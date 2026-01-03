@@ -236,29 +236,24 @@ LOGGING = {
 }
 
 # Credenciais AWS - Adicionado default='' para não quebrar o build no Railway
+# Credenciais AWS
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
 AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='') 
 AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='pastita')
 AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='sa-east-1')
 
-# Configurações do S3
+# Configurações de Storage
+# Forçamos o uso do S3. Se falhar, tem que dar erro no log.
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
 AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
 AWS_S3_FILE_OVERWRITE = False
-AWS_S3_VERIFY = True
 AWS_QUERYSTRING_AUTH = False  
 AWS_S3_SIGNATURE_VERSION = 's3v4'
 AWS_DEFAULT_ACL = None  
 
-# --- AJUSTE CRÍTICO AQUI ---
-# Verificamos se as credenciais existem. Se não (como no build), usamos storage local
-if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-    # Opcional: Se quiser que os arquivos estáticos (CSS Admin) também vão para o S3:
-    # STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
-    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
-else:
-    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-    MEDIA_URL = '/media/'
+# URL de Mídia apontando diretamente para o S3
+MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
 
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
