@@ -29,3 +29,40 @@ INFO 2026-01-03 14:12:59,107 autoreload 6528 22972 C:\Users\User\Documents\api\s
 INFO 2026-01-03 14:13:08,056 autoreload 14920 3064 Watching for file changes with StatReloader
 INFO 2026-01-03 14:13:26,137 autoreload 14920 3064 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
 INFO 2026-01-03 14:13:30,646 autoreload 23556 22772 Watching for file changes with StatReloader
+INFO 2026-01-03 14:35:54,909 autoreload 23556 22772 C:\Users\User\Documents\api\server\api\views.py changed, reloading.
+INFO 2026-01-03 14:36:05,588 autoreload 12676 1988 Watching for file changes with StatReloader
+INFO 2026-01-03 14:39:36,182 autoreload 12676 1988 C:\Users\User\Documents\api\server\server\urls.py changed, reloading.
+INFO 2026-01-03 14:39:41,574 autoreload 15016 25352 Watching for file changes with StatReloader
+INFO 2026-01-03 14:39:51,149 autoreload 23668 22844 Watching for file changes with StatReloader
+WARNING 2026-01-03 14:39:57,047 log 15016 20688 Not Found: /
+WARNING 2026-01-03 14:39:59,366 log 15016 20688 Not Found: /favicon.ico
+WARNING 2026-01-03 14:40:20,453 log 15016 14876 Method Not Allowed: /api/login/
+WARNING 2026-01-03 14:40:20,782 log 15016 14876 Not Found: /favicon.ico
+WARNING 2026-01-03 14:40:52,285 log 15016 19964 Method Not Allowed: /api/users/register/
+WARNING 2026-01-03 14:40:52,561 log 15016 19964 Not Found: /static/rest_framework/css/bootstrap.min.css
+WARNING 2026-01-03 14:40:52,572 log 15016 24204 Not Found: /static/rest_framework/css/bootstrap-tweaks.css
+WARNING 2026-01-03 14:40:52,579 log 15016 19964 Not Found: /static/rest_framework/css/prettify.css
+WARNING 2026-01-03 14:40:52,581 log 15016 24204 Not Found: /static/rest_framework/css/default.css
+WARNING 2026-01-03 14:40:52,589 log 15016 19964 Not Found: /static/rest_framework/js/jquery-3.7.1.min.js
+WARNING 2026-01-03 14:40:52,592 log 15016 24204 Not Found: /static/rest_framework/js/ajax-form.js
+WARNING 2026-01-03 14:40:52,599 log 15016 19964 Not Found: /static/rest_framework/js/csrf.js
+WARNING 2026-01-03 14:40:52,606 log 15016 24204 Not Found: /static/rest_framework/js/bootstrap.min.js
+WARNING 2026-01-03 14:40:52,609 log 15016 19964 Not Found: /static/rest_framework/js/prettify-min.js
+WARNING 2026-01-03 14:40:52,617 log 15016 24204 Not Found: /static/rest_framework/js/default.js
+WARNING 2026-01-03 14:40:52,619 log 15016 19964 Not Found: /static/rest_framework/js/load-ajax-form.js
+WARNING 2026-01-03 14:40:52,657 log 15016 19964 Not Found: /static/rest_framework/css/bootstrap.min.css
+WARNING 2026-01-03 14:40:52,658 log 15016 24204 Not Found: /static/rest_framework/css/bootstrap-tweaks.css
+WARNING 2026-01-03 14:40:52,662 log 15016 19964 Not Found: /static/rest_framework/css/prettify.css
+WARNING 2026-01-03 14:40:52,664 log 15016 24204 Not Found: /static/rest_framework/css/default.css
+WARNING 2026-01-03 14:41:03,153 log 15016 23636 Not Found: /api/users/login/
+WARNING 2026-01-03 14:41:03,170 log 15016 23636 Not Found: /static/rest_framework/css/bootstrap.min.css
+WARNING 2026-01-03 14:41:03,171 log 15016 14768 Not Found: /static/rest_framework/css/bootstrap-tweaks.css
+WARNING 2026-01-03 14:41:03,176 log 15016 23636 Not Found: /static/rest_framework/css/prettify.css
+WARNING 2026-01-03 14:41:03,177 log 15016 14768 Not Found: /static/rest_framework/css/default.css
+WARNING 2026-01-03 14:41:03,185 log 15016 23636 Not Found: /static/rest_framework/js/jquery-3.7.1.min.js
+WARNING 2026-01-03 14:41:03,186 log 15016 14768 Not Found: /static/rest_framework/js/ajax-form.js
+WARNING 2026-01-03 14:41:03,190 log 15016 14768 Not Found: /static/rest_framework/js/csrf.js
+WARNING 2026-01-03 14:41:03,191 log 15016 23636 Not Found: /static/rest_framework/js/bootstrap.min.js
+WARNING 2026-01-03 14:41:03,194 log 15016 14768 Not Found: /static/rest_framework/js/prettify-min.js
+WARNING 2026-01-03 14:41:03,195 log 15016 23636 Not Found: /static/rest_framework/js/default.js
+WARNING 2026-01-03 14:41:03,199 log 15016 14768 Not Found: /static/rest_framework/js/load-ajax-form.js

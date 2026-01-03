@@ -46,7 +46,7 @@ class UserViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(user)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
         """Register a new user"""
         serializer = self.get_serializer(data=request.data)
