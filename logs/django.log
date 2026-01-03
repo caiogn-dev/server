@@ -1,0 +1,4 @@
+INFO 2026-01-02 23:41:02,588 autoreload 2588 6044 Watching for file changes with StatReloader
+WARNING 2026-01-02 23:41:07,446 log 2588 4936 Not Found: /
+WARNING 2026-01-02 23:41:08,915 log 2588 4936 Not Found: /favicon.ico
+WARNING 2026-01-02 23:42:35,088 log 2588 20032 Unauthorized: /api/checkout/
