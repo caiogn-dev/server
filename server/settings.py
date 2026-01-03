@@ -32,7 +32,7 @@ SECRET_KEY = 'django-insecure-eg*ds206gdc0j_xfm%m%#h#qzo)ycucg@3c=8+=hf#%(@t3gc%
 DEBUG = False
 
 ALLOWED_HOSTS = ['*']
-# Adicione o domínio do seu app no Railway
+
 CSRF_TRUSTED_ORIGINS = [
     "https://web-production-3e83a.up.railway.app",
     "https://pastita.com.br",

@@ -26,3 +26,5 @@ WARNING 2026-01-03 13:07:52,162 log 16416 10764 Not Found: /favicon.ico
 INFO 2026-01-03 14:06:17,906 autoreload 16416 18088 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
 INFO 2026-01-03 14:06:27,168 autoreload 6528 22972 Watching for file changes with StatReloader
 INFO 2026-01-03 14:12:59,107 autoreload 6528 22972 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
+INFO 2026-01-03 14:13:08,056 autoreload 14920 3064 Watching for file changes with StatReloader
+INFO 2026-01-03 14:13:26,137 autoreload 14920 3064 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
