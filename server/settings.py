@@ -238,7 +238,7 @@ LOGGING = {
 # Credenciais AWS
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='build-dummy-value')
 AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='build-dummy-value')
-AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='build-dummy-value')
+AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='pastita')
 AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='sa-east-1')
 
 # Configurações do S3
