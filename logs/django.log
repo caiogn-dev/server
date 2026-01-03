@@ -23,3 +23,4 @@ INFO 2026-01-03 12:19:04,452 autoreload 16416 18088 Watching for file changes wi
 INFO 2026-01-03 13:07:39,964 autoreload 19700 9568 Watching for file changes with StatReloader
 WARNING 2026-01-03 13:07:51,289 log 16416 10764 Not Found: /
 WARNING 2026-01-03 13:07:52,162 log 16416 10764 Not Found: /favicon.ico
+INFO 2026-01-03 14:06:17,906 autoreload 16416 18088 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
