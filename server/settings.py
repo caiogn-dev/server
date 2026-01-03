@@ -251,3 +251,5 @@ MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 AWS_S3_VERIFY = True
 AWS_QUERYSTRING_AUTH = False  # Para gerar URLs limpas e públicas
 AWS_S3_SIGNATURE_VERSION = 's3v4' # Força a versão 4 de assinatura (mais moderna)
+AWS_S3_FILE_OVERWRITE = False
+AWS_DEFAULT_ACL = None  # Buckets novos bloqueiam ACLs por padrão, deixe None
