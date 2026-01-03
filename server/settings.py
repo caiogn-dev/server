@@ -234,18 +234,35 @@ LOGGING = {
         'level': 'INFO',
     },
 }
-# Credenciais AWS
-AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY') 
-AWS_STORAGE_BUCKET_NAME = 'pastita'
-AWS_S3_REGION_NAME = 'sa-east-1' # Verifique se é esta a sua região
-AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+
+# Credenciais AWS - Adicionado default='' para não quebrar o build no Railway
+AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
+AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='') 
+AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='pastita')
+AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='sa-east-1')
+
 # Configurações do S3
+AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
 AWS_S3_FILE_OVERWRITE = False
-# Storage de Mídia
-DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
-MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 AWS_S3_VERIFY = True
-AWS_QUERYSTRING_AUTH = False  # Para gerar URLs limpas e públicas
-AWS_S3_SIGNATURE_VERSION = 's3v4' # Força a versão 4 de assinatura (mais moderna)
-AWS_DEFAULT_ACL = None  # Buckets novos bloqueiam ACLs por padrão, deixe None
+AWS_QUERYSTRING_AUTH = False  
+AWS_S3_SIGNATURE_VERSION = 's3v4'
+AWS_DEFAULT_ACL = None  
+
+# --- AJUSTE CRÍTICO AQUI ---
+# Verificamos se as credenciais existem. Se não (como no build), usamos storage local
+if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    # Opcional: Se quiser que os arquivos estáticos (CSS Admin) também vão para o S3:
+    # STATICFILES_STORAGE = 'storages.backends.s3boto3.S3StaticStorage'
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+else:
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    MEDIA_URL = '/media/'
+
+# Static files (CSS, JavaScript, Images)
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# ... (restante do arquivo)
