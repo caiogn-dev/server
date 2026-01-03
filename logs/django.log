@@ -18,3 +18,5 @@ INFO 2026-01-03 11:32:08,871 autoreload 21636 3432 Watching for file changes wit
 INFO 2026-01-03 11:33:39,465 autoreload 16272 5528 Watching for file changes with StatReloader
 WARNING 2026-01-03 11:34:05,039 log 16272 20040 Not Found: /
 WARNING 2026-01-03 11:34:05,986 log 16272 20040 Not Found: /favicon.ico
+INFO 2026-01-03 12:18:46,319 autoreload 21636 3432 C:\Users\User\Documents\api\venv\Lib\site-packages\urllib3\poolmanager.py changed, reloading.
+INFO 2026-01-03 12:19:04,452 autoreload 16416 18088 Watching for file changes with StatReloader
