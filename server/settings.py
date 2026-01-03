@@ -237,19 +237,16 @@ LOGGING = {
 # Credenciais AWS
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='build-dummy-value')
 AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='build-dummy-value')
-AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='pastita')
-AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='sa-east-1')
-
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+AWS_STORAGE_BUCKET_NAME = 'pastita'
+AWS_S3_REGION_NAME = 'sa-east-1' # Verifique se é esta a sua região
+AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
 # Configurações do S3
 AWS_S3_FILE_OVERWRITE = False
-AWS_DEFAULT_ACL = 'public-read' # Permite que as URLs sejam acessíveis publicamente
-AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
-
 # Storage de Mídia
 DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/'
 AWS_S3_VERIFY = True
 AWS_QUERYSTRING_AUTH = False  # Para gerar URLs limpas e públicas
 AWS_S3_SIGNATURE_VERSION = 's3v4' # Força a versão 4 de assinatura (mais moderna)
-AWS_S3_FILE_OVERWRITE = False
 AWS_DEFAULT_ACL = None  # Buckets novos bloqueiam ACLs por padrão, deixe None
