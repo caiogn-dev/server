@@ -2,3 +2,19 @@ INFO 2026-01-02 23:41:02,588 autoreload 2588 6044 Watching for file changes with
 WARNING 2026-01-02 23:41:07,446 log 2588 4936 Not Found: /
 WARNING 2026-01-02 23:41:08,915 log 2588 4936 Not Found: /favicon.ico
 WARNING 2026-01-02 23:42:35,088 log 2588 20032 Unauthorized: /api/checkout/
+INFO 2026-01-03 11:16:28,175 autoreload 15260 8292 Watching for file changes with StatReloader
+INFO 2026-01-03 11:18:57,423 autoreload 21352 24944 Watching for file changes with StatReloader
+WARNING 2026-01-03 11:19:18,349 log 21352 3604 Not Found: /
+WARNING 2026-01-03 11:19:28,021 log 21352 17592 Not Found: /favicon.ico
+INFO 2026-01-03 11:25:37,330 autoreload 10812 5636 Watching for file changes with StatReloader
+INFO 2026-01-03 11:26:36,379 autoreload 10812 5636 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
+INFO 2026-01-03 11:27:31,740 autoreload 21360 1752 Watching for file changes with StatReloader
+INFO 2026-01-03 11:28:22,987 autoreload 14608 23148 Watching for file changes with StatReloader
+INFO 2026-01-03 11:30:12,093 autoreload 21360 1752 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
+
+INFO 2026-01-03 11:30:50,221 autoreload 18336 24240 Watching for file changes with StatReloader
+INFO 2026-01-03 11:31:47,799 autoreload 18336 24240 C:\Users\User\Documents\api\server\server\settings.py changed, reloading.
+INFO 2026-01-03 11:32:08,871 autoreload 21636 3432 Watching for file changes with StatReloader
+INFO 2026-01-03 11:33:39,465 autoreload 16272 5528 Watching for file changes with StatReloader
+WARNING 2026-01-03 11:34:05,039 log 16272 20040 Not Found: /
+WARNING 2026-01-03 11:34:05,986 log 16272 20040 Not Found: /favicon.ico
