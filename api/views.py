@@ -55,7 +55,7 @@ class UserViewSet(viewsets.ModelViewSet):
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class ProductViewSet(viewsets.ReadOnlyModelViewSet):
+class ProductViewSet(viewsets.ModelViewSet):
     """ViewSet for Product model"""
     queryset = Product.objects.filter(is_active=True)
     serializer_class = ProductSerializer
@@ -63,7 +63,12 @@ class ProductViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['category', 'is_active']
     search_fields = ['name', 'description', 'sku']
     ordering_fields = ['price', 'created_at', 'name']
-
+    
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve', 'search', 'categories']:
+            return [permissions.AllowAny()]
+        return [permissions.IsAdminUser()]
+    
     @action(detail=False, methods=['get'])
     def search(self, request):
         """Search products by name or category"""

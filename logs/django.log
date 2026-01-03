@@ -66,3 +66,7 @@ WARNING 2026-01-03 14:41:03,191 log 15016 23636 Not Found: /static/rest_framewor
 WARNING 2026-01-03 14:41:03,194 log 15016 14768 Not Found: /static/rest_framework/js/prettify-min.js
 WARNING 2026-01-03 14:41:03,195 log 15016 23636 Not Found: /static/rest_framework/js/default.js
 WARNING 2026-01-03 14:41:03,199 log 15016 14768 Not Found: /static/rest_framework/js/load-ajax-form.js
+INFO 2026-01-03 14:45:53,896 autoreload 15016 25352 C:\Users\User\Documents\api\server\api\views.py changed, reloading.
+INFO 2026-01-03 14:46:07,423 autoreload 23892 16908 Watching for file changes with StatReloader
+INFO 2026-01-03 14:46:26,056 autoreload 23892 16908 C:\Users\User\Documents\api\server\api\views.py changed, reloading.
+INFO 2026-01-03 14:46:30,873 autoreload 16496 9744 Watching for file changes with StatReloader
