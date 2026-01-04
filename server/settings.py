@@ -1,6 +1,9 @@
 """
 Django settings for server project.
+<<<<<<< HEAD
 Production-ready configuration with security best practices.
+=======
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
 """
 
 from pathlib import Path
@@ -21,6 +24,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-producti
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
+<<<<<<< HEAD
 # Allowed hosts - specific hosts for security
 ALLOWED_HOSTS = [
     'localhost',
@@ -38,6 +42,9 @@ if os.environ.get('RAILWAY_STATIC_URL'):
 # Allow all hosts in debug mode for development convenience
 if DEBUG:
     ALLOWED_HOSTS = ['*']
+=======
+ALLOWED_HOSTS = ['*']
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
 
 # Application definition
 INSTALLED_APPS = [
@@ -134,6 +141,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ],
+<<<<<<< HEAD
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_THROTTLE_CLASSES': [
@@ -158,11 +166,20 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:12001",
+=======
+}
+
+# CORS Configuration - BLINDADO
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
 ]
 
+<<<<<<< HEAD
 # Add dynamic frontend URL from environment
 FRONTEND_CORS = config('FRONTEND_URL', default='')
 if FRONTEND_CORS and FRONTEND_CORS not in CORS_ALLOWED_ORIGINS:
@@ -173,11 +190,16 @@ CSRF_TRUSTED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
     "http://localhost:12001",
+=======
+# CSRF
+CSRF_TRUSTED_ORIGINS = [
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
 ]
 
+<<<<<<< HEAD
 # Add dynamic frontend URL to CSRF trusted origins
 if FRONTEND_CORS and FRONTEND_CORS not in CSRF_TRUSTED_ORIGINS:
     CSRF_TRUSTED_ORIGINS.append(FRONTEND_CORS)
@@ -205,6 +227,9 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
+=======
+CORS_ALLOW_CREDENTIALS = True
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
 
 # Mercado Pago
 MERCADO_PAGO_ACCESS_TOKEN = config('MERCADO_PAGO_ACCESS_TOKEN', default='')
@@ -225,6 +250,7 @@ AWS_QUERYSTRING_AUTH = False
 AWS_S3_SIGNATURE_VERSION = 's3v4'
 AWS_DEFAULT_ACL = None
 
+<<<<<<< HEAD
 # Media files
 MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -247,11 +273,25 @@ LOGGING = {
             'style': '{',
         },
     },
+=======
+# Mídia
+MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+# --- LOGGING CORRIGIDO ---
+# Isso joga o erro na tela do Railway para você ver o que está acontecendo
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'stream': sys.stdout,
+<<<<<<< HEAD
             'formatter': 'simple',
+=======
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
         },
     },
     'root': {
@@ -262,6 +302,7 @@ LOGGING = {
         'django': {
             'handlers': ['console'],
             'level': 'INFO',
+<<<<<<< HEAD
             'propagate': False,
         },
         'django.request': {
@@ -292,3 +333,9 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+=======
+            'propagate': True,
+        },
+    },
+}
+>>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
