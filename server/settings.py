@@ -71,14 +71,19 @@ WSGI_APPLICATION = 'server.wsgi.application'
 
 # Database
 # Configuração híbrida: Tenta pegar do DATABASE_URL (Railway), senão usa SQLite local
-DATABASES = {
-    'default': config(
-        'DATABASE_URL',
-        default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
-        cast=dj_database_url.parse
-    )
-}
-
+if not DEBUG: # ou use uma variável IS_PRODUCTION
+    DATABASES = {
+        'default': dj_database_url.parse(config('DATABASE_URL')) # SEM DEFAULT! Vai crashar se não achar.
+    }
+else:
+    # Apenas localmente usa o fallback se quiser
+    DATABASES = {
+        'default': config(
+            'DATABASE_URL',
+            default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
+            cast=dj_database_url.parse
+        )
+    }
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
