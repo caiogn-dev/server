@@ -5,6 +5,7 @@ Complete RESTful API built with Django & Django REST Framework with Mercado Pago
 ## 🚀 Quick Start
 
 ### Prerequisites
+<<<<<<< HEAD
 - Python 3.11+
 - pip (Python package manager)
 - Mercado Pago Account (for payments)
@@ -27,12 +28,34 @@ venv\Scripts\activate
 ```
 
 ### 2. Install Dependencies
+=======
+- Python 3.13+
+- Virtual Environment (already created at `/venv/`)
+- Mercado Pago Account
+
+### 1. Activate Virtual Environment
+
+**Windows (PowerShell):**
+```powershell
+cd c:\Users\User\Documents\api\server
+..\..\venv\Scripts\Activate.ps1
+```
+
+**Mac/Linux:**
+```bash
+cd ~/api/server
+source ../../venv/bin/activate
+```
+
+### 2. Install Dependencies (Already Done)
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 3. Configure Environment Variables
 
+<<<<<<< HEAD
 Create `.env` file in the project root:
 ```env
 DEBUG=True
@@ -53,11 +76,24 @@ AWS_ACCESS_KEY_ID=your-aws-key
 AWS_SECRET_ACCESS_KEY=your-aws-secret
 AWS_STORAGE_BUCKET_NAME=your-bucket-name
 AWS_S3_REGION_NAME=sa-east-1
+=======
+Create `.env` file in `server/` directory:
+```
+DEBUG=True
+SECRET_KEY=your-secret-key-here
+MERCADO_PAGO_ACCESS_TOKEN=your-mercado-pago-token
+BACKEND_URL=http://localhost:8000
+FRONTEND_URL=https://pastita.com.br
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
 ```
 
 Get your Mercado Pago token from: https://www.mercadopago.com/developers
 
+<<<<<<< HEAD
 ### 4. Run Migrations
+=======
+### 4. Run Migrations (Already Done)
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
 ```bash
 python manage.py migrate
 ```
@@ -69,10 +105,17 @@ python manage.py createsuperuser
 
 ### 6. Start Server
 ```bash
+<<<<<<< HEAD
 python manage.py runserver 0.0.0.0:12000
 ```
 
 Server runs at: **http://localhost:12000**
+=======
+python manage.py runserver
+```
+
+Server runs at: **http://localhost:8000**
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
 
 ---
 

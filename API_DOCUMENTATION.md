@@ -14,7 +14,6 @@ This is a complete RESTful API built with Django Rest Framework for an e-commerc
 - **Mercado Pago Integration**: Payment processing and webhook handling
 - **Admin Panel**: Django admin interface for managing all resources
 - **CORS Support**: Integrated with frontend at pastita.com.br
-- **Brazilian Validation**: CPF, phone, and CEP validation
 
 ---
 
@@ -22,72 +21,66 @@ This is a complete RESTful API built with Django Rest Framework for an e-commerc
 
 ### Prerequisites
 
-- Python 3.11+
-- pip (Python package manager)
+- Python 3.13+
+- Virtual Environment (`venv/`)
 - Mercado Pago account with API credentials
 
 ### 1. Environment Setup
 
 ```bash
 # Navigate to project directory
-cd server-main
+cd c:\Users\User\Documents\api\server
 
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or: venv\Scripts\activate  # Windows
+# Activate virtual environment
+..\..\venv\Scripts\Activate.ps1
 ```
 
-### 2. Install Dependencies
+### 2. Environment Variables
+
+Create a `.env` file in the server directory based on `.env.example`:
 
 ```bash
-pip install -r requirements.txt
-```
-
-### 3. Environment Variables
-
-Create a `.env` file in the project root:
-
-```env
 DEBUG=True
 SECRET_KEY=your-secret-key-here
 
-# Database (SQLite for dev, PostgreSQL for prod)
-DATABASE_URL=sqlite:///db.sqlite3
-
-# Mercado Pago API Token
-MERCADO_PAGO_ACCESS_TOKEN=your-access-token
+# Mercado Pago API Token (get from https://www.mercadopago.com/developers)
+MERCADO_PAGO_ACCESS_TOKEN=your-actual-access-token
 
 # API URLs
-BACKEND_URL=http://localhost:12000
-FRONTEND_URL=http://localhost:12001
+BACKEND_URL=http://localhost:8000
+FRONTEND_URL=https://pastita.com.br
 ```
 
-### 4. Database
+### 3. Database
+
+The API uses SQLite by default (suitable for development). For production, consider migrating to PostgreSQL.
 
 ```bash
+# Migrations already applied
 python manage.py migrate
 ```
 
-### 5. Create Superuser
+### 4. Create Superuser
 
 ```bash
 python manage.py createsuperuser
 ```
 
-### 6. Start Development Server
+Follow the prompts to create an admin user.
+
+### 5. Start Development Server
 
 ```bash
-python manage.py runserver 0.0.0.0:12000
+python manage.py runserver
 ```
 
-Server will run at `http://localhost:12000`
+Server will run at `http://localhost:8000`
 
 ---
 
 ## API Endpoints
 
-### Base URL: `http://localhost:12000/api/`
+### Base URL: `http://localhost:8000/api/`
 
 ### Authentication
 - Token Authentication: Add header `Authorization: Token <your_token>`
@@ -247,56 +240,27 @@ Authorization: Token <your_token>
 Content-Type: application/json
 
 {
-  "buyer": {
-    "name": "João Silva",
-    "email": "joao@example.com",
-    "phone": "11987654321",
-    "cpf": "12345678901",
-    "address": "Rua Principal, 123, Centro",
-    "city": "São Paulo",
-    "state": "SP",
-    "zip_code": "01234567"
-  }
+  "customer_name": "João Silva",
+  "customer_email": "joao@example.com",
+  "customer_phone": "+5511987654321",
+  "billing_address": "Rua Principal, 123",
+  "billing_city": "São Paulo",
+  "billing_state": "SP",
+  "billing_zip_code": "01234-567",
+  "billing_country": "Brazil",
+  "payment_method": "credit_card"
 }
 ```
 
-**Required Fields:**
-| Field | Type | Validation |
-|-------|------|------------|
-| name | string | Required |
-| email | string | Required, valid email format |
-| phone | string | Required, 10-11 digits (Brazilian format) |
-| cpf | string | Optional, 11 digits (validated with algorithm) |
-| address | string | Required |
-| city | string | Required |
-| state | string | Required, 2-letter code (SP, RJ, etc.) |
-| zip_code | string | Required, 8 digits (Brazilian CEP) |
-
-**Success Response (201):**
+**Response:**
 ```json
 {
-  "success": true,
-  "order_id": "uuid",
-  "order_number": "ORD-20260104-ABC123",
-  "checkout_id": "uuid",
+  "id": "uuid",
   "session_token": "unique-token",
-  "total_amount": 299.99,
-  "init_point": "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=...",
-  "sandbox_init_point": "https://sandbox.mercadopago.com.br/checkout/v1/redirect?pref_id=...",
-  "preference_id": "mp-preference-id"
-}
-```
-
-**Validation Error Response (400):**
-```json
-{
-  "error": "Validation failed",
-  "details": {
-    "name": "Nome é obrigatório",
-    "phone": "Telefone inválido (10-11 dígitos)",
-    "cpf": "CPF inválido",
-    "zip_code": "CEP inválido (8 dígitos)"
-  }
+  "payment_link": "https://www.mercadopago.com.br/checkout/v1/redirect?pref_id=...",
+  "total_amount": "299.99",
+  "payment_status": "pending",
+  "created_at": "2026-01-02T10:30:00Z"
 }
 ```
 

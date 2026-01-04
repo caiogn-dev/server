@@ -87,17 +87,15 @@ eb init -p python-3.11 pastita-api --region sa-east-1
 ### Passo 7: Crie o Environment
 
 ```bash
-# Crie ambiente (substitua YOUR_* pelos valores reais)
+# Crie ambiente
 eb create pastita-production \
   --instance-type t3.micro \
-  --envvars DEBUG=False,DATABASE_URL=YOUR_DATABASE_URL,MERCADO_PAGO_ACCESS_TOKEN=YOUR_MP_TOKEN,SECRET_KEY=YOUR_SECRET_KEY,FRONTEND_URL=https://pastita.com.br,BACKEND_URL=https://your-api-url.com
+  --envvars DEBUG=False,DB_ENGINE=django.db.backends.postgresql,DB_NAME=postgres,DB_USER=postgres,DB_PASSWORD=Caio@2026mano,DB_HOST=db.irrakcwiaubidijzhdok.supabase.co,DB_PORT=5432,MERCADO_PAGO_ACCESS_TOKEN=seu-token-aqui,SECRET_KEY=django-insecure-eg*ds206gdc0j_xfm%m%#h#qzo)ycucg@3c=8+=hf#%(@t3gc%
 
 # Aguarde (3-5 minutos)
 # Quando terminar:
 eb open
 ```
-
-⚠️ **IMPORTANTE**: Nunca compartilhe suas credenciais! Use variáveis de ambiente.
 
 **Pronto! Sua API está ao vivo! 🎉**
 

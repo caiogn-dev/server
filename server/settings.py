@@ -1,6 +1,5 @@
 """
 Django settings for server project.
-Production-ready configuration with security best practices.
 """
 
 from pathlib import Path
@@ -21,23 +20,7 @@ SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-producti
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config('DEBUG', default=False, cast=bool)
 
-# Allowed hosts - specific hosts for security
-ALLOWED_HOSTS = [
-    'localhost',
-    '127.0.0.1',
-    '0.0.0.0',
-    'web-production-3e83a.up.railway.app',
-    'pastita.com.br',
-    'www.pastita.com.br',
-]
-
-# Add Railway and other dynamic hosts
-if os.environ.get('RAILWAY_STATIC_URL'):
-    ALLOWED_HOSTS.append(os.environ.get('RAILWAY_STATIC_URL').replace('https://', '').replace('http://', ''))
-
-# Allow all hosts in debug mode for development convenience
-if DEBUG:
-    ALLOWED_HOSTS = ['*']
+ALLOWED_HOSTS = ['*']
 
 # Application definition
 INSTALLED_APPS = [
@@ -134,77 +117,25 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 20,
-    'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle'
-    ],
-    'DEFAULT_THROTTLE_RATES': {
-        'anon': '100/hour',
-        'user': '1000/hour'
-    },
-    'DEFAULT_FILTER_BACKENDS': [
-        'django_filters.rest_framework.DjangoFilterBackend',
-        'rest_framework.filters.SearchFilter',
-        'rest_framework.filters.OrderingFilter',
-    ],
 }
 
-# CORS Configuration
+# CORS Configuration - BLINDADO
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:12001",
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
 ]
 
-# Add dynamic frontend URL from environment
-FRONTEND_CORS = config('FRONTEND_URL', default='')
-if FRONTEND_CORS and FRONTEND_CORS not in CORS_ALLOWED_ORIGINS:
-    CORS_ALLOWED_ORIGINS.append(FRONTEND_CORS)
-
-# CSRF trusted origins
+# CSRF
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://localhost:12001",
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
 ]
-
-# Add dynamic frontend URL to CSRF trusted origins
-if FRONTEND_CORS and FRONTEND_CORS not in CSRF_TRUSTED_ORIGINS:
-    CSRF_TRUSTED_ORIGINS.append(FRONTEND_CORS)
-
-# CSRF Cookie settings for SPA
-CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read the cookie
-CSRF_COOKIE_SAMESITE = 'Lax'  # Protect against CSRF while allowing same-site requests
-CSRF_COOKIE_NAME = 'csrftoken'
-CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'
-
-# In production, use secure cookies
-if not DEBUG:
-    CSRF_COOKIE_SECURE = True
-    SESSION_COOKIE_SECURE = True
 
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-]
 
 # Mercado Pago
 MERCADO_PAGO_ACCESS_TOKEN = config('MERCADO_PAGO_ACCESS_TOKEN', default='')
@@ -225,33 +156,19 @@ AWS_QUERYSTRING_AUTH = False
 AWS_S3_SIGNATURE_VERSION = 's3v4'
 AWS_DEFAULT_ACL = None
 
-# Media files
+# Mídia
 MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
-# Mercado Pago additional settings
-MERCADO_PAGO_STATEMENT_DESCRIPTOR = config('MERCADO_PAGO_STATEMENT_DESCRIPTOR', default='PASTITA')
-
-# Logging configuration
+# --- LOGGING CORRIGIDO ---
+# Isso joga o erro na tela do Railway para você ver o que está acontecendo
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
-        'simple': {
-            'format': '{levelname} {asctime} {module} {message}',
-            'style': '{',
-        },
-    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'stream': sys.stdout,
-            'formatter': 'simple',
         },
     },
     'root': {
@@ -262,33 +179,7 @@ LOGGING = {
         'django': {
             'handlers': ['console'],
             'level': 'INFO',
-            'propagate': False,
-        },
-        'django.request': {
-            'handlers': ['console'],
-            'level': 'WARNING',
-            'propagate': False,
-        },
-        'api': {
-            'handlers': ['console'],
-            'level': 'DEBUG' if DEBUG else 'INFO',
-            'propagate': False,
-        },
-        'api.mercado_pago': {
-            'handlers': ['console'],
-            'level': 'DEBUG' if DEBUG else 'INFO',
-            'propagate': False,
+            'propagate': True,
         },
     },
 }
-
-# Security settings for production
-if not DEBUG:
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = 'DENY'
-    SECURE_HSTS_SECONDS = 31536000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True

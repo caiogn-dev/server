@@ -6,11 +6,16 @@ This guide explains how to connect your pastita.com.br frontend to the Django AP
 
 ```
 Production: https://your-api-domain.com/api/
+<<<<<<< HEAD
 Development: http://localhost:12000/api/
+=======
+Development: http://localhost:8000/api/
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
 ```
 
 ## 🔐 Authentication
 
+<<<<<<< HEAD
 ### Login Flow
 
 ```javascript
@@ -97,6 +102,53 @@ api.interceptors.response.use(
 );
 
 export default api;
+=======
+### Get Auth Token
+
+First, get an authentication token for the user:
+
+```javascript
+async function login(username, password) {
+  const response = await fetch('http://localhost:8000/api-auth/login/', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, password })
+  });
+  
+  if (response.ok) {
+    // Token will be in response or set via session cookie
+    return response;
+  }
+}
+```
+
+Or use Token Authentication:
+
+```javascript
+async function getToken(username, password) {
+  // You'll need to implement a custom token endpoint
+  // For now, store token in localStorage after login
+  const token = localStorage.getItem('authToken');
+  return token;
+}
+```
+
+### Add Token to Requests
+
+```javascript
+const token = localStorage.getItem('authToken');
+const headers = {
+  'Authorization': `Token ${token}`,
+  'Content-Type': 'application/json',
+};
+
+const response = await fetch('http://localhost:8000/api/users/profile/', {
+  method: 'GET',
+  headers: headers
+});
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
 ```
 
 Or use a reusable fetch wrapper:
@@ -299,6 +351,7 @@ async function updateCartQuantity(productId, newQuantity) {
 
 ### 1. Create Checkout
 
+<<<<<<< HEAD
 The checkout endpoint expects buyer data in a specific format:
 
 ```javascript
@@ -342,6 +395,33 @@ async function handleCheckout() {
       console.log('Validation errors:', error.response.data.details);
       // { name: 'Nome é obrigatório', phone: 'Telefone inválido', ... }
     }
+=======
+```javascript
+async function startCheckout() {
+  const checkoutData = {
+    customer_name: 'João Silva',
+    customer_email: 'joao@example.com',
+    customer_phone: '+5511987654321',
+    billing_address: 'Rua Principal, 123',
+    billing_city: 'São Paulo',
+    billing_state: 'SP',
+    billing_zip_code: '01234-567',
+    billing_country: 'Brazil',
+    payment_method: 'credit_card'
+  };
+
+  try {
+    const checkout = await api.createCheckout(checkoutData);
+    console.log('Checkout created:', checkout);
+    
+    // Save session token for later reference
+    localStorage.setItem('checkoutToken', checkout.session_token);
+    
+    // Redirect to payment page
+    window.location.href = checkout.payment_link;
+  } catch (error) {
+    showNotification('Checkout failed: ' + error.message, 'error');
+>>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
   }
 }
 ```
