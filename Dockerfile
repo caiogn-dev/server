@@ -15,7 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Collect static files
-RUN python manage.py collectstatic --noinput
+# Passamos valores fake apenas para este comando rodar sem erro
+RUN DATABASE_URL="sqlite:///dummy.db" SECRET_KEY="build-secret" python manage.py collectstatic --noinput
 
 # Expose port
 EXPOSE 8000
