@@ -24,8 +24,12 @@ class UserSerializer(serializers.ModelSerializer):
         }
 
     def create(self, validated_data):
-        """Create a new user with hashed password"""
-        user = User.objects.create_user(**validated_data)
+        # O design pattern aqui é interceptar a criação para usar o método seguro do Manager
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password']
+        )
         return user
 
     def update(self, instance, validated_data):
