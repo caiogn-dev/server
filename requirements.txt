@@ -1,0 +1,15 @@
+Django
+djangorestframework
+django-cors-headers
+django-filter
+python-decouple
+python-dotenv
+Pillow
+requests
+mercadopago
+psycopg2-binary
+gunicorn
+whitenoise
+django-storages
+boto3
+dj-database-url
