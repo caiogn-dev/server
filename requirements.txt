@@ -12,3 +12,4 @@ gunicorn
 whitenoise
 django-storages
 boto3
+dj-database-url
