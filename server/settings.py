@@ -73,7 +73,7 @@ WSGI_APPLICATION = 'server.wsgi.application'
 # Configuração híbrida: Tenta pegar do DATABASE_URL (Railway), senão usa SQLite local
 if not DEBUG: # ou use uma variável IS_PRODUCTION
     DATABASES = {
-        'default': dj_database_url.parse(config('DATABASE_URL')) # SEM DEFAULT! Vai crashar se não achar.
+        'default': dj_database_url.parse(config('DATABASE_URL', default="dumby-default-pass")) # SEM DEFAULT! Vai crashar se não achar.
     }
 else:
     # Apenas localmente usa o fallback se quiser
