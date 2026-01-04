@@ -1,9 +1,6 @@
 """
 Django settings for server project.
-<<<<<<< HEAD
 Production-ready configuration with security best practices.
-=======
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
 """
 
 from pathlib import Path
