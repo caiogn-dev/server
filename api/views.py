@@ -19,8 +19,62 @@ from .serializers import (
 )
 from .mercado_pago import MercadoPagoService
 from .permissions import IsOwnerOrReadOnly, IsOwner
+# api/views.py
+import mercadopago
+from django.conf import settings
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
 
+class CreatePreferenceView(APIView):
+    def post(self, request):
+        # 1. Configura o SDK
+        sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
+        
+        cart_items = request.data.get('items', [])
+        buyer_data = request.data.get('buyer', {})
+
+        # 2. Monta os itens no formato que o MP exige
+        mp_items = []
+        for item in cart_items:
+            mp_items.append({
+                "title": item['name'],
+                "quantity": int(item['quantity']),
+                "currency_id": "BRL",
+                "unit_price": float(item['price'])
+            })
+
+        # 3. Cria a preferência
+        preference_data = {
+            "items": mp_items,
+            "payer": {
+                "name": buyer_data.get('name'),
+                "email": buyer_data.get('email'),
+                "identification": {
+                    "type": "CPF",
+                    "number": buyer_data.get('cpf')
+                }
+            },
+            "back_urls": {
+                "success": f"{settings.FRONTEND_URL}/sucesso",
+                "failure": f"{settings.FRONTEND_URL}/erro",
+                "pending": f"{settings.FRONTEND_URL}/pendente"
+            },
+            "auto_return": "approved"
+        }
+
+        preference_response = sdk.preference().create(preference_data)
+        preference = preference_response["response"]
+
+        # 4. Retorna o link para o Frontend
+        return Response({
+            "init_point": preference['init_point'], # Link para produção
+            "sandbox_init_point": preference['sandbox_init_point'] # Link para testes
+        }, status=status.HTTP_200_OK)
+    
+    
 User = get_user_model()
+
 
 
 class UserViewSet(viewsets.ModelViewSet):
