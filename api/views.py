@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, permissions
+﻿from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -68,6 +68,13 @@ def validate_phone(phone: str) -> bool:
     return len(phone) >= 10 and len(phone) <= 11
 
 
+def normalize_phone(phone: str) -> str:
+    """Normalize phone to digits only."""
+    if not phone:
+        return ''
+    return re.sub(r'[^0-9]', '', phone)
+
+
 def validate_cep(cep: str) -> bool:
     """Validate Brazilian CEP (8 digits)."""
     cep = re.sub(r'[^0-9]', '', cep)
@@ -79,6 +86,61 @@ def generate_order_number() -> str:
     date_prefix = timezone.now().strftime('%Y%m%d')
     unique_suffix = uuid.uuid4().hex[:8].upper()
     return f"ORD-{date_prefix}-{unique_suffix}"
+
+
+class EmailOrPhoneAuthToken(APIView):
+    """Authenticate user using email or phone and return auth token."""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        login = request.data.get('login') or request.data.get('email') or request.data.get('phone')
+        password = request.data.get('password')
+
+        if not login or not password:
+            return Response(
+                {'error': 'Informe e-mail ou celular e senha.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        login = str(login).strip()
+        user = None
+
+        if '@' in login:
+            user = User.objects.filter(email__iexact=login).first()
+        else:
+            phone = normalize_phone(login)
+            if phone:
+                matches = User.objects.filter(phone=phone)
+                if matches.count() > 1:
+                    return Response(
+                        {'error': 'Celular duplicado. Entre em contato com o suporte.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                user = matches.first()
+
+        if not user or not user.check_password(password):
+            return Response(
+                {'error': 'Credenciais inválidas.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not user.is_active:
+            return Response(
+                {'error': 'Usuário inativo.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        token, _ = Token.objects.get_or_create(user=user)
+        return Response({
+            'token': token.key,
+            'user': {
+                'id': str(user.id),
+                'email': user.email,
+                'phone': user.phone,
+                'first_name': user.first_name,
+                'last_name': user.last_name
+            }
+        })
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -743,27 +805,38 @@ class CheckoutViewSet(viewsets.ViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def status(self, request):
-        """Check checkout status by session token or order ID."""
+        """Check checkout status by session token, order ID, or order number."""
         session_token = request.query_params.get('token')
         order_id = request.query_params.get('order_id')
+        order_number = request.query_params.get('order_number')
         
-        if not session_token and not order_id:
+        if not session_token and not order_id and not order_number:
             return Response(
-                {'error': 'Either token or order_id is required'},
+                {'error': 'token, order_id, or order_number is required'},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not request.user.is_authenticated and not session_token:
+            return Response(
+                {'error': 'Authentication required without token'},
+                status=status.HTTP_401_UNAUTHORIZED
             )
         
         try:
             if session_token:
                 checkout = Checkout.objects.select_related('order').get(
-                    session_token=session_token,
+                    session_token=session_token
+                )
+            elif order_id:
+                checkout = Checkout.objects.select_related('order').get(
+                    order_id=order_id,
                     user=request.user
                 )
             else:
                 checkout = Checkout.objects.select_related('order').get(
-                    order_id=order_id,
+                    order__order_number=order_number,
                     user=request.user
                 )
         except Checkout.DoesNotExist:
@@ -825,6 +898,15 @@ class WebhookViewSet(viewsets.ViewSet):
             
             # Log incoming webhook for debugging
             logger.info(f"MP Webhook received: {payload}")
+
+            verified, reason = MercadoPagoService.verify_webhook_signature(request)
+            if not verified:
+                logger.warning(f"MP webhook signature invalid: {reason}")
+                if not settings.DEBUG:
+                    return Response(
+                        {'message': 'Invalid signature'},
+                        status=status.HTTP_401_UNAUTHORIZED
+                    )
             
             # Handle empty payload gracefully
             if not payload:
@@ -915,3 +997,4 @@ class HealthCheckView(APIView):
         
         status_code = status.HTTP_200_OK if health['status'] == 'healthy' else status.HTTP_503_SERVICE_UNAVAILABLE
         return Response(health, status=status_code)
+

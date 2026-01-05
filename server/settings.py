@@ -1,4 +1,4 @@
-"""
+﻿"""
 Django settings for server project.
 Production-ready configuration with security best practices.
 """
@@ -19,7 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = config('DEBUG', default=False, cast=bool)
+DEBUG = config('DEBUG', default=True, cast=bool)
 
 # Allowed hosts - specific hosts for security
 ALLOWED_HOSTS = [
@@ -87,19 +87,18 @@ TEMPLATES = [
 WSGI_APPLICATION = 'server.wsgi.application'
 
 # Database
-# Configuração híbrida: Tenta pegar do DATABASE_URL (Railway), senão usa SQLite local
-if not DEBUG: # ou use uma variável IS_PRODUCTION
+# Configuração híbrida: usa DATABASE_URL quando disponível, senão SQLite local.
+DATABASE_URL = config('DATABASE_URL', default='')
+if DATABASE_URL:
     DATABASES = {
-        'default': dj_database_url.parse(config('DATABASE_URL', default="dumby-default-pass")) # SEM DEFAULT! Vai crashar se não achar.
+        'default': dj_database_url.parse(DATABASE_URL)
     }
 else:
-    # Apenas localmente usa o fallback se quiser
     DATABASES = {
-        'default': config(
-            'DATABASE_URL',
-            default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
-            cast=dj_database_url.parse
-        )
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
     }
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -184,7 +183,8 @@ if FRONTEND_CORS and FRONTEND_CORS not in CSRF_TRUSTED_ORIGINS:
 
 # CSRF Cookie settings for SPA
 CSRF_COOKIE_HTTPONLY = False  # Allow JavaScript to read the cookie
-CSRF_COOKIE_SAMESITE = 'Lax'  # Protect against CSRF while allowing same-site requests
+CSRF_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
+SESSION_COOKIE_SAMESITE = 'Lax' if DEBUG else 'None'
 CSRF_COOKIE_NAME = 'csrftoken'
 CSRF_HEADER_NAME = 'HTTP_X_CSRFTOKEN'
 
@@ -208,27 +208,32 @@ CORS_ALLOW_HEADERS = [
 
 # Mercado Pago
 MERCADO_PAGO_ACCESS_TOKEN = config('MERCADO_PAGO_ACCESS_TOKEN', default='')
+MERCADO_PAGO_WEBHOOK_SECRET = config('MERCADO_PAGO_WEBHOOK_SECRET', default='')
 BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
 FRONTEND_URL = config('FRONTEND_URL', default='https://pastita.com.br')
 
-# --- CONFIGURAÇÃO AWS S3 ---
+# --- CONFIGURACAO AWS S3 ---
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
 AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default='')
-AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='pastita')
+AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default='')
 
-# CORREÇÃO CRÍTICA: Se não houver variável, usa us-east-1 (o padrão do seu bucket novo)
-AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='sa-east-1')
+USE_S3 = bool(AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and AWS_STORAGE_BUCKET_NAME)
 
-AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
-AWS_S3_FILE_OVERWRITE = False
-AWS_QUERYSTRING_AUTH = False
-AWS_S3_SIGNATURE_VERSION = 's3v4'
-AWS_DEFAULT_ACL = None
+if USE_S3:
+    AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='sa-east-1')
+    AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
+    AWS_S3_FILE_OVERWRITE = False
+    AWS_QUERYSTRING_AUTH = False
+    AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_DEFAULT_ACL = None
 
-# Media files
-MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+    MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/media/'
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+else:
+    MEDIA_URL = '/media/'
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+
 MEDIA_ROOT = BASE_DIR / 'media'
-DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
 
 # Mercado Pago additional settings
 MERCADO_PAGO_STATEMENT_DESCRIPTOR = config('MERCADO_PAGO_STATEMENT_DESCRIPTOR', default='PASTITA')
@@ -292,3 +297,7 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD = True
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+
+
+
+

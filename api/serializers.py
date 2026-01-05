@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+import uuid
 from .models import (
     Product, Cart, CartItem, Order, OrderItem, 
     Checkout, PaymentNotification
@@ -13,7 +14,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            'id', 'username', 'email', 'password', 'first_name', 'last_name',
+            'id', 'email', 'password', 'first_name', 'last_name',
             'phone', 'cpf', 'date_of_birth', 'profile_image',
             'address', 'city', 'state', 'zip_code', 'country',
             'created_at', 'updated_at'
@@ -23,12 +24,45 @@ class UserSerializer(serializers.ModelSerializer):
             'password': {'write_only': True}
         }
 
+    def validate_email(self, value):
+        if not value:
+            raise serializers.ValidationError('E-mail é obrigatário.')
+        return value.strip().lower()
+
+    def validate_phone(self, value):
+        if not value:
+            return value
+        digits = ''.join(char for char in value if char.isdigit())
+        if len(digits) < 10 or len(digits) > 11:
+            raise serializers.ValidationError('Celular inválido (10-11 dígitos).')
+        return digits
+
+    def validate(self, attrs):
+        if self.instance is None:
+            if not attrs.get('phone'):
+                raise serializers.ValidationError({'phone': 'Celular é obrigatório.'})
+        return attrs
+
     def create(self, validated_data):
-        # O design pattern aqui é interceptar a criação para usar o método seguro do Manager
+        email = validated_data.get('email', '').strip().lower()
+        phone = validated_data.get('phone')
+        username = email or phone or uuid.uuid4().hex[:30]
+
         user = User.objects.create_user(
-            username=validated_data['username'],
-            email=validated_data.get('email', ''),
-            password=validated_data['password']
+            username=username,
+            email=email,
+            password=validated_data['password'],
+            first_name=validated_data.get('first_name', ''),
+            last_name=validated_data.get('last_name', ''),
+            phone=phone,
+            cpf=validated_data.get('cpf'),
+            date_of_birth=validated_data.get('date_of_birth'),
+            profile_image=validated_data.get('profile_image'),
+            address=validated_data.get('address'),
+            city=validated_data.get('city'),
+            state=validated_data.get('state'),
+            zip_code=validated_data.get('zip_code'),
+            country=validated_data.get('country', 'Brazil')
         )
         return user
 

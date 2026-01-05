@@ -1,6 +1,8 @@
 import mercadopago
 import logging
 import re
+import hashlib
+import hmac
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
@@ -23,6 +25,38 @@ class MercadoPagoService:
             self.sdk = mercadopago.SDK(self.access_token)
         
         self.statement_descriptor = getattr(settings, 'MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'PASTITA')
+
+    @staticmethod
+    def verify_webhook_signature(request) -> tuple[bool, str]:
+        """Verify Mercado Pago webhook signature when secret is configured."""
+        secret = getattr(settings, 'MERCADO_PAGO_WEBHOOK_SECRET', '')
+        if not secret:
+            return False, 'missing_secret'
+
+        signature = request.headers.get('x-signature')
+        request_id = request.headers.get('x-request-id')
+        if not signature or not request_id:
+            return False, 'missing_headers'
+
+        parts = {}
+        for chunk in signature.split(','):
+            if '=' in chunk:
+                key, value = chunk.strip().split('=', 1)
+                parts[key] = value
+
+        ts = parts.get('ts')
+        v1 = parts.get('v1')
+        if not ts or not v1:
+            return False, 'invalid_signature'
+
+        payload = request.body.decode('utf-8')
+        manifest = f'{ts}.{request_id}.{payload}'
+        expected = hmac.new(secret.encode('utf-8'), manifest.encode('utf-8'), hashlib.sha256).hexdigest()
+
+        if not hmac.compare_digest(expected, v1):
+            return False, 'signature_mismatch'
+
+        return True, 'ok'
 
     def _clean_cpf(self, cpf: str) -> str:
         """Remove formatting from CPF."""
