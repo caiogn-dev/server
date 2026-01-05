@@ -216,7 +216,7 @@ class CheckoutCreateSerializer(serializers.Serializer):
         default='Brazil'
     )
     payment_method = serializers.ChoiceField(
-        choices=['credit_card', 'debit_card', 'pix', 'bank_transfer']
+        choices=['credit_card', 'debit_card', 'pix', 'bank_transfer', 'cash']
     )
 
 

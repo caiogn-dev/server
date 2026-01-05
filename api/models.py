@@ -174,6 +174,7 @@ class Checkout(models.Model):
         ('debit_card', 'Debit Card'),
         ('pix', 'PIX'),
         ('bank_transfer', 'Bank Transfer'),
+        ('cash', 'Cash'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

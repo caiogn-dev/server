@@ -24,6 +24,7 @@ router.register(r'webhooks', views.WebhookViewSet, basename='webhook')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('webhooks', views.WebhookViewSet.as_view({'get': 'list'}), name='webhooks_root'),
     path('login/', views.EmailOrPhoneAuthToken.as_view(), name='api_token_auth'),
     path('health/', views.HealthCheckView.as_view(), name='health_check'),
     path('csrf/', views.get_csrf_token, name='csrf_token'),  # CSRF token endpoint

@@ -1,5 +1,6 @@
 ﻿from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
+from typing import Optional
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
@@ -624,12 +625,82 @@ class CheckoutViewSet(viewsets.ViewSet):
     """
     permission_classes = [permissions.IsAuthenticated]
 
+    def _normalize_mp_payment_method(self, method: str, payment_type_id: str) -> Optional[str]:
+        """Map MP method/type to local checkout payment_method."""
+        raw = (method or '').strip().lower()
+        mapping = {
+            'pix': 'pix',
+            'credit_card': 'credit_card',
+            'debit_card': 'debit_card',
+            'bank_transfer': 'bank_transfer',
+            'cash': 'cash',
+            'ticket': 'cash',
+            'boleto': 'cash',
+        }
+        if raw in mapping:
+            return mapping[raw]
+
+        type_mapping = {
+            'pix': 'pix',
+            'credit_card': 'credit_card',
+            'debit_card': 'debit_card',
+            'ticket': 'cash',
+        }
+        return type_mapping.get(payment_type_id)
+
+    def _map_checkout_status(self, mp_status: str, fallback: str) -> str:
+        checkout_status_mapping = {
+            'approved': 'completed',
+            'authorized': 'processing',
+            'in_process': 'processing',
+            'in_mediation': 'pending',
+            'pending': 'pending',
+            'rejected': 'failed',
+            'cancelled': 'cancelled',
+            'refunded': 'refunded'
+        }
+        return checkout_status_mapping.get(mp_status, fallback)
+
+    def _update_order_status_from_payment(self, order, mp_status: str) -> None:
+        status_mapping = {
+            'approved': 'processing',
+            'authorized': 'processing',
+            'in_process': 'pending',
+            'in_mediation': 'pending',
+            'pending': 'pending',
+            'rejected': 'cancelled',
+            'cancelled': 'cancelled',
+            'refunded': 'cancelled',
+            'charged_back': 'cancelled'
+        }
+
+        previous_status = order.status
+        new_status = status_mapping.get(mp_status, order.status)
+
+        if new_status != previous_status:
+            order.status = new_status
+            order.save()
+            logger.info(f"Order {order.order_number} status: {previous_status} -> {new_status}")
+
+            if new_status == 'cancelled' and previous_status != 'cancelled':
+                for item in order.items.all():
+                    item.product.stock_quantity += item.quantity
+                    item.product.save()
+                logger.info(f"Stock restored for cancelled order {order.order_number}")
+
     @action(detail=False, methods=['post'])
     @transaction.atomic
     def create_checkout(self, request):
         """Create order and payment preference from cart."""
         user = request.user
         buyer_data = request.data.get('buyer', {})
+        payment_data = request.data.get('payment') or {}
+
+        if payment_data and not isinstance(payment_data, dict):
+            return Response(
+                {'error': 'Invalid payment data'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Extract and validate buyer information
         buyer_name = buyer_data.get('name', '').strip()
@@ -765,15 +836,72 @@ class CheckoutViewSet(viewsets.ViewSet):
         # Clear cart
         cart.items.all().delete()
 
-        # Create Mercado Pago preference
+        mp_buyer_data = {
+            'name': buyer_name,
+            'email': buyer_email,
+            'cpf': buyer_cpf,
+            'phone': buyer_phone
+        }
+
+        # Transparent checkout payment (PIX / Cartao / Dinheiro)
+        if payment_data:
+            try:
+                mp_service = MercadoPagoService()
+                payment = mp_service.create_payment_from_order(order, mp_buyer_data, payment_data)
+
+                payment_status = payment.get('status')
+                payment_type_id = payment.get('payment_type_id', '')
+                payment_method_id = payment.get('payment_method_id', '')
+                transaction_data = (
+                    payment.get('point_of_interaction', {})
+                    .get('transaction_data', {})
+                )
+
+                checkout.mercado_pago_payment_id = str(payment.get('id'))
+                checkout.payment_method = self._normalize_mp_payment_method(
+                    payment_data.get('method') or payment_data.get('payment_method'),
+                    payment_type_id
+                )
+                checkout.payment_status = self._map_checkout_status(payment_status, checkout.payment_status)
+                checkout.payment_link = transaction_data.get('ticket_url')
+
+                if payment_status == 'approved':
+                    checkout.completed_at = timezone.now()
+
+                checkout.save()
+
+                self._update_order_status_from_payment(order, payment_status)
+
+                return Response({
+                    'success': True,
+                    'order_id': str(order.id),
+                    'order_number': order_number,
+                    'checkout_id': str(checkout.id),
+                    'session_token': session_token,
+                    'total_amount': float(total_amount),
+                    'payment': {
+                        'id': payment.get('id'),
+                        'status': payment_status,
+                        'status_detail': payment.get('status_detail'),
+                        'payment_method_id': payment_method_id,
+                        'payment_type_id': payment_type_id,
+                        'qr_code': transaction_data.get('qr_code'),
+                        'qr_code_base64': transaction_data.get('qr_code_base64'),
+                        'ticket_url': transaction_data.get('ticket_url'),
+                    }
+                }, status=status.HTTP_201_CREATED)
+
+            except Exception as e:
+                logger.error(f"Mercado Pago payment error for order {order_number}: {str(e)}")
+                return Response(
+                    {'error': 'Payment service error', 'details': str(e)},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        # Create Mercado Pago preference (redirect checkout)
         try:
             mp_service = MercadoPagoService()
-            preference = mp_service.create_preference_from_order(order, {
-                'name': buyer_name,
-                'email': buyer_email,
-                'cpf': buyer_cpf,
-                'phone': buyer_phone
-            })
+            preference = mp_service.create_preference_from_order(order, mp_buyer_data)
             
             # Update checkout with MP preference ID
             checkout.mercado_pago_preference_id = preference.get('id')
@@ -883,6 +1011,15 @@ class WebhookViewSet(viewsets.ViewSet):
     All webhooks are public but should be verified.
     """
     permission_classes = [permissions.AllowAny]
+
+    def list(self, request):
+        """Basic index to prevent 404 on /api/webhooks/."""
+        return Response({
+            'status': 'active',
+            'endpoints': {
+                'mercado_pago': '/api/webhooks/mercado_pago/'
+            }
+        })
 
     @action(detail=False, methods=['post'], url_path='mercado_pago')
     def mercado_pago(self, request):
