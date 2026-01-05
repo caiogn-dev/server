@@ -10,10 +10,10 @@ import os
 import sys
 import dj_database_url
 
-# Load .env file explicitly
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load .env from the project root (works regardless of current working dir)
+load_dotenv(BASE_DIR / '.env')
 
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
