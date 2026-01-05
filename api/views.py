@@ -972,7 +972,65 @@ class CheckoutViewSet(viewsets.ViewSet):
                 {'error': 'Checkout not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
+        payment_payload = None
+        if checkout.mercado_pago_payment_id:
+            try:
+                mp_service = MercadoPagoService()
+                payment_data = mp_service.get_payment_info(checkout.mercado_pago_payment_id)
+                if payment_data:
+                    transaction_data = (
+                        payment_data.get('point_of_interaction', {})
+                        .get('transaction_data', {})
+                    )
+                    payment_payload = {
+                        'id': payment_data.get('id'),
+                        'status': payment_data.get('status'),
+                        'status_detail': payment_data.get('status_detail'),
+                        'payment_method_id': payment_data.get('payment_method_id'),
+                        'payment_type_id': payment_data.get('payment_type_id'),
+                        'qr_code': transaction_data.get('qr_code'),
+                        'qr_code_base64': transaction_data.get('qr_code_base64'),
+                        'ticket_url': transaction_data.get('ticket_url'),
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to fetch MP payment info for checkout {checkout.id}: {str(e)}")
+        else:
+            try:
+                mp_service = MercadoPagoService()
+                payment_data = mp_service.find_payment_by_external_reference(str(checkout.order.id))
+                if payment_data:
+                    full_payment_data = mp_service.get_payment_info(payment_data.get('id'))
+                    if full_payment_data:
+                        payment_data = full_payment_data
+
+                    transaction_data = (
+                        payment_data.get('point_of_interaction', {})
+                        .get('transaction_data', {})
+                    )
+                    checkout.mercado_pago_payment_id = str(payment_data.get('id'))
+                    checkout.payment_method = mp_service._normalize_checkout_payment_method(
+                        payment_data.get('payment_type_id', ''),
+                        payment_data.get('payment_method_id', '')
+                    )
+                    checkout.payment_status = self._map_checkout_status(
+                        payment_data.get('status'),
+                        checkout.payment_status
+                    )
+                    checkout.save(update_fields=['mercado_pago_payment_id', 'payment_method', 'payment_status', 'updated_at'])
+                    payment_payload = {
+                        'id': payment_data.get('id'),
+                        'status': payment_data.get('status'),
+                        'status_detail': payment_data.get('status_detail'),
+                        'payment_method_id': payment_data.get('payment_method_id'),
+                        'payment_type_id': payment_data.get('payment_type_id'),
+                        'qr_code': transaction_data.get('qr_code'),
+                        'qr_code_base64': transaction_data.get('qr_code_base64'),
+                        'ticket_url': transaction_data.get('ticket_url'),
+                    }
+            except Exception as e:
+                logger.warning(f"Failed to search MP payment for checkout {checkout.id}: {str(e)}")
+
         return Response({
             'checkout_id': str(checkout.id),
             'order_id': str(checkout.order.id),
@@ -981,6 +1039,7 @@ class CheckoutViewSet(viewsets.ViewSet):
             'order_status': checkout.order.status,
             'total_amount': float(checkout.total_amount),
             'payment_link': checkout.payment_link,
+            'payment': payment_payload,
             'created_at': checkout.created_at.isoformat(),
             'expires_at': checkout.expires_at.isoformat() if checkout.expires_at else None
         })

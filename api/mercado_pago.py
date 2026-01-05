@@ -307,6 +307,27 @@ class MercadoPagoService:
         
         return response["response"]
 
+    def find_payment_by_external_reference(self, external_reference: str) -> dict:
+        """Find most recent payment by external reference (order id)."""
+        if not self.sdk:
+            raise ValueError("Mercado Pago is not configured")
+
+        response = self.sdk.payment().search({
+            "external_reference": str(external_reference),
+            "sort": "date_created",
+            "criteria": "desc",
+            "limit": 1,
+        })
+
+        if response.get("status") != 200:
+            logger.warning(f"MP payment search failed: {response}")
+            return None
+
+        results = response.get("response", {}).get("results", [])
+        if not results:
+            return None
+        return results[0]
+
     def process_payment_notification(self, mp_payment_id: str, payload: dict) -> bool:
         """
         Process payment webhook notification from Mercado Pago.
