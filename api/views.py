@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.db.models import Sum, F, DecimalField, ExpressionWrapper
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.utils import timezone
@@ -366,6 +367,18 @@ class CartViewSet(viewsets.ViewSet):
             logger.info(f"Created new cart for user {user.id}")
         return cart
 
+    def get_cart_totals(self, cart):
+        totals = CartItem.objects.filter(cart=cart).aggregate(
+            cart_total=Sum(
+                ExpressionWrapper(
+                    F('quantity') * F('product__price'),
+                    output_field=DecimalField(max_digits=10, decimal_places=2)
+                )
+            ),
+            cart_count=Sum('quantity')
+        )
+        return float(totals['cart_total'] or 0), int(totals['cart_count'] or 0)
+
     def list(self, request):
         """Get current user's cart with all items."""
         cart = self.get_cart(request.user)
@@ -424,12 +437,14 @@ class CartViewSet(viewsets.ViewSet):
         cart_item.save()
         
         logger.info(f"User {request.user.id} added {quantity}x {product.name} to cart")
+
+        cart_total, cart_count = self.get_cart_totals(cart)
         
         return Response({
             'message': 'Item added to cart',
             'item': CartItemSerializer(cart_item).data,
-            'cart_total': float(cart.get_total()),
-            'cart_count': cart.get_item_count()
+            'cart_total': cart_total,
+            'cart_count': cart_count
         }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     @action(detail=False, methods=['post'])
@@ -453,11 +468,13 @@ class CartViewSet(viewsets.ViewSet):
             )
         
         logger.info(f"User {request.user.id} removed product {product_id} from cart")
+
+        cart_total, cart_count = self.get_cart_totals(cart)
         
         return Response({
             'message': 'Item removed from cart',
-            'cart_total': float(cart.get_total()),
-            'cart_count': cart.get_item_count()
+            'cart_total': cart_total,
+            'cart_count': cart_count
         })
 
     @action(detail=False, methods=['post'])
@@ -484,10 +501,11 @@ class CartViewSet(viewsets.ViewSet):
         # If quantity is 0 or less, remove the item
         if quantity <= 0:
             CartItem.objects.filter(cart=cart, product_id=product_id).delete()
+            cart_total, cart_count = self.get_cart_totals(cart)
             return Response({
                 'message': 'Item removed from cart',
-                'cart_total': float(cart.get_total()),
-                'cart_count': cart.get_item_count()
+                'cart_total': cart_total,
+                'cart_count': cart_count
             })
 
         try:
@@ -510,12 +528,14 @@ class CartViewSet(viewsets.ViewSet):
         
         cart_item.quantity = quantity
         cart_item.save()
+
+        cart_total, cart_count = self.get_cart_totals(cart)
         
         return Response({
             'message': 'Cart updated',
             'item': CartItemSerializer(cart_item).data,
-            'cart_total': float(cart.get_total()),
-            'cart_count': cart.get_item_count()
+            'cart_total': cart_total,
+            'cart_count': cart_count
         })
 
     @action(detail=False, methods=['post'])
@@ -527,7 +547,9 @@ class CartViewSet(viewsets.ViewSet):
         logger.info(f"User {request.user.id} cleared cart ({count} items)")
         return Response({
             'message': 'Cart cleared',
-            'items_removed': count
+            'items_removed': count,
+            'cart_total': 0,
+            'cart_count': 0
         })
 
     @action(detail=False, methods=['get'])
