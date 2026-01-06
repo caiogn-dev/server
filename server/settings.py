@@ -128,7 +128,6 @@ AUTH_USER_MODEL = 'api.User'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'api.authentication.CookieTokenAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticatedOrReadOnly',
@@ -212,6 +211,15 @@ AUTH_COOKIE_NAME = config('AUTH_COOKIE_NAME', default='auth_token')
 AUTH_COOKIE_SECURE = config('AUTH_COOKIE_SECURE', default=not DEBUG, cast=bool)
 AUTH_COOKIE_SAMESITE = config('AUTH_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
 AUTH_COOKIE_DOMAIN = config('AUTH_COOKIE_DOMAIN', default='')
+
+FRONTEND_IS_HTTPS = FRONTEND_URL.startswith('https://')
+if FRONTEND_IS_HTTPS:
+    CSRF_COOKIE_SAMESITE = 'None'
+    SESSION_COOKIE_SAMESITE = 'None'
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = True
+    AUTH_COOKIE_SAMESITE = 'None'
+    AUTH_COOKIE_SECURE = True
 
 # --- CONFIGURACAO AWS S3 ---
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')
