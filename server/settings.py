@@ -127,7 +127,7 @@ AUTH_USER_MODEL = 'api.User'
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        'api.authentication.CookieTokenAuthentication',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -211,6 +211,12 @@ MERCADO_PAGO_ACCESS_TOKEN = config('MERCADO_PAGO_ACCESS_TOKEN', default='')
 MERCADO_PAGO_WEBHOOK_SECRET = config('MERCADO_PAGO_WEBHOOK_SECRET', default='')
 BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
 FRONTEND_URL = config('FRONTEND_URL', default='https://pastita.com.br')
+
+# Auth cookie (HttpOnly token)
+AUTH_COOKIE_NAME = config('AUTH_COOKIE_NAME', default='auth_token')
+AUTH_COOKIE_SECURE = config('AUTH_COOKIE_SECURE', default=not DEBUG, cast=bool)
+AUTH_COOKIE_SAMESITE = config('AUTH_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
+AUTH_COOKIE_DOMAIN = config('AUTH_COOKIE_DOMAIN', default='')
 
 # --- CONFIGURACAO AWS S3 ---
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default='')

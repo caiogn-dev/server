@@ -132,7 +132,7 @@ class EmailOrPhoneAuthToken(APIView):
             )
 
         token, _ = Token.objects.get_or_create(user=user)
-        return Response({
+        response = Response({
             'token': token.key,
             'user': {
                 'id': str(user.id),
@@ -142,6 +142,16 @@ class EmailOrPhoneAuthToken(APIView):
                 'last_name': user.last_name
             }
         })
+        cookie_kwargs = {
+            'httponly': True,
+            'secure': settings.AUTH_COOKIE_SECURE,
+            'samesite': settings.AUTH_COOKIE_SAMESITE,
+            'path': '/',
+        }
+        if settings.AUTH_COOKIE_DOMAIN:
+            cookie_kwargs['domain'] = settings.AUTH_COOKIE_DOMAIN
+        response.set_cookie(settings.AUTH_COOKIE_NAME, token.key, **cookie_kwargs)
+        return response
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -181,10 +191,20 @@ class UserViewSet(viewsets.ModelViewSet):
         user = serializer.save()
         token, _ = Token.objects.get_or_create(user=user)
         logger.info(f"New user registered: {user.username}")
-        return Response({
+        response = Response({
             'user': serializer.data,
             'token': token.key
         }, status=status.HTTP_201_CREATED)
+        cookie_kwargs = {
+            'httponly': True,
+            'secure': settings.AUTH_COOKIE_SECURE,
+            'samesite': settings.AUTH_COOKIE_SAMESITE,
+            'path': '/',
+        }
+        if settings.AUTH_COOKIE_DOMAIN:
+            cookie_kwargs['domain'] = settings.AUTH_COOKIE_DOMAIN
+        response.set_cookie(settings.AUTH_COOKIE_NAME, token.key, **cookie_kwargs)
+        return response
 
     @action(detail=False, methods=['post'])
     def logout(self, request):
@@ -192,7 +212,14 @@ class UserViewSet(viewsets.ModelViewSet):
         try:
             request.user.auth_token.delete()
             logger.info(f"User {request.user.id} logged out")
-            return Response({'message': 'Successfully logged out'}, status=status.HTTP_200_OK)
+            response = Response({'message': 'Successfully logged out'}, status=status.HTTP_200_OK)
+            response.delete_cookie(
+                settings.AUTH_COOKIE_NAME,
+                path='/',
+                domain=settings.AUTH_COOKIE_DOMAIN or None,
+                samesite=settings.AUTH_COOKIE_SAMESITE
+            )
+            return response
         except Exception as e:
             logger.error(f"Logout error for user {request.user.id}: {str(e)}")
             return Response({'error': 'Logout failed'}, status=status.HTTP_400_BAD_REQUEST)
