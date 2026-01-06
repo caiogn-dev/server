@@ -152,11 +152,8 @@ REST_FRAMEWORK = {
 
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "http://localhost:12001",
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
@@ -169,9 +166,7 @@ if FRONTEND_CORS and FRONTEND_CORS not in CORS_ALLOWED_ORIGINS:
 
 # CSRF trusted origins
 CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
     "http://localhost:3000",
-    "http://localhost:12001",
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
