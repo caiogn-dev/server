@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
-from django.db.models import Count, F, Sum
+from django.db.models import Count, F, Sum, Q
 from django.conf import settings
 from django.utils import timezone
 from django.middleware.csrf import get_token
@@ -19,8 +19,9 @@ import re
 from .models import Product, Cart, CartItem, Order, OrderItem, Checkout, PaymentNotification
 from .serializers import (
     UserSerializer, ProductSerializer, CartSerializer, CartItemSerializer,
-    OrderSerializer, OrderItemSerializer, CheckoutSerializer
+    OrderSerializer, OrderItemSerializer, CheckoutSerializer, AdminUserSerializer
 )
+from .ws_utils import broadcast_admin_event
 from .mercado_pago import MercadoPagoService
 
 User = get_user_model()
@@ -423,6 +424,19 @@ class CheckoutViewSet(viewsets.ViewSet):
             billing_country='Brazil'
         )
 
+        try:
+            broadcast_admin_event(
+                "order",
+                {
+                    "order_number": order.order_number,
+                    "status": order.status,
+                    "total_amount": float(order.total_amount),
+                    "created_at": order.created_at.isoformat(),
+                },
+            )
+        except Exception:
+            logger.exception("Failed to broadcast order event")
+
         mp_service = MercadoPagoService()
         response_payload = {
             'order_id': str(order.id),
@@ -588,4 +602,54 @@ class AdminViewSet(viewsets.ViewSet):
             'count': total,
             'results': results,
         })
+
+
+class AdminUserViewSet(viewsets.ReadOnlyModelViewSet):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = AdminUserSerializer
+    queryset = User.objects.all().order_by('-date_joined')
+
+    def list(self, request):
+        qs = self.get_queryset()
+        query = (request.query_params.get('q') or '').strip()
+        if query:
+            qs = qs.filter(
+                Q(email__icontains=query) |
+                Q(first_name__icontains=query) |
+                Q(last_name__icontains=query) |
+                Q(phone__icontains=query)
+            )
+
+        limit = int(request.query_params.get('limit', 20))
+        offset = int(request.query_params.get('offset', 0))
+        total = qs.count()
+        qs = qs[offset:offset + limit]
+        serializer = self.get_serializer(qs, many=True)
+        return Response({'count': total, 'results': serializer.data})
+
+
+class AdminProductViewSet(viewsets.ModelViewSet):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = ProductSerializer
+    queryset = Product.objects.all().order_by('-created_at')
+
+    def list(self, request):
+        qs = self.get_queryset()
+        query = (request.query_params.get('q') or '').strip()
+        if query:
+            qs = qs.filter(
+                Q(name__icontains=query) |
+                Q(description__icontains=query) |
+                Q(sku__icontains=query)
+            )
+        is_active = request.query_params.get('is_active')
+        if is_active in ['true', 'false']:
+            qs = qs.filter(is_active=is_active == 'true')
+
+        limit = int(request.query_params.get('limit', 20))
+        offset = int(request.query_params.get('offset', 0))
+        total = qs.count()
+        qs = qs[offset:offset + limit]
+        serializer = self.get_serializer(qs, many=True)
+        return Response({'count': total, 'results': serializer.data})
 

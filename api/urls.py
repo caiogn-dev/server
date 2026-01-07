@@ -23,6 +23,8 @@ router.register(r'checkout', views.CheckoutViewSet, basename='checkout')
 router.register(r'webhooks', views.WebhookViewSet, basename='webhook')
 # Admin dashboard
 router.register(r'admin', views.AdminViewSet, basename='admin')
+router.register(r'admin/users', views.AdminUserViewSet, basename='admin-user')
+router.register(r'admin/products', views.AdminProductViewSet, basename='admin-product')
 
 urlpatterns = [
     path('', include(router.urls)),

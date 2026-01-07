@@ -77,6 +77,18 @@ class UserSerializer(serializers.ModelSerializer):
         return instance
 
 
+class AdminUserSerializer(serializers.ModelSerializer):
+    """Restricted user serializer for admin dashboard"""
+    class Meta:
+        model = User
+        fields = [
+            'id', 'email', 'first_name', 'last_name', 'phone',
+            'is_active', 'is_staff', 'last_login', 'date_joined',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = fields
+
+
 class ProductSerializer(serializers.ModelSerializer):
     """Serializer for Product model"""
     class Meta:
