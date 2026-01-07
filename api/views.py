@@ -7,6 +7,8 @@ from django.db.models import Count, F, Sum, Q
 from django.conf import settings
 from django.utils import timezone
 from django.middleware.csrf import get_token
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
@@ -79,6 +81,7 @@ def generate_order_number() -> str:
     return f"ORD-{date_prefix}-{unique_suffix}"
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class EmailOrPhoneAuthToken(APIView):
     permission_classes = [permissions.AllowAny]
 
