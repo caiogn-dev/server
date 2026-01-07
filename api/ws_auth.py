@@ -1,13 +1,13 @@
 from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
-from django.contrib.auth.models import AnonymousUser
 from django.db import close_old_connections
-from rest_framework.authtoken.models import Token
 
 
 @database_sync_to_async
 def get_user_from_token(token_key: str):
+    from django.contrib.auth.models import AnonymousUser
+    from rest_framework.authtoken.models import Token
     try:
         token = Token.objects.select_related("user").get(key=token_key)
         return token.user
@@ -18,6 +18,7 @@ def get_user_from_token(token_key: str):
 class TokenAuthMiddleware(BaseMiddleware):
     async def __call__(self, scope, receive, send):
         close_old_connections()
+        from django.contrib.auth.models import AnonymousUser
         token_key = None
         query_string = scope.get("query_string", b"").decode()
         query_params = parse_qs(query_string)
