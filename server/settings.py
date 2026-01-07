@@ -29,6 +29,7 @@ ALLOWED_HOSTS = [
     'web-production-3e83a.up.railway.app',
     'pastita.com.br',
     'www.pastita.com.br',
+    'painel.pastita.com.br',
 ]
 
 # Add Railway and other dynamic hosts
@@ -164,6 +165,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
+    "https://painel.pastita.com.br",
 ]
 
 # Add dynamic frontend URL from environment
@@ -177,6 +179,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",
+    "https://painel.pastita.com.br",
 ]
 
 # Add dynamic frontend URL to CSRF trusted origins

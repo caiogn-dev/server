@@ -20,5 +20,5 @@ RUN python manage.py collectstatic --noinput
 # Expose port
 EXPOSE 8000
 
-# Run gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120", "server.wsgi:application"]
+# Run daphne (ASGI) for WebSocket support
+CMD ["daphne", "-b", "0.0.0.0", "-p", "8000", "server.asgi:application"]
