@@ -11,6 +11,7 @@ from django.views.decorators.csrf import ensure_csrf_cookie
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from decimal import Decimal
+from datetime import timedelta
 import uuid
 import logging
 import re
@@ -533,14 +534,13 @@ class AdminViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def summary(self, request):
         now = timezone.now()
-        today_start = timezone.datetime.combine(now.date(), timezone.datetime.min.time(), tzinfo=timezone.utc)
         today_orders_qs = Order.objects.filter(created_at__date=now.date())
 
         today_revenue = today_orders_qs.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
         today_orders = today_orders_qs.count()
         pending_orders = Order.objects.filter(status='pending').count()
         active_users_24h = (
-            Order.objects.filter(created_at__gte=now - timezone.timedelta(hours=24))
+            Order.objects.filter(created_at__gte=now - timedelta(hours=24))
             .values('user')
             .distinct()
             .count()
