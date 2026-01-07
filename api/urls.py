@@ -21,6 +21,8 @@ router.register(r'checkout', views.CheckoutViewSet, basename='checkout')
 
 # Webhooks for external services
 router.register(r'webhooks', views.WebhookViewSet, basename='webhook')
+# Admin dashboard
+router.register(r'admin', views.AdminViewSet, basename='admin')
 
 urlpatterns = [
     path('', include(router.urls)),

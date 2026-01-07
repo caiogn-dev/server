@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.db import transaction
-from django.db.models import Count, F
+from django.db.models import Count, F, Sum
 from django.conf import settings
 from django.utils import timezone
 from django.middleware.csrf import get_token
@@ -521,4 +521,71 @@ class HealthCheckView(APIView):
 
     def get(self, request):
         return Response({'status': 'ok'})
+
+
+class AdminViewSet(viewsets.ViewSet):
+    """
+    Endpoints administrativos para o painel.
+    Protegido por permissão de admin.
+    """
+    permission_classes = [permissions.IsAdminUser]
+
+    @action(detail=False, methods=['get'])
+    def summary(self, request):
+        now = timezone.now()
+        today_start = timezone.datetime.combine(now.date(), timezone.datetime.min.time(), tzinfo=timezone.utc)
+        today_orders_qs = Order.objects.filter(created_at__date=now.date())
+
+        today_revenue = today_orders_qs.aggregate(total=Sum('total_amount'))['total'] or Decimal('0')
+        today_orders = today_orders_qs.count()
+        pending_orders = Order.objects.filter(status='pending').count()
+        active_users_24h = (
+            Order.objects.filter(created_at__gte=now - timezone.timedelta(hours=24))
+            .values('user')
+            .distinct()
+            .count()
+        )
+
+        return Response({
+            'today_revenue': float(today_revenue),
+            'today_orders': today_orders,
+            'pending_orders': pending_orders,
+            'active_users': active_users_24h,
+        })
+
+    @action(detail=False, methods=['get'])
+    def orders(self, request):
+        qs = Order.objects.all().select_related('user').order_by('-created_at')
+
+        status_param = request.query_params.get('status')
+        if status_param:
+            qs = qs.filter(status=status_param)
+
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        if date_from:
+            qs = qs.filter(created_at__date__gte=date_from)
+        if date_to:
+            qs = qs.filter(created_at__date__lte=date_to)
+
+        limit = int(request.query_params.get('limit', 20))
+        offset = int(request.query_params.get('offset', 0))
+        total = qs.count()
+        qs = qs[offset:offset + limit]
+
+        results = []
+        for order in qs:
+            results.append({
+                'order_number': order.order_number,
+                'customer_name': order.user.get_full_name() or order.user.email,
+                'status': order.status,
+                'total_amount': float(order.total_amount),
+                'shipping_method': 'pickup' if 'pickup' in (order.notes or '') else 'delivery',
+                'created_at': order.created_at,
+            })
+
+        return Response({
+            'count': total,
+            'results': results,
+        })
 
