@@ -462,14 +462,17 @@ class CheckoutViewSet(viewsets.ViewSet):
 
         return Response(response_payload, status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def status(self, request):
         order_number = request.query_params.get('order_number')
         if not order_number:
             return Response({'error': 'order_number obrigatorio'}, status=status.HTTP_400_BAD_REQUEST)
-        try:
-            order = Order.objects.get(order_number=order_number, user=request.user)
-        except Order.DoesNotExist:
+        order = None
+        if request.user and request.user.is_authenticated:
+            order = Order.objects.filter(order_number=order_number, user=request.user).first()
+        if not order:
+            order = Order.objects.filter(order_number=order_number).first()
+        if not order:
             return Response({'error': 'Pedido nao encontrado'}, status=status.HTTP_404_NOT_FOUND)
         checkout = Checkout.objects.filter(order=order).first()
         data = {
@@ -477,6 +480,7 @@ class CheckoutViewSet(viewsets.ViewSet):
             'order_number': order.order_number,
             'order_status': order.status,
             'payment_status': checkout.payment_status if checkout else order.status,
+            'total_amount': float(order.total_amount),
             'shipping_address': order.shipping_address,
             'shipping_city': order.shipping_city,
             'shipping_state': order.shipping_state,
