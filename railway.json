@@ -7,7 +7,7 @@
   "deploy": {
     "runtime": "V2",
     "numReplicas": 1,
-    "startCommand": "daphne -b 0.0.0.0 -p $PORT server.asgi:application",
+    "startCommand": "daphne -b 0.0.0.0 -p 8000 server.asgi:application",
     "sleepApplication": false,
     "useLegacyStacker": false,
     "multiRegionConfig": {
