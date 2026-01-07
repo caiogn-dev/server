@@ -23,7 +23,7 @@ DEBUG = config('DEBUG', default=True, cast=bool)
 
 # Allowed hosts - specific hosts for security
 ALLOWED_HOSTS = [
-    'localhost',
+    'localhost:3000',
     '127.0.0.1',
     '0.0.0.0',
     'web-production-3e83a.up.railway.app',
