@@ -84,6 +84,7 @@ def generate_order_number() -> str:
 @method_decorator(csrf_exempt, name='dispatch')
 class EmailOrPhoneAuthToken(APIView):
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def post(self, request):
         login_value = request.data.get('login') or request.data.get('email') or request.data.get('phone')
