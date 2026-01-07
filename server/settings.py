@@ -160,8 +160,6 @@ REST_FRAMEWORK = {
 
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
     "https://pastita.com.br",
     "https://www.pastita.com.br",
     "https://web-production-3e83a.up.railway.app",

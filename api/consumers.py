@@ -1,10 +1,14 @@
+import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+
+logger = logging.getLogger(__name__)
 
 
 class AdminUpdatesConsumer(AsyncJsonWebsocketConsumer):
     async def connect(self):
         user = self.scope.get("user")
         if not user or not user.is_authenticated or not user.is_staff:
+            logger.warning("Admin WS denied: user=%s", getattr(user, "email", "anonymous"))
             await self.close(code=4403)
             return
 
