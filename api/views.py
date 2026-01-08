@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import timedelta
 import uuid
 import logging
@@ -34,6 +34,9 @@ PICKUP_ADDRESS = "Q. 112 Sul Rua SR 1, conj. 06 lote 04 - Plano Diretor Sul"
 PICKUP_CITY = "Palmas"
 PICKUP_STATE = "TO"
 PICKUP_ZIP = "77020-170"
+COUPON_CODE = "PASTITA10"
+COUPON_PERCENT = Decimal('0.10')
+COUPON_MAX_USES = 100
 
 
 @api_view(['GET'])
@@ -383,19 +386,37 @@ class CheckoutViewSet(viewsets.ViewSet):
                 return Response({'error': f"Estoque insuficiente para {item.product.name}"}, status=status.HTTP_400_BAD_REQUEST)
             cart_total += Decimal(item.product.price) * item.quantity
 
-        total_amount = cart_total + shipping_fee
+        coupon_code = (payload.get('coupon_code') or '').strip().upper()
+        discount_amount = Decimal('0.00')
+        if coupon_code:
+            if coupon_code != COUPON_CODE:
+                return Response({'error': 'Cupom invalido.'}, status=status.HTTP_400_BAD_REQUEST)
+            total_uses = Order.objects.filter(coupon_code=COUPON_CODE).count()
+            if total_uses >= COUPON_MAX_USES:
+                return Response({'error': 'Cupom esgotado.'}, status=status.HTTP_400_BAD_REQUEST)
+            if Order.objects.filter(user=user, coupon_code=COUPON_CODE).exists():
+                return Response({'error': 'Cupom ja utilizado.'}, status=status.HTTP_400_BAD_REQUEST)
+            discount_base = cart_total + shipping_fee
+            discount_amount = (discount_base * COUPON_PERCENT).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        total_amount = cart_total + shipping_fee - discount_amount
 
         order = Order.objects.create(
             user=user,
             order_number=generate_order_number(),
             total_amount=total_amount,
+            coupon_code=coupon_code or None,
+            discount_amount=discount_amount,
             status='pending',
             shipping_address=ship_addr,
             shipping_city=ship_city,
             shipping_state=ship_state,
             shipping_zip_code=ship_zip,
             shipping_country='Brazil',
-            notes=f"shipping_method={shipping_method}; shipping_fee={shipping_fee}"
+            notes=(
+                f"shipping_method={shipping_method}; shipping_fee={shipping_fee}"
+                + (f"; coupon={coupon_code}; discount={discount_amount}" if coupon_code else "")
+            )
         )
 
         for item in cart_items:
@@ -448,7 +469,9 @@ class CheckoutViewSet(viewsets.ViewSet):
             'payment_status': checkout.payment_status,
             'shipping_method': shipping_method,
             'shipping_fee': float(shipping_fee),
-            'total_amount': float(total_amount)
+            'total_amount': float(total_amount),
+            'coupon_code': coupon_code or None,
+            'discount_amount': float(discount_amount),
         }
 
         try:
@@ -500,6 +523,8 @@ class CheckoutViewSet(viewsets.ViewSet):
             'order_status': order.status,
             'payment_status': checkout.payment_status if checkout else order.status,
             'total_amount': float(order.total_amount),
+            'coupon_code': order.coupon_code,
+            'discount_amount': float(order.discount_amount or 0),
             'shipping_address': order.shipping_address,
             'shipping_city': order.shipping_city,
             'shipping_state': order.shipping_state,

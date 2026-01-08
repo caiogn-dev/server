@@ -170,12 +170,16 @@ class OrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = Order
         fields = [
-            'id', 'user', 'order_number', 'total_amount', 'status',
+            'id', 'user', 'order_number', 'total_amount', 'coupon_code',
+            'discount_amount', 'status',
             'shipping_address', 'shipping_city', 'shipping_state',
             'shipping_zip_code', 'shipping_country', 'notes',
             'items', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'order_number', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'order_number', 'coupon_code', 'discount_amount',
+            'created_at', 'updated_at'
+        ]
 
 
 class PaymentNotificationSerializer(serializers.ModelSerializer):
