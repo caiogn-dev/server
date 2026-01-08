@@ -214,6 +214,8 @@ MERCADO_PAGO_ACCESS_TOKEN = config('MERCADO_PAGO_ACCESS_TOKEN', default='')
 MERCADO_PAGO_WEBHOOK_SECRET = config('MERCADO_PAGO_WEBHOOK_SECRET', default='')
 BACKEND_URL = config('BACKEND_URL', default='http://localhost:8000')
 FRONTEND_URL = config('FRONTEND_URL', default='https://pastita.com.br')
+PANEL_WEBHOOK_URL = config('PANEL_WEBHOOK_URL', default='')
+PANEL_WEBHOOK_SECRET = config('PANEL_WEBHOOK_SECRET', default='')
 
 # Auth cookie (HttpOnly token)
 AUTH_COOKIE_NAME = config('AUTH_COOKIE_NAME', default='auth_token')

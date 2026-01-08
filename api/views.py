@@ -23,7 +23,7 @@ from .serializers import (
     UserSerializer, ProductSerializer, CartSerializer, CartItemSerializer,
     OrderSerializer, OrderItemSerializer, CheckoutSerializer, AdminUserSerializer
 )
-from .ws_utils import broadcast_admin_event
+from .panel_webhook import send_panel_webhook
 from .mercado_pago import MercadoPagoService
 
 User = get_user_model()
@@ -428,18 +428,18 @@ class CheckoutViewSet(viewsets.ViewSet):
             billing_country='Brazil'
         )
 
-        try:
-            broadcast_admin_event(
-                "order",
-                {
-                    "order_number": order.order_number,
-                    "status": order.status,
-                    "total_amount": float(order.total_amount),
-                    "created_at": order.created_at.isoformat(),
-                },
-            )
-        except Exception:
-            logger.exception("Failed to broadcast order event")
+        customer_name = buyer.get('name') or user.get_full_name() or user.email
+
+        send_panel_webhook(
+            "order_created",
+            {
+                "order_number": order.order_number,
+                "status": order.status,
+                "total_amount": float(order.total_amount),
+                "created_at": order.created_at.isoformat(),
+                "customer_name": customer_name,
+            },
+        )
 
         mp_service = MercadoPagoService()
         response_payload = {

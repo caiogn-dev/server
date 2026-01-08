@@ -334,7 +334,7 @@ class MercadoPagoService:
         Updates order and checkout status based on payment result.
         """
         from .models import Order, Checkout, PaymentNotification
-        from .ws_utils import broadcast_admin_event
+        from .panel_webhook import send_panel_webhook
         
         try:
             # Fetch current payment status from MP
@@ -426,18 +426,16 @@ class MercadoPagoService:
             except Checkout.DoesNotExist:
                 logger.warning(f"No checkout found for order {order.id}")
 
-            try:
-                broadcast_admin_event(
-                    "payment",
-                    {
-                        "order_number": order.order_number,
-                        "order_status": order.status,
-                        "payment_status": checkout.payment_status if 'checkout' in locals() else mp_status,
-                        "payment_id": str(mp_payment_id),
-                    },
-                )
-            except Exception:
-                logger.exception("Failed to broadcast payment event")
+            send_panel_webhook(
+                "payment_updated",
+                {
+                    "order_number": order.order_number,
+                    "order_status": order.status,
+                    "payment_status": checkout.payment_status if 'checkout' in locals() else mp_status,
+                    "payment_id": str(mp_payment_id),
+                    "customer_name": order.user.get_full_name() or order.user.email,
+                },
+            )
 
             # Create notification record
             try:
