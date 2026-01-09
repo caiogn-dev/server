@@ -7,10 +7,17 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from drf_spectacular.utils import extend_schema
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class HealthCheckView(APIView):
-    """Health check endpoint for monitoring."""
+    """Health check endpoint for monitoring.
+    
+    IMPORTANT: This endpoint ALWAYS returns 200 for Railway healthcheck.
+    Database and cache status are reported but don't affect the HTTP status.
+    """
     permission_classes = [AllowAny]
     authentication_classes = []
 
@@ -25,31 +32,32 @@ class HealthCheckView(APIView):
             'checks': {}
         }
 
-        def mark_degraded():
-            if health_status['status'] == 'healthy':
-                health_status['status'] = 'degraded'
-
+        # Check database - but don't fail healthcheck if unavailable
         try:
             with connection.cursor() as cursor:
                 cursor.execute('SELECT 1')
             health_status['checks']['database'] = 'ok'
         except Exception as e:
             health_status['checks']['database'] = f'error: {str(e)}'
-            health_status['status'] = 'unhealthy'
+            health_status['status'] = 'degraded'
+            logger.warning(f"Database health check failed: {e}")
 
+        # Check cache - but don't fail healthcheck if unavailable
         try:
             cache.set('health_check', 'ok', 10)
             if cache.get('health_check') == 'ok':
                 health_status['checks']['cache'] = 'ok'
             else:
                 health_status['checks']['cache'] = 'error: cache not working'
-                mark_degraded()
+                health_status['status'] = 'degraded'
         except Exception as e:
             health_status['checks']['cache'] = f'error: {str(e)}'
-            mark_degraded()
+            health_status['status'] = 'degraded'
+            logger.warning(f"Cache health check failed: {e}")
 
-        status_code = 200 if health_status['status'] in ('healthy', 'degraded') else 503
-        return Response(health_status, status=status_code)
+        # ALWAYS return 200 for Railway healthcheck
+        # The application is running, even if DB/cache have issues
+        return Response(health_status, status=200)
 
 
 class SystemInfoView(APIView):

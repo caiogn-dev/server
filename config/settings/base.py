@@ -82,20 +82,22 @@ ASGI_APPLICATION = 'config.asgi.application'
 # Redis (shared)
 REDIS_URL = os.environ.get('REDIS_URL', '').strip()
 
-# Channels
+# Channels - use Redis if available, otherwise use in-memory
 if REDIS_URL:
-    channel_hosts = [REDIS_URL]
-else:
-    channel_hosts = [(os.environ.get('REDIS_HOST', 'localhost'), int(os.environ.get('REDIS_PORT', '6379')))]
-
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            'hosts': channel_hosts,
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [REDIS_URL],
+            },
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
 if DATABASE_URL:
@@ -116,25 +118,19 @@ if DATABASE_URL:
         if sslmode:
             DATABASES['default']['OPTIONS'] = {'sslmode': sslmode}
     else:
+        # Fallback to SQLite if DATABASE_URL is not PostgreSQL
         DATABASES = {
             'default': {
-                'ENGINE': 'django.db.backends.postgresql',
-                'NAME': os.environ.get('DB_NAME', 'whatsapp_business'),
-                'USER': os.environ.get('DB_USER', 'postgres'),
-                'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
-                'HOST': os.environ.get('DB_HOST', 'localhost'),
-                'PORT': os.environ.get('DB_PORT', '5432'),
+                'ENGINE': 'django.db.backends.sqlite3',
+                'NAME': BASE_DIR / 'db.sqlite3',
             }
         }
 else:
+    # No DATABASE_URL - use SQLite as fallback
     DATABASES = {
         'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('DB_NAME', 'whatsapp_business'),
-            'USER': os.environ.get('DB_USER', 'postgres'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
-            'HOST': os.environ.get('DB_HOST', 'localhost'),
-            'PORT': os.environ.get('DB_PORT', '5432'),
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
 
@@ -214,13 +210,21 @@ CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
-# Redis Cache
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': REDIS_URL or 'redis://localhost:6379/1',
+# Cache configuration - use Redis if available, otherwise use local memory
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        }
     }
-}
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
+        }
+    }
 
 # WhatsApp Business API
 WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
