@@ -5,14 +5,21 @@ import sys
 
 port = os.environ.get('PORT', '8080')
 
+# Make migrations
+print("=== Creating database migrations ===")
+makemigrations_result = subprocess.run([
+    sys.executable, 'manage.py', 'makemigrations', '--noinput'
+])
+if makemigrations_result.returncode != 0:
+    print("WARNING: makemigrations failed, but continuing...")
+
 # Run migrations
-print("=== Running database migrations ===")
+print("=== Applying database migrations ===")
 migrate_result = subprocess.run([
-    sys.executable, 'manage.py', 'makemigrations', '--noinput',
     sys.executable, 'manage.py', 'migrate', '--noinput'
 ])
 if migrate_result.returncode != 0:
-    print("WARNING: Migrations failed, but continuing...")
+    print("WARNING: migrate failed, but continuing...")
 
 # Collect static files (optional, uncomment if needed)
 # print("=== Collecting static files ===")
