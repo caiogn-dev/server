@@ -1,626 +1,386 @@
-# Pastita E-commerce API
+# WhatsApp Business Platform
 
-Complete RESTful API built with Django & Django REST Framework with Mercado Pago payment integration for pastita.com.br
+Plataforma completa para integração com a API oficial do WhatsApp Business da Meta, desenvolvida em Django com arquitetura API-first.
 
-## 🚀 Quick Start
+## 📋 Índice
 
-### Prerequisites
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
+- [Arquitetura](#arquitetura)
+- [Funcionalidades](#funcionalidades)
+- [Instalação](#instalação)
+- [Configuração](#configuração)
+- [Endpoints da API](#endpoints-da-api)
+- [Webhooks](#webhooks)
+- [Integração com Langflow](#integração-com-langflow)
+- [Fluxo de Pedidos](#fluxo-de-pedidos)
+
+## 🏗️ Arquitetura
+
+```
+whatsapp_business/
+├── config/                    # Configurações do projeto Django
+│   ├── settings/
+│   │   ├── base.py           # Configurações base
+│   │   ├── development.py    # Configurações de desenvolvimento
+│   │   └── production.py     # Configurações de produção
+│   ├── urls.py               # URLs principais
+│   ├── celery.py             # Configuração do Celery
+│   └── wsgi.py
+├── apps/
+│   ├── core/                 # App base com utilitários
+│   │   ├── models.py         # Modelos base
+│   │   ├── exceptions.py     # Exceções customizadas
+│   │   ├── middleware.py     # Middlewares (logging, rate limiting)
+│   │   └── utils.py          # Utilitários
+│   ├── whatsapp/             # Integração WhatsApp
+│   │   ├── models.py         # WhatsAppAccount, Message, WebhookEvent
+│   │   ├── services/         # WhatsAppAPIService, MessageService
+│   │   ├── repositories/     # Repositórios de dados
+│   │   ├── api/              # ViewSets e Serializers
+│   │   ├── webhooks/         # Webhook handlers
+│   │   └── tasks/            # Celery tasks
+│   ├── conversations/        # Gerenciamento de conversas
+│   ├── orders/               # Fluxo de pedidos
+│   ├── payments/             # Integração pagamentos
+│   └── langflow/             # Integração LLM/Langflow
+└── manage.py
+```
+
+### Padrões Arquiteturais
+
+- **Services**: Lógica de negócio encapsulada
+- **Repositories**: Abstração de acesso a dados
+- **Domain/Use Cases**: Casos de uso do domínio
+- **Event-driven**: Processamento assíncrono com Celery
+
+## ✨ Funcionalidades
+
+### WhatsApp Business API
+- ✅ Envio de mensagens de texto
+- ✅ Envio de templates aprovados
+- ✅ Mensagens interativas (botões e listas)
+- ✅ Envio de mídia (imagens, documentos)
+- ✅ Recebimento de mensagens via webhook
+- ✅ Status de mensagens (sent, delivered, read, failed)
+- ✅ Múltiplos números de WhatsApp
+
+### Gerenciamento de Números
+- ✅ Cadastro de múltiplos números
+- ✅ Isolamento seguro de tokens (criptografia)
+- ✅ Controle de ativação/desativação
+- ✅ Rotação de tokens
+
+### Automação com Langflow
+- ✅ Integração com Langflow para LLM
+- ✅ Processamento automático de mensagens
+- ✅ Sessões de conversa com contexto
+- ✅ Alternância entre atendimento humano/automático
+
+### Pedidos e Pagamentos
+- ✅ Criação e gerenciamento de pedidos
+- ✅ Fluxo completo de status
+- ✅ Integração com gateways de pagamento
+- ✅ Webhooks de pagamento
+- ✅ Notificações automáticas
+
+## 🚀 Instalação
+
+### Requisitos
 - Python 3.11+
-- pip (Python package manager)
-- Mercado Pago Account (for payments)
-- AWS S3 Account (for media storage)
+- PostgreSQL 15+ (ou SQLite para desenvolvimento)
+- Redis 7+
 
-### 1. Clone and Setup
+### Desenvolvimento Local
 
 ```bash
-# Navigate to project
-cd server-main
+# Clone o repositório
+cd whatsapp_business
 
-# Create virtual environment
+# Crie um ambiente virtual
 python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# ou
+venv\Scripts\activate  # Windows
 
-# Activate virtual environment
-# Linux/Mac:
-source venv/bin/activate
-# Windows:
-venv\Scripts\activate
-```
-
-### 2. Install Dependencies
-<<<<<<< HEAD
-=======
-=======
-- Python 3.13+
-- Virtual Environment (already created at `/venv/`)
-- Mercado Pago Account
-
-### 1. Activate Virtual Environment
-
-**Windows (PowerShell):**
-```powershell
-cd c:\Users\User\Documents\api\server
-..\..\venv\Scripts\Activate.ps1
-```
-
-**Mac/Linux:**
-```bash
-cd ~/api/server
-source ../../venv/bin/activate
-```
-
-### 2. Install Dependencies (Already Done)
->>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
-```bash
+# Instale as dependências
 pip install -r requirements.txt
-```
 
-### 3. Configure Environment Variables
+# Configure as variáveis de ambiente
+cp .env.example .env
+# Edite o arquivo .env com suas configurações
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
-Create `.env` file in the project root:
-```env
-DEBUG=True
-SECRET_KEY=your-secret-key-here
-
-# Database (uses SQLite in dev, PostgreSQL in production)
-DATABASE_URL=sqlite:///db.sqlite3
-
-# Mercado Pago
-MERCADO_PAGO_ACCESS_TOKEN=your-mercado-pago-token
-
-# URLs
-BACKEND_URL=http://localhost:8000
-FRONTEND_URL=http://localhost:12001
-
-# AWS S3 (for media files)
-AWS_ACCESS_KEY_ID=your-aws-key
-AWS_SECRET_ACCESS_KEY=your-aws-secret
-AWS_STORAGE_BUCKET_NAME=your-bucket-name
-AWS_S3_REGION_NAME=sa-east-1
-<<<<<<< HEAD
-=======
-=======
-Create `.env` file in `server/` directory:
-```
-DEBUG=True
-SECRET_KEY=your-secret-key-here
-MERCADO_PAGO_ACCESS_TOKEN=your-mercado-pago-token
-BACKEND_URL=http://localhost:8000
-FRONTEND_URL=https://pastita.com.br
->>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
-```
-
-Get your Mercado Pago token from: https://www.mercadopago.com/developers
-
-<<<<<<< HEAD
-### 4. Run Migrations
-=======
-<<<<<<< HEAD
-### 4. Run Migrations
-=======
-### 4. Run Migrations (Already Done)
->>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
-```bash
+# Execute as migrações
 python manage.py migrate
-```
 
-### 5. Create Admin User
-```bash
+# Crie um superusuário
 python manage.py createsuperuser
-```
 
-### 6. Start Server
-```bash
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
-python manage.py runserver 0.0.0.0:12000
-```
-
-Server runs at: **http://localhost:12000**
-<<<<<<< HEAD
-=======
-=======
+# Inicie o servidor
 python manage.py runserver
 ```
 
-Server runs at: **http://localhost:8000**
->>>>>>> 838554ebd8a2ea491b313a8ada579af71a2b6d65
->>>>>>> 13838eb33aed8bbccef57ffcdb6234c3511ad18a
+### Docker
 
----
+```bash
+# Build e start
+docker-compose up -d
 
-## 📚 API Overview
+# Migrações
+docker-compose exec web python manage.py migrate
 
-### Base URL
-```
-http://localhost:8000/api/
-```
-
-### Admin Panel
-```
-http://localhost:8000/admin/
+# Criar superusuário
+docker-compose exec web python manage.py createsuperuser
 ```
 
-### API Root (Browsable)
-```
-http://localhost:8000/api/
+## ⚙️ Configuração
+
+### Variáveis de Ambiente
+
+```env
+# Django
+DJANGO_SECRET_KEY=your-secret-key
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Database
+DB_NAME=whatsapp_business
+DB_USER=postgres
+DB_PASSWORD=postgres
+DB_HOST=localhost
+DB_PORT=5432
+
+# Redis/Celery
+REDIS_URL=redis://localhost:6379/1
+CELERY_BROKER_URL=redis://localhost:6379/0
+
+# WhatsApp Business API
+WHATSAPP_API_VERSION=v18.0
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=your-verify-token
+WHATSAPP_APP_SECRET=your-app-secret
+
+# Langflow
+LANGFLOW_API_URL=http://localhost:7860
+LANGFLOW_API_KEY=your-langflow-api-key
 ```
 
----
+## 📡 Endpoints da API
 
-## 🔑 Database Models (ORM)
-
-### 1. **User** (Extended Django User)
-```python
-- id (UUID)
-- username, email, password
-- first_name, last_name
-- phone, cpf, date_of_birth
-- profile_image
-- address, city, state, zip_code, country
-- created_at, updated_at
+### Autenticação
+A API usa Token Authentication. Inclua o header:
+```
+Authorization: Token <your-token>
 ```
 
-### 2. **Product**
-```python
-- id (UUID)
-- name, description, price
-- stock_quantity
-- image
-- category, sku
-- is_active (boolean)
-- created_at, updated_at
-```
+### WhatsApp Accounts
 
-### 3. **Cart**
-```python
-- id (UUID)
-- user (1-to-1 relationship)
-- items (related CartItems)
-- created_at, updated_at
-- Methods: get_total(), get_item_count()
-```
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/whatsapp/accounts/` | Listar contas |
+| POST | `/api/v1/whatsapp/accounts/` | Criar conta |
+| GET | `/api/v1/whatsapp/accounts/{id}/` | Detalhes da conta |
+| PUT | `/api/v1/whatsapp/accounts/{id}/` | Atualizar conta |
+| DELETE | `/api/v1/whatsapp/accounts/{id}/` | Remover conta |
+| POST | `/api/v1/whatsapp/accounts/{id}/activate/` | Ativar conta |
+| POST | `/api/v1/whatsapp/accounts/{id}/deactivate/` | Desativar conta |
+| POST | `/api/v1/whatsapp/accounts/{id}/rotate_token/` | Rotacionar token |
+| POST | `/api/v1/whatsapp/accounts/{id}/sync_templates/` | Sincronizar templates |
 
-### 4. **CartItem**
-```python
-- id (UUID)
-- cart (Foreign Key)
-- product (Foreign Key)
-- quantity
-- created_at, updated_at
-```
+### Messages
 
-### 5. **Order**
-```python
-- id (UUID)
-- user (Foreign Key)
-- order_number (unique)
-- total_amount
-- status (pending, processing, shipped, delivered, cancelled)
-- shipping_address, shipping_city, shipping_state, shipping_zip_code
-- notes
-- created_at, updated_at
-```
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/whatsapp/messages/` | Listar mensagens |
+| GET | `/api/v1/whatsapp/messages/{id}/` | Detalhes da mensagem |
+| POST | `/api/v1/whatsapp/messages/send_text/` | Enviar texto |
+| POST | `/api/v1/whatsapp/messages/send_template/` | Enviar template |
+| POST | `/api/v1/whatsapp/messages/send_interactive_buttons/` | Enviar botões |
+| POST | `/api/v1/whatsapp/messages/send_interactive_list/` | Enviar lista |
+| POST | `/api/v1/whatsapp/messages/send_image/` | Enviar imagem |
+| POST | `/api/v1/whatsapp/messages/send_document/` | Enviar documento |
+| POST | `/api/v1/whatsapp/messages/mark_as_read/` | Marcar como lida |
+| POST | `/api/v1/whatsapp/messages/conversation_history/` | Histórico |
+| POST | `/api/v1/whatsapp/messages/stats/` | Estatísticas |
 
-### 6. **OrderItem**
-```python
-- id (UUID)
-- order (Foreign Key)
-- product (Foreign Key)
-- quantity, price
-- created_at
-```
+### Conversations
 
-### 7. **Checkout**
-```python
-- id (UUID)
-- order (1-to-1)
-- user (Foreign Key)
-- total_amount
-- payment_status
-- payment_method
-- mercado_pago_payment_id
-- mercado_pago_preference_id
-- session_token (unique)
-- payment_link
-- customer_name, customer_email, customer_phone
-- billing_address, city, state, zip_code
-- expires_at, completed_at
-- created_at, updated_at
-```
-
-### 8. **PaymentNotification**
-```python
-- id (UUID)
-- notification_type (payment, order, merchant_order)
-- mercado_pago_id (unique)
-- checkout (Foreign Key)
-- payload (JSON)
-- status, status_detail
-- processed (boolean)
-- error_message
-- created_at, processed_at
-```
-
----
-
-## 🛣️ API Endpoints
-
-### User Management
-```
-POST   /api/users/register/                    - Register new user
-GET    /api/users/profile/                    - Get current user profile
-PUT    /api/users/profile/                    - Update user profile
-```
-
-### Products
-```
-GET    /api/products/                         - List all products
-GET    /api/products/{id}/                    - Get product details
-GET    /api/products/search/?q=term           - Search products
-GET    /api/products/categories/              - Get all categories
-```
-
-### Cart
-```
-GET    /api/cart/list/                        - Get user's cart
-POST   /api/cart/add_item/                    - Add item to cart
-POST   /api/cart/update_item/                 - Update item quantity
-POST   /api/cart/remove_item/                 - Remove item from cart
-POST   /api/cart/clear/                       - Clear entire cart
-```
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/conversations/` | Listar conversas |
+| GET | `/api/v1/conversations/{id}/` | Detalhes |
+| POST | `/api/v1/conversations/{id}/switch_to_human/` | Modo humano |
+| POST | `/api/v1/conversations/{id}/switch_to_auto/` | Modo automático |
+| POST | `/api/v1/conversations/{id}/assign_agent/` | Atribuir agente |
+| POST | `/api/v1/conversations/{id}/close/` | Fechar |
+| POST | `/api/v1/conversations/{id}/resolve/` | Resolver |
+| GET | `/api/v1/conversations/{id}/notes/` | Listar notas |
+| POST | `/api/v1/conversations/{id}/add_note/` | Adicionar nota |
 
 ### Orders
-```
-GET    /api/orders/                           - List user's orders
-GET    /api/orders/{id}/                      - Get order details
-GET    /api/orders/{id}/items/                - Get order items
-PATCH  /api/orders/{id}/update_status/        - Update order status (admin)
-```
 
-### Checkout
-```
-POST   /api/checkout/create_checkout/         - Create checkout from cart
-GET    /api/checkout/list/                    - Get user's checkouts
-GET    /api/checkout/details/?token=...       - Get checkout by token
-```
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/orders/` | Listar pedidos |
+| POST | `/api/v1/orders/` | Criar pedido |
+| GET | `/api/v1/orders/{id}/` | Detalhes |
+| POST | `/api/v1/orders/{id}/confirm/` | Confirmar |
+| POST | `/api/v1/orders/{id}/awaiting_payment/` | Aguardando pagamento |
+| POST | `/api/v1/orders/{id}/mark_paid/` | Marcar como pago |
+| POST | `/api/v1/orders/{id}/ship/` | Enviar |
+| POST | `/api/v1/orders/{id}/deliver/` | Entregar |
+| POST | `/api/v1/orders/{id}/cancel/` | Cancelar |
+| GET | `/api/v1/orders/{id}/events/` | Eventos |
+| GET | `/api/v1/orders/stats/` | Estatísticas |
 
-### Webhooks
-```
-POST   /api/webhooks/mercado_pago/            - Mercado Pago webhook receiver
-```
+### Payments
 
----
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/payments/` | Listar pagamentos |
+| POST | `/api/v1/payments/` | Criar pagamento |
+| POST | `/api/v1/payments/{id}/process/` | Processar |
+| POST | `/api/v1/payments/{id}/confirm/` | Confirmar |
+| POST | `/api/v1/payments/{id}/fail/` | Falhar |
+| POST | `/api/v1/payments/{id}/cancel/` | Cancelar |
+| POST | `/api/v1/payments/{id}/refund/` | Reembolsar |
 
-## 💳 Mercado Pago Integration Flow
+### Langflow
 
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/langflow/flows/` | Listar flows |
+| POST | `/api/v1/langflow/flows/` | Criar flow |
+| POST | `/api/v1/langflow/flows/process/` | Processar mensagem |
+| GET | `/api/v1/langflow/flows/{id}/stats/` | Estatísticas |
+| GET | `/api/v1/langflow/sessions/` | Listar sessões |
+| GET | `/api/v1/langflow/sessions/{id}/history/` | Histórico |
+
+## 🔗 Webhooks
+
+### WhatsApp Webhook
+
+Configure no Meta Developer Portal:
 ```
-┌─────────────────┐
-│   Frontend      │
-│  (pastita.com)  │
-└────────┬────────┘
-         │
-         ├─→ POST /api/checkout/create_checkout/
-         │
-┌────────▼────────────────────────────────────────┐
-│     Backend (Django API)                         │
-│  ├─ Create Order                                │
-│  ├─ Create Checkout                             │
-│  └─ Create Mercado Pago Preference              │
-└────────┬─────────────────────────────────────────┘
-         │
-         └─→ Return payment_link
-         │
-         ├─→ Redirect to Mercado Pago
-         │
-┌────────▼────────────────────────────────┐
-│   Mercado Pago Payment Gateway           │
-│   (User completes payment)               │
-└────────┬─────────────────────────────────┘
-         │
-         ├─→ POST /api/webhooks/mercado_pago/
-         │
-         └─→ Redirect to Frontend (success/failure)
-         │
-┌────────▼─────────────────────────────────┐
-│   Backend Updates Status                  │
-│   ├─ Update Checkout payment_status       │
-│   └─ Update Order status                  │
-└───────────────────────────────────────────┘
+URL: https://your-domain.com/webhooks/whatsapp/
+Verify Token: (configurado em WHATSAPP_WEBHOOK_VERIFY_TOKEN)
 ```
 
----
+O webhook recebe:
+- Mensagens de texto
+- Mensagens interativas
+- Status de mensagens
+- Erros
 
-## 🔐 Authentication
-
-### Get Token (Development)
-```bash
-POST /api-auth/login/
-```
-
-### Use Token in Requests
-```
-Authorization: Token YOUR_TOKEN_HERE
-```
-
-Or with curl:
-```bash
-curl -H "Authorization: Token YOUR_TOKEN" http://localhost:8000/api/users/profile/
-```
-
----
-
-## 📝 Example Workflows
-
-### 1. Register & Login
-```javascript
-// Register
-const registerRes = await fetch('http://localhost:8000/api/users/register/', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    username: 'joao123',
-    email: 'joao@example.com',
-    password: 'secure123',
-    first_name: 'João',
-    last_name: 'Silva'
-  })
-});
-```
-
-### 2. Add Product to Cart
-```javascript
-const cartRes = await fetch('http://localhost:8000/api/cart/add_item/', {
-  method: 'POST',
-  headers: {
-    'Authorization': 'Token YOUR_TOKEN',
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    product_id: 'product-uuid',
-    quantity: 2
-  })
-});
-```
-
-### 3. Create Checkout
-```javascript
-const checkoutRes = await fetch('http://localhost:8000/api/checkout/create_checkout/', {
-  method: 'POST',
-  headers: {
-    'Authorization': 'Token YOUR_TOKEN',
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    customer_name: 'João Silva',
-    customer_email: 'joao@example.com',
-    customer_phone: '+5511987654321',
-    billing_address: 'Rua Principal, 123',
-    billing_city: 'São Paulo',
-    billing_state: 'SP',
-    billing_zip_code: '01234-567',
-    payment_method: 'credit_card'
-  })
-});
-
-const checkout = await checkoutRes.json();
-window.location.href = checkout.payment_link;  // Redirect to Mercado Pago
-```
-
----
-
-## 📂 Project Structure
+### Payment Webhooks
 
 ```
-c:\Users\User\Documents\api\
-├── venv/                          # Virtual environment (activated)
-│   └── Scripts/python.exe          # Python executable
-│
-└── server/
-    ├── api/                       # Django app
-    │   ├── migrations/            # Database migrations
-    │   ├── models.py             # 8 ORM models
-    │   ├── serializers.py        # DRF serializers
-    │   ├── views.py              # API viewsets
-    │   ├── urls.py               # API routes
-    │   ├── admin.py              # Django admin config
-    │   ├── permissions.py        # Custom permissions
-    │   └── mercado_pago.py       # Mercado Pago service
-    │
-    ├── server/
-    │   ├── settings.py           # Django settings
-    │   ├── urls.py               # Main URL config
-    │   ├── wsgi.py               # WSGI app
-    │   └── asgi.py               # ASGI app
-    │
-    ├── logs/                      # Application logs
-    ├── media/                     # User uploads
-    ├── manage.py                  # Django CLI
-    ├── db.sqlite3                 # Database
-    ├── requirements.txt           # Dependencies
-    ├── .env.example              # Environment template
-    ├── .env                       # Environment (YOUR CONFIG)
-    ├── API_DOCUMENTATION.md       # Full API docs
-    └── README.md                  # This file
+URL: https://your-domain.com/webhooks/payments/{gateway_id}/
 ```
 
----
+Suporta:
+- Stripe
+- Mercado Pago
+- PagSeguro
+- PIX
+- Custom
 
-## ⚙️ Configuration
+## 🤖 Integração com Langflow
 
-### CORS (Cross-Origin Resource Sharing)
+### Configuração
 
-Frontend domains allowed to access API:
-- `http://localhost:3000` (dev)
-- `http://localhost:8000` (dev)
-- `https://pastita.com.br` (production)
+1. Crie um flow no Langflow
+2. Registre o flow na API:
 
-To add more origins, edit `server/settings.py`:
-```python
-CORS_ALLOWED_ORIGINS = [
-    "your-domain.com",
-    # Add more domains
-]
+```json
+POST /api/v1/langflow/flows/
+{
+    "name": "Atendimento Automático",
+    "flow_id": "seu-flow-id-do-langflow",
+    "endpoint_url": "http://langflow:7860/api/v1/run/seu-flow-id",
+    "status": "active",
+    "input_type": "chat",
+    "output_type": "chat"
+}
 ```
 
-### Media Files
+3. Associe o flow a uma conta WhatsApp:
 
-User uploads stored in: `server/media/`
-
-Accessible at: `http://localhost:8000/media/`
-
----
-
-## 🧪 Testing
-
-### Test with cURL
-```bash
-# List products
-curl http://localhost:8000/api/products/
-
-# Get cart (requires auth token)
-curl -H "Authorization: Token YOUR_TOKEN" http://localhost:8000/api/cart/list/
+```json
+POST /api/v1/langflow/flows/{id}/assign_accounts/
+{
+    "account_ids": ["uuid-da-conta"]
+}
 ```
 
-### Test with Postman
+4. Configure a conta para usar o flow:
 
-1. Create collection with base URL: `http://localhost:8000/api/`
-2. Add Authorization header: `Authorization: Token YOUR_TOKEN`
-3. Test each endpoint
-
-### Test Payment Webhook
-
-```bash
-curl -X POST http://localhost:8000/api/webhooks/mercado_pago/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "topic": "payment",
-    "id": "123456789"
-  }'
+```json
+PATCH /api/v1/whatsapp/accounts/{id}/
+{
+    "default_langflow_flow_id": "uuid-do-flow",
+    "auto_response_enabled": true
+}
 ```
 
----
+### Processamento Manual
 
-## 🚨 Troubleshooting
-
-### Server Won't Start
-```bash
-# Check for migrations
-python manage.py migrate
-
-# Check for errors
-python manage.py check
+```json
+POST /api/v1/langflow/flows/process/
+{
+    "flow_id": "uuid-do-flow",
+    "message": "Olá, preciso de ajuda",
+    "context": {
+        "customer_name": "João"
+    }
+}
 ```
 
-### Database Errors
-```bash
-# Reset database (development only)
-rm db.sqlite3
-python manage.py migrate
-python manage.py createsuperuser
-```
-
-### Mercado Pago Token Not Working
-1. Check `.env` file has correct token
-2. Verify token at Mercado Pago dashboard
-3. Token must have payment read/write permissions
-
-### CORS Errors
-Check frontend domain is in `CORS_ALLOWED_ORIGINS` in `settings.py`
-
----
-
-## 📦 Dependencies
+## 📦 Fluxo de Pedidos
 
 ```
-Django==6.0
-djangorestframework==3.16.1
-django-cors-headers==4.9.0
-django-filter==25.2
-mercadopago==2.3.0
-python-decouple==3.8
-python-dotenv==1.2.1
-Pillow==12.1.0
-requests==2.32.5
+PENDING → CONFIRMED → AWAITING_PAYMENT → PAID → SHIPPED → DELIVERED
+                                    ↓
+                               CANCELLED
 ```
 
-Install all: `pip install -r requirements.txt`
+### Criar Pedido
 
----
-
-## 🔒 Security Notes
-
-1. **Never commit `.env` file** - it contains secrets
-2. **Use HTTPS in production** (not HTTP)
-3. **Set DEBUG=False** in production
-4. **Use strong SECRET_KEY** in production
-5. **Validate all webhook signatures** from Mercado Pago
-6. **Use environment variables** for all secrets
-7. **Enable CORS only for trusted domains**
-
----
-
-## 🚀 Deployment
-
-For production deployment:
-
-1. Use PostgreSQL instead of SQLite
-2. Use Gunicorn/uWSGI as WSGI server
-3. Configure proper logging
-4. Set up HTTPS/SSL certificates
-5. Use environment variables for all config
-6. Set DEBUG=False
-7. Configure allowed hosts
-8. Set up proper database backups
-9. Monitor error logs
-
----
-
-## 📞 Support
-
-- **Mercado Pago Docs**: https://www.mercadopago.com/developers
-- **Django Docs**: https://docs.djangoproject.com/
-- **DRF Docs**: https://www.django-rest-framework.org/
-
----
-
-## ✅ Next Steps
-
-1. ✅ API created with all models
-2. ✅ Database migrations applied
-3. ✅ Django admin configured
-4. ✅ REST endpoints ready
-5. ✅ Mercado Pago integration ready
-6. ✅ Webhook handler ready
-7. ✅ CORS configured
-8. ⬜ Create admin user: `python manage.py createsuperuser`
-9. ⬜ Add products via admin panel
-10. ⬜ Configure `.env` with Mercado Pago token
-11. ⬜ Connect frontend to API endpoints
-
----
-
-**Status**: ✅ Ready for Integration
-
-**Server**: http://localhost:8000
-**Admin**: http://localhost:8000/admin/
-**API Root**: http://localhost:8000/api/
-
-Start the server anytime with:
-```bash
-python manage.py runserver
+```json
+POST /api/v1/orders/
+{
+    "account_id": "uuid-da-conta",
+    "customer_phone": "5511999999999",
+    "customer_name": "João Silva",
+    "items": [
+        {
+            "product_name": "Produto A",
+            "quantity": 2,
+            "unit_price": 99.90
+        }
+    ],
+    "shipping_address": {
+        "street": "Rua Exemplo",
+        "number": "123",
+        "city": "São Paulo",
+        "state": "SP",
+        "zip_code": "01234-567"
+    }
+}
 ```
 
-Good luck! 🎉
+## 📊 Documentação da API
+
+Acesse a documentação interativa:
+- Swagger UI: `/api/docs/`
+- ReDoc: `/api/redoc/`
+- OpenAPI Schema: `/api/schema/`
+
+## 🔒 Segurança
+
+- Validação de assinatura dos webhooks da Meta
+- Criptografia de tokens de acesso
+- Rate limiting configurável
+- Logging estruturado
+- Proteção CORS
+
+## 📝 Licença
+
+MIT License
