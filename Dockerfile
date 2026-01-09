@@ -22,17 +22,10 @@ RUN mkdir -p logs staticfiles
 # Collectstatic with a dummy secret key (will use real one at runtime)
 RUN SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-echo "=== Starting Application ==="\n\
-echo "Running migrations..."\n\
-python manage.py migrate --noinput\n\
-echo "Creating admin user..."\n\
-python manage.py create_admin || echo "Admin already exists"\n\
-echo "Starting gunicorn..."\n\
-exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --log-level info\n\
-' > /app/start.sh && chmod +x /app/start.sh
+# Copy and setup entrypoint
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 
-CMD ["/app/start.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
