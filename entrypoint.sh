@@ -5,7 +5,7 @@ import sys
 
 set -e
 
-echo "=== Starting Application ==="
+echo "Starting Application Entrypoint Script"
 echo "Running migrations..."
 python manage.py migrate --noinput
 
