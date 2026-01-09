@@ -4,6 +4,7 @@ Django base settings for WhatsApp Business Platform.
 import os
 from pathlib import Path
 from datetime import timedelta
+from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -78,26 +79,64 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 ASGI_APPLICATION = 'config.asgi.application'
 
+# Redis (shared)
+REDIS_URL = os.environ.get('REDIS_URL', '').strip()
+
 # Channels
+if REDIS_URL:
+    channel_hosts = [REDIS_URL]
+else:
+    channel_hosts = [(os.environ.get('REDIS_HOST', 'localhost'), int(os.environ.get('REDIS_PORT', '6379')))]
+
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [(os.environ.get('REDIS_HOST', 'localhost'), 6379)],
+            'hosts': channel_hosts,
         },
     },
 }
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'whatsapp_business'),
-        'USER': os.environ.get('DB_USER', 'postgres'),
-        'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
-        'HOST': os.environ.get('DB_HOST', 'localhost'),
-        'PORT': os.environ.get('DB_PORT', '5432'),
+DATABASE_URL = os.environ.get('DATABASE_URL', '').strip()
+if DATABASE_URL:
+    parsed_db = urlparse(DATABASE_URL)
+    if parsed_db.scheme in ('postgres', 'postgresql'):
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': parsed_db.path.lstrip('/'),
+                'USER': unquote(parsed_db.username or ''),
+                'PASSWORD': unquote(parsed_db.password or ''),
+                'HOST': parsed_db.hostname or 'localhost',
+                'PORT': str(parsed_db.port or 5432),
+            }
+        }
+        db_query = parse_qs(parsed_db.query)
+        sslmode = db_query.get('sslmode', [None])[0]
+        if sslmode:
+            DATABASES['default']['OPTIONS'] = {'sslmode': sslmode}
+    else:
+        DATABASES = {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': os.environ.get('DB_NAME', 'whatsapp_business'),
+                'USER': os.environ.get('DB_USER', 'postgres'),
+                'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
+                'HOST': os.environ.get('DB_HOST', 'localhost'),
+                'PORT': os.environ.get('DB_PORT', '5432'),
+            }
+        }
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME', 'whatsapp_business'),
+            'USER': os.environ.get('DB_USER', 'postgres'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', 'postgres'),
+            'HOST': os.environ.get('DB_HOST', 'localhost'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+        }
     }
-}
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -163,8 +202,8 @@ if cors_origins:
     CORS_ALLOWED_ORIGINS.extend([o.strip() for o in cors_origins.split(',') if o.strip()])
 
 # Celery
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', REDIS_URL or 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', REDIS_URL or 'redis://localhost:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -179,7 +218,7 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://localhost:6379/1'),
+        'LOCATION': REDIS_URL or 'redis://localhost:6379/1',
     }
 }
 
