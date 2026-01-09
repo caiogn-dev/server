@@ -22,7 +22,17 @@ RUN mkdir -p logs staticfiles
 # Collectstatic with a dummy secret key (will use real one at runtime)
 RUN SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
 
+# Create startup script
+RUN echo '#!/bin/bash\n\
+echo "=== Starting Application ==="\n\
+echo "Running migrations..."\n\
+python manage.py migrate --noinput\n\
+echo "Creating admin user..."\n\
+python manage.py create_admin || echo "Admin already exists"\n\
+echo "Starting gunicorn..."\n\
+exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --log-level info\n\
+' > /app/start.sh && chmod +x /app/start.sh
+
 EXPOSE 8000
 
-# Startup: migrate (with retry), create admin, then run gunicorn
-CMD ["sh", "-c", "echo 'Running migrations...' && python manage.py migrate --noinput && echo 'Migrations complete!' && python manage.py create_admin 2>&1 || echo 'Admin exists'; exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --log-level info"]
+CMD ["/app/start.sh"]
