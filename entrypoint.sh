@@ -1,19 +1,17 @@
-#!/usr/bin/env sh
-set -e
+#!/usr/bin/env python
+import os
+import subprocess
+import sys
 
-echo "Starting Application Entrypoint Script"
-echo "Running migrations..."
-python manage.py migrate --noinput
+port = os.environ.get('PORT', '8080')
+print(f"=== Starting gunicorn on port {port} ===")
 
-echo "Creating admin user..."
-python manage.py create_admin || echo "Admin already exists"
-
-PORT="${PORT:-8080}"
-echo "=== Starting gunicorn on port ${PORT} ==="
-
-exec gunicorn config.wsgi:application \
-  --bind "0.0.0.0:${PORT}" \
-  --workers 1 \
-  --timeout 120 \
-  --access-logfile - \
-  --error-logfile -
+subprocess.run([
+    sys.executable, '-m', 'gunicorn',
+    'config.wsgi:application',
+    '--bind', f'0.0.0.0:{port}',
+    '--workers', '1',
+    '--timeout', '120',
+    '--access-logfile', '-',
+    '--error-logfile', '-'
+])

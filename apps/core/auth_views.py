@@ -19,7 +19,6 @@ class LoginSerializer(serializers.Serializer):
 
 
 class RegisterSerializer(serializers.Serializer):
-    username = serializers.CharField(max_length=150)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
@@ -189,13 +188,6 @@ class RegisterView(APIView):
         
         data = serializer.validated_data
         
-        # Check if username already exists
-        if User.objects.filter(username=data['username']).exists():
-            return Response(
-                {'error': 'Username already exists'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         # Check if email already exists
         if User.objects.filter(email=data['email']).exists():
             return Response(
@@ -203,9 +195,17 @@ class RegisterView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Generate username from email (use part before @)
+        base_username = data['email'].split('@')[0]
+        username = base_username
+        counter = 1
+        while User.objects.filter(username=username).exists():
+            username = f"{base_username}{counter}"
+            counter += 1
+        
         # Create user
         user = User.objects.create_user(
-            username=data['username'],
+            username=username,
             email=data['email'],
             password=data['password'],
             first_name=data.get('first_name', ''),
