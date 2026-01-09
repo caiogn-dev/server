@@ -3,6 +3,15 @@ import os
 import subprocess
 import sys
 
+set -e
+
+echo "=== Starting Application ==="
+echo "Running migrations..."
+python manage.py migrate --noinput
+
+echo "Creating admin user..."
+python manage.py create_admin || echo "Admin already exists"
+
 port = os.environ.get('PORT', '8080')
 print(f"=== Starting gunicorn on port {port} ===")
 
