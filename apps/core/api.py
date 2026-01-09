@@ -25,6 +25,10 @@ class HealthCheckView(APIView):
             'checks': {}
         }
 
+        def mark_degraded():
+            if health_status['status'] == 'healthy':
+                health_status['status'] = 'degraded'
+
         try:
             with connection.cursor() as cursor:
                 cursor.execute('SELECT 1')
@@ -39,12 +43,12 @@ class HealthCheckView(APIView):
                 health_status['checks']['cache'] = 'ok'
             else:
                 health_status['checks']['cache'] = 'error: cache not working'
-                health_status['status'] = 'degraded'
+                mark_degraded()
         except Exception as e:
             health_status['checks']['cache'] = f'error: {str(e)}'
-            health_status['status'] = 'degraded'
+            mark_degraded()
 
-        status_code = 200 if health_status['status'] == 'healthy' else 503
+        status_code = 200 if health_status['status'] in ('healthy', 'degraded') else 503
         return Response(health_status, status=status_code)
 
 
