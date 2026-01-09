@@ -1,12 +1,17 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env python
+import os
+import subprocess
+import sys
 
-echo "=== Starting Application ==="
-echo "Running migrations..."
-python manage.py migrate --noinput
+port = os.environ.get('PORT', '8080')
+print(f"=== Starting gunicorn on port {port} ===")
 
-echo "Creating admin user..."
-python manage.py create_admin || echo "Admin already exists"
-
-echo "Starting gunicorn on port ${PORT:-8000}..."
-exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --log-level info
+subprocess.run([
+    sys.executable, '-m', 'gunicorn',
+    'config.wsgi:application',
+    '--bind', f'0.0.0.0:{port}',
+    '--workers', '1',
+    '--timeout', '120',
+    '--access-logfile', '-',
+    '--error-logfile', '-'
+])
