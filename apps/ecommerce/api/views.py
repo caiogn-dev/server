@@ -3,12 +3,15 @@ E-commerce API views - compatible with Pastita frontend.
 """
 import logging
 import uuid
+from decimal import Decimal
 from django.db import transaction
+from django.db.models import Sum
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
@@ -364,3 +367,75 @@ class WebhookViewSet(viewsets.GenericViewSet):
             logger.info(f"Payment failed for {checkout.customer_phone}")
         except Exception as e:
             logger.warning(f"Could not notify payment failure: {e}")
+
+
+class OrdersHistoryView(APIView):
+    """
+    Orders history API for authenticated users.
+    
+    GET /api/v1/ecommerce/orders/history/
+    Returns user's order history based on completed checkouts.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Get user's order history from completed checkouts."""
+        user = request.user
+        
+        # Get all checkouts for this user
+        checkouts = Checkout.objects.filter(
+            user=user
+        ).order_by('-created_at')
+        
+        # Calculate statistics
+        completed_checkouts = checkouts.filter(payment_status='completed')
+        total_orders = completed_checkouts.count()
+        total_spent = completed_checkouts.aggregate(
+            total=Sum('total_amount')
+        )['total'] or Decimal('0.00')
+        
+        # Build recent orders list
+        recent_orders = []
+        for checkout in checkouts[:20]:  # Last 20 orders
+            # Get items from cart if available
+            items = []
+            if checkout.cart:
+                for cart_item in checkout.cart.items.select_related('product').all():
+                    items.append({
+                        'id': str(cart_item.id),
+                        'product_name': cart_item.product.name,
+                        'quantity': cart_item.quantity,
+                        'price': float(cart_item.product.price),
+                        'subtotal': float(cart_item.get_subtotal()),
+                    })
+            
+            # Map payment_status to order status
+            status_map = {
+                'pending': 'Pendente',
+                'processing': 'Processando',
+                'completed': 'Concluído',
+                'failed': 'Falhou',
+                'cancelled': 'Cancelado',
+                'refunded': 'Reembolsado',
+            }
+            
+            recent_orders.append({
+                'id': str(checkout.id),
+                'order_number': checkout.session_token[:8].upper(),
+                'status': status_map.get(checkout.payment_status, checkout.payment_status),
+                'total_amount': float(checkout.total_amount),
+                'items': items,
+                'created_at': checkout.created_at.isoformat(),
+                'completed_at': checkout.completed_at.isoformat() if checkout.completed_at else None,
+                'shipping_address': checkout.shipping_address,
+                'shipping_city': checkout.shipping_city,
+                'shipping_state': checkout.shipping_state,
+            })
+        
+        return Response({
+            'statistics': {
+                'total_orders': total_orders,
+                'total_spent': float(total_spent),
+            },
+            'recent_orders': recent_orders,
+        })

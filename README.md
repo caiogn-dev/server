@@ -242,6 +242,36 @@ Authorization: Token <your-token>
 | POST | `/api/v1/payments/{id}/cancel/` | Cancelar |
 | POST | `/api/v1/payments/{id}/refund/` | Reembolsar |
 
+### Payment Gateways
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/payments/gateways/` | Listar gateways |
+| POST | `/api/v1/payments/gateways/` | Criar gateway |
+| GET | `/api/v1/payments/gateways/{id}/` | Detalhes do gateway |
+| PATCH | `/api/v1/payments/gateways/{id}/` | Atualizar gateway |
+| DELETE | `/api/v1/payments/gateways/{id}/` | Remover gateway |
+
+### User Profile (E-commerce)
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/users/profile/` | Obter perfil do usuário |
+| PATCH | `/api/v1/users/profile/` | Atualizar perfil |
+
+### E-commerce
+
+| Método | Endpoint | Descrição |
+|--------|----------|-----------|
+| GET | `/api/v1/ecommerce/products/` | Listar produtos |
+| GET | `/api/v1/ecommerce/products/{id}/` | Detalhes do produto |
+| GET | `/api/v1/ecommerce/cart/list/` | Obter carrinho |
+| POST | `/api/v1/ecommerce/cart/add_item/` | Adicionar item |
+| POST | `/api/v1/ecommerce/cart/update_item/` | Atualizar item |
+| POST | `/api/v1/ecommerce/cart/remove_item/` | Remover item |
+| POST | `/api/v1/ecommerce/checkout/create_checkout/` | Criar checkout |
+| GET | `/api/v1/ecommerce/orders/history/` | Histórico de pedidos |
+
 ### Langflow
 
 | Método | Endpoint | Descrição |

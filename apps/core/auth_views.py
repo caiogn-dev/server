@@ -11,6 +11,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema
+from .models import UserProfile
 
 
 class LoginSerializer(serializers.Serializer):
@@ -44,6 +45,34 @@ class UserSerializer(serializers.Serializer):
     is_staff = serializers.BooleanField()
     is_superuser = serializers.BooleanField()
     date_joined = serializers.DateTimeField()
+
+
+class UserProfileSerializer(serializers.Serializer):
+    """Extended user profile serializer with all fields."""
+    id = serializers.IntegerField(source='user.id')
+    username = serializers.CharField(source='user.username')
+    email = serializers.EmailField(source='user.email')
+    first_name = serializers.CharField(source='user.first_name')
+    last_name = serializers.CharField(source='user.last_name')
+    phone = serializers.CharField(allow_blank=True)
+    cpf = serializers.CharField(allow_blank=True)
+    address = serializers.CharField(allow_blank=True)
+    city = serializers.CharField(allow_blank=True)
+    state = serializers.CharField(allow_blank=True)
+    zip_code = serializers.CharField(allow_blank=True)
+
+
+class UpdateProfileSerializer(serializers.Serializer):
+    """Serializer for updating user profile."""
+    first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+    email = serializers.EmailField(required=False)
+    phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    cpf = serializers.CharField(max_length=14, required=False, allow_blank=True)
+    address = serializers.CharField(required=False, allow_blank=True)
+    city = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    state = serializers.CharField(max_length=2, required=False, allow_blank=True)
+    zip_code = serializers.CharField(max_length=10, required=False, allow_blank=True)
 
 
 class LoginView(APIView):
@@ -217,6 +246,12 @@ class RegisterView(APIView):
             last_name=data.get('last_name', ''),
         )
         
+        # Update profile with phone if provided
+        if data.get('phone'):
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.phone = data['phone']
+            profile.save()
+        
         # Create token
         token = Token.objects.create(user=user)
         
@@ -228,6 +263,92 @@ class RegisterView(APIView):
             'first_name': user.first_name,
             'last_name': user.last_name,
         }, status=status.HTTP_201_CREATED)
+
+
+class ProfileView(APIView):
+    """Get and update user profile with extended fields."""
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Get Profile",
+        description="Get current user profile with extended fields",
+        responses={200: UserProfileSerializer}
+    )
+    def get(self, request):
+        user = request.user
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'phone': profile.phone,
+            'cpf': profile.cpf,
+            'address': profile.address,
+            'city': profile.city,
+            'state': profile.state,
+            'zip_code': profile.zip_code,
+        })
+
+    @extend_schema(
+        summary="Update Profile",
+        description="Update current user profile",
+        request=UpdateProfileSerializer,
+        responses={200: UserProfileSerializer}
+    )
+    def patch(self, request):
+        serializer = UpdateProfileSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        
+        user = request.user
+        data = serializer.validated_data
+        
+        # Update user fields
+        if 'first_name' in data:
+            user.first_name = data['first_name']
+        if 'last_name' in data:
+            user.last_name = data['last_name']
+        if 'email' in data:
+            # Check if email is already taken by another user
+            if User.objects.filter(email=data['email']).exclude(id=user.id).exists():
+                return Response(
+                    {'error': 'Email already exists'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            user.email = data['email']
+        user.save()
+        
+        # Update profile fields
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if 'phone' in data:
+            profile.phone = data['phone']
+        if 'cpf' in data:
+            profile.cpf = data['cpf']
+        if 'address' in data:
+            profile.address = data['address']
+        if 'city' in data:
+            profile.city = data['city']
+        if 'state' in data:
+            profile.state = data['state']
+        if 'zip_code' in data:
+            profile.zip_code = data['zip_code']
+        profile.save()
+        
+        return Response({
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'phone': profile.phone,
+            'cpf': profile.cpf,
+            'address': profile.address,
+            'city': profile.city,
+            'state': profile.state,
+            'zip_code': profile.zip_code,
+        })
 
 
 class CSRFTokenView(APIView):

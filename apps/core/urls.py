@@ -6,7 +6,7 @@ from .api import HealthCheckView, SystemInfoView
 from .dashboard_views import DashboardOverviewView, DashboardActivityView, DashboardChartsView
 from .auth_views import (
     LoginView, LogoutView, CurrentUserView, ChangePasswordView,
-    RegisterView, CSRFTokenView
+    RegisterView, CSRFTokenView, ProfileView
 )
 from .export_views import (
     export_messages, export_orders, export_sessions,
@@ -27,6 +27,9 @@ urlpatterns = [
     path('auth/register/', RegisterView.as_view(), name='auth-register'),
     path('auth/me/', CurrentUserView.as_view(), name='auth-me'),
     path('auth/change-password/', ChangePasswordView.as_view(), name='auth-change-password'),
+    
+    # User Profile (extended fields)
+    path('users/profile/', ProfileView.as_view(), name='user-profile'),
     
     # Dashboard
     path('dashboard/overview/', DashboardOverviewView.as_view(), name='dashboard-overview'),
