@@ -25,7 +25,9 @@ SECURE_HSTS_PRELOAD = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 
-CORS_ALLOW_ALL_ORIGINS = False
+# CORS - allow all if CORS_ALLOWED_ORIGINS not set, otherwise restrict
+import os
+CORS_ALLOW_ALL_ORIGINS = not bool(os.environ.get('CORS_ALLOWED_ORIGINS', ''))
 
 # Override logging for production - use only console (no file handler)
 LOGGING = {
