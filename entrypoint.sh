@@ -8,7 +8,7 @@ port = os.environ.get('PORT', '8080')
 # Run migrations
 print("=== Running database migrations ===")
 migrate_result = subprocess.run([
-    sys.executable, 'manage.py', 'makemigrations', '--noinput'
+    sys.executable, 'manage.py', 'makemigrations', '--noinput',
     sys.executable, 'manage.py', 'migrate', '--noinput'
 ])
 if migrate_result.returncode != 0:
