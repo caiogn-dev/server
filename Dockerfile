@@ -24,5 +24,5 @@ RUN SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
 
 EXPOSE 8000
 
-# Simple startup - just run gunicorn
-CMD ["sh", "-c", "python manage.py migrate --noinput 2>&1 || echo 'Migration failed, continuing...'; exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --log-level info"]
+# Startup: migrate, create admin, then run gunicorn
+CMD ["sh", "-c", "python manage.py migrate --noinput 2>&1 || echo 'Migration failed'; python manage.py create_admin 2>&1 || echo 'Admin creation skipped'; exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers 1 --timeout 120 --log-level info"]

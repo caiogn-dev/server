@@ -3,6 +3,7 @@ Core API views - Health check and system endpoints.
 """
 from django.db import connection
 from django.core.cache import cache
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -34,9 +35,14 @@ class HealthCheckView(APIView):
 
         # Check database - but don't fail healthcheck if unavailable
         try:
+            db_engine = settings.DATABASES['default']['ENGINE']
+            db_type = 'postgresql' if 'postgresql' in db_engine else 'sqlite' if 'sqlite' in db_engine else 'unknown'
             with connection.cursor() as cursor:
                 cursor.execute('SELECT 1')
-            health_status['checks']['database'] = 'ok'
+            health_status['checks']['database'] = {
+                'status': 'ok',
+                'type': db_type
+            }
         except Exception as e:
             health_status['checks']['database'] = f'error: {str(e)}'
             health_status['status'] = 'degraded'
@@ -44,9 +50,14 @@ class HealthCheckView(APIView):
 
         # Check cache - but don't fail healthcheck if unavailable
         try:
+            cache_backend = settings.CACHES['default']['BACKEND']
+            cache_type = 'redis' if 'redis' in cache_backend.lower() else 'memory' if 'locmem' in cache_backend.lower() else 'unknown'
             cache.set('health_check', 'ok', 10)
             if cache.get('health_check') == 'ok':
-                health_status['checks']['cache'] = 'ok'
+                health_status['checks']['cache'] = {
+                    'status': 'ok',
+                    'type': cache_type
+                }
             else:
                 health_status['checks']['cache'] = 'error: cache not working'
                 health_status['status'] = 'degraded'
