@@ -7,7 +7,7 @@ from .api.views import (
     ProductViewSet, CartViewSet, CheckoutViewSet, WebhookViewSet, 
     OrdersHistoryView, WishlistViewSet, CouponViewSet, DeliveryViewSet,
     CouponAdminViewSet, DeliveryZoneAdminViewSet, StoreLocationAdminViewSet,
-    ProductAdminViewSet
+    ProductAdminViewSet, GeocodingViewSet
 )
 
 router = DefaultRouter()
@@ -18,6 +18,7 @@ router.register(r'webhooks', WebhookViewSet, basename='ecommerce-webhook')
 router.register(r'wishlist', WishlistViewSet, basename='wishlist')
 router.register(r'coupons', CouponViewSet, basename='coupon')
 router.register(r'delivery', DeliveryViewSet, basename='delivery')
+router.register(r'geocoding', GeocodingViewSet, basename='geocoding')
 
 # Admin routes
 router.register(r'admin/coupons', CouponAdminViewSet, basename='admin-coupon')

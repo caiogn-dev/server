@@ -1409,6 +1409,304 @@ class DeliveryViewSet(viewsets.GenericViewSet):
         return Response(serializer.data)
 
 
+class GeocodingViewSet(viewsets.ViewSet):
+    """
+    Geocoding API endpoints using OpenStreetMap services.
+    
+    Endpoints:
+    - POST /api/v1/ecommerce/geocoding/search/ - Forward geocoding (address to coordinates)
+    - POST /api/v1/ecommerce/geocoding/reverse/ - Reverse geocoding (coordinates to address)
+    - GET /api/v1/ecommerce/geocoding/suggestions/ - Address autocomplete
+    - POST /api/v1/ecommerce/geocoding/route/ - Calculate route between two points
+    - GET /api/v1/ecommerce/geocoding/cep/{cep}/ - Brazilian CEP lookup
+    """
+    permission_classes = [AllowAny]
+    
+    @action(detail=False, methods=['post'])
+    def search(self, request):
+        """
+        Forward geocoding - convert address to coordinates.
+        
+        Request body:
+        {
+            "query": "Rua Example, 123, São Paulo",
+            "country_codes": ["br"],  // optional
+            "limit": 5  // optional
+        }
+        """
+        from ..services.geocoding_service import geocoding_service
+        
+        query = request.data.get('query', '')
+        if not query:
+            return Response(
+                {'error': 'Query is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        country_codes = request.data.get('country_codes', ['br'])
+        limit = min(int(request.data.get('limit', 5)), 20)
+        
+        results = geocoding_service.geocode(
+            query=query,
+            country_codes=country_codes,
+            limit=limit
+        )
+        
+        return Response({
+            'results': [
+                {
+                    'latitude': float(r.latitude),
+                    'longitude': float(r.longitude),
+                    'display_name': r.display_name,
+                    'address': r.address,
+                    'city': r.city,
+                    'state': r.state,
+                    'country': r.country,
+                    'zip_code': r.zip_code,
+                    'place_id': r.place_id,
+                    'importance': r.importance,
+                    'bounding_box': r.bounding_box,
+                }
+                for r in results
+            ]
+        })
+    
+    @action(detail=False, methods=['post'])
+    def reverse(self, request):
+        """
+        Reverse geocoding - convert coordinates to address.
+        
+        Request body:
+        {
+            "latitude": -23.5505,
+            "longitude": -46.6333,
+            "zoom": 18  // optional, 0-18
+        }
+        """
+        from ..services.geocoding_service import geocoding_service
+        
+        latitude = request.data.get('latitude')
+        longitude = request.data.get('longitude')
+        
+        if latitude is None or longitude is None:
+            return Response(
+                {'error': 'Latitude and longitude are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            latitude = float(latitude)
+            longitude = float(longitude)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'Invalid coordinates'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        zoom = min(max(int(request.data.get('zoom', 18)), 0), 18)
+        
+        result = geocoding_service.reverse_geocode(
+            latitude=latitude,
+            longitude=longitude,
+            zoom=zoom
+        )
+        
+        if not result:
+            return Response(
+                {'error': 'Location not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response({
+            'latitude': float(result.latitude),
+            'longitude': float(result.longitude),
+            'display_name': result.display_name,
+            'address': result.address,
+            'city': result.city,
+            'state': result.state,
+            'country': result.country,
+            'zip_code': result.zip_code,
+            'place_id': result.place_id,
+        })
+    
+    @action(detail=False, methods=['get'])
+    def suggestions(self, request):
+        """
+        Address autocomplete suggestions.
+        
+        Query params:
+        - q: Search query (required, min 3 chars)
+        - country_codes: Comma-separated country codes (optional, default: br)
+        - limit: Max results (optional, default: 10, max: 20)
+        """
+        from ..services.geocoding_service import geocoding_service
+        
+        query = request.query_params.get('q', '')
+        if len(query) < 3:
+            return Response({'suggestions': []})
+        
+        country_codes_str = request.query_params.get('country_codes', 'br')
+        country_codes = [c.strip() for c in country_codes_str.split(',')]
+        limit = min(int(request.query_params.get('limit', 10)), 20)
+        
+        suggestions = geocoding_service.search_suggestions(
+            query=query,
+            country_codes=country_codes,
+            limit=limit
+        )
+        
+        return Response({
+            'suggestions': [
+                {
+                    'display_name': s.display_name,
+                    'latitude': float(s.latitude),
+                    'longitude': float(s.longitude),
+                    'place_id': s.place_id,
+                    'address_type': s.address_type,
+                    'importance': s.importance,
+                }
+                for s in suggestions
+            ]
+        })
+    
+    @action(detail=False, methods=['post'])
+    def route(self, request):
+        """
+        Calculate route between two points.
+        
+        Request body:
+        {
+            "origin": {"latitude": -23.5505, "longitude": -46.6333},
+            "destination": {"latitude": -23.5489, "longitude": -46.6388},
+            "profile": "driving",  // optional: driving, walking, cycling
+            "steps": true  // optional: include turn-by-turn directions
+        }
+        """
+        from ..services.geocoding_service import geocoding_service
+        
+        origin = request.data.get('origin', {})
+        destination = request.data.get('destination', {})
+        
+        if not all([
+            origin.get('latitude'), origin.get('longitude'),
+            destination.get('latitude'), destination.get('longitude')
+        ]):
+            return Response(
+                {'error': 'Origin and destination coordinates are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            origin_coords = (float(origin['latitude']), float(origin['longitude']))
+            dest_coords = (float(destination['latitude']), float(destination['longitude']))
+        except (TypeError, ValueError, KeyError):
+            return Response(
+                {'error': 'Invalid coordinates'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        profile = request.data.get('profile', 'driving')
+        include_steps = request.data.get('steps', True)
+        
+        result = geocoding_service.calculate_route(
+            origin=origin_coords,
+            destination=dest_coords,
+            profile=profile,
+            steps=include_steps
+        )
+        
+        if not result:
+            return Response(
+                {'error': 'Route calculation failed'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        response_data = {
+            'distance_km': float(result.distance_km),
+            'duration_minutes': result.duration_minutes,
+            'summary': result.summary,
+        }
+        
+        if result.geometry:
+            response_data['geometry'] = result.geometry
+        
+        if result.steps:
+            response_data['steps'] = result.steps
+        
+        return response_data
+    
+    @action(detail=False, methods=['get'], url_path='cep/(?P<cep>[0-9-]+)')
+    def cep_lookup(self, request, cep=None):
+        """
+        Brazilian CEP (zip code) lookup.
+        
+        URL: /api/v1/ecommerce/geocoding/cep/{cep}/
+        """
+        from ..services.geocoding_service import geocoding_service
+        
+        if not cep:
+            return Response(
+                {'error': 'CEP is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = geocoding_service.lookup_brazilian_cep(cep)
+        
+        if not result:
+            return Response(
+                {'error': 'CEP not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response(result)
+    
+    @action(detail=False, methods=['post'], url_path='geocode-brazilian')
+    def geocode_brazilian(self, request):
+        """
+        Geocode a Brazilian address using CEP for better accuracy.
+        
+        Request body:
+        {
+            "cep": "01310-100",
+            "address": "Av. Paulista, 1000",  // optional
+            "city": "São Paulo",  // optional
+            "state": "SP"  // optional
+        }
+        """
+        from ..services.geocoding_service import geocoding_service
+        
+        cep = request.data.get('cep', '')
+        if not cep:
+            return Response(
+                {'error': 'CEP is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = geocoding_service.geocode_brazilian_address(
+            cep=cep,
+            address=request.data.get('address', ''),
+            city=request.data.get('city', ''),
+            state=request.data.get('state', '')
+        )
+        
+        if not result:
+            return Response(
+                {'error': 'Could not geocode address'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        return Response({
+            'latitude': float(result.latitude),
+            'longitude': float(result.longitude),
+            'display_name': result.display_name,
+            'address': result.address,
+            'city': result.city,
+            'state': result.state,
+            'country': result.country,
+            'zip_code': result.zip_code,
+        })
+
+
 class ProductAdminViewSet(viewsets.ModelViewSet):
     """
     Admin CRUD for Products.
