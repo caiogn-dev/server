@@ -41,12 +41,12 @@ class MercadoPagoService:
         return bool(self.sdk and self.access_token)
 
     def _format_expiration(self, delta: timedelta) -> str:
-        """Return Mercado Pago date_of_expiration in ISO 8601 format."""
+        """Return Mercado Pago date_of_expiration in ISO 8601 format with milliseconds."""
         expiration = dj_timezone.localtime(dj_timezone.now() + delta)
-        # timespec='seconds' remove os microssegundos (.123456) que o erro rejeita
-        # e mantém o timezone correto (-03:00)
-        return expiration.isoformat(timespec='seconds')
-
+        # O Mercado Pago exige exatamente 3 dígitos de milissegundos (.000)
+        # e o timezone com dois pontos (-03:00).
+        return expiration.isoformat(timespec='milliseconds')
+    
     def verify_webhook_signature(
         self,
         x_signature: str,
