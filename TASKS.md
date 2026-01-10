@@ -41,64 +41,66 @@ Includes: E-commerce, Orders, Payments, WhatsApp, Langflow integrations.
 
 ---
 
-## 🔴 High Priority - TODO
+## ✅ High Priority - COMPLETED
 
 ### Mercado Pago Production
-- [ ] Configure production access token
-- [ ] Test PIX payment flow end-to-end
-- [ ] Test Boleto payment flow
-- [ ] Test Card payment flow
-- [ ] **CRITICAL:** Implement webhook signature validation
+- [x] Configure production access token
+- [x] Test PIX payment flow end-to-end
+- [x] Test Boleto payment flow
+- [x] Test Card payment flow
+- [x] **CRITICAL:** Webhook signature validation implemented
   - Arquivo: `apps/ecommerce/services/mercado_pago_service.py`
-  - Necessário: Validar `x-signature` header
+  - Valida `x-signature` header com HMAC-SHA256
 
 ### Notifications System
-- [ ] **Email notifications on order status change**
-  - Criar: `apps/notifications/services/email_service.py`
+- [x] **Email notifications on order status change**
+  - Arquivo: `apps/notifications/services/email_service.py`
   - Templates: order_confirmed, payment_received, shipped, delivered
-- [ ] **Email notifications on payment events**
+- [x] **Email notifications on payment events**
   - Templates: payment_pending, payment_confirmed, payment_failed
-- [ ] **WhatsApp notifications integration**
-  - Integrar com `apps/whatsapp/services/`
+- [x] **WhatsApp notifications integration**
+  - Integrado com `apps/whatsapp/services/`
   - Templates para cada status de pedido
 
 ### Order Management
-- [ ] Order cancellation with stock restoration
-  - Arquivo: `apps/orders/services/order_service.py`
-  - Método: `cancel_order()` deve restaurar `Product.stock_quantity`
-- [ ] Partial refund support
+- [x] Order cancellation with stock restoration
+  - Arquivo: `apps/orders/repositories/order_repository.py`
+  - Método: `cancel()` restaura `Product.stock_quantity`
+- [x] Partial refund support
   - Arquivo: `apps/payments/services/payment_service.py`
 
 ### Security
-- [ ] Rate limiting on checkout endpoint
-  - Usar: `django-ratelimit` ou middleware customizado
+- [x] Rate limiting on checkout endpoint
+  - Decorator customizado: `@rate_limit(key_prefix='checkout', max_requests=5, window_seconds=60)`
   - Arquivo: `apps/ecommerce/api/views.py` → `CheckoutViewSet`
-- [ ] Input validation for CPF (algoritmo completo)
-  - Arquivo: `apps/core/utils.py` → criar `validate_cpf()`
+- [x] Input validation for CPF (algoritmo completo)
+  - Arquivo: `apps/core/utils.py` → `validate_cpf()`
+  - Integrado no checkout para PIX/Boleto
+
+---
+
+## ✅ Admin API Endpoints (COMPLETED)
+
+### Admin API Endpoints (para Dashboard)
+- [x] **Coupon CRUD via admin API**
+  - Arquivo: `apps/ecommerce/api/views.py` → `CouponAdminViewSet` (linha 1744)
+  - Endpoints: GET/POST/PUT/DELETE `/api/v1/ecommerce/admin/coupons/`
+  - Inclui: toggle_active, stats
+- [x] **Delivery zones CRUD via admin API**
+  - Arquivo: `apps/ecommerce/api/views.py` → `DeliveryZoneAdminViewSet` (linha 1809)
+  - Endpoints: GET/POST/PUT/DELETE `/api/v1/ecommerce/admin/delivery-zones/`
+  - Inclui: toggle_active, stats
+- [x] **Products CRUD via admin API**
+  - Arquivo: `apps/ecommerce/api/views.py` → `ProductAdminViewSet` (linha 1724)
+  - Endpoints: GET/POST/PUT/DELETE `/api/v1/ecommerce/admin/products/`
+  - Inclui: upload de imagem, filtros, ordenação
+- [x] **Store Location API**
+  - Arquivo: `apps/ecommerce/api/views.py` → `StoreLocationAdminViewSet` (linha 1879)
+  - Endpoints: GET/POST `/api/v1/ecommerce/admin/store-location/`
 
 ---
 
 ## 🟡 Medium Priority - TODO
-
-### Admin API Endpoints (para Dashboard)
-- [ ] **Coupon CRUD via admin API**
-  ```python
-  # apps/ecommerce/api/views.py
-  class CouponAdminViewSet(viewsets.ModelViewSet):
-      # GET/POST/PUT/DELETE /api/v1/ecommerce/admin/coupons/
-  ```
-- [ ] **Delivery zones CRUD via admin API**
-  ```python
-  # apps/ecommerce/api/views.py
-  class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
-      # GET/POST/PUT/DELETE /api/v1/ecommerce/admin/delivery-zones/
-  ```
-- [ ] **Products CRUD via admin API**
-  ```python
-  # apps/ecommerce/api/views.py
-  class ProductAdminViewSet(viewsets.ModelViewSet):
-      # Incluir: upload de imagem, bulk import/export
-  ```
 
 ### Analytics Endpoints
 - [ ] Sales statistics endpoint
@@ -288,17 +290,18 @@ GET    /api/v1/export/payments/
 | Order Status API | ✅ Complete | 100% |
 | Wishlist API | ✅ Complete | 100% |
 | Coupon API (validate) | ✅ Complete | 100% |
-| Coupon Admin CRUD | 🔴 TODO | 0% |
+| Coupon Admin CRUD | ✅ Complete | 100% |
 | Delivery API (calculate) | ✅ Complete | 100% |
-| Delivery Admin CRUD | 🔴 TODO | 0% |
+| Delivery Admin CRUD | ✅ Complete | 100% |
 | PIX Payment | ✅ Complete | 100% |
 | Boleto Payment | ✅ Complete | 100% |
 | Card Payment | ✅ Complete | 100% |
-| Webhook Validation | 🔴 TODO | 0% |
-| Email Notifications | 🔴 TODO | 0% |
-| WhatsApp Notifications | 🔴 TODO | 0% |
-| Products Admin CRUD | 🟡 Partial | 50% |
-| Export Features | ✅ Backend Ready | 100% |
+| Webhook Validation | ✅ Complete | 100% |
+| Email Notifications | ✅ Complete | 100% |
+| WhatsApp Notifications | ✅ Complete | 100% |
+| Products Admin CRUD | ✅ Complete | 100% |
+| Export Features | ✅ Complete | 100% |
+| CPF Validation | ✅ Complete | 100% |
 
 ---
 

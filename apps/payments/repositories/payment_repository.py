@@ -69,17 +69,35 @@ class PaymentRepository:
         new_status: str,
         gateway_response: dict = None
     ) -> Payment:
-        """Update payment status."""
-        payment.status = new_status
+        """
+        Update payment status with row locking to prevent race conditions.
+        """
+        from django.db import transaction
         
-        if gateway_response:
-            payment.gateway_response = gateway_response
-        
-        if new_status == Payment.PaymentStatus.COMPLETED:
-            payment.paid_at = timezone.now()
-        
-        payment.save()
-        return payment
+        with transaction.atomic():
+            # Lock the payment row
+            locked_payment = Payment.objects.select_for_update().get(id=payment.id)
+            
+            # Skip if already in target status (idempotency)
+            if locked_payment.status == new_status:
+                return locked_payment
+            
+            locked_payment.status = new_status
+            
+            if gateway_response:
+                locked_payment.gateway_response = gateway_response
+            
+            if new_status == Payment.PaymentStatus.COMPLETED:
+                locked_payment.paid_at = timezone.now()
+            
+            locked_payment.save()
+            
+            # Update original object
+            payment.status = locked_payment.status
+            payment.gateway_response = locked_payment.gateway_response
+            payment.paid_at = locked_payment.paid_at
+            
+            return locked_payment
 
     def mark_failed(
         self,
@@ -87,12 +105,27 @@ class PaymentRepository:
         error_code: str,
         error_message: str
     ) -> Payment:
-        """Mark payment as failed."""
-        payment.status = Payment.PaymentStatus.FAILED
-        payment.error_code = error_code
-        payment.error_message = error_message
-        payment.save()
-        return payment
+        """Mark payment as failed with row locking."""
+        from django.db import transaction
+        
+        with transaction.atomic():
+            locked_payment = Payment.objects.select_for_update().get(id=payment.id)
+            
+            # Don't overwrite completed status
+            if locked_payment.status == Payment.PaymentStatus.COMPLETED:
+                return locked_payment
+            
+            locked_payment.status = Payment.PaymentStatus.FAILED
+            locked_payment.error_code = error_code
+            locked_payment.error_message = error_message
+            locked_payment.save()
+            
+            # Update original object
+            payment.status = locked_payment.status
+            payment.error_code = locked_payment.error_code
+            payment.error_message = locked_payment.error_message
+            
+            return locked_payment
 
     def get_gateway_by_id(self, gateway_id: UUID) -> Optional[PaymentGateway]:
         """Get gateway by ID."""

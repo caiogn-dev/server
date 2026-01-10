@@ -92,8 +92,20 @@ class MercadoPagoService:
             True if signature is valid, False otherwise
         """
         if not self.webhook_secret:
-            logger.warning("Webhook secret not configured, skipping signature validation")
-            return True  # Allow if not configured (for development)
+            # In production, fail closed - reject webhooks without secret configured
+            is_production = not getattr(settings, 'DEBUG', True)
+            if is_production:
+                logger.error(
+                    "SECURITY: Webhook secret not configured in production! "
+                    "Set MERCADO_PAGO_WEBHOOK_SECRET environment variable."
+                )
+                return False
+            else:
+                logger.warning(
+                    "Webhook secret not configured, skipping signature validation. "
+                    "This is only acceptable in development mode."
+                )
+                return True
         
         if not x_signature:
             logger.warning("No x-signature header provided")

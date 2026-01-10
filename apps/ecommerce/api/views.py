@@ -12,6 +12,7 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.conf import settings
 from django.core.cache import cache
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -28,6 +29,7 @@ from apps.orders.models import Order
 from apps.payments.services import PaymentService
 from apps.payments.models import Payment, PaymentGateway
 from apps.whatsapp.models import WhatsAppAccount
+from apps.core.utils import validate_cpf
 from .serializers import (
     ProductSerializer,
     CartSerializer,
@@ -181,7 +183,9 @@ class CartViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['post'])
     def add_item(self, request):
-        """Add item to cart"""
+        """Add item to cart with atomic quantity increment"""
+        from django.db.models import F
+        
         serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -191,6 +195,7 @@ class CartViewSet(viewsets.GenericViewSet):
         product = get_object_or_404(Product, id=product_id, is_active=True)
         cart = self.get_cart(request)
         
+        # Use get_or_create with atomic increment to prevent race conditions
         cart_item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
@@ -198,8 +203,11 @@ class CartViewSet(viewsets.GenericViewSet):
         )
         
         if not created:
-            cart_item.quantity += quantity
-            cart_item.save()
+            # Atomic increment using F() expression
+            CartItem.objects.filter(id=cart_item.id).update(
+                quantity=F('quantity') + quantity
+            )
+            cart_item.refresh_from_db()
         
         # Trigger webhook for cart update
         self._notify_cart_update(cart, 'cart_updated')
@@ -422,8 +430,73 @@ class CheckoutViewSet(viewsets.GenericViewSet):
 
         return default_fee
 
+    def _validate_and_reserve_stock(self, cart: Cart) -> tuple[bool, list]:
+        """
+        Validate and atomically reserve stock for all cart items.
+        Uses select_for_update to prevent race conditions.
+        
+        Returns:
+            tuple: (success: bool, insufficient_stock: list)
+            - If success is True, stock has been decremented
+            - If success is False, insufficient_stock contains items that failed
+        """
+        from django.db.models import F
+        
+        insufficient_stock = []
+        cart_items = list(cart.items.select_related('product').all())
+        
+        # Get product IDs and lock them for update (prevents concurrent modifications)
+        product_ids = [item.product_id for item in cart_items]
+        
+        # Lock products in consistent order to prevent deadlocks
+        locked_products = {
+            p.id: p for p in Product.objects.filter(
+                id__in=product_ids
+            ).select_for_update(nowait=False).order_by('id')
+        }
+        
+        # First pass: validate all stock
+        for item in cart_items:
+            product = locked_products.get(item.product_id)
+            if not product or product.stock_quantity < item.quantity:
+                insufficient_stock.append({
+                    'product_id': str(item.product_id),
+                    'product_name': item.product.name,
+                    'requested': item.quantity,
+                    'available': product.stock_quantity if product else 0,
+                })
+        
+        # If any item has insufficient stock, don't decrement anything
+        if insufficient_stock:
+            return False, insufficient_stock
+        
+        # Second pass: decrement all stock atomically
+        for item in cart_items:
+            updated = Product.objects.filter(
+                id=item.product_id,
+                stock_quantity__gte=item.quantity
+            ).update(
+                stock_quantity=F('stock_quantity') - item.quantity,
+                updated_at=timezone.now()
+            )
+            
+            # Double-check update succeeded (race condition safety)
+            if updated == 0:
+                # This shouldn't happen due to select_for_update, but handle it
+                product = locked_products.get(item.product_id)
+                insufficient_stock.append({
+                    'product_id': str(item.product_id),
+                    'product_name': item.product.name,
+                    'requested': item.quantity,
+                    'available': product.stock_quantity if product else 0,
+                })
+                # Note: Some stock may have been decremented - transaction will rollback
+                return False, insufficient_stock
+        
+        return True, []
+
     def _create_order_from_cart(self, cart: Cart, data: dict, request) -> Order:
-        """Create an Order from the current cart."""
+        """Create an Order from the current cart (stock already reserved)."""
         account = self._get_default_account()
         order_repo = OrderRepository()
 
@@ -571,10 +644,34 @@ class CheckoutViewSet(viewsets.GenericViewSet):
         if not customer_cpf and hasattr(request.user, 'profile'):
             customer_cpf = getattr(request.user.profile, 'cpf', '') or ''
         
+        # Validate CPF for payment methods that require it (PIX, Boleto)
+        if payment_method in ['pix', 'boleto']:
+            if not customer_cpf:
+                return Response(
+                    {'error': 'CPF é obrigatório para pagamento via PIX ou Boleto'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not validate_cpf(customer_cpf):
+                return Response(
+                    {'error': 'CPF inválido. Por favor, verifique o número informado.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
         payment_result = None
         payment_error = None
         
         with transaction.atomic():
+            # Validate and reserve stock atomically (with row locking)
+            stock_success, insufficient_stock = self._validate_and_reserve_stock(cart)
+            if not stock_success:
+                return Response(
+                    {
+                        'error': 'Alguns produtos não possuem estoque suficiente',
+                        'insufficient_stock': insufficient_stock
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
             # Create checkout
             checkout = Checkout.objects.create(
                 cart=cart,
@@ -593,7 +690,7 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                 scheduled_time_slot=data.get('scheduled_time_slot', ''),
             )
 
-            # Create order for dashboard tracking
+            # Create order for dashboard tracking (stock already reserved)
             order = self._create_order_from_cart(cart, data, request)
             order.subtotal = subtotal_amount
             order.discount = discount_amount
@@ -607,6 +704,20 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             # Update cart with phone number for automation
             cart.phone_number = data['customer_phone']
             cart.save(update_fields=['phone_number'])
+            
+            # Increment coupon usage atomically (if coupon was used)
+            if coupon_code and discount_amount > 0:
+                try:
+                    coupon = Coupon.objects.get(code__iexact=coupon_code)
+                    if not coupon.increment_usage():
+                        # Usage limit reached during checkout (race condition)
+                        # Transaction will rollback, stock will be restored
+                        return Response(
+                            {'error': 'Cupom atingiu o limite de uso'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except Coupon.DoesNotExist:
+                    pass  # Coupon was deleted during checkout, continue anyway
             
             # Create Mercado Pago payment based on method
             mp_service = MercadoPagoService()
@@ -1021,7 +1132,7 @@ class WebhookViewSet(viewsets.GenericViewSet):
 
     @action(detail=False, methods=['post'], url_path='mercado_pago')
     def mercado_pago(self, request):
-        """Handle Mercado Pago webhook notifications"""
+        """Handle Mercado Pago webhook notifications with idempotency"""
         logger.info(f"Received MP webhook: {request.data}")
         
         mp_service = MercadoPagoService()
@@ -1041,33 +1152,63 @@ class WebhookViewSet(viewsets.GenericViewSet):
         result = mp_service.process_webhook(request.data)
         
         if result.get('success') and result.get('external_reference'):
-            # Find checkout by external reference (session_token)
-            try:
-                checkout = Checkout.objects.get(
-                    session_token=result['external_reference']
-                )
-                
-                payment_status = result.get('status')
-                if payment_status == 'approved':
-                    checkout.payment_status = 'completed'
-                    checkout.mercado_pago_payment_id = result.get('payment_id')
-                    checkout.mark_completed()
-                    self._sync_payment_status(checkout, result)
-                    self._notify_payment_confirmed(checkout)
+            # Use transaction with select_for_update to prevent race conditions
+            with transaction.atomic():
+                try:
+                    # Lock the checkout row to prevent concurrent updates
+                    checkout = Checkout.objects.select_for_update(nowait=False).get(
+                        session_token=result['external_reference']
+                    )
                     
-                elif payment_status in ['pending', 'in_process']:
-                    checkout.payment_status = 'processing'
-                    checkout.save()
-                    self._sync_payment_status(checkout, result)
+                    payment_status = result.get('status')
+                    mp_payment_id = str(result.get('payment_id', ''))
                     
-                elif payment_status in ['rejected', 'cancelled']:
-                    checkout.payment_status = 'failed'
-                    checkout.save()
-                    self._sync_payment_status(checkout, result)
-                    self._notify_payment_failed(checkout)
+                    # Idempotency check: skip if already processed with same payment_id
+                    if checkout.mercado_pago_payment_id == mp_payment_id:
+                        if checkout.payment_status == 'completed' and payment_status == 'approved':
+                            logger.info(f"Webhook already processed for checkout {checkout.id}")
+                            return Response({'status': 'ok', 'message': 'already_processed'})
                     
-            except Checkout.DoesNotExist:
-                logger.warning(f"Checkout not found for ref: {result.get('external_reference')}")
+                    if payment_status == 'approved':
+                        # Only process if not already completed
+                        if checkout.payment_status != 'completed':
+                            checkout.payment_status = 'completed'
+                            checkout.mercado_pago_payment_id = mp_payment_id
+                            checkout.completed_at = timezone.now()
+                            checkout.save(update_fields=[
+                                'payment_status', 'mercado_pago_payment_id', 
+                                'completed_at', 'updated_at'
+                            ])
+                            self._sync_payment_status(checkout, result)
+                            # Notify outside transaction to avoid blocking
+                            transaction.on_commit(
+                                lambda c=checkout: self._notify_payment_confirmed(c)
+                            )
+                        
+                    elif payment_status in ['pending', 'in_process']:
+                        if checkout.payment_status not in ['completed', 'failed']:
+                            checkout.payment_status = 'processing'
+                            checkout.mercado_pago_payment_id = mp_payment_id
+                            checkout.save(update_fields=[
+                                'payment_status', 'mercado_pago_payment_id', 'updated_at'
+                            ])
+                            self._sync_payment_status(checkout, result)
+                        
+                    elif payment_status in ['rejected', 'cancelled']:
+                        # Only mark as failed if not already completed
+                        if checkout.payment_status != 'completed':
+                            checkout.payment_status = 'failed'
+                            checkout.mercado_pago_payment_id = mp_payment_id
+                            checkout.save(update_fields=[
+                                'payment_status', 'mercado_pago_payment_id', 'updated_at'
+                            ])
+                            self._sync_payment_status(checkout, result)
+                            transaction.on_commit(
+                                lambda c=checkout: self._notify_payment_failed(c)
+                            )
+                        
+                except Checkout.DoesNotExist:
+                    logger.warning(f"Checkout not found for ref: {result.get('external_reference')}")
         
         return Response({'status': 'ok'})
 

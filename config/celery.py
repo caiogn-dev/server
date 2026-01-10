@@ -2,7 +2,10 @@
 Celery configuration for WhatsApp Business Platform.
 """
 import os
+import logging
 from celery import Celery
+
+logger = logging.getLogger(__name__)
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
 
@@ -63,4 +66,5 @@ app.conf.beat_schedule = {
 
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):
-    print(f'Request: {self.request!r}')
+    """Debug task for testing Celery configuration."""
+    logger.debug(f'Request: {self.request!r}')

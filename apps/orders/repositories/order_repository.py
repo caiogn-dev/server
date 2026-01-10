@@ -117,34 +117,55 @@ class OrderRepository:
         actor=None,
         description: str = ''
     ) -> Order:
-        """Update order status."""
-        old_status = order.status
-        order.status = new_status
+        """
+        Update order status with row locking to prevent race conditions.
+        Uses select_for_update to ensure atomic status transitions.
+        """
+        from django.db import transaction
         
-        now = timezone.now()
-        if new_status == Order.OrderStatus.CONFIRMED:
-            order.confirmed_at = now
-        elif new_status == Order.OrderStatus.PAID:
-            order.paid_at = now
-        elif new_status == Order.OrderStatus.SHIPPED:
-            order.shipped_at = now
-        elif new_status == Order.OrderStatus.DELIVERED:
-            order.delivered_at = now
-        elif new_status == Order.OrderStatus.CANCELLED:
-            order.cancelled_at = now
-        
-        order.save()
-        
-        self._create_event(
-            order=order,
-            event_type=OrderEvent.EventType.STATUS_CHANGED,
-            description=description or f"Status changed from {old_status} to {new_status}",
-            old_status=old_status,
-            new_status=new_status,
-            actor=actor
-        )
-        
-        return order
+        with transaction.atomic():
+            # Lock the order row to prevent concurrent updates
+            locked_order = Order.objects.select_for_update().get(id=order.id)
+            old_status = locked_order.status
+            
+            # Skip if already in target status (idempotency)
+            if old_status == new_status:
+                return locked_order
+            
+            locked_order.status = new_status
+            
+            now = timezone.now()
+            if new_status == Order.OrderStatus.CONFIRMED:
+                locked_order.confirmed_at = now
+            elif new_status == Order.OrderStatus.PAID:
+                locked_order.paid_at = now
+            elif new_status == Order.OrderStatus.SHIPPED:
+                locked_order.shipped_at = now
+            elif new_status == Order.OrderStatus.DELIVERED:
+                locked_order.delivered_at = now
+            elif new_status == Order.OrderStatus.CANCELLED:
+                locked_order.cancelled_at = now
+            
+            locked_order.save()
+            
+            self._create_event(
+                order=locked_order,
+                event_type=OrderEvent.EventType.STATUS_CHANGED,
+                description=description or f"Status changed from {old_status} to {new_status}",
+                old_status=old_status,
+                new_status=new_status,
+                actor=actor
+            )
+            
+            # Update the original order object to reflect changes
+            order.status = locked_order.status
+            order.confirmed_at = locked_order.confirmed_at
+            order.paid_at = locked_order.paid_at
+            order.shipped_at = locked_order.shipped_at
+            order.delivered_at = locked_order.delivered_at
+            order.cancelled_at = locked_order.cancelled_at
+            
+            return locked_order
 
     def add_item(self, order: Order, **item_data) -> OrderItem:
         """Add item to order."""

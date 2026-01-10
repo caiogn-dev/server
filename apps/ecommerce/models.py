@@ -283,6 +283,32 @@ class Coupon(models.Model):
         
         return min(discount, total)
 
+    def increment_usage(self) -> bool:
+        """
+        Atomically increment usage count with race condition protection.
+        Returns True if increment was successful, False if usage limit reached.
+        """
+        from django.db.models import F
+        
+        # Use atomic update with condition to prevent race conditions
+        if self.usage_limit:
+            # Only increment if under limit
+            updated = Coupon.objects.filter(
+                id=self.id,
+                used_count__lt=self.usage_limit
+            ).update(
+                used_count=F('used_count') + 1,
+                updated_at=timezone.now()
+            )
+            return updated > 0
+        else:
+            # No limit, just increment
+            Coupon.objects.filter(id=self.id).update(
+                used_count=F('used_count') + 1,
+                updated_at=timezone.now()
+            )
+            return True
+
 
 class DeliveryZone(models.Model):
     """Delivery zones with fees (ZIP range or distance-based)."""
