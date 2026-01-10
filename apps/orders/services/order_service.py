@@ -6,6 +6,8 @@ from typing import Optional, List, Dict, Any
 from uuid import UUID
 from datetime import datetime
 from django.utils import timezone
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from apps.core.exceptions import NotFoundError, ValidationError
 from apps.whatsapp.services import MessageService
 from apps.whatsapp.repositories import WhatsAppAccountRepository
@@ -22,6 +24,41 @@ class OrderService:
     def __init__(self):
         self.repo = OrderRepository()
         self.account_repo = WhatsAppAccountRepository()
+
+    def _send_order_notification(
+        self,
+        order: Order,
+        status: str,
+        previous_status: str = None,
+        tracking_code: str = None,
+        carrier: str = None
+    ) -> None:
+        """Send WebSocket notification for order status change."""
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                return
+            
+            message = {
+                'type': 'order_status',
+                'order_id': str(order.id),
+                'order_number': order.order_number,
+                'status': status,
+                'previous_status': previous_status,
+                'tracking_code': tracking_code,
+                'carrier': carrier,
+                'timestamp': timezone.now().isoformat(),
+            }
+            
+            # Send to order-specific group
+            async_to_sync(channel_layer.group_send)(
+                f"order_{order.id}",
+                message
+            )
+            
+            logger.debug(f"Order notification sent for order {order.order_number}")
+        except Exception as e:
+            logger.warning(f"Failed to send order notification: {str(e)}")
 
     def create_order(
         self,
@@ -125,6 +162,7 @@ class OrderService:
     def confirm_order(self, order_id: str, actor=None) -> Order:
         """Confirm an order."""
         order = self.get_order(order_id)
+        previous_status = order.status
         
         if order.status != Order.OrderStatus.PENDING:
             raise ValidationError(
@@ -139,6 +177,7 @@ class OrderService:
         )
         
         self._notify_customer_order_confirmed(order)
+        self._send_order_notification(order, 'confirmed', previous_status)
         
         logger.info(f"Order confirmed: {order.order_number}")
         return order
@@ -146,6 +185,7 @@ class OrderService:
     def mark_awaiting_payment(self, order_id: str, actor=None) -> Order:
         """Mark order as awaiting payment."""
         order = self.get_order(order_id)
+        previous_status = order.status
         
         if order.status not in [Order.OrderStatus.PENDING, Order.OrderStatus.CONFIRMED]:
             raise ValidationError(
@@ -160,6 +200,7 @@ class OrderService:
         )
         
         self._notify_customer_payment_pending(order)
+        self._send_order_notification(order, 'awaiting_payment', previous_status)
         
         logger.info(f"Order awaiting payment: {order.order_number}")
         return order
@@ -172,6 +213,7 @@ class OrderService:
     ) -> Order:
         """Mark order as paid."""
         order = self.get_order(order_id)
+        previous_status = order.status
         
         if order.status not in [
             Order.OrderStatus.PENDING,
@@ -195,6 +237,7 @@ class OrderService:
         )
         
         self._notify_customer_payment_confirmed(order)
+        self._send_order_notification(order, 'paid', previous_status)
         
         logger.info(f"Order paid: {order.order_number}")
         return order
@@ -208,6 +251,7 @@ class OrderService:
     ) -> Order:
         """Mark order as shipped."""
         order = self.get_order(order_id)
+        previous_status = order.status
         
         if order.status != Order.OrderStatus.PAID:
             raise ValidationError(
@@ -229,6 +273,7 @@ class OrderService:
         )
         
         self._notify_customer_order_shipped(order, tracking_code, carrier)
+        self._send_order_notification(order, 'shipped', previous_status, tracking_code, carrier)
         
         logger.info(f"Order shipped: {order.order_number}")
         return order
@@ -236,6 +281,7 @@ class OrderService:
     def mark_delivered(self, order_id: str, actor=None) -> Order:
         """Mark order as delivered."""
         order = self.get_order(order_id)
+        previous_status = order.status
         
         if order.status != Order.OrderStatus.SHIPPED:
             raise ValidationError(
@@ -250,6 +296,7 @@ class OrderService:
         )
         
         self._notify_customer_order_delivered(order)
+        self._send_order_notification(order, 'delivered', previous_status)
         
         logger.info(f"Order delivered: {order.order_number}")
         return order
@@ -262,6 +309,7 @@ class OrderService:
     ) -> Order:
         """Cancel an order."""
         order = self.get_order(order_id)
+        previous_status = order.status
         
         if order.status in [
             Order.OrderStatus.SHIPPED,
@@ -275,6 +323,7 @@ class OrderService:
         order = self.repo.cancel(order, reason, actor)
         
         self._notify_customer_order_cancelled(order, reason)
+        self._send_order_notification(order, 'cancelled', previous_status)
         
         logger.info(f"Order cancelled: {order.order_number}")
         return order

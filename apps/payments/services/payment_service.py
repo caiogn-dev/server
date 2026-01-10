@@ -5,6 +5,8 @@ import logging
 from typing import Optional, List, Dict, Any
 from uuid import UUID
 from django.utils import timezone
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 from apps.core.exceptions import NotFoundError, ValidationError, PaymentGatewayError
 from apps.core.utils import generate_idempotency_key
 from apps.orders.models import Order
@@ -20,6 +22,41 @@ class PaymentService:
 
     def __init__(self):
         self.repo = PaymentRepository()
+
+    def _send_payment_notification(
+        self,
+        payment: Payment,
+        status: str,
+        error_code: str = None,
+        error_message: str = None
+    ) -> None:
+        """Send WebSocket notification for payment status change."""
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer or not payment.order:
+                return
+            
+            message = {
+                'type': 'payment_status',
+                'order_id': str(payment.order.id),
+                'payment_id': str(payment.id),
+                'status': status,
+                'payment_method': payment.payment_method,
+                'amount': float(payment.amount),
+                'error_code': error_code,
+                'error_message': error_message,
+                'timestamp': timezone.now().isoformat(),
+            }
+            
+            # Send to order-specific group
+            async_to_sync(channel_layer.group_send)(
+                f"payment_order_{payment.order.id}",
+                message
+            )
+            
+            logger.debug(f"Payment notification sent for order {payment.order.id}")
+        except Exception as e:
+            logger.warning(f"Failed to send payment notification: {str(e)}")
 
     def create_payment(
         self,
@@ -138,6 +175,9 @@ class PaymentService:
         except Exception as e:
             logger.error(f"Failed to update order status: {str(e)}")
         
+        # Send WebSocket notification
+        self._send_payment_notification(payment, 'completed')
+        
         logger.info(f"Payment confirmed: {payment.payment_id}")
         return payment
 
@@ -156,6 +196,9 @@ class PaymentService:
             payment.save(update_fields=['gateway_response'])
         
         payment = self.repo.mark_failed(payment, error_code, error_message)
+        
+        # Send WebSocket notification
+        self._send_payment_notification(payment, 'failed', error_code, error_message)
         
         logger.warning(f"Payment failed: {payment.payment_id} - {error_code}")
         return payment
@@ -176,6 +219,9 @@ class PaymentService:
             payment,
             Payment.PaymentStatus.CANCELLED
         )
+        
+        # Send WebSocket notification
+        self._send_payment_notification(payment, 'cancelled')
         
         logger.info(f"Payment cancelled: {payment.payment_id}")
         return payment
