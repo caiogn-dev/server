@@ -170,6 +170,14 @@ class Checkout(models.Model):
     shipping_state = models.CharField(max_length=50, blank=True)
     shipping_zip_code = models.CharField(max_length=20, blank=True)
     
+    # Delivery scheduling
+    shipping_method = models.CharField(max_length=20, default='delivery', choices=[
+        ('delivery', 'Entrega'),
+        ('pickup', 'Retirada'),
+    ])
+    scheduled_date = models.DateField(blank=True, null=True)
+    scheduled_time_slot = models.CharField(max_length=50, blank=True, null=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -195,3 +203,120 @@ class Checkout(models.Model):
         self.payment_status = 'completed'
         self.completed_at = timezone.now()
         self.save(update_fields=['payment_status', 'completed_at', 'updated_at'])
+
+
+class Wishlist(models.Model):
+    """User's wishlist/favorites"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='wishlist'
+    )
+    products = models.ManyToManyField(Product, related_name='wishlisted_by', blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Wishlist'
+        verbose_name_plural = 'Wishlists'
+
+    def __str__(self):
+        return f"Wishlist of {self.user.email}"
+
+
+class Coupon(models.Model):
+    """Discount coupons"""
+    DISCOUNT_TYPE_CHOICES = [
+        ('percentage', 'Percentage'),
+        ('fixed', 'Fixed Amount'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(max_length=50, unique=True, db_index=True)
+    description = models.TextField(blank=True)
+    discount_type = models.CharField(max_length=20, choices=DISCOUNT_TYPE_CHOICES, default='percentage')
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2)
+    min_purchase = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    max_discount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    usage_limit = models.PositiveIntegerField(null=True, blank=True)
+    used_count = models.PositiveIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    valid_from = models.DateTimeField()
+    valid_until = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Coupon'
+        verbose_name_plural = 'Coupons'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.code} - {self.discount_value}{'%' if self.discount_type == 'percentage' else ' R$'}"
+
+    def is_valid(self):
+        """Check if coupon is valid"""
+        now = timezone.now()
+        if not self.is_active:
+            return False
+        if now < self.valid_from or now > self.valid_until:
+            return False
+        if self.usage_limit and self.used_count >= self.usage_limit:
+            return False
+        return True
+
+    def calculate_discount(self, total):
+        """Calculate discount for a given total"""
+        if not self.is_valid():
+            return Decimal('0.00')
+        if total < self.min_purchase:
+            return Decimal('0.00')
+        
+        if self.discount_type == 'percentage':
+            discount = total * (self.discount_value / 100)
+        else:
+            discount = self.discount_value
+        
+        if self.max_discount:
+            discount = min(discount, self.max_discount)
+        
+        return min(discount, total)
+
+
+class DeliveryZone(models.Model):
+    """Delivery zones with fees"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)
+    zip_code_start = models.CharField(max_length=8)
+    zip_code_end = models.CharField(max_length=8)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    estimated_days = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Delivery Zone'
+        verbose_name_plural = 'Delivery Zones'
+        ordering = ['zip_code_start']
+
+    def __str__(self):
+        return f"{self.name} ({self.zip_code_start}-{self.zip_code_end}) - R$ {self.delivery_fee}"
+
+    @classmethod
+    def get_fee_for_zip(cls, zip_code):
+        """Get delivery fee for a zip code"""
+        clean_zip = ''.join(filter(str.isdigit, str(zip_code)))[:8]
+        zone = cls.objects.filter(
+            zip_code_start__lte=clean_zip,
+            zip_code_end__gte=clean_zip,
+            is_active=True
+        ).first()
+        if zone:
+            return {
+                'fee': zone.delivery_fee,
+                'estimated_days': zone.estimated_days,
+                'zone_name': zone.name
+            }
+        return None

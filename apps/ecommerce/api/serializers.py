@@ -2,23 +2,30 @@
 E-commerce API serializers - compatible with Pastita frontend.
 """
 from rest_framework import serializers
-from ..models import Product, Cart, CartItem, Checkout
+from ..models import Product, Cart, CartItem, Checkout, Wishlist, Coupon, DeliveryZone
 
 
 class ProductSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    is_favorited = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
         fields = [
             'id', 'name', 'description', 'price', 'stock_quantity',
             'image', 'image_url', 'category', 'sku', 'is_active',
-            'metadata', 'created_at', 'updated_at'
+            'metadata', 'created_at', 'updated_at', 'is_favorited'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_image_url(self, obj):
         return obj.get_image_url()
+
+    def get_is_favorited(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated:
+            return obj.wishlisted_by.filter(user=request.user).exists()
+        return False
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -113,3 +120,60 @@ class CreateCheckoutSerializer(serializers.Serializer):
     shipping_city = serializers.CharField(max_length=100, required=False, allow_blank=True)
     shipping_state = serializers.CharField(max_length=50, required=False, allow_blank=True)
     shipping_zip_code = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    shipping_method = serializers.ChoiceField(
+        choices=[('delivery', 'Entrega'), ('pickup', 'Retirada')],
+        default='delivery',
+        required=False
+    )
+    scheduled_date = serializers.DateField(required=False, allow_null=True)
+    scheduled_time_slot = serializers.CharField(max_length=50, required=False, allow_blank=True, allow_null=True)
+
+
+class WishlistSerializer(serializers.ModelSerializer):
+    products = ProductSerializer(many=True, read_only=True)
+    product_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Wishlist
+        fields = ['id', 'products', 'product_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_product_count(self, obj):
+        return obj.products.count()
+
+
+class CouponSerializer(serializers.ModelSerializer):
+    is_valid_now = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Coupon
+        fields = [
+            'id', 'code', 'description', 'discount_type', 'discount_value',
+            'min_purchase', 'max_discount', 'usage_limit', 'used_count',
+            'is_active', 'is_valid_now', 'valid_from', 'valid_until',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'used_count', 'created_at', 'updated_at']
+
+    def get_is_valid_now(self, obj):
+        return obj.is_valid()
+
+
+class ValidateCouponSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=50)
+    total = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
+class DeliveryFeeSerializer(serializers.Serializer):
+    zip_code = serializers.CharField(max_length=10)
+
+
+class DeliveryZoneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeliveryZone
+        fields = [
+            'id', 'name', 'zip_code_start', 'zip_code_end', 
+            'delivery_fee', 'estimated_days', 'is_active',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']

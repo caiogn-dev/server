@@ -62,6 +62,7 @@ class Payment(BaseModel):
         DEBIT_CARD = 'debit_card', 'Debit Card'
         PIX = 'pix', 'PIX'
         BOLETO = 'boleto', 'Boleto'
+        CASH = 'cash', 'Dinheiro'
         BANK_TRANSFER = 'bank_transfer', 'Bank Transfer'
         WALLET = 'wallet', 'Digital Wallet'
         OTHER = 'other', 'Other'

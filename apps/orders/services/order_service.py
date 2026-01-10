@@ -9,6 +9,7 @@ from django.utils import timezone
 from apps.core.exceptions import NotFoundError, ValidationError
 from apps.whatsapp.services import MessageService
 from apps.whatsapp.repositories import WhatsAppAccountRepository
+from apps.notifications.services import email_service
 from ..models import Order, OrderItem, OrderEvent
 from ..repositories import OrderRepository
 
@@ -381,6 +382,7 @@ class OrderService:
 
     def _notify_customer_order_confirmed(self, order: Order) -> None:
         """Notify customer that order is confirmed."""
+        # Send WhatsApp notification
         try:
             message_service = MessageService()
             message_service.send_text_message(
@@ -392,7 +394,14 @@ class OrderService:
                 metadata={'order_id': str(order.id), 'notification_type': 'order_confirmed'}
             )
         except Exception as e:
-            logger.error(f"Failed to notify customer: {str(e)}")
+            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        
+        # Send email notification
+        if order.customer_email:
+            try:
+                email_service.send_order_confirmation(order, order.customer_email)
+            except Exception as e:
+                logger.error(f"Failed to send order confirmation email: {str(e)}")
 
     def _notify_customer_payment_pending(self, order: Order) -> None:
         """Notify customer about pending payment."""
@@ -411,6 +420,7 @@ class OrderService:
 
     def _notify_customer_payment_confirmed(self, order: Order) -> None:
         """Notify customer that payment is confirmed."""
+        # Send WhatsApp notification
         try:
             message_service = MessageService()
             message_service.send_text_message(
@@ -423,7 +433,14 @@ class OrderService:
                 metadata={'order_id': str(order.id), 'notification_type': 'payment_confirmed'}
             )
         except Exception as e:
-            logger.error(f"Failed to notify customer: {str(e)}")
+            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        
+        # Send email notification
+        if order.customer_email:
+            try:
+                email_service.send_payment_confirmed(order, order.customer_email)
+            except Exception as e:
+                logger.error(f"Failed to send payment confirmation email: {str(e)}")
 
     def _notify_customer_order_shipped(
         self,
@@ -432,6 +449,7 @@ class OrderService:
         carrier: str
     ) -> None:
         """Notify customer that order is shipped."""
+        # Send WhatsApp notification
         try:
             message_service = MessageService()
             tracking_info = ""
@@ -448,10 +466,18 @@ class OrderService:
                 metadata={'order_id': str(order.id), 'notification_type': 'order_shipped'}
             )
         except Exception as e:
-            logger.error(f"Failed to notify customer: {str(e)}")
+            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        
+        # Send email notification
+        if order.customer_email:
+            try:
+                email_service.send_order_shipped(order, order.customer_email, tracking_code)
+            except Exception as e:
+                logger.error(f"Failed to send order shipped email: {str(e)}")
 
     def _notify_customer_order_delivered(self, order: Order) -> None:
         """Notify customer that order is delivered."""
+        # Send WhatsApp notification
         try:
             message_service = MessageService()
             message_service.send_text_message(
@@ -463,7 +489,14 @@ class OrderService:
                 metadata={'order_id': str(order.id), 'notification_type': 'order_delivered'}
             )
         except Exception as e:
-            logger.error(f"Failed to notify customer: {str(e)}")
+            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        
+        # Send email notification
+        if order.customer_email:
+            try:
+                email_service.send_order_delivered(order, order.customer_email)
+            except Exception as e:
+                logger.error(f"Failed to send order delivered email: {str(e)}")
 
     def _notify_customer_order_cancelled(self, order: Order, reason: str) -> None:
         """Notify customer that order is cancelled."""

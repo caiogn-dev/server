@@ -3,9 +3,12 @@ Mercado Pago integration service for e-commerce.
 """
 import logging
 import uuid
+import hmac
+import hashlib
 from decimal import Decimal
 from typing import Optional, Dict, Any
 from django.conf import settings
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,7 @@ class MercadoPagoService:
         self.backend_url = getattr(settings, 'BACKEND_URL', 'http://localhost:8000')
         self.frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
         self.statement_descriptor = getattr(settings, 'MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'PASTITA')
+        self.webhook_secret = getattr(settings, 'MERCADO_PAGO_WEBHOOK_SECRET', '')
         
         if HAS_MERCADOPAGO and self.access_token:
             self.sdk = mercadopago.SDK(self.access_token)
@@ -34,6 +38,75 @@ class MercadoPagoService:
     def is_configured(self) -> bool:
         """Check if Mercado Pago is properly configured"""
         return bool(self.sdk and self.access_token)
+
+    def verify_webhook_signature(
+        self,
+        x_signature: str,
+        x_request_id: str,
+        data_id: str,
+    ) -> bool:
+        """
+        Verify Mercado Pago webhook signature.
+        
+        The signature is calculated using HMAC-SHA256 with the webhook secret.
+        The template is: id:[data.id];request-id:[x-request-id];ts:[ts];
+        
+        Args:
+            x_signature: The x-signature header from the webhook request
+            x_request_id: The x-request-id header from the webhook request
+            data_id: The data.id from the webhook payload
+            
+        Returns:
+            True if signature is valid, False otherwise
+        """
+        if not self.webhook_secret:
+            logger.warning("Webhook secret not configured, skipping signature validation")
+            return True  # Allow if not configured (for development)
+        
+        if not x_signature:
+            logger.warning("No x-signature header provided")
+            return False
+        
+        try:
+            # Parse the x-signature header
+            # Format: ts=timestamp,v1=signature
+            parts = {}
+            for part in x_signature.split(','):
+                if '=' in part:
+                    key, value = part.split('=', 1)
+                    parts[key.strip()] = value.strip()
+            
+            ts = parts.get('ts')
+            v1 = parts.get('v1')
+            
+            if not ts or not v1:
+                logger.warning(f"Invalid x-signature format: {x_signature}")
+                return False
+            
+            # Build the manifest string
+            # Template: id:[data.id];request-id:[x-request-id];ts:[ts];
+            manifest = f"id:{data_id};request-id:{x_request_id};ts:{ts};"
+            
+            # Calculate HMAC-SHA256
+            expected_signature = hmac.new(
+                self.webhook_secret.encode('utf-8'),
+                manifest.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Compare signatures
+            is_valid = hmac.compare_digest(expected_signature, v1)
+            
+            if not is_valid:
+                logger.warning(f"Webhook signature mismatch. Expected: {expected_signature}, Got: {v1}")
+            else:
+                logger.debug(f"Webhook signature verified successfully for data_id: {data_id}")
+            
+            return is_valid
+            
+        except Exception as e:
+            logger.exception(f"Error verifying webhook signature: {e}")
+            return False
 
     def create_preference(
         self,
@@ -205,4 +278,302 @@ class MercadoPagoService:
             return {'success': False, 'error': 'Failed to get merchant order'}
         except Exception as e:
             logger.exception(f"Error processing merchant order {order_id}: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def create_pix_payment(
+        self,
+        checkout_id: str,
+        amount: float,
+        customer_email: str,
+        customer_name: str,
+        customer_cpf: str,
+        description: str = 'Pedido Pastita',
+        external_reference: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a PIX payment directly (not a preference).
+        This generates the QR code immediately.
+        
+        Args:
+            checkout_id: Internal checkout ID
+            amount: Amount to charge
+            customer_email: Customer email
+            customer_name: Customer full name
+            customer_cpf: Customer CPF (required for PIX)
+            description: Payment description
+            external_reference: External reference for tracking
+            
+        Returns:
+            Dict with payment_id, qr_code, qr_code_base64, status, etc.
+        """
+        if not self.is_configured():
+            logger.error("Mercado Pago not configured")
+            return {'success': False, 'error': 'Payment service not configured'}
+
+        # Clean CPF (remove formatting)
+        clean_cpf = ''.join(filter(str.isdigit, str(customer_cpf or '')))
+        
+        # Split name into first and last
+        name_parts = customer_name.split() if customer_name else ['Cliente']
+        first_name = name_parts[0] if name_parts else 'Cliente'
+        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+
+        # PIX expiration (30 minutes from now)
+        expiration = (datetime.utcnow() + timedelta(minutes=30)).isoformat() + 'Z'
+
+        payment_data = {
+            'transaction_amount': float(amount),
+            'description': description,
+            'payment_method_id': 'pix',
+            'payer': {
+                'email': customer_email,
+                'first_name': first_name,
+                'last_name': last_name,
+                'identification': {
+                    'type': 'CPF',
+                    'number': clean_cpf,
+                } if clean_cpf else None,
+            },
+            'external_reference': external_reference or str(checkout_id),
+            'notification_url': f'{self.backend_url}/api/v1/ecommerce/webhooks/mercado_pago/',
+            'date_of_expiration': expiration,
+        }
+
+        # Remove None identification if CPF not provided
+        if not clean_cpf:
+            del payment_data['payer']['identification']
+
+        try:
+            response = self.sdk.payment().create(payment_data)
+            result = response.get('response', {})
+            
+            if response.get('status') in [200, 201]:
+                # Extract PIX data from point_of_interaction
+                poi = result.get('point_of_interaction', {})
+                transaction_data = poi.get('transaction_data', {})
+                
+                logger.info(f"Created PIX payment {result.get('id')} for checkout {checkout_id}")
+                return {
+                    'success': True,
+                    'payment_id': result.get('id'),
+                    'status': result.get('status'),
+                    'status_detail': result.get('status_detail'),
+                    'qr_code': transaction_data.get('qr_code'),
+                    'qr_code_base64': transaction_data.get('qr_code_base64'),
+                    'ticket_url': transaction_data.get('ticket_url'),
+                    'transaction_amount': result.get('transaction_amount'),
+                    'date_of_expiration': result.get('date_of_expiration'),
+                    'external_reference': result.get('external_reference'),
+                }
+            else:
+                error_msg = result.get('message', 'Unknown error')
+                cause = result.get('cause', [])
+                if cause:
+                    error_details = [c.get('description', '') for c in cause if c.get('description')]
+                    if error_details:
+                        error_msg = '; '.join(error_details)
+                logger.error(f"Failed to create PIX payment: {response}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'status_code': response.get('status'),
+                }
+        except Exception as e:
+            logger.exception(f"Error creating PIX payment: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def create_boleto_payment(
+        self,
+        checkout_id: str,
+        amount: float,
+        customer_email: str,
+        customer_name: str,
+        customer_cpf: str,
+        description: str = 'Pedido Pastita',
+        external_reference: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a Boleto payment directly.
+        
+        Args:
+            checkout_id: Internal checkout ID
+            amount: Amount to charge
+            customer_email: Customer email
+            customer_name: Customer full name
+            customer_cpf: Customer CPF (required for Boleto)
+            description: Payment description
+            external_reference: External reference for tracking
+            
+        Returns:
+            Dict with payment_id, ticket_url, barcode, status, etc.
+        """
+        if not self.is_configured():
+            logger.error("Mercado Pago not configured")
+            return {'success': False, 'error': 'Payment service not configured'}
+
+        # Clean CPF
+        clean_cpf = ''.join(filter(str.isdigit, str(customer_cpf or '')))
+        
+        # Split name
+        name_parts = customer_name.split() if customer_name else ['Cliente']
+        first_name = name_parts[0] if name_parts else 'Cliente'
+        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+
+        # Boleto expiration (3 days from now)
+        expiration = (datetime.utcnow() + timedelta(days=3)).strftime('%Y-%m-%d')
+
+        payment_data = {
+            'transaction_amount': float(amount),
+            'description': description,
+            'payment_method_id': 'bolbradesco',
+            'payer': {
+                'email': customer_email,
+                'first_name': first_name,
+                'last_name': last_name,
+                'identification': {
+                    'type': 'CPF',
+                    'number': clean_cpf,
+                } if clean_cpf else None,
+            },
+            'external_reference': external_reference or str(checkout_id),
+            'notification_url': f'{self.backend_url}/api/v1/ecommerce/webhooks/mercado_pago/',
+            'date_of_expiration': expiration,
+        }
+
+        if not clean_cpf:
+            del payment_data['payer']['identification']
+
+        try:
+            response = self.sdk.payment().create(payment_data)
+            result = response.get('response', {})
+            
+            if response.get('status') in [200, 201]:
+                transaction_details = result.get('transaction_details', {})
+                
+                logger.info(f"Created Boleto payment {result.get('id')} for checkout {checkout_id}")
+                return {
+                    'success': True,
+                    'payment_id': result.get('id'),
+                    'status': result.get('status'),
+                    'status_detail': result.get('status_detail'),
+                    'ticket_url': transaction_details.get('external_resource_url'),
+                    'barcode': result.get('barcode', {}).get('content'),
+                    'transaction_amount': result.get('transaction_amount'),
+                    'date_of_expiration': result.get('date_of_expiration'),
+                    'external_reference': result.get('external_reference'),
+                }
+            else:
+                error_msg = result.get('message', 'Unknown error')
+                logger.error(f"Failed to create Boleto payment: {response}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'status_code': response.get('status'),
+                }
+        except Exception as e:
+            logger.exception(f"Error creating Boleto payment: {e}")
+            return {'success': False, 'error': str(e)}
+
+    def create_card_payment(
+        self,
+        checkout_id: str,
+        amount: float,
+        token: str,
+        payment_method_id: str,
+        installments: int,
+        customer_email: str,
+        customer_name: str,
+        customer_cpf: str,
+        issuer_id: Optional[str] = None,
+        description: str = 'Pedido Pastita',
+        external_reference: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Create a card payment using a token from the frontend.
+        
+        Args:
+            checkout_id: Internal checkout ID
+            amount: Amount to charge
+            token: Card token from Mercado Pago SDK
+            payment_method_id: Payment method (visa, master, etc.)
+            installments: Number of installments
+            customer_email: Customer email
+            customer_name: Customer full name
+            customer_cpf: Customer CPF
+            issuer_id: Card issuer ID
+            description: Payment description
+            external_reference: External reference for tracking
+            
+        Returns:
+            Dict with payment_id, status, etc.
+        """
+        if not self.is_configured():
+            logger.error("Mercado Pago not configured")
+            return {'success': False, 'error': 'Payment service not configured'}
+
+        # Clean CPF
+        clean_cpf = ''.join(filter(str.isdigit, str(customer_cpf or '')))
+        
+        # Split name
+        name_parts = customer_name.split() if customer_name else ['Cliente']
+        first_name = name_parts[0] if name_parts else 'Cliente'
+        last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
+
+        payment_data = {
+            'transaction_amount': float(amount),
+            'token': token,
+            'description': description,
+            'installments': int(installments),
+            'payment_method_id': payment_method_id,
+            'payer': {
+                'email': customer_email,
+                'first_name': first_name,
+                'last_name': last_name,
+                'identification': {
+                    'type': 'CPF',
+                    'number': clean_cpf,
+                } if clean_cpf else None,
+            },
+            'external_reference': external_reference or str(checkout_id),
+            'notification_url': f'{self.backend_url}/api/v1/ecommerce/webhooks/mercado_pago/',
+            'statement_descriptor': self.statement_descriptor,
+        }
+
+        if issuer_id:
+            payment_data['issuer_id'] = issuer_id
+
+        if not clean_cpf:
+            del payment_data['payer']['identification']
+
+        try:
+            response = self.sdk.payment().create(payment_data)
+            result = response.get('response', {})
+            
+            if response.get('status') in [200, 201]:
+                logger.info(f"Created card payment {result.get('id')} for checkout {checkout_id}")
+                return {
+                    'success': True,
+                    'payment_id': result.get('id'),
+                    'status': result.get('status'),
+                    'status_detail': result.get('status_detail'),
+                    'transaction_amount': result.get('transaction_amount'),
+                    'installments': result.get('installments'),
+                    'external_reference': result.get('external_reference'),
+                }
+            else:
+                error_msg = result.get('message', 'Unknown error')
+                cause = result.get('cause', [])
+                if cause:
+                    error_details = [c.get('description', '') for c in cause if c.get('description')]
+                    if error_details:
+                        error_msg = '; '.join(error_details)
+                logger.error(f"Failed to create card payment: {response}")
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'status_code': response.get('status'),
+                    'status_detail': result.get('status_detail'),
+                }
+        except Exception as e:
+            logger.exception(f"Error creating card payment: {e}")
             return {'success': False, 'error': str(e)}
