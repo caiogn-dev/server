@@ -169,15 +169,35 @@ class DeliveryFeeSerializer(serializers.Serializer):
 
 
 class DeliveryZoneSerializer(serializers.ModelSerializer):
+    distance_label = serializers.SerializerMethodField()
+    min_km = serializers.SerializerMethodField()
+    max_km = serializers.SerializerMethodField()
+
     class Meta:
         model = DeliveryZone
         fields = [
-            'id', 'name', 'zip_code_start', 'zip_code_end',
-            'min_km', 'max_km', 'delivery_fee', 'min_fee',
+            'id', 'name', 'distance_band', 'distance_label',
+            'min_km', 'max_km', 'delivery_fee',
             'estimated_days', 'is_active',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'distance_label', 'min_km', 'max_km', 'created_at', 'updated_at']
+
+    def get_distance_label(self, obj):
+        return dict(DeliveryZone.DISTANCE_BAND_CHOICES).get(obj.distance_band, '')
+
+    def get_min_km(self, obj):
+        band_range = DeliveryZone.get_band_range(obj.distance_band)
+        return band_range[0] if band_range else None
+
+    def get_max_km(self, obj):
+        band_range = DeliveryZone.get_band_range(obj.distance_band)
+        return band_range[1] if band_range else None
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get('distance_band'):
+            raise serializers.ValidationError({'distance_band': 'Selecione uma faixa de distancia.'})
+        return attrs
 
 
 class StoreLocationSerializer(serializers.ModelSerializer):

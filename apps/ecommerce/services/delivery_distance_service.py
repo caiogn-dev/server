@@ -52,8 +52,8 @@ class DeliveryDistanceService:
         ]
         return ', '.join([part for part in parts if part])
 
-    def _build_manual_query(self, zip_code: str, address: str, city: str, state: str) -> str:
-        parts = [address, city, state, zip_code, 'Brasil']
+    def _build_manual_query(self, zip_code: str, address: str, city: str, state: str, name: str = '') -> str:
+        parts = [name, address, city, state, zip_code, 'Brasil']
         return ', '.join([part for part in parts if part])
 
     def _build_city_queries(self, city: str, state: str, state_full: str, zip_code: str) -> list[str]:
@@ -118,7 +118,8 @@ class DeliveryDistanceService:
             clean_zip,
             manual_data.get('address', ''),
             manual_data.get('city', ''),
-            manual_data.get('state', '')
+            manual_data.get('state', ''),
+            manual_data.get('name', '')
         )
         if manual_query:
             queries.append(manual_query)
@@ -252,7 +253,7 @@ class DeliveryDistanceService:
         dest_coords = (destination.latitude, destination.longitude)
 
         distance_km, duration_min = self.get_route_distance(origin_coords, dest_coords)
-        rate = DeliveryZone.get_rate_for_distance(distance_km)
+        rate = DeliveryZone.get_fee_for_distance(distance_km)
         if not rate:
             return {
                 'available': False,
@@ -268,6 +269,7 @@ class DeliveryDistanceService:
             'zone_name': rate['zone_name'],
             'distance_km': distance_km,
             'duration_min': duration_min,
-            'rate_per_km': rate['rate_per_km'],
-            'min_fee': rate['min_fee'],
+            'distance_band': rate.get('distance_band'),
+            'min_km': rate.get('min_km'),
+            'max_km': rate.get('max_km'),
         }

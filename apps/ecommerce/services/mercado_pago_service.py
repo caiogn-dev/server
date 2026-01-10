@@ -46,6 +46,29 @@ class MercadoPagoService:
         # O Mercado Pago exige exatamente 3 dígitos de milissegundos (.000)
         # e o timezone com dois pontos (-03:00).
         return expiration.isoformat(timespec='milliseconds')
+
+    def _apply_coupon_discount(
+        self,
+        payment_data: Dict[str, Any],
+        discount_amount: float,
+        coupon_code: Optional[str],
+    ) -> None:
+        """Attach coupon discount fields to a Mercado Pago payment payload."""
+        if not discount_amount or discount_amount <= 0:
+            return
+
+        transaction_amount = payment_data.get('transaction_amount')
+        if transaction_amount is not None:
+            coupon_value = min(float(discount_amount), float(transaction_amount))
+        else:
+            coupon_value = float(discount_amount)
+
+        payment_data['coupon_amount'] = coupon_value
+        metadata = payment_data.get('metadata') or {}
+        metadata['discount_amount'] = coupon_value
+        if coupon_code:
+            metadata['coupon_code'] = coupon_code
+        payment_data['metadata'] = metadata
     
     def verify_webhook_signature(
         self,
@@ -297,6 +320,8 @@ class MercadoPagoService:
         customer_cpf: str,
         description: str = 'Pedido Pastita',
         external_reference: Optional[str] = None,
+        discount_amount: float = 0.0,
+        coupon_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a PIX payment directly (not a preference).
@@ -310,6 +335,8 @@ class MercadoPagoService:
             customer_cpf: Customer CPF (required for PIX)
             description: Payment description
             external_reference: External reference for tracking
+            discount_amount: Discount amount applied to the order
+            coupon_code: Coupon code applied to the order
             
         Returns:
             Dict with payment_id, qr_code, qr_code_base64, status, etc.
@@ -351,6 +378,8 @@ class MercadoPagoService:
         # Remove None identification if CPF not provided
         if not clean_cpf:
             del payment_data['payer']['identification']
+
+        self._apply_coupon_discount(payment_data, discount_amount, coupon_code)
 
         try:
             response = self.sdk.payment().create(payment_data)
@@ -400,6 +429,8 @@ class MercadoPagoService:
         customer_cpf: str,
         description: str = 'Pedido Pastita',
         external_reference: Optional[str] = None,
+        discount_amount: float = 0.0,
+        coupon_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a Boleto payment directly.
@@ -412,6 +443,8 @@ class MercadoPagoService:
             customer_cpf: Customer CPF (required for Boleto)
             description: Payment description
             external_reference: External reference for tracking
+            discount_amount: Discount amount applied to the order
+            coupon_code: Coupon code applied to the order
             
         Returns:
             Dict with payment_id, ticket_url, barcode, status, etc.
@@ -451,6 +484,8 @@ class MercadoPagoService:
 
         if not clean_cpf:
             del payment_data['payer']['identification']
+
+        self._apply_coupon_discount(payment_data, discount_amount, coupon_code)
 
         try:
             response = self.sdk.payment().create(payment_data)
@@ -496,6 +531,8 @@ class MercadoPagoService:
         issuer_id: Optional[str] = None,
         description: str = 'Pedido Pastita',
         external_reference: Optional[str] = None,
+        discount_amount: float = 0.0,
+        coupon_code: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a card payment using a token from the frontend.
@@ -512,6 +549,8 @@ class MercadoPagoService:
             issuer_id: Card issuer ID
             description: Payment description
             external_reference: External reference for tracking
+            discount_amount: Discount amount applied to the order
+            coupon_code: Coupon code applied to the order
             
         Returns:
             Dict with payment_id, status, etc.
@@ -553,6 +592,8 @@ class MercadoPagoService:
 
         if not clean_cpf:
             del payment_data['payer']['identification']
+
+        self._apply_coupon_discount(payment_data, discount_amount, coupon_code)
 
         try:
             response = self.sdk.payment().create(payment_data)

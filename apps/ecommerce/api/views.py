@@ -5,9 +5,9 @@ import logging
 import uuid
 import time
 from functools import wraps
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
-from django.db.models import Sum
+from django.db.models import Sum, Case, When, IntegerField, Value
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.conf import settings
@@ -387,9 +387,8 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             return default_fee
 
         distance_enabled = DeliveryZone.objects.filter(is_active=True).exclude(
-            min_km__isnull=True,
-            max_km__isnull=True
-        ).exists()
+            distance_band__isnull=True
+        ).exclude(distance_band='').exists()
         if distance_enabled:
             distance_service = DeliveryDistanceService()
             distance_result = distance_service.calculate_delivery(clean_zip)
@@ -492,13 +491,16 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             )
         
         data = serializer.validated_data
-        subtotal_amount = cart.get_total()
+        currency_quant = Decimal('0.01')
+        subtotal_amount = cart.get_total().quantize(currency_quant, rounding=ROUND_HALF_UP)
         shipping_method = data.get('shipping_method', 'delivery')
         shipping_cost = self._calculate_shipping_cost(
             shipping_method=shipping_method,
             zip_code=data.get('shipping_zip_code', '')
         )
-        total_amount = subtotal_amount + shipping_cost
+        shipping_cost = shipping_cost.quantize(currency_quant, rounding=ROUND_HALF_UP)
+        total_before_discount = (subtotal_amount + shipping_cost).quantize(currency_quant, rounding=ROUND_HALF_UP)
+        total_amount = total_before_discount
         session_token = str(uuid.uuid4())
 
         coupon_code = (request.data.get('coupon_code') or '').strip()
@@ -524,8 +526,14 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            discount_amount = coupon.calculate_discount(total_amount)
-            total_amount = max(total_amount - discount_amount, Decimal('0'))
+            discount_amount = coupon.calculate_discount(total_before_discount).quantize(
+                currency_quant,
+                rounding=ROUND_HALF_UP
+            )
+            total_amount = total_before_discount - discount_amount
+            if total_amount < 0:
+                total_amount = Decimal('0.00')
+            total_amount = total_amount.quantize(currency_quant, rounding=ROUND_HALF_UP)
         
         # Get payment info from request
         payment_payload = request.data.get('payment') or {}
@@ -587,6 +595,8 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                         customer_cpf=customer_cpf,
                         description=f'Pedido Pastita #{order.order_number}',
                         external_reference=order.order_number,
+                        discount_amount=float(discount_amount),
+                        coupon_code=coupon_code or None,
                     )
                     
                     if result.get('success'):
@@ -613,6 +623,8 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                         customer_cpf=customer_cpf,
                         description=f'Pedido Pastita #{order.order_number}',
                         external_reference=order.order_number,
+                        discount_amount=float(discount_amount),
+                        coupon_code=coupon_code or None,
                     )
                     
                     if result.get('success'):
@@ -666,6 +678,8 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                             issuer_id=issuer_id,
                             description=f'Pedido Pastita #{order.order_number}',
                             external_reference=order.order_number,
+                            discount_amount=float(discount_amount),
+                            coupon_code=coupon_code or None,
                         )
                         
                         if result.get('success'):
@@ -1321,9 +1335,8 @@ class DeliveryViewSet(viewsets.GenericViewSet):
         zip_code = serializer.validated_data['zip_code']
 
         distance_enabled = DeliveryZone.objects.filter(is_active=True).exclude(
-            min_km__isnull=True,
-            max_km__isnull=True
-        ).exists()
+            distance_band__isnull=True
+        ).exclude(distance_band='').exists()
         if distance_enabled:
             distance_service = DeliveryDistanceService()
             distance_result = distance_service.calculate_delivery(zip_code)
@@ -1335,8 +1348,9 @@ class DeliveryViewSet(viewsets.GenericViewSet):
                     'zone_name': distance_result['zone_name'],
                     'distance_km': float(distance_result['distance_km']),
                     'duration_min': distance_result.get('duration_min'),
-                    'rate_per_km': float(distance_result['rate_per_km']),
-                    'min_fee': float(distance_result['min_fee']) if distance_result.get('min_fee') else None,
+                    'distance_band': distance_result.get('distance_band'),
+                    'min_km': float(distance_result['min_km']) if distance_result.get('min_km') else None,
+                    'max_km': float(distance_result['max_km']) if distance_result.get('max_km') else None,
                 })
 
         result = DeliveryZone.get_fee_for_zip(zip_code)
@@ -1439,13 +1453,28 @@ class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
     PATCH  /api/v1/ecommerce/admin/delivery-zones/{id}/
     DELETE /api/v1/ecommerce/admin/delivery-zones/{id}/
     """
-    queryset = DeliveryZone.objects.all().order_by('min_km', 'zip_code_start')
+    queryset = DeliveryZone.objects.all()
     serializer_class = DeliveryZoneSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['is_active']
-    search_fields = ['name', 'zip_code_start', 'zip_code_end']
-    ordering_fields = ['name', 'delivery_fee', 'min_km', 'max_km']
+    search_fields = ['name', 'distance_band']
+    ordering_fields = ['name', 'delivery_fee', 'distance_band', 'estimated_days']
+
+    def get_queryset(self):
+        band_order = Case(
+            When(distance_band='0_2', then=Value(0)),
+            When(distance_band='2_5', then=Value(1)),
+            When(distance_band='5_8', then=Value(2)),
+            When(distance_band='8_12', then=Value(3)),
+            When(distance_band='12_15', then=Value(4)),
+            When(distance_band='15_20', then=Value(5)),
+            default=Value(99),
+            output_field=IntegerField(),
+        )
+        return DeliveryZone.objects.all().annotate(
+            distance_order=band_order
+        ).order_by('distance_order', 'name')
     
     @action(detail=True, methods=['post'])
     def toggle_active(self, request, pk=None):
@@ -1465,6 +1494,7 @@ class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
         
         total = DeliveryZone.objects.count()
         active = DeliveryZone.objects.filter(is_active=True).count()
+        inactive = max(total - active, 0)
         fee_stats = DeliveryZone.objects.filter(is_active=True).aggregate(
             avg_fee=Avg('delivery_fee'),
             min_fee=Min('delivery_fee'),
@@ -1473,8 +1503,9 @@ class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
         )
         
         return Response({
-            'total_zones': total,
-            'active_zones': active,
+            'total': total,
+            'active': active,
+            'inactive': inactive,
             'avg_fee': float(fee_stats['avg_fee'] or 0),
             'min_fee': float(fee_stats['min_fee'] or 0),
             'max_fee': float(fee_stats['max_fee'] or 0),
@@ -1499,6 +1530,7 @@ class StoreLocationAdminViewSet(viewsets.ViewSet):
         zip_code = serializer.validated_data['zip_code']
         distance_service = DeliveryDistanceService()
         manual_data = {
+            'name': serializer.validated_data.get('name', ''),
             'address': serializer.validated_data.get('address', ''),
             'city': serializer.validated_data.get('city', ''),
             'state': serializer.validated_data.get('state', ''),

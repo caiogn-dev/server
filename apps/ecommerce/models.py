@@ -286,8 +286,26 @@ class Coupon(models.Model):
 
 class DeliveryZone(models.Model):
     """Delivery zones with fees (ZIP range or distance-based)."""
+    DISTANCE_BAND_CHOICES = [
+        ('0_2', '0-2 km'),
+        ('2_5', '2-5 km'),
+        ('5_8', '5-8 km'),
+        ('8_12', '8-12 km'),
+        ('12_15', '12-15 km'),
+        ('15_20', '15-20 km'),
+    ]
+    DISTANCE_BAND_RANGES = {
+        '0_2': (Decimal('0.00'), Decimal('2.00')),
+        '2_5': (Decimal('2.00'), Decimal('5.00')),
+        '5_8': (Decimal('5.00'), Decimal('8.00')),
+        '8_12': (Decimal('8.00'), Decimal('12.00')),
+        '12_15': (Decimal('12.00'), Decimal('15.00')),
+        '15_20': (Decimal('15.00'), Decimal('20.00')),
+    }
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
+    distance_band = models.CharField(max_length=10, choices=DISTANCE_BAND_CHOICES, blank=True, null=True)
     zip_code_start = models.CharField(max_length=8, blank=True, null=True)
     zip_code_end = models.CharField(max_length=8, blank=True, null=True)
     min_km = models.DecimalField(max_digits=7, decimal_places=2, blank=True, null=True)
@@ -302,14 +320,30 @@ class DeliveryZone(models.Model):
     class Meta:
         verbose_name = 'Delivery Zone'
         verbose_name_plural = 'Delivery Zones'
-        ordering = ['min_km', 'zip_code_start']
+        ordering = ['distance_band', 'min_km', 'zip_code_start']
 
     def __str__(self):
+        if self.distance_band:
+            label = dict(self.DISTANCE_BAND_CHOICES).get(self.distance_band, self.distance_band)
+            return f"{self.name} ({label}) - R$ {self.delivery_fee}"
         if self.min_km is not None or self.max_km is not None:
             min_km = f"{self.min_km:.2f}" if self.min_km is not None else '0.00'
             max_km = f"{self.max_km:.2f}" if self.max_km is not None else '∞'
             return f"{self.name} ({min_km}-{max_km} km) - R$ {self.delivery_fee}/km"
         return f"{self.name} ({self.zip_code_start}-{self.zip_code_end}) - R$ {self.delivery_fee}"
+
+    @classmethod
+    def get_band_range(cls, band: str):
+        return cls.DISTANCE_BAND_RANGES.get(band)
+
+    @classmethod
+    def get_band_for_distance(cls, distance_km: Decimal):
+        if distance_km is None:
+            return None
+        for band, (min_km, max_km) in cls.DISTANCE_BAND_RANGES.items():
+            if distance_km >= min_km and distance_km <= max_km:
+                return band
+        return None
 
     @classmethod
     def get_fee_for_zip(cls, zip_code):
@@ -329,30 +363,27 @@ class DeliveryZone(models.Model):
         return None
 
     @classmethod
-    def get_rate_for_distance(cls, distance_km: Decimal):
-        """Get delivery rate for a distance in km."""
-        zones = cls.objects.filter(
+    def get_fee_for_distance(cls, distance_km: Decimal):
+        """Get delivery fee for a distance in km using fixed bands."""
+        band = cls.get_band_for_distance(distance_km)
+        if not band:
+            return None
+
+        zone = cls.objects.filter(
             is_active=True,
-            min_km__lte=distance_km,
-        ).order_by('min_km')
-        zone = None
-        for candidate in zones:
-            if candidate.max_km is None or distance_km <= candidate.max_km:
-                zone = candidate
-                break
+            distance_band=band
+        ).order_by('-updated_at').first()
         if not zone:
             return None
-        fee = Decimal(distance_km) * zone.delivery_fee
-        if zone.min_fee:
-            fee = max(fee, zone.min_fee)
+
+        band_range = cls.get_band_range(zone.distance_band)
         return {
-            'fee': fee,
+            'fee': zone.delivery_fee,
             'estimated_days': zone.estimated_days,
             'zone_name': zone.name,
-            'min_km': zone.min_km,
-            'max_km': zone.max_km,
-            'rate_per_km': zone.delivery_fee,
-            'min_fee': zone.min_fee,
+            'distance_band': zone.distance_band,
+            'min_km': band_range[0] if band_range else None,
+            'max_km': band_range[1] if band_range else None,
         }
 
 
