@@ -6,7 +6,8 @@ from rest_framework.routers import DefaultRouter
 from .api.views import (
     ProductViewSet, CartViewSet, CheckoutViewSet, WebhookViewSet, 
     OrdersHistoryView, WishlistViewSet, CouponViewSet, DeliveryViewSet,
-    CouponAdminViewSet, DeliveryZoneAdminViewSet, StoreLocationAdminViewSet
+    CouponAdminViewSet, DeliveryZoneAdminViewSet, StoreLocationAdminViewSet,
+    ProductAdminViewSet
 )
 
 router = DefaultRouter()
@@ -22,6 +23,7 @@ router.register(r'delivery', DeliveryViewSet, basename='delivery')
 router.register(r'admin/coupons', CouponAdminViewSet, basename='admin-coupon')
 router.register(r'admin/delivery-zones', DeliveryZoneAdminViewSet, basename='admin-delivery-zone')
 router.register(r'admin/store-location', StoreLocationAdminViewSet, basename='admin-store-location')
+router.register(r'admin/products', ProductAdminViewSet, basename='admin-product')
 
 urlpatterns = [
     path('', include(router.urls)),

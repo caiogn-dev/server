@@ -1378,6 +1378,25 @@ class DeliveryViewSet(viewsets.GenericViewSet):
         return Response(serializer.data)
 
 
+class ProductAdminViewSet(viewsets.ModelViewSet):
+    """
+    Admin CRUD for Products.
+
+    GET    /api/v1/ecommerce/admin/products/
+    POST   /api/v1/ecommerce/admin/products/
+    GET    /api/v1/ecommerce/admin/products/{id}/
+    PATCH  /api/v1/ecommerce/admin/products/{id}/
+    DELETE /api/v1/ecommerce/admin/products/{id}/
+    """
+    queryset = Product.objects.all().order_by('-created_at')
+    serializer_class = ProductSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['category', 'is_active']
+    search_fields = ['name', 'description', 'sku']
+    ordering_fields = ['name', 'price', 'created_at', 'stock_quantity']
+
+
 class CouponAdminViewSet(viewsets.ModelViewSet):
     """
     Admin CRUD for Coupons.
