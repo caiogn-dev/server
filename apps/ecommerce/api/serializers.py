@@ -166,6 +166,9 @@ class ValidateCouponSerializer(serializers.Serializer):
 
 class DeliveryFeeSerializer(serializers.Serializer):
     zip_code = serializers.CharField(max_length=10)
+    address = serializers.CharField(required=False, allow_blank=True)
+    city = serializers.CharField(required=False, allow_blank=True)
+    state = serializers.CharField(required=False, allow_blank=True)
 
 
 class DeliveryZoneSerializer(serializers.ModelSerializer):

@@ -377,7 +377,12 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             is_active=True
         ).first()
 
-    def _calculate_shipping_cost(self, shipping_method: str, zip_code: str) -> Decimal:
+    def _calculate_shipping_cost(
+        self,
+        shipping_method: str,
+        zip_code: str,
+        manual_data=None
+    ) -> Decimal:
         """Calculate shipping cost based on delivery method and zip code."""
         if shipping_method == 'pickup':
             return Decimal('0')
@@ -392,7 +397,7 @@ class CheckoutViewSet(viewsets.GenericViewSet):
         ).exclude(distance_band='').exists()
         if distance_enabled:
             distance_service = DeliveryDistanceService()
-            distance_result = distance_service.calculate_delivery(clean_zip)
+            distance_result = distance_service.calculate_delivery(clean_zip, manual_data=manual_data)
             if distance_result.get('available'):
                 return Decimal(str(distance_result['fee']))
 
@@ -497,7 +502,12 @@ class CheckoutViewSet(viewsets.GenericViewSet):
         shipping_method = data.get('shipping_method', 'delivery')
         shipping_cost = self._calculate_shipping_cost(
             shipping_method=shipping_method,
-            zip_code=data.get('shipping_zip_code', '')
+            zip_code=data.get('shipping_zip_code', ''),
+            manual_data={
+                'address': data.get('shipping_address', ''),
+                'city': data.get('shipping_city', ''),
+                'state': data.get('shipping_state', ''),
+            }
         )
         shipping_cost = shipping_cost.quantize(currency_quant, rounding=ROUND_HALF_UP)
         total_before_discount = (subtotal_amount + shipping_cost).quantize(currency_quant, rounding=ROUND_HALF_UP)
@@ -1334,13 +1344,18 @@ class DeliveryViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         
         zip_code = serializer.validated_data['zip_code']
+        manual_data = {
+            'address': serializer.validated_data.get('address', ''),
+            'city': serializer.validated_data.get('city', ''),
+            'state': serializer.validated_data.get('state', ''),
+        }
 
         distance_enabled = DeliveryZone.objects.filter(is_active=True).exclude(
             distance_band__isnull=True
         ).exclude(distance_band='').exists()
         if distance_enabled:
             distance_service = DeliveryDistanceService()
-            distance_result = distance_service.calculate_delivery(zip_code)
+            distance_result = distance_service.calculate_delivery(zip_code, manual_data=manual_data)
             if distance_result.get('available'):
                 return Response({
                     'available': True,

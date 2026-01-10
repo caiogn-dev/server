@@ -104,25 +104,30 @@ class DeliveryDistanceService:
         if not clean_zip:
             return None
 
+        manual_data = manual_data or {}
+        has_manual = any(
+            manual_data.get(field)
+            for field in ['address', 'city', 'state', 'name']
+        )
+
         cached = ZipCodeGeo.objects.filter(zip_code=clean_zip).first()
-        if cached and cached.latitude and cached.longitude:
+        if cached and cached.latitude and cached.longitude and not has_manual:
             return cached
 
         address_data = self._fetch_viacep(clean_zip)
         queries: list[str] = []
+        if has_manual:
+            manual_query = self._build_manual_query(
+                clean_zip,
+                manual_data.get('address', ''),
+                manual_data.get('city', ''),
+                manual_data.get('state', ''),
+                manual_data.get('name', '')
+            )
+            if manual_query:
+                queries.append(manual_query)
         if address_data:
             queries.append(self._build_geocode_query(clean_zip, address_data))
-
-        manual_data = manual_data or {}
-        manual_query = self._build_manual_query(
-            clean_zip,
-            manual_data.get('address', ''),
-            manual_data.get('city', ''),
-            manual_data.get('state', ''),
-            manual_data.get('name', '')
-        )
-        if manual_query:
-            queries.append(manual_query)
 
         if address_data:
             queries.extend(self._build_city_queries(
@@ -156,18 +161,34 @@ class DeliveryDistanceService:
 
         if not coords:
             coords = self._geocode_postalcode(clean_zip)
+        if not coords and cached and cached.latitude and cached.longitude:
+            return cached
         if not coords:
             return None
         latitude, longitude = coords
 
-        if address_data:
-            address_payload = address_data
-        else:
+        if has_manual:
             address_payload = {
                 'logradouro': manual_data.get('address', ''),
                 'localidade': manual_data.get('city', ''),
                 'uf': manual_data.get('state', ''),
             }
+        else:
+            address_payload = address_data or {
+                'logradouro': manual_data.get('address', ''),
+                'localidade': manual_data.get('city', ''),
+                'uf': manual_data.get('state', ''),
+            }
+
+        if has_manual:
+            return ZipCodeGeo(
+                zip_code=clean_zip,
+                address=(address_payload or {}).get('logradouro', ''),
+                city=(address_payload or {}).get('localidade', ''),
+                state=(address_payload or {}).get('uf', ''),
+                latitude=latitude,
+                longitude=longitude,
+            )
 
         geo, _ = ZipCodeGeo.objects.update_or_create(
             zip_code=clean_zip,
@@ -188,7 +209,15 @@ class DeliveryDistanceService:
         if store.latitude and store.longitude:
             return store
 
-        geo = self.get_zip_location(store.zip_code)
+        geo = self.get_zip_location(
+            store.zip_code,
+            manual_data={
+                'name': store.name,
+                'address': store.address,
+                'city': store.city,
+                'state': store.state,
+            }
+        )
         if not geo:
             return store
 
@@ -234,7 +263,7 @@ class DeliveryDistanceService:
         distance_km = self._haversine_km(lat1, lon1, lat2, lon2)
         return distance_km, None
 
-    def calculate_delivery(self, zip_code: str) -> dict:
+    def calculate_delivery(self, zip_code: str, manual_data: Optional[dict] = None) -> dict:
         store = self.get_store_location()
         if not store or not store.zip_code:
             return {
@@ -242,7 +271,7 @@ class DeliveryDistanceService:
                 'error': 'STORE_LOCATION_NOT_SET',
             }
 
-        destination = self.get_zip_location(zip_code)
+        destination = self.get_zip_location(zip_code, manual_data=manual_data)
         if not destination or destination.latitude is None or destination.longitude is None:
             return {
                 'available': False,
