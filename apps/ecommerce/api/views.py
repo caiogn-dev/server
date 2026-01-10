@@ -376,6 +376,32 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             is_active=True
         ).first()
 
+    def _calculate_shipping_cost(self, shipping_method: str, zip_code: str) -> Decimal:
+        """Calculate shipping cost based on delivery method and zip code."""
+        if shipping_method == 'pickup':
+            return Decimal('0')
+
+        clean_zip = ''.join(filter(str.isdigit, str(zip_code or '')))[:8]
+        default_fee = Decimal(str(getattr(settings, 'DEFAULT_DELIVERY_FEE', 15.00)))
+        if not clean_zip:
+            return default_fee
+
+        distance_enabled = DeliveryZone.objects.filter(is_active=True).exclude(
+            min_km__isnull=True,
+            max_km__isnull=True
+        ).exists()
+        if distance_enabled:
+            distance_service = DeliveryDistanceService()
+            distance_result = distance_service.calculate_delivery(clean_zip)
+            if distance_result.get('available'):
+                return Decimal(str(distance_result['fee']))
+
+        zone_result = DeliveryZone.get_fee_for_zip(clean_zip)
+        if zone_result:
+            return Decimal(str(zone_result['fee']))
+
+        return default_fee
+
     def _create_order_from_cart(self, cart: Cart, data: dict, request) -> Order:
         """Create an Order from the current cart."""
         account = self._get_default_account()
@@ -466,8 +492,40 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             )
         
         data = serializer.validated_data
-        total_amount = cart.get_total()
+        subtotal_amount = cart.get_total()
+        shipping_method = data.get('shipping_method', 'delivery')
+        shipping_cost = self._calculate_shipping_cost(
+            shipping_method=shipping_method,
+            zip_code=data.get('shipping_zip_code', '')
+        )
+        total_amount = subtotal_amount + shipping_cost
         session_token = str(uuid.uuid4())
+
+        coupon_code = (request.data.get('coupon_code') or '').strip()
+        discount_amount = Decimal('0')
+        if coupon_code:
+            try:
+                coupon = Coupon.objects.get(code__iexact=coupon_code)
+            except Coupon.DoesNotExist:
+                return Response(
+                    {'error': 'Cupom não encontrado'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            if not coupon.is_valid():
+                return Response(
+                    {'error': 'Cupom expirado ou inválido'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if total_amount < coupon.min_purchase:
+                return Response(
+                    {'error': f'Compra mínima de R$ {coupon.min_purchase:.2f} para usar este cupom'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            discount_amount = coupon.calculate_discount(total_amount)
+            total_amount = max(total_amount - discount_amount, Decimal('0'))
         
         # Get payment info from request
         payment_payload = request.data.get('payment') or {}
@@ -503,8 +561,12 @@ class CheckoutViewSet(viewsets.GenericViewSet):
 
             # Create order for dashboard tracking
             order = self._create_order_from_cart(cart, data, request)
+            order.subtotal = subtotal_amount
+            order.discount = discount_amount
+            order.shipping_cost = shipping_cost
+            order.calculate_total()
             order.metadata = {**(order.metadata or {}), 'checkout_id': str(checkout.id)}
-            order.save(update_fields=['metadata'])
+            order.save(update_fields=['subtotal', 'discount', 'shipping_cost', 'total', 'metadata'])
             checkout.order = order
             checkout.save(update_fields=['order'])
             
