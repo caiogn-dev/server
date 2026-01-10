@@ -131,11 +131,15 @@ class CartViewSet(viewsets.GenericViewSet):
         serializer = UpdateCartItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        item_id = serializer.validated_data['item_id']
+        item_id = serializer.validated_data.get('item_id')
+        product_id = serializer.validated_data.get('product_id')
         quantity = serializer.validated_data['quantity']
         
         cart = self.get_cart(request)
-        cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
+        if item_id:
+            cart_item = get_object_or_404(CartItem, id=item_id, cart=cart)
+        else:
+            cart_item = get_object_or_404(CartItem, product_id=product_id, cart=cart)
         
         if quantity == 0:
             cart_item.delete()
@@ -153,10 +157,14 @@ class CartViewSet(viewsets.GenericViewSet):
         serializer = RemoveFromCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        item_id = serializer.validated_data['item_id']
+        item_id = serializer.validated_data.get('item_id')
+        product_id = serializer.validated_data.get('product_id')
         cart = self.get_cart(request)
         
-        CartItem.objects.filter(id=item_id, cart=cart).delete()
+        if item_id:
+            CartItem.objects.filter(id=item_id, cart=cart).delete()
+        else:
+            CartItem.objects.filter(product_id=product_id, cart=cart).delete()
         
         self._notify_cart_update(cart, 'cart_updated')
         

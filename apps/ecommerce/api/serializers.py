@@ -65,12 +65,24 @@ class AddToCartSerializer(serializers.Serializer):
 
 
 class UpdateCartItemSerializer(serializers.Serializer):
-    item_id = serializers.UUIDField()
+    item_id = serializers.UUIDField(required=False)
+    product_id = serializers.UUIDField(required=False)
     quantity = serializers.IntegerField(min_value=0)
+
+    def validate(self, attrs):
+        if not attrs.get('item_id') and not attrs.get('product_id'):
+            raise serializers.ValidationError('item_id or product_id is required.')
+        return attrs
 
 
 class RemoveFromCartSerializer(serializers.Serializer):
-    item_id = serializers.UUIDField()
+    item_id = serializers.UUIDField(required=False)
+    product_id = serializers.UUIDField(required=False)
+
+    def validate(self, attrs):
+        if not attrs.get('item_id') and not attrs.get('product_id'):
+            raise serializers.ValidationError('item_id or product_id is required.')
+        return attrs
 
 
 class CheckoutSerializer(serializers.ModelSerializer):

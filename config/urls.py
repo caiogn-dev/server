@@ -16,6 +16,7 @@ urlpatterns = [
     # API v1
     path('api/v1/', include([
         path('', include('apps.core.urls')),
+        path('', include('apps.ecommerce.legacy_urls')),
         path('whatsapp/', include('apps.whatsapp.urls')),
         path('conversations/', include('apps.conversations.urls')),
         path('orders/', include('apps.orders.urls')),
