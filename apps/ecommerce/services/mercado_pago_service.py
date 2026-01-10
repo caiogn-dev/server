@@ -41,9 +41,9 @@ class MercadoPagoService:
         return bool(self.sdk and self.access_token)
 
     def _format_expiration(self, delta: timedelta) -> str:
-        """Return Mercado Pago date_of_expiration in yyyy-MM-dd'T'HH:mm:ssz."""
+        """Return Mercado Pago date_of_expiration in ISO 8601 format."""
         expiration = dj_timezone.localtime(dj_timezone.now() + delta)
-        return expiration.strftime('%Y-%m-%dT%H:%M:%S%z')
+        return expiration.isoformat()
 
     def verify_webhook_signature(
         self,
@@ -326,6 +326,7 @@ class MercadoPagoService:
 
         # PIX expiration (4 hours from now)
         expiration = self._format_expiration(timedelta(hours=4))
+        logger.info("PIX expiration formatted: %s", expiration)
 
         payment_data = {
             'transaction_amount': float(amount),
