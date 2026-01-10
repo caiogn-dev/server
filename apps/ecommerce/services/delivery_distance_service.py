@@ -15,6 +15,12 @@ class DeliveryDistanceService:
         self.viacep_url = getattr(settings, 'VIACEP_URL', 'https://viacep.com.br/ws/{zip}/json/')
         self.geocode_url = getattr(settings, 'GEOCODE_URL', 'https://nominatim.openstreetmap.org/search')
         self.osrm_url = getattr(settings, 'OSRM_URL', 'https://router.project-osrm.org/route/v1/driving')
+        self.google_distance_url = getattr(
+            settings,
+            'GOOGLE_DISTANCE_MATRIX_URL',
+            'https://maps.googleapis.com/maps/api/distancematrix/json'
+        )
+        self.google_maps_key = getattr(settings, 'GOOGLE_MAPS_API_KEY', '')
         self.user_agent = getattr(settings, 'GEOCODE_USER_AGENT', 'pastita-delivery/1.0')
         self.timeout_seconds = int(getattr(settings, 'DELIVERY_GEO_TIMEOUT', 10))
 
@@ -211,9 +217,55 @@ class DeliveryDistanceService:
         c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return Decimal(r * c).quantize(Decimal('0.01'))
 
+    def _google_distance_matrix(
+        self,
+        origin: Tuple[Decimal, Decimal],
+        dest: Tuple[Decimal, Decimal]
+    ) -> Optional[Tuple[Decimal, int]]:
+        if not self.google_maps_key:
+            return None
+        lat1, lon1 = origin
+        lat2, lon2 = dest
+        try:
+            response = requests.get(
+                self.google_distance_url,
+                params={
+                    'origins': f'{lat1},{lon1}',
+                    'destinations': f'{lat2},{lon2}',
+                    'key': self.google_maps_key,
+                    'mode': 'driving',
+                    'units': 'metric',
+                    'language': 'pt-BR',
+                },
+                timeout=self.timeout_seconds
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            if data.get('status') != 'OK':
+                return None
+            rows = data.get('rows') or []
+            if not rows:
+                return None
+            elements = rows[0].get('elements') or []
+            if not elements:
+                return None
+            element = elements[0]
+            if element.get('status') != 'OK':
+                return None
+            distance_km = Decimal(element['distance']['value'] / 1000).quantize(Decimal('0.01'))
+            duration_min = int(element['duration']['value'] / 60)
+            return distance_km, duration_min
+        except (requests.RequestException, KeyError, ValueError, TypeError) as exc:
+            logger.warning("Google Distance Matrix failed: %s", exc)
+            return None
+
     def get_route_distance(self, origin: Tuple[Decimal, Decimal], dest: Tuple[Decimal, Decimal]) -> Tuple[Decimal, Optional[int]]:
         lat1, lon1 = origin
         lat2, lon2 = dest
+        google_distance = self._google_distance_matrix(origin, dest)
+        if google_distance:
+            return google_distance
         try:
             response = requests.get(
                 f"{self.osrm_url}/{lon1},{lat1};{lon2},{lat2}",
