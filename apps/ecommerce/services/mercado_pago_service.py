@@ -40,6 +40,11 @@ class MercadoPagoService:
         """Check if Mercado Pago is properly configured"""
         return bool(self.sdk and self.access_token)
 
+    def _format_expiration(self, delta: timedelta) -> str:
+        """Return Mercado Pago date_of_expiration in yyyy-MM-dd'T'HH:mm:ssz."""
+        expiration = dj_timezone.localtime(dj_timezone.now() + delta)
+        return expiration.strftime('%Y-%m-%dT%H:%M:%S%z')
+
     def verify_webhook_signature(
         self,
         x_signature: str,
@@ -319,10 +324,8 @@ class MercadoPagoService:
         first_name = name_parts[0] if name_parts else 'Cliente'
         last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
 
-        # PIX expiration (4 hours from now, local timezone, seconds precision)
-        expiration = dj_timezone.localtime(
-            dj_timezone.now() + timedelta(hours=4)
-        ).isoformat(timespec='seconds')
+        # PIX expiration (4 hours from now)
+        expiration = self._format_expiration(timedelta(hours=4))
 
         payment_data = {
             'transaction_amount': float(amount),
@@ -423,7 +426,7 @@ class MercadoPagoService:
         last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
 
         # Boleto expiration (3 days from now)
-        expiration = (datetime.utcnow() + timedelta(days=3)).strftime('%Y-%m-%d')
+        expiration = self._format_expiration(timedelta(days=3))
 
         payment_data = {
             'transaction_amount': float(amount),
