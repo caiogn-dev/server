@@ -529,9 +529,10 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                         checkout.mercado_pago_payment_id = str(result.get('payment_id'))
                         checkout.pix_code = result.get('qr_code')
                         checkout.pix_qr_code = result.get('qr_code_base64')
+                        checkout.payment_link = result.get('ticket_url') or checkout.payment_link
                         checkout.payment_status = 'processing'
                         checkout.save(update_fields=[
-                            'mercado_pago_payment_id', 'pix_code', 'pix_qr_code', 'payment_status'
+                            'mercado_pago_payment_id', 'pix_code', 'pix_qr_code', 'payment_link', 'payment_status'
                         ])
                         payment_result = result
                     else:
