@@ -2,7 +2,7 @@
 E-commerce API serializers - compatible with Pastita frontend.
 """
 from rest_framework import serializers
-from ..models import Product, Cart, CartItem, Checkout, Wishlist, Coupon, DeliveryZone
+from ..models import Product, Cart, CartItem, Checkout, Wishlist, Coupon, DeliveryZone, StoreLocation
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -172,8 +172,19 @@ class DeliveryZoneSerializer(serializers.ModelSerializer):
     class Meta:
         model = DeliveryZone
         fields = [
-            'id', 'name', 'zip_code_start', 'zip_code_end', 
-            'delivery_fee', 'estimated_days', 'is_active',
+            'id', 'name', 'zip_code_start', 'zip_code_end',
+            'min_km', 'max_km', 'delivery_fee', 'min_fee',
+            'estimated_days', 'is_active',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class StoreLocationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StoreLocation
+        fields = [
+            'id', 'name', 'zip_code', 'address', 'city', 'state',
+            'latitude', 'longitude', 'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'latitude', 'longitude', 'created_at', 'updated_at']

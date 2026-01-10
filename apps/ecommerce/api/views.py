@@ -20,7 +20,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-from ..models import Product, Cart, CartItem, Checkout, Wishlist, Coupon, DeliveryZone
+from ..models import Product, Cart, CartItem, Checkout, Wishlist, Coupon, DeliveryZone, StoreLocation
 from apps.notifications.services import NotificationService
 from apps.orders.repositories import OrderRepository
 from apps.orders.models import Order
@@ -41,8 +41,10 @@ from .serializers import (
     ValidateCouponSerializer,
     DeliveryFeeSerializer,
     DeliveryZoneSerializer,
+    StoreLocationSerializer,
 )
 from ..services import MercadoPagoService
+from ..services.delivery_distance_service import DeliveryDistanceService
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -1255,8 +1257,27 @@ class DeliveryViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
         
         zip_code = serializer.validated_data['zip_code']
+
+        distance_enabled = DeliveryZone.objects.filter(is_active=True).exclude(
+            min_km__isnull=True,
+            max_km__isnull=True
+        ).exists()
+        if distance_enabled:
+            distance_service = DeliveryDistanceService()
+            distance_result = distance_service.calculate_delivery(zip_code)
+            if distance_result.get('available'):
+                return Response({
+                    'available': True,
+                    'fee': float(distance_result['fee']),
+                    'estimated_days': distance_result['estimated_days'],
+                    'zone_name': distance_result['zone_name'],
+                    'distance_km': float(distance_result['distance_km']),
+                    'duration_min': distance_result.get('duration_min'),
+                    'rate_per_km': float(distance_result['rate_per_km']),
+                    'min_fee': float(distance_result['min_fee']) if distance_result.get('min_fee') else None,
+                })
+
         result = DeliveryZone.get_fee_for_zip(zip_code)
-        
         if result:
             return Response({
                 'available': True,
@@ -1264,8 +1285,7 @@ class DeliveryViewSet(viewsets.GenericViewSet):
                 'estimated_days': result['estimated_days'],
                 'zone_name': result['zone_name']
             })
-        
-        # Default fee if no zone found
+
         default_fee = getattr(settings, 'DEFAULT_DELIVERY_FEE', 15.00)
         return Response({
             'available': True,
@@ -1357,13 +1377,13 @@ class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
     PATCH  /api/v1/ecommerce/admin/delivery-zones/{id}/
     DELETE /api/v1/ecommerce/admin/delivery-zones/{id}/
     """
-    queryset = DeliveryZone.objects.all().order_by('zip_code_start')
+    queryset = DeliveryZone.objects.all().order_by('min_km', 'zip_code_start')
     serializer_class = DeliveryZoneSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['is_active']
     search_fields = ['name', 'zip_code_start', 'zip_code_end']
-    ordering_fields = ['name', 'delivery_fee', 'zip_code_start']
+    ordering_fields = ['name', 'delivery_fee', 'min_km', 'max_km']
     
     @action(detail=True, methods=['post'])
     def toggle_active(self, request, pk=None):
@@ -1386,7 +1406,8 @@ class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
         fee_stats = DeliveryZone.objects.filter(is_active=True).aggregate(
             avg_fee=Avg('delivery_fee'),
             min_fee=Min('delivery_fee'),
-            max_fee=Max('delivery_fee')
+            max_fee=Max('delivery_fee'),
+            avg_days=Avg('estimated_days'),
         )
         
         return Response({
@@ -1394,5 +1415,45 @@ class DeliveryZoneAdminViewSet(viewsets.ModelViewSet):
             'active_zones': active,
             'avg_fee': float(fee_stats['avg_fee'] or 0),
             'min_fee': float(fee_stats['min_fee'] or 0),
-            'max_fee': float(fee_stats['max_fee'] or 0)
+            'max_fee': float(fee_stats['max_fee'] or 0),
+            'avg_days': float(fee_stats['avg_days'] or 0)
         })
+
+
+class StoreLocationAdminViewSet(viewsets.ViewSet):
+    """Admin config for store location used in delivery distance calculations."""
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request):
+        location = StoreLocation.objects.filter(is_active=True).order_by('-updated_at').first()
+        if not location:
+            return Response({})
+        return Response(StoreLocationSerializer(location).data)
+
+    def create(self, request):
+        serializer = StoreLocationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        zip_code = serializer.validated_data['zip_code']
+        distance_service = DeliveryDistanceService()
+        geo = distance_service.get_zip_location(zip_code)
+        if not geo:
+            return Response({'error': 'CEP inválido ou não encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        location = StoreLocation.objects.filter(is_active=True).order_by('-updated_at').first()
+        if not location:
+            location = StoreLocation()
+
+        location.name = serializer.validated_data.get('name', location.name or '')
+        location.zip_code = distance_service.normalize_zip(zip_code)
+        location.address = serializer.validated_data.get('address') or geo.address
+        location.city = serializer.validated_data.get('city') or geo.city
+        location.state = serializer.validated_data.get('state') or geo.state
+        location.latitude = geo.latitude
+        location.longitude = geo.longitude
+        location.is_active = True
+        location.save()
+
+        StoreLocation.objects.filter(is_active=True).exclude(id=location.id).update(is_active=False)
+
+        return Response(StoreLocationSerializer(location).data, status=status.HTTP_201_CREATED)

@@ -285,12 +285,15 @@ class Coupon(models.Model):
 
 
 class DeliveryZone(models.Model):
-    """Delivery zones with fees"""
+    """Delivery zones with fees (ZIP range or distance-based)."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
-    zip_code_start = models.CharField(max_length=8)
-    zip_code_end = models.CharField(max_length=8)
+    zip_code_start = models.CharField(max_length=8, blank=True, null=True)
+    zip_code_end = models.CharField(max_length=8, blank=True, null=True)
+    min_km = models.DecimalField(max_digits=7, decimal_places=2, blank=True, null=True)
+    max_km = models.DecimalField(max_digits=7, decimal_places=2, blank=True, null=True)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2)
+    min_fee = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     estimated_days = models.PositiveIntegerField(default=1)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -299,9 +302,13 @@ class DeliveryZone(models.Model):
     class Meta:
         verbose_name = 'Delivery Zone'
         verbose_name_plural = 'Delivery Zones'
-        ordering = ['zip_code_start']
+        ordering = ['min_km', 'zip_code_start']
 
     def __str__(self):
+        if self.min_km is not None or self.max_km is not None:
+            min_km = f"{self.min_km:.2f}" if self.min_km is not None else '0.00'
+            max_km = f"{self.max_km:.2f}" if self.max_km is not None else '∞'
+            return f"{self.name} ({min_km}-{max_km} km) - R$ {self.delivery_fee}/km"
         return f"{self.name} ({self.zip_code_start}-{self.zip_code_end}) - R$ {self.delivery_fee}"
 
     @classmethod
@@ -312,7 +319,7 @@ class DeliveryZone(models.Model):
             zip_code_start__lte=clean_zip,
             zip_code_end__gte=clean_zip,
             is_active=True
-        ).first()
+        ).exclude(zip_code_start__isnull=True).exclude(zip_code_start='').first()
         if zone:
             return {
                 'fee': zone.delivery_fee,
@@ -320,3 +327,71 @@ class DeliveryZone(models.Model):
                 'zone_name': zone.name
             }
         return None
+
+    @classmethod
+    def get_rate_for_distance(cls, distance_km: Decimal):
+        """Get delivery rate for a distance in km."""
+        zones = cls.objects.filter(
+            is_active=True,
+            min_km__lte=distance_km,
+        ).order_by('min_km')
+        zone = None
+        for candidate in zones:
+            if candidate.max_km is None or distance_km <= candidate.max_km:
+                zone = candidate
+                break
+        if not zone:
+            return None
+        fee = Decimal(distance_km) * zone.delivery_fee
+        if zone.min_fee:
+            fee = max(fee, zone.min_fee)
+        return {
+            'fee': fee,
+            'estimated_days': zone.estimated_days,
+            'zone_name': zone.name,
+            'min_km': zone.min_km,
+            'max_km': zone.max_km,
+            'rate_per_km': zone.delivery_fee,
+            'min_fee': zone.min_fee,
+        }
+
+
+class StoreLocation(models.Model):
+    """Store location used to calculate delivery distances."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, blank=True)
+    zip_code = models.CharField(max_length=8)
+    address = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=50, blank=True)
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Store Location'
+        verbose_name_plural = 'Store Locations'
+
+    def __str__(self):
+        return self.name or f"Store ({self.zip_code})"
+
+
+class ZipCodeGeo(models.Model):
+    """Cached geolocation for ZIP codes."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    zip_code = models.CharField(max_length=8, unique=True)
+    address = models.CharField(max_length=255, blank=True)
+    city = models.CharField(max_length=100, blank=True)
+    state = models.CharField(max_length=50, blank=True)
+    latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'ZIP Geolocation'
+        verbose_name_plural = 'ZIP Geolocations'
+
+    def __str__(self):
+        return self.zip_code
