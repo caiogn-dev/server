@@ -8,7 +8,7 @@ import hashlib
 from decimal import Decimal
 from typing import Optional, Dict, Any
 from django.conf import settings
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -318,8 +318,8 @@ class MercadoPagoService:
         first_name = name_parts[0] if name_parts else 'Cliente'
         last_name = ' '.join(name_parts[1:]) if len(name_parts) > 1 else ''
 
-        # PIX expiration (4 hours from now, seconds precision)
-        expiration = (datetime.utcnow() + timedelta(hours=4)).replace(microsecond=0).isoformat() + 'Z'
+        # PIX expiration (4 hours from now, with timezone offset)
+        expiration = (datetime.now(timezone.utc) + timedelta(hours=4)).replace(microsecond=0).isoformat()
 
         payment_data = {
             'transaction_amount': float(amount),
