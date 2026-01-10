@@ -1633,7 +1633,7 @@ class GeocodingViewSet(viewsets.ViewSet):
         if result.steps:
             response_data['steps'] = result.steps
         
-        return response_data
+        return Response(response_data)
     
     @action(detail=False, methods=['get'], url_path='cep/(?P<cep>[0-9-]+)')
     def cep_lookup(self, request, cep=None):
@@ -1887,7 +1887,7 @@ class StoreLocationAdminViewSet(viewsets.ViewSet):
         geo = distance_service.get_zip_location(zip_code, manual_data=manual_data)
         if not geo:
             return Response(
-                {'error': 'N?o foi poss?vel localizar o CEP informado. Revise endere?o, cidade e UF e tente novamente.'},
+                {'error': 'Não foi possível localizar o CEP informado. Revise endereço, cidade e UF e tente novamente.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
