@@ -1436,9 +1436,17 @@ class StoreLocationAdminViewSet(viewsets.ViewSet):
 
         zip_code = serializer.validated_data['zip_code']
         distance_service = DeliveryDistanceService()
-        geo = distance_service.get_zip_location(zip_code)
+        manual_data = {
+            'address': serializer.validated_data.get('address', ''),
+            'city': serializer.validated_data.get('city', ''),
+            'state': serializer.validated_data.get('state', ''),
+        }
+        geo = distance_service.get_zip_location(zip_code, manual_data=manual_data)
         if not geo:
-            return Response({'error': 'CEP inválido ou não encontrado.'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'N?o foi poss?vel localizar o CEP informado. Revise endere?o, cidade e UF e tente novamente.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         location = StoreLocation.objects.filter(is_active=True).order_by('-updated_at').first()
         if not location:

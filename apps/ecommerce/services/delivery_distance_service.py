@@ -52,11 +52,27 @@ class DeliveryDistanceService:
         ]
         return ', '.join([part for part in parts if part])
 
-    def _geocode(self, query: str) -> Optional[Tuple[Decimal, Decimal]]:
+    def _build_manual_query(self, zip_code: str, address: str, city: str, state: str) -> str:
+        parts = [address, city, state, zip_code, 'Brasil']
+        return ', '.join([part for part in parts if part])
+
+    def _build_city_queries(self, city: str, state: str, state_full: str, zip_code: str) -> list[str]:
+        queries: list[str] = []
+        if city and state_full:
+            if zip_code:
+                queries.append(f"{city}, {state_full}, {zip_code}, Brasil")
+            queries.append(f"{city}, {state_full}, Brasil")
+        if city and state:
+            if zip_code:
+                queries.append(f"{city}, {state}, {zip_code}, Brasil")
+            queries.append(f"{city}, {state}, Brasil")
+        return queries
+
+    def _geocode_request(self, params: dict) -> Optional[Tuple[Decimal, Decimal]]:
         try:
             response = requests.get(
                 self.geocode_url,
-                params={'format': 'json', 'limit': 1, 'q': query},
+                params=params,
                 headers={'User-Agent': self.user_agent},
                 timeout=self.timeout_seconds
             )
@@ -70,7 +86,20 @@ class DeliveryDistanceService:
             logger.warning("Geocode failed: %s", exc)
             return None
 
-    def get_zip_location(self, zip_code: str) -> Optional[ZipCodeGeo]:
+    def _geocode(self, query: str) -> Optional[Tuple[Decimal, Decimal]]:
+        return self._geocode_request({'format': 'json', 'limit': 1, 'q': query})
+
+    def _geocode_postalcode(self, zip_code: str) -> Optional[Tuple[Decimal, Decimal]]:
+        if not zip_code:
+            return None
+        return self._geocode_request({
+            'format': 'json',
+            'limit': 1,
+            'postalcode': zip_code,
+            'country': 'Brazil',
+        })
+
+    def get_zip_location(self, zip_code: str, manual_data: Optional[dict] = None) -> Optional[ZipCodeGeo]:
         clean_zip = self.normalize_zip(zip_code)
         if not clean_zip:
             return None
@@ -80,18 +109,71 @@ class DeliveryDistanceService:
             return cached
 
         address_data = self._fetch_viacep(clean_zip)
-        query = self._build_geocode_query(clean_zip, address_data)
-        coords = self._geocode(query)
+        queries: list[str] = []
+        if address_data:
+            queries.append(self._build_geocode_query(clean_zip, address_data))
+
+        manual_data = manual_data or {}
+        manual_query = self._build_manual_query(
+            clean_zip,
+            manual_data.get('address', ''),
+            manual_data.get('city', ''),
+            manual_data.get('state', '')
+        )
+        if manual_query:
+            queries.append(manual_query)
+
+        if address_data:
+            queries.extend(self._build_city_queries(
+                address_data.get('localidade', ''),
+                address_data.get('uf', ''),
+                address_data.get('estado', ''),
+                clean_zip
+            ))
+        if manual_data:
+            queries.extend(self._build_city_queries(
+                manual_data.get('city', ''),
+                manual_data.get('state', ''),
+                '',
+                clean_zip
+            ))
+
+        queries.append(f"{clean_zip}, Brasil")
+        if len(clean_zip) == 8:
+            queries.append(f"{clean_zip[:5]}-{clean_zip[5:]}, Brasil")
+
+        coords = None
+        seen: set[str] = set()
+        for query in queries:
+            normalized = query.strip().lower()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            coords = self._geocode(query)
+            if coords:
+                break
+
+        if not coords:
+            coords = self._geocode_postalcode(clean_zip)
         if not coords:
             return None
         latitude, longitude = coords
 
+        if address_data:
+            address_payload = address_data
+        else:
+            address_payload = {
+                'logradouro': manual_data.get('address', ''),
+                'localidade': manual_data.get('city', ''),
+                'uf': manual_data.get('state', ''),
+            }
+
         geo, _ = ZipCodeGeo.objects.update_or_create(
             zip_code=clean_zip,
             defaults={
-                'address': (address_data or {}).get('logradouro', ''),
-                'city': (address_data or {}).get('localidade', ''),
-                'state': (address_data or {}).get('uf', ''),
+                'address': (address_payload or {}).get('logradouro', ''),
+                'city': (address_payload or {}).get('localidade', ''),
+                'state': (address_payload or {}).get('uf', ''),
                 'latitude': latitude,
                 'longitude': longitude,
             }
