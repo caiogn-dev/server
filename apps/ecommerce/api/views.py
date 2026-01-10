@@ -7,6 +7,8 @@ from decimal import Decimal
 from django.db import transaction
 from django.db.models import Sum
 from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -16,6 +18,12 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from ..models import Product, Cart, CartItem, Checkout
+from apps.notifications.services import NotificationService
+from apps.orders.repositories import OrderRepository
+from apps.orders.models import Order
+from apps.payments.services import PaymentService
+from apps.payments.models import Payment, PaymentGateway
+from apps.whatsapp.models import WhatsAppAccount
 from .serializers import (
     ProductSerializer,
     CartSerializer,
@@ -29,6 +37,7 @@ from .serializers import (
 from ..services import MercadoPagoService
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -203,6 +212,172 @@ class CheckoutViewSet(viewsets.GenericViewSet):
     serializer_class = CheckoutSerializer
     permission_classes = [IsAuthenticated]
 
+    def _get_admin_users(self):
+        """Return active superadmin users."""
+        return User.objects.filter(is_superuser=True, is_active=True)
+
+    def _notify_admins(self, title: str, message: str, notification_type: str, data: dict, related_type: str, related_id: str):
+        """Send notification to all superadmins."""
+        service = NotificationService()
+        for admin in self._get_admin_users():
+            service.create_notification(
+                title=title,
+                message=message,
+                notification_type=notification_type,
+                user=admin,
+                data=data,
+                related_object_type=related_type,
+                related_object_id=related_id,
+            )
+
+    def _get_default_account(self) -> WhatsAppAccount:
+        """Resolve or create the default account for ecommerce orders."""
+        account_id = getattr(settings, 'ECOMMERCE_DEFAULT_ACCOUNT_ID', '').strip()
+        if account_id:
+            account = WhatsAppAccount.objects.filter(id=account_id, is_active=True).first()
+            if account:
+                return account
+
+        account = WhatsAppAccount.objects.filter(
+            metadata__ecommerce_system=True,
+            is_active=True
+        ).first()
+        if account:
+            return account
+
+        account = WhatsAppAccount.objects.filter(is_active=True).order_by('created_at').first()
+        if account:
+            return account
+
+        owner = self._get_admin_users().order_by('id').first()
+        phone_number_id = f"ecommerce-{uuid.uuid4().hex[:12]}"
+        waba_id = f"ecommerce-{uuid.uuid4().hex[:12]}"
+
+        account = WhatsAppAccount(
+            name='Pastita Store (Sistema)',
+            phone_number_id=phone_number_id,
+            waba_id=waba_id,
+            phone_number='5500000000000',
+            display_phone_number='',
+            status=WhatsAppAccount.AccountStatus.ACTIVE,
+            owner=owner,
+            metadata={'ecommerce_system': True},
+        )
+        account.access_token = 'ecommerce-placeholder'
+        account.save()
+        return account
+
+    def _resolve_payment_method(self, request) -> str:
+        """Map frontend payment payload to payment method."""
+        payment_payload = request.data.get('payment') or {}
+        method = payment_payload.get('method') or payment_payload.get('payment_method_id')
+        if not method:
+            return ''
+        method = str(method).lower()
+        if method in ['pix']:
+            return Payment.PaymentMethod.PIX
+        if method in ['cash', 'boleto', 'bolbradesco']:
+            return Payment.PaymentMethod.BOLETO
+        if method in ['credit_card', 'card']:
+            return Payment.PaymentMethod.CREDIT_CARD
+        if method in ['debit_card']:
+            return Payment.PaymentMethod.DEBIT_CARD
+        return Payment.PaymentMethod.OTHER
+
+    def _get_gateway_for_payment(self, account: WhatsAppAccount, payment_method: str):
+        """Return matching gateway if available."""
+        gateway_type = None
+        if payment_method == Payment.PaymentMethod.PIX:
+            gateway_type = PaymentGateway.GatewayType.PIX
+        elif payment_method in [Payment.PaymentMethod.CREDIT_CARD, Payment.PaymentMethod.DEBIT_CARD]:
+            gateway_type = PaymentGateway.GatewayType.MERCADOPAGO
+        elif payment_method == Payment.PaymentMethod.BOLETO:
+            gateway_type = PaymentGateway.GatewayType.MERCADOPAGO
+
+        if not gateway_type:
+            return None
+
+        return PaymentGateway.objects.filter(
+            gateway_type=gateway_type,
+            is_enabled=True,
+            is_active=True
+        ).first()
+
+    def _create_order_from_cart(self, cart: Cart, data: dict, request) -> Order:
+        """Create an Order from the current cart."""
+        account = self._get_default_account()
+        order_repo = OrderRepository()
+
+        shipping_address = {
+            'address': data.get('shipping_address', ''),
+            'city': data.get('shipping_city', ''),
+            'state': data.get('shipping_state', ''),
+            'zip_code': data.get('shipping_zip_code', ''),
+            'method': request.data.get('shipping_method', ''),
+        }
+
+        order_items = []
+        for item in cart.items.select_related('product').all():
+            order_items.append({
+                'product_id': str(item.product.id),
+                'product_name': item.product.name,
+                'product_sku': item.product.sku or '',
+                'quantity': item.quantity,
+                'unit_price': float(item.product.price),
+                'total_price': float(item.product.price) * item.quantity,
+                'metadata': {'source': 'ecommerce'},
+            })
+
+        metadata = {
+            'source': 'ecommerce',
+            'checkout_session': request.data.get('session_id', ''),
+            'shipping_method': request.data.get('shipping_method', ''),
+            'coupon_code': request.data.get('coupon_code', ''),
+        }
+
+        order = order_repo.create(
+            account=account,
+            customer_phone=data['customer_phone'],
+            customer_name=data.get('customer_name', ''),
+            customer_email=data.get('customer_email', ''),
+            status=Order.OrderStatus.AWAITING_PAYMENT,
+            subtotal=cart.get_total(),
+            total=cart.get_total(),
+            shipping_address=shipping_address,
+            billing_address={},
+            metadata=metadata,
+            items=order_items,
+        )
+
+        return order
+
+    def _create_payment_for_order(self, order: Order, checkout: Checkout, request):
+        """Create a Payment record for the order."""
+        payment_service = PaymentService()
+        payment_method = self._resolve_payment_method(request)
+        gateway = self._get_gateway_for_payment(order.account, payment_method)
+
+        payment = payment_service.create_payment(
+            order_id=str(order.id),
+            amount=float(checkout.total_amount),
+            gateway_id=str(gateway.id) if gateway else None,
+            payment_method=payment_method,
+            payer_email=checkout.customer_email,
+            payer_name=checkout.customer_name,
+            metadata={
+                'source': 'ecommerce',
+                'checkout_id': str(checkout.id),
+                'session_token': checkout.session_token,
+                'shipping_method': request.data.get('shipping_method', ''),
+            },
+        )
+
+        if checkout.payment_link:
+            payment.payment_url = checkout.payment_link
+            payment.save(update_fields=['payment_url'])
+
+        return payment
+
     @action(detail=False, methods=['post'])
     def create_checkout(self, request):
         """Create checkout from cart and generate Mercado Pago preference"""
@@ -235,6 +410,13 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                 shipping_state=data.get('shipping_state', ''),
                 shipping_zip_code=data.get('shipping_zip_code', ''),
             )
+
+            # Create order for dashboard tracking
+            order = self._create_order_from_cart(cart, data, request)
+            order.metadata = {**(order.metadata or {}), 'checkout_id': str(checkout.id)}
+            order.save(update_fields=['metadata'])
+            checkout.order = order
+            checkout.save(update_fields=['order'])
             
             # Update cart with phone number for automation
             cart.phone_number = data['customer_phone']
@@ -271,8 +453,25 @@ class CheckoutViewSet(viewsets.GenericViewSet):
                 else:
                     logger.error(f"Failed to create MP preference: {result}")
             
+            # Create payment record for dashboard tracking
+            payment = self._create_payment_for_order(order, checkout, request)
+
             # Notify automation system
             self._notify_checkout_created(checkout, cart)
+
+            transaction.on_commit(lambda: self._notify_admins(
+                title='Novo pedido criado',
+                message=f"Pedido #{order.order_number} aguardando pagamento.",
+                notification_type='order',
+                data={
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                    'checkout_id': str(checkout.id),
+                    'total': float(order.total),
+                },
+                related_type='order',
+                related_id=str(order.id),
+            ))
         
         return Response(CheckoutSerializer(checkout).data, status=status.HTTP_201_CREATED)
 
@@ -315,6 +514,80 @@ class WebhookViewSet(viewsets.GenericViewSet):
     """
     permission_classes = [AllowAny]
 
+    def _get_admin_users(self):
+        """Return active superadmin users."""
+        return User.objects.filter(is_superuser=True, is_active=True)
+
+    def _notify_admins(self, title: str, message: str, notification_type: str, data: dict, related_type: str, related_id: str):
+        """Send notification to all superadmins."""
+        service = NotificationService()
+        for admin in self._get_admin_users():
+            service.create_notification(
+                title=title,
+                message=message,
+                notification_type=notification_type,
+                user=admin,
+                data=data,
+                related_object_type=related_type,
+                related_object_id=related_id,
+            )
+
+    def _map_mp_payment_method(self, method_id: str) -> str:
+        """Map Mercado Pago payment_method_id to Payment method."""
+        if not method_id:
+            return ''
+        method_id = method_id.lower()
+        if method_id == 'pix':
+            return Payment.PaymentMethod.PIX
+        if method_id in ['bolbradesco', 'boleto']:
+            return Payment.PaymentMethod.BOLETO
+        if method_id in ['visa', 'master', 'mastercard', 'amex', 'elo', 'hipercard']:
+            return Payment.PaymentMethod.CREDIT_CARD
+        return Payment.PaymentMethod.OTHER
+
+    def _get_or_create_payment(self, checkout: Checkout, result: dict) -> Payment | None:
+        """Ensure a Payment record exists for the checkout order."""
+        if not checkout.order:
+            return None
+
+        payment = Payment.objects.filter(order=checkout.order, is_active=True).order_by('-created_at').first()
+        if not payment:
+            gateway = PaymentGateway.objects.filter(
+                gateway_type=PaymentGateway.GatewayType.MERCADOPAGO,
+                is_enabled=True,
+                is_active=True
+            ).first()
+            payment_service = PaymentService()
+            payment = payment_service.create_payment(
+                order_id=str(checkout.order.id),
+                amount=float(checkout.total_amount),
+                gateway_id=str(gateway.id) if gateway else None,
+                payment_method=self._map_mp_payment_method(result.get('payment_method', '')),
+                payer_email=checkout.customer_email,
+                payer_name=checkout.customer_name,
+                metadata={
+                    'source': 'ecommerce',
+                    'checkout_id': str(checkout.id),
+                    'session_token': checkout.session_token,
+                },
+            )
+
+        updates = {}
+        payment_method = self._map_mp_payment_method(result.get('payment_method', ''))
+        if payment_method and not payment.payment_method:
+            updates['payment_method'] = payment_method
+        if checkout.payment_link and not payment.payment_url:
+            updates['payment_url'] = checkout.payment_link
+        if result.get('payment_id') and payment.external_id != str(result.get('payment_id')):
+            updates['external_id'] = str(result.get('payment_id'))
+
+        if updates:
+            for key, value in updates.items():
+                setattr(payment, key, value)
+            payment.save(update_fields=list(updates.keys()))
+
+        return payment
+
     @action(detail=False, methods=['post'], url_path='mercado_pago')
     def mercado_pago(self, request):
         """Handle Mercado Pago webhook notifications"""
@@ -335,19 +608,18 @@ class WebhookViewSet(viewsets.GenericViewSet):
                     checkout.payment_status = 'completed'
                     checkout.mercado_pago_payment_id = result.get('payment_id')
                     checkout.mark_completed()
-                    
-                    # Notify automation system
+                    self._sync_payment_status(checkout, result)
                     self._notify_payment_confirmed(checkout)
                     
                 elif payment_status in ['pending', 'in_process']:
                     checkout.payment_status = 'processing'
                     checkout.save()
+                    self._sync_payment_status(checkout, result)
                     
                 elif payment_status in ['rejected', 'cancelled']:
                     checkout.payment_status = 'failed'
                     checkout.save()
-                    
-                    # Notify automation system
+                    self._sync_payment_status(checkout, result)
                     self._notify_payment_failed(checkout)
                     
             except Checkout.DoesNotExist:
@@ -355,24 +627,70 @@ class WebhookViewSet(viewsets.GenericViewSet):
         
         return Response({'status': 'ok'})
 
+    def _sync_payment_status(self, checkout: Checkout, result: dict):
+        """Sync payment status with payments app."""
+        payment = self._get_or_create_payment(checkout, result)
+        if not payment:
+            return
+
+        payment_status = result.get('status')
+        payment_service = PaymentService()
+
+        if payment_status == 'approved':
+            payment_service.confirm_payment(
+                str(payment.id),
+                external_id=str(result.get('payment_id', '')),
+                gateway_response=result
+            )
+        elif payment_status in ['rejected', 'cancelled']:
+            payment_service.fail_payment(
+                str(payment.id),
+                error_code=str(result.get('status_detail', 'failed')),
+                error_message='Payment failed',
+                gateway_response=result
+            )
+        elif payment_status in ['pending', 'in_process']:
+            if payment.status == Payment.PaymentStatus.PENDING:
+                payment.status = Payment.PaymentStatus.PROCESSING
+                payment.save(update_fields=['status'])
+
     def _notify_payment_confirmed(self, checkout):
-        """Notify automation about payment confirmation"""
+        """Notify admins about payment confirmation."""
         try:
-            from apps.automation.services import AutomationService
-            from apps.automation.models import CompanyProfile, CustomerSession
-            
-            # Find or create customer session
-            phone = checkout.customer_phone
-            if phone:
-                logger.info(f"Payment confirmed for {phone}, triggering automation")
-                # The automation service will handle sending the WhatsApp message
+            if checkout.order:
+                self._notify_admins(
+                    title='Pagamento confirmado',
+                    message=f"Pedido #{checkout.order.order_number} pago com sucesso.",
+                    notification_type='payment',
+                    data={
+                        'order_id': str(checkout.order.id),
+                        'order_number': checkout.order.order_number,
+                        'checkout_id': str(checkout.id),
+                        'amount': float(checkout.total_amount),
+                    },
+                    related_type='payment',
+                    related_id=str(checkout.order.id),
+                )
         except Exception as e:
             logger.warning(f"Could not notify payment: {e}")
 
     def _notify_payment_failed(self, checkout):
-        """Notify automation about payment failure"""
+        """Notify admins about payment failure."""
         try:
-            logger.info(f"Payment failed for {checkout.customer_phone}")
+            if checkout.order:
+                self._notify_admins(
+                    title='Pagamento falhou',
+                    message=f"Pedido #{checkout.order.order_number} com pagamento falhado.",
+                    notification_type='payment',
+                    data={
+                        'order_id': str(checkout.order.id),
+                        'order_number': checkout.order.order_number,
+                        'checkout_id': str(checkout.id),
+                        'amount': float(checkout.total_amount),
+                    },
+                    related_type='payment',
+                    related_id=str(checkout.order.id),
+                )
         except Exception as e:
             logger.warning(f"Could not notify payment failure: {e}")
 

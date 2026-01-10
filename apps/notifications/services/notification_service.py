@@ -197,6 +197,7 @@ class NotificationService:
                         "notification": {
                             "id": str(notification.id),
                             "type": notification.notification_type,
+                            "notification_type": notification.notification_type,
                             "priority": notification.priority,
                             "title": notification.title,
                             "message": notification.message,

@@ -25,14 +25,13 @@ if migrate_result.returncode != 0:
 # print("=== Collecting static files ===")
 # subprocess.run([sys.executable, 'manage.py', 'collectstatic', '--noinput'])
 
-print(f"=== Starting gunicorn on port {port} ===")
+print(f"=== Starting daphne (ASGI) on port {port} ===")
 
 subprocess.run([
-    sys.executable, '-m', 'gunicorn',
-    'config.wsgi:application',
-    '--bind', f'0.0.0.0:{port}',
-    '--workers', '1',
-    '--timeout', '120',
-    '--access-logfile', '-',
-    '--error-logfile', '-'
+    sys.executable, '-m', 'daphne',
+    '-b', '0.0.0.0',
+    '-p', str(port),
+    '--proxy-headers',
+    '--access-log', '-',
+    'config.asgi:application'
 ])
