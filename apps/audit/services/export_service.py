@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Export service for generating CSV/Excel exports.
 """

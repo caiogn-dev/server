@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Order Service - Business logic for order management.
 """

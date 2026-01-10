@@ -449,12 +449,12 @@ GET        /api/v1/ecommerce/admin/delivery-zones/stats/
 
 ---
 
-## ? Atualiza??o - Entrega por KM (2026-01-10)
+## ✅ Atualização - Entrega por KM (2026-01-10)
 
 - [x] StoreLocation model + admin endpoint
-- [x] DeliveryZone com faixas por KM (min_km/max_km, pre?o por KM, taxa m?nima)
-- [x] C?lculo de rota (OSRM) com fallback Haversine
-- [x] Cache de geolocaliza??o de CEP (ZipCodeGeo)
+- [x] DeliveryZone com faixas por KM (min_km/max_km, preço por KM, taxa mínima)
+- [x] Cálculo de rota (OSRM) com fallback Haversine
+- [x] Cache de geolocalização de CEP (ZipCodeGeo)
 - [x] /delivery/calculate retorna distance_km e rate_per_km
 
 **Novos endpoints:**

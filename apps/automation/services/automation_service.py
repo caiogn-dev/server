@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Automation Service - Core business logic for message automation.
 """

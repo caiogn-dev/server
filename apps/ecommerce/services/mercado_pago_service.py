@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Mercado Pago integration service for e-commerce.
 """

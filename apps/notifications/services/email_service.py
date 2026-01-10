@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Email service using Resend API.
 """
