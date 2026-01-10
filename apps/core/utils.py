@@ -79,3 +79,83 @@ def generate_idempotency_key(*args) -> str:
     """Generate an idempotency key from arguments."""
     data = ':'.join(str(arg) for arg in args)
     return hashlib.sha256(data.encode()).hexdigest()
+
+
+def validate_cpf(cpf: str) -> bool:
+    """
+    Validate a Brazilian CPF number using the official algorithm.
+    
+    The CPF consists of 11 digits: 9 base digits + 2 verification digits.
+    The verification digits are calculated using modulo 11.
+    
+    Args:
+        cpf: CPF string (can contain formatting characters)
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    # Remove non-digit characters
+    cpf = ''.join(filter(str.isdigit, str(cpf or '')))
+    
+    # Must have exactly 11 digits
+    if len(cpf) != 11:
+        return False
+    
+    # Reject known invalid CPFs (all same digits)
+    if cpf == cpf[0] * 11:
+        return False
+    
+    # Calculate first verification digit
+    total = 0
+    for i in range(9):
+        total += int(cpf[i]) * (10 - i)
+    
+    remainder = total % 11
+    first_digit = 0 if remainder < 2 else 11 - remainder
+    
+    if int(cpf[9]) != first_digit:
+        return False
+    
+    # Calculate second verification digit
+    total = 0
+    for i in range(10):
+        total += int(cpf[i]) * (11 - i)
+    
+    remainder = total % 11
+    second_digit = 0 if remainder < 2 else 11 - remainder
+    
+    if int(cpf[10]) != second_digit:
+        return False
+    
+    return True
+
+
+def format_cpf(cpf: str) -> str:
+    """
+    Format a CPF number for display.
+    
+    Args:
+        cpf: CPF string (digits only or formatted)
+        
+    Returns:
+        Formatted CPF (XXX.XXX.XXX-XX) or original if invalid length
+    """
+    cpf = ''.join(filter(str.isdigit, str(cpf or '')))
+    
+    if len(cpf) != 11:
+        return cpf
+    
+    return f"{cpf[:3]}.{cpf[3:6]}.{cpf[6:9]}-{cpf[9:]}"
+
+
+def clean_cpf(cpf: str) -> str:
+    """
+    Remove formatting from CPF, returning only digits.
+    
+    Args:
+        cpf: CPF string (formatted or not)
+        
+    Returns:
+        CPF with only digits
+    """
+    return ''.join(filter(str.isdigit, str(cpf or '')))

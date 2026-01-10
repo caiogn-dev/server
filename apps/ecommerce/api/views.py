@@ -303,7 +303,14 @@ class CheckoutViewSet(viewsets.GenericViewSet):
             )
 
     def _get_default_account(self) -> WhatsAppAccount:
-        """Resolve or create the default account for ecommerce orders."""
+        """Resolve or create the default account for ecommerce orders.
+        
+        Priority:
+        1. Account specified by ECOMMERCE_DEFAULT_ACCOUNT_ID env var
+        2. Account with metadata.ecommerce_system = True
+        3. First active account
+        4. Create a system account (without WhatsApp integration - notifications disabled)
+        """
         account_id = getattr(settings, 'ECOMMERCE_DEFAULT_ACCOUNT_ID', '').strip()
         if account_id:
             account = WhatsAppAccount.objects.filter(id=account_id, is_active=True).first()
@@ -321,22 +328,30 @@ class CheckoutViewSet(viewsets.GenericViewSet):
         if account:
             return account
 
+        # Create a system account for e-commerce without WhatsApp integration
+        # WhatsApp notifications will be skipped for this account
         owner = self._get_admin_users().order_by('id').first()
-        phone_number_id = f"ecommerce-{uuid.uuid4().hex[:12]}"
-        waba_id = f"ecommerce-{uuid.uuid4().hex[:12]}"
+        phone_number_id = f"ecommerce-system-{uuid.uuid4().hex[:8]}"
+        waba_id = f"ecommerce-system-{uuid.uuid4().hex[:8]}"
 
         account = WhatsAppAccount(
-            name='Pastita Store (Sistema)',
+            name='Pastita E-commerce (Sistema)',
             phone_number_id=phone_number_id,
             waba_id=waba_id,
-            phone_number='5500000000000',
-            display_phone_number='',
-            status=WhatsAppAccount.AccountStatus.ACTIVE,
+            phone_number='0000000000000',
+            display_phone_number='Sistema E-commerce',
+            status=WhatsAppAccount.AccountStatus.INACTIVE,  # Inactive = no WhatsApp calls
             owner=owner,
-            metadata={'ecommerce_system': True},
+            metadata={
+                'ecommerce_system': True,
+                'whatsapp_disabled': True,
+                'notifications_email_only': True,
+            },
         )
-        account.access_token = 'ecommerce-placeholder'
+        # No access token - this account won't make WhatsApp API calls
+        account.access_token = ''
         account.save()
+        logger.info(f"Created system e-commerce account {account.id} (WhatsApp disabled)")
         return account
 
     def _resolve_payment_method(self, request) -> str:

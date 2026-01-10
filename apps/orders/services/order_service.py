@@ -380,21 +380,35 @@ class OrderService:
         """Get order statistics."""
         return self.repo.get_order_stats(account_id, start_date, end_date)
 
+    def _is_whatsapp_enabled(self, order: Order) -> bool:
+        """Check if WhatsApp notifications are enabled for this order's account."""
+        if not order.account:
+            return False
+        if order.account.status != 'active':
+            return False
+        metadata = order.account.metadata or {}
+        if metadata.get('whatsapp_disabled'):
+            return False
+        if not order.account.access_token:
+            return False
+        return True
+
     def _notify_customer_order_confirmed(self, order: Order) -> None:
         """Notify customer that order is confirmed."""
-        # Send WhatsApp notification
-        try:
-            message_service = MessageService()
-            message_service.send_text_message(
-                account_id=str(order.account.id),
-                to=order.customer_phone,
-                text=f"✅ Seu pedido #{order.order_number} foi confirmado!\n\n"
-                     f"Total: R$ {order.total:.2f}\n\n"
-                     f"Aguardamos o pagamento para dar continuidade.",
-                metadata={'order_id': str(order.id), 'notification_type': 'order_confirmed'}
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        # Send WhatsApp notification (if enabled)
+        if self._is_whatsapp_enabled(order):
+            try:
+                message_service = MessageService()
+                message_service.send_text_message(
+                    account_id=str(order.account.id),
+                    to=order.customer_phone,
+                    text=f"✅ Seu pedido #{order.order_number} foi confirmado!\n\n"
+                         f"Total: R$ {order.total:.2f}\n\n"
+                         f"Aguardamos o pagamento para dar continuidade.",
+                    metadata={'order_id': str(order.id), 'notification_type': 'order_confirmed'}
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
         
         # Send email notification
         if order.customer_email:
@@ -405,6 +419,8 @@ class OrderService:
 
     def _notify_customer_payment_pending(self, order: Order) -> None:
         """Notify customer about pending payment."""
+        if not self._is_whatsapp_enabled(order):
+            return
         try:
             message_service = MessageService()
             message_service.send_text_message(
@@ -420,20 +436,21 @@ class OrderService:
 
     def _notify_customer_payment_confirmed(self, order: Order) -> None:
         """Notify customer that payment is confirmed."""
-        # Send WhatsApp notification
-        try:
-            message_service = MessageService()
-            message_service.send_text_message(
-                account_id=str(order.account.id),
-                to=order.customer_phone,
-                text=f"✅ Pagamento confirmado!\n\n"
-                     f"Pedido #{order.order_number}\n"
-                     f"Valor: R$ {order.total:.2f}\n\n"
-                     f"Seu pedido está sendo preparado para envio.",
-                metadata={'order_id': str(order.id), 'notification_type': 'payment_confirmed'}
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        # Send WhatsApp notification (if enabled)
+        if self._is_whatsapp_enabled(order):
+            try:
+                message_service = MessageService()
+                message_service.send_text_message(
+                    account_id=str(order.account.id),
+                    to=order.customer_phone,
+                    text=f"✅ Pagamento confirmado!\n\n"
+                         f"Pedido #{order.order_number}\n"
+                         f"Valor: R$ {order.total:.2f}\n\n"
+                         f"Seu pedido está sendo preparado para envio.",
+                    metadata={'order_id': str(order.id), 'notification_type': 'payment_confirmed'}
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
         
         # Send email notification
         if order.customer_email:
@@ -449,24 +466,25 @@ class OrderService:
         carrier: str
     ) -> None:
         """Notify customer that order is shipped."""
-        # Send WhatsApp notification
-        try:
-            message_service = MessageService()
-            tracking_info = ""
-            if tracking_code:
-                tracking_info = f"\n\n📦 Código de rastreio: {tracking_code}"
-            if carrier:
-                tracking_info += f"\nTransportadora: {carrier}"
-            
-            message_service.send_text_message(
-                account_id=str(order.account.id),
-                to=order.customer_phone,
-                text=f"🚚 Seu pedido foi enviado!\n\n"
-                     f"Pedido #{order.order_number}{tracking_info}",
-                metadata={'order_id': str(order.id), 'notification_type': 'order_shipped'}
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        # Send WhatsApp notification (if enabled)
+        if self._is_whatsapp_enabled(order):
+            try:
+                message_service = MessageService()
+                tracking_info = ""
+                if tracking_code:
+                    tracking_info = f"\n\n📦 Código de rastreio: {tracking_code}"
+                if carrier:
+                    tracking_info += f"\nTransportadora: {carrier}"
+                
+                message_service.send_text_message(
+                    account_id=str(order.account.id),
+                    to=order.customer_phone,
+                    text=f"🚚 Seu pedido foi enviado!\n\n"
+                         f"Pedido #{order.order_number}{tracking_info}",
+                    metadata={'order_id': str(order.id), 'notification_type': 'order_shipped'}
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
         
         # Send email notification
         if order.customer_email:
@@ -477,19 +495,20 @@ class OrderService:
 
     def _notify_customer_order_delivered(self, order: Order) -> None:
         """Notify customer that order is delivered."""
-        # Send WhatsApp notification
-        try:
-            message_service = MessageService()
-            message_service.send_text_message(
-                account_id=str(order.account.id),
-                to=order.customer_phone,
-                text=f"📬 Pedido entregue!\n\n"
-                     f"Pedido #{order.order_number} foi entregue com sucesso.\n\n"
-                     f"Obrigado pela preferência! 🙏",
-                metadata={'order_id': str(order.id), 'notification_type': 'order_delivered'}
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
+        # Send WhatsApp notification (if enabled)
+        if self._is_whatsapp_enabled(order):
+            try:
+                message_service = MessageService()
+                message_service.send_text_message(
+                    account_id=str(order.account.id),
+                    to=order.customer_phone,
+                    text=f"📬 Pedido entregue!\n\n"
+                         f"Pedido #{order.order_number} foi entregue com sucesso.\n\n"
+                         f"Obrigado pela preferência! 🙏",
+                    metadata={'order_id': str(order.id), 'notification_type': 'order_delivered'}
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify customer via WhatsApp: {str(e)}")
         
         # Send email notification
         if order.customer_email:
@@ -500,6 +519,8 @@ class OrderService:
 
     def _notify_customer_order_cancelled(self, order: Order, reason: str) -> None:
         """Notify customer that order is cancelled."""
+        if not self._is_whatsapp_enabled(order):
+            return
         try:
             message_service = MessageService()
             reason_text = f"\n\nMotivo: {reason}" if reason else ""

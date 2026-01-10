@@ -167,13 +167,49 @@ class OrderRepository:
         return item
 
     def cancel(self, order: Order, reason: str = '', actor=None) -> Order:
-        """Cancel an order."""
+        """Cancel an order and restore stock quantities."""
+        # Restore stock for each item
+        self._restore_stock(order)
+        
         return self.update_status(
             order=order,
             new_status=Order.OrderStatus.CANCELLED,
             actor=actor,
             description=f"Order cancelled. Reason: {reason}" if reason else "Order cancelled"
         )
+
+    def _restore_stock(self, order: Order) -> None:
+        """Restore stock quantities for all items in an order."""
+        try:
+            from apps.ecommerce.models import Product
+            
+            for item in order.items.all():
+                product_id = item.product_id
+                if not product_id:
+                    continue
+                    
+                try:
+                    product = Product.objects.get(id=product_id)
+                    product.stock_quantity += item.quantity
+                    product.save(update_fields=['stock_quantity', 'updated_at'])
+                    
+                    self._create_event(
+                        order=order,
+                        event_type=OrderEvent.EventType.NOTE_ADDED,
+                        description=f"Stock restored: {item.product_name} +{item.quantity} units",
+                        metadata={'product_id': str(product_id), 'quantity_restored': item.quantity}
+                    )
+                except Product.DoesNotExist:
+                    # Product may have been deleted, log but continue
+                    self._create_event(
+                        order=order,
+                        event_type=OrderEvent.EventType.NOTE_ADDED,
+                        description=f"Could not restore stock for {item.product_name}: product not found",
+                        metadata={'product_id': str(product_id), 'quantity': item.quantity}
+                    )
+        except ImportError:
+            # E-commerce app not installed, skip stock restoration
+            pass
 
     def add_note(
         self,
