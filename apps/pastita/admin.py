@@ -2,39 +2,12 @@
 Pastita Admin Configuration
 """
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
 from django.utils.html import format_html
 from .models import (
-    CustomUser, Produto, Molho, Carne, Rondelli, Combo,
+    Produto, Molho, Carne, Rondelli, Combo,
     Carrinho, ItemCarrinho, ItemComboCarrinho,
     Pedido, ItemPedido, ItemComboPedido
 )
-
-
-# =============================================================================
-# USER ADMIN
-# =============================================================================
-
-@admin.register(CustomUser)
-class CustomUserAdmin(UserAdmin):
-    list_display = ('email', 'first_name', 'last_name', 'phone', 'is_active', 'is_staff', 'date_joined')
-    list_filter = ('is_active', 'is_staff', 'is_superuser', 'date_joined')
-    search_fields = ('email', 'first_name', 'last_name', 'phone')
-    ordering = ('-date_joined',)
-    
-    fieldsets = (
-        (None, {'fields': ('email', 'password')}),
-        ('Informações Pessoais', {'fields': ('first_name', 'last_name', 'phone')}),
-        ('Permissões', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Datas', {'fields': ('last_login',)}),
-    )
-    
-    add_fieldsets = (
-        (None, {
-            'classes': ('wide',),
-            'fields': ('email', 'password1', 'password2', 'first_name', 'last_name', 'phone'),
-        }),
-    )
 
 
 # =============================================================================

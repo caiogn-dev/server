@@ -1,16 +1,15 @@
 """
 Pastita API Views - REST API endpoints for the Pastita app.
 """
-import json
 import logging
 from decimal import Decimal
 from urllib.parse import quote
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
 from django.utils.timezone import now
 from django.views.decorators.csrf import csrf_exempt
-from django.http import HttpResponse
 
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view, permission_classes
@@ -20,7 +19,7 @@ from rest_framework.views import APIView
 import mercadopago
 
 from .models import (
-    CustomUser, Produto, Molho, Carne, Rondelli, Combo,
+    Produto, Molho, Carne, Rondelli, Combo,
     Carrinho, ItemCarrinho, ItemComboCarrinho,
     Pedido, ItemPedido, ItemComboPedido
 )
@@ -32,6 +31,8 @@ from .serializers import (
     PedidoSerializer, PedidoListSerializer,
     CheckoutSerializer, PaymentResponseSerializer, CatalogoSerializer
 )
+
+User = get_user_model()
 
 logger = logging.getLogger(__name__)
 
