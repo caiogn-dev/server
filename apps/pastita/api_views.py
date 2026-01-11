@@ -7,6 +7,8 @@ from urllib.parse import quote
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.db.models import F
 from django.shortcuts import get_object_or_404
 from django.utils.timezone import now
 from django.views.decorators.csrf import csrf_exempt
@@ -184,7 +186,10 @@ class CatalogoView(APIView):
 # =============================================================================
 
 class CarrinhoViewSet(viewsets.ViewSet):
-    """ViewSet for shopping cart operations."""
+    """ViewSet for shopping cart operations.
+    
+    Uses atomic transactions and select_for_update to prevent race conditions.
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def get_cart(self, user):
@@ -199,8 +204,9 @@ class CarrinhoViewSet(viewsets.ViewSet):
         return Response(serializer.data)
 
     @action(detail=False, methods=['post'])
+    @transaction.atomic
     def adicionar_produto(self, request):
-        """Add product to cart."""
+        """Add product to cart with race condition protection."""
         serializer = AddToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -210,16 +216,19 @@ class CarrinhoViewSet(viewsets.ViewSet):
         produto = get_object_or_404(Produto, pk=produto_id, ativo=True)
         cart = self.get_cart(request.user)
         
-        item, created = ItemCarrinho.objects.get_or_create(
+        # Use select_for_update to lock the row during update
+        item, created = ItemCarrinho.objects.select_for_update().get_or_create(
             carrinho=cart,
-            produto=produto
+            produto=produto,
+            defaults={'quantidade': quantidade}
         )
         
-        if created:
-            item.quantidade = quantidade
-        else:
-            item.quantidade += quantidade
-        item.save()
+        if not created:
+            # Use F() expression for atomic increment
+            ItemCarrinho.objects.filter(pk=item.pk).update(
+                quantidade=F('quantidade') + quantidade
+            )
+            item.refresh_from_db()
         
         return Response({
             'message': f'{produto.nome} adicionado ao carrinho',
@@ -227,8 +236,9 @@ class CarrinhoViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['post'])
+    @transaction.atomic
     def adicionar_combo(self, request):
-        """Add combo to cart."""
+        """Add combo to cart with race condition protection."""
         serializer = AddComboToCartSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -238,14 +248,19 @@ class CarrinhoViewSet(viewsets.ViewSet):
         combo = get_object_or_404(Combo, pk=combo_id, ativo=True)
         cart = self.get_cart(request.user)
         
-        item, created = ItemComboCarrinho.objects.get_or_create(
+        # Use select_for_update to lock the row during update
+        item, created = ItemComboCarrinho.objects.select_for_update().get_or_create(
             carrinho=cart,
-            combo=combo
+            combo=combo,
+            defaults={'quantidade': quantidade}
         )
         
         if not created:
-            item.quantidade += quantidade
-            item.save()
+            # Use F() expression for atomic increment
+            ItemComboCarrinho.objects.filter(pk=item.pk).update(
+                quantidade=F('quantidade') + quantidade
+            )
+            item.refresh_from_db()
         
         return Response({
             'message': f'Combo {combo.nome} adicionado ao carrinho',
@@ -253,15 +268,17 @@ class CarrinhoViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['post'], url_path='atualizar-produto/(?P<item_id>[^/.]+)')
+    @transaction.atomic
     def atualizar_produto(self, request, item_id=None):
-        """Update product quantity in cart."""
+        """Update product quantity in cart with race condition protection."""
         serializer = UpdateCartItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         quantidade = serializer.validated_data['quantidade']
         
+        # Use select_for_update to lock the row
         item = get_object_or_404(
-            ItemCarrinho,
+            ItemCarrinho.objects.select_for_update(),
             id=item_id,
             carrinho__usuario=request.user
         )
@@ -281,15 +298,17 @@ class CarrinhoViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['post'], url_path='atualizar-combo/(?P<item_id>[^/.]+)')
+    @transaction.atomic
     def atualizar_combo(self, request, item_id=None):
-        """Update combo quantity in cart."""
+        """Update combo quantity in cart with race condition protection."""
         serializer = UpdateCartItemSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         quantidade = serializer.validated_data['quantidade']
         
+        # Use select_for_update to lock the row
         item = get_object_or_404(
-            ItemComboCarrinho,
+            ItemComboCarrinho.objects.select_for_update(),
             id=item_id,
             carrinho__usuario=request.user
         )
@@ -309,10 +328,11 @@ class CarrinhoViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['delete'], url_path='remover-produto/(?P<item_id>[^/.]+)')
+    @transaction.atomic
     def remover_produto(self, request, item_id=None):
         """Remove product from cart."""
         item = get_object_or_404(
-            ItemCarrinho,
+            ItemCarrinho.objects.select_for_update(),
             id=item_id,
             carrinho__usuario=request.user
         )
@@ -326,10 +346,11 @@ class CarrinhoViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['delete'], url_path='remover-combo/(?P<item_id>[^/.]+)')
+    @transaction.atomic
     def remover_combo(self, request, item_id=None):
         """Remove combo from cart."""
         item = get_object_or_404(
-            ItemComboCarrinho,
+            ItemComboCarrinho.objects.select_for_update(),
             id=item_id,
             carrinho__usuario=request.user
         )
@@ -343,6 +364,7 @@ class CarrinhoViewSet(viewsets.ViewSet):
         })
 
     @action(detail=False, methods=['delete'])
+    @transaction.atomic
     def limpar(self, request):
         """Clear entire cart."""
         cart = self.get_cart(request.user)

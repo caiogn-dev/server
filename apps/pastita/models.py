@@ -2,12 +2,9 @@
 Pastita Models - Massas Artesanais Premium
 Product inheritance system with specialized product types.
 """
-import os
 from decimal import Decimal
 from django.conf import settings
 from django.db import models
-from django.templatetags.static import static
-from django.contrib.auth import get_user_model
 
 
 # =============================================================================
