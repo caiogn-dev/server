@@ -2,9 +2,14 @@
 Pastita Models - Massas Artesanais Premium
 Product inheritance system with specialized product types.
 """
+import logging
+import os
 from decimal import Decimal
 from django.conf import settings
 from django.db import models
+from django.templatetags.static import static
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -37,8 +42,8 @@ class Produto(models.Model):
             if self.imagem and hasattr(self.imagem, 'path'):
                 if os.path.exists(self.imagem.path):
                     return self.imagem.url
-        except Exception:
-            pass
+        except (ValueError, OSError) as e:
+            logger.debug(f"Image not found for product {self.id}: {e}")
         return static('img/padrao.png')
 
 
@@ -247,8 +252,8 @@ class Combo(models.Model):
             if self.imagem and hasattr(self.imagem, 'path'):
                 if os.path.exists(self.imagem.path):
                     return self.imagem.url
-        except Exception:
-            pass
+        except (ValueError, OSError) as e:
+            logger.debug(f"Image not found for combo {self.id}: {e}")
         return static('img/padrao.png')
 
     @property
