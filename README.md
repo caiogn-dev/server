@@ -36,6 +36,7 @@ python manage.py runserver
 - E-commerce API (Products, Cart, Checkout)
 - Order Management with full lifecycle
 - Payment Integration (Mercado Pago: PIX, Boleto, Card)
+- Delivery zone management with KM-based pricing
 - WhatsApp Business API integration
 - Langflow LLM automation
 - Real-time WebSocket updates
@@ -48,6 +49,7 @@ See `/docs` folder in the project root for:
 - [Technical Evaluation](../docs/TECHNICAL_EVALUATION.md)
 - [API Reference](../docs/API_REFERENCE.md)
 - [Deployment Guide](../docs/DEPLOYMENT.md)
+- [HERE Maps Integration](../docs/HERE_MAPS_INTEGRATION.md)
 - [Pending Tasks](../docs/TODO.md)
 
 ## API Documentation

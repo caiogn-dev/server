@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'apps.campaigns',
     'apps.automation',
     'apps.ecommerce',
+    'apps.pastita',  # Pastita - Massas Artesanais
 ]
 
 MIDDLEWARE = [
@@ -231,6 +232,12 @@ WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', 'your-verify-token')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
+
+# Pastita - Mercado Pago Integration
+MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
+MERCADO_PAGO_PUBLIC_KEY = os.environ.get('MERCADO_PAGO_PUBLIC_KEY', '')
+PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '5563992957931')
+PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', 'https://agriao.shop')
 
 # Langflow
 LANGFLOW_API_URL = os.environ.get('LANGFLOW_API_URL', 'http://localhost:7860')

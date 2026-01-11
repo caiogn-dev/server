@@ -27,6 +27,7 @@ urlpatterns = [
         path('marketing/', include('apps.campaigns.urls')),
         path('automation/', include('apps.automation.urls')),
         path('ecommerce/', include('apps.ecommerce.urls')),
+        path('pastita/', include('apps.pastita.urls')),  # Pastita API
     ])),
     
     # Webhooks (public endpoints)
