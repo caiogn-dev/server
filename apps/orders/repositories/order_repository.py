@@ -202,7 +202,7 @@ class OrderRepository:
     def _restore_stock(self, order: Order) -> None:
         """Restore stock quantities for all items in an order."""
         try:
-            from apps.ecommerce.models import Product
+            from apps.stores.models import StoreProduct
             
             for item in order.items.all():
                 product_id = item.product_id
@@ -210,17 +210,18 @@ class OrderRepository:
                     continue
                     
                 try:
-                    product = Product.objects.get(id=product_id)
-                    product.stock_quantity += item.quantity
-                    product.save(update_fields=['stock_quantity', 'updated_at'])
-                    
-                    self._create_event(
-                        order=order,
-                        event_type=OrderEvent.EventType.NOTE_ADDED,
-                        description=f"Stock restored: {item.product_name} +{item.quantity} units",
-                        metadata={'product_id': str(product_id), 'quantity_restored': item.quantity}
-                    )
-                except Product.DoesNotExist:
+                    product = StoreProduct.objects.get(id=product_id)
+                    if product.track_stock:
+                        product.stock_quantity += item.quantity
+                        product.save(update_fields=['stock_quantity', 'updated_at'])
+                        
+                        self._create_event(
+                            order=order,
+                            event_type=OrderEvent.EventType.NOTE_ADDED,
+                            description=f"Stock restored: {item.product_name} +{item.quantity} units",
+                            metadata={'product_id': str(product_id), 'quantity_restored': item.quantity}
+                        )
+                except StoreProduct.DoesNotExist:
                     # Product may have been deleted, log but continue
                     self._create_event(
                         order=order,
@@ -229,7 +230,7 @@ class OrderRepository:
                         metadata={'product_id': str(product_id), 'quantity': item.quantity}
                     )
         except ImportError:
-            # E-commerce app not installed, skip stock restoration
+            # Stores app not installed, skip stock restoration
             pass
 
     def add_note(

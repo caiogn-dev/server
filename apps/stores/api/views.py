@@ -440,9 +440,128 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         order.tracking_code = request.data.get('tracking_code', '')
         order.tracking_url = request.data.get('tracking_url', '')
         order.carrier = request.data.get('carrier', '')
-        order.save(update_fields=['tracking_code', 'tracking_url', 'carrier', 'updated_at'])
+        order.status = StoreOrder.OrderStatus.SHIPPED
+        order.save(update_fields=['tracking_code', 'tracking_url', 'carrier', 'status', 'updated_at'])
         
         return Response(StoreOrderSerializer(order).data)
+
+    @action(detail=True, methods=['post'])
+    def mark_paid(self, request, pk=None):
+        """Mark order as paid."""
+        order = self.get_object()
+        order.payment_status = 'paid'
+        order.payment_reference = request.data.get('payment_reference', '')
+        order.paid_at = timezone.now()
+        order.save(update_fields=['payment_status', 'payment_reference', 'paid_at', 'updated_at'])
+        webhook_service.trigger_webhooks(order.store, 'order.paid', {
+            'order_id': str(order.id),
+            'order_number': order.order_number,
+            'total': float(order.total)
+        })
+        return Response(StoreOrderSerializer(order).data)
+
+    @action(detail=True, methods=['post'])
+    def add_note(self, request, pk=None):
+        """Add internal note to order."""
+        order = self.get_object()
+        note = request.data.get('note', '')
+        is_internal = request.data.get('is_internal', True)
+        if note:
+            prefix = "[INTERNAL] " if is_internal else ""
+            current = order.internal_notes or ""
+            order.internal_notes = (current + "\n" + prefix + note).strip()
+            order.save(update_fields=['internal_notes', 'updated_at'])
+        return Response(StoreOrderSerializer(order).data)
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None):
+        """Get order history/events."""
+        order = self.get_object()
+        events = []
+        if order.internal_notes:
+            for i, note in enumerate(order.internal_notes.split("\n")):
+                if note.strip():
+                    events.append({
+                        'id': i,
+                        'event': note.strip(),
+                        'created_at': order.updated_at.isoformat()
+                    })
+        return Response(events)
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """Get order statistics."""
+        from django.db.models import Sum, Count, Avg
+        from django.db.models.functions import TruncDate
+        from datetime import timedelta
+
+        store_id = request.query_params.get('store')
+        period = request.query_params.get('period', 'month')
+        queryset = self.get_queryset()
+        if store_id:
+            queryset = queryset.filter(store_id=store_id)
+
+        now = timezone.now()
+        today = now.date()
+        if period == 'today':
+            date_from = today
+        elif period == 'week':
+            date_from = today - timedelta(days=7)
+        elif period == 'year':
+            date_from = today - timedelta(days=365)
+        else:
+            date_from = today - timedelta(days=30)
+
+        paid_orders = queryset.filter(payment_status='paid')
+        total_stats = paid_orders.aggregate(
+            total_orders=Count('id'),
+            total_revenue=Sum('total'),
+            average_order=Avg('total')
+        )
+        today_stats = paid_orders.filter(created_at__date=today).aggregate(
+            orders_today=Count('id'),
+            revenue_today=Sum('total')
+        )
+        period_stats = paid_orders.filter(created_at__date__gte=date_from).aggregate(
+            orders_period=Count('id'),
+            revenue_period=Sum('total')
+        )
+        week_stats = paid_orders.filter(created_at__date__gte=today - timedelta(days=7)).aggregate(
+            orders_week=Count('id'),
+            revenue_week=Sum('total')
+        )
+        month_stats = paid_orders.filter(created_at__date__gte=today - timedelta(days=30)).aggregate(
+            orders_month=Count('id'),
+            revenue_month=Sum('total')
+        )
+        status_counts = queryset.values('status').annotate(count=Count('id'))
+        pending = sum(s['count'] for s in status_counts if s['status'] == 'pending')
+        processing = sum(s['count'] for s in status_counts if s['status'] in ['confirmed', 'preparing', 'ready'])
+        completed = sum(s['count'] for s in status_counts if s['status'] in ['delivered', 'completed'])
+        cancelled = sum(s['count'] for s in status_counts if s['status'] == 'cancelled')
+
+        daily = paid_orders.filter(created_at__date__gte=date_from).annotate(
+            date=TruncDate('created_at')
+        ).values('date').annotate(count=Count('id'), revenue=Sum('total')).order_by('date')
+
+        return Response({
+            'total_orders': total_stats['total_orders'] or 0,
+            'total_revenue': float(total_stats['total_revenue'] or 0),
+            'average_order_value': float(total_stats['average_order'] or 0),
+            'orders_today': today_stats['orders_today'] or 0,
+            'revenue_today': float(today_stats['revenue_today'] or 0),
+            'orders_period': period_stats['orders_period'] or 0,
+            'revenue_period': float(period_stats['revenue_period'] or 0),
+            'orders_week': week_stats['orders_week'] or 0,
+            'revenue_week': float(week_stats['revenue_week'] or 0),
+            'orders_month': month_stats['orders_month'] or 0,
+            'revenue_month': float(month_stats['revenue_month'] or 0),
+            'pending_orders': pending,
+            'processing_orders': processing,
+            'completed_orders': completed,
+            'cancelled_orders': cancelled,
+            'daily_orders': [{'date': d['date'].isoformat(), 'count': d['count'], 'revenue': float(d['revenue'] or 0)} for d in daily]
+        })
 
 
 class StoreCustomerViewSet(viewsets.ModelViewSet):
@@ -1018,15 +1137,27 @@ class StoreDeliveryZoneViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get delivery zone statistics."""
+        from django.db.models import Avg
+        
         store_id = request.query_params.get('store')
         queryset = self.get_queryset()
         
         if store_id:
             queryset = queryset.filter(store_id=store_id)
         
+        # Calculate averages
+        active_zones = queryset.filter(is_active=True)
+        aggregates = active_zones.aggregate(
+            avg_fee=Avg('delivery_fee'),
+            avg_days=Avg('estimated_days')
+        )
+        
         stats = {
             'total': queryset.count(),
-            'active': queryset.filter(is_active=True).count(),
+            'active': active_zones.count(),
+            'inactive': queryset.filter(is_active=False).count(),
+            'avg_fee': float(aggregates['avg_fee'] or 0),
+            'avg_days': float(aggregates['avg_days'] or 0),
             'by_type': {}
         }
         

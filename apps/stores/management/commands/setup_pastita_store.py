@@ -8,8 +8,7 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
-from apps.stores.models import Store, StoreCategory, StoreIntegration, StoreDeliveryZone as DeliveryZone
-from apps.ecommerce.models import Coupon
+from apps.stores.models import Store, StoreCategory, StoreIntegration, StoreDeliveryZone, StoreCoupon
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -239,16 +238,36 @@ class Command(BaseCommand):
         )
         self.stdout.write(f'  Created WhatsApp integration')
 
-        # Link existing delivery zones to Pastita
-        updated_zones = DeliveryZone.objects.filter(store__isnull=True).update(store=store)
-        self.stdout.write(f'  Linked {updated_zones} delivery zones to Pastita')
+        # Create default coupons if none exist (using StoreCoupon)
+        if not StoreCoupon.objects.filter(store=store).exists():
+            from django.utils import timezone
+            default_coupons = [
+                {
+                    'code': 'BEMVINDO10',
+                    'description': '10% de desconto na primeira compra',
+                    'discount_type': 'percentage',
+                    'discount_value': Decimal('10.00'),
+                    'min_purchase': Decimal('50.00'),
+                    'first_order_only': True,
+                    'valid_from': timezone.now(),
+                    'valid_until': timezone.now() + timezone.timedelta(days=365),
+                },
+                {
+                    'code': 'FRETEGRATIS',
+                    'description': 'Frete grátis em compras acima de R$ 100',
+                    'discount_type': 'fixed',
+                    'discount_value': Decimal('15.00'),
+                    'min_purchase': Decimal('100.00'),
+                    'valid_from': timezone.now(),
+                    'valid_until': timezone.now() + timezone.timedelta(days=365),
+                },
+            ]
+            for coupon_data in default_coupons:
+                StoreCoupon.objects.create(store=store, **coupon_data)
+            self.stdout.write(f'  Created {len(default_coupons)} default coupons')
 
-        # Link existing coupons to Pastita
-        updated_coupons = Coupon.objects.filter(store__isnull=True).update(store=store)
-        self.stdout.write(f'  Linked {updated_coupons} coupons to Pastita')
-
-        # Create default delivery zones if none exist
-        if not DeliveryZone.objects.filter(store=store).exists():
+        # Create default delivery zones if none exist (using StoreDeliveryZone)
+        if not StoreDeliveryZone.objects.filter(store=store).exists():
             default_zones = [
                 {'name': 'Centro', 'distance_band': '0_2', 'delivery_fee': Decimal('5.00'), 'color': '#4CAF50', 'estimated_minutes': 15, 'sort_order': 1},
                 {'name': 'Próximo', 'distance_band': '2_5', 'delivery_fee': Decimal('8.00'), 'color': '#8BC34A', 'estimated_minutes': 20, 'sort_order': 2},
@@ -258,9 +277,10 @@ class Command(BaseCommand):
                 {'name': 'Área Estendida', 'distance_band': '15_20', 'delivery_fee': Decimal('25.00'), 'color': '#E91E63', 'estimated_minutes': 50, 'sort_order': 6},
             ]
             for zone_data in default_zones:
-                DeliveryZone.objects.create(
+                StoreDeliveryZone.objects.create(
                     store=store,
                     zone_type='distance_band',
+                    estimated_days=0,
                     **zone_data
                 )
             self.stdout.write(f'  Created {len(default_zones)} default delivery zones')

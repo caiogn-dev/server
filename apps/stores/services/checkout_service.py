@@ -5,7 +5,6 @@ Handles order creation, payment processing, and stock management.
 import logging
 import uuid
 from decimal import Decimal
-from urllib.parse import urlparse
 from django.db import models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -14,118 +13,57 @@ from django.conf import settings
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem,
     StoreProduct, StoreProductVariant, StoreIntegration,
-    StoreDeliveryZone
+    StoreDeliveryZone, StoreCoupon
 )
-from apps.ecommerce.models import Coupon, DeliveryZone as LegacyDeliveryZone
+from apps.ecommerce.models import DeliveryZone as LegacyDeliveryZone
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
 
 
-def get_webhook_notification_url() -> str:
-    """
-    Get a valid webhook notification URL for payment providers.
-    Returns None if no valid public URL is configured.
-    
-    The webhook endpoint is: /api/v1/stores/webhooks/mercadopago/
-    """
-    base_url = getattr(settings, 'BASE_URL', '').strip()
-    
-    if not base_url:
-        logger.warning("BASE_URL not configured - webhook notifications disabled")
-        return None
-    
-    # Parse and validate URL
-    try:
-        parsed = urlparse(base_url)
-        
-        # Check if it's a valid URL with scheme and host
-        if not parsed.scheme or not parsed.netloc:
-            logger.warning(f"Invalid BASE_URL format: {base_url}")
-            return None
-        
-        # Check if it's localhost or local IP (not valid for webhooks)
-        host = parsed.netloc.split(':')[0].lower()
-        local_hosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1']
-        
-        if host in local_hosts or host.startswith('192.168.') or host.startswith('10.'):
-            logger.warning(f"BASE_URL is a local address ({host}) - webhook notifications disabled")
-            return None
-        
-        # Build webhook URL - correct endpoint is /api/v1/stores/webhooks/mercadopago/
-        webhook_url = f"{base_url.rstrip('/')}/api/v1/stores/webhooks/mercadopago/"
-        return webhook_url
-        
-    except Exception as e:
-        logger.error(f"Error parsing BASE_URL: {e}")
-        return None
-
-
 class CheckoutService:
     """Service for processing checkouts."""
     
+    # Distance band ranges for zone matching
+    DISTANCE_BAND_RANGES = {
+        '0_2': (Decimal('0.00'), Decimal('2.00')),
+        '2_5': (Decimal('2.00'), Decimal('5.00')),
+        '5_8': (Decimal('5.00'), Decimal('8.00')),
+        '8_12': (Decimal('8.00'), Decimal('12.00')),
+        '12_15': (Decimal('12.00'), Decimal('15.00')),
+        '15_20': (Decimal('15.00'), Decimal('20.00')),
+        '20_30': (Decimal('20.00'), Decimal('30.00')),
+        '30_plus': (Decimal('30.00'), Decimal('999.00')),
+    }
+    
     @staticmethod
     def get_delivery_zones(store: Store):
-        """
-        Get delivery zones for a store.
-        First checks StoreDeliveryZone, then falls back to legacy DeliveryZone.
-        """
-        # Try new model first
-        zones = StoreDeliveryZone.objects.filter(store=store, is_active=True)
+        """Get delivery zones from StoreDeliveryZone or LegacyDeliveryZone."""
+        # Try StoreDeliveryZone first
+        zones = StoreDeliveryZone.objects.filter(store=store, is_active=True).order_by('sort_order', 'delivery_fee')
         if zones.exists():
-            return zones.order_by('sort_order', 'distance_band', 'min_km'), 'store'
+            return zones, 'store'
         
-        # Fall back to legacy model (doesn't have sort_order)
-        legacy_zones = LegacyDeliveryZone.objects.filter(store=store, is_active=True)
-        if legacy_zones.exists():
-            return legacy_zones.order_by('distance_band', 'min_km'), 'legacy'
-        
-        # Also check legacy zones without store (global zones)
-        global_zones = LegacyDeliveryZone.objects.filter(store__isnull=True, is_active=True)
-        if global_zones.exists():
-            return global_zones.order_by('distance_band', 'min_km'), 'global'
+        # Fallback to LegacyDeliveryZone
+        try:
+            legacy_zones = LegacyDeliveryZone.objects.filter(store=store, is_active=True).order_by('delivery_fee')
+            if legacy_zones.exists():
+                return legacy_zones, 'legacy'
+        except Exception as e:
+            logger.warning(f"Error fetching legacy zones: {e}")
         
         return None, None
     
     @staticmethod
-    def ensure_delivery_zones_exist(store: Store):
-        """Create default delivery zones if none exist for the store."""
-        zones, source = CheckoutService.get_delivery_zones(store)
-        if zones is not None:
-            return
-        
-        logger.info(f"Creating default delivery zones for store {store.slug}")
-        
-        default_zones = [
-            {'name': 'Centro', 'distance_band': '0_2', 'delivery_fee': Decimal('5.00'), 'color': '#4CAF50', 'estimated_minutes': 15, 'sort_order': 1},
-            {'name': 'Próximo', 'distance_band': '2_5', 'delivery_fee': Decimal('8.00'), 'color': '#8BC34A', 'estimated_minutes': 20, 'sort_order': 2},
-            {'name': 'Médio', 'distance_band': '5_8', 'delivery_fee': Decimal('12.00'), 'color': '#FFC107', 'estimated_minutes': 25, 'sort_order': 3},
-            {'name': 'Distante', 'distance_band': '8_12', 'delivery_fee': Decimal('15.00'), 'color': '#FF9800', 'estimated_minutes': 30, 'sort_order': 4},
-            {'name': 'Muito Distante', 'distance_band': '12_15', 'delivery_fee': Decimal('20.00'), 'color': '#FF5722', 'estimated_minutes': 40, 'sort_order': 5},
-            {'name': 'Área Estendida', 'distance_band': '15_20', 'delivery_fee': Decimal('25.00'), 'color': '#E91E63', 'estimated_minutes': 50, 'sort_order': 6},
-        ]
-        
-        for zone_data in default_zones:
-            StoreDeliveryZone.objects.create(
-                store=store,
-                zone_type='distance_band',
-                is_active=True,
-                **zone_data
-            )
-        
-        logger.info(f"Created {len(default_zones)} delivery zones for store {store.slug}")
-    
-    @staticmethod
     def calculate_delivery_fee(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
-        """Calculate delivery fee based on distance or ZIP code."""
-        # Ensure distance_km is Decimal for proper comparison
+        """Calculate delivery fee based on distance or ZIP code.
+        
+        Uses StoreDeliveryZone model, falls back to LegacyDeliveryZone.
+        """
+        # Ensure distance_km is Decimal
         if distance_km is not None and not isinstance(distance_km, Decimal):
             distance_km = Decimal(str(distance_km))
         
-        # Ensure delivery zones exist
-        CheckoutService.ensure_delivery_zones_exist(store)
-        
-        # Get zones
         zones, source = CheckoutService.get_delivery_zones(store)
         
         if zones is None or not zones.exists():
@@ -134,21 +72,10 @@ class CheckoutService:
                 'fee': float(store.default_delivery_fee),
                 'zone_name': 'Padrão',
                 'estimated_minutes': 30,
+                'estimated_days': 0,
             }
         
         logger.info(f"Calculating delivery fee for distance: {distance_km} km, found {zones.count()} zones from {source}")
-        
-        # Distance band ranges (same for both models)
-        DISTANCE_BAND_RANGES = {
-            '0_2': (Decimal('0.00'), Decimal('2.00')),
-            '2_5': (Decimal('2.00'), Decimal('5.00')),
-            '5_8': (Decimal('5.00'), Decimal('8.00')),
-            '8_12': (Decimal('8.00'), Decimal('12.00')),
-            '12_15': (Decimal('12.00'), Decimal('15.00')),
-            '15_20': (Decimal('15.00'), Decimal('20.00')),
-            '20_30': (Decimal('20.00'), Decimal('30.00')),
-            '30_plus': (Decimal('30.00'), Decimal('999.00')),
-        }
         
         # Log all zones for debugging
         for z in zones:
@@ -156,115 +83,105 @@ class CheckoutService:
             distance_band = getattr(z, 'distance_band', None)
             logger.info(f"  Zone: {z.name}, type={zone_type}, band={distance_band}, fee={z.delivery_fee}")
         
-        # Try to find matching zone by distance band
-        if distance_km is not None:
-            for zone in zones:
-                zone_type = getattr(zone, 'zone_type', 'distance_band')
-                distance_band = getattr(zone, 'distance_band', None)
+        # Try to find matching zone
+        for zone in zones:
+            zone_type = getattr(zone, 'zone_type', 'distance_band')
+            distance_band = getattr(zone, 'distance_band', None)
+            
+            # Handle distance_band type zones (accepts any zone with distance_band set)
+            if distance_band and distance_km is not None:
+                # Try StoreDeliveryZone.DISTANCE_BAND_RANGES first, then our fallback
+                ranges = None
+                if hasattr(StoreDeliveryZone, 'DISTANCE_BAND_RANGES'):
+                    ranges = StoreDeliveryZone.DISTANCE_BAND_RANGES.get(distance_band)
+                if not ranges:
+                    ranges = CheckoutService.DISTANCE_BAND_RANGES.get(distance_band)
                 
-                # Handle distance_band type zones (accepts 'distance_band', 'distance', or any type with distance_band set)
-                if distance_band:
-                    ranges = DISTANCE_BAND_RANGES.get(distance_band)
-                    if ranges:
-                        min_km, max_km = ranges
-                        logger.info(f"Checking zone '{zone.name}' ({distance_band}): {min_km} <= {distance_km} < {max_km}")
-                        if min_km <= distance_km < max_km:
-                            logger.info(f"Match found: zone '{zone.name}' with fee {zone.delivery_fee}")
-                            return {
-                                'fee': float(zone.delivery_fee),
-                                'zone_id': str(zone.id),
-                                'zone_name': zone.name,
-                                'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
-                            }
-                
-                # Handle custom_distance type zones
-                elif zone_type == 'custom_distance':
-                    min_km_val = getattr(zone, 'min_km', None) or Decimal('0')
-                    max_km_val = getattr(zone, 'max_km', None) or Decimal('999')
-                    logger.info(f"Checking custom zone '{zone.name}': {min_km_val} <= {distance_km} < {max_km_val}")
-                    if min_km_val <= distance_km < max_km_val:
-                        fee = zone.delivery_fee
-                        if hasattr(zone, 'fee_per_km') and zone.fee_per_km:
-                            fee += zone.fee_per_km * distance_km
-                        logger.info(f"Match found: custom zone '{zone.name}' with fee {fee}")
-                        return {
-                            'fee': float(fee),
-                            'zone_id': str(zone.id),
-                            'zone_name': zone.name,
-                            'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
-                        }
-        
-        # Handle zip_range type zones
-        if zip_code:
-            for zone in zones:
-                zone_type = getattr(zone, 'zone_type', None)
-                if zone_type == 'zip_range':
-                    clean_zip = zip_code.replace('-', '').replace('.', '')
-                    zip_start = getattr(zone, 'zip_code_start', None)
-                    zip_end = getattr(zone, 'zip_code_end', None)
-                    if zip_start and zip_end and zip_start <= clean_zip <= zip_end:
+                if ranges:
+                    min_km, max_km = ranges
+                    logger.info(f"Checking zone '{zone.name}' ({distance_band}): {min_km} <= {distance_km} < {max_km}")
+                    if min_km <= distance_km < max_km:
+                        logger.info(f"Match found: zone '{zone.name}' with fee {zone.delivery_fee}")
                         return {
                             'fee': float(zone.delivery_fee),
                             'zone_id': str(zone.id),
                             'zone_name': zone.name,
                             'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
+                            'estimated_days': getattr(zone, 'estimated_days', 0),
                         }
+            
+            # Handle custom_distance type zones
+            elif zone_type == 'custom_distance' and distance_km is not None:
+                min_km = getattr(zone, 'min_km', None) or Decimal('0')
+                max_km = getattr(zone, 'max_km', None) or Decimal('999')
+                logger.info(f"Checking custom zone '{zone.name}': {min_km} <= {distance_km} < {max_km}")
+                if min_km <= distance_km < max_km:
+                    fee = zone.delivery_fee
+                    fee_per_km = getattr(zone, 'fee_per_km', None)
+                    if fee_per_km:
+                        fee += fee_per_km * distance_km
+                    logger.info(f"Match found: custom zone '{zone.name}' with fee {fee}")
+                    return {
+                        'fee': float(fee),
+                        'zone_id': str(zone.id),
+                        'zone_name': zone.name,
+                        'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
+                        'estimated_days': getattr(zone, 'estimated_days', 0),
+                    }
+            
+            # Handle zip_range type zones
+            elif zone_type == 'zip_range' and zip_code:
+                clean_zip = zip_code.replace('-', '').replace('.', '')
+                zip_start = getattr(zone, 'zip_code_start', None)
+                zip_end = getattr(zone, 'zip_code_end', None)
+                if zip_start and zip_end and zip_start <= clean_zip <= zip_end:
+                    return {
+                        'fee': float(zone.delivery_fee),
+                        'zone_id': str(zone.id),
+                        'zone_name': zone.name,
+                        'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
+                        'estimated_days': getattr(zone, 'estimated_days', 0),
+                    }
         
-        # No matching zone found - check if distance exceeds all zones
+        # No matching zone found
         logger.warning(f"No matching zone for distance {distance_km} km in store {store.slug}")
         
-        # Try to find the zone with highest distance range
-        distance_zones = zones.filter(zone_type='distance_band').exclude(distance_band__isnull=True)
-        if distance_zones.exists() and distance_km is not None:
-            # Find the zone that covers the highest distance
-            for band in ['30_plus', '20_30', '15_20', '12_15', '8_12', '5_8', '2_5', '0_2']:
-                zone = distance_zones.filter(distance_band=band).first()
-                if zone:
-                    ranges = DISTANCE_BAND_RANGES.get(band)
-                    if ranges:
-                        min_km, max_km = ranges
-                        # If distance exceeds all zones, use the highest zone
-                        if distance_km >= min_km:
-                            logger.debug(f"Using highest applicable zone: '{zone.name}' for distance {distance_km}")
-                            return {
-                                'fee': float(zone.delivery_fee),
-                                'zone_id': str(zone.id),
-                                'zone_name': zone.name,
-                                'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
-                                'note': 'Distância além da zona máxima configurada'
-                            }
+        # Default to first zone or store default
+        first_zone = zones.first()
+        if first_zone:
+            return {
+                'fee': float(first_zone.delivery_fee),
+                'zone_id': str(first_zone.id),
+                'zone_name': first_zone.name,
+                'estimated_minutes': getattr(first_zone, 'estimated_minutes', 30),
+                'estimated_days': getattr(first_zone, 'estimated_days', 0),
+            }
         
-        # Default to store default fee
-        logger.debug(f"Using store default fee: {store.default_delivery_fee}")
         return {
             'fee': float(store.default_delivery_fee),
-            'zone_name': 'Área estendida',
-            'estimated_minutes': 45,
+            'zone_name': 'Padrão',
+            'estimated_minutes': 30,
+            'estimated_days': 0,
         }
     
     @staticmethod
-    def validate_coupon(store: Store, code: str, subtotal: Decimal) -> dict:
-        """Validate a coupon code for a store."""
+    def validate_coupon(store: Store, code: str, subtotal: Decimal, user=None) -> dict:
+        """Validate a coupon code for a store using the unified StoreCoupon model."""
         try:
-            # Try store-specific coupon first, then global
-            coupon = Coupon.objects.filter(
+            # Find coupon for this store
+            coupon = StoreCoupon.objects.filter(
+                store=store,
                 code__iexact=code,
                 is_active=True
-            ).filter(
-                models.Q(store=store) | models.Q(store__isnull=True)
             ).first()
             
             if not coupon:
                 return {'valid': False, 'error': 'Cupom não encontrado'}
             
-            if not coupon.is_valid():
-                return {'valid': False, 'error': 'Cupom expirado ou inválido'}
-            
-            if subtotal < coupon.min_purchase:
-                return {
-                    'valid': False,
-                    'error': f'Valor mínimo para este cupom: R$ {coupon.min_purchase:.2f}'
-                }
+            # Use the model's is_valid method which handles all validation
+            is_valid, error_message = coupon.is_valid(subtotal=subtotal, user=user)
+            if not is_valid:
+                return {'valid': False, 'error': error_message}
             
             discount = coupon.calculate_discount(subtotal)
             
@@ -347,14 +264,14 @@ class CheckoutService:
         for combo_item in cart.combo_items.all():
             subtotal += combo_item.subtotal
         
-        # Validate and apply coupon
+        # Validate and apply coupon using unified StoreCoupon model
         discount = Decimal('0')
         coupon = None
         if coupon_code:
-            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal)
+            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal, user=cart.user)
             if coupon_result['valid']:
                 discount = Decimal(str(coupon_result['discount']))
-                coupon = Coupon.objects.get(id=coupon_result['coupon_id'])
+                coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
         
         # Calculate total
         tax = Decimal('0')
@@ -509,9 +426,6 @@ class CheckoutService:
         
         sdk = mercadopago.SDK(credentials['access_token'])
         
-        # Get valid webhook URL (may be None if not configured properly)
-        notification_url = get_webhook_notification_url()
-        
         # Build payment data
         if payment_method == 'pix':
             payment_data = {
@@ -524,13 +438,8 @@ class CheckoutService:
                     "last_name": " ".join(order.customer_name.split()[1:]) if order.customer_name else "",
                 },
                 "external_reference": str(order.id),
+                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
             }
-            
-            # Only add notification_url if it's a valid public URL
-            if notification_url:
-                payment_data["notification_url"] = notification_url
-            else:
-                logger.info(f"Creating payment without notification_url for order {order.order_number}")
             
             result = sdk.payment().create(payment_data)
             
@@ -586,13 +495,8 @@ class CheckoutService:
                     "pending": f"{settings.FRONTEND_URL}/pendente?order={order.id}",
                 },
                 "auto_return": "approved",
+                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
             }
-            
-            # Only add notification_url if it's a valid public URL
-            if notification_url:
-                preference_data["notification_url"] = notification_url
-            else:
-                logger.info(f"Creating preference without notification_url for order {order.order_number}")
             
             result = sdk.preference().create(preference_data)
             

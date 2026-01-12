@@ -1,16 +1,5 @@
 """
-Legacy E-commerce models.
-
-⚠️ LEGACY: These models are kept for database migration compatibility only.
-DO NOT use these models in new code.
-
-Use the unified stores system instead:
-- stores.StoreProduct
-- stores.StoreCart / StoreCartItem
-- stores.StoreWishlist
-- stores.StoreCoupon
-- stores.StoreDeliveryZone
-- stores.StoreOrder / StoreOrderItem
+E-commerce models for legacy data compatibility.
 """
 import uuid
 from decimal import Decimal
@@ -243,15 +232,12 @@ class Coupon(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # Store FK - null means global coupon valid for all stores
-    # DEPRECATED: Use stores.StoreCoupon instead
     store = models.ForeignKey(
         'stores.Store',
         on_delete=models.CASCADE,
         related_name='legacy_coupons',
         null=True,
         blank=True,
-        help_text="DEPRECATED: Use stores.StoreCoupon instead"
     )
     code = models.CharField(max_length=50, db_index=True)
     description = models.TextField(blank=True)
@@ -369,15 +355,12 @@ class DeliveryZone(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # Store FK - required for per-store zones
-    # DEPRECATED: Use stores.StoreDeliveryZone instead
     store = models.ForeignKey(
         'stores.Store',
         on_delete=models.CASCADE,
         related_name='legacy_delivery_zones',
         null=True,
         blank=True,
-        help_text="DEPRECATED: Use stores.StoreDeliveryZone instead"
     )
     name = models.CharField(max_length=100)
     zone_type = models.CharField(
