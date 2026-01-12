@@ -223,6 +223,7 @@ class StoreValidateDeliveryView(APIView):
 class StoreDeliveryZonesView(APIView):
     """Get delivery zones as isolines."""
     
+    authentication_classes = []
     permission_classes = [permissions.AllowAny]
     
     def get(self, request, store_slug):

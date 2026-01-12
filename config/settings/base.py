@@ -192,6 +192,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:12001",
+    "https://www.pastita.com.br",
+    "https://pastita.com.br",
     "https://work-1-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
     "https://work-2-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
     "https://work-1-zdllsooldjqqzgtd.prod-runtime.all-hands.dev",

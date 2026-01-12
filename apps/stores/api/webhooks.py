@@ -184,6 +184,8 @@ class CustomerOrdersView(APIView):
     Get orders for authenticated customer.
     Used by frontend to show order history.
     """
+    authentication_classes = []
+    permission_classes = []
     
     def get(self, request):
         """Get orders for the authenticated user."""
@@ -191,7 +193,7 @@ class CustomerOrdersView(APIView):
         
         if not user.is_authenticated:
             return Response(
-                {'error': 'Autenticação necessária'},
+                {'error': 'Autenticação necessária', 'results': []},
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
