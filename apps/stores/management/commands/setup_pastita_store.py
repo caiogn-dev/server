@@ -8,8 +8,8 @@ from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.db import transaction
 
-from apps.stores.models import Store, StoreCategory, StoreIntegration
-from apps.ecommerce.models import DeliveryZone, Coupon
+from apps.stores.models import Store, StoreCategory, StoreIntegration, StoreDeliveryZone as DeliveryZone
+from apps.ecommerce.models import Coupon
 
 User = get_user_model()
 logger = logging.getLogger(__name__)

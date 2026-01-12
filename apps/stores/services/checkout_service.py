@@ -13,9 +13,10 @@ from django.conf import settings
 
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem,
-    StoreProduct, StoreProductVariant, StoreIntegration
+    StoreProduct, StoreProductVariant, StoreIntegration,
+    StoreDeliveryZone as DeliveryZone
 )
-from apps.ecommerce.models import Coupon, DeliveryZone
+from apps.ecommerce.models import Coupon
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
