@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DB_HOST=db
+      - DB_NAME=whatsapp_business
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - static_volume:/app/staticfiles
+      - logs_volume:/app/logs
+
+  celery:
+    build: .
+    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,langflow
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DB_HOST=db
+      - DB_NAME=whatsapp_business
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - logs_volume:/app/logs
+
+  celery-beat:
+    build: .
+    command: celery -A config.celery beat -l info
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DB_HOST=db
+      - DB_NAME=whatsapp_business
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:15
+    environment:
+      - POSTGRES_DB=whatsapp_business
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  logs_volume:
