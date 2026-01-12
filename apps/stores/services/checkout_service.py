@@ -136,7 +136,7 @@ class CheckoutService:
                 'estimated_minutes': 30,
             }
         
-        logger.debug(f"Calculating delivery fee for distance: {distance_km} km, found {zones.count()} zones from {source}")
+        logger.info(f"Calculating delivery fee for distance: {distance_km} km, found {zones.count()} zones from {source}")
         
         # Distance band ranges (same for both models)
         DISTANCE_BAND_RANGES = {
@@ -150,42 +150,59 @@ class CheckoutService:
             '30_plus': (Decimal('30.00'), Decimal('999.00')),
         }
         
-        # Try to find matching zone
-        for zone in zones:
-            if zone.zone_type == 'distance_band' and zone.distance_band:
-                ranges = DISTANCE_BAND_RANGES.get(zone.distance_band)
-                if ranges and distance_km is not None:
-                    min_km, max_km = ranges
-                    logger.debug(f"Checking zone '{zone.name}' ({zone.distance_band}): {min_km} <= {distance_km} < {max_km}")
-                    if min_km <= distance_km < max_km:
-                        logger.debug(f"Match found: zone '{zone.name}' with fee {zone.delivery_fee}")
+        # Log all zones for debugging
+        for z in zones:
+            zone_type = getattr(z, 'zone_type', 'unknown')
+            distance_band = getattr(z, 'distance_band', None)
+            logger.info(f"  Zone: {z.name}, type={zone_type}, band={distance_band}, fee={z.delivery_fee}")
+        
+        # Try to find matching zone by distance band
+        if distance_km is not None:
+            for zone in zones:
+                zone_type = getattr(zone, 'zone_type', 'distance_band')
+                distance_band = getattr(zone, 'distance_band', None)
+                
+                # Handle distance_band type zones
+                if zone_type == 'distance_band' and distance_band:
+                    ranges = DISTANCE_BAND_RANGES.get(distance_band)
+                    if ranges:
+                        min_km, max_km = ranges
+                        logger.info(f"Checking zone '{zone.name}' ({distance_band}): {min_km} <= {distance_km} < {max_km}")
+                        if min_km <= distance_km < max_km:
+                            logger.info(f"Match found: zone '{zone.name}' with fee {zone.delivery_fee}")
+                            return {
+                                'fee': float(zone.delivery_fee),
+                                'zone_id': str(zone.id),
+                                'zone_name': zone.name,
+                                'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
+                            }
+                
+                # Handle custom_distance type zones
+                elif zone_type == 'custom_distance':
+                    min_km_val = getattr(zone, 'min_km', None) or Decimal('0')
+                    max_km_val = getattr(zone, 'max_km', None) or Decimal('999')
+                    logger.info(f"Checking custom zone '{zone.name}': {min_km_val} <= {distance_km} < {max_km_val}")
+                    if min_km_val <= distance_km < max_km_val:
+                        fee = zone.delivery_fee
+                        if hasattr(zone, 'fee_per_km') and zone.fee_per_km:
+                            fee += zone.fee_per_km * distance_km
+                        logger.info(f"Match found: custom zone '{zone.name}' with fee {fee}")
                         return {
-                            'fee': float(zone.delivery_fee),
+                            'fee': float(fee),
                             'zone_id': str(zone.id),
                             'zone_name': zone.name,
                             'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
                         }
-            
-            elif zone.zone_type == 'custom_distance' and distance_km is not None:
-                min_km = zone.min_km or Decimal('0')
-                max_km = zone.max_km or Decimal('999')
-                logger.debug(f"Checking custom zone '{zone.name}': {min_km} <= {distance_km} < {max_km}")
-                if min_km <= distance_km < max_km:
-                    fee = zone.delivery_fee
-                    if hasattr(zone, 'fee_per_km') and zone.fee_per_km:
-                        fee += zone.fee_per_km * distance_km
-                    logger.debug(f"Match found: custom zone '{zone.name}' with fee {fee}")
-                    return {
-                        'fee': float(fee),
-                        'zone_id': str(zone.id),
-                        'zone_name': zone.name,
-                        'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
-                    }
-            
-            elif zone.zone_type == 'zip_range' and zip_code:
-                clean_zip = zip_code.replace('-', '').replace('.', '')
-                if zone.zip_code_start and zone.zip_code_end:
-                    if zone.zip_code_start <= clean_zip <= zone.zip_code_end:
+        
+        # Handle zip_range type zones
+        if zip_code:
+            for zone in zones:
+                zone_type = getattr(zone, 'zone_type', None)
+                if zone_type == 'zip_range':
+                    clean_zip = zip_code.replace('-', '').replace('.', '')
+                    zip_start = getattr(zone, 'zip_code_start', None)
+                    zip_end = getattr(zone, 'zip_code_end', None)
+                    if zip_start and zip_end and zip_start <= clean_zip <= zip_end:
                         return {
                             'fee': float(zone.delivery_fee),
                             'zone_id': str(zone.id),
