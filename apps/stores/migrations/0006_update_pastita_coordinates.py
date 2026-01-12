@@ -7,22 +7,23 @@ from django.db import migrations
 
 def update_pastita_coordinates(apps, schema_editor):
     Store = apps.get_model('stores', 'Store')
+    # Coordenadas exatas da Ivoneth Banqueteria/Pastita
+    CORRECT_LAT = Decimal('-10.1854332')
+    CORRECT_LNG = Decimal('-48.3038653')
+    
     try:
         store = Store.objects.get(slug='pastita')
-        # Coordenadas corretas do Google Maps - Ivoneth Banqueteria
-        store.latitude = Decimal('-10.185260')
-        store.longitude = Decimal('-48.303478')
+        store.latitude = CORRECT_LAT
+        store.longitude = CORRECT_LNG
         store.save(update_fields=['latitude', 'longitude'])
-        print(f"Updated Pastita coordinates to (-10.185260, -48.303478)")
+        print(f"Updated Pastita coordinates to ({CORRECT_LAT}, {CORRECT_LNG})")
     except Store.DoesNotExist:
         print("Pastita store not found, skipping coordinate update")
     
-    # Also update any other stores that might have wrong coordinates
-    stores_updated = Store.objects.filter(
-        slug='pastita'
-    ).update(
-        latitude=Decimal('-10.185260'),
-        longitude=Decimal('-48.303478')
+    # Force update to ensure correct coordinates
+    stores_updated = Store.objects.filter(slug='pastita').update(
+        latitude=CORRECT_LAT,
+        longitude=CORRECT_LNG
     )
     print(f"Force updated {stores_updated} store(s)")
 
