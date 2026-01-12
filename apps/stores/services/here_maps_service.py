@@ -1,8 +1,16 @@
 """
 HERE Maps Service - Unified location services for all stores.
 Provides geocoding, routing, distance calculation, and isoline generation.
+
+Cache Strategy:
+- Routes: 24 hours (routes don't change frequently)
+- Geocoding: 24 hours (addresses are stable)
+- Reverse Geocoding: 24 hours
+- Isolines: 6 hours (delivery zones)
+- Autosuggest: No cache (real-time suggestions)
 """
 import logging
+import hashlib
 import requests
 from decimal import Decimal
 from typing import Optional, Dict, List, Tuple
@@ -21,8 +29,22 @@ HERE_ROUTING_URL = "https://router.hereapi.com/v8/routes"
 HERE_ISOLINE_URL = "https://isoline.router.hereapi.com/v8/isolines"
 HERE_AUTOSUGGEST_URL = "https://autosuggest.search.hereapi.com/v1/autosuggest"
 
-# Cache TTL (1 hour)
-CACHE_TTL = 3600
+# Cache TTLs (in seconds)
+CACHE_TTL_ROUTE = 86400  # 24 hours - routes are stable
+CACHE_TTL_GEOCODE = 86400  # 24 hours - addresses don't change
+CACHE_TTL_ISOLINE = 21600  # 6 hours - delivery zones
+CACHE_TTL_DEFAULT = 3600  # 1 hour - fallback
+
+
+def _round_coords(lat: float, lng: float, precision: int = 4) -> Tuple[float, float]:
+    """Round coordinates to reduce cache key variations."""
+    return (round(lat, precision), round(lng, precision))
+
+
+def _make_cache_key(prefix: str, *args) -> str:
+    """Create a consistent cache key."""
+    key_data = f"{prefix}:{':'.join(str(a) for a in args)}"
+    return hashlib.md5(key_data.encode()).hexdigest()[:32]
 
 
 class HereMapsService:
@@ -42,9 +64,13 @@ class HereMapsService:
         Returns:
             Dict with lat, lng, formatted_address, or None if not found
         """
-        cache_key = f"geocode:{address}:{country}"
+        # Normalize address for better cache hits
+        normalized_address = address.strip().lower()
+        cache_key = _make_cache_key("geocode", normalized_address, country)
+        
         cached = cache.get(cache_key)
         if cached:
+            logger.debug(f"Geocode cache hit for: {address[:50]}")
             return cached
         
         try:
@@ -70,7 +96,7 @@ class HereMapsService:
                     'address': item.get('address', {}),
                     'place_id': item.get('id'),
                 }
-                cache.set(cache_key, result, CACHE_TTL)
+                cache.set(cache_key, result, CACHE_TTL_GEOCODE)
                 return result
             
             return None
@@ -90,9 +116,13 @@ class HereMapsService:
         Returns:
             Dict with address details, or None if not found
         """
-        cache_key = f"reverse_geocode:{lat}:{lng}"
+        # Round coordinates to reduce cache variations (4 decimal places = ~11m precision)
+        rounded_lat, rounded_lng = _round_coords(lat, lng, 4)
+        cache_key = _make_cache_key("revgeo", rounded_lat, rounded_lng)
+        
         cached = cache.get(cache_key)
         if cached:
+            logger.debug(f"Reverse geocode cache hit for: {lat},{lng}")
             return cached
         
         try:
@@ -122,7 +152,7 @@ class HereMapsService:
                     'country': address.get('countryName', ''),
                     'country_code': address.get('countryCode', ''),
                 }
-                cache.set(cache_key, result, CACHE_TTL)
+                cache.set(cache_key, result, CACHE_TTL_GEOCODE)
                 return result
             
             return None
@@ -148,9 +178,14 @@ class HereMapsService:
         Returns:
             Dict with distance_km, duration_minutes, polyline
         """
-        cache_key = f"route:{origin}:{destination}:{transport_mode}"
+        # Round coordinates to 4 decimal places for cache efficiency
+        origin_rounded = _round_coords(origin[0], origin[1], 4)
+        dest_rounded = _round_coords(destination[0], destination[1], 4)
+        cache_key = _make_cache_key("route", origin_rounded, dest_rounded, transport_mode)
+        
         cached = cache.get(cache_key)
         if cached:
+            logger.debug(f"Route cache hit: {origin} -> {destination}")
             return cached
         
         try:
@@ -180,7 +215,9 @@ class HereMapsService:
                     'departure': section.get('departure', {}),
                     'arrival': section.get('arrival', {}),
                 }
-                cache.set(cache_key, result, CACHE_TTL)
+                # Cache routes for 24 hours - they don't change frequently
+                cache.set(cache_key, result, CACHE_TTL_ROUTE)
+                logger.debug(f"Route cached: {origin} -> {destination}")
                 return result
             
             return None
@@ -228,9 +265,13 @@ class HereMapsService:
         Returns:
             Dict with polygon coordinates and metadata
         """
-        cache_key = f"isoline:{center}:{range_type}:{range_value}:{transport_mode}"
+        # Round center coordinates for cache efficiency
+        center_rounded = _round_coords(center[0], center[1], 3)  # 3 decimals for isolines
+        cache_key = _make_cache_key("isoline", center_rounded, range_type, range_value, transport_mode)
+        
         cached = cache.get(cache_key)
         if cached:
+            logger.debug(f"Isoline cache hit: {center}")
             return cached
         
         try:
@@ -266,7 +307,8 @@ class HereMapsService:
                     'polygons': polygons,
                     'center': {'lat': center[0], 'lng': center[1]},
                 }
-                cache.set(cache_key, result, CACHE_TTL)
+                # Cache isolines for 6 hours
+                cache.set(cache_key, result, CACHE_TTL_ISOLINE)
                 return result
             
             return None
