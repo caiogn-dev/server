@@ -14,9 +14,9 @@ from django.conf import settings
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem,
     StoreProduct, StoreProductVariant, StoreIntegration,
-    StoreDeliveryZone as DeliveryZone
+    StoreDeliveryZone
 )
-from apps.ecommerce.models import Coupon
+from apps.ecommerce.models import Coupon, DeliveryZone as LegacyDeliveryZone
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
@@ -65,33 +65,95 @@ class CheckoutService:
     """Service for processing checkouts."""
     
     @staticmethod
+    def get_delivery_zones(store: Store):
+        """
+        Get delivery zones for a store.
+        First checks StoreDeliveryZone, then falls back to legacy DeliveryZone.
+        """
+        # Try new model first
+        zones = StoreDeliveryZone.objects.filter(store=store, is_active=True)
+        if zones.exists():
+            return zones.order_by('sort_order', 'distance_band', 'min_km'), 'store'
+        
+        # Fall back to legacy model
+        legacy_zones = LegacyDeliveryZone.objects.filter(store=store, is_active=True)
+        if legacy_zones.exists():
+            return legacy_zones.order_by('sort_order', 'distance_band', 'min_km'), 'legacy'
+        
+        # Also check legacy zones without store (global zones)
+        global_zones = LegacyDeliveryZone.objects.filter(store__isnull=True, is_active=True)
+        if global_zones.exists():
+            return global_zones.order_by('sort_order', 'distance_band', 'min_km'), 'global'
+        
+        return None, None
+    
+    @staticmethod
+    def ensure_delivery_zones_exist(store: Store):
+        """Create default delivery zones if none exist for the store."""
+        zones, source = CheckoutService.get_delivery_zones(store)
+        if zones is not None:
+            return
+        
+        logger.info(f"Creating default delivery zones for store {store.slug}")
+        
+        default_zones = [
+            {'name': 'Centro', 'distance_band': '0_2', 'delivery_fee': Decimal('5.00'), 'color': '#4CAF50', 'estimated_minutes': 15, 'sort_order': 1},
+            {'name': 'Próximo', 'distance_band': '2_5', 'delivery_fee': Decimal('8.00'), 'color': '#8BC34A', 'estimated_minutes': 20, 'sort_order': 2},
+            {'name': 'Médio', 'distance_band': '5_8', 'delivery_fee': Decimal('12.00'), 'color': '#FFC107', 'estimated_minutes': 25, 'sort_order': 3},
+            {'name': 'Distante', 'distance_band': '8_12', 'delivery_fee': Decimal('15.00'), 'color': '#FF9800', 'estimated_minutes': 30, 'sort_order': 4},
+            {'name': 'Muito Distante', 'distance_band': '12_15', 'delivery_fee': Decimal('20.00'), 'color': '#FF5722', 'estimated_minutes': 40, 'sort_order': 5},
+            {'name': 'Área Estendida', 'distance_band': '15_20', 'delivery_fee': Decimal('25.00'), 'color': '#E91E63', 'estimated_minutes': 50, 'sort_order': 6},
+        ]
+        
+        for zone_data in default_zones:
+            StoreDeliveryZone.objects.create(
+                store=store,
+                zone_type='distance_band',
+                is_active=True,
+                **zone_data
+            )
+        
+        logger.info(f"Created {len(default_zones)} delivery zones for store {store.slug}")
+    
+    @staticmethod
     def calculate_delivery_fee(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
         """Calculate delivery fee based on distance or ZIP code."""
         # Ensure distance_km is Decimal for proper comparison
         if distance_km is not None and not isinstance(distance_km, Decimal):
             distance_km = Decimal(str(distance_km))
         
-        # Get zones ordered by distance band (not by fee) for proper matching
-        zones = DeliveryZone.objects.filter(
-            store=store,
-            is_active=True
-        ).order_by('sort_order', 'distance_band', 'min_km')
+        # Ensure delivery zones exist
+        CheckoutService.ensure_delivery_zones_exist(store)
         
-        if not zones.exists():
-            # Use store default
-            logger.debug(f"No delivery zones found for store {store.slug}, using default fee")
+        # Get zones
+        zones, source = CheckoutService.get_delivery_zones(store)
+        
+        if zones is None or not zones.exists():
+            logger.warning(f"No delivery zones found for store {store.slug}")
             return {
                 'fee': float(store.default_delivery_fee),
                 'zone_name': 'Padrão',
                 'estimated_minutes': 30,
             }
         
-        logger.debug(f"Calculating delivery fee for distance: {distance_km} km")
+        logger.debug(f"Calculating delivery fee for distance: {distance_km} km, found {zones.count()} zones from {source}")
+        
+        # Distance band ranges (same for both models)
+        DISTANCE_BAND_RANGES = {
+            '0_2': (Decimal('0.00'), Decimal('2.00')),
+            '2_5': (Decimal('2.00'), Decimal('5.00')),
+            '5_8': (Decimal('5.00'), Decimal('8.00')),
+            '8_12': (Decimal('8.00'), Decimal('12.00')),
+            '12_15': (Decimal('12.00'), Decimal('15.00')),
+            '15_20': (Decimal('15.00'), Decimal('20.00')),
+            '20_30': (Decimal('20.00'), Decimal('30.00')),
+            '30_plus': (Decimal('30.00'), Decimal('999.00')),
+        }
         
         # Try to find matching zone
         for zone in zones:
             if zone.zone_type == 'distance_band' and zone.distance_band:
-                ranges = DeliveryZone.DISTANCE_BAND_RANGES.get(zone.distance_band)
+                ranges = DISTANCE_BAND_RANGES.get(zone.distance_band)
                 if ranges and distance_km is not None:
                     min_km, max_km = ranges
                     logger.debug(f"Checking zone '{zone.name}' ({zone.distance_band}): {min_km} <= {distance_km} < {max_km}")
@@ -101,7 +163,7 @@ class CheckoutService:
                             'fee': float(zone.delivery_fee),
                             'zone_id': str(zone.id),
                             'zone_name': zone.name,
-                            'estimated_minutes': zone.estimated_minutes,
+                            'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
                         }
             
             elif zone.zone_type == 'custom_distance' and distance_km is not None:
@@ -110,14 +172,14 @@ class CheckoutService:
                 logger.debug(f"Checking custom zone '{zone.name}': {min_km} <= {distance_km} < {max_km}")
                 if min_km <= distance_km < max_km:
                     fee = zone.delivery_fee
-                    if zone.fee_per_km:
+                    if hasattr(zone, 'fee_per_km') and zone.fee_per_km:
                         fee += zone.fee_per_km * distance_km
                     logger.debug(f"Match found: custom zone '{zone.name}' with fee {fee}")
                     return {
                         'fee': float(fee),
                         'zone_id': str(zone.id),
                         'zone_name': zone.name,
-                        'estimated_minutes': zone.estimated_minutes,
+                        'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
                     }
             
             elif zone.zone_type == 'zip_range' and zip_code:
@@ -128,7 +190,7 @@ class CheckoutService:
                             'fee': float(zone.delivery_fee),
                             'zone_id': str(zone.id),
                             'zone_name': zone.name,
-                            'estimated_minutes': zone.estimated_minutes,
+                            'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
                         }
         
         # No matching zone found - check if distance exceeds all zones
@@ -141,7 +203,7 @@ class CheckoutService:
             for band in ['30_plus', '20_30', '15_20', '12_15', '8_12', '5_8', '2_5', '0_2']:
                 zone = distance_zones.filter(distance_band=band).first()
                 if zone:
-                    ranges = DeliveryZone.DISTANCE_BAND_RANGES.get(band)
+                    ranges = DISTANCE_BAND_RANGES.get(band)
                     if ranges:
                         min_km, max_km = ranges
                         # If distance exceeds all zones, use the highest zone
@@ -151,7 +213,7 @@ class CheckoutService:
                                 'fee': float(zone.delivery_fee),
                                 'zone_id': str(zone.id),
                                 'zone_name': zone.name,
-                                'estimated_minutes': zone.estimated_minutes,
+                                'estimated_minutes': getattr(zone, 'estimated_minutes', 30),
                                 'note': 'Distância além da zona máxima configurada'
                             }
         
