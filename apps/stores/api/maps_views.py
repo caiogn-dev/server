@@ -195,8 +195,8 @@ class StoreValidateDeliveryView(APIView):
             
             # Add delivery fee calculation
             if result['is_valid']:
-                from apps.stores.services import checkout_service
-                fee_info = checkout_service.calculate_delivery_fee(
+                from apps.stores.services.checkout_service import CheckoutService
+                fee_info = CheckoutService.calculate_delivery_fee(
                     store,
                     distance_km=Decimal(str(result['distance_km']))
                 )
