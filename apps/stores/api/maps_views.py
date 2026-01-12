@@ -182,6 +182,8 @@ class StoreValidateDeliveryView(APIView):
             store_location = (float(store.latitude), float(store.longitude))
             delivery_location = (float(lat), float(lng))
             
+            logger.info(f"Validating delivery: store={store_location}, delivery={delivery_location}")
+            
             # Get max distance from store settings or use default
             max_distance = float(store.metadata.get('max_delivery_distance_km', 20))
             max_time = float(store.metadata.get('max_delivery_time_minutes', 45))

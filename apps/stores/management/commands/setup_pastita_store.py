@@ -81,14 +81,14 @@ class Command(BaseCommand):
             phone='(63) 99295-7931',
             whatsapp_number='5563992957931',
             
-            # Address (Palmas, TO)
+            # Address (Palmas, TO) - Ivoneth Banqueteria
             address='Q. 112 Sul Rua SR 1, conj. 06 lote 04 - Plano Diretor Sul',
             city='Palmas',
             state='TO',
             zip_code='77020-170',
             country='BR',
-            latitude=Decimal('-10.1847'),
-            longitude=Decimal('-48.3337'),
+            latitude=Decimal('-10.18832'),
+            longitude=Decimal('-48.30376'),
             
             # Branding
             primary_color='#722F37',  # Marsala
