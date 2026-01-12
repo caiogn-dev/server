@@ -361,7 +361,7 @@ class HereMapsService:
         
         Args:
             query: Search query
-            center: (lat, lng) tuple for biasing results
+            center: (lat, lng) tuple for biasing results (required by HERE API)
             country: ISO country code
             limit: Maximum number of results
         
@@ -369,15 +369,21 @@ class HereMapsService:
             List of suggestion dicts
         """
         try:
+            # HERE Autosuggest API requires 'at' parameter
+            # Use center if provided, otherwise use Brazil center (Brasília)
+            if center:
+                at_param = f'{center[0]},{center[1]}'
+            else:
+                # Default to Brasília, Brazil as center point
+                at_param = '-15.7801,-47.9292'
+            
             params = {
                 'q': query,
+                'at': at_param,
                 'in': f'countryCode:{country}',
                 'limit': limit,
                 'apiKey': self.api_key,
             }
-            
-            if center:
-                params['at'] = f'{center[0]},{center[1]}'
             
             response = requests.get(
                 HERE_AUTOSUGGEST_URL,
@@ -390,7 +396,6 @@ class HereMapsService:
             suggestions = []
             for item in data.get('items', []):
                 position = item.get('position', {})
-                address = item.get('address', {})
                 suggestions.append({
                     'title': item.get('title', ''),
                     'address': item.get('address', {}),
