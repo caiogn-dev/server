@@ -12,9 +12,9 @@ from django.conf import settings
 
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem,
-    StoreProduct, StoreProductVariant, StoreIntegration
+    StoreProduct, StoreProductVariant, StoreIntegration,
+    StoreDeliveryZone, StoreCoupon
 )
-from apps.ecommerce.models import Coupon, DeliveryZone
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
@@ -25,11 +25,14 @@ class CheckoutService:
     
     @staticmethod
     def calculate_delivery_fee(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
-        """Calculate delivery fee based on distance or ZIP code."""
-        zones = DeliveryZone.objects.filter(
+        """Calculate delivery fee based on distance or ZIP code.
+        
+        Uses StoreDeliveryZone model which is managed by the dashboard.
+        """
+        zones = StoreDeliveryZone.objects.filter(
             store=store,
             is_active=True
-        ).order_by('delivery_fee')
+        ).order_by('sort_order', 'delivery_fee')
         
         if not zones.exists():
             # Use store default
@@ -37,12 +40,13 @@ class CheckoutService:
                 'fee': float(store.default_delivery_fee),
                 'zone_name': 'Padrão',
                 'estimated_minutes': 30,
+                'estimated_days': 0,
             }
         
         # Try to find matching zone
         for zone in zones:
             if zone.zone_type == 'distance_band' and zone.distance_band:
-                ranges = DeliveryZone.DISTANCE_BAND_RANGES.get(zone.distance_band)
+                ranges = StoreDeliveryZone.DISTANCE_BAND_RANGES.get(zone.distance_band)
                 if ranges and distance_km is not None:
                     min_km, max_km = ranges
                     if min_km <= distance_km < max_km:
@@ -51,6 +55,7 @@ class CheckoutService:
                             'zone_id': str(zone.id),
                             'zone_name': zone.name,
                             'estimated_minutes': zone.estimated_minutes,
+                            'estimated_days': zone.estimated_days,
                         }
             
             elif zone.zone_type == 'custom_distance' and distance_km is not None:
@@ -65,6 +70,7 @@ class CheckoutService:
                         'zone_id': str(zone.id),
                         'zone_name': zone.name,
                         'estimated_minutes': zone.estimated_minutes,
+                        'estimated_days': zone.estimated_days,
                     }
             
             elif zone.zone_type == 'zip_range' and zip_code:
@@ -76,6 +82,7 @@ class CheckoutService:
                             'zone_id': str(zone.id),
                             'zone_name': zone.name,
                             'estimated_minutes': zone.estimated_minutes,
+                            'estimated_days': zone.estimated_days,
                         }
         
         # Default to first zone or store default
@@ -86,37 +93,34 @@ class CheckoutService:
                 'zone_id': str(first_zone.id),
                 'zone_name': first_zone.name,
                 'estimated_minutes': first_zone.estimated_minutes,
+                'estimated_days': first_zone.estimated_days,
             }
         
         return {
             'fee': float(store.default_delivery_fee),
             'zone_name': 'Padrão',
             'estimated_minutes': 30,
+            'estimated_days': 0,
         }
     
     @staticmethod
-    def validate_coupon(store: Store, code: str, subtotal: Decimal) -> dict:
-        """Validate a coupon code for a store."""
+    def validate_coupon(store: Store, code: str, subtotal: Decimal, user=None) -> dict:
+        """Validate a coupon code for a store using the unified StoreCoupon model."""
         try:
-            # Try store-specific coupon first, then global
-            coupon = Coupon.objects.filter(
+            # Find coupon for this store
+            coupon = StoreCoupon.objects.filter(
+                store=store,
                 code__iexact=code,
                 is_active=True
-            ).filter(
-                models.Q(store=store) | models.Q(store__isnull=True)
             ).first()
             
             if not coupon:
                 return {'valid': False, 'error': 'Cupom não encontrado'}
             
-            if not coupon.is_valid():
-                return {'valid': False, 'error': 'Cupom expirado ou inválido'}
-            
-            if subtotal < coupon.min_purchase:
-                return {
-                    'valid': False,
-                    'error': f'Valor mínimo para este cupom: R$ {coupon.min_purchase:.2f}'
-                }
+            # Use the model's is_valid method which handles all validation
+            is_valid, error_message = coupon.is_valid(subtotal=subtotal, user=user)
+            if not is_valid:
+                return {'valid': False, 'error': error_message}
             
             discount = coupon.calculate_discount(subtotal)
             
@@ -199,14 +203,14 @@ class CheckoutService:
         for combo_item in cart.combo_items.all():
             subtotal += combo_item.subtotal
         
-        # Validate and apply coupon
+        # Validate and apply coupon using unified StoreCoupon model
         discount = Decimal('0')
         coupon = None
         if coupon_code:
-            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal)
+            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal, user=cart.user)
             if coupon_result['valid']:
                 discount = Decimal(str(coupon_result['discount']))
-                coupon = Coupon.objects.get(id=coupon_result['coupon_id'])
+                coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
         
         # Calculate total
         tax = Decimal('0')

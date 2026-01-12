@@ -156,8 +156,7 @@ class StoreService:
         coupon_code: str = None
     ):
         """Create a new order for a store."""
-        from apps.stores.models import StoreOrder, StoreOrderItem, StoreProduct, StoreProductVariant
-        from apps.ecommerce.models import Coupon
+        from apps.stores.models import StoreOrder, StoreOrderItem, StoreProduct, StoreProductVariant, StoreCoupon
         
         # Calculate totals
         subtotal = Decimal('0.00')
@@ -191,15 +190,16 @@ class StoreService:
                 'notes': item_data.get('notes', '')
             })
         
-        # Apply coupon discount
+        # Apply coupon discount using unified StoreCoupon model
         discount = Decimal('0.00')
         if coupon_code:
             try:
-                coupon = Coupon.objects.get(code=coupon_code, is_active=True)
-                if coupon.is_valid():
+                coupon = StoreCoupon.objects.get(store=store, code__iexact=coupon_code, is_active=True)
+                is_valid, _ = coupon.is_valid(subtotal=subtotal)
+                if is_valid:
                     discount = coupon.calculate_discount(subtotal)
                     coupon.increment_usage()
-            except Coupon.DoesNotExist:
+            except StoreCoupon.DoesNotExist:
                 pass
         
         # Calculate delivery fee

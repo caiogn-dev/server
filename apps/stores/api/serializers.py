@@ -847,13 +847,15 @@ class StoreDeliveryZoneSerializer(serializers.ModelSerializer):
     
     zone_type_display = serializers.CharField(source='get_zone_type_display', read_only=True)
     distance_band_display = serializers.SerializerMethodField()
+    distance_label = serializers.SerializerMethodField()  # Alias for frontend compatibility
+    store_name = serializers.CharField(source='store.name', read_only=True)
     
     class Meta:
         model = StoreDeliveryZone
         fields = [
-            'id', 'store', 'name',
+            'id', 'store', 'store_name', 'name',
             'zone_type', 'zone_type_display',
-            'distance_band', 'distance_band_display',
+            'distance_band', 'distance_band_display', 'distance_label',
             'min_km', 'max_km',
             'zip_code_start', 'zip_code_end',
             'min_minutes', 'max_minutes',
@@ -869,6 +871,10 @@ class StoreDeliveryZoneSerializer(serializers.ModelSerializer):
         if obj.distance_band:
             return dict(StoreDeliveryZone.DISTANCE_BAND_CHOICES).get(obj.distance_band, obj.distance_band)
         return None
+    
+    def get_distance_label(self, obj):
+        """Alias for distance_band_display for frontend compatibility."""
+        return self.get_distance_band_display(obj)
 
 
 class StoreDeliveryZoneCreateSerializer(serializers.ModelSerializer):
