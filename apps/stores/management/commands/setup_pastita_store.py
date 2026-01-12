@@ -87,8 +87,8 @@ class Command(BaseCommand):
             state='TO',
             zip_code='77020-170',
             country='BR',
-            latitude=Decimal('-10.18832'),
-            longitude=Decimal('-48.30376'),
+            latitude=Decimal('-10.185260'),
+            longitude=Decimal('-48.303478'),
             
             # Branding
             primary_color='#722F37',  # Marsala

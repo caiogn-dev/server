@@ -9,10 +9,10 @@ def update_pastita_coordinates(apps, schema_editor):
     Store = apps.get_model('stores', 'Store')
     try:
         store = Store.objects.get(slug='pastita')
-        store.latitude = Decimal('-10.18832')
-        store.longitude = Decimal('-48.30376')
+        store.latitude = Decimal('-10.185260')
+        store.longitude = Decimal('-48.303478')
         store.save(update_fields=['latitude', 'longitude'])
-        print(f"Updated Pastita coordinates to (-10.18832, -48.30376)")
+        print(f"Updated Pastita coordinates to (-10.185260, -48.303478)")
     except Store.DoesNotExist:
         print("Pastita store not found, skipping coordinate update")
 
