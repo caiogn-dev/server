@@ -179,16 +179,13 @@ class CheckoutService:
         for combo_item in cart.combo_items.all():
             subtotal += combo_item.subtotal
         
-        tax = Decimal('0')  # Can be calculated based on store settings
-        if cart.store.tax_rate:
-            tax = subtotal * (cart.store.tax_rate / 100)
-        
-        total = subtotal + delivery_fee + tax - discount
+        # Total = subtotal + delivery - discount (no tax)
+        total = subtotal + delivery_fee - discount
         
         return {
             'subtotal': float(subtotal),
             'delivery_fee': float(delivery_fee),
-            'tax': float(tax),
+            'tax': 0,
             'discount': float(discount),
             'total': float(max(total, Decimal('0'))),
         }
@@ -241,12 +238,8 @@ class CheckoutService:
                 discount = Decimal(str(coupon_result['discount']))
                 coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
         
-        # Calculate total
-        tax = Decimal('0')
-        if store.tax_rate:
-            tax = subtotal * (store.tax_rate / 100)
-        
-        total = subtotal + delivery_fee + tax - discount
+        # Calculate total (no tax - just subtotal + delivery - discount)
+        total = subtotal + delivery_fee - discount
         
         # Create order
         order = StoreOrder.objects.create(
@@ -260,7 +253,7 @@ class CheckoutService:
             subtotal=subtotal,
             discount=discount,
             coupon_code=coupon_code or '',
-            tax=tax,
+            tax=Decimal('0'),
             delivery_fee=delivery_fee,
             total=total,
             delivery_method=(
