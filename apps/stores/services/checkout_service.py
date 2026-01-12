@@ -423,6 +423,9 @@ class CheckoutService:
                 pix_data = payment.get("point_of_interaction", {}).get("transaction_data", {})
                 order.pix_code = pix_data.get("qr_code", "")
                 order.pix_qr_code = pix_data.get("qr_code_base64", "")
+                
+                logger.info(f"PIX data for order {order.order_number}: code_len={len(order.pix_code)}, qr_len={len(order.pix_qr_code)}")
+                
                 order.save()
                 
                 return {
