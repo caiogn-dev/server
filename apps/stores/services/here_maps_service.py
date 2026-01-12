@@ -189,6 +189,7 @@ class HereMapsService:
             return cached
         
         try:
+            logger.info(f"Calculating route: {origin} -> {destination}")
             response = requests.get(
                 HERE_ROUTING_URL,
                 params={
@@ -200,7 +201,11 @@ class HereMapsService:
                 },
                 timeout=15
             )
-            response.raise_for_status()
+            
+            if response.status_code != 200:
+                logger.error(f"HERE API error: {response.status_code} - {response.text}")
+                return None
+            
             data = response.json()
             
             if data.get('routes'):
@@ -217,13 +222,14 @@ class HereMapsService:
                 }
                 # Cache routes for 24 hours - they don't change frequently
                 cache.set(cache_key, result, CACHE_TTL_ROUTE)
-                logger.debug(f"Route cached: {origin} -> {destination}")
+                logger.info(f"Route calculated: {result['distance_km']} km, {result['duration_minutes']} min")
                 return result
             
+            logger.warning(f"No routes found in response: {data}")
             return None
         
         except Exception as e:
-            logger.error(f"Route calculation error: {e}")
+            logger.error(f"Route calculation error: {e}", exc_info=True)
             return None
     
     def calculate_distance(

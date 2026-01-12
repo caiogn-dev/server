@@ -103,6 +103,8 @@ class StoreRouteView(APIView):
             origin = (float(store.latitude), float(store.longitude))
             destination = (float(dest_lat), float(dest_lng))
             
+            logger.info(f"Route request: store={store.slug}, origin={origin}, destination={destination}")
+            
             result = here_maps_service.calculate_route(origin, destination)
             if result:
                 return Response({
@@ -117,11 +119,14 @@ class StoreRouteView(APIView):
                     },
                     **result
                 })
+            
+            logger.error(f"Route calculation failed for store={store.slug}")
             return Response(
-                {'error': 'Could not calculate route'},
+                {'error': 'Could not calculate route', 'store_location': origin, 'destination': destination},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        except ValueError:
+        except ValueError as e:
+            logger.error(f"Invalid coordinates: {e}")
             return Response(
                 {'error': 'Invalid coordinate values'},
                 status=status.HTTP_400_BAD_REQUEST
