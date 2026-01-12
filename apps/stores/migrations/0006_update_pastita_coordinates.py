@@ -31,7 +31,7 @@ def reverse_coordinates(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stores', '0002_storedeliveryzone_sort_order'),
+        ('stores', '0005_migrate_pastita_data'),
     ]
 
     operations = [
