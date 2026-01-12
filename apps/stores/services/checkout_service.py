@@ -162,8 +162,8 @@ class CheckoutService:
                 zone_type = getattr(zone, 'zone_type', 'distance_band')
                 distance_band = getattr(zone, 'distance_band', None)
                 
-                # Handle distance_band type zones
-                if zone_type == 'distance_band' and distance_band:
+                # Handle distance_band type zones (accepts 'distance_band', 'distance', or any type with distance_band set)
+                if distance_band:
                     ranges = DISTANCE_BAND_RANGES.get(distance_band)
                     if ranges:
                         min_km, max_km = ranges
