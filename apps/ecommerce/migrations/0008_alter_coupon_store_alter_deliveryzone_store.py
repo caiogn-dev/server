@@ -4,6 +4,16 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+def update_related_names(apps, schema_editor):
+    """Update related names for store FK - this is a no-op at DB level."""
+    # The related_name change is only at Django ORM level, not DB level
+    pass
+
+
+def reverse_migration(apps, schema_editor):
+    pass
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -12,14 +22,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name='coupon',
-            name='store',
-            field=models.ForeignKey(blank=True, help_text='DEPRECATED: Use stores.StoreCoupon instead', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='legacy_coupons', to='stores.store'),
-        ),
-        migrations.AlterField(
-            model_name='deliveryzone',
-            name='store',
-            field=models.ForeignKey(blank=True, help_text='DEPRECATED: Use stores.StoreDeliveryZone instead', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='legacy_delivery_zones', to='stores.store'),
-        ),
+        # Use RunPython instead of AlterField to avoid issues with missing columns
+        migrations.RunPython(update_related_names, reverse_migration),
     ]
