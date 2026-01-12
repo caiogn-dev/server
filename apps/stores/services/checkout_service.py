@@ -75,15 +75,15 @@ class CheckoutService:
         if zones.exists():
             return zones.order_by('sort_order', 'distance_band', 'min_km'), 'store'
         
-        # Fall back to legacy model
+        # Fall back to legacy model (doesn't have sort_order)
         legacy_zones = LegacyDeliveryZone.objects.filter(store=store, is_active=True)
         if legacy_zones.exists():
-            return legacy_zones.order_by('sort_order', 'distance_band', 'min_km'), 'legacy'
+            return legacy_zones.order_by('distance_band', 'min_km'), 'legacy'
         
         # Also check legacy zones without store (global zones)
         global_zones = LegacyDeliveryZone.objects.filter(store__isnull=True, is_active=True)
         if global_zones.exists():
-            return global_zones.order_by('sort_order', 'distance_band', 'min_km'), 'global'
+            return global_zones.order_by('distance_band', 'min_km'), 'global'
         
         return None, None
     
