@@ -27,59 +27,75 @@ class CheckoutService:
     def calculate_delivery_fee(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
         """Calculate delivery fee based on distance or ZIP code.
         
-        Uses StoreDeliveryZone model which is managed by the dashboard.
-        Falls back to dynamic distance-based calculation if no zones configured.
+        Priority:
+        1. Try to match configured delivery zones
+        2. Fall back to dynamic distance-based calculation
+        
+        The dynamic calculation uses store metadata or sensible defaults.
         """
-        zones = StoreDeliveryZone.objects.filter(
-            store=store,
-            is_active=True
-        ).order_by('sort_order', 'delivery_fee')
-        
-        # If no zones configured, use dynamic distance-based calculation
-        if not zones.exists():
-            return CheckoutService._calculate_dynamic_fee(store, distance_km)
-        
-        # Try to find matching zone
-        for zone in zones:
-            if zone.zone_type == 'distance_band' and distance_km is not None:
-                # Use custom min_km/max_km if set, otherwise fall back to band ranges
-                if zone.min_km is not None and zone.max_km is not None:
-                    min_km, max_km = zone.min_km, zone.max_km
-                elif zone.distance_band:
-                    ranges = StoreDeliveryZone.DISTANCE_BAND_RANGES.get(zone.distance_band)
-                    if ranges:
-                        min_km, max_km = ranges
+        # Always use dynamic calculation for distance-based pricing
+        # This ensures consistent pricing based on actual distance
+        if distance_km is not None:
+            # First check if there are properly configured distance zones
+            zones = StoreDeliveryZone.objects.filter(
+                store=store,
+                is_active=True,
+                zone_type__in=['distance_band', 'custom_distance']
+            ).order_by('sort_order', 'min_km')
+            
+            # Try to find matching zone
+            for zone in zones:
+                if zone.zone_type == 'distance_band':
+                    if zone.min_km is not None and zone.max_km is not None:
+                        min_km, max_km = zone.min_km, zone.max_km
+                    elif zone.distance_band:
+                        ranges = StoreDeliveryZone.DISTANCE_BAND_RANGES.get(zone.distance_band)
+                        if ranges:
+                            min_km, max_km = ranges
+                        else:
+                            continue
                     else:
                         continue
-                else:
-                    continue
+                    
+                    if min_km <= distance_km < max_km:
+                        return {
+                            'fee': float(zone.delivery_fee),
+                            'zone_id': str(zone.id),
+                            'zone_name': zone.name,
+                            'estimated_minutes': zone.estimated_minutes,
+                            'estimated_days': zone.estimated_days,
+                            'distance_km': float(distance_km),
+                        }
                 
-                if min_km <= distance_km < max_km:
-                    return {
-                        'fee': float(zone.delivery_fee),
-                        'zone_id': str(zone.id),
-                        'zone_name': zone.name,
-                        'estimated_minutes': zone.estimated_minutes,
-                        'estimated_days': zone.estimated_days,
-                    }
+                elif zone.zone_type == 'custom_distance':
+                    min_km = zone.min_km or Decimal('0')
+                    max_km = zone.max_km or Decimal('999')
+                    if min_km <= distance_km < max_km:
+                        fee = zone.delivery_fee
+                        if zone.fee_per_km:
+                            fee += zone.fee_per_km * distance_km
+                        return {
+                            'fee': float(fee),
+                            'zone_id': str(zone.id),
+                            'zone_name': zone.name,
+                            'estimated_minutes': zone.estimated_minutes,
+                            'estimated_days': zone.estimated_days,
+                            'distance_km': float(distance_km),
+                        }
             
-            elif zone.zone_type == 'custom_distance' and distance_km is not None:
-                min_km = zone.min_km or Decimal('0')
-                max_km = zone.max_km or Decimal('999')
-                if min_km <= distance_km < max_km:
-                    fee = zone.delivery_fee
-                    if zone.fee_per_km:
-                        fee += zone.fee_per_km * distance_km
-                    return {
-                        'fee': float(fee),
-                        'zone_id': str(zone.id),
-                        'zone_name': zone.name,
-                        'estimated_minutes': zone.estimated_minutes,
-                        'estimated_days': zone.estimated_days,
-                    }
+            # No matching distance zone - use dynamic calculation
+            return CheckoutService._calculate_dynamic_fee(store, distance_km)
+        
+        # ZIP code based lookup
+        if zip_code:
+            zones = StoreDeliveryZone.objects.filter(
+                store=store,
+                is_active=True,
+                zone_type='zip_range'
+            ).order_by('sort_order')
             
-            elif zone.zone_type == 'zip_range' and zip_code:
-                clean_zip = zip_code.replace('-', '').replace('.', '')
+            clean_zip = zip_code.replace('-', '').replace('.', '')
+            for zone in zones:
                 if zone.zip_code_start and zone.zip_code_end:
                     if zone.zip_code_start <= clean_zip <= zone.zip_code_end:
                         return {
@@ -90,8 +106,8 @@ class CheckoutService:
                             'estimated_days': zone.estimated_days,
                         }
         
-        # No matching zone found - use dynamic calculation
-        return CheckoutService._calculate_dynamic_fee(store, distance_km)
+        # No distance or ZIP provided - return base fee
+        return CheckoutService._calculate_dynamic_fee(store, None)
     
     @staticmethod
     def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
