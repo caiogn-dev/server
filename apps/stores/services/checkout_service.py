@@ -28,20 +28,16 @@ class CheckoutService:
         """Calculate delivery fee based on distance or ZIP code.
         
         Uses StoreDeliveryZone model which is managed by the dashboard.
+        Falls back to dynamic distance-based calculation if no zones configured.
         """
         zones = StoreDeliveryZone.objects.filter(
             store=store,
             is_active=True
         ).order_by('sort_order', 'delivery_fee')
         
+        # If no zones configured, use dynamic distance-based calculation
         if not zones.exists():
-            # Use store default
-            return {
-                'fee': float(store.default_delivery_fee),
-                'zone_name': 'Padrão',
-                'estimated_minutes': 30,
-                'estimated_days': 0,
-            }
+            return CheckoutService._calculate_dynamic_fee(store, distance_km)
         
         # Try to find matching zone
         for zone in zones:
@@ -94,22 +90,71 @@ class CheckoutService:
                             'estimated_days': zone.estimated_days,
                         }
         
-        # Default to first zone or store default
-        first_zone = zones.first()
-        if first_zone:
+        # No matching zone found - use dynamic calculation
+        return CheckoutService._calculate_dynamic_fee(store, distance_km)
+    
+    @staticmethod
+    def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
+        """Calculate delivery fee dynamically based on distance.
+        
+        Uses store metadata for configuration or sensible defaults.
+        Fee structure:
+        - Base fee (minimum)
+        - Per-km rate after a threshold
+        - Estimated time based on distance
+        """
+        # Get configuration from store metadata or use defaults
+        metadata = store.metadata or {}
+        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or 5.0)))
+        fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', 1.0)))
+        free_km_threshold = Decimal(str(metadata.get('delivery_free_km', 2.0)))
+        max_fee = Decimal(str(metadata.get('delivery_max_fee', 25.0)))
+        
+        # If no distance provided, return base fee
+        if distance_km is None:
             return {
-                'fee': float(first_zone.delivery_fee),
-                'zone_id': str(first_zone.id),
-                'zone_name': first_zone.name,
-                'estimated_minutes': first_zone.estimated_minutes,
-                'estimated_days': first_zone.estimated_days,
+                'fee': float(base_fee),
+                'zone_name': 'Padrão',
+                'estimated_minutes': 30,
+                'estimated_days': 0,
             }
         
+        distance = Decimal(str(distance_km))
+        
+        # Calculate fee: base + (distance - threshold) * per_km_rate
+        if distance <= free_km_threshold:
+            fee = base_fee
+            zone_name = 'Próximo'
+        else:
+            extra_km = distance - free_km_threshold
+            fee = base_fee + (extra_km * fee_per_km)
+            
+            # Determine zone name based on distance
+            if distance <= 5:
+                zone_name = 'Próximo'
+            elif distance <= 10:
+                zone_name = 'Padrão'
+            elif distance <= 15:
+                zone_name = 'Distante'
+            else:
+                zone_name = 'Muito Distante'
+        
+        # Cap at max fee
+        fee = min(fee, max_fee)
+        
+        # Round to 2 decimal places
+        fee = fee.quantize(Decimal('0.01'))
+        
+        # Estimate delivery time: ~3 min per km + 15 min preparation
+        estimated_minutes = int(15 + (float(distance) * 3))
+        
         return {
-            'fee': float(store.default_delivery_fee),
-            'zone_name': 'Padrão',
-            'estimated_minutes': 30,
+            'fee': float(fee),
+            'zone_name': zone_name,
+            'estimated_minutes': estimated_minutes,
             'estimated_days': 0,
+            'distance_km': float(distance),
+            'calculation': 'dynamic',
         }
     
     @staticmethod
