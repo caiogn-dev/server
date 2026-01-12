@@ -29,8 +29,8 @@ def add_fields_and_create_wishlist(apps, schema_editor):
             # Add product_type_id column
             try:
                 cursor.execute("""
-                    ALTER TABLE stores_storeproduct 
-                    ADD COLUMN IF NOT EXISTS product_type_id uuid REFERENCES stores_storeproducttype(id) ON DELETE SET NULL
+                    ALTER TABLE store_products 
+                    ADD COLUMN IF NOT EXISTS product_type_id uuid REFERENCES store_product_types(id) ON DELETE SET NULL
                 """)
             except Exception:
                 pass
@@ -38,7 +38,7 @@ def add_fields_and_create_wishlist(apps, schema_editor):
             # Add type_attributes column
             try:
                 cursor.execute("""
-                    ALTER TABLE stores_storeproduct 
+                    ALTER TABLE store_products 
                     ADD COLUMN IF NOT EXISTS type_attributes jsonb DEFAULT '{}'::jsonb
                 """)
             except Exception:
@@ -61,21 +61,21 @@ def add_fields_and_create_wishlist(apps, schema_editor):
                 CREATE TABLE IF NOT EXISTS store_wishlists_products (
                     id serial PRIMARY KEY,
                     storewishlist_id uuid NOT NULL REFERENCES store_wishlists(id) ON DELETE CASCADE,
-                    storeproduct_id uuid NOT NULL REFERENCES stores_storeproduct(id) ON DELETE CASCADE,
+                    storeproduct_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE,
                     UNIQUE(storewishlist_id, storeproduct_id)
                 )
             """)
             
         else:
             # SQLite - check columns first
-            cursor.execute("PRAGMA table_info(stores_storeproduct)")
+            cursor.execute("PRAGMA table_info(store_products)")
             columns = [row[1] for row in cursor.fetchall()]
             
             if 'product_type_id' not in columns:
                 try:
                     cursor.execute("""
-                        ALTER TABLE stores_storeproduct 
-                        ADD COLUMN product_type_id char(36) REFERENCES stores_storeproducttype(id)
+                        ALTER TABLE store_products 
+                        ADD COLUMN product_type_id char(36) REFERENCES store_product_types(id)
                     """)
                 except Exception:
                     pass
@@ -83,7 +83,7 @@ def add_fields_and_create_wishlist(apps, schema_editor):
             if 'type_attributes' not in columns:
                 try:
                     cursor.execute("""
-                        ALTER TABLE stores_storeproduct 
+                        ALTER TABLE store_products 
                         ADD COLUMN type_attributes text DEFAULT '{}'
                     """)
                 except Exception:
@@ -116,7 +116,7 @@ def add_fields_and_create_wishlist(apps, schema_editor):
                     CREATE TABLE store_wishlists_products (
                         id integer PRIMARY KEY AUTOINCREMENT,
                         storewishlist_id char(36) NOT NULL REFERENCES store_wishlists(id),
-                        storeproduct_id char(36) NOT NULL REFERENCES stores_storeproduct(id),
+                        storeproduct_id char(36) NOT NULL REFERENCES store_products(id),
                         UNIQUE(storewishlist_id, storeproduct_id)
                     )
                 """)

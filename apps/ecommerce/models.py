@@ -1,44 +1,24 @@
 """
-E-commerce models for Pastita integration.
+Legacy E-commerce models.
 
-⚠️ DEPRECATED: This app is deprecated. Use apps.stores instead.
+⚠️ LEGACY: These models are kept for database migration compatibility only.
+DO NOT use these models in new code.
 
-Most models in this file are legacy and should not be used for new code.
-Use the unified stores system instead.
-
-Use these models instead:
-- Product → stores.StoreProduct
-- Cart/CartItem → stores.StoreCart/StoreCartItem
-- Wishlist → stores.StoreWishlist
-- Coupon → stores.StoreCoupon
-- DeliveryZone → stores.StoreDeliveryZone
-
-Note: Coupon and DeliveryZone have `legacy_coupons` and `legacy_delivery_zones`
-related_names to avoid conflicts with stores.StoreCoupon and stores.StoreDeliveryZone.
-
-This file is kept for backward compatibility with existing data.
+Use the unified stores system instead:
+- stores.StoreProduct
+- stores.StoreCart / StoreCartItem
+- stores.StoreWishlist
+- stores.StoreCoupon
+- stores.StoreDeliveryZone
+- stores.StoreOrder / StoreOrderItem
 """
 import uuid
-import warnings
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 User = get_user_model()
-
-# Emit deprecation warning when this module is imported
-warnings.warn(
-    "apps.ecommerce is deprecated. Use apps.stores instead.",
-    DeprecationWarning,
-    stacklevel=2
-)
-
-
-def get_store_model():
-    """Lazy import to avoid circular imports."""
-    from apps.stores.models import Store
-    return Store
 
 
 class Product(models.Model):
