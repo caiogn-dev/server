@@ -144,6 +144,7 @@ class PaymentStatusView(APIView):
     """
     Check payment status for an order.
     Used by frontend to poll payment status.
+    Accepts either order UUID or order_number.
     """
     
     authentication_classes = []
@@ -152,7 +153,14 @@ class PaymentStatusView(APIView):
     def get(self, request, order_id):
         """Get payment status for an order."""
         try:
-            order = StoreOrder.objects.get(id=order_id)
+            # Try to find by UUID first
+            try:
+                from uuid import UUID
+                UUID(str(order_id))
+                order = StoreOrder.objects.get(id=order_id)
+            except (ValueError, StoreOrder.DoesNotExist):
+                # Try by order_number
+                order = StoreOrder.objects.get(order_number=str(order_id))
             
             return Response({
                 'order_id': str(order.id),

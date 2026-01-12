@@ -145,8 +145,8 @@ urlpatterns = [
     # Store-specific webhook
     path('s/<slug:store_slug>/webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     
-    # Payment status check
-    path('orders/<uuid:order_id>/payment-status/', PaymentStatusView.as_view(), name='order-payment-status'),
+    # Payment status check (accepts UUID or order_number)
+    path('orders/<str:order_id>/payment-status/', PaymentStatusView.as_view(), name='order-payment-status'),
     
     # ==========================================================================
     # CUSTOMER ORDER ENDPOINTS (public/authenticated)
