@@ -1,29 +1,26 @@
 #!/usr/bin/env python
+"""
+Production entrypoint for Railway deployment.
+DO NOT run makemigrations in production - migrations should be committed to git.
+"""
 import os
 import subprocess
 import sys
 
 port = os.environ.get('PORT', '8080')
 
-# Make migrations
-print("=== Creating database migrations ===")
-makemigrations_result = subprocess.run([
-    sys.executable, 'manage.py', 'makemigrations', '--noinput'
-])
-if makemigrations_result.returncode != 0:
-    print("WARNING: makemigrations failed, but continuing...")
-
-# Run migrations
+# Run migrations only (DO NOT run makemigrations in production)
 print("=== Applying database migrations ===")
 migrate_result = subprocess.run([
     sys.executable, 'manage.py', 'migrate', '--noinput'
 ])
 if migrate_result.returncode != 0:
-    print("WARNING: migrate failed, but continuing...")
+    print("ERROR: migrate failed!")
+    sys.exit(1)
 
-# Collect static files (optional, uncomment if needed)
-# print("=== Collecting static files ===")
-# subprocess.run([sys.executable, 'manage.py', 'collectstatic', '--noinput'])
+# Collect static files
+print("=== Collecting static files ===")
+subprocess.run([sys.executable, 'manage.py', 'collectstatic', '--noinput'])
 
 print(f"=== Starting daphne (ASGI) on port {port} ===")
 
