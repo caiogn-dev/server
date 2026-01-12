@@ -25,6 +25,8 @@ def get_webhook_notification_url() -> str:
     """
     Get a valid webhook notification URL for payment providers.
     Returns None if no valid public URL is configured.
+    
+    The webhook endpoint is: /api/v1/stores/webhooks/mercadopago/
     """
     base_url = getattr(settings, 'BASE_URL', '').strip()
     
@@ -49,8 +51,8 @@ def get_webhook_notification_url() -> str:
             logger.warning(f"BASE_URL is a local address ({host}) - webhook notifications disabled")
             return None
         
-        # Build webhook URL
-        webhook_url = f"{base_url.rstrip('/')}/webhooks/payments/mercadopago/"
+        # Build webhook URL - correct endpoint is /api/v1/stores/webhooks/mercadopago/
+        webhook_url = f"{base_url.rstrip('/')}/api/v1/stores/webhooks/mercadopago/"
         return webhook_url
         
     except Exception as e:
