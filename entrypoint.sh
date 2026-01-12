@@ -18,6 +18,14 @@ if migrate_result.returncode != 0:
     print("ERROR: migrate failed!")
     sys.exit(1)
 
+# Setup Pastita store if not exists
+print("=== Setting up Pastita store ===")
+setup_result = subprocess.run([
+    sys.executable, 'manage.py', 'setup_pastita_store'
+])
+if setup_result.returncode != 0:
+    print("WARNING: setup_pastita_store had issues, but continuing...")
+
 # Collect static files
 print("=== Collecting static files ===")
 subprocess.run([sys.executable, 'manage.py', 'collectstatic', '--noinput'])
