@@ -145,6 +145,7 @@ class PaymentStatusView(APIView):
     Check payment status for an order.
     Used by frontend to poll payment status.
     Accepts either order UUID or order_number.
+    Returns complete order info including PIX data.
     """
     
     authentication_classes = []
@@ -157,20 +158,58 @@ class PaymentStatusView(APIView):
             try:
                 from uuid import UUID
                 UUID(str(order_id))
-                order = StoreOrder.objects.get(id=order_id)
+                order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
             except (ValueError, StoreOrder.DoesNotExist):
                 # Try by order_number
-                order = StoreOrder.objects.get(order_number=str(order_id))
+                order = StoreOrder.objects.select_related('store').prefetch_related('items').get(order_number=str(order_id))
             
-            return Response({
+            # Build items list
+            items = []
+            for item in order.items.all():
+                items.append({
+                    'id': str(item.id),
+                    'product_name': item.product_name,
+                    'variant_name': item.variant_name,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                })
+            
+            # Build response with all payment info
+            response_data = {
                 'order_id': str(order.id),
                 'order_number': order.order_number,
                 'status': order.status,
                 'payment_status': order.payment_status,
+                'payment_method': order.payment_method,
                 'payment_id': order.payment_id,
+                'subtotal': float(order.subtotal),
+                'delivery_fee': float(order.delivery_fee),
+                'discount': float(order.discount),
+                'tax': float(order.tax) if order.tax else 0,
                 'total': float(order.total),
+                'total_amount': float(order.total),
+                'delivery_method': order.delivery_method,
+                'delivery_address': order.delivery_address,
+                'items': items,
+                'created_at': order.created_at.isoformat(),
                 'paid_at': order.paid_at.isoformat() if order.paid_at else None,
-            })
+            }
+            
+            # Include PIX data if available
+            if order.payment_method == 'pix':
+                response_data['pix_code'] = order.pix_code or ''
+                response_data['pix_qr_code'] = order.pix_qr_code or ''
+                response_data['payment'] = {
+                    'payment_method_id': 'pix',
+                    'payment_type_id': 'bank_transfer',
+                    'status': order.payment_status,
+                    'transaction_amount': float(order.total),
+                    'qr_code': order.pix_code or '',
+                    'qr_code_base64': order.pix_qr_code or '',
+                }
+            
+            return Response(response_data)
         
         except StoreOrder.DoesNotExist:
             return Response(
