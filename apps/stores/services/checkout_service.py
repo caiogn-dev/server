@@ -5,6 +5,7 @@ Handles order creation, payment processing, and stock management.
 import logging
 import uuid
 from decimal import Decimal
+from urllib.parse import urlparse
 from django.db import models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -18,6 +19,43 @@ from apps.ecommerce.models import Coupon, DeliveryZone
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
+
+
+def get_webhook_notification_url() -> str:
+    """
+    Get a valid webhook notification URL for payment providers.
+    Returns None if no valid public URL is configured.
+    """
+    base_url = getattr(settings, 'BASE_URL', '').strip()
+    
+    if not base_url:
+        logger.warning("BASE_URL not configured - webhook notifications disabled")
+        return None
+    
+    # Parse and validate URL
+    try:
+        parsed = urlparse(base_url)
+        
+        # Check if it's a valid URL with scheme and host
+        if not parsed.scheme or not parsed.netloc:
+            logger.warning(f"Invalid BASE_URL format: {base_url}")
+            return None
+        
+        # Check if it's localhost or local IP (not valid for webhooks)
+        host = parsed.netloc.split(':')[0].lower()
+        local_hosts = ['localhost', '127.0.0.1', '0.0.0.0', '::1']
+        
+        if host in local_hosts or host.startswith('192.168.') or host.startswith('10.'):
+            logger.warning(f"BASE_URL is a local address ({host}) - webhook notifications disabled")
+            return None
+        
+        # Build webhook URL
+        webhook_url = f"{base_url.rstrip('/')}/webhooks/payments/mercadopago/"
+        return webhook_url
+        
+    except Exception as e:
+        logger.error(f"Error parsing BASE_URL: {e}")
+        return None
 
 
 class CheckoutService:
@@ -361,6 +399,9 @@ class CheckoutService:
         
         sdk = mercadopago.SDK(credentials['access_token'])
         
+        # Get valid webhook URL (may be None if not configured properly)
+        notification_url = get_webhook_notification_url()
+        
         # Build payment data
         if payment_method == 'pix':
             payment_data = {
@@ -373,8 +414,13 @@ class CheckoutService:
                     "last_name": " ".join(order.customer_name.split()[1:]) if order.customer_name else "",
                 },
                 "external_reference": str(order.id),
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
             }
+            
+            # Only add notification_url if it's a valid public URL
+            if notification_url:
+                payment_data["notification_url"] = notification_url
+            else:
+                logger.info(f"Creating payment without notification_url for order {order.order_number}")
             
             result = sdk.payment().create(payment_data)
             
@@ -430,8 +476,13 @@ class CheckoutService:
                     "pending": f"{settings.FRONTEND_URL}/pendente?order={order.id}",
                 },
                 "auto_return": "approved",
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
             }
+            
+            # Only add notification_url if it's a valid public URL
+            if notification_url:
+                preference_data["notification_url"] = notification_url
+            else:
+                logger.info(f"Creating preference without notification_url for order {order.order_number}")
             
             result = sdk.preference().create(preference_data)
             
