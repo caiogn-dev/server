@@ -250,17 +250,17 @@ class Command(BaseCommand):
         # Create default delivery zones if none exist
         if not DeliveryZone.objects.filter(store=store).exists():
             default_zones = [
-                {'name': 'Centro', 'distance_band': '0_2', 'delivery_fee': Decimal('5.00'), 'color': '#4CAF50'},
-                {'name': 'Próximo', 'distance_band': '2_5', 'delivery_fee': Decimal('8.00'), 'color': '#8BC34A'},
-                {'name': 'Médio', 'distance_band': '5_8', 'delivery_fee': Decimal('12.00'), 'color': '#FFC107'},
-                {'name': 'Distante', 'distance_band': '8_12', 'delivery_fee': Decimal('15.00'), 'color': '#FF9800'},
-                {'name': 'Muito Distante', 'distance_band': '12_15', 'delivery_fee': Decimal('20.00'), 'color': '#FF5722'},
+                {'name': 'Centro', 'distance_band': '0_2', 'delivery_fee': Decimal('5.00'), 'color': '#4CAF50', 'estimated_minutes': 15, 'sort_order': 1},
+                {'name': 'Próximo', 'distance_band': '2_5', 'delivery_fee': Decimal('8.00'), 'color': '#8BC34A', 'estimated_minutes': 20, 'sort_order': 2},
+                {'name': 'Médio', 'distance_band': '5_8', 'delivery_fee': Decimal('12.00'), 'color': '#FFC107', 'estimated_minutes': 25, 'sort_order': 3},
+                {'name': 'Distante', 'distance_band': '8_12', 'delivery_fee': Decimal('15.00'), 'color': '#FF9800', 'estimated_minutes': 30, 'sort_order': 4},
+                {'name': 'Muito Distante', 'distance_band': '12_15', 'delivery_fee': Decimal('20.00'), 'color': '#FF5722', 'estimated_minutes': 40, 'sort_order': 5},
+                {'name': 'Área Estendida', 'distance_band': '15_20', 'delivery_fee': Decimal('25.00'), 'color': '#E91E63', 'estimated_minutes': 50, 'sort_order': 6},
             ]
             for zone_data in default_zones:
                 DeliveryZone.objects.create(
                     store=store,
                     zone_type='distance_band',
-                    estimated_minutes=30,
                     **zone_data
                 )
             self.stdout.write(f'  Created {len(default_zones)} default delivery zones')

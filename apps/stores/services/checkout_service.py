@@ -66,18 +66,26 @@ class CheckoutService:
     @staticmethod
     def calculate_delivery_fee(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
         """Calculate delivery fee based on distance or ZIP code."""
+        # Ensure distance_km is Decimal for proper comparison
+        if distance_km is not None and not isinstance(distance_km, Decimal):
+            distance_km = Decimal(str(distance_km))
+        
+        # Get zones ordered by distance band (not by fee) for proper matching
         zones = DeliveryZone.objects.filter(
             store=store,
             is_active=True
-        ).order_by('delivery_fee')
+        ).order_by('sort_order', 'distance_band', 'min_km')
         
         if not zones.exists():
             # Use store default
+            logger.debug(f"No delivery zones found for store {store.slug}, using default fee")
             return {
                 'fee': float(store.default_delivery_fee),
                 'zone_name': 'Padrão',
                 'estimated_minutes': 30,
             }
+        
+        logger.debug(f"Calculating delivery fee for distance: {distance_km} km")
         
         # Try to find matching zone
         for zone in zones:
@@ -85,7 +93,9 @@ class CheckoutService:
                 ranges = DeliveryZone.DISTANCE_BAND_RANGES.get(zone.distance_band)
                 if ranges and distance_km is not None:
                     min_km, max_km = ranges
+                    logger.debug(f"Checking zone '{zone.name}' ({zone.distance_band}): {min_km} <= {distance_km} < {max_km}")
                     if min_km <= distance_km < max_km:
+                        logger.debug(f"Match found: zone '{zone.name}' with fee {zone.delivery_fee}")
                         return {
                             'fee': float(zone.delivery_fee),
                             'zone_id': str(zone.id),
@@ -96,10 +106,12 @@ class CheckoutService:
             elif zone.zone_type == 'custom_distance' and distance_km is not None:
                 min_km = zone.min_km or Decimal('0')
                 max_km = zone.max_km or Decimal('999')
+                logger.debug(f"Checking custom zone '{zone.name}': {min_km} <= {distance_km} < {max_km}")
                 if min_km <= distance_km < max_km:
                     fee = zone.delivery_fee
                     if zone.fee_per_km:
                         fee += zone.fee_per_km * distance_km
+                    logger.debug(f"Match found: custom zone '{zone.name}' with fee {fee}")
                     return {
                         'fee': float(fee),
                         'zone_id': str(zone.id),
@@ -118,20 +130,36 @@ class CheckoutService:
                             'estimated_minutes': zone.estimated_minutes,
                         }
         
-        # Default to first zone or store default
-        first_zone = zones.first()
-        if first_zone:
-            return {
-                'fee': float(first_zone.delivery_fee),
-                'zone_id': str(first_zone.id),
-                'zone_name': first_zone.name,
-                'estimated_minutes': first_zone.estimated_minutes,
-            }
+        # No matching zone found - check if distance exceeds all zones
+        logger.warning(f"No matching zone for distance {distance_km} km in store {store.slug}")
         
+        # Try to find the zone with highest distance range
+        distance_zones = zones.filter(zone_type='distance_band').exclude(distance_band__isnull=True)
+        if distance_zones.exists() and distance_km is not None:
+            # Find the zone that covers the highest distance
+            for band in ['30_plus', '20_30', '15_20', '12_15', '8_12', '5_8', '2_5', '0_2']:
+                zone = distance_zones.filter(distance_band=band).first()
+                if zone:
+                    ranges = DeliveryZone.DISTANCE_BAND_RANGES.get(band)
+                    if ranges:
+                        min_km, max_km = ranges
+                        # If distance exceeds all zones, use the highest zone
+                        if distance_km >= min_km:
+                            logger.debug(f"Using highest applicable zone: '{zone.name}' for distance {distance_km}")
+                            return {
+                                'fee': float(zone.delivery_fee),
+                                'zone_id': str(zone.id),
+                                'zone_name': zone.name,
+                                'estimated_minutes': zone.estimated_minutes,
+                                'note': 'Distância além da zona máxima configurada'
+                            }
+        
+        # Default to store default fee
+        logger.debug(f"Using store default fee: {store.default_delivery_fee}")
         return {
             'fee': float(store.default_delivery_fee),
-            'zone_name': 'Padrão',
-            'estimated_minutes': 30,
+            'zone_name': 'Área estendida',
+            'estimated_minutes': 45,
         }
     
     @staticmethod
