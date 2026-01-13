@@ -387,7 +387,13 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 Q(customer_phone__icontains=search)
             )
         
-        return queryset.prefetch_related('items').order_by('-created_at')
+        # Optimize queries with select_related and prefetch_related
+        return queryset.select_related(
+            'store', 'customer'
+        ).prefetch_related(
+            'items__product',
+            'combo_items__combo'
+        ).order_by('-created_at')
     
     def get_serializer_class(self):
         if self.action == 'create':

@@ -32,6 +32,10 @@ from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
     StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView
 )
+from .api.export_views import (
+    OrdersExportView, RevenueReportView, ProductsReportView,
+    StockReportView, CustomersReportView, DashboardStatsView
+)
 
 # Main router for admin/management endpoints
 router = DefaultRouter()
@@ -163,4 +167,26 @@ urlpatterns = [
     
     # WhatsApp confirmation link
     path('orders/<uuid:order_id>/whatsapp/', OrderWhatsAppView.as_view(), name='order-whatsapp'),
+    
+    # ==========================================================================
+    # REPORTS & EXPORT ENDPOINTS (require auth)
+    # ==========================================================================
+    
+    # Export orders as CSV
+    path('reports/orders/export/', OrdersExportView.as_view(), name='orders-export'),
+    
+    # Revenue report (JSON)
+    path('reports/revenue/', RevenueReportView.as_view(), name='revenue-report'),
+    
+    # Products performance report
+    path('reports/products/', ProductsReportView.as_view(), name='products-report'),
+    
+    # Stock/inventory report
+    path('reports/stock/', StockReportView.as_view(), name='stock-report'),
+    
+    # Customers report
+    path('reports/customers/', CustomersReportView.as_view(), name='customers-report'),
+    
+    # Dashboard stats overview
+    path('reports/dashboard/', DashboardStatsView.as_view(), name='dashboard-stats'),
 ]
