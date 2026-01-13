@@ -447,7 +447,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = StoreOrder
         fields = [
-            'id', 'store', 'order_number',
+            'id', 'store', 'order_number', 'access_token',
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
@@ -463,7 +463,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
-            'id', 'order_number', 'created_at', 'updated_at',
+            'id', 'order_number', 'access_token', 'created_at', 'updated_at',
             'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at'
         ]
 
@@ -944,7 +944,7 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
     class Meta:
         model = StoreOrder
         fields = [
-            'id', 'store', 'order_number',
+            'id', 'store', 'order_number', 'access_token',
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
@@ -960,7 +960,7 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
-            'id', 'order_number', 'created_at', 'updated_at',
+            'id', 'order_number', 'access_token', 'created_at', 'updated_at',
             'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at'
         ]
 

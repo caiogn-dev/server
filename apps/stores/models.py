@@ -698,6 +698,15 @@ class StoreOrder(BaseModel):
     # Order number (human-readable)
     order_number = models.CharField(max_length=50, unique=True, db_index=True)
     
+    # Security token for public access (payment page, order tracking)
+    # This token is required to view order details without authentication
+    access_token = models.CharField(
+        max_length=64, 
+        unique=True, 
+        db_index=True,
+        help_text='Secure token for public order access (payment page, tracking)'
+    )
+    
     # Customer
     customer = models.ForeignKey(
         User,
@@ -785,6 +794,8 @@ class StoreOrder(BaseModel):
     def save(self, *args, **kwargs):
         if not self.order_number:
             self.order_number = self.generate_order_number()
+        if not self.access_token:
+            self.access_token = self.generate_access_token()
         super().save(*args, **kwargs)
     
     def generate_order_number(self):
@@ -795,6 +806,12 @@ class StoreOrder(BaseModel):
         timestamp = timezone.now().strftime('%y%m%d')
         random_suffix = ''.join(random.choices(string.digits, k=4))
         return f"{prefix}{timestamp}{random_suffix}"
+    
+    @staticmethod
+    def generate_access_token():
+        """Generate a secure random access token for public order access."""
+        import secrets
+        return secrets.token_urlsafe(32)  # 43 characters, cryptographically secure
     
     def update_status(self, new_status: str, notify: bool = True):
         """Update order status and optionally send notifications."""

@@ -142,26 +142,67 @@ class MercadoPagoWebhookView(APIView):
 @method_decorator(csrf_exempt, name='dispatch')
 class PaymentStatusView(APIView):
     """
-    Check payment status for an order.
-    Used by frontend to poll payment status.
-    Accepts either order UUID or order_number.
-    Returns complete order info including PIX data.
+    SECURE payment status endpoint.
+    Requires access_token for public access.
+    
+    Usage:
+    - GET /orders/{order_number}/payment-status/?token={access_token}
+    - GET /orders/by-token/{access_token}/
+    
+    The access_token is a secure random string generated when the order is created.
+    This prevents unauthorized access to order details.
     """
     
     authentication_classes = []
     permission_classes = []
     
     def get(self, request, order_id):
-        """Get payment status for an order."""
+        """Get payment status for an order (requires token)."""
         try:
-            # Try to find by UUID first
+            # Get token from query params
+            token = request.query_params.get('token', '')
+            
+            # Try to find order
+            order = None
+            
+            # Try by UUID first
             try:
                 from uuid import UUID
                 UUID(str(order_id))
                 order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
             except (ValueError, StoreOrder.DoesNotExist):
                 # Try by order_number
-                order = StoreOrder.objects.select_related('store').prefetch_related('items').get(order_number=str(order_id))
+                try:
+                    order = StoreOrder.objects.select_related('store').prefetch_related('items').get(order_number=str(order_id))
+                except StoreOrder.DoesNotExist:
+                    pass
+            
+            if not order:
+                return Response(
+                    {'error': 'Pedido não encontrado'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # SECURITY: Validate access token
+            # Allow access if:
+            # 1. Valid token provided
+            # 2. User is authenticated and owns the order
+            # 3. Request is from authenticated admin/staff
+            user = request.user
+            is_authenticated_owner = user.is_authenticated and (
+                order.customer == user or 
+                user.is_staff or 
+                user.is_superuser
+            )
+            
+            has_valid_token = token and order.access_token and token == order.access_token
+            
+            if not has_valid_token and not is_authenticated_owner:
+                logger.warning(f"Unauthorized access attempt to order {order.order_number}")
+                return Response(
+                    {'error': 'Token de acesso inválido ou expirado'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             # Build items list
             items = []
@@ -211,9 +252,79 @@ class PaymentStatusView(APIView):
             
             return Response(response_data)
         
+        except Exception as e:
+            logger.error(f"Error in PaymentStatusView: {e}", exc_info=True)
+            return Response(
+                {'error': 'Erro ao buscar pedido'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class OrderByTokenView(APIView):
+    """
+    Get order details by access token.
+    This is the SECURE way to access order details publicly.
+    
+    Usage: GET /orders/by-token/{access_token}/
+    """
+    
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request, access_token):
+        """Get order by access token."""
+        try:
+            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(
+                access_token=access_token
+            )
+            
+            # Build items list
+            items = []
+            for item in order.items.all():
+                items.append({
+                    'id': str(item.id),
+                    'product_name': item.product_name,
+                    'variant_name': item.variant_name,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                })
+            
+            # Build response
+            response_data = {
+                'order_id': str(order.id),
+                'order_number': order.order_number,
+                'store': {
+                    'name': order.store.name,
+                    'slug': order.store.slug,
+                    'phone': order.store.phone,
+                    'whatsapp_number': order.store.whatsapp_number,
+                },
+                'status': order.status,
+                'payment_status': order.payment_status,
+                'payment_method': order.payment_method,
+                'subtotal': float(order.subtotal),
+                'delivery_fee': float(order.delivery_fee),
+                'discount': float(order.discount),
+                'tax': float(order.tax) if order.tax else 0,
+                'total': float(order.total),
+                'delivery_method': order.delivery_method,
+                'items': items,
+                'created_at': order.created_at.isoformat(),
+                'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+            }
+            
+            # Include PIX data if available
+            if order.payment_method == 'pix':
+                response_data['pix_code'] = order.pix_code or ''
+                response_data['pix_qr_code'] = order.pix_qr_code or ''
+            
+            return Response(response_data)
+        
         except StoreOrder.DoesNotExist:
             return Response(
-                {'error': 'Pedido não encontrado'},
+                {'error': 'Token inválido ou pedido não encontrado'},
                 status=status.HTTP_404_NOT_FOUND
             )
 

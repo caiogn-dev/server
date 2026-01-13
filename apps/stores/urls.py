@@ -25,7 +25,7 @@ from .api.views import (
     StoreProductTypeAdminViewSet
 )
 from .api.webhooks import (
-    MercadoPagoWebhookView, PaymentStatusView,
+    MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
     CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView
 )
 from .api.maps_views import (
@@ -145,8 +145,11 @@ urlpatterns = [
     # Store-specific webhook
     path('s/<slug:store_slug>/webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     
-    # Payment status check (accepts UUID or order_number)
+    # Payment status check (requires token for security)
     path('orders/<str:order_id>/payment-status/', PaymentStatusView.as_view(), name='order-payment-status'),
+    
+    # SECURE: Get order by access token (public endpoint)
+    path('orders/by-token/<str:access_token>/', OrderByTokenView.as_view(), name='order-by-token'),
     
     # ==========================================================================
     # CUSTOMER ORDER ENDPOINTS (public/authenticated)
