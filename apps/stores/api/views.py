@@ -2,12 +2,25 @@
 API views for the stores app.
 """
 import logging
+import uuid as uuid_module
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+
+
+def filter_by_store(queryset, store_param):
+    """Filter queryset by store UUID or slug."""
+    if not store_param:
+        return queryset, False
+    
+    try:
+        uuid_module.UUID(store_param)
+        return queryset.filter(store_id=store_param), True
+    except (ValueError, AttributeError):
+        return queryset.filter(store__slug=store_param), True
 
 from apps.stores.models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
@@ -109,14 +122,17 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        if store_id:
-            return StoreIntegration.objects.filter(store_id=store_id)
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        queryset = StoreIntegration.objects.all()
+        
+        queryset, filtered = filter_by_store(queryset, store_param)
+        if filtered:
+            return queryset
         
         user = self.request.user
         if user.is_staff:
-            return StoreIntegration.objects.all()
-        return StoreIntegration.objects.filter(
+            return queryset
+        return queryset.filter(
             Q(store__owner=user) | Q(store__staff=user)
         ).distinct()
     
@@ -147,14 +163,16 @@ class StoreWebhookViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        if store_id:
-            return StoreWebhook.objects.filter(store_id=store_id)
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        queryset = StoreWebhook.objects.all()
+        queryset, filtered = filter_by_store(queryset, store_param)
+        if filtered:
+            return queryset
         
         user = self.request.user
         if user.is_staff:
-            return StoreWebhook.objects.all()
-        return StoreWebhook.objects.filter(
+            return queryset
+        return queryset.filter(
             Q(store__owner=user) | Q(store__staff=user)
         ).distinct()
     
@@ -173,16 +191,18 @@ class StoreCategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        if store_id:
-            return StoreCategory.objects.filter(store_id=store_id)
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        queryset = StoreCategory.objects.all()
+        queryset, filtered = filter_by_store(queryset, store_param)
+        if filtered:
+            return queryset.order_by('sort_order', 'name')
         
         user = self.request.user
         if user.is_staff:
-            return StoreCategory.objects.all()
-        return StoreCategory.objects.filter(
+            return queryset.order_by('sort_order', 'name')
+        return queryset.filter(
             Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+        ).distinct().order_by('sort_order', 'name')
 
 
 class StoreProductViewSet(viewsets.ModelViewSet):
@@ -191,12 +211,11 @@ class StoreProductViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         queryset = StoreProduct.objects.all()
         
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
-        else:
+        queryset, filtered = filter_by_store(queryset, store_param)
+        if not filtered:
             user = self.request.user
             if not user.is_staff:
                 queryset = queryset.filter(
@@ -571,12 +590,11 @@ class StoreCustomerViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         queryset = StoreCustomer.objects.all()
         
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
-        else:
+        queryset, filtered = filter_by_store(queryset, store_param)
+        if not filtered:
             user = self.request.user
             if not user.is_staff:
                 queryset = queryset.filter(
