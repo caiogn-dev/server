@@ -56,6 +56,7 @@ urlpatterns = [
     path('webhooks/', include([
         path('whatsapp/', include('apps.whatsapp.webhooks.urls')),
         path('payments/', include('apps.payments.webhooks.urls')),
+        path('payments/mercadopago/', include('apps.stores.webhooks_urls')),
         path('automation/', include('apps.automation.webhooks.urls')),
     ])),
 ]
