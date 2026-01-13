@@ -65,6 +65,7 @@ class StoreViewSet(viewsets.ModelViewSet):
     """ViewSet for managing stores."""
     
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
+    lookup_field = 'pk'
     
     def get_queryset(self):
         user = self.request.user
@@ -73,6 +74,26 @@ class StoreViewSet(viewsets.ModelViewSet):
         return Store.objects.filter(
             Q(owner=user) | Q(staff=user)
         ).distinct()
+    
+    def get_object(self):
+        """
+        Override to support both UUID and slug lookups.
+        This allows endpoints like /stores/stores/pastita/ to work.
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs[lookup_url_kwarg]
+        
+        # Try UUID first, then slug
+        try:
+            uuid_module.UUID(lookup_value)
+            filter_kwargs = {'pk': lookup_value}
+        except (ValueError, AttributeError):
+            filter_kwargs = {'slug': lookup_value}
+        
+        obj = get_object_or_404(queryset, **filter_kwargs)
+        self.check_object_permissions(self.request, obj)
+        return obj
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -992,15 +1013,20 @@ class StoreComboViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     
     def get_queryset(self):
-        store_id = self.request.query_params.get('store')
+        store_param = self.request.query_params.get('store')
         store_slug = self.kwargs.get('store_slug')
         
         queryset = StoreCombo.objects.all()
         
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
-        elif store_id:
-            queryset = queryset.filter(store_id=store_id)
+        elif store_param:
+            # Support both UUID and slug for the store parameter
+            try:
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                queryset = queryset.filter(store__slug=store_param)
         
         if self.action == 'list' and not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
@@ -1019,15 +1045,20 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     
     def get_queryset(self):
-        store_id = self.request.query_params.get('store')
+        store_param = self.request.query_params.get('store')
         store_slug = self.kwargs.get('store_slug')
         
         queryset = StoreProductType.objects.all()
         
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
-        elif store_id:
-            queryset = queryset.filter(store_id=store_id)
+        elif store_param:
+            # Support both UUID and slug for the store parameter
+            try:
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                queryset = queryset.filter(store__slug=store_param)
         
         if self.action == 'list' and not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
@@ -1053,7 +1084,7 @@ class StoreCouponViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        store_id = self.request.query_params.get('store')
+        store_param = self.request.query_params.get('store')
         
         if user.is_staff:
             queryset = StoreCoupon.objects.all()
@@ -1064,8 +1095,13 @@ class StoreCouponViewSet(viewsets.ModelViewSet):
             ).values_list('id', flat=True)
             queryset = StoreCoupon.objects.filter(store_id__in=user_stores)
         
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
+        if store_param:
+            # Support both UUID and slug for the store parameter
+            try:
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                queryset = queryset.filter(store__slug=store_param)
         
         return queryset.select_related('store').order_by('-created_at')
     
@@ -1120,7 +1156,7 @@ class StoreDeliveryZoneViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        store_id = self.request.query_params.get('store')
+        store_param = self.request.query_params.get('store')
         
         if user.is_staff:
             queryset = StoreDeliveryZone.objects.all()
@@ -1130,8 +1166,13 @@ class StoreDeliveryZoneViewSet(viewsets.ModelViewSet):
             ).values_list('id', flat=True)
             queryset = StoreDeliveryZone.objects.filter(store_id__in=user_stores)
         
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
+        if store_param:
+            # Support both UUID and slug for the store parameter
+            try:
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                queryset = queryset.filter(store__slug=store_param)
         
         return queryset.select_related('store').order_by('sort_order', 'distance_band', 'min_km')
     
@@ -1357,10 +1398,14 @@ class StoreProductTypeAdminViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = StoreProductType.objects.all()
         
-        # Filter by store
-        store_id = self.request.query_params.get('store')
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
+        # Filter by store (supports both UUID and slug)
+        store_param = self.request.query_params.get('store')
+        if store_param:
+            try:
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                queryset = queryset.filter(store__slug=store_param)
         
         store_slug = self.request.query_params.get('store_slug')
         if store_slug:
