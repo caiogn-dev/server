@@ -736,6 +736,7 @@ class StoreOrder(BaseModel):
     payment_preference_id = models.CharField(max_length=255, blank=True)
     pix_code = models.TextField(blank=True)
     pix_qr_code = models.TextField(blank=True)
+    pix_ticket_url = models.URLField(max_length=500, blank=True, help_text='Link to Mercado Pago payment page with QR code')
     
     # Delivery
     delivery_method = models.CharField(

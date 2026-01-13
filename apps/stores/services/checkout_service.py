@@ -417,7 +417,11 @@ class CheckoutService:
                 order.pix_code = pix_data.get("qr_code", "")
                 order.pix_qr_code = pix_data.get("qr_code_base64", "")
                 
-                logger.info(f"PIX data for order {order.order_number}: code_len={len(order.pix_code)}, qr_len={len(order.pix_qr_code)}")
+                # Get ticket_url (link to payment page with QR code)
+                ticket_url = pix_data.get("ticket_url", "")
+                order.pix_ticket_url = ticket_url
+                
+                logger.info(f"PIX data for order {order.order_number}: code_len={len(order.pix_code)}, qr_len={len(order.pix_qr_code)}, ticket_url={ticket_url}")
                 
                 order.save()
                 
@@ -427,6 +431,7 @@ class CheckoutService:
                     'status': payment["status"],
                     'pix_code': order.pix_code,
                     'pix_qr_code': order.pix_qr_code,
+                    'ticket_url': ticket_url,
                     'expiration': pix_data.get("expiration_date"),
                 }
             else:
