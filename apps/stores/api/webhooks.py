@@ -270,6 +270,9 @@ class CustomerOrdersView(APIView):
 class CustomerOrderDetailView(APIView):
     """
     Get single order details for customer.
+    Only allows access if:
+    - User is authenticated and owns the order
+    - Order was created in the last 24 hours (for payment status page)
     """
     
     authentication_classes = []
@@ -279,6 +282,22 @@ class CustomerOrderDetailView(APIView):
         """Get order details."""
         try:
             order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
+            
+            # Security check: verify access permission
+            user = request.user
+            is_owner = user.is_authenticated and order.customer == user
+            
+            # Allow access to recent orders (within 24h) for payment status page
+            # This is needed because user might not be logged in during checkout
+            from django.utils import timezone
+            from datetime import timedelta
+            is_recent = order.created_at > timezone.now() - timedelta(hours=24)
+            
+            if not is_owner and not is_recent:
+                return Response(
+                    {'error': 'Acesso negado. Faça login para ver seus pedidos.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
             
             items = []
             for item in order.items.all():
