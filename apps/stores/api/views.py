@@ -847,10 +847,12 @@ class StoreCheckoutView(APIView):
                     'success': True,
                     'order_id': str(order.id),
                     'order_number': order.order_number,
+                    'access_token': order.access_token,  # Secure token for payment page
                     'payment_id': payment_result.get('payment_id'),
                     'payment_status': payment_result.get('status'),
                     'pix_code': payment_result.get('pix_code'),
                     'pix_qr_code': payment_result.get('pix_qr_code'),
+                    'pix_ticket_url': payment_result.get('pix_ticket_url'),  # MP payment page
                     'redirect_url': payment_result.get('init_point'),
                     'subtotal': float(order.subtotal),
                     'delivery_fee': float(order.delivery_fee),
@@ -864,6 +866,7 @@ class StoreCheckoutView(APIView):
                     'error': payment_result.get('error', 'Erro ao processar pagamento'),
                     'order_id': str(order.id),
                     'order_number': order.order_number,
+                    'access_token': order.access_token,  # Include token even on payment error
                 }, status=status.HTTP_400_BAD_REQUEST)
         
         except ValueError as e:
