@@ -1,6 +1,7 @@
 # Generated migration for adding access_token field to StoreOrder
 # This token is required for secure public access to order details
 # This migration is idempotent - safe to run multiple times
+# Uses raw SQL to avoid ORM issues with historical models
 
 import secrets
 from django.db import migrations, connection
@@ -10,6 +11,7 @@ def safe_add_access_token(apps, schema_editor):
     """
     Safely add access_token field and generate tokens for existing orders.
     This function is idempotent - safe to run multiple times.
+    Uses raw SQL to avoid ORM model state issues.
     """
     with connection.cursor() as cursor:
         # Check if column exists
@@ -26,21 +28,24 @@ def safe_add_access_token(apps, schema_editor):
                 ALTER TABLE store_orders 
                 ADD COLUMN access_token VARCHAR(64) DEFAULT '' NOT NULL
             """)
-    
-    # Generate tokens for orders without one
-    StoreOrder = apps.get_model('stores', 'StoreOrder')
-    orders_without_token = StoreOrder.objects.filter(access_token='')
-    for order in orders_without_token:
-        order.access_token = secrets.token_urlsafe(32)
-        order.save(update_fields=['access_token'])
-    
-    # Add unique constraint if not exists (using raw SQL for idempotency)
-    with connection.cursor() as cursor:
+        
+        # Generate tokens for orders without one (using raw SQL)
+        cursor.execute("""
+            SELECT id FROM store_orders WHERE access_token = '' OR access_token IS NULL
+        """)
+        orders_without_token = cursor.fetchall()
+        
+        for (order_id,) in orders_without_token:
+            token = secrets.token_urlsafe(32)
+            cursor.execute("""
+                UPDATE store_orders SET access_token = %s WHERE id = %s
+            """, [token, order_id])
+        
         # Check if any index/constraint on access_token exists
         cursor.execute("""
             SELECT 1 FROM pg_indexes 
             WHERE tablename = 'store_orders' 
-            AND indexdef LIKE '%access_token%'
+            AND indexdef LIKE '%%access_token%%'
             LIMIT 1
         """)
         index_exists = cursor.fetchone() is not None
