@@ -446,12 +446,14 @@ class HereMapsService:
         
         distance_km = route['distance_km']
         duration_minutes = route['duration_minutes']
+        polyline = route.get('polyline')
         
         if distance_km > max_distance_km:
             return {
                 'is_valid': False,
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
+                'polyline': polyline,  # Always include polyline for map display
                 'message': f'Endereço fora da área de entrega (máx: {max_distance_km}km)',
             }
         
@@ -460,6 +462,7 @@ class HereMapsService:
                 'is_valid': False,
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
+                'polyline': polyline,  # Always include polyline for map display
                 'message': f'Tempo de entrega muito longo (máx: {max_time_minutes}min)',
             }
         
@@ -467,7 +470,7 @@ class HereMapsService:
             'is_valid': True,
             'distance_km': distance_km,
             'duration_minutes': duration_minutes,
-            'polyline': route.get('polyline'),
+            'polyline': polyline,
             'message': 'Endereço válido para entrega',
         }
 
