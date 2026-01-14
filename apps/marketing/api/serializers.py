@@ -34,6 +34,13 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
     open_rate = serializers.FloatField(read_only=True)
     click_rate = serializers.FloatField(read_only=True)
     
+    # Make template optional (can be null)
+    template = serializers.PrimaryKeyRelatedField(
+        queryset=EmailTemplate.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
     class Meta:
         model = EmailCampaign
         fields = [
@@ -52,6 +59,18 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
             'emails_sent', 'emails_delivered', 'emails_opened',
             'emails_clicked', 'emails_bounced', 'emails_unsubscribed'
         ]
+    
+    def validate(self, data):
+        """Validate that either template or html_content is provided."""
+        template = data.get('template')
+        html_content = data.get('html_content')
+        
+        if not template and not html_content:
+            raise serializers.ValidationError({
+                'html_content': 'Este campo é obrigatório quando não há template selecionado.'
+            })
+        
+        return data
 
 
 class EmailCampaignListSerializer(serializers.ModelSerializer):
