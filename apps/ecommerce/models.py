@@ -1,13 +1,37 @@
 """
 E-commerce models for legacy data compatibility.
+
+DEPRECATION WARNING:
+====================
+This module contains LEGACY models that are being phased out.
+The unified e-commerce system is now in apps.stores.models.
+
+MIGRATION GUIDE:
+- Product -> stores.StoreProduct
+- Cart, CartItem -> stores.StoreCart, stores.StoreCartItem
+- Coupon -> stores.StoreCoupon
+- DeliveryZone -> stores.StoreDeliveryZone
+- Wishlist -> stores.StoreWishlist
+- Checkout -> Use stores.StoreOrder directly
+
+DO NOT create new features using these models.
+All new development should use the stores app.
 """
 import uuid
+import warnings
 from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 User = get_user_model()
+
+# Deprecation warning for module import
+warnings.warn(
+    "apps.ecommerce.models is deprecated. Use apps.stores.models instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class Product(models.Model):
@@ -257,13 +281,8 @@ class Coupon(models.Model):
         verbose_name = 'Coupon'
         verbose_name_plural = 'Coupons'
         ordering = ['-created_at']
-        # Code must be unique per store (or globally if store is null)
-        constraints = [
-            models.UniqueConstraint(
-                fields=['store', 'code'],
-                name='unique_coupon_code_per_store'
-            ),
-        ]
+        # Note: unique_coupon_code_per_store constraint is added via migration 0009
+        # Do NOT add it here to avoid duplicate constraint errors
 
     def __str__(self):
         return f"{self.code} - {self.discount_value}{'%' if self.discount_type == 'percentage' else ' R$'}"
