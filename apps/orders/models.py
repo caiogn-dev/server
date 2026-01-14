@@ -1,11 +1,36 @@
 """
 Orders models - Order management.
+
+DEPRECATION WARNING:
+====================
+This module contains LEGACY models that are being phased out.
+For multi-tenant store orders, use apps.stores.models.StoreOrder instead.
+
+MIGRATION GUIDE:
+- Order -> stores.StoreOrder (for store-specific orders)
+- OrderItem -> stores.StoreOrderItem
+- OrderEvent -> stores.StoreOrderEvent (if needed)
+
+This Order model is still used for:
+- WhatsApp-based orders (via conversation)
+- Generic orders not tied to a specific store
+
+For new store-based features, use StoreOrder.
 """
+import warnings
 from django.db import models
 from django.contrib.auth import get_user_model
 from apps.core.models import BaseModel
 
 User = get_user_model()
+
+# Deprecation warning for module import
+warnings.warn(
+    "apps.orders.models.Order is being phased out for store orders. "
+    "Use apps.stores.models.StoreOrder for multi-tenant store orders.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 
 class Order(BaseModel):
