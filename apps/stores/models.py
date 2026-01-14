@@ -704,6 +704,8 @@ class StoreOrder(BaseModel):
         max_length=64, 
         unique=True, 
         db_index=True,
+        default='',
+        blank=True,
         help_text='Secure token for public order access (payment page, tracking)'
     )
     
