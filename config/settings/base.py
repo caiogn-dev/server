@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'apps.automation',
     'apps.ecommerce',
     'apps.stores',  # Multi-store management (unified)
+    'apps.marketing',  # Email marketing with Resend
 ]
 
 MIDDLEWARE = [

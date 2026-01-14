@@ -48,7 +48,8 @@ urlpatterns = [
         path('langflow/', include('apps.langflow.urls')),
 
         # Marketing & Audit
-        path('marketing/', include('apps.campaigns.urls')),
+        path('marketing/', include('apps.marketing.urls')),
+        path('campaigns/', include('apps.campaigns.urls')),  # WhatsApp campaigns
         path('audit/', include('apps.audit.urls')),
     ])),
 
