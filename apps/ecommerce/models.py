@@ -281,8 +281,14 @@ class Coupon(models.Model):
         verbose_name = 'Coupon'
         verbose_name_plural = 'Coupons'
         ordering = ['-created_at']
-        # Note: unique_coupon_code_per_store constraint is added via migration 0009
-        # Do NOT add it here to avoid duplicate constraint errors
+        # Code must be unique per store (or globally if store is null)
+        # Constraint is added via migration 0009 using SeparateDatabaseAndState
+        constraints = [
+            models.UniqueConstraint(
+                fields=['store', 'code'],
+                name='unique_coupon_code_per_store'
+            ),
+        ]
 
     def __str__(self):
         return f"{self.code} - {self.discount_value}{'%' if self.discount_type == 'percentage' else ' R$'}"
