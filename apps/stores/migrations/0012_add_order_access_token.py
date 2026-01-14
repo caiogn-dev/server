@@ -1,10 +1,10 @@
 # Generated migration for adding access_token field to StoreOrder
 # This token is required for secure public access to order details
 # This migration is idempotent - safe to run multiple times
-# Uses raw SQL to avoid ORM issues with historical models
+# Uses SeparateDatabaseAndState to handle both DB and Django state
 
 import secrets
-from django.db import migrations, connection
+from django.db import migrations, models, connection
 
 
 def safe_add_access_token(apps, schema_editor):
@@ -70,5 +70,26 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RunPython(safe_add_access_token, reverse_migration),
+        # Use SeparateDatabaseAndState to:
+        # 1. Run the database operations via RunPython (idempotent)
+        # 2. Update Django's state to know the field exists
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(safe_add_access_token, reverse_migration),
+            ],
+            state_operations=[
+                migrations.AddField(
+                    model_name='storeorder',
+                    name='access_token',
+                    field=models.CharField(
+                        blank=True,
+                        db_index=True,
+                        default='',
+                        help_text='Secure token for public order access (payment page, tracking)',
+                        max_length=64,
+                        unique=True
+                    ),
+                ),
+            ],
+        ),
     ]
