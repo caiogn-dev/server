@@ -295,3 +295,153 @@ class Subscriber(models.Model):
     
     def __str__(self):
         return f"{self.email} ({self.status})"
+
+
+class EmailAutomation(models.Model):
+    """
+    Automated email triggers.
+    Sends emails automatically when certain events occur.
+    """
+    
+    class TriggerType(models.TextChoices):
+        # User lifecycle
+        NEW_USER = 'new_user', 'Novo Usuário'
+        WELCOME = 'welcome', 'Boas-vindas'
+        
+        # Order lifecycle
+        ORDER_CONFIRMED = 'order_confirmed', 'Pedido Confirmado'
+        ORDER_PREPARING = 'order_preparing', 'Pedido em Preparo'
+        ORDER_SHIPPED = 'order_shipped', 'Pedido Enviado'
+        ORDER_DELIVERED = 'order_delivered', 'Pedido Entregue'
+        ORDER_CANCELLED = 'order_cancelled', 'Pedido Cancelado'
+        
+        # Payment
+        PAYMENT_CONFIRMED = 'payment_confirmed', 'Pagamento Confirmado'
+        PAYMENT_FAILED = 'payment_failed', 'Pagamento Falhou'
+        
+        # Cart
+        CART_ABANDONED = 'cart_abandoned', 'Carrinho Abandonado'
+        
+        # Marketing
+        COUPON_SENT = 'coupon_sent', 'Cupom Enviado'
+        BIRTHDAY = 'birthday', 'Aniversário'
+        
+        # Feedback
+        REVIEW_REQUEST = 'review_request', 'Solicitar Avaliação'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store = models.ForeignKey(
+        Store,
+        on_delete=models.CASCADE,
+        related_name='email_automations'
+    )
+    
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    
+    trigger_type = models.CharField(
+        max_length=30,
+        choices=TriggerType.choices
+    )
+    
+    # Email content
+    subject = models.CharField(max_length=255)
+    html_content = models.TextField()
+    
+    # Optional: use a template instead
+    template = models.ForeignKey(
+        EmailTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='automations'
+    )
+    
+    # Timing
+    delay_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text="Minutes to wait before sending (0 = immediate)"
+    )
+    
+    # Conditions
+    is_active = models.BooleanField(default=True)
+    conditions = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Additional conditions for triggering"
+    )
+    
+    # Stats
+    total_sent = models.PositiveIntegerField(default=0)
+    total_opened = models.PositiveIntegerField(default=0)
+    total_clicked = models.PositiveIntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    class Meta:
+        ordering = ['trigger_type', 'name']
+        indexes = [
+            models.Index(fields=['store', 'trigger_type', 'is_active']),
+        ]
+    
+    def __str__(self):
+        return f"{self.store.name} - {self.get_trigger_type_display()}"
+
+
+class EmailAutomationLog(models.Model):
+    """Log of automated emails sent."""
+    
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Pendente'
+        SENT = 'sent', 'Enviado'
+        FAILED = 'failed', 'Falhou'
+        OPENED = 'opened', 'Aberto'
+        CLICKED = 'clicked', 'Clicado'
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    automation = models.ForeignKey(
+        EmailAutomation,
+        on_delete=models.CASCADE,
+        related_name='logs'
+    )
+    
+    recipient_email = models.EmailField()
+    recipient_name = models.CharField(max_length=255, blank=True)
+    
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING
+    )
+    
+    # Reference to what triggered this
+    trigger_data = models.JSONField(default=dict, blank=True)
+    
+    # Resend tracking
+    resend_id = models.CharField(max_length=100, blank=True)
+    
+    # Timing
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    opened_at = models.DateTimeField(null=True, blank=True)
+    
+    error_message = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['automation', 'status']),
+            models.Index(fields=['recipient_email']),
+        ]
+    
+    def __str__(self):
+        return f"{self.recipient_email} - {self.automation.trigger_type}"

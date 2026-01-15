@@ -7,13 +7,19 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 
-from apps.marketing.models import EmailTemplate, EmailCampaign, EmailRecipient, Subscriber
+from apps.marketing.models import (
+    EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
+    EmailAutomation, EmailAutomationLog
+)
 from apps.marketing.services import email_marketing_service
+from apps.marketing.services.email_automation_service import email_automation_service
 from .serializers import (
     EmailTemplateSerializer, EmailTemplateListSerializer,
     EmailCampaignSerializer, EmailCampaignListSerializer,
     EmailRecipientSerializer, SubscriberSerializer, SubscriberListSerializer,
     MarketingStatsSerializer, SendCouponEmailSerializer, SendWelcomeEmailSerializer,
+    EmailAutomationSerializer, EmailAutomationListSerializer,
+    EmailAutomationLogSerializer, TriggerAutomationSerializer,
 )
 
 
@@ -468,3 +474,107 @@ class QuickActionsViewSet(viewsets.ViewSet):
         if result['success']:
             return Response(result)
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+class EmailAutomationViewSet(viewsets.ModelViewSet):
+    """ViewSet for email automations."""
+    
+    permission_classes = [IsAuthenticated]
+    serializer_class = EmailAutomationSerializer
+    
+    def get_queryset(self):
+        queryset = EmailAutomation.objects.all()
+        store_id = self.request.query_params.get('store')
+        if store_id:
+            queryset = queryset.filter(store_id=store_id)
+        trigger_type = self.request.query_params.get('trigger_type')
+        if trigger_type:
+            queryset = queryset.filter(trigger_type=trigger_type)
+        return queryset.select_related('template', 'store')
+    
+    def get_serializer_class(self):
+        if self.action == 'list':
+            return EmailAutomationListSerializer
+        return EmailAutomationSerializer
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+    
+    @action(detail=False, methods=['get'])
+    def trigger_types(self, request):
+        """Get available trigger types."""
+        return Response([
+            {'value': choice[0], 'label': choice[1]}
+            for choice in EmailAutomation.TriggerType.choices
+        ])
+    
+    @action(detail=True, methods=['post'])
+    def toggle(self, request, pk=None):
+        """Toggle automation active status."""
+        automation = self.get_object()
+        automation.is_active = not automation.is_active
+        automation.save(update_fields=['is_active'])
+        return Response(EmailAutomationSerializer(automation).data)
+    
+    @action(detail=True, methods=['get'])
+    def logs(self, request, pk=None):
+        """Get logs for this automation."""
+        automation = self.get_object()
+        logs = EmailAutomationLog.objects.filter(automation=automation)[:100]
+        return Response(EmailAutomationLogSerializer(logs, many=True).data)
+    
+    @action(detail=False, methods=['post'])
+    def trigger(self, request):
+        """Manually trigger an automation."""
+        serializer = TriggerAutomationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        store_id = request.data.get('store')
+        if not store_id:
+            return Response(
+                {'error': 'store is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        result = email_automation_service.trigger(
+            store_id=store_id,
+            trigger_type=serializer.validated_data['trigger_type'],
+            recipient_email=serializer.validated_data['recipient_email'],
+            recipient_name=serializer.validated_data.get('recipient_name', ''),
+            context=serializer.validated_data.get('context', {})
+        )
+        
+        if result.get('success'):
+            return Response(result)
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post'])
+    def test(self, request):
+        """Send a test email for an automation."""
+        automation_id = request.data.get('automation_id')
+        test_email = request.data.get('email')
+        
+        if not automation_id or not test_email:
+            return Response(
+                {'error': 'automation_id and email are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            automation = EmailAutomation.objects.get(id=automation_id)
+        except EmailAutomation.DoesNotExist:
+            return Response(
+                {'error': 'Automation not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Send test email
+        result = email_automation_service.trigger(
+            store_id=str(automation.store_id),
+            trigger_type=automation.trigger_type,
+            recipient_email=test_email,
+            recipient_name='Teste',
+            context={'is_test': True}
+        )
+        
+        return Response(result)

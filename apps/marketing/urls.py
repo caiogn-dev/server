@@ -10,6 +10,7 @@ from .api.views import (
     CustomersViewSet,
     MarketingStatsViewSet,
     QuickActionsViewSet,
+    EmailAutomationViewSet,
 )
 
 router = DefaultRouter()
@@ -17,6 +18,7 @@ router.register(r'templates', EmailTemplateViewSet, basename='email-templates')
 router.register(r'campaigns', EmailCampaignViewSet, basename='email-campaigns')
 router.register(r'subscribers', SubscriberViewSet, basename='subscribers')
 router.register(r'customers', CustomersViewSet, basename='customers')
+router.register(r'automations', EmailAutomationViewSet, basename='email-automations')
 router.register(r'stats', MarketingStatsViewSet, basename='marketing-stats')
 router.register(r'actions', QuickActionsViewSet, basename='quick-actions')
 

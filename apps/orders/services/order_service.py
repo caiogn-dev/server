@@ -19,6 +19,41 @@ from ..repositories import OrderRepository
 logger = logging.getLogger(__name__)
 
 
+def _trigger_email_automation(order: Order, trigger_type: str, extra_context: dict = None):
+    """Trigger email automation for order events."""
+    try:
+        from apps.marketing.services.email_automation_service import email_automation_service
+        
+        if not order.customer_email:
+            return
+        
+        # Get store_id from order's account
+        store_id = None
+        if hasattr(order.account, 'store') and order.account.store:
+            store_id = str(order.account.store.id)
+        
+        if not store_id:
+            logger.debug(f"No store found for order {order.order_number}, skipping automation")
+            return
+        
+        context = {
+            'order_number': order.order_number,
+            'order_total': f'{order.total:.2f}',
+            'order_status': order.status,
+            **(extra_context or {})
+        }
+        
+        email_automation_service.trigger(
+            store_id=store_id,
+            trigger_type=trigger_type,
+            recipient_email=order.customer_email,
+            recipient_name=order.customer_name or '',
+            context=context
+        )
+    except Exception as e:
+        logger.error(f"Failed to trigger email automation: {e}")
+
+
 class OrderService:
     """Service for order operations."""
 
@@ -466,6 +501,9 @@ class OrderService:
                 email_service.send_order_confirmation(order, order.customer_email)
             except Exception as e:
                 logger.error(f"Failed to send order confirmation email: {str(e)}")
+        
+        # Trigger custom email automation (if configured)
+        _trigger_email_automation(order, 'order_confirmed')
 
     def _notify_customer_payment_pending(self, order: Order) -> None:
         """Notify customer about pending payment."""
@@ -508,6 +546,9 @@ class OrderService:
                 email_service.send_payment_confirmed(order, order.customer_email)
             except Exception as e:
                 logger.error(f"Failed to send payment confirmation email: {str(e)}")
+        
+        # Trigger custom email automation
+        _trigger_email_automation(order, 'payment_confirmed')
 
     def _notify_customer_order_shipped(
         self,
@@ -542,6 +583,9 @@ class OrderService:
                 email_service.send_order_shipped(order, order.customer_email, tracking_code)
             except Exception as e:
                 logger.error(f"Failed to send order shipped email: {str(e)}")
+        
+        # Trigger custom email automation
+        _trigger_email_automation(order, 'order_shipped', {'tracking_code': tracking_code or ''})
 
     def _notify_customer_order_delivered(self, order: Order) -> None:
         """Notify customer that order is delivered."""
@@ -566,6 +610,9 @@ class OrderService:
                 email_service.send_order_delivered(order, order.customer_email)
             except Exception as e:
                 logger.error(f"Failed to send order delivered email: {str(e)}")
+        
+        # Trigger custom email automation
+        _trigger_email_automation(order, 'order_delivered')
 
     def _notify_customer_order_cancelled(self, order: Order, reason: str) -> None:
         """Notify customer that order is cancelled."""

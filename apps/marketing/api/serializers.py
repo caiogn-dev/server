@@ -2,7 +2,10 @@
 Marketing API serializers.
 """
 from rest_framework import serializers
-from apps.marketing.models import EmailTemplate, EmailCampaign, EmailRecipient, Subscriber
+from apps.marketing.models import (
+    EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
+    EmailAutomation, EmailAutomationLog
+)
 
 
 class EmailTemplateSerializer(serializers.ModelSerializer):
@@ -153,3 +156,85 @@ class SendCampaignSerializer(serializers.Serializer):
     """Serializer for sending a campaign."""
     
     campaign_id = serializers.UUIDField()
+
+
+# =============================================================================
+# EMAIL AUTOMATION SERIALIZERS
+# =============================================================================
+
+class EmailAutomationSerializer(serializers.ModelSerializer):
+    """Serializer for email automations."""
+    
+    trigger_type_display = serializers.CharField(
+        source='get_trigger_type_display',
+        read_only=True
+    )
+    template_name = serializers.CharField(
+        source='template.name',
+        read_only=True,
+        allow_null=True
+    )
+    
+    class Meta:
+        model = EmailAutomation
+        fields = [
+            'id', 'store', 'name', 'description', 'trigger_type',
+            'trigger_type_display', 'subject', 'html_content',
+            'template', 'template_name', 'delay_minutes', 'is_active',
+            'conditions', 'total_sent', 'total_opened', 'total_clicked',
+            'created_at', 'updated_at', 'created_by'
+        ]
+        read_only_fields = [
+            'id', 'total_sent', 'total_opened', 'total_clicked',
+            'created_at', 'updated_at', 'created_by'
+        ]
+
+
+class EmailAutomationListSerializer(serializers.ModelSerializer):
+    """Lightweight serializer for automation lists."""
+    
+    trigger_type_display = serializers.CharField(
+        source='get_trigger_type_display',
+        read_only=True
+    )
+    
+    class Meta:
+        model = EmailAutomation
+        fields = [
+            'id', 'name', 'trigger_type', 'trigger_type_display',
+            'is_active', 'total_sent', 'delay_minutes', 'created_at'
+        ]
+
+
+class EmailAutomationLogSerializer(serializers.ModelSerializer):
+    """Serializer for automation logs."""
+    
+    automation_name = serializers.CharField(
+        source='automation.name',
+        read_only=True
+    )
+    trigger_type = serializers.CharField(
+        source='automation.trigger_type',
+        read_only=True
+    )
+    
+    class Meta:
+        model = EmailAutomationLog
+        fields = [
+            'id', 'automation', 'automation_name', 'trigger_type',
+            'recipient_email', 'recipient_name', 'status',
+            'trigger_data', 'scheduled_at', 'sent_at', 'opened_at',
+            'error_message', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class TriggerAutomationSerializer(serializers.Serializer):
+    """Serializer for manually triggering an automation."""
+    
+    trigger_type = serializers.ChoiceField(
+        choices=EmailAutomation.TriggerType.choices
+    )
+    recipient_email = serializers.EmailField()
+    recipient_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    context = serializers.DictField(required=False, default=dict)
