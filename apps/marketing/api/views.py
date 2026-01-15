@@ -274,7 +274,6 @@ class CustomersViewSet(viewsets.ViewSet):
         from django.contrib.auth import get_user_model
         from apps.orders.models import Order
         from apps.stores.models import Store
-        from apps.core.models import UserProfile
         from django.db.models import Count, Sum, Max
         
         User = get_user_model()
@@ -302,20 +301,21 @@ class CustomersViewSet(viewsets.ViewSet):
             is_active=True,
             is_staff=False,
             is_superuser=False
-        ).select_related('profile')
+        ).prefetch_related('profile')
         
         for user in users:
-            email = user.email.lower().strip()
+            email = (user.email or '').lower().strip()
             if email and '@' in email:
                 # Get phone from profile if exists
                 phone = ''
                 try:
-                    if hasattr(user, 'profile') and user.profile:
-                        phone = user.profile.phone or ''
-                except UserProfile.DoesNotExist:
+                    profile = getattr(user, 'profile', None)
+                    if profile:
+                        phone = profile.phone or ''
+                except Exception:
                     pass
                 
-                name = f"{user.first_name} {user.last_name}".strip() or user.username
+                name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username or email.split('@')[0]
                 
                 customers_dict[email] = {
                     'id': str(user.id),
