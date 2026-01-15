@@ -295,13 +295,19 @@ class CustomersViewSet(viewsets.ViewSet):
         customers_dict = {}
         
         # 1. Get ALL registered users (they are potential customers)
-        # For now, we include all users. In the future, you might want to
-        # filter by users who have interacted with this specific store.
+        # Include all non-staff users who registered via the site
         users = User.objects.filter(
-            is_active=True,
-            is_staff=False,
-            is_superuser=False
+            is_active=True
+        ).exclude(
+            is_staff=True
+        ).exclude(
+            is_superuser=True
         ).prefetch_related('profile')
+        
+        # Debug: log user count
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"CustomersViewSet: Found {users.count()} registered users")
         
         for user in users:
             email = (user.email or '').lower().strip()
@@ -460,6 +466,63 @@ class CustomersViewSet(viewsets.ViewSet):
         
         # Return the highest count (users are the main source now)
         return Response({'count': max(user_count, subscriber_count, order_emails)})
+    
+    @action(detail=False, methods=['get'])
+    def debug(self, request):
+        """Debug endpoint to check data sources."""
+        from django.contrib.auth import get_user_model
+        from apps.orders.models import Order
+        from apps.stores.models import Store
+        
+        User = get_user_model()
+        
+        store_id = request.query_params.get('store')
+        
+        # Count all users
+        all_users = User.objects.count()
+        active_users = User.objects.filter(is_active=True).count()
+        staff_users = User.objects.filter(is_staff=True).count()
+        superusers = User.objects.filter(is_superuser=True).count()
+        customer_users = User.objects.filter(
+            is_active=True
+        ).exclude(is_staff=True).exclude(is_superuser=True).count()
+        
+        # Sample users (first 5 non-staff)
+        sample_users = list(User.objects.filter(
+            is_active=True
+        ).exclude(is_staff=True).exclude(is_superuser=True).values(
+            'id', 'email', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined'
+        )[:5])
+        
+        # Subscribers count
+        subscriber_count = Subscriber.objects.filter(store_id=store_id).count() if store_id else 0
+        
+        # Orders count
+        order_count = 0
+        if store_id:
+            try:
+                store = Store.objects.get(id=store_id)
+                if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
+                    order_count = Order.objects.filter(
+                        account=store.whatsapp_account,
+                        customer_email__isnull=False
+                    ).exclude(customer_email='').count()
+            except Store.DoesNotExist:
+                pass
+        
+        return Response({
+            'users': {
+                'total': all_users,
+                'active': active_users,
+                'staff': staff_users,
+                'superusers': superusers,
+                'customers': customer_users,
+                'sample': sample_users,
+            },
+            'subscribers': subscriber_count,
+            'orders_with_email': order_count,
+            'store_id': store_id,
+        })
 
 
 class MarketingStatsViewSet(viewsets.ViewSet):
