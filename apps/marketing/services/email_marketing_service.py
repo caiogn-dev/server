@@ -148,13 +148,18 @@ class EmailMarketingService:
         from_email = campaign.from_email or self.default_from_email
         from_name = campaign.from_name or self.default_from_name
         
+        # Get store name for personalization
+        store_name = campaign.store.name if campaign.store else 'Loja'
+        
         for subscriber in subscribers:
             if isinstance(subscriber, dict):
                 email = subscriber['email']
                 name = subscriber.get('name', '')
+                first_name = name.split()[0] if name else ''
             else:
                 email = subscriber.email
-                name = subscriber.name
+                name = subscriber.name or ''
+                first_name = name.split()[0] if name else ''
             
             # Create recipient record
             recipient, created = EmailRecipient.objects.get_or_create(
@@ -166,10 +171,24 @@ class EmailMarketingService:
             if recipient.status != 'pending':
                 continue
             
-            # Personalize content
+            # Personalize content with multiple variables
+            personalization_vars = {
+                'name': name,
+                'customer_name': name,
+                'first_name': first_name,
+                'email': email,
+                'store_name': store_name,
+                'year': str(timezone.now().year),
+            }
             html_content = self._personalize_content(
                 campaign.html_content,
-                {'name': name, 'email': email}
+                personalization_vars
+            )
+            
+            # Also personalize subject
+            personalized_subject = self._personalize_content(
+                campaign.subject,
+                personalization_vars
             )
             
             # Send via Resend
@@ -177,7 +196,7 @@ class EmailMarketingService:
                 response = resend.Emails.send({
                     'from': f'{from_name} <{from_email}>',
                     'to': [email],
-                    'subject': campaign.subject,
+                    'subject': personalized_subject,
                     'html': html_content,
                 })
                 
