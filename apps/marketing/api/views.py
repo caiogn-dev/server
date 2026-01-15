@@ -261,16 +261,23 @@ class SubscriberViewSet(viewsets.ModelViewSet):
 class CustomersViewSet(viewsets.ViewSet):
     """
     ViewSet for unified customer list.
-    Aggregates customers from multiple sources: orders, subscribers, etc.
+    Aggregates customers from multiple sources:
+    - Django Users (registered users)
+    - Orders (customers who made purchases)
+    - Subscribers (marketing contacts)
     """
     
     permission_classes = [IsAuthenticated]
     
     def list(self, request):
         """Get all customers for a store (aggregated from multiple sources)."""
+        from django.contrib.auth import get_user_model
         from apps.orders.models import Order
         from apps.stores.models import Store
+        from apps.core.models import UserProfile
         from django.db.models import Count, Sum, Max
+        
+        User = get_user_model()
         
         store_id = request.query_params.get('store')
         if not store_id:
@@ -288,7 +295,43 @@ class CustomersViewSet(viewsets.ViewSet):
         # Dictionary to aggregate customers by email
         customers_dict = {}
         
-        # 1. Get customers from Orders (via WhatsApp account)
+        # 1. Get ALL registered users (they are potential customers)
+        # For now, we include all users. In the future, you might want to
+        # filter by users who have interacted with this specific store.
+        users = User.objects.filter(
+            is_active=True,
+            is_staff=False,
+            is_superuser=False
+        ).select_related('profile')
+        
+        for user in users:
+            email = user.email.lower().strip()
+            if email and '@' in email:
+                # Get phone from profile if exists
+                phone = ''
+                try:
+                    if hasattr(user, 'profile') and user.profile:
+                        phone = user.profile.phone or ''
+                except UserProfile.DoesNotExist:
+                    pass
+                
+                name = f"{user.first_name} {user.last_name}".strip() or user.username
+                
+                customers_dict[email] = {
+                    'id': str(user.id),
+                    'email': email,
+                    'name': name,
+                    'phone': phone,
+                    'total_orders': 0,
+                    'total_spent': 0,
+                    'last_order': None,
+                    'source': 'registered',
+                    'status': 'active',
+                    'tags': ['registered'],
+                    'created_at': user.date_joined.isoformat() if user.date_joined else None,
+                }
+        
+        # 2. Get customers from Orders (via WhatsApp account)
         if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
             order_customers = Order.objects.filter(
                 account=store.whatsapp_account,
@@ -306,7 +349,7 @@ class CustomersViewSet(viewsets.ViewSet):
                 if email and '@' in email:
                     if email not in customers_dict:
                         customers_dict[email] = {
-                            'id': email,  # Use email as ID for now
+                            'id': email,
                             'email': email,
                             'name': customer['customer_name'] or '',
                             'phone': customer['customer_phone'] or '',
@@ -315,18 +358,21 @@ class CustomersViewSet(viewsets.ViewSet):
                             'last_order': customer['last_order'].isoformat() if customer['last_order'] else None,
                             'source': 'orders',
                             'status': 'active',
-                            'tags': [],
+                            'tags': ['customer'],
                         }
                     else:
-                        # Merge data
-                        customers_dict[email]['total_orders'] += customer['total_orders'] or 0
-                        customers_dict[email]['total_spent'] += float(customer['total_spent'] or 0)
+                        # Merge order data into existing customer
+                        customers_dict[email]['total_orders'] = customer['total_orders'] or 0
+                        customers_dict[email]['total_spent'] = float(customer['total_spent'] or 0)
+                        customers_dict[email]['last_order'] = customer['last_order'].isoformat() if customer['last_order'] else None
+                        if 'customer' not in customers_dict[email]['tags']:
+                            customers_dict[email]['tags'].append('customer')
                         if not customers_dict[email]['name'] and customer['customer_name']:
                             customers_dict[email]['name'] = customer['customer_name']
                         if not customers_dict[email]['phone'] and customer['customer_phone']:
                             customers_dict[email]['phone'] = customer['customer_phone']
         
-        # 2. Get subscribers from marketing
+        # 3. Get subscribers from marketing
         subscribers = Subscriber.objects.filter(store_id=store_id)
         for sub in subscribers:
             email = sub.email.lower().strip()
@@ -344,16 +390,19 @@ class CustomersViewSet(viewsets.ViewSet):
                     'tags': sub.tags or [],
                 }
             else:
-                # Merge - subscriber data takes precedence for some fields
-                customers_dict[email]['id'] = str(sub.id)
-                customers_dict[email]['status'] = sub.status
-                customers_dict[email]['tags'] = sub.tags or []
+                # Merge subscriber data
+                if sub.status == 'unsubscribed':
+                    customers_dict[email]['status'] = 'unsubscribed'
+                if sub.tags:
+                    for tag in sub.tags:
+                        if tag not in customers_dict[email]['tags']:
+                            customers_dict[email]['tags'].append(tag)
                 if sub.name and not customers_dict[email]['name']:
                     customers_dict[email]['name'] = sub.name
         
         # Convert to list and sort
         customers_list = list(customers_dict.values())
-        customers_list.sort(key=lambda x: x['total_orders'], reverse=True)
+        customers_list.sort(key=lambda x: (x['total_orders'], x.get('created_at', '')), reverse=True)
         
         # Apply filters
         status_filter = request.query_params.get('status')
@@ -376,16 +425,27 @@ class CustomersViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def count(self, request):
         """Get customer count for a store."""
+        from django.contrib.auth import get_user_model
+        from apps.orders.models import Order
+        from apps.stores.models import Store
+        
+        User = get_user_model()
+        
         store_id = request.query_params.get('store')
         if not store_id:
             return Response({'count': 0})
         
-        # Quick count from subscribers + unique order emails
-        from apps.orders.models import Order
-        from apps.stores.models import Store
+        # Count registered users (non-staff)
+        user_count = User.objects.filter(
+            is_active=True,
+            is_staff=False,
+            is_superuser=False
+        ).count()
         
+        # Count subscribers
         subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
         
+        # Count unique order emails
         try:
             store = Store.objects.get(id=store_id)
             if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
@@ -398,8 +458,8 @@ class CustomersViewSet(viewsets.ViewSet):
         except Store.DoesNotExist:
             order_emails = 0
         
-        # This is an approximation (may have overlap)
-        return Response({'count': max(subscriber_count, order_emails)})
+        # Return the highest count (users are the main source now)
+        return Response({'count': max(user_count, subscriber_count, order_emails)})
 
 
 class MarketingStatsViewSet(viewsets.ViewSet):
