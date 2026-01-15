@@ -252,6 +252,150 @@ class SubscriberViewSet(viewsets.ModelViewSet):
         return Response(SubscriberSerializer(subscriber).data)
 
 
+class CustomersViewSet(viewsets.ViewSet):
+    """
+    ViewSet for unified customer list.
+    Aggregates customers from multiple sources: orders, subscribers, etc.
+    """
+    
+    permission_classes = [IsAuthenticated]
+    
+    def list(self, request):
+        """Get all customers for a store (aggregated from multiple sources)."""
+        from apps.orders.models import Order
+        from apps.stores.models import Store
+        from django.db.models import Count, Sum, Max
+        
+        store_id = request.query_params.get('store')
+        if not store_id:
+            return Response(
+                {'error': 'store parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get store to find associated WhatsApp account
+        try:
+            store = Store.objects.get(id=store_id)
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Dictionary to aggregate customers by email
+        customers_dict = {}
+        
+        # 1. Get customers from Orders (via WhatsApp account)
+        if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
+            order_customers = Order.objects.filter(
+                account=store.whatsapp_account,
+                customer_email__isnull=False
+            ).exclude(
+                customer_email=''
+            ).values('customer_email', 'customer_name', 'customer_phone').annotate(
+                total_orders=Count('id'),
+                total_spent=Sum('total'),
+                last_order=Max('created_at')
+            )
+            
+            for customer in order_customers:
+                email = customer['customer_email'].lower().strip()
+                if email and '@' in email:
+                    if email not in customers_dict:
+                        customers_dict[email] = {
+                            'id': email,  # Use email as ID for now
+                            'email': email,
+                            'name': customer['customer_name'] or '',
+                            'phone': customer['customer_phone'] or '',
+                            'total_orders': customer['total_orders'] or 0,
+                            'total_spent': float(customer['total_spent'] or 0),
+                            'last_order': customer['last_order'].isoformat() if customer['last_order'] else None,
+                            'source': 'orders',
+                            'status': 'active',
+                            'tags': [],
+                        }
+                    else:
+                        # Merge data
+                        customers_dict[email]['total_orders'] += customer['total_orders'] or 0
+                        customers_dict[email]['total_spent'] += float(customer['total_spent'] or 0)
+                        if not customers_dict[email]['name'] and customer['customer_name']:
+                            customers_dict[email]['name'] = customer['customer_name']
+                        if not customers_dict[email]['phone'] and customer['customer_phone']:
+                            customers_dict[email]['phone'] = customer['customer_phone']
+        
+        # 2. Get subscribers from marketing
+        subscribers = Subscriber.objects.filter(store_id=store_id)
+        for sub in subscribers:
+            email = sub.email.lower().strip()
+            if email not in customers_dict:
+                customers_dict[email] = {
+                    'id': str(sub.id),
+                    'email': email,
+                    'name': sub.name or '',
+                    'phone': sub.phone or '',
+                    'total_orders': sub.total_orders or 0,
+                    'total_spent': float(sub.total_spent or 0),
+                    'last_order': None,
+                    'source': sub.source or 'subscriber',
+                    'status': sub.status,
+                    'tags': sub.tags or [],
+                }
+            else:
+                # Merge - subscriber data takes precedence for some fields
+                customers_dict[email]['id'] = str(sub.id)
+                customers_dict[email]['status'] = sub.status
+                customers_dict[email]['tags'] = sub.tags or []
+                if sub.name and not customers_dict[email]['name']:
+                    customers_dict[email]['name'] = sub.name
+        
+        # Convert to list and sort
+        customers_list = list(customers_dict.values())
+        customers_list.sort(key=lambda x: x['total_orders'], reverse=True)
+        
+        # Apply filters
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            customers_list = [c for c in customers_list if c['status'] == status_filter]
+        
+        search = request.query_params.get('search', '').lower()
+        if search:
+            customers_list = [c for c in customers_list if 
+                search in c['email'].lower() or 
+                search in c['name'].lower() or
+                search in (c['phone'] or '').lower()
+            ]
+        
+        return Response({
+            'count': len(customers_list),
+            'results': customers_list,
+        })
+    
+    @action(detail=False, methods=['get'])
+    def count(self, request):
+        """Get customer count for a store."""
+        store_id = request.query_params.get('store')
+        if not store_id:
+            return Response({'count': 0})
+        
+        # Quick count from subscribers + unique order emails
+        from apps.orders.models import Order
+        from apps.stores.models import Store
+        
+        subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
+        
+        try:
+            store = Store.objects.get(id=store_id)
+            if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
+                order_emails = Order.objects.filter(
+                    account=store.whatsapp_account,
+                    customer_email__isnull=False
+                ).exclude(customer_email='').values('customer_email').distinct().count()
+            else:
+                order_emails = 0
+        except Store.DoesNotExist:
+            order_emails = 0
+        
+        # This is an approximation (may have overlap)
+        return Response({'count': max(subscriber_count, order_emails)})
+
+
 class MarketingStatsViewSet(viewsets.ViewSet):
     """ViewSet for marketing statistics."""
     
