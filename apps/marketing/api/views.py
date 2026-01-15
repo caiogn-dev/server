@@ -701,3 +701,204 @@ class EmailAutomationViewSet(viewsets.ModelViewSet):
         )
         
         return Response(result)
+
+
+class TemplateVariablesViewSet(viewsets.ViewSet):
+    """ViewSet for template variables and preview."""
+    
+    permission_classes = [IsAuthenticated]
+    
+    @action(detail=False, methods=['get'])
+    def available(self, request):
+        """Get all available template variables with descriptions."""
+        variables = {
+            'customer': {
+                'description': 'Variáveis do cliente (preenchidas automaticamente)',
+                'variables': [
+                    {'name': 'customer_name', 'description': 'Nome completo do cliente', 'example': 'João Silva'},
+                    {'name': 'first_name', 'description': 'Primeiro nome do cliente', 'example': 'João'},
+                    {'name': 'email', 'description': 'Email do cliente', 'example': 'joao@email.com'},
+                    {'name': 'phone', 'description': 'Telefone do cliente', 'example': '(11) 99999-9999'},
+                ]
+            },
+            'store': {
+                'description': 'Variáveis da loja',
+                'variables': [
+                    {'name': 'store_name', 'description': 'Nome da loja', 'example': 'Pastita'},
+                    {'name': 'store_url', 'description': 'URL da loja', 'example': 'https://pastita.com.br'},
+                    {'name': 'year', 'description': 'Ano atual', 'example': '2026'},
+                ]
+            },
+            'order': {
+                'description': 'Variáveis de pedido (para automações de pedido)',
+                'variables': [
+                    {'name': 'order_number', 'description': 'Número do pedido', 'example': 'PAS-2026-001'},
+                    {'name': 'order_total', 'description': 'Total do pedido', 'example': '89.90'},
+                    {'name': 'order_status', 'description': 'Status do pedido', 'example': 'confirmed'},
+                    {'name': 'delivery_method', 'description': 'Método de entrega', 'example': 'delivery'},
+                    {'name': 'tracking_code', 'description': 'Código de rastreio', 'example': 'BR123456789'},
+                    {'name': 'tracking_url', 'description': 'URL de rastreio', 'example': 'https://...'},
+                ]
+            },
+            'coupon': {
+                'description': 'Variáveis de cupom (para campanhas de cupom)',
+                'variables': [
+                    {'name': 'coupon_code', 'description': 'Código do cupom', 'example': 'DESCONTO10'},
+                    {'name': 'discount_value', 'description': 'Valor do desconto', 'example': '10%'},
+                    {'name': 'expiry_date', 'description': 'Data de expiração', 'example': '31/12/2026'},
+                ]
+            },
+            'promotion': {
+                'description': 'Variáveis de promoção',
+                'variables': [
+                    {'name': 'promotion_title', 'description': 'Título da promoção', 'example': 'Black Friday'},
+                    {'name': 'promotion_description', 'description': 'Descrição da promoção', 'example': 'Até 50% OFF'},
+                ]
+            }
+        }
+        return Response(variables)
+    
+    @action(detail=False, methods=['post'])
+    def preview(self, request):
+        """Generate a preview of a template with sample data."""
+        from apps.stores.models import Store
+        from django.utils import timezone
+        
+        html_content = request.data.get('html_content', '')
+        store_id = request.data.get('store')
+        customer_email = request.data.get('customer_email')  # Optional: use real customer data
+        
+        if not html_content:
+            return Response(
+                {'error': 'html_content is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get store info
+        store_name = 'Loja'
+        store_url = 'https://loja.com.br'
+        if store_id:
+            try:
+                store = Store.objects.get(id=store_id)
+                store_name = store.name
+                store_url = store.website_url or f'https://{store.slug}.com.br'
+            except Store.DoesNotExist:
+                pass
+        
+        # Get customer data if email provided
+        customer_name = 'Cliente Exemplo'
+        first_name = 'Cliente'
+        email = 'cliente@exemplo.com'
+        phone = '(11) 99999-9999'
+        
+        if customer_email:
+            # Try to find real customer data
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            
+            user = User.objects.filter(email=customer_email).first()
+            if user:
+                customer_name = f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0]
+                first_name = user.first_name or user.email.split('@')[0]
+                email = user.email
+                try:
+                    if hasattr(user, 'profile') and user.profile:
+                        phone = user.profile.phone or phone
+                except Exception:
+                    pass
+            else:
+                # Try subscriber
+                subscriber = Subscriber.objects.filter(email=customer_email).first()
+                if subscriber:
+                    customer_name = subscriber.name or customer_email.split('@')[0]
+                    first_name = customer_name.split()[0] if customer_name else customer_email.split('@')[0]
+                    email = subscriber.email
+                    phone = subscriber.phone or phone
+        
+        # Build replacement variables
+        variables = {
+            # Customer
+            'customer_name': customer_name,
+            'name': customer_name,
+            'first_name': first_name,
+            'email': email,
+            'phone': phone,
+            # Store
+            'store_name': store_name,
+            'store_url': store_url,
+            'year': str(timezone.now().year),
+            # Order (sample)
+            'order_number': 'PAS-2026-001',
+            'order_total': '89.90',
+            'order_status': 'confirmed',
+            'delivery_method': 'delivery',
+            'tracking_code': 'BR123456789',
+            'tracking_url': 'https://rastreamento.correios.com.br',
+            # Coupon (sample)
+            'coupon_code': 'DESCONTO10',
+            'discount_value': '10%',
+            'expiry_date': '31/12/2026',
+            # Promotion (sample)
+            'promotion_title': 'Promoção Especial',
+            'promotion_description': 'Aproveite descontos incríveis!',
+        }
+        
+        # Replace variables in content
+        preview_html = html_content
+        for key, value in variables.items():
+            preview_html = preview_html.replace(f'{{{{{key}}}}}', value)
+            preview_html = preview_html.replace(f'{{{{ {key} }}}}', value)
+        
+        return Response({
+            'preview_html': preview_html,
+            'variables_used': variables,
+        })
+    
+    @action(detail=False, methods=['get'])
+    def sample_customer(self, request):
+        """Get a sample customer for preview."""
+        from django.contrib.auth import get_user_model
+        
+        store_id = request.query_params.get('store')
+        
+        # Try to get a real customer
+        User = get_user_model()
+        user = User.objects.filter(
+            is_active=True,
+            is_staff=False,
+            is_superuser=False
+        ).exclude(email='').first()
+        
+        if user:
+            phone = ''
+            try:
+                if hasattr(user, 'profile') and user.profile:
+                    phone = user.profile.phone or ''
+            except Exception:
+                pass
+            
+            return Response({
+                'email': user.email,
+                'name': f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0],
+                'first_name': user.first_name or user.email.split('@')[0],
+                'phone': phone,
+            })
+        
+        # Fallback to subscriber
+        if store_id:
+            subscriber = Subscriber.objects.filter(store_id=store_id, status='active').first()
+            if subscriber:
+                return Response({
+                    'email': subscriber.email,
+                    'name': subscriber.name or subscriber.email.split('@')[0],
+                    'first_name': (subscriber.name or subscriber.email.split('@')[0]).split()[0],
+                    'phone': subscriber.phone or '',
+                })
+        
+        # Return sample data
+        return Response({
+            'email': 'cliente@exemplo.com',
+            'name': 'Cliente Exemplo',
+            'first_name': 'Cliente',
+            'phone': '(11) 99999-9999',
+        })

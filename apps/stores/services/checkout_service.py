@@ -20,6 +20,41 @@ from .cart_service import cart_service
 logger = logging.getLogger(__name__)
 
 
+def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_context: dict = None):
+    """Trigger email automation for order events."""
+    try:
+        from apps.marketing.services.email_automation_service import email_automation_service
+        
+        if not order.customer_email:
+            logger.debug(f"No customer email for order {order.order_number}, skipping automation")
+            return
+        
+        store_id = str(order.store.id) if order.store else None
+        if not store_id:
+            logger.debug(f"No store for order {order.order_number}, skipping automation")
+            return
+        
+        context = {
+            'order_number': order.order_number,
+            'order_total': f'{order.total:.2f}',
+            'order_status': order.status,
+            'delivery_method': order.delivery_method,
+            **(extra_context or {})
+        }
+        
+        result = email_automation_service.trigger(
+            store_id=store_id,
+            trigger_type=trigger_type,
+            recipient_email=order.customer_email,
+            recipient_name=order.customer_name or '',
+            context=context
+        )
+        logger.info(f"Email automation triggered for order {order.order_number}: {trigger_type} -> {result}")
+        
+    except Exception as e:
+        logger.error(f"Failed to trigger email automation for order {order.order_number}: {e}")
+
+
 class CheckoutService:
     """Service for processing checkouts."""
     
@@ -333,6 +368,9 @@ class CheckoutService:
         
         logger.info(f"Order {order.order_number} created for store {store.slug}")
         
+        # Trigger order confirmation email automation
+        trigger_order_email_automation(order, 'order_confirmed')
+        
         return order
     
     @staticmethod
@@ -519,10 +557,15 @@ class CheckoutService:
             
             if status == 'approved':
                 order.paid_at = timezone.now()
+                # Trigger payment confirmed email automation
+                trigger_order_email_automation(order, 'payment_confirmed')
             elif status in ['cancelled', 'rejected', 'refunded']:
                 order.cancelled_at = timezone.now()
                 # Restore stock
                 CheckoutService._restore_stock(order)
+                # Trigger order cancelled email automation
+                if status in ['cancelled', 'rejected']:
+                    trigger_order_email_automation(order, 'order_cancelled')
             
             order.save()
             

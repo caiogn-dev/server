@@ -481,6 +481,8 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def add_tracking(self, request, pk=None):
         """Add tracking information to an order."""
+        from apps.stores.services.checkout_service import trigger_order_email_automation
+        
         order = self.get_object()
         
         order.tracking_code = request.data.get('tracking_code', '')
@@ -489,11 +491,20 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         order.status = StoreOrder.OrderStatus.SHIPPED
         order.save(update_fields=['tracking_code', 'tracking_url', 'carrier', 'status', 'updated_at'])
         
+        # Trigger order shipped email automation
+        trigger_order_email_automation(order, 'order_shipped', {
+            'tracking_code': order.tracking_code,
+            'tracking_url': order.tracking_url,
+            'carrier': order.carrier,
+        })
+        
         return Response(StoreOrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
         """Mark order as paid."""
+        from apps.stores.services.checkout_service import trigger_order_email_automation
+        
         order = self.get_object()
         order.payment_status = 'paid'
         order.payment_reference = request.data.get('payment_reference', '')
@@ -504,6 +515,10 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             'order_number': order.order_number,
             'total': float(order.total)
         })
+        
+        # Trigger payment confirmed email automation
+        trigger_order_email_automation(order, 'payment_confirmed')
+        
         return Response(StoreOrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])

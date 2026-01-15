@@ -11,6 +11,7 @@ from .api.views import (
     MarketingStatsViewSet,
     QuickActionsViewSet,
     EmailAutomationViewSet,
+    TemplateVariablesViewSet,
 )
 
 router = DefaultRouter()
@@ -21,6 +22,7 @@ router.register(r'customers', CustomersViewSet, basename='customers')
 router.register(r'automations', EmailAutomationViewSet, basename='email-automations')
 router.register(r'stats', MarketingStatsViewSet, basename='marketing-stats')
 router.register(r'actions', QuickActionsViewSet, basename='quick-actions')
+router.register(r'variables', TemplateVariablesViewSet, basename='template-variables')
 
 urlpatterns = [
     path('', include(router.urls)),

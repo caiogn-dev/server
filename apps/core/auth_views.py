@@ -1,6 +1,7 @@
 """
 Authentication views for the API.
 """
+import logging
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.core.exceptions import ObjectDoesNotExist
@@ -15,6 +16,8 @@ from drf_spectacular.utils import extend_schema
 from .models import UserProfile
 from apps.notifications.services import email_service
 
+logger = logging.getLogger(__name__)
+
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -28,6 +31,7 @@ class RegisterSerializer(serializers.Serializer):
     last_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     coupon_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    store_slug = serializers.CharField(max_length=100, required=False, allow_blank=True)
 
 
 class TokenSerializer(serializers.Serializer):
@@ -214,6 +218,39 @@ class RegisterView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
+    def _trigger_new_user_automation(self, user, store_slug=None):
+        """Trigger email automation for new user registration."""
+        try:
+            from apps.marketing.services.email_automation_service import email_automation_service
+            from apps.stores.models import Store
+            
+            # Get store by slug or use default (pastita)
+            store = None
+            if store_slug:
+                store = Store.objects.filter(slug=store_slug, is_active=True).first()
+            
+            if not store:
+                # Try to get default store (pastita)
+                store = Store.objects.filter(slug='pastita', is_active=True).first()
+            
+            if not store:
+                # Get any active store
+                store = Store.objects.filter(is_active=True).first()
+            
+            if store:
+                customer_name = f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0]
+                result = email_automation_service.on_new_user(
+                    store_id=str(store.id),
+                    email=user.email,
+                    name=customer_name,
+                )
+                logger.info(f"New user automation triggered for {user.email}: {result}")
+            else:
+                logger.warning(f"No active store found for new user automation: {user.email}")
+                
+        except Exception as e:
+            logger.error(f"Failed to trigger new user automation: {e}")
+
     @extend_schema(
         summary="Register",
         description="Register a new user account",
@@ -297,6 +334,9 @@ class RegisterView(APIView):
             </html>
             """
             email_service.send_email(user.email, subject, html)
+        
+        # Trigger new user email automation for all stores (or default store)
+        self._trigger_new_user_automation(user, data.get('store_slug'))
         
         return Response({
             'token': token.key,

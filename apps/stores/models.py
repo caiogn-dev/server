@@ -837,7 +837,38 @@ class StoreOrder(BaseModel):
         if notify:
             self.send_status_webhook(old_status, new_status)
         
+        # Trigger email automation for status changes
+        self._trigger_status_email_automation(new_status)
+        
         return self
+    
+    def _trigger_status_email_automation(self, new_status: str):
+        """Trigger email automation based on status change."""
+        try:
+            from apps.stores.services.checkout_service import trigger_order_email_automation
+            
+            status_trigger_map = {
+                self.OrderStatus.CONFIRMED: 'order_confirmed',
+                self.OrderStatus.PAID: 'payment_confirmed',
+                self.OrderStatus.SHIPPED: 'order_shipped',
+                self.OrderStatus.DELIVERED: 'order_delivered',
+                self.OrderStatus.CANCELLED: 'order_cancelled',
+            }
+            
+            trigger_type = status_trigger_map.get(new_status)
+            if trigger_type:
+                extra_context = {}
+                if new_status == self.OrderStatus.SHIPPED:
+                    extra_context = {
+                        'tracking_code': self.tracking_code or '',
+                        'tracking_url': self.tracking_url or '',
+                        'carrier': self.carrier or '',
+                    }
+                trigger_order_email_automation(self, trigger_type, extra_context)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to trigger email automation for order {self.order_number}: {e}")
     
     def send_status_webhook(self, old_status: str, new_status: str):
         """Send webhook notification for status change."""
