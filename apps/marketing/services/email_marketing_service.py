@@ -257,6 +257,16 @@ class EmailMarketingService:
             if recipient.status != 'pending':
                 continue
             
+            # Get store URL
+            store_url = ''
+            store_domain = ''
+            if campaign.store:
+                store_domain = campaign.store.domain or ''
+                if store_domain:
+                    store_url = f'https://{store_domain}'
+                else:
+                    store_url = f'https://pastita.com.br'  # fallback
+            
             # Personalize content with multiple variables
             personalization_vars = {
                 'name': name,
@@ -265,6 +275,12 @@ class EmailMarketingService:
                 'email': email,
                 'store_name': store_name,
                 'year': str(timezone.now().year),
+                'store_url': store_url,
+                'store_domain': store_domain,
+                # Common discount placeholders - get from campaign metadata if available
+                'discount_value': str(campaign.audience_filters.get('discount_value', '10')) if campaign.audience_filters else '10',
+                'discount_code': campaign.audience_filters.get('discount_code', 'DESCONTO10') if campaign.audience_filters else 'DESCONTO10',
+                'coupon_code': campaign.audience_filters.get('coupon_code', '') if campaign.audience_filters else '',
             }
             html_content = self._personalize_content(
                 campaign.html_content,
@@ -321,9 +337,19 @@ class EmailMarketingService:
     
     def _personalize_content(self, content: str, variables: Dict[str, str]) -> str:
         """Replace variables in content."""
+        import re
+        
         for key, value in variables.items():
-            content = content.replace(f'{{{{{key}}}}}', value or '')
-            content = content.replace(f'{{{{ {key} }}}}', value or '')
+            val = str(value) if value else ''
+            # Handle different formats: {{key}}, {{ key }}, {key}
+            content = content.replace(f'{{{{{key}}}}}', val)  # {{key}}
+            content = content.replace(f'{{{{ {key} }}}}', val)  # {{ key }}
+            content = content.replace(f'{{{key}}}', val)  # {key}
+        
+        # Also handle any remaining {{variable}} patterns with regex
+        # Replace any unmatched {{...}} with empty string
+        content = re.sub(r'\{\{\s*\w+\s*\}\}', '', content)
+        
         return content
     
     def send_single_email(
