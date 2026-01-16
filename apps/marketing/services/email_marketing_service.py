@@ -106,8 +106,13 @@ class EmailMarketingService:
         except EmailCampaign.DoesNotExist:
             return {'success': False, 'error': 'Campaign not found'}
         
+        logger.info(f"Sending campaign {campaign_id}: store={campaign.store_id}, audience={campaign.audience_type}, status={campaign.status}")
+        
         if campaign.status not in ['draft', 'scheduled']:
             return {'success': False, 'error': f'Campaign cannot be sent (status: {campaign.status})'}
+        
+        if not campaign.store_id:
+            return {'success': False, 'error': 'Campaign has no store associated'}
         
         # Update status
         campaign.status = 'sending'
