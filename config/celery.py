@@ -34,7 +34,12 @@ app.conf.beat_schedule = {
         'task': 'apps.orders.tasks.check_pending_orders',
         'schedule': 600.0,
     },
-    # Automation tasks
+    # Store cart abandoned (email notifications)
+    'check-store-abandoned-carts': {
+        'task': 'apps.orders.tasks.check_store_abandoned_carts',
+        'schedule': 300.0,  # Every 5 minutes
+    },
+    # Automation tasks (WhatsApp sessions)
     'check-abandoned-carts': {
         'task': 'apps.automation.tasks.check_abandoned_carts',
         'schedule': 300.0,  # Every 5 minutes
@@ -60,6 +65,11 @@ app.conf.beat_schedule = {
     'cleanup-old-reports': {
         'task': 'apps.automation.tasks.scheduled.cleanup_old_reports',
         'schedule': 86400.0,  # Daily
+    },
+    # Process scheduled email automations
+    'process-scheduled-email-automations': {
+        'task': 'apps.marketing.tasks.process_scheduled_automations',
+        'schedule': 60.0,  # Every minute
     },
 }
 

@@ -9,6 +9,69 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+@shared_task(name='apps.orders.tasks.check_store_abandoned_carts')
+def check_store_abandoned_carts():
+    """
+    Check for abandoned StoreCart and trigger email notifications.
+    Runs every 5 minutes via Celery Beat.
+    """
+    from apps.stores.models import StoreCart
+    from apps.marketing.services.email_automation_service import email_automation_service
+    
+    # Find carts that:
+    # - Have items
+    # - Were updated more than 30 minutes ago
+    # - Are still active (not converted to order)
+    # - Have a user with email
+    cutoff_time = timezone.now() - timedelta(minutes=30)
+    
+    abandoned_carts = StoreCart.objects.filter(
+        is_active=True,
+        updated_at__lt=cutoff_time,
+        user__isnull=False,
+        user__email__isnull=False,
+    ).exclude(
+        user__email=''
+    ).select_related('store', 'user').prefetch_related('items')
+    
+    sent_count = 0
+    for cart in abandoned_carts:
+        # Skip empty carts
+        if cart.items.count() == 0:
+            continue
+        
+        # Check if we already sent notification (stored in metadata)
+        if cart.metadata.get('abandoned_email_sent'):
+            continue
+        
+        # Trigger email automation
+        try:
+            result = email_automation_service.trigger(
+                store_id=str(cart.store.id),
+                trigger_type='cart_abandoned',
+                recipient_email=cart.user.email,
+                recipient_name=cart.user.get_full_name() or cart.user.email.split('@')[0],
+                context={
+                    'cart_total': f'{cart.subtotal:.2f}',
+                    'item_count': cart.item_count,
+                }
+            )
+            
+            if result.get('success') or result.get('scheduled'):
+                # Mark as sent
+                cart.metadata['abandoned_email_sent'] = True
+                cart.metadata['abandoned_email_sent_at'] = timezone.now().isoformat()
+                cart.save(update_fields=['metadata'])
+                sent_count += 1
+                logger.info(f"Abandoned cart email triggered for {cart.user.email}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send abandoned cart email for cart {cart.id}: {e}")
+    
+    logger.info(f"Checked abandoned carts: {sent_count} emails triggered")
+    return sent_count
+
+
 @shared_task(name='apps.orders.tasks.check_pending_orders')
 def check_pending_orders():
     """
