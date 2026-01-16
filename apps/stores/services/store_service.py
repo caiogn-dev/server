@@ -3,7 +3,7 @@ Store service for managing stores and their operations.
 """
 import logging
 from typing import Dict, Any, Optional, List
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -209,7 +209,14 @@ class StoreService:
         if delivery_data:
             delivery_method = delivery_data.get('method', 'delivery')
             if delivery_method == 'delivery':
-                delivery_fee = Decimal(str(delivery_data.get('fee', store.default_delivery_fee)))
+                fee_value = delivery_data.get('fee')
+                if fee_value is not None and fee_value != '':
+                    try:
+                        delivery_fee = Decimal(str(fee_value))
+                    except (ValueError, InvalidOperation):
+                        delivery_fee = store.default_delivery_fee or Decimal('0.00')
+                else:
+                    delivery_fee = store.default_delivery_fee or Decimal('0.00')
                 
                 # Check free delivery threshold
                 if store.free_delivery_threshold and subtotal >= store.free_delivery_threshold:
