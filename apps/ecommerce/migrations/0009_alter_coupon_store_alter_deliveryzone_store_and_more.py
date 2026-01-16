@@ -8,30 +8,42 @@ import django.db.models.deletion
 def add_constraint_if_not_exists(apps, schema_editor):
     """Add unique constraint only if it doesn't exist"""
     constraint_name = 'unique_coupon_code_per_store'
+    db_vendor = connection.vendor
+    
     with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT 1 FROM pg_constraint WHERE conname = %s
-        """, [constraint_name])
-        if not cursor.fetchone():
+        if db_vendor == 'postgresql':
             cursor.execute("""
-                ALTER TABLE ecommerce_coupon 
-                ADD CONSTRAINT unique_coupon_code_per_store 
-                UNIQUE (store_id, code)
-            """)
+                SELECT 1 FROM pg_constraint WHERE conname = %s
+            """, [constraint_name])
+            if not cursor.fetchone():
+                cursor.execute("""
+                    ALTER TABLE ecommerce_coupon 
+                    ADD CONSTRAINT unique_coupon_code_per_store 
+                    UNIQUE (store_id, code)
+                """)
+        elif db_vendor == 'sqlite':
+            # SQLite handles unique constraints differently - skip for dev
+            pass
 
 
 def remove_constraint_if_exists(apps, schema_editor):
     """Remove constraint if it exists (for rollback)"""
     constraint_name = 'unique_coupon_code_per_store'
+    db_vendor = connection.vendor
+    
     with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT 1 FROM pg_constraint WHERE conname = %s
-        """, [constraint_name])
-        if cursor.fetchone():
+        if db_vendor == 'postgresql':
             cursor.execute("""
-                ALTER TABLE ecommerce_coupon 
-                DROP CONSTRAINT unique_coupon_code_per_store
-            """)
+                SELECT 1 FROM pg_constraint WHERE conname = %s
+            """, [constraint_name])
+            if cursor.fetchone():
+                cursor.execute("""
+                    ALTER TABLE ecommerce_coupon 
+                    DROP CONSTRAINT unique_coupon_code_per_store
+                """)
+        elif db_vendor == 'sqlite':
+            # SQLite handles unique constraints differently - skip for dev
+            pass
 
 
 class Migration(migrations.Migration):
