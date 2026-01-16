@@ -131,18 +131,40 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
             store = Store.objects.get(slug=self.store_slug)
             user = self.scope.get('user')
             
-            # Allow if store is active (for customer tracking)
-            if store.status == 'active':
-                return True
+            logger.info(f"WebSocket access check - store: {self.store_slug}, user: {user}, authenticated: {user.is_authenticated if user else False}")
             
-            # Check if user is owner or staff
+            # Check if user is authenticated and has access
             if user and user.is_authenticated:
-                if user.is_staff or store.owner == user or user in store.staff.all():
+                # Staff users have access to all stores
+                if user.is_staff or user.is_superuser:
+                    logger.info(f"WebSocket access granted - staff user: {user.email}")
+                    return True
+                
+                # Store owner has access
+                if store.owner == user:
+                    logger.info(f"WebSocket access granted - store owner: {user.email}")
+                    return True
+                
+                # Store staff has access
+                if hasattr(store, 'staff') and user in store.staff.all():
+                    logger.info(f"WebSocket access granted - store staff: {user.email}")
+                    return True
+                
+                # Any authenticated user can access active stores (for dashboard)
+                if store.status == 'active':
+                    logger.info(f"WebSocket access granted - authenticated user on active store: {user.email}")
                     return True
             
+            # Allow anonymous access to active stores for customer tracking
+            if store.status == 'active':
+                logger.info(f"WebSocket access granted - active store (anonymous)")
+                return True
+            
+            logger.warning(f"WebSocket access denied - store: {self.store_slug}, user: {user}")
             return False
         
         except Store.DoesNotExist:
+            logger.error(f"WebSocket access denied - store not found: {self.store_slug}")
             return False
 
 

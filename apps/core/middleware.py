@@ -1,15 +1,81 @@
 """
-Core middleware for logging and rate limiting.
+Core middleware for logging, rate limiting, and WebSocket authentication.
 """
 import time
 import json
 import logging
 import hashlib
+from urllib.parse import parse_qs
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
+from channels.db import database_sync_to_async
+from channels.middleware import BaseMiddleware
+from django.contrib.auth.models import AnonymousUser
 
 logger = logging.getLogger(__name__)
+
+
+# ============================================
+# WebSocket Token Authentication Middleware
+# ============================================
+
+@database_sync_to_async
+def get_user_from_token(token_key):
+    """Get user from token key."""
+    from rest_framework.authtoken.models import Token
+    try:
+        token = Token.objects.select_related('user').get(key=token_key)
+        return token.user
+    except Token.DoesNotExist:
+        return AnonymousUser()
+
+
+class TokenAuthMiddleware(BaseMiddleware):
+    """
+    Custom middleware that authenticates WebSocket connections using token.
+    
+    Token can be passed as:
+    - Query parameter: ?token=xxx
+    - Header: Authorization: Token xxx
+    """
+    
+    async def __call__(self, scope, receive, send):
+        # Try to get token from query string
+        query_string = scope.get('query_string', b'').decode()
+        query_params = parse_qs(query_string)
+        token_key = None
+        
+        # Check query parameter
+        if 'token' in query_params:
+            token_key = query_params['token'][0]
+        
+        # Check headers if no query param
+        if not token_key:
+            headers = dict(scope.get('headers', []))
+            auth_header = headers.get(b'authorization', b'').decode()
+            if auth_header.startswith('Token '):
+                token_key = auth_header[6:]
+        
+        # Authenticate user
+        if token_key:
+            scope['user'] = await get_user_from_token(token_key)
+            if scope['user'].is_authenticated:
+                logger.debug(f"WebSocket authenticated: {scope['user'].email}")
+        else:
+            scope['user'] = AnonymousUser()
+        
+        return await super().__call__(scope, receive, send)
+
+
+def TokenAuthMiddlewareStack(inner):
+    """Convenience function to wrap URLRouter with token auth."""
+    return TokenAuthMiddleware(inner)
+
+
+# ============================================
+# HTTP Middleware
+# ============================================
 
 
 class RequestLoggingMiddleware:
