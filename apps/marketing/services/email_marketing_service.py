@@ -96,6 +96,7 @@ class EmailMarketingService:
     def send_campaign(self, campaign_id: str) -> Dict[str, Any]:
         """Send an email campaign."""
         from apps.marketing.models import EmailCampaign, EmailRecipient, Subscriber
+        from apps.stores.models import StoreOrder
         
         if not self.enabled:
             return {'success': False, 'error': 'Email service not configured'}
@@ -114,32 +115,112 @@ class EmailMarketingService:
         campaign.save()
         
         # Get recipients
+        recipients_list = []
+        
         if campaign.audience_type == 'all':
+            # First get subscribers
             subscribers = Subscriber.objects.filter(
                 store=campaign.store,
                 status='active',
                 accepts_marketing=True
             )
-        elif campaign.audience_type == 'custom':
-            subscribers = []
-            for recipient in campaign.recipient_list:
-                subscribers.append({
-                    'email': recipient.get('email'),
-                    'name': recipient.get('name', ''),
+            for sub in subscribers:
+                recipients_list.append({
+                    'email': sub.email,
+                    'name': sub.name or '',
                 })
+            
+            # Also get customers from orders (unique emails)
+            orders = StoreOrder.objects.filter(
+                store=campaign.store,
+                customer_email__isnull=False
+            ).exclude(customer_email='').values('customer_email', 'customer_name').distinct()
+            
+            existing_emails = {r['email'].lower() for r in recipients_list}
+            for order in orders:
+                email = order['customer_email'].lower()
+                if email not in existing_emails:
+                    recipients_list.append({
+                        'email': order['customer_email'],
+                        'name': order['customer_name'] or '',
+                    })
+                    existing_emails.add(email)
+                    
+        elif campaign.audience_type == 'customers':
+            # Only customers who made orders
+            orders = StoreOrder.objects.filter(
+                store=campaign.store,
+                customer_email__isnull=False
+            ).exclude(customer_email='').values('customer_email', 'customer_name').distinct()
+            
+            seen_emails = set()
+            for order in orders:
+                email = order['customer_email'].lower()
+                if email not in seen_emails:
+                    recipients_list.append({
+                        'email': order['customer_email'],
+                        'name': order['customer_name'] or '',
+                    })
+                    seen_emails.add(email)
+                    
+        elif campaign.audience_type == 'subscribers':
+            # Only subscribers
+            subscribers = Subscriber.objects.filter(
+                store=campaign.store,
+                status='active',
+                accepts_marketing=True
+            )
+            for sub in subscribers:
+                recipients_list.append({
+                    'email': sub.email,
+                    'name': sub.name or '',
+                })
+                    
+        elif campaign.audience_type == 'custom':
+            for recipient in (campaign.recipient_list or []):
+                if recipient.get('email'):
+                    recipients_list.append({
+                        'email': recipient.get('email'),
+                        'name': recipient.get('name', ''),
+                    })
         else:
-            # Segment filtering
+            # Segment filtering from subscribers
             subscribers = Subscriber.objects.filter(
                 store=campaign.store,
                 status='active',
                 accepts_marketing=True
             )
             # Apply filters from audience_filters
-            filters = campaign.audience_filters
+            filters = campaign.audience_filters or {}
             if filters.get('tags'):
                 subscribers = subscribers.filter(tags__contains=filters['tags'])
             if filters.get('min_orders'):
                 subscribers = subscribers.filter(total_orders__gte=filters['min_orders'])
+            
+            for sub in subscribers:
+                recipients_list.append({
+                    'email': sub.email,
+                    'name': sub.name or '',
+                })
+        
+        # Use recipients_list instead of subscribers
+        subscribers = recipients_list
+        
+        logger.info(f"Campaign {campaign.id}: Found {len(subscribers)} recipients (audience_type: {campaign.audience_type})")
+        
+        if not subscribers:
+            campaign.status = 'sent'
+            campaign.completed_at = timezone.now()
+            campaign.emails_sent = 0
+            campaign.total_recipients = 0
+            campaign.save()
+            return {
+                'success': True,
+                'sent': 0,
+                'failed': 0,
+                'campaign_id': str(campaign.id),
+                'message': 'No recipients found for this campaign'
+            }
         
         # Create recipients and send
         sent_count = 0

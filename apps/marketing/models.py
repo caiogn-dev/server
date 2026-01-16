@@ -82,7 +82,9 @@ class EmailCampaign(models.Model):
         CANCELLED = 'cancelled', 'Cancelada'
     
     class AudienceType(models.TextChoices):
-        ALL = 'all', 'Todos os clientes'
+        ALL = 'all', 'Todos (subscribers + clientes)'
+        CUSTOMERS = 'customers', 'Apenas clientes (que fizeram pedidos)'
+        SUBSCRIBERS = 'subscribers', 'Apenas subscribers'
         SEGMENT = 'segment', 'Segmento'
         CUSTOM = 'custom', 'Lista personalizada'
     
