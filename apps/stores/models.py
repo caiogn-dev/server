@@ -851,6 +851,7 @@ class StoreOrder(BaseModel):
                 self.OrderStatus.CONFIRMED: 'order_confirmed',
                 self.OrderStatus.PAID: 'payment_confirmed',
                 self.OrderStatus.SHIPPED: 'order_shipped',
+                self.OrderStatus.OUT_FOR_DELIVERY: 'order_shipped',  # Same email as shipped
                 self.OrderStatus.DELIVERED: 'order_delivered',
                 self.OrderStatus.CANCELLED: 'order_cancelled',
             }
@@ -858,7 +859,7 @@ class StoreOrder(BaseModel):
             trigger_type = status_trigger_map.get(new_status)
             if trigger_type:
                 extra_context = {}
-                if new_status == self.OrderStatus.SHIPPED:
+                if new_status in [self.OrderStatus.SHIPPED, self.OrderStatus.OUT_FOR_DELIVERY]:
                     extra_context = {
                         'tracking_code': self.tracking_code or '',
                         'tracking_url': self.tracking_url or '',
