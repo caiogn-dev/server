@@ -857,6 +857,28 @@ class StoreCheckoutView(APIView):
                 notes=data.get('notes', '')
             )
             
+            # Send WebSocket notification for new order
+            try:
+                from channels.layers import get_channel_layer
+                from asgiref.sync import async_to_sync
+                
+                channel_layer = get_channel_layer()
+                if channel_layer:
+                    async_to_sync(channel_layer.group_send)(
+                        f"store_{store.slug}_orders",
+                        {
+                            'type': 'order_created',
+                            'order_id': str(order.id),
+                            'order_number': order.order_number,
+                            'customer_name': data['customer_name'],
+                            'total': float(order.total),
+                            'created_at': order.created_at.isoformat(),
+                        }
+                    )
+                    logger.info(f"WebSocket: order_created sent for {order.order_number}")
+            except Exception as e:
+                logger.warning(f"Failed to send order_created WebSocket: {e}")
+            
             # Create payment
             payment_result = checkout_service.create_payment(
                 order=order,
