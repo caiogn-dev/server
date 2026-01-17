@@ -26,8 +26,13 @@ def get_user_from_token(token_key):
     from rest_framework.authtoken.models import Token
     try:
         token = Token.objects.select_related('user').get(key=token_key)
+        logger.info(f"WebSocket token auth success: user={token.user.email}")
         return token.user
     except Token.DoesNotExist:
+        logger.warning(f"WebSocket token auth failed: token not found (first 8 chars: {token_key[:8] if token_key else 'none'})")
+        return AnonymousUser()
+    except Exception as e:
+        logger.error(f"WebSocket token auth error: {e}")
         return AnonymousUser()
 
 
@@ -41,6 +46,10 @@ class TokenAuthMiddleware(BaseMiddleware):
     """
     
     async def __call__(self, scope, receive, send):
+        # Log connection details for debugging
+        path = scope.get('path', 'unknown')
+        logger.info(f"WebSocket middleware processing: path={path}")
+        
         # Try to get token from query string
         query_string = scope.get('query_string', b'').decode()
         query_params = parse_qs(query_string)
@@ -49,6 +58,7 @@ class TokenAuthMiddleware(BaseMiddleware):
         # Check query parameter
         if 'token' in query_params:
             token_key = query_params['token'][0]
+            logger.debug(f"WebSocket token found in query params")
         
         # Check headers if no query param
         if not token_key:
@@ -56,13 +66,24 @@ class TokenAuthMiddleware(BaseMiddleware):
             auth_header = headers.get(b'authorization', b'').decode()
             if auth_header.startswith('Token '):
                 token_key = auth_header[6:]
+                logger.debug(f"WebSocket token found in Authorization header")
+            elif auth_header.startswith('Bearer '):
+                token_key = auth_header[7:]
+                logger.debug(f"WebSocket token found in Bearer header")
         
         # Authenticate user
         if token_key:
-            scope['user'] = await get_user_from_token(token_key)
-            if scope['user'].is_authenticated:
-                logger.debug(f"WebSocket authenticated: {scope['user'].email}")
+            try:
+                scope['user'] = await get_user_from_token(token_key)
+                if scope['user'].is_authenticated:
+                    logger.info(f"WebSocket authenticated: user={scope['user'].email}, path={path}")
+                else:
+                    logger.warning(f"WebSocket auth failed: anonymous user, path={path}")
+            except Exception as e:
+                logger.error(f"WebSocket auth exception: {e}")
+                scope['user'] = AnonymousUser()
         else:
+            logger.info(f"WebSocket no token provided: path={path}")
             scope['user'] = AnonymousUser()
         
         return await super().__call__(scope, receive, send)
