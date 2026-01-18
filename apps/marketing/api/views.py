@@ -114,10 +114,23 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def send(self, request, pk=None):
         """Send a campaign."""
-        result = email_marketing_service.send_campaign(pk)
-        if result['success']:
-            return Response(result)
-        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.info(f"Sending campaign {pk}")
+            result = email_marketing_service.send_campaign(pk)
+            logger.info(f"Campaign {pk} send result: {result}")
+            
+            if result['success']:
+                return Response(result)
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.exception(f"Error sending campaign {pk}: {e}")
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=True, methods=['post'])
     def schedule(self, request, pk=None):

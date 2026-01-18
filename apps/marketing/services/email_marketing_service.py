@@ -98,12 +98,17 @@ class EmailMarketingService:
         from apps.marketing.models import EmailCampaign, EmailRecipient, Subscriber
         from apps.stores.models import StoreOrder
         
+        logger.info(f"[send_campaign] Starting campaign {campaign_id}")
+        
         if not self.enabled:
-            return {'success': False, 'error': 'Email service not configured'}
+            logger.warning(f"[send_campaign] Email service not enabled. API Key: {'set' if self.api_key else 'not set'}, Resend: {RESEND_AVAILABLE}")
+            return {'success': False, 'error': 'Email service not configured. Please configure RESEND_API_KEY.'}
         
         try:
             campaign = EmailCampaign.objects.get(id=campaign_id)
+            logger.info(f"[send_campaign] Found campaign: {campaign.name}, store={campaign.store_id}, status={campaign.status}")
         except EmailCampaign.DoesNotExist:
+            logger.error(f"[send_campaign] Campaign {campaign_id} not found")
             return {'success': False, 'error': 'Campaign not found'}
         
         logger.info(f"Sending campaign {campaign_id}: store={campaign.store_id}, audience={campaign.audience_type}, status={campaign.status}")
