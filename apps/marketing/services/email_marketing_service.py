@@ -266,11 +266,13 @@ class EmailMarketingService:
             store_url = ''
             store_domain = ''
             if campaign.store:
-                store_domain = campaign.store.domain or ''
-                if store_domain:
+                store_slug = campaign.store.slug or ''
+                if store_slug:
+                    store_domain = f'{store_slug}.pastita.com.br'
                     store_url = f'https://{store_domain}'
                 else:
-                    store_url = f'https://pastita.com.br'  # fallback
+                    store_url = 'https://pastita.com.br'  # fallback
+                    store_domain = 'pastita.com.br'
             
             # Personalize content with multiple variables
             personalization_vars = {
