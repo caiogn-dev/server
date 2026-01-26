@@ -2,12 +2,15 @@
 Instagram API Views.
 """
 import logging
+import requests
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.http import HttpResponse
+from django.conf import settings
+from urllib.parse import urlencode
 
 from apps.instagram.models import (
     InstagramAccount,
@@ -390,3 +393,168 @@ class InstagramWebhookEventViewSet(viewsets.ReadOnlyModelViewSet):
         return InstagramWebhookEvent.objects.filter(
             account__owner=self.request.user
         ).order_by('-created_at')[:100]
+
+
+class InstagramOAuthView(APIView):
+    """
+    OAuth flow for Instagram Business Login.
+    
+    GET /oauth/start/ - Start OAuth flow
+    GET /oauth/callback/ - Handle OAuth callback
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
+    
+    INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize"
+    INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+    GRAPH_API_URL = "https://graph.instagram.com"
+    FACEBOOK_GRAPH_URL = "https://graph.facebook.com/v21.0"
+    
+    def get_redirect_uri(self):
+        return f"{settings.API_BASE_URL}/api/v1/instagram/oauth/callback/"
+    
+    def get_app_credentials(self):
+        return {
+            'app_id': getattr(settings, 'INSTAGRAM_APP_ID', ''),
+            'app_secret': getattr(settings, 'INSTAGRAM_APP_SECRET', ''),
+        }
+
+
+class InstagramOAuthStartView(InstagramOAuthView):
+    """Start the Instagram OAuth flow."""
+    
+    def get(self, request):
+        """Redirect user to Instagram authorization."""
+        creds = self.get_app_credentials()
+        
+        if not creds['app_id']:
+            return Response(
+                {'error': 'Instagram App ID not configured'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Store state for CSRF protection
+        import secrets
+        state = secrets.token_urlsafe(32)
+        request.session['instagram_oauth_state'] = state
+        
+        params = {
+            'client_id': creds['app_id'],
+            'redirect_uri': self.get_redirect_uri(),
+            'scope': 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish',
+            'response_type': 'code',
+            'state': state,
+        }
+        
+        auth_url = f"{self.INSTAGRAM_OAUTH_URL}?{urlencode(params)}"
+        return redirect(auth_url)
+
+
+class InstagramOAuthCallbackView(InstagramOAuthView):
+    """Handle the Instagram OAuth callback."""
+    
+    def get(self, request):
+        """Process OAuth callback and exchange code for token."""
+        code = request.query_params.get('code')
+        error = request.query_params.get('error')
+        error_description = request.query_params.get('error_description', '')
+        
+        # Dashboard URL for redirecting after OAuth
+        dashboard_url = getattr(settings, 'DASHBOARD_URL', 'https://painel.pastita.com.br')
+        
+        if error:
+            logger.error(f"Instagram OAuth error: {error} - {error_description}")
+            return redirect(f"{dashboard_url}/instagram/accounts?error={error}&message={error_description}")
+        
+        if not code:
+            return redirect(f"{dashboard_url}/instagram/accounts?error=no_code")
+        
+        creds = self.get_app_credentials()
+        
+        try:
+            # Step 1: Exchange code for short-lived token
+            token_response = requests.post(
+                self.INSTAGRAM_TOKEN_URL,
+                data={
+                    'client_id': creds['app_id'],
+                    'client_secret': creds['app_secret'],
+                    'grant_type': 'authorization_code',
+                    'redirect_uri': self.get_redirect_uri(),
+                    'code': code,
+                }
+            )
+            
+            if token_response.status_code != 200:
+                logger.error(f"Token exchange failed: {token_response.text}")
+                return redirect(f"{dashboard_url}/instagram/accounts?error=token_exchange_failed")
+            
+            token_data = token_response.json()
+            short_lived_token = token_data.get('access_token')
+            user_id = token_data.get('user_id')
+            
+            # Step 2: Exchange for long-lived token
+            long_lived_response = requests.get(
+                f"{self.GRAPH_API_URL}/access_token",
+                params={
+                    'grant_type': 'ig_exchange_token',
+                    'client_secret': creds['app_secret'],
+                    'access_token': short_lived_token,
+                }
+            )
+            
+            if long_lived_response.status_code != 200:
+                logger.error(f"Long-lived token exchange failed: {long_lived_response.text}")
+                # Use short-lived token as fallback
+                access_token = short_lived_token
+                expires_in = 3600
+            else:
+                long_lived_data = long_lived_response.json()
+                access_token = long_lived_data.get('access_token')
+                expires_in = long_lived_data.get('expires_in', 5184000)  # 60 days
+            
+            # Step 3: Get user profile info
+            profile_response = requests.get(
+                f"{self.GRAPH_API_URL}/me",
+                params={
+                    'fields': 'id,username,account_type,media_count,profile_picture_url',
+                    'access_token': access_token,
+                }
+            )
+            
+            profile_data = profile_response.json() if profile_response.status_code == 200 else {}
+            username = profile_data.get('username', f'user_{user_id}')
+            
+            # Step 4: Create or update Instagram account
+            from django.utils import timezone
+            from datetime import timedelta
+            
+            # For now, we'll store the data and redirect to dashboard
+            # The user will need to complete the setup in the dashboard
+            
+            # Encode data to pass to dashboard
+            import base64
+            import json
+            
+            account_data = {
+                'instagram_user_id': user_id,
+                'instagram_account_id': profile_data.get('id', user_id),
+                'username': username,
+                'access_token': access_token,
+                'expires_in': expires_in,
+                'profile_picture_url': profile_data.get('profile_picture_url', ''),
+            }
+            
+            encoded_data = base64.urlsafe_b64encode(
+                json.dumps(account_data).encode()
+            ).decode()
+            
+            logger.info(f"Instagram OAuth successful for @{username}")
+            
+            return redirect(
+                f"{dashboard_url}/instagram/accounts?oauth_success=true&data={encoded_data}"
+            )
+            
+        except Exception as e:
+            logger.error(f"Instagram OAuth error: {e}", exc_info=True)
+            return redirect(f"{dashboard_url}/instagram/accounts?error=server_error")

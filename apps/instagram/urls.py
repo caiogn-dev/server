@@ -8,7 +8,9 @@ from .api.views import (
     InstagramConversationViewSet,
     InstagramMessageViewSet,
     InstagramWebhookView,
-    InstagramWebhookEventViewSet
+    InstagramWebhookEventViewSet,
+    InstagramOAuthStartView,
+    InstagramOAuthCallbackView,
 )
 
 router = DefaultRouter()
@@ -20,4 +22,6 @@ router.register(r'webhook-events', InstagramWebhookEventViewSet, basename='insta
 urlpatterns = [
     path('', include(router.urls)),
     path('webhook/', InstagramWebhookView.as_view(), name='instagram-webhook'),
+    path('oauth/start/', InstagramOAuthStartView.as_view(), name='instagram-oauth-start'),
+    path('oauth/callback/', InstagramOAuthCallbackView.as_view(), name='instagram-oauth-callback'),
 ]

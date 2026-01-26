@@ -247,6 +247,8 @@ INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN'
 
 # Base URL for webhooks and callbacks
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:12000')
+API_BASE_URL = os.environ.get('API_BASE_URL', 'https://web-production-3e83a.up.railway.app')
+DASHBOARD_URL = os.environ.get('DASHBOARD_URL', 'https://painel.pastita.com.br')
 
 # Mercado Pago Integration
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
