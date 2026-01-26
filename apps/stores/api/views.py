@@ -502,22 +502,61 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
-        """Mark order as paid."""
+        """Mark order as paid (manual payment confirmation for cash, transfer, etc)."""
         from apps.stores.services.checkout_service import trigger_order_email_automation
         
         order = self.get_object()
-        order.payment_status = 'paid'
+        
+        # Update payment status
+        order.payment_status = StoreOrder.PaymentStatus.PAID
         order.payment_reference = request.data.get('payment_reference', '')
         order.paid_at = timezone.now()
-        order.save(update_fields=['payment_status', 'payment_reference', 'paid_at', 'updated_at'])
+        
+        # Also update order status to confirmed if it's still pending/processing
+        if order.status in [StoreOrder.OrderStatus.PENDING, StoreOrder.OrderStatus.PROCESSING]:
+            order.status = StoreOrder.OrderStatus.CONFIRMED
+        
+        order.save(update_fields=['payment_status', 'payment_reference', 'paid_at', 'status', 'updated_at'])
+        
         webhook_service.trigger_webhooks(order.store, 'order.paid', {
             'order_id': str(order.id),
             'order_number': order.order_number,
-            'total': float(order.total)
+            'total': float(order.total),
+            'payment_status': order.payment_status,
+            'status': order.status
         })
         
         # Trigger payment confirmed email automation
         trigger_order_email_automation(order, 'payment_confirmed')
+        
+        return Response(StoreOrderSerializer(order).data)
+    
+    @action(detail=True, methods=['post'])
+    def update_payment_status(self, request, pk=None):
+        """Update payment status only (for manual control)."""
+        order = self.get_object()
+        new_payment_status = request.data.get('payment_status')
+        
+        valid_statuses = dict(StoreOrder.PaymentStatus.choices)
+        if new_payment_status not in valid_statuses:
+            return Response(
+                {'error': f'Invalid payment status. Valid options: {list(valid_statuses.keys())}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_payment_status = order.payment_status
+        order.payment_status = new_payment_status
+        
+        # If marking as paid, update paid_at timestamp
+        if new_payment_status == StoreOrder.PaymentStatus.PAID and not order.paid_at:
+            order.paid_at = timezone.now()
+            # Also update order status to confirmed if pending
+            if order.status in [StoreOrder.OrderStatus.PENDING, StoreOrder.OrderStatus.PROCESSING]:
+                order.status = StoreOrder.OrderStatus.CONFIRMED
+        
+        order.save(update_fields=['payment_status', 'paid_at', 'status', 'updated_at'])
+        
+        logger.info(f"Order {order.order_number} payment status changed: {old_payment_status} -> {new_payment_status}")
         
         return Response(StoreOrderSerializer(order).data)
 
