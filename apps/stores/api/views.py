@@ -508,14 +508,13 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         
         # Update payment status
         order.payment_status = StoreOrder.PaymentStatus.PAID
-        order.payment_reference = request.data.get('payment_reference', '')
         order.paid_at = timezone.now()
         
         # Also update order status to confirmed if it's still pending/processing
         if order.status in [StoreOrder.OrderStatus.PENDING, StoreOrder.OrderStatus.PROCESSING]:
             order.status = StoreOrder.OrderStatus.CONFIRMED
         
-        order.save(update_fields=['payment_status', 'payment_reference', 'paid_at', 'status', 'updated_at'])
+        order.save(update_fields=['payment_status', 'paid_at', 'status', 'updated_at'])
         
         # Trigger webhooks (non-blocking)
         try:
