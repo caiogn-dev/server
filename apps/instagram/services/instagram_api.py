@@ -135,6 +135,29 @@ class InstagramAPIService:
         
         return data
     
+    # ==================== Conversations ====================
+    
+    def get_conversations(self, limit: int = 50) -> Dict[str, Any]:
+        """Get list of conversations for this Instagram account."""
+        return self._make_request(
+            'GET',
+            f"{self.instagram_account_id}/conversations",
+            params={
+                'fields': 'id,participants,updated_time,messages{id,from,to,message,created_time}',
+                'limit': limit
+            }
+        )
+    
+    def get_conversation_messages(self, conversation_id: str, limit: int = 50) -> Dict[str, Any]:
+        """Get messages from a specific conversation."""
+        return self._make_request(
+            'GET',
+            f"{conversation_id}",
+            params={
+                'fields': 'id,participants,messages.limit({limit}){id,from,to,message,created_time,attachments}',
+            }
+        )
+    
     # ==================== Messaging ====================
     
     def send_message(

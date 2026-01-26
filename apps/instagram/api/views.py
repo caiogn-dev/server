@@ -145,6 +145,96 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             'inbound_messages': inbound_messages,
             'outbound_messages': outbound_messages
         })
+    
+    @action(detail=True, methods=['post'])
+    def sync_conversations(self, request, pk=None):
+        """Sync conversations from Instagram API."""
+        account = self.get_object()
+        
+        try:
+            api = InstagramAPIService(account)
+            data = api.get_conversations(limit=50)
+            
+            conversations_data = data.get('data', [])
+            synced = 0
+            errors = 0
+            
+            for conv_data in conversations_data:
+                try:
+                    # Get participant info
+                    participants = conv_data.get('participants', {}).get('data', [])
+                    participant = None
+                    for p in participants:
+                        if p.get('id') != account.instagram_account_id:
+                            participant = p
+                            break
+                    
+                    if not participant:
+                        continue
+                    
+                    participant_id = participant.get('id', '')
+                    
+                    # Create or update conversation
+                    conversation, created = InstagramConversation.objects.update_or_create(
+                        account=account,
+                        participant_id=participant_id,
+                        defaults={
+                            'participant_username': participant.get('username', ''),
+                            'participant_name': participant.get('name', participant.get('username', '')),
+                            'participant_profile_pic': participant.get('profile_pic', ''),
+                            'status': InstagramConversation.ConversationStatus.ACTIVE,
+                        }
+                    )
+                    
+                    # Sync messages from this conversation
+                    messages_data = conv_data.get('messages', {}).get('data', [])
+                    for msg_data in messages_data:
+                        msg_from = msg_data.get('from', {})
+                        msg_to = msg_data.get('to', {}).get('data', [{}])[0] if msg_data.get('to') else {}
+                        
+                        is_outbound = msg_from.get('id') == account.instagram_account_id
+                        
+                        InstagramMessage.objects.update_or_create(
+                            account=account,
+                            instagram_message_id=msg_data.get('id', ''),
+                            defaults={
+                                'conversation': conversation,
+                                'direction': 'outbound' if is_outbound else 'inbound',
+                                'message_type': 'text',
+                                'status': 'delivered',
+                                'sender_id': msg_from.get('id', ''),
+                                'recipient_id': msg_to.get('id', '') if msg_to else participant_id,
+                                'text_content': msg_data.get('message', ''),
+                                'sent_at': msg_data.get('created_time'),
+                            }
+                        )
+                    
+                    # Update conversation stats
+                    conversation.message_count = conversation.messages.count()
+                    last_msg = conversation.messages.order_by('-created_at').first()
+                    if last_msg:
+                        conversation.last_message_at = last_msg.created_at
+                        conversation.last_message_preview = last_msg.text_content[:100] if last_msg.text_content else ''
+                    conversation.save()
+                    
+                    synced += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error syncing conversation: {e}")
+                    errors += 1
+            
+            return Response({
+                'success': True,
+                'synced': synced,
+                'errors': errors,
+                'total_found': len(conversations_data)
+            })
+            
+        except InstagramAPIError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class InstagramConversationViewSet(viewsets.ModelViewSet):
