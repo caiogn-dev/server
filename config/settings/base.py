@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'apps.ecommerce',
     'apps.stores',  # Multi-store management (unified)
     'apps.marketing',  # Email marketing with Resend
+    'apps.instagram',  # Instagram Messaging API integration
 ]
 
 MIDDLEWARE = [
@@ -238,6 +239,11 @@ WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', 'your-verify-token')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
+
+# Instagram API Configuration
+INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
+INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
 
 # Base URL for webhooks and callbacks
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:12000')
