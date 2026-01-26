@@ -11,7 +11,8 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 GRAPH_API_VERSION = 'v21.0'
-GRAPH_API_BASE_URL = f'https://graph.facebook.com/{GRAPH_API_VERSION}'
+FACEBOOK_GRAPH_URL = f'https://graph.facebook.com/{GRAPH_API_VERSION}'
+INSTAGRAM_GRAPH_URL = f'https://graph.instagram.com/{GRAPH_API_VERSION}'
 
 
 class InstagramAPIService:
@@ -21,6 +22,13 @@ class InstagramAPIService:
         self.account = account
         self.access_token = account.access_token if account else None
         self.instagram_account_id = account.instagram_account_id if account else None
+        
+        # Detect token type and set appropriate base URL
+        # IGAA tokens use graph.instagram.com, EAAF tokens use graph.facebook.com
+        if self.access_token and self.access_token.startswith('IGAA'):
+            self.base_url = INSTAGRAM_GRAPH_URL
+        else:
+            self.base_url = FACEBOOK_GRAPH_URL
     
     def _make_request(
         self, 
@@ -28,10 +36,13 @@ class InstagramAPIService:
         endpoint: str, 
         params: Optional[Dict] = None,
         json_data: Optional[Dict] = None,
-        timeout: int = 30
+        timeout: int = 30,
+        use_facebook_api: bool = False
     ) -> Dict[str, Any]:
         """Make a request to the Graph API."""
-        url = f"{GRAPH_API_BASE_URL}/{endpoint}"
+        # Some endpoints only work on Facebook Graph API
+        base = FACEBOOK_GRAPH_URL if use_facebook_api else self.base_url
+        url = f"{base}/{endpoint}"
         
         if params is None:
             params = {}
