@@ -221,6 +221,34 @@ class EmailAutomationService:
             context=extra_context
         )
     
+    def on_order_received(
+        self,
+        store_id: str,
+        email: str,
+        name: str = '',
+        order_number: str = '',
+        order_total: float = 0,
+        payment_method: str = '',
+        **extra_context
+    ) -> Dict[str, Any]:
+        """
+        Trigger email when order is RECEIVED (created, awaiting payment).
+        This is sent BEFORE payment confirmation.
+        """
+        return self.trigger(
+            store_id=store_id,
+            trigger_type='order_received',
+            recipient_email=email,
+            recipient_name=name,
+            context={
+                'order_number': order_number,
+                'order_total': f'{order_total:.2f}',
+                'payment_method': payment_method,
+                'status_message': 'Aguardando pagamento',
+                **extra_context
+            }
+        )
+    
     def on_order_confirmed(
         self,
         store_id: str,
@@ -230,7 +258,10 @@ class EmailAutomationService:
         order_total: float = 0,
         **extra_context
     ) -> Dict[str, Any]:
-        """Trigger email for order confirmation."""
+        """
+        Trigger email for order confirmation (AFTER payment confirmed).
+        This should only be called after webhook confirms payment.
+        """
         return self.trigger(
             store_id=store_id,
             trigger_type='order_confirmed',
@@ -239,6 +270,7 @@ class EmailAutomationService:
             context={
                 'order_number': order_number,
                 'order_total': f'{order_total:.2f}',
+                'status_message': 'Pagamento confirmado! Pedido em produção.',
                 **extra_context
             }
         )
