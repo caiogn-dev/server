@@ -54,7 +54,8 @@ class InstagramAccountCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating Instagram accounts."""
     
     access_token = serializers.CharField(write_only=True)
-    app_secret = serializers.CharField(write_only=True)
+    app_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    facebook_page_id = serializers.CharField(required=False, allow_blank=True)
     
     class Meta:
         model = InstagramAccount
@@ -74,11 +75,11 @@ class InstagramAccountCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         access_token = validated_data.pop('access_token')
-        app_secret = validated_data.pop('app_secret')
+        app_secret = validated_data.pop('app_secret', '')
         
         account = InstagramAccount(**validated_data)
         account.access_token = access_token
-        account.app_secret = app_secret
+        account.app_secret = app_secret or ''
         account.status = InstagramAccount.AccountStatus.ACTIVE
         account.save()
         
