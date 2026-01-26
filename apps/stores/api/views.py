@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Q
+from django.utils import timezone
 
 
 def filter_by_store(queryset, store_param):
@@ -503,8 +504,6 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
         """Mark order as paid (manual payment confirmation for cash, transfer, etc)."""
-        from apps.stores.services.checkout_service import trigger_order_email_automation
-        
         order = self.get_object()
         
         # Update payment status
@@ -518,17 +517,27 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         
         order.save(update_fields=['payment_status', 'payment_reference', 'paid_at', 'status', 'updated_at'])
         
-        webhook_service.trigger_webhooks(order.store, 'order.paid', {
-            'order_id': str(order.id),
-            'order_number': order.order_number,
-            'total': float(order.total),
-            'payment_status': order.payment_status,
-            'status': order.status
-        })
+        # Trigger webhooks (non-blocking)
+        try:
+            webhook_service.trigger_webhooks(order.store, 'order.paid', {
+                'order_id': str(order.id),
+                'order_number': order.order_number,
+                'total': float(order.total),
+                'payment_status': order.payment_status,
+                'status': order.status
+            })
+        except Exception as e:
+            logger.error(f"Failed to trigger webhooks for order {order.order_number}: {e}")
         
-        # Trigger payment confirmed email automation
-        trigger_order_email_automation(order, 'payment_confirmed')
+        # Trigger payment confirmed email automation (non-blocking)
+        try:
+            from apps.stores.services.checkout_service import trigger_order_email_automation
+            trigger_order_email_automation(order, 'payment_confirmed')
+        except Exception as e:
+            logger.error(f"Failed to trigger email automation for order {order.order_number}: {e}")
         
+        # Refresh from database to ensure we have latest data
+        order.refresh_from_db()
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'])
