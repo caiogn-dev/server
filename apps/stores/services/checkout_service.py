@@ -368,8 +368,10 @@ class CheckoutService:
         
         logger.info(f"Order {order.order_number} created for store {store.slug}")
         
-        # Trigger order confirmation email automation
-        trigger_order_email_automation(order, 'order_confirmed')
+        # Trigger order received email automation (NOT confirmed - payment pending)
+        # The 'order_confirmed' / 'payment_confirmed' email will ONLY be sent
+        # after payment is confirmed via webhook
+        trigger_order_email_automation(order, 'order_received')
         
         return order
     

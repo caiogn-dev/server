@@ -310,14 +310,16 @@ class EmailAutomation(models.Model):
         NEW_USER = 'new_user', 'Novo Usuário'
         WELCOME = 'welcome', 'Boas-vindas'
         
-        # Order lifecycle
-        ORDER_CONFIRMED = 'order_confirmed', 'Pedido Confirmado'
+        # Order lifecycle - NEW SEMANTIC FLOW
+        ORDER_RECEIVED = 'order_received', 'Pedido Recebido'  # NEW: When order is created (awaiting payment)
+        ORDER_CONFIRMED = 'order_confirmed', 'Pedido Confirmado'  # After payment confirmed
         ORDER_PREPARING = 'order_preparing', 'Pedido em Preparo'
         ORDER_SHIPPED = 'order_shipped', 'Pedido Enviado'
         ORDER_DELIVERED = 'order_delivered', 'Pedido Entregue'
         ORDER_CANCELLED = 'order_cancelled', 'Pedido Cancelado'
         
         # Payment
+        PAYMENT_PENDING = 'payment_pending', 'Pagamento Pendente'  # NEW: PIX/card awaiting
         PAYMENT_CONFIRMED = 'payment_confirmed', 'Pagamento Confirmado'
         PAYMENT_FAILED = 'payment_failed', 'Pagamento Falhou'
         
