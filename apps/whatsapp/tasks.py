@@ -55,30 +55,36 @@ def send_message_async(account_id: str, to_number: str, message_type: str, conte
     from .services.message_service import MessageService
     
     try:
-        account = WhatsAppAccount.objects.get(id=account_id)
-        service = MessageService(account)
+        # Verify account exists
+        WhatsAppAccount.objects.get(id=account_id)
+        service = MessageService()
         
         if message_type == 'text':
-            result = service.send_text(to_number, content.get('text', ''))
+            result = service.send_text_message(
+                account_id=account_id,
+                to=to_number,
+                text=content.get('text', '')
+            )
         elif message_type == 'template':
-            result = service.send_template(
-                to_number,
-                content.get('template_name'),
-                content.get('language', 'pt_BR'),
-                content.get('components', [])
+            result = service.send_template_message(
+                account_id=account_id,
+                to=to_number,
+                template_name=content.get('template_name'),
+                language_code=content.get('language', 'pt_BR'),
+                components=content.get('components', [])
             )
         else:
             logger.error(f"Unknown message type: {message_type}")
             return None
             
         logger.info(f"Message sent to {to_number}: {result}")
-        return result
+        return {'message_id': str(result.id), 'whatsapp_message_id': result.whatsapp_message_id}
         
     except WhatsAppAccount.DoesNotExist:
         logger.error(f"WhatsApp account not found: {account_id}")
         return None
     except Exception as e:
-        logger.error(f"Error sending message: {e}")
+        logger.error(f"Error sending message: {e}", exc_info=True)
         raise
 
 
@@ -232,10 +238,12 @@ def send_campaign_message(
             logger.info(f"Recipient {recipient_id} already processed")
             return {'status': 'skipped', 'reason': 'already_processed'}
         
-        service = MessageService(account)
+        # MessageService is instantiated without arguments
+        service = MessageService()
         
         if message_type == 'template' and campaign.template:
-            message = service.send_template(
+            message = service.send_template_message(
+                account_id=account_id,
                 to=recipient.phone_number,
                 template_name=campaign.template.name,
                 language_code=campaign.template.language,
@@ -243,7 +251,11 @@ def send_campaign_message(
             )
         else:
             text = content.get('text', '') if content else ''
-            message = service.send_text(recipient.phone_number, text)
+            message = service.send_text_message(
+                account_id=account_id,
+                to=recipient.phone_number,
+                text=text
+            )
         
         # Update recipient status
         recipient.message_id = str(message.id)
@@ -271,7 +283,7 @@ def send_campaign_message(
         logger.error(f"Recipient not found: {recipient_id}")
         return {'status': 'error', 'reason': 'recipient_not_found'}
     except Exception as e:
-        logger.error(f"Error sending campaign message: {e}")
+        logger.error(f"Error sending campaign message: {e}", exc_info=True)
         
         # Update recipient as failed
         try:
