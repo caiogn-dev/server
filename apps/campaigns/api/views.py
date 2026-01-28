@@ -6,8 +6,10 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from django.db.models import Max
 
 from ..models import Campaign, CampaignRecipient, ScheduledMessage, ContactList
 from ..services import CampaignService, SchedulerService
@@ -24,6 +26,150 @@ from .serializers import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SystemContactsView(APIView):
+    """
+    Get contacts from the system (conversations, orders, subscribers).
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Get system contacts",
+        description="Fetch contacts from conversations, orders, and subscribers",
+        parameters=[
+            {
+                'name': 'account_id',
+                'in': 'query',
+                'description': 'WhatsApp account ID to filter contacts',
+                'required': False,
+                'schema': {'type': 'string'}
+            },
+            {
+                'name': 'source',
+                'in': 'query',
+                'description': 'Source filter: all, conversations, orders, subscribers',
+                'required': False,
+                'schema': {'type': 'string', 'default': 'all'}
+            },
+            {
+                'name': 'limit',
+                'in': 'query',
+                'description': 'Maximum number of contacts to return',
+                'required': False,
+                'schema': {'type': 'integer', 'default': 100}
+            }
+        ]
+    )
+    def get(self, request):
+        account_id = request.query_params.get('account_id')
+        source = request.query_params.get('source', 'all')
+        limit = int(request.query_params.get('limit', 100))
+        
+        contacts = {}  # Use dict to deduplicate by phone
+        
+        # Get contacts from conversations
+        if source in ['all', 'conversations']:
+            try:
+                from apps.conversations.models import Conversation
+                conv_qs = Conversation.objects.all()
+                if account_id:
+                    conv_qs = conv_qs.filter(account_id=account_id)
+                
+                conversations = conv_qs.values(
+                    'phone_number', 'contact_name'
+                ).annotate(
+                    last_activity=Max('updated_at')
+                ).order_by('-last_activity')[:limit]
+                
+                for conv in conversations:
+                    phone = conv['phone_number']
+                    if phone and phone not in contacts:
+                        contacts[phone] = {
+                            'phone': phone,
+                            'name': conv['contact_name'] or '',
+                            'source': 'conversation'
+                        }
+            except Exception as e:
+                logger.warning(f"Error fetching conversations: {e}")
+        
+        # Get contacts from orders
+        if source in ['all', 'orders']:
+            try:
+                from apps.orders.models import Order
+                orders = Order.objects.values(
+                    'customer_phone', 'customer_name'
+                ).annotate(
+                    last_order=Max('created_at')
+                ).order_by('-last_order')[:limit]
+                
+                for order in orders:
+                    phone = order['customer_phone']
+                    if phone and phone not in contacts:
+                        contacts[phone] = {
+                            'phone': phone,
+                            'name': order['customer_name'] or '',
+                            'source': 'order'
+                        }
+            except Exception as e:
+                logger.warning(f"Error fetching orders: {e}")
+        
+        # Get contacts from marketing subscribers
+        if source in ['all', 'subscribers']:
+            try:
+                from apps.marketing.models import Subscriber
+                subscribers = Subscriber.objects.filter(
+                    phone__isnull=False
+                ).exclude(
+                    phone=''
+                ).values(
+                    'phone', 'name', 'email'
+                ).order_by('-created_at')[:limit]
+                
+                for sub in subscribers:
+                    phone = sub['phone']
+                    if phone and phone not in contacts:
+                        name = sub['name'] or sub['email'] or ''
+                        contacts[phone] = {
+                            'phone': phone,
+                            'name': name,
+                            'source': 'subscriber'
+                        }
+            except Exception as e:
+                logger.warning(f"Error fetching subscribers: {e}")
+        
+        # Get contacts from automation sessions
+        if source in ['all', 'sessions']:
+            try:
+                from apps.automation.models import AutomationSession
+                sessions_qs = AutomationSession.objects.all()
+                if account_id:
+                    sessions_qs = sessions_qs.filter(account_id=account_id)
+                
+                sessions = sessions_qs.values(
+                    'phone_number', 'customer_name'
+                ).annotate(
+                    last_activity=Max('updated_at')
+                ).order_by('-last_activity')[:limit]
+                
+                for session in sessions:
+                    phone = session['phone_number']
+                    if phone and phone not in contacts:
+                        contacts[phone] = {
+                            'phone': phone,
+                            'name': session['customer_name'] or '',
+                            'source': 'session'
+                        }
+            except Exception as e:
+                logger.warning(f"Error fetching sessions: {e}")
+        
+        # Convert to list and limit
+        contact_list = list(contacts.values())[:limit]
+        
+        return Response({
+            'count': len(contact_list),
+            'results': contact_list
+        })
 
 
 @extend_schema_view(
