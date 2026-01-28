@@ -60,6 +60,135 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
         instance.status = WhatsAppAccount.AccountStatus.INACTIVE
         instance.save()
 
+    @extend_schema(summary="Force delete WhatsApp account and all related data")
+    @action(detail=True, methods=['delete'])
+    def force_delete(self, request, pk=None):
+        """
+        Force delete a WhatsApp account and all related data.
+        
+        This will delete:
+        - All messages
+        - All webhook events
+        - All conversations
+        - All campaigns and recipients
+        - All scheduled messages
+        - All automation sessions
+        - All orders
+        - All payments
+        - All langflow integrations
+        - The account itself
+        """
+        from django.db import transaction
+        
+        account = self.get_object()
+        account_id = str(account.id)
+        account_name = account.name
+        
+        deleted_counts = {}
+        
+        try:
+            with transaction.atomic():
+                # Delete messages
+                deleted_counts['messages'] = account.messages.count()
+                account.messages.all().delete()
+                
+                # Delete webhook events
+                deleted_counts['webhook_events'] = account.webhook_events.count()
+                account.webhook_events.all().delete()
+                
+                # Delete templates
+                deleted_counts['templates'] = account.templates.count()
+                account.templates.all().delete()
+                
+                # Delete conversations
+                try:
+                    from apps.conversations.models import Conversation
+                    conversations = Conversation.objects.filter(account=account)
+                    deleted_counts['conversations'] = conversations.count()
+                    conversations.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete conversations: {e}")
+                    deleted_counts['conversations'] = 0
+                
+                # Delete campaigns and related
+                try:
+                    from apps.campaigns.models import Campaign, ScheduledMessage, ContactList
+                    campaigns = Campaign.objects.filter(account=account)
+                    for campaign in campaigns:
+                        campaign.recipients.all().delete()
+                    deleted_counts['campaigns'] = campaigns.count()
+                    campaigns.delete()
+                    
+                    scheduled = ScheduledMessage.objects.filter(account=account)
+                    deleted_counts['scheduled_messages'] = scheduled.count()
+                    scheduled.delete()
+                    
+                    contact_lists = ContactList.objects.filter(account=account)
+                    deleted_counts['contact_lists'] = contact_lists.count()
+                    contact_lists.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete campaigns: {e}")
+                    deleted_counts['campaigns'] = 0
+                
+                # Delete automation sessions
+                try:
+                    from apps.automation.models import AutomationSession
+                    sessions = AutomationSession.objects.filter(account=account)
+                    deleted_counts['automation_sessions'] = sessions.count()
+                    sessions.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete automation sessions: {e}")
+                    deleted_counts['automation_sessions'] = 0
+                
+                # Delete orders
+                try:
+                    from apps.orders.models import Order
+                    orders = Order.objects.filter(account=account)
+                    deleted_counts['orders'] = orders.count()
+                    orders.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete orders: {e}")
+                    deleted_counts['orders'] = 0
+                
+                # Delete payments
+                try:
+                    from apps.payments.models import Payment
+                    payments = Payment.objects.filter(account=account)
+                    deleted_counts['payments'] = payments.count()
+                    payments.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete payments: {e}")
+                    deleted_counts['payments'] = 0
+                
+                # Delete langflow integrations
+                try:
+                    from apps.langflow.models import LangflowIntegration
+                    integrations = LangflowIntegration.objects.filter(account=account)
+                    deleted_counts['langflow_integrations'] = integrations.count()
+                    integrations.delete()
+                except Exception as e:
+                    logger.warning(f"Could not delete langflow integrations: {e}")
+                    deleted_counts['langflow_integrations'] = 0
+                
+                # Finally delete the account
+                account.delete()
+                
+            logger.info(f"Force deleted WhatsApp account {account_name} ({account_id}): {deleted_counts}")
+            
+            return Response({
+                'status': 'deleted',
+                'account_id': account_id,
+                'account_name': account_name,
+                'deleted_counts': deleted_counts
+            })
+            
+        except Exception as e:
+            logger.error(f"Error force deleting account {account_id}: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @extend_schema(summary="Activate WhatsApp account")
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
