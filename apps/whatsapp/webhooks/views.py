@@ -3,6 +3,7 @@ WhatsApp Webhook views.
 """
 import logging
 import json
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -10,9 +11,33 @@ from rest_framework import status
 from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema
 from ..services import WebhookService
-from ..tasks import process_webhook_event
 
 logger = logging.getLogger(__name__)
+
+
+def process_event_sync_or_async(event):
+    """
+    Process webhook event - try async first, fall back to sync.
+    
+    This ensures events are processed even if Celery is not running.
+    """
+    try:
+        # Try to dispatch to Celery
+        from ..tasks import process_webhook_event
+        process_webhook_event.delay(str(event.id))
+        logger.info(f"Event {event.id} dispatched to Celery")
+        return 'async'
+    except Exception as e:
+        # Celery not available, process synchronously
+        logger.warning(f"Celery not available, processing event {event.id} synchronously: {e}")
+        try:
+            service = WebhookService()
+            service.process_event(event)
+            logger.info(f"Event {event.id} processed synchronously")
+            return 'sync'
+        except Exception as sync_error:
+            logger.error(f"Error processing event {event.id} synchronously: {sync_error}", exc_info=True)
+            return 'error'
 
 
 class WhatsAppWebhookView(APIView):
@@ -91,15 +116,19 @@ class WhatsAppWebhookView(APIView):
                     for st in statuses:
                         logger.info(f"  - Status: {st.get('status')} for message {st.get('id')}")
         
+        processed_results = {'async': 0, 'sync': 0, 'error': 0}
+        
         try:
             events = service.process_webhook(payload, headers)
             
-            logger.info(f"Created {len(events)} webhook events, dispatching to Celery...")
+            logger.info(f"Created {len(events)} webhook events, processing...")
             
             for event in events:
-                # Dispatch to Celery for async processing
-                process_webhook_event.delay(str(event.id))
-                logger.info(f"  - Dispatched event {event.id} (type: {event.event_type})")
+                result = process_event_sync_or_async(event)
+                processed_results[result] += 1
+                logger.info(f"  - Event {event.id} (type: {event.event_type}) -> {result}")
+            
+            logger.info(f"Processing complete: {processed_results}")
             
         except Exception as e:
             logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
