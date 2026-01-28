@@ -79,64 +79,77 @@ class WhatsAppWebhookView(APIView):
     )
     def post(self, request):
         """Handle incoming webhook events from Meta."""
-        signature = request.headers.get('X-Hub-Signature-256', '')
-        
-        service = WebhookService()
-        
-        # Log raw payload for debugging
-        logger.info(f"Webhook POST received - Object: {request.data.get('object')}")
-        
-        if not service.validate_signature(request.body, signature):
-            logger.warning("Invalid webhook signature")
-            return Response(
-                {'error': 'Invalid signature'},
-                status=status.HTTP_401_UNAUTHORIZED
-            )
-        
-        payload = request.data
-        headers = dict(request.headers)
-        
-        # Log detailed payload info
-        entries = payload.get('entry', [])
-        for entry in entries:
-            changes = entry.get('changes', [])
-            for change in changes:
-                field = change.get('field')
-                value = change.get('value', {})
-                
-                # Log messages
-                messages = value.get('messages', [])
-                if messages:
-                    logger.info(f"Webhook: Received {len(messages)} message(s)")
-                    for msg in messages:
-                        logger.info(f"  - Message ID: {msg.get('id')}, Type: {msg.get('type')}, From: {msg.get('from')}")
-                
-                # Log statuses
-                statuses = value.get('statuses', [])
-                if statuses:
-                    logger.info(f"Webhook: Received {len(statuses)} status update(s)")
-                    for st in statuses:
-                        logger.info(f"  - Status: {st.get('status')} for message {st.get('id')}")
-        
-        processed_results = {'async': 0, 'sync': 0, 'error': 0}
-        
         try:
-            events = service.process_webhook(payload, headers)
+            signature = request.headers.get('X-Hub-Signature-256', '')
             
-            logger.info(f"Created {len(events)} webhook events, processing...")
+            service = WebhookService()
             
-            for event in events:
-                result = process_event_sync_or_async(event)
-                processed_results[result] += 1
-                logger.info(f"  - Event {event.id} (type: {event.event_type}) -> {result}")
+            # Log raw payload for debugging
+            logger.info(f"Webhook POST received - Object: {request.data.get('object')}")
             
-            logger.info(f"Processing complete: {processed_results}")
+            # Log full payload for debugging
+            import json
+            logger.info(f"Webhook payload: {json.dumps(request.data, indent=2, default=str)[:2000]}")
+            
+            if not service.validate_signature(request.body, signature):
+                logger.warning("Invalid webhook signature")
+                return Response(
+                    {'error': 'Invalid signature'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+            
+            payload = request.data
+            headers = {k: v for k, v in request.headers.items()}
+            
+            # Log detailed payload info
+            entries = payload.get('entry', [])
+            for entry in entries:
+                changes = entry.get('changes', [])
+                for change in changes:
+                    field = change.get('field')
+                    value = change.get('value', {})
+                    metadata = value.get('metadata', {})
+                    
+                    logger.info(f"Webhook change - field: {field}, phone_number_id: {metadata.get('phone_number_id')}")
+                    
+                    # Log messages
+                    messages = value.get('messages', [])
+                    if messages:
+                        logger.info(f"Webhook: Received {len(messages)} message(s)")
+                        for msg in messages:
+                            logger.info(f"  - Message ID: {msg.get('id')}, Type: {msg.get('type')}, From: {msg.get('from')}")
+                    
+                    # Log statuses
+                    statuses = value.get('statuses', [])
+                    if statuses:
+                        logger.info(f"Webhook: Received {len(statuses)} status update(s)")
+                        for st in statuses:
+                            logger.info(f"  - Status: {st.get('status')} for message {st.get('id')}")
+            
+            processed_results = {'async': 0, 'sync': 0, 'error': 0}
+            
+            try:
+                events = service.process_webhook(payload, headers)
+                
+                logger.info(f"Created {len(events)} webhook events, processing...")
+                
+                for event in events:
+                    result = process_event_sync_or_async(event)
+                    processed_results[result] += 1
+                    logger.info(f"  - Event {event.id} (type: {event.event_type}) -> {result}")
+                
+                logger.info(f"Processing complete: {processed_results}")
+                
+            except Exception as e:
+                logger.error(f"Error processing webhook events: {str(e)}", exc_info=True)
+            
+            # Always return 200 to Meta to acknowledge receipt
+            return Response({'status': 'ok'})
             
         except Exception as e:
-            logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
-        
-        # Always return 200 to Meta to acknowledge receipt
-        return Response({'status': 'ok'})
+            logger.error(f"Webhook POST error: {str(e)}", exc_info=True)
+            # Still return 200 to avoid Meta retrying
+            return Response({'status': 'error', 'message': str(e)})
 
 
 class WebhookDebugView(APIView):
