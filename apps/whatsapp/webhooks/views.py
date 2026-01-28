@@ -4,13 +4,15 @@ WhatsApp Webhook views.
 import logging
 import json
 from django.conf import settings
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import status
 from django.http import HttpResponse
 from drf_spectacular.utils import extend_schema
 from ..services import WebhookService
+from ..models import WebhookEvent, Message
 
 logger = logging.getLogger(__name__)
 
@@ -135,3 +137,63 @@ class WhatsAppWebhookView(APIView):
         
         # Always return 200 to Meta to acknowledge receipt
         return Response({'status': 'ok'})
+
+
+class WebhookDebugView(APIView):
+    """Debug endpoint to check webhook status."""
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Debug webhook status",
+        description="Check recent webhook events and messages",
+        responses={200: dict}
+    )
+    def get(self, request):
+        """Get debug info about webhooks."""
+        # Get recent webhook events
+        recent_events = WebhookEvent.objects.order_by('-created_at')[:20]
+        events_data = [
+            {
+                'id': str(e.id),
+                'event_type': e.event_type,
+                'processing_status': e.processing_status,
+                'created_at': e.created_at.isoformat(),
+                'error_message': e.error_message[:100] if e.error_message else None,
+            }
+            for e in recent_events
+        ]
+        
+        # Get recent inbound messages
+        recent_inbound = Message.objects.filter(
+            direction='inbound'
+        ).order_by('-created_at')[:10]
+        inbound_data = [
+            {
+                'id': str(m.id),
+                'from_number': m.from_number,
+                'text_body': m.text_body[:50] if m.text_body else None,
+                'message_type': m.message_type,
+                'created_at': m.created_at.isoformat(),
+            }
+            for m in recent_inbound
+        ]
+        
+        # Get stats
+        total_events = WebhookEvent.objects.count()
+        pending_events = WebhookEvent.objects.filter(processing_status='pending').count()
+        failed_events = WebhookEvent.objects.filter(processing_status='failed').count()
+        total_inbound = Message.objects.filter(direction='inbound').count()
+        total_outbound = Message.objects.filter(direction='outbound').count()
+        
+        return Response({
+            'stats': {
+                'total_webhook_events': total_events,
+                'pending_events': pending_events,
+                'failed_events': failed_events,
+                'total_inbound_messages': total_inbound,
+                'total_outbound_messages': total_outbound,
+            },
+            'recent_events': events_data,
+            'recent_inbound_messages': inbound_data,
+            'server_time': timezone.now().isoformat(),
+        })
