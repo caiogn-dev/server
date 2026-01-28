@@ -7,10 +7,12 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from django.conf import settings
 from django.utils import timezone
+from django.db import transaction
 from apps.core.utils import verify_webhook_signature, generate_idempotency_key
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
 from ..repositories import WebhookEventRepository, WhatsAppAccountRepository
+from .broadcast_service import get_broadcast_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,7 @@ class WebhookService:
     def __init__(self):
         self.webhook_repo = WebhookEventRepository()
         self.account_repo = WhatsAppAccountRepository()
+        self.broadcast = get_broadcast_service()
 
     def verify_webhook(self, mode: str, token: str, challenge: str) -> str:
         """Verify webhook subscription."""
@@ -234,3 +237,366 @@ class WebhookService:
         deleted = self.webhook_repo.cleanup_old_events(days)
         logger.info(f"Cleaned up {deleted} old webhook events")
         return deleted
+
+    @transaction.atomic
+    def process_event(self, event: WebhookEvent) -> Optional[Message]:
+        """
+        Process a webhook event and broadcast updates.
+        
+        This is called by the Celery task after the event is saved.
+        It handles:
+        - MESSAGE events: Create/update Message record, broadcast to clients
+        - STATUS events: Update message status, broadcast to clients
+        - ERROR events: Log error, broadcast to clients
+        
+        Args:
+            event: WebhookEvent to process
+            
+        Returns:
+            Message object if a message was created/updated, None otherwise
+        """
+        try:
+            self.mark_event_processing(event)
+            
+            if event.event_type == WebhookEvent.EventType.MESSAGE:
+                message = self._process_inbound_message(event)
+                self.mark_event_completed(event)
+                return message
+            
+            elif event.event_type == WebhookEvent.EventType.STATUS:
+                message = self._process_status_update(event)
+                self.mark_event_completed(event)
+                return message
+            
+            elif event.event_type == WebhookEvent.EventType.ERROR:
+                self._process_error(event)
+                self.mark_event_completed(event)
+                return None
+            
+            else:
+                logger.warning(f"Unknown event type: {event.event_type}")
+                self.mark_event_completed(event)
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error processing event {event.id}: {e}", exc_info=True)
+            self.mark_event_failed(event, str(e))
+            raise
+
+    def _process_inbound_message(self, event: WebhookEvent) -> Optional[Message]:
+        """Process an inbound message event."""
+        payload = event.payload
+        message_data = payload.get('message', {})
+        contact_data = payload.get('contact', {})
+        
+        if not message_data:
+            logger.warning(f"No message data in event {event.id}")
+            return None
+        
+        # Extract message details
+        whatsapp_message_id = message_data.get('id')
+        from_number = message_data.get('from')
+        timestamp = message_data.get('timestamp')
+        message_type = message_data.get('type', 'unknown')
+        
+        # Check for duplicate message
+        existing = Message.objects.filter(whatsapp_message_id=whatsapp_message_id).first()
+        if existing:
+            logger.info(f"Duplicate message ignored: {whatsapp_message_id}")
+            return existing
+        
+        # Extract text content based on message type
+        text_body = ''
+        content = {}
+        media_id = ''
+        media_url = ''
+        media_mime_type = ''
+        
+        if message_type == 'text':
+            text_body = message_data.get('text', {}).get('body', '')
+            content = {'text': text_body}
+        elif message_type in ['image', 'video', 'audio', 'document', 'sticker']:
+            media_data = message_data.get(message_type, {})
+            media_id = media_data.get('id', '')
+            media_mime_type = media_data.get('mime_type', '')
+            text_body = media_data.get('caption', '')
+            content = {message_type: media_data}
+        elif message_type == 'location':
+            location = message_data.get('location', {})
+            content = {'location': location}
+            text_body = f"📍 {location.get('name', 'Location')}"
+        elif message_type == 'contacts':
+            contacts = message_data.get('contacts', [])
+            content = {'contacts': contacts}
+            text_body = f"👤 {len(contacts)} contact(s)"
+        elif message_type == 'interactive':
+            interactive = message_data.get('interactive', {})
+            content = {'interactive': interactive}
+            # Extract button/list reply
+            if 'button_reply' in interactive:
+                text_body = interactive['button_reply'].get('title', '')
+            elif 'list_reply' in interactive:
+                text_body = interactive['list_reply'].get('title', '')
+        elif message_type == 'button':
+            button = message_data.get('button', {})
+            text_body = button.get('text', '')
+            content = {'button': button}
+        elif message_type == 'reaction':
+            reaction = message_data.get('reaction', {})
+            content = {'reaction': reaction}
+            text_body = reaction.get('emoji', '👍')
+        elif message_type == 'order':
+            order = message_data.get('order', {})
+            content = {'order': order}
+            text_body = f"🛒 Order with {len(order.get('product_items', []))} item(s)"
+        else:
+            content = message_data
+        
+        # Get or create conversation
+        conversation = self._get_or_create_conversation(
+            account=event.account,
+            phone_number=from_number,
+            contact_name=contact_data.get('profile', {}).get('name', '')
+        )
+        
+        # Create message
+        message = Message.objects.create(
+            account=event.account,
+            conversation=conversation,
+            whatsapp_message_id=whatsapp_message_id,
+            direction=Message.MessageDirection.INBOUND,
+            message_type=self._map_message_type(message_type),
+            status=Message.MessageStatus.DELIVERED,
+            from_number=from_number,
+            to_number=event.account.phone_number,
+            content=content,
+            text_body=text_body,
+            media_id=media_id,
+            media_mime_type=media_mime_type,
+            context_message_id=message_data.get('context', {}).get('id', ''),
+            delivered_at=timezone.now(),
+            metadata={
+                'timestamp': timestamp,
+                'contact': contact_data
+            }
+        )
+        
+        # Link event to message
+        event.related_message = message
+        event.save(update_fields=['related_message'])
+        
+        # Update conversation
+        conversation.last_message_at = timezone.now()
+        conversation.last_customer_message_at = timezone.now()
+        conversation.save(update_fields=['last_message_at', 'last_customer_message_at', 'updated_at'])
+        
+        # Broadcast to connected clients
+        self._broadcast_new_message(event.account, message, conversation, contact_data)
+        
+        logger.info(f"Processed inbound message: {message.id} from {from_number}")
+        return message
+
+    def _process_status_update(self, event: WebhookEvent) -> Optional[Message]:
+        """Process a message status update event."""
+        payload = event.payload
+        
+        whatsapp_message_id = payload.get('id')
+        status = payload.get('status')
+        timestamp = payload.get('timestamp')
+        recipient_id = payload.get('recipient_id')
+        
+        if not whatsapp_message_id or not status:
+            logger.warning(f"Invalid status update in event {event.id}")
+            return None
+        
+        # Find the message
+        message = Message.objects.filter(whatsapp_message_id=whatsapp_message_id).first()
+        
+        if not message:
+            logger.warning(f"Message not found for status update: {whatsapp_message_id}")
+            return None
+        
+        # Map Meta status to our status
+        status_map = {
+            'sent': Message.MessageStatus.SENT,
+            'delivered': Message.MessageStatus.DELIVERED,
+            'read': Message.MessageStatus.READ,
+            'failed': Message.MessageStatus.FAILED,
+        }
+        
+        new_status = status_map.get(status)
+        if not new_status:
+            logger.warning(f"Unknown status: {status}")
+            return message
+        
+        # Only update if status is "higher" (sent < delivered < read)
+        status_order = ['pending', 'sent', 'delivered', 'read', 'failed']
+        current_idx = status_order.index(message.status) if message.status in status_order else 0
+        new_idx = status_order.index(new_status) if new_status in status_order else 0
+        
+        if new_idx <= current_idx and new_status != 'failed':
+            logger.debug(f"Ignoring status update {status} for message {message.id} (current: {message.status})")
+            return message
+        
+        # Update message status
+        message.status = new_status
+        update_fields = ['status', 'updated_at']
+        
+        # Set timestamp fields
+        status_time = timezone.now()
+        if timestamp:
+            try:
+                status_time = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+            except (ValueError, TypeError):
+                pass
+        
+        if new_status == Message.MessageStatus.SENT:
+            message.sent_at = status_time
+            update_fields.append('sent_at')
+        elif new_status == Message.MessageStatus.DELIVERED:
+            message.delivered_at = status_time
+            update_fields.append('delivered_at')
+        elif new_status == Message.MessageStatus.READ:
+            message.read_at = status_time
+            update_fields.append('read_at')
+        elif new_status == Message.MessageStatus.FAILED:
+            message.failed_at = status_time
+            update_fields.append('failed_at')
+            # Extract error info if available
+            errors = payload.get('errors', [])
+            if errors:
+                message.error_code = str(errors[0].get('code', ''))
+                message.error_message = errors[0].get('title', '')
+                update_fields.extend(['error_code', 'error_message'])
+        
+        message.save(update_fields=update_fields)
+        
+        # Link event to message
+        event.related_message = message
+        event.save(update_fields=['related_message'])
+        
+        # Broadcast status update
+        self.broadcast.broadcast_status_update(
+            account_id=str(event.account.id),
+            message_id=str(message.id),
+            status=new_status,
+            whatsapp_message_id=whatsapp_message_id,
+            timestamp=status_time
+        )
+        
+        logger.info(f"Updated message {message.id} status to {new_status}")
+        return message
+
+    def _process_error(self, event: WebhookEvent) -> None:
+        """Process an error event."""
+        payload = event.payload
+        
+        error_code = str(payload.get('code', ''))
+        error_title = payload.get('title', 'Unknown error')
+        error_message = payload.get('message', '')
+        error_details = payload.get('error_data', {})
+        
+        logger.error(f"WhatsApp API error: {error_code} - {error_title}: {error_message}")
+        
+        # Broadcast error to clients
+        self.broadcast.broadcast_error(
+            account_id=str(event.account.id),
+            error_code=error_code,
+            error_message=f"{error_title}: {error_message}" if error_message else error_title
+        )
+
+    def _get_or_create_conversation(
+        self,
+        account: WhatsAppAccount,
+        phone_number: str,
+        contact_name: str = ''
+    ):
+        """Get or create a conversation for a phone number."""
+        from apps.conversations.models import Conversation
+        
+        conversation, created = Conversation.objects.get_or_create(
+            account=account,
+            phone_number=phone_number,
+            defaults={
+                'contact_name': contact_name,
+                'status': Conversation.ConversationStatus.OPEN,
+                'mode': Conversation.ConversationMode.AUTO
+            }
+        )
+        
+        if created:
+            logger.info(f"Created new conversation with {phone_number}")
+            # Broadcast new conversation
+            self.broadcast.broadcast_conversation_update(
+                account_id=str(account.id),
+                conversation={
+                    'id': str(conversation.id),
+                    'phone_number': phone_number,
+                    'contact_name': contact_name,
+                    'status': conversation.status,
+                    'mode': conversation.mode,
+                    'created_at': conversation.created_at.isoformat()
+                }
+            )
+        elif contact_name and not conversation.contact_name:
+            # Update contact name if we didn't have it
+            conversation.contact_name = contact_name
+            conversation.save(update_fields=['contact_name', 'updated_at'])
+        
+        return conversation
+
+    def _broadcast_new_message(
+        self,
+        account: WhatsAppAccount,
+        message: Message,
+        conversation,
+        contact_data: Dict[str, Any]
+    ) -> None:
+        """Broadcast a new message to connected clients."""
+        message_dict = {
+            'id': str(message.id),
+            'whatsapp_message_id': message.whatsapp_message_id,
+            'direction': message.direction,
+            'message_type': message.message_type,
+            'status': message.status,
+            'from_number': message.from_number,
+            'to_number': message.to_number,
+            'text_body': message.text_body,
+            'content': message.content,
+            'media_id': message.media_id,
+            'media_url': message.media_url,
+            'created_at': message.created_at.isoformat(),
+            'delivered_at': message.delivered_at.isoformat() if message.delivered_at else None,
+        }
+        
+        contact_dict = {
+            'wa_id': contact_data.get('wa_id', message.from_number),
+            'name': contact_data.get('profile', {}).get('name', ''),
+        }
+        
+        self.broadcast.broadcast_new_message(
+            account_id=str(account.id),
+            message=message_dict,
+            conversation_id=str(conversation.id) if conversation else None,
+            contact=contact_dict
+        )
+
+    def _map_message_type(self, meta_type: str) -> str:
+        """Map Meta message type to our MessageType."""
+        type_map = {
+            'text': Message.MessageType.TEXT,
+            'image': Message.MessageType.IMAGE,
+            'video': Message.MessageType.VIDEO,
+            'audio': Message.MessageType.AUDIO,
+            'document': Message.MessageType.DOCUMENT,
+            'sticker': Message.MessageType.STICKER,
+            'location': Message.MessageType.LOCATION,
+            'contacts': Message.MessageType.CONTACTS,
+            'interactive': Message.MessageType.INTERACTIVE,
+            'template': Message.MessageType.TEMPLATE,
+            'reaction': Message.MessageType.REACTION,
+            'button': Message.MessageType.BUTTON,
+            'order': Message.MessageType.ORDER,
+            'system': Message.MessageType.SYSTEM,
+        }
+        return type_map.get(meta_type, Message.MessageType.UNKNOWN)
