@@ -55,10 +55,14 @@ urlpatterns = [
     ])),
 
     # Webhooks (public endpoints)
+    # IMPORTANT: Meta's WhatsApp API sends webhooks WITHOUT trailing slash
+    # We need to handle both /webhooks/whatsapp and /webhooks/whatsapp/
     path('webhooks/', include([
         path('whatsapp/', include('apps.whatsapp.webhooks.urls')),
         path('payments/', include('apps.payments.webhooks.urls')),
         path('payments/mercadopago/', include('apps.stores.webhooks_urls')),
         path('automation/', include('apps.automation.webhooks.urls')),
     ])),
+    # Handle webhook without trailing slash (Meta sends POST to /webhooks/whatsapp)
+    path('webhooks/whatsapp', include('apps.whatsapp.webhooks.urls')),
 ]
