@@ -515,8 +515,12 @@ class MessageService:
         metadata: Dict = None
     ) -> Message:
         """Create an outbound message record."""
-        return self.message_repo.create(
+        # Get or create conversation for this contact
+        conversation = self._get_or_create_conversation(account, to)
+        
+        message = self.message_repo.create(
             account=account,
+            conversation=conversation,
             whatsapp_message_id=f"pending_{uuid.uuid4().hex}",
             direction=Message.MessageDirection.OUTBOUND,
             message_type=message_type,
@@ -532,6 +536,31 @@ class MessageService:
             context_message_id=context_message_id,
             metadata=metadata or {}
         )
+        
+        # Update conversation last message time
+        conversation.last_message_at = timezone.now()
+        conversation.last_agent_message_at = timezone.now()
+        conversation.save(update_fields=['last_message_at', 'last_agent_message_at', 'updated_at'])
+        
+        return message
+    
+    def _get_or_create_conversation(self, account: WhatsAppAccount, phone_number: str):
+        """Get or create a conversation for a phone number."""
+        from apps.conversations.models import Conversation
+        
+        conversation, created = Conversation.objects.get_or_create(
+            account=account,
+            phone_number=phone_number,
+            defaults={
+                'status': Conversation.ConversationStatus.OPEN,
+                'mode': Conversation.ConversationMode.AUTO
+            }
+        )
+        
+        if created:
+            logger.info(f"Created new conversation with {phone_number}")
+        
+        return conversation
 
     def _update_message_sent(self, message: Message, response: Dict) -> None:
         """Update message after successful send."""
