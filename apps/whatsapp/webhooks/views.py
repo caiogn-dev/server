@@ -2,6 +2,7 @@
 WhatsApp Webhook views.
 """
 import logging
+import json
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -55,6 +56,9 @@ class WhatsAppWebhookView(APIView):
         
         service = WebhookService()
         
+        # Log raw payload for debugging
+        logger.info(f"Webhook POST received - Object: {request.data.get('object')}")
+        
         if not service.validate_signature(request.body, signature):
             logger.warning("Invalid webhook signature")
             return Response(
@@ -65,17 +69,40 @@ class WhatsAppWebhookView(APIView):
         payload = request.data
         headers = dict(request.headers)
         
-        logger.info(f"Webhook received: {payload.get('object')}")
+        # Log detailed payload info
+        entries = payload.get('entry', [])
+        for entry in entries:
+            changes = entry.get('changes', [])
+            for change in changes:
+                field = change.get('field')
+                value = change.get('value', {})
+                
+                # Log messages
+                messages = value.get('messages', [])
+                if messages:
+                    logger.info(f"Webhook: Received {len(messages)} message(s)")
+                    for msg in messages:
+                        logger.info(f"  - Message ID: {msg.get('id')}, Type: {msg.get('type')}, From: {msg.get('from')}")
+                
+                # Log statuses
+                statuses = value.get('statuses', [])
+                if statuses:
+                    logger.info(f"Webhook: Received {len(statuses)} status update(s)")
+                    for st in statuses:
+                        logger.info(f"  - Status: {st.get('status')} for message {st.get('id')}")
         
         try:
             events = service.process_webhook(payload, headers)
             
-            for event in events:
-                process_webhook_event.delay(str(event.id))
+            logger.info(f"Created {len(events)} webhook events, dispatching to Celery...")
             
-            logger.info(f"Processed {len(events)} webhook events")
+            for event in events:
+                # Dispatch to Celery for async processing
+                process_webhook_event.delay(str(event.id))
+                logger.info(f"  - Dispatched event {event.id} (type: {event.event_type})")
             
         except Exception as e:
-            logger.error(f"Error processing webhook: {str(e)}")
+            logger.error(f"Error processing webhook: {str(e)}", exc_info=True)
         
+        # Always return 200 to Meta to acknowledge receipt
         return Response({'status': 'ok'})
