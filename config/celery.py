@@ -19,16 +19,27 @@ app.conf.task_routes = {
     'apps.payments.tasks.*': {'queue': 'payments'},
     'apps.langflow.tasks.*': {'queue': 'langflow'},
     'apps.automation.tasks.*': {'queue': 'automation'},
+    'apps.campaigns.tasks.*': {'queue': 'campaigns'},
 }
 
 app.conf.beat_schedule = {
     'cleanup-old-webhook-events': {
         'task': 'apps.whatsapp.tasks.cleanup_old_webhook_events',
-        'schedule': 3600.0,
+        'schedule': 3600.0,  # Every hour
     },
     'sync-message-statuses': {
         'task': 'apps.whatsapp.tasks.sync_message_statuses',
-        'schedule': 300.0,
+        'schedule': 300.0,  # Every 5 minutes
+    },
+    # Process pending webhook events (fallback for missed events)
+    'process-pending-webhook-events': {
+        'task': 'apps.whatsapp.tasks.process_pending_webhook_events',
+        'schedule': 30.0,  # Every 30 seconds
+    },
+    # Retry failed webhook events
+    'retry-failed-webhook-events': {
+        'task': 'apps.whatsapp.tasks.retry_failed_webhook_events',
+        'schedule': 300.0,  # Every 5 minutes
     },
     'check-pending-orders': {
         'task': 'apps.orders.tasks.check_pending_orders',
@@ -69,6 +80,15 @@ app.conf.beat_schedule = {
     # Process scheduled email automations
     'process-scheduled-email-automations': {
         'task': 'apps.marketing.tasks.process_scheduled_automations',
+        'schedule': 60.0,  # Every minute
+    },
+    # Campaign tasks
+    'check-scheduled-campaigns': {
+        'task': 'apps.campaigns.tasks.check_scheduled_campaigns',
+        'schedule': 60.0,  # Every minute
+    },
+    'process-campaign-scheduled-messages': {
+        'task': 'apps.campaigns.tasks.process_scheduled_messages',
         'schedule': 60.0,  # Every minute
     },
 }
