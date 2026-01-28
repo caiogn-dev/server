@@ -2,6 +2,7 @@
 Campaign API views.
 """
 import logging
+import traceback
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -234,9 +235,23 @@ class CampaignViewSet(viewsets.ModelViewSet):
         service = CampaignService()
         try:
             campaign = service.start_campaign(str(pk))
+            logger.info(f"Campaign {pk} started successfully by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
+        except Campaign.DoesNotExist:
+            logger.warning(f"Campaign {pk} not found")
+            return Response(
+                {'error': 'Campanha não encontrada'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except ValueError as e:
+            logger.warning(f"Campaign {pk} start validation failed: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Campaign {pk} start error: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': 'Erro ao iniciar campanha. Verifique se o serviço de filas está ativo.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(summary="Pause campaign")
     @action(detail=True, methods=['post'])
@@ -245,10 +260,16 @@ class CampaignViewSet(viewsets.ModelViewSet):
         service = CampaignService()
         try:
             campaign = service.pause_campaign(str(pk))
+            logger.info(f"Campaign {pk} paused by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
+        except Campaign.DoesNotExist:
+            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
+        except Exception as e:
+            logger.error(f"Campaign {pk} pause error: {e}\n{traceback.format_exc()}")
+            return Response({'error': 'Erro ao pausar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @extend_schema(summary="Resume campaign")
     @action(detail=True, methods=['post'])
     def resume(self, request, pk=None):
@@ -256,10 +277,16 @@ class CampaignViewSet(viewsets.ModelViewSet):
         service = CampaignService()
         try:
             campaign = service.resume_campaign(str(pk))
+            logger.info(f"Campaign {pk} resumed by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
+        except Campaign.DoesNotExist:
+            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
+        except Exception as e:
+            logger.error(f"Campaign {pk} resume error: {e}\n{traceback.format_exc()}")
+            return Response({'error': 'Erro ao retomar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
     @extend_schema(summary="Cancel campaign")
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -267,9 +294,15 @@ class CampaignViewSet(viewsets.ModelViewSet):
         service = CampaignService()
         try:
             campaign = service.cancel_campaign(str(pk))
+            logger.info(f"Campaign {pk} cancelled by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
+        except Campaign.DoesNotExist:
+            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Campaign {pk} cancel error: {e}\n{traceback.format_exc()}")
+            return Response({'error': 'Erro ao cancelar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(summary="Get campaign statistics")
     @action(detail=True, methods=['get'])

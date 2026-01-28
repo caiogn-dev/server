@@ -94,6 +94,8 @@ class CampaignService:
     
     def start_campaign(self, campaign_id: str) -> Campaign:
         """Start a campaign immediately."""
+        from django.conf import settings
+        
         campaign = Campaign.objects.get(id=campaign_id)
         
         if campaign.status not in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
@@ -103,9 +105,20 @@ class CampaignService:
         campaign.started_at = timezone.now()
         campaign.save()
         
-        # Trigger async processing
-        from ..tasks import process_campaign
-        process_campaign.delay(str(campaign.id))
+        # Trigger async processing (with fallback for dev without Celery)
+        try:
+            from ..tasks import process_campaign
+            process_campaign.delay(str(campaign.id))
+            logger.info(f"Campaign {campaign_id} queued for async processing")
+        except Exception as e:
+            logger.warning(f"Celery unavailable for campaign {campaign_id}: {e}")
+            # Fallback: process synchronously in DEBUG mode
+            if getattr(settings, 'DEBUG', False):
+                logger.info(f"Processing campaign {campaign_id} synchronously (DEBUG mode)")
+                self.process_campaign_batch(campaign_id, batch_size=10)
+            else:
+                # In production, re-raise to alert about Celery issues
+                raise
         
         return campaign
     
