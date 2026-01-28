@@ -82,6 +82,10 @@ class WhatsAppWebhookView(APIView):
         try:
             signature = request.headers.get('X-Hub-Signature-256', '')
             
+            # IMPORTANT: Read raw body BEFORE accessing request.data
+            # DRF's request.data consumes the stream, making request.body unavailable
+            raw_body = request.body
+            
             service = WebhookService()
             
             # Log raw payload for debugging
@@ -119,8 +123,8 @@ class WhatsAppWebhookView(APIView):
                         for st in statuses:
                             logger.info(f"  - Status: {st.get('status')} for message {st.get('id')}")
             
-            # Validate signature
-            if not service.validate_signature(request.body, signature):
+            # Validate signature using the raw body we captured earlier
+            if not service.validate_signature(raw_body, signature):
                 logger.warning("Invalid webhook signature - skipping validation in dev mode")
                 # Continue anyway for debugging
             

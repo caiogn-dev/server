@@ -840,6 +840,9 @@ class StoreOrder(BaseModel):
         # Trigger email automation for status changes
         self._trigger_status_email_automation(new_status)
         
+        # Trigger WhatsApp notification for status changes
+        self._trigger_status_whatsapp_notification(new_status)
+        
         return self
     
     def _trigger_status_email_automation(self, new_status: str):
@@ -870,6 +873,145 @@ class StoreOrder(BaseModel):
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Failed to trigger email automation for order {self.order_number}: {e}")
+    
+    def _trigger_status_whatsapp_notification(self, new_status: str):
+        """Trigger WhatsApp notification based on status change."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Only send if customer has phone number
+        if not self.customer_phone:
+            return
+        
+        # Map status to WhatsApp message
+        status_message_map = {
+            self.OrderStatus.CONFIRMED: (
+                "✅ *Pedido Confirmado!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} foi confirmado!\n"
+                "Valor: R$ {total}\n\n"
+                "Estamos preparando seu pedido.\n"
+                "Obrigado por comprar na {store_name}! 🎉"
+            ),
+            self.OrderStatus.PAID: (
+                "💰 *Pagamento Confirmado!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "O pagamento do pedido #{order_number} foi confirmado!\n"
+                "Valor: R$ {total}\n\n"
+                "Seu pedido está sendo preparado. 🎉"
+            ),
+            self.OrderStatus.PREPARING: (
+                "👨‍🍳 *Pedido em Preparo!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} está sendo preparado!\n\n"
+                "Em breve você receberá mais atualizações."
+            ),
+            self.OrderStatus.READY: (
+                "📦 *Pedido Pronto!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} está pronto!\n\n"
+                "Aguardando retirada ou envio."
+            ),
+            self.OrderStatus.SHIPPED: (
+                "🚚 *Pedido Enviado!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} foi enviado!\n\n"
+                "{tracking_info}"
+                "Em breve chegará até você! 📦"
+            ),
+            self.OrderStatus.OUT_FOR_DELIVERY: (
+                "🛵 *Saiu para Entrega!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} saiu para entrega!\n\n"
+                "{tracking_info}"
+                "Fique atento, logo chegará! 🏃"
+            ),
+            self.OrderStatus.DELIVERED: (
+                "📦 *Pedido Entregue!*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} foi entregue!\n\n"
+                "Esperamos que goste! 😊\n"
+                "Qualquer problema, estamos à disposição.\n\n"
+                "Obrigado por comprar na {store_name}! ❤️"
+            ),
+            self.OrderStatus.CANCELLED: (
+                "❌ *Pedido Cancelado*\n\n"
+                "Olá {customer_name}!\n\n"
+                "Seu pedido #{order_number} foi cancelado.\n\n"
+                "Se você não solicitou o cancelamento, entre em contato conosco.\n\n"
+                "Atenciosamente,\n{store_name}"
+            ),
+        }
+        
+        message_template = status_message_map.get(new_status)
+        if not message_template:
+            return
+        
+        # Check if notification was already sent for this status
+        notification_key = f'whatsapp_notification_{new_status}'
+        if self.metadata.get(notification_key):
+            logger.debug(f"WhatsApp notification already sent for order {self.order_number} status {new_status}")
+            return
+        
+        try:
+            # Build tracking info
+            tracking_info = ''
+            if self.tracking_code:
+                tracking_info = f"Código de rastreio: *{self.tracking_code}*\n"
+                if self.tracking_url:
+                    tracking_info += f"Rastrear: {self.tracking_url}\n"
+                if self.carrier:
+                    tracking_info += f"Transportadora: {self.carrier}\n"
+                tracking_info += "\n"
+            
+            # Format message
+            message_text = message_template.format(
+                customer_name=self.customer_name or 'Cliente',
+                order_number=self.order_number,
+                total=f'{self.total:.2f}',
+                store_name=self.store.name,
+                tracking_info=tracking_info,
+            )
+            
+            # Normalize phone number
+            phone = ''.join(filter(str.isdigit, self.customer_phone))
+            if not phone.startswith('55'):
+                phone = '55' + phone
+            
+            # Try to find WhatsApp account and send message
+            from apps.automation.models import CompanyProfile
+            from apps.whatsapp.services import MessageService
+            
+            # Find active WhatsApp account
+            company_profile = CompanyProfile.objects.select_related('account').filter(
+                is_active=True,
+                account__is_active=True
+            ).first()
+            
+            if company_profile and company_profile.account:
+                message_service = MessageService()
+                message_service.send_text_message(
+                    account_id=str(company_profile.account.id),
+                    to=phone,
+                    text=message_text,
+                    metadata={
+                        'source': 'store_order_notification',
+                        'order_id': str(self.id),
+                        'order_number': self.order_number,
+                        'notification_type': new_status,
+                    }
+                )
+                
+                # Mark notification as sent
+                self.metadata[notification_key] = timezone.now().isoformat()
+                self.save(update_fields=['metadata'])
+                
+                logger.info(f"WhatsApp notification sent for order {self.order_number}: {new_status}")
+            else:
+                logger.debug(f"No active WhatsApp account found for order {self.order_number}")
+                
+        except Exception as e:
+            logger.error(f"Failed to send WhatsApp notification for order {self.order_number}: {e}")
     
     def send_status_webhook(self, old_status: str, new_status: str):
         """Send webhook notification for status change."""
