@@ -6,25 +6,58 @@ to avoid duplication. The unified ScheduledMessage model is in apps.automation.m
 """
 from celery import shared_task
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task
-def process_campaign(campaign_id: str):
+@shared_task(bind=True, max_retries=3)
+def process_campaign(self, campaign_id: str):
     """Process a campaign batch."""
     from ..services import CampaignService
+    from ..models import Campaign
     
-    service = CampaignService()
+    logger.info(f"Starting to process campaign {campaign_id}")
     
-    while True:
-        result = service.process_campaign_batch(campaign_id, batch_size=100)
+    try:
+        service = CampaignService()
         
-        if result['remaining'] == 0:
-            logger.info(f"Campaign {campaign_id} completed")
-            break
+        # Verify campaign exists and is running
+        try:
+            campaign = Campaign.objects.get(id=campaign_id)
+            if campaign.status != Campaign.CampaignStatus.RUNNING:
+                logger.warning(f"Campaign {campaign_id} is not running (status: {campaign.status})")
+                return {'status': 'skipped', 'reason': f'Campaign status is {campaign.status}'}
+        except Campaign.DoesNotExist:
+            logger.error(f"Campaign {campaign_id} not found")
+            return {'status': 'error', 'reason': 'Campaign not found'}
         
-        logger.info(f"Campaign {campaign_id}: processed {result['processed']}, remaining {result['remaining']}")
+        total_processed = 0
+        total_failed = 0
+        
+        while True:
+            result = service.process_campaign_batch(campaign_id, batch_size=50)
+            
+            total_processed += result.get('processed', 0)
+            
+            if result['remaining'] == 0:
+                logger.info(f"Campaign {campaign_id} completed. Total processed: {total_processed}")
+                break
+            
+            logger.info(f"Campaign {campaign_id}: processed {result['processed']}, remaining {result['remaining']}")
+            
+            # Small delay between batches to avoid rate limiting
+            time.sleep(1)
+        
+        return {
+            'status': 'completed',
+            'campaign_id': campaign_id,
+            'total_processed': total_processed,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing campaign {campaign_id}: {e}", exc_info=True)
+        raise self.retry(exc=e, countdown=60)
 
 
 @shared_task

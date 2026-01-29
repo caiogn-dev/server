@@ -97,7 +97,7 @@ class CampaignService:
     
     def start_campaign(self, campaign_id: str) -> Campaign:
         """Start a campaign immediately."""
-        from django.conf import settings
+        import time
         
         campaign = Campaign.objects.get(id=campaign_id)
         
@@ -108,6 +108,8 @@ class CampaignService:
         campaign.started_at = timezone.now()
         campaign.save()
         
+        logger.info(f"Campaign {campaign_id} started with {campaign.total_recipients} recipients")
+        
         # Trigger async processing (with fallback if Celery unavailable)
         celery_available = self._check_celery_connection()
         
@@ -115,15 +117,35 @@ class CampaignService:
             try:
                 from ..tasks import process_campaign
                 process_campaign.delay(str(campaign.id))
-                logger.info(f"Campaign {campaign_id} queued for async processing")
+                logger.info(f"Campaign {campaign_id} queued for async processing via Celery")
             except Exception as e:
                 logger.warning(f"Celery task failed for campaign {campaign_id}: {e}")
                 celery_available = False
         
         if not celery_available:
-            # Fallback: process synchronously
+            # Fallback: process synchronously in batches
             logger.info(f"Processing campaign {campaign_id} synchronously (Celery unavailable)")
-            self.process_campaign_batch(campaign_id, batch_size=50)
+            total_processed = 0
+            
+            while True:
+                # Refresh campaign status
+                campaign.refresh_from_db()
+                
+                if campaign.status != Campaign.CampaignStatus.RUNNING:
+                    logger.info(f"Campaign {campaign_id} stopped (status: {campaign.status})")
+                    break
+                
+                result = self.process_campaign_batch(campaign_id, batch_size=50)
+                total_processed += result.get('processed', 0)
+                
+                if result['remaining'] == 0:
+                    logger.info(f"Campaign {campaign_id} completed synchronously. Total: {total_processed}")
+                    break
+                
+                logger.info(f"Campaign {campaign_id}: processed {result['processed']}, remaining {result['remaining']}")
+                
+                # Small delay between batches
+                time.sleep(0.5)
         
         return campaign
     
@@ -255,18 +277,35 @@ class CampaignService:
         campaign = Campaign.objects.get(id=campaign_id)
         
         if campaign.status != Campaign.CampaignStatus.RUNNING:
+            logger.warning(f"Campaign {campaign_id} is not running (status: {campaign.status})")
             return {'processed': 0, 'remaining': 0}
         
         # Get pending recipients
-        recipients = campaign.recipients.filter(
+        recipients = list(campaign.recipients.filter(
             status=CampaignRecipient.RecipientStatus.PENDING
-        )[:batch_size]
+        )[:batch_size])
+        
+        if not recipients:
+            logger.info(f"Campaign {campaign_id}: No pending recipients found")
+            remaining = campaign.recipients.filter(
+                status=CampaignRecipient.RecipientStatus.PENDING
+            ).count()
+            if remaining == 0:
+                campaign.status = Campaign.CampaignStatus.COMPLETED
+                campaign.completed_at = timezone.now()
+                campaign.save()
+            return {'processed': 0, 'remaining': remaining}
+        
+        logger.info(f"Campaign {campaign_id}: Processing {len(recipients)} recipients")
         
         message_service = MessageService()
         processed = 0
+        failed = 0
         
         for recipient in recipients:
             try:
+                logger.debug(f"Sending message to {recipient.phone_number}")
+                
                 # Send message
                 if campaign.template:
                     message = message_service.send_template_message(
@@ -299,14 +338,17 @@ class CampaignService:
                 campaign.messages_sent += 1
                 processed += 1
                 
+                logger.info(f"Campaign {campaign_id}: Sent to {recipient.phone_number} (msg_id: {message.whatsapp_message_id})")
+                
             except Exception as e:
-                logger.error(f"Error sending campaign message: {e}")
+                logger.error(f"Campaign {campaign_id}: Error sending to {recipient.phone_number}: {e}", exc_info=True)
                 recipient.status = CampaignRecipient.RecipientStatus.FAILED
                 recipient.failed_at = timezone.now()
                 recipient.error_message = str(e)
                 recipient.save()
                 
                 campaign.messages_failed += 1
+                failed += 1
         
         # Check if campaign is complete
         remaining = campaign.recipients.filter(
@@ -316,10 +358,11 @@ class CampaignService:
         if remaining == 0:
             campaign.status = Campaign.CampaignStatus.COMPLETED
             campaign.completed_at = timezone.now()
+            logger.info(f"Campaign {campaign_id} completed: {campaign.messages_sent} sent, {campaign.messages_failed} failed")
         
         campaign.save()
         
-        return {'processed': processed, 'remaining': remaining}
+        return {'processed': processed, 'failed': failed, 'remaining': remaining}
     
     def _create_recipients(
         self,
