@@ -10,7 +10,7 @@ class Migration(migrations.Migration):
     initial = True
 
     dependencies = [
-        ('orders', '0001_initial'),
+        ('stores', '0001_initial'),
         ('conversations', '0002_initial'),
         ('whatsapp', '0001_initial'),
     ]
@@ -81,7 +81,7 @@ class Migration(migrations.Migration):
                 ('expires_at', models.DateTimeField(blank=True, null=True)),
                 ('company', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='customer_sessions', to='automation.companyprofile')),
                 ('conversation', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='customer_sessions', to='conversations.conversation')),
-                ('order', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='customer_sessions', to='orders.order')),
+                ('order', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='customer_sessions', to='stores.storeorder')),
             ],
             options={
                 'verbose_name': 'Customer Session',
