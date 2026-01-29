@@ -23,7 +23,7 @@ services:
 
   celery:
     build: .
-    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,langflow
+    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,langflow,automation,campaigns
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
