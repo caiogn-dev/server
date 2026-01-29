@@ -50,7 +50,10 @@ class CampaignService:
         
         # Create recipients if contact list provided
         if contact_list:
-            self._create_recipients(campaign, contact_list)
+            created_count = self._create_recipients(campaign, contact_list)
+            campaign.total_recipients = created_count
+            campaign.save(update_fields=['total_recipients'])
+            logger.info(f"Campaign {campaign.id} created with {created_count} recipients")
         
         return campaign
     
