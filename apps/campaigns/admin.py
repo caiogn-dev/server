@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import Campaign, CampaignRecipient, ScheduledMessage, ContactList
+from .models import Campaign, CampaignRecipient, ContactList
+from apps.automation.models import ScheduledMessage  # Moved to automation app
 
 
 @admin.register(Campaign)

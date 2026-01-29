@@ -112,7 +112,8 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                 
                 # Delete campaigns and related
                 try:
-                    from apps.campaigns.models import Campaign, ScheduledMessage, ContactList
+                    from apps.campaigns.models import Campaign, ContactList
+                    from apps.automation.models import ScheduledMessage
                     campaigns = Campaign.objects.filter(account=account)
                     for campaign in campaigns:
                         campaign.recipients.all().delete()

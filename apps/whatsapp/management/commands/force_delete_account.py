@@ -55,7 +55,8 @@ class Command(BaseCommand):
             counts['conversations'] = '?'
             
         try:
-            from apps.campaigns.models import Campaign, ScheduledMessage, ContactList
+            from apps.campaigns.models import Campaign, ContactList
+            from apps.automation.models import ScheduledMessage
             counts['campaigns'] = Campaign.objects.filter(account=account).count()
             counts['scheduled_messages'] = ScheduledMessage.objects.filter(account=account).count()
             counts['contact_lists'] = ContactList.objects.filter(account=account).count()
@@ -117,7 +118,8 @@ class Command(BaseCommand):
                 
                 # Delete campaigns and related
                 try:
-                    from apps.campaigns.models import Campaign, ScheduledMessage, ContactList
+                    from apps.campaigns.models import Campaign, ContactList
+                    from apps.automation.models import ScheduledMessage
                     campaigns = Campaign.objects.filter(account=account)
                     for campaign in campaigns:
                         campaign.recipients.all().delete()
