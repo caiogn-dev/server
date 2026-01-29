@@ -360,34 +360,34 @@ class CustomersViewSet(viewsets.ViewSet):
             total_spent=Sum('total'),
             last_order=Max('created_at')
         )
-            
-            for customer in order_customers:
-                email = customer['customer_email'].lower().strip()
-                if email and '@' in email:
-                    if email not in customers_dict:
-                        customers_dict[email] = {
-                            'id': email,
-                            'email': email,
-                            'name': customer['customer_name'] or '',
-                            'phone': customer['customer_phone'] or '',
-                            'total_orders': customer['total_orders'] or 0,
-                            'total_spent': float(customer['total_spent'] or 0),
-                            'last_order': customer['last_order'].isoformat() if customer['last_order'] else None,
-                            'source': 'orders',
-                            'status': 'active',
-                            'tags': ['customer'],
-                        }
-                    else:
-                        # Merge order data into existing customer
-                        customers_dict[email]['total_orders'] = customer['total_orders'] or 0
-                        customers_dict[email]['total_spent'] = float(customer['total_spent'] or 0)
-                        customers_dict[email]['last_order'] = customer['last_order'].isoformat() if customer['last_order'] else None
-                        if 'customer' not in customers_dict[email]['tags']:
-                            customers_dict[email]['tags'].append('customer')
-                        if not customers_dict[email]['name'] and customer['customer_name']:
-                            customers_dict[email]['name'] = customer['customer_name']
-                        if not customers_dict[email]['phone'] and customer['customer_phone']:
-                            customers_dict[email]['phone'] = customer['customer_phone']
+
+        for customer in order_customers:
+            email = customer['customer_email'].lower().strip()
+            if email and '@' in email:
+                if email not in customers_dict:
+                    customers_dict[email] = {
+                        'id': email,
+                        'email': email,
+                        'name': customer['customer_name'] or '',
+                        'phone': customer['customer_phone'] or '',
+                        'total_orders': customer['total_orders'] or 0,
+                        'total_spent': float(customer['total_spent'] or 0),
+                        'last_order': customer['last_order'].isoformat() if customer['last_order'] else None,
+                        'source': 'orders',
+                        'status': 'active',
+                        'tags': ['customer'],
+                    }
+                else:
+                    # Merge order data into existing customer
+                    customers_dict[email]['total_orders'] = customer['total_orders'] or 0
+                    customers_dict[email]['total_spent'] = float(customer['total_spent'] or 0)
+                    customers_dict[email]['last_order'] = customer['last_order'].isoformat() if customer['last_order'] else None
+                    if 'customer' not in customers_dict[email]['tags']:
+                        customers_dict[email]['tags'].append('customer')
+                    if not customers_dict[email]['name'] and customer['customer_name']:
+                        customers_dict[email]['name'] = customer['customer_name']
+                    if not customers_dict[email]['phone'] and customer['customer_phone']:
+                        customers_dict[email]['phone'] = customer['customer_phone']
         
         # 3. Get subscribers from marketing
         subscribers = Subscriber.objects.filter(store_id=store_id)
