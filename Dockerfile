@@ -19,8 +19,8 @@ COPY . .
 
 RUN mkdir -p logs staticfiles
 
-# Collectstatic with a dummy secret key (will use real one at runtime)
-RUN SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
+# Collectstatic with build-time settings to satisfy production checks
+RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
 
 # Copy and setup entrypoint
 COPY entrypoint.sh /entrypoint.sh
