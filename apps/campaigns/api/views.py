@@ -147,7 +147,8 @@ class SystemContactsView(APIView):
                 from apps.automation.models import CustomerSession
                 sessions_qs = CustomerSession.objects.all()
                 if account_id:
-                    sessions_qs = sessions_qs.filter(account_id=account_id)
+                    # CustomerSession has company -> CompanyProfile has account
+                    sessions_qs = sessions_qs.filter(company__account_id=account_id)
                 
                 sessions = sessions_qs.values(
                     'phone_number', 'customer_name'
