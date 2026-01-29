@@ -170,6 +170,9 @@ class WebhookDebugView(APIView):
     )
     def get(self, request):
         """Get debug info about webhooks."""
+        from ..models import WhatsAppAccount
+        from datetime import timedelta
+        
         # Get recent webhook events
         recent_events = WebhookEvent.objects.order_by('-created_at')[:20]
         events_data = [
@@ -178,7 +181,9 @@ class WebhookDebugView(APIView):
                 'event_type': e.event_type,
                 'processing_status': e.processing_status,
                 'created_at': e.created_at.isoformat(),
-                'error_message': e.error_message[:100] if e.error_message else None,
+                'error_message': e.error_message[:200] if e.error_message else None,
+                'account_id': str(e.account_id) if e.account_id else None,
+                'retry_count': e.retry_count,
             }
             for e in recent_events
         ]
@@ -194,26 +199,156 @@ class WebhookDebugView(APIView):
                 'text_body': m.text_body[:50] if m.text_body else None,
                 'message_type': m.message_type,
                 'created_at': m.created_at.isoformat(),
+                'account_id': str(m.account_id),
             }
             for m in recent_inbound
         ]
         
         # Get stats
+        now = timezone.now()
+        last_24h = now - timedelta(hours=24)
+        last_hour = now - timedelta(hours=1)
+        
         total_events = WebhookEvent.objects.count()
         pending_events = WebhookEvent.objects.filter(processing_status='pending').count()
         failed_events = WebhookEvent.objects.filter(processing_status='failed').count()
+        processing_events = WebhookEvent.objects.filter(processing_status='processing').count()
+        completed_events = WebhookEvent.objects.filter(processing_status='completed').count()
+        
+        events_last_24h = WebhookEvent.objects.filter(created_at__gte=last_24h).count()
+        events_last_hour = WebhookEvent.objects.filter(created_at__gte=last_hour).count()
+        
         total_inbound = Message.objects.filter(direction='inbound').count()
         total_outbound = Message.objects.filter(direction='outbound').count()
+        inbound_last_24h = Message.objects.filter(direction='inbound', created_at__gte=last_24h).count()
+        inbound_last_hour = Message.objects.filter(direction='inbound', created_at__gte=last_hour).count()
+        
+        # Get WhatsApp accounts status
+        accounts = WhatsAppAccount.objects.all()
+        accounts_data = [
+            {
+                'id': str(a.id),
+                'name': a.name,
+                'phone_number': a.phone_number,
+                'phone_number_id': a.phone_number_id,
+                'status': a.status,
+                'is_active': a.is_active,
+                'auto_response_enabled': a.auto_response_enabled,
+            }
+            for a in accounts
+        ]
+        
+        # Check Celery status
+        celery_status = 'unknown'
+        try:
+            from config.celery import app
+            conn = app.connection()
+            conn.ensure_connection(max_retries=1, timeout=2)
+            conn.close()
+            celery_status = 'connected'
+        except Exception as e:
+            celery_status = f'disconnected: {str(e)[:50]}'
+        
+        # Get failed events details
+        failed_events_details = WebhookEvent.objects.filter(
+            processing_status='failed'
+        ).order_by('-created_at')[:5]
+        failed_data = [
+            {
+                'id': str(e.id),
+                'event_type': e.event_type,
+                'error_message': e.error_message[:300] if e.error_message else None,
+                'retry_count': e.retry_count,
+                'created_at': e.created_at.isoformat(),
+            }
+            for e in failed_events_details
+        ]
         
         return Response({
+            'status': 'ok',
+            'server_time': timezone.now().isoformat(),
+            'celery_status': celery_status,
             'stats': {
-                'total_webhook_events': total_events,
-                'pending_events': pending_events,
-                'failed_events': failed_events,
-                'total_inbound_messages': total_inbound,
-                'total_outbound_messages': total_outbound,
+                'webhook_events': {
+                    'total': total_events,
+                    'pending': pending_events,
+                    'processing': processing_events,
+                    'completed': completed_events,
+                    'failed': failed_events,
+                    'last_24h': events_last_24h,
+                    'last_hour': events_last_hour,
+                },
+                'messages': {
+                    'total_inbound': total_inbound,
+                    'total_outbound': total_outbound,
+                    'inbound_last_24h': inbound_last_24h,
+                    'inbound_last_hour': inbound_last_hour,
+                },
             },
+            'accounts': accounts_data,
             'recent_events': events_data,
             'recent_inbound_messages': inbound_data,
-            'server_time': timezone.now().isoformat(),
+            'failed_events': failed_data,
+            'diagnosis': {
+                'has_active_accounts': any(a['is_active'] and a['status'] == 'active' for a in accounts_data),
+                'has_pending_events': pending_events > 0,
+                'has_failed_events': failed_events > 0,
+                'celery_connected': celery_status == 'connected',
+                'receiving_webhooks': events_last_hour > 0,
+                'receiving_messages': inbound_last_hour > 0,
+            }
+        })
+
+    @extend_schema(
+        summary="Reprocess pending/failed webhook events",
+        description="Manually trigger reprocessing of pending or failed webhook events",
+        responses={200: dict}
+    )
+    def post(self, request):
+        """Reprocess pending/failed webhook events."""
+        action = request.data.get('action', 'reprocess_pending')
+        limit = min(int(request.data.get('limit', 50)), 100)
+        
+        service = WebhookService()
+        results = {'processed': 0, 'failed': 0, 'errors': []}
+        
+        if action == 'reprocess_pending':
+            events = WebhookEvent.objects.filter(
+                processing_status='pending'
+            ).order_by('created_at')[:limit]
+        elif action == 'reprocess_failed':
+            events = WebhookEvent.objects.filter(
+                processing_status='failed',
+                retry_count__lt=5
+            ).order_by('created_at')[:limit]
+        elif action == 'reprocess_all':
+            events = WebhookEvent.objects.filter(
+                processing_status__in=['pending', 'failed']
+            ).order_by('created_at')[:limit]
+        else:
+            return Response(
+                {'error': f'Unknown action: {action}. Use: reprocess_pending, reprocess_failed, reprocess_all'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        for event in events:
+            try:
+                # Reset status to pending for retry
+                if event.processing_status == 'failed':
+                    event.processing_status = 'pending'
+                    event.save(update_fields=['processing_status'])
+                
+                service.process_event(event)
+                results['processed'] += 1
+            except Exception as e:
+                results['failed'] += 1
+                results['errors'].append({
+                    'event_id': str(event.id),
+                    'error': str(e)[:100]
+                })
+        
+        return Response({
+            'status': 'ok',
+            'action': action,
+            'results': results
         })
