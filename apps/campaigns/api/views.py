@@ -11,6 +11,7 @@ from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Max
+from django.utils import timezone
 
 from ..models import Campaign, CampaignRecipient, ContactList
 from apps.automation.models import ScheduledMessage  # Use unified model
@@ -312,6 +313,53 @@ class CampaignViewSet(viewsets.ModelViewSet):
         service = CampaignService()
         stats = service.get_campaign_stats(str(pk))
         return Response(stats)
+    
+    @extend_schema(summary="Force process campaign batch")
+    @action(detail=True, methods=['post'])
+    def process(self, request, pk=None):
+        """
+        Force process a campaign batch synchronously.
+        Use this when Celery is not available or campaign is stuck.
+        """
+        service = CampaignService()
+        try:
+            campaign = Campaign.objects.get(id=pk)
+            
+            # If campaign is not running, start it first
+            if campaign.status in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
+                campaign.status = Campaign.CampaignStatus.RUNNING
+                campaign.started_at = timezone.now()
+                campaign.save()
+                logger.info(f"Campaign {pk} status changed to running")
+            
+            if campaign.status != Campaign.CampaignStatus.RUNNING:
+                return Response(
+                    {'error': f'Campaign cannot be processed (status: {campaign.status})'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Process batch
+            batch_size = int(request.data.get('batch_size', 50))
+            result = service.process_campaign_batch(str(pk), batch_size=batch_size)
+            
+            logger.info(f"Campaign {pk} processed: {result}")
+            
+            return Response({
+                'success': True,
+                'processed': result.get('processed', 0),
+                'failed': result.get('failed', 0),
+                'remaining': result.get('remaining', 0),
+                'campaign_status': Campaign.objects.get(id=pk).status,
+            })
+            
+        except Campaign.DoesNotExist:
+            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Campaign {pk} process error: {e}\n{traceback.format_exc()}")
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @extend_schema(summary="Get campaign recipients")
     @action(detail=True, methods=['get'])
