@@ -105,22 +105,36 @@ class CampaignService:
         campaign.started_at = timezone.now()
         campaign.save()
         
-        # Trigger async processing (with fallback for dev without Celery)
-        try:
-            from ..tasks import process_campaign
-            process_campaign.delay(str(campaign.id))
-            logger.info(f"Campaign {campaign_id} queued for async processing")
-        except Exception as e:
-            logger.warning(f"Celery unavailable for campaign {campaign_id}: {e}")
-            # Fallback: process synchronously in DEBUG mode
-            if getattr(settings, 'DEBUG', False):
-                logger.info(f"Processing campaign {campaign_id} synchronously (DEBUG mode)")
-                self.process_campaign_batch(campaign_id, batch_size=10)
-            else:
-                # In production, re-raise to alert about Celery issues
-                raise
+        # Trigger async processing (with fallback if Celery unavailable)
+        celery_available = self._check_celery_connection()
+        
+        if celery_available:
+            try:
+                from ..tasks import process_campaign
+                process_campaign.delay(str(campaign.id))
+                logger.info(f"Campaign {campaign_id} queued for async processing")
+            except Exception as e:
+                logger.warning(f"Celery task failed for campaign {campaign_id}: {e}")
+                celery_available = False
+        
+        if not celery_available:
+            # Fallback: process synchronously
+            logger.info(f"Processing campaign {campaign_id} synchronously (Celery unavailable)")
+            self.process_campaign_batch(campaign_id, batch_size=50)
         
         return campaign
+    
+    def _check_celery_connection(self) -> bool:
+        """Check if Celery broker is available."""
+        try:
+            from config.celery import app
+            conn = app.connection()
+            conn.ensure_connection(max_retries=1, timeout=2)
+            conn.close()
+            return True
+        except Exception as e:
+            logger.warning(f"Celery broker not available: {e}")
+            return False
     
     def pause_campaign(self, campaign_id: str) -> Campaign:
         """Pause a running campaign."""
