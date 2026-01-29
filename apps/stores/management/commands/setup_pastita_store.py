@@ -7,6 +7,7 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.conf import settings
 
 from apps.stores.models import Store, StoreCategory, StoreIntegration, StoreDeliveryZone, StoreCoupon
 
@@ -66,6 +67,14 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f'Using existing owner: {owner_email}')
 
+        here_api_key = getattr(settings, 'HERE_API_KEY', '').strip()
+        store_metadata = {
+            'legacy_app': 'pastita',
+            'product_types': ['molho', 'carne', 'rondelli', 'combo'],
+        }
+        if here_api_key:
+            store_metadata['here_api_key'] = here_api_key
+
         # Create Pastita Store
         store = Store.objects.create(
             name='Pastita - Massas Artesanais',
@@ -117,11 +126,7 @@ class Command(BaseCommand):
             
             owner=owner,
             
-            metadata={
-                'legacy_app': 'pastita',
-                'product_types': ['molho', 'carne', 'rondelli', 'combo'],
-                'here_api_key': 'G9H9YAXgkVi1YDXhkea18Sb5EIUAch5m1oNYoaPUZNw',
-            }
+            metadata=store_metadata
         )
         self.stdout.write(self.style.SUCCESS(f'Created Pastita store (ID: {store.id})'))
 

@@ -12,7 +12,6 @@ from apps.core.exceptions import NotFoundError, ValidationError
 from apps.whatsapp.models import WhatsAppAccount, Message
 from apps.whatsapp.services import MessageService as WhatsAppService
 from apps.conversations.models import Conversation
-from apps.orders.models import Order
 from apps.langflow.services import LangflowService
 
 from ..models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog

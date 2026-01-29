@@ -157,29 +157,36 @@ class ExportService:
     ) -> HttpResponse:
         """Export orders."""
         fields = [
-            'id', 'order_number', 'customer_phone', 'customer_name',
-            'customer_email', 'status', 'subtotal', 'discount',
-            'shipping_cost', 'tax', 'total', 'currency',
-            'created_at', 'confirmed_at', 'paid_at', 'shipped_at', 'delivered_at',
+            'id', 'order_number', 'store__name', 'store__slug',
+            'customer_phone', 'customer_name', 'customer_email',
+            'status', 'payment_status', 'payment_method',
+            'subtotal', 'discount', 'delivery_fee', 'tax', 'total',
+            'delivery_method', 'delivery_address',
+            'created_at', 'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at',
         ]
         field_labels = {
             'id': 'ID',
             'order_number': 'Número do Pedido',
+            'store__name': 'Loja',
+            'store__slug': 'Slug da Loja',
             'customer_phone': 'Telefone',
             'customer_name': 'Nome do Cliente',
             'customer_email': 'Email',
             'status': 'Status',
+            'payment_status': 'Status do Pagamento',
+            'payment_method': 'Método de Pagamento',
             'subtotal': 'Subtotal',
             'discount': 'Desconto',
-            'shipping_cost': 'Frete',
+            'delivery_fee': 'Taxa de Entrega',
             'tax': 'Impostos',
             'total': 'Total',
-            'currency': 'Moeda',
+            'delivery_method': 'Método de Entrega',
+            'delivery_address': 'Endereço de Entrega',
             'created_at': 'Criado em',
-            'confirmed_at': 'Confirmado em',
             'paid_at': 'Pago em',
             'shipped_at': 'Enviado em',
             'delivered_at': 'Entregue em',
+            'cancelled_at': 'Cancelado em',
         }
         
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -234,48 +241,6 @@ class ExportService:
                 filename=f'conversas_{timestamp}.csv'
             )
     
-    def export_payments(
-        self,
-        queryset: QuerySet,
-        export_format: str = 'csv',
-        user: Optional[User] = None,
-    ) -> HttpResponse:
-        """Export payments."""
-        fields = [
-            'id', 'payment_id', 'external_id', 'status', 'payment_method',
-            'amount', 'currency', 'fee', 'net_amount', 'refunded_amount',
-            'payer_email', 'payer_name', 'paid_at', 'created_at',
-        ]
-        field_labels = {
-            'id': 'ID',
-            'payment_id': 'ID do Pagamento',
-            'external_id': 'ID Externo',
-            'status': 'Status',
-            'payment_method': 'Método',
-            'amount': 'Valor',
-            'currency': 'Moeda',
-            'fee': 'Taxa',
-            'net_amount': 'Valor Líquido',
-            'refunded_amount': 'Valor Reembolsado',
-            'payer_email': 'Email do Pagador',
-            'payer_name': 'Nome do Pagador',
-            'paid_at': 'Pago em',
-            'created_at': 'Criado em',
-        }
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
-        if export_format == 'excel':
-            return self.export_to_excel(
-                queryset, fields, field_labels,
-                filename=f'pagamentos_{timestamp}.xlsx',
-                sheet_name='Pagamentos'
-            )
-        else:
-            return self.export_to_csv(
-                queryset, fields, field_labels,
-                filename=f'pagamentos_{timestamp}.csv'
-            )
     
     def _get_field_value(self, obj: Model, field: str) -> Any:
         """Get field value from object, handling nested fields."""

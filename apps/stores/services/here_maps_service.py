@@ -19,8 +19,8 @@ from django.core.cache import cache
 
 logger = logging.getLogger(__name__)
 
-# HERE Maps API Key
-HERE_API_KEY = getattr(settings, 'HERE_API_KEY', 'G9H9YAXgkVi1YDXhkea18Sb5EIUAch5m1oNYoaPUZNw')
+# HERE Maps API Key (must be provided via environment/settings)
+HERE_API_KEY = getattr(settings, 'HERE_API_KEY', '') or ''
 
 # API Endpoints
 HERE_GEOCODE_URL = "https://geocode.search.hereapi.com/v1/geocode"

@@ -3,6 +3,7 @@ Django production settings.
 """
 from .base import *
 import os
+from django.core.exceptions import ImproperlyConfigured
 
 DEBUG = False
 
@@ -27,9 +28,15 @@ SECURE_HSTS_PRELOAD = True
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 
-# CORS - allow all if CORS_ALLOWED_ORIGINS not set, otherwise restrict
-import os
-CORS_ALLOW_ALL_ORIGINS = not bool(os.environ.get('CORS_ALLOWED_ORIGINS', ''))
+# Enforce required production settings
+if SECRET_KEY == 'your-secret-key-change-in-production':
+    raise ImproperlyConfigured('SECRET_KEY must be set in production.')
+
+if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['*'] or '*' in ALLOWED_HOSTS:
+    raise ImproperlyConfigured('ALLOWED_HOSTS must be explicitly set in production.')
+
+# CORS - never allow all in production
+CORS_ALLOW_ALL_ORIGINS = False
 
 # Override logging for production - use only console (no file handler)
 LOGGING = {

@@ -189,6 +189,7 @@ def export_messages(request):
 @extend_schema(
     parameters=[
         OpenApiParameter(name='account_id', type=str, required=False),
+        OpenApiParameter(name='store', type=str, required=False),
         OpenApiParameter(name='start_date', type=str, required=False),
         OpenApiParameter(name='end_date', type=str, required=False),
         OpenApiParameter(name='format', type=str, required=False, enum=['csv', 'xlsx']),
@@ -200,20 +201,25 @@ def export_messages(request):
 @permission_classes([IsAuthenticated])
 def export_orders(request):
     """Export orders to CSV or Excel."""
-    from apps.orders.models import Order
+    from apps.stores.models import StoreOrder
     
     # Get parameters
     account_id = request.query_params.get('account_id')
+    store_param = request.query_params.get('store')
     start_date = request.query_params.get('start_date')
     end_date = request.query_params.get('end_date')
     export_format = request.query_params.get('format', 'csv')
     order_status = request.query_params.get('status')
     
     # Build queryset
-    queryset = Order.objects.select_related('account').all()
-    
-    if account_id:
-        queryset = queryset.filter(account_id=account_id)
+    queryset = StoreOrder.objects.select_related('store').all()
+    if store_param:
+        try:
+            import uuid as uuid_module
+            uuid_module.UUID(store_param)
+            queryset = queryset.filter(store_id=store_param)
+        except (ValueError, AttributeError):
+            queryset = queryset.filter(store__slug=store_param)
     
     if start_date:
         try:
@@ -241,19 +247,22 @@ def export_orders(request):
         data.append({
             'id': str(order.id),
             'order_number': order.order_number,
-            'account_name': order.account.name if order.account else '',
+            'store_name': order.store.name if order.store else '',
+            'store_slug': order.store.slug if order.store else '',
             'customer_phone': order.customer_phone,
             'customer_name': order.customer_name,
             'customer_email': order.customer_email,
             'status': order.status,
+            'payment_status': order.payment_status,
+            'payment_method': order.payment_method,
             'subtotal': float(order.subtotal),
             'discount': float(order.discount),
-            'shipping_cost': float(order.shipping_cost),
+            'delivery_fee': float(order.delivery_fee),
             'tax': float(order.tax),
             'total': float(order.total),
-            'currency': order.currency,
-            'notes': order.notes or '',
-            'confirmed_at': order.confirmed_at.isoformat() if order.confirmed_at else '',
+            'currency': order.store.currency if order.store else '',
+            'customer_notes': order.customer_notes or '',
+            'internal_notes': order.internal_notes or '',
             'paid_at': order.paid_at.isoformat() if order.paid_at else '',
             'shipped_at': order.shipped_at.isoformat() if order.shipped_at else '',
             'delivered_at': order.delivered_at.isoformat() if order.delivered_at else '',
@@ -496,75 +505,3 @@ def export_conversations(request):
     return generate_csv_response(data, f'conversations_{timestamp}.csv')
 
 
-@extend_schema(
-    parameters=[
-        OpenApiParameter(name='start_date', type=str, required=False),
-        OpenApiParameter(name='end_date', type=str, required=False),
-        OpenApiParameter(name='format', type=str, required=False, enum=['csv', 'xlsx']),
-        OpenApiParameter(name='status', type=str, required=False),
-    ],
-    tags=['Export']
-)
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def export_payments(request):
-    """Export payments to CSV or Excel."""
-    from apps.payments.models import Payment
-    
-    # Get parameters
-    start_date = request.query_params.get('start_date')
-    end_date = request.query_params.get('end_date')
-    export_format = request.query_params.get('format', 'csv')
-    payment_status = request.query_params.get('status')
-    
-    # Build queryset
-    queryset = Payment.objects.select_related('order', 'gateway').all()
-    
-    if start_date:
-        try:
-            start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            queryset = queryset.filter(created_at__gte=start)
-        except ValueError:
-            pass
-    
-    if end_date:
-        try:
-            end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-            queryset = queryset.filter(created_at__lte=end)
-        except ValueError:
-            pass
-    
-    if payment_status:
-        queryset = queryset.filter(status=payment_status)
-    
-    # Limit to 10000 records
-    queryset = queryset.order_by('-created_at')[:10000]
-    
-    # Prepare data
-    data = []
-    for payment in queryset:
-        data.append({
-            'id': str(payment.id),
-            'payment_id': payment.payment_id,
-            'external_id': payment.external_id or '',
-            'order_number': payment.order.order_number if payment.order else '',
-            'gateway_name': payment.gateway.name if payment.gateway else '',
-            'status': payment.status,
-            'payment_method': payment.payment_method,
-            'amount': float(payment.amount),
-            'currency': payment.currency,
-            'fee': float(payment.fee),
-            'net_amount': float(payment.net_amount),
-            'payer_email': payment.payer_email or '',
-            'payer_name': payment.payer_name or '',
-            'paid_at': payment.paid_at.isoformat() if payment.paid_at else '',
-            'error_code': payment.error_code or '',
-            'error_message': payment.error_message or '',
-            'created_at': payment.created_at.isoformat(),
-        })
-    
-    # Generate response
-    timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-    if export_format == 'xlsx':
-        return generate_excel_response(data, f'payments_{timestamp}.xlsx', 'Payments')
-    return generate_csv_response(data, f'payments_{timestamp}.csv')

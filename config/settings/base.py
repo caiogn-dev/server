@@ -35,14 +35,11 @@ INSTALLED_APPS = [
     'apps.core',
     'apps.whatsapp',
     'apps.conversations',
-    'apps.orders',
-    'apps.payments',
     'apps.langflow',
     'apps.notifications',
     'apps.audit',
     'apps.campaigns',
     'apps.automation',
-    'apps.ecommerce',
     'apps.stores',  # Multi-store management (unified)
     'apps.marketing',  # Email marketing with Resend
     'apps.instagram',  # Instagram Messaging API integration
@@ -244,6 +241,9 @@ WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
+
+# Maps (HERE)
+HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
 
 # Base URL for webhooks and callbacks
 BASE_URL = os.environ.get('BASE_URL', 'http://localhost:12000')

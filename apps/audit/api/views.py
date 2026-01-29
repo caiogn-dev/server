@@ -10,9 +10,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from apps.whatsapp.models import Message
-from apps.orders.models import Order
+from apps.stores.models import StoreOrder
 from apps.conversations.models import Conversation
-from apps.payments.models import Payment
 
 from ..models import AuditLog, DataExportLog
 from ..services import AuditService, ExportService
@@ -117,9 +116,15 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             response = export_service.export_messages(queryset, export_format, request.user)
             
         elif export_type == 'orders':
-            queryset = Order.objects.filter(is_active=True)
-            if filters.get('account'):
-                queryset = queryset.filter(account_id=filters['account'])
+            queryset = StoreOrder.objects.filter(is_active=True)
+            store_filter = filters.get('store') or filters.get('store_id')
+            if store_filter:
+                try:
+                    import uuid as uuid_module
+                    uuid_module.UUID(store_filter)
+                    queryset = queryset.filter(store_id=store_filter)
+                except (ValueError, AttributeError):
+                    queryset = queryset.filter(store__slug=store_filter)
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
             response = export_service.export_orders(queryset, export_format, request.user)
@@ -132,12 +137,6 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
                 queryset = queryset.filter(status=filters['status'])
             response = export_service.export_conversations(queryset, export_format, request.user)
             
-        elif export_type == 'payments':
-            queryset = Payment.objects.filter(is_active=True)
-            if filters.get('status'):
-                queryset = queryset.filter(status=filters['status'])
-            response = export_service.export_payments(queryset, export_format, request.user)
-        
         else:
             return Response(
                 {'error': 'Invalid export type'},

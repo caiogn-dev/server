@@ -10,7 +10,7 @@ from .auth_views import (
 )
 from .export_views import (
     export_messages, export_orders, export_sessions,
-    export_automation_logs, export_conversations, export_payments
+    export_automation_logs, export_conversations
 )
 
 urlpatterns = [
@@ -42,5 +42,4 @@ urlpatterns = [
     path('export/sessions/', export_sessions, name='export-sessions'),
     path('export/automation-logs/', export_automation_logs, name='export-automation-logs'),
     path('export/conversations/', export_conversations, name='export-conversations'),
-    path('export/payments/', export_payments, name='export-payments'),
 ]

@@ -285,8 +285,7 @@ class CustomersViewSet(viewsets.ViewSet):
     def list(self, request):
         """Get all customers for a store (aggregated from multiple sources)."""
         from django.contrib.auth import get_user_model
-        from apps.orders.models import Order
-        from apps.stores.models import Store
+        from apps.stores.models import Store, StoreOrder
         from django.db.models import Count, Sum, Max
         
         User = get_user_model()
@@ -350,18 +349,17 @@ class CustomersViewSet(viewsets.ViewSet):
                     'created_at': user.date_joined.isoformat() if user.date_joined else None,
                 }
         
-        # 2. Get customers from Orders (via WhatsApp account)
-        if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
-            order_customers = Order.objects.filter(
-                account=store.whatsapp_account,
-                customer_email__isnull=False
-            ).exclude(
-                customer_email=''
-            ).values('customer_email', 'customer_name', 'customer_phone').annotate(
-                total_orders=Count('id'),
-                total_spent=Sum('total'),
-                last_order=Max('created_at')
-            )
+        # 2. Get customers from Store Orders
+        order_customers = StoreOrder.objects.filter(
+            store_id=store_id,
+            customer_email__isnull=False
+        ).exclude(
+            customer_email=''
+        ).values('customer_email', 'customer_name', 'customer_phone').annotate(
+            total_orders=Count('id'),
+            total_spent=Sum('total'),
+            last_order=Max('created_at')
+        )
             
             for customer in order_customers:
                 email = customer['customer_email'].lower().strip()
@@ -445,8 +443,7 @@ class CustomersViewSet(viewsets.ViewSet):
     def count(self, request):
         """Get customer count for a store."""
         from django.contrib.auth import get_user_model
-        from apps.orders.models import Order
-        from apps.stores.models import Store
+        from apps.stores.models import Store, StoreOrder
         
         User = get_user_model()
         
@@ -466,14 +463,11 @@ class CustomersViewSet(viewsets.ViewSet):
         
         # Count unique order emails
         try:
-            store = Store.objects.get(id=store_id)
-            if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
-                order_emails = Order.objects.filter(
-                    account=store.whatsapp_account,
-                    customer_email__isnull=False
-                ).exclude(customer_email='').values('customer_email').distinct().count()
-            else:
-                order_emails = 0
+            Store.objects.get(id=store_id)
+            order_emails = StoreOrder.objects.filter(
+                store_id=store_id,
+                customer_email__isnull=False
+            ).exclude(customer_email='').values('customer_email').distinct().count()
         except Store.DoesNotExist:
             order_emails = 0
         
@@ -484,8 +478,7 @@ class CustomersViewSet(viewsets.ViewSet):
     def debug(self, request):
         """Debug endpoint to check data sources."""
         from django.contrib.auth import get_user_model
-        from apps.orders.models import Order
-        from apps.stores.models import Store
+        from apps.stores.models import Store, StoreOrder
         
         User = get_user_model()
         
@@ -514,12 +507,11 @@ class CustomersViewSet(viewsets.ViewSet):
         order_count = 0
         if store_id:
             try:
-                store = Store.objects.get(id=store_id)
-                if hasattr(store, 'whatsapp_account') and store.whatsapp_account:
-                    order_count = Order.objects.filter(
-                        account=store.whatsapp_account,
-                        customer_email__isnull=False
-                    ).exclude(customer_email='').count()
+                Store.objects.get(id=store_id)
+                order_count = StoreOrder.objects.filter(
+                    store_id=store_id,
+                    customer_email__isnull=False
+                ).exclude(customer_email='').count()
             except Store.DoesNotExist:
                 pass
         

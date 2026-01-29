@@ -73,12 +73,14 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
         - All campaigns and recipients
         - All scheduled messages
         - All automation sessions
-        - All orders
-        - All payments
+        - All company profiles
+        - All store orders linked to this WhatsApp account
+        - WhatsApp store integrations
         - All langflow integrations
         - The account itself
         """
         from django.db import transaction
+        from django.db.models import Q
         
         account = self.get_object()
         account_id = str(account.id)
@@ -134,32 +136,47 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                 # Delete automation sessions
                 try:
                     from apps.automation.models import CustomerSession
-                    sessions = CustomerSession.objects.filter(account=account)
+                    sessions = CustomerSession.objects.filter(company__account=account)
                     deleted_counts['automation_sessions'] = sessions.count()
                     sessions.delete()
                 except Exception as e:
                     logger.warning(f"Could not delete automation sessions: {e}")
                     deleted_counts['automation_sessions'] = 0
                 
-                # Delete orders
+                # Delete company profiles
                 try:
-                    from apps.orders.models import Order
-                    orders = Order.objects.filter(account=account)
-                    deleted_counts['orders'] = orders.count()
-                    orders.delete()
+                    from apps.automation.models import CompanyProfile
+                    profiles = CompanyProfile.objects.filter(account=account)
+                    deleted_counts['company_profiles'] = profiles.count()
+                    profiles.delete()
                 except Exception as e:
-                    logger.warning(f"Could not delete orders: {e}")
-                    deleted_counts['orders'] = 0
-                
-                # Delete payments
+                    logger.warning(f"Could not delete company profiles: {e}")
+                    deleted_counts['company_profiles'] = 0
+
+                # Delete store orders and integrations linked to this WhatsApp account
                 try:
-                    from apps.payments.models import Payment
-                    payments = Payment.objects.filter(account=account)
-                    deleted_counts['payments'] = payments.count()
-                    payments.delete()
+                    from apps.stores.models import StoreIntegration, StoreOrder
+                    store_ids = StoreIntegration.objects.filter(
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).filter(
+                        Q(phone_number_id=account.phone_number_id) |
+                        Q(waba_id=account.waba_id)
+                    ).values_list('store_id', flat=True)
+                    store_ids = list(store_ids)
+                    deleted_counts['store_orders'] = StoreOrder.objects.filter(store_id__in=store_ids).count()
+                    StoreOrder.objects.filter(store_id__in=store_ids).delete()
+                    deleted_counts['store_integrations'] = StoreIntegration.objects.filter(
+                        store_id__in=store_ids,
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).count()
+                    StoreIntegration.objects.filter(
+                        store_id__in=store_ids,
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).delete()
                 except Exception as e:
-                    logger.warning(f"Could not delete payments: {e}")
-                    deleted_counts['payments'] = 0
+                    logger.warning(f"Could not delete store integrations/orders: {e}")
+                    deleted_counts['store_orders'] = 0
+                    deleted_counts['store_integrations'] = 0
                 
                 # Delete langflow integrations
                 try:

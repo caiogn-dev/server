@@ -12,8 +12,7 @@ from drf_spectacular.utils import extend_schema
 
 from apps.whatsapp.models import WhatsAppAccount, Message, WebhookEvent
 from apps.conversations.models import Conversation
-from apps.orders.models import Order
-from apps.payments.models import Payment
+from apps.stores.models import StoreOrder
 from apps.langflow.models import LangflowFlow, LangflowSession, LangflowLog
 
 logger = logging.getLogger(__name__)
@@ -45,7 +44,15 @@ class DashboardOverviewView(APIView):
         
         messages_qs = Message.objects.filter(account_id__in=account_ids)
         conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
-        orders_qs = Order.objects.filter(account_id__in=account_ids, is_active=True)
+        orders_qs = StoreOrder.objects.filter(is_active=True)
+        store_param = request.query_params.get('store')
+        if store_param:
+            try:
+                import uuid as uuid_module
+                uuid_module.UUID(store_param)
+                orders_qs = orders_qs.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                orders_qs = orders_qs.filter(store__slug=store_param)
         
         # Messages metrics
         messages_today = messages_qs.filter(created_at__gte=today_start).count()
@@ -105,18 +112,13 @@ class DashboardOverviewView(APIView):
             paid_at__gte=month_start
         ).aggregate(total=Sum('total'))['total'] or 0
 
-        # Payments metrics
-        payments_qs = Payment.objects.filter(
-            order__account_id__in=account_ids,
-            is_active=True
-        )
-        
-        payments_pending = payments_qs.filter(
-            status__in=['pending', 'processing']
+        # Payments metrics (derived from store orders)
+        payments_pending = orders_qs.filter(
+            payment_status__in=['pending', 'processing']
         ).count()
         
-        payments_completed_today = payments_qs.filter(
-            status='completed',
+        payments_completed_today = orders_qs.filter(
+            payment_status='paid',
             paid_at__gte=today_start
         ).count()
 
@@ -202,7 +204,17 @@ class DashboardActivityView(APIView):
             accounts_qs = accounts_qs.filter(id=account_id)
         
         account_ids = list(accounts_qs.values_list('id', flat=True))
-        
+
+        orders_qs = StoreOrder.objects.filter(is_active=True)
+        store_param = request.query_params.get('store')
+        if store_param:
+            try:
+                import uuid as uuid_module
+                uuid_module.UUID(store_param)
+                orders_qs = orders_qs.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                orders_qs = orders_qs.filter(store__slug=store_param)
+
         # Recent messages
         recent_messages = Message.objects.filter(
             account_id__in=account_ids,
@@ -220,15 +232,12 @@ class DashboardActivityView(APIView):
         } for m in recent_messages]
         
         # Recent orders
-        recent_orders = Order.objects.filter(
-            account_id__in=account_ids,
-            is_active=True
-        ).select_related('account').order_by('-created_at')[:limit]
+        recent_orders = orders_qs.select_related('store').order_by('-created_at')[:limit]
         
         orders_data = [{
             'id': str(o.id),
             'type': 'order',
-            'account_name': o.account.name,
+            'store_name': o.store.name,
             'order_number': o.order_number,
             'customer_name': o.customer_name,
             'customer_phone': o.customer_phone,
@@ -284,6 +293,15 @@ class DashboardChartsView(APIView):
             accounts_qs = accounts_qs.filter(id=account_id)
         
         account_ids = list(accounts_qs.values_list('id', flat=True))
+        orders_qs = StoreOrder.objects.filter(is_active=True)
+        store_param = request.query_params.get('store')
+        if store_param:
+            try:
+                import uuid as uuid_module
+                uuid_module.UUID(store_param)
+                orders_qs = orders_qs.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                orders_qs = orders_qs.filter(store__slug=store_param)
         
         now = timezone.now()
         start_date = now - timedelta(days=days)
@@ -321,16 +339,12 @@ class DashboardChartsView(APIView):
             day_start = (now - timedelta(days=days-1-i)).replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
             
-            count = Order.objects.filter(
-                account_id__in=account_ids,
-                is_active=True,
+            count = orders_qs.filter(
                 created_at__gte=day_start,
                 created_at__lt=day_end
             ).count()
             
-            revenue = Order.objects.filter(
-                account_id__in=account_ids,
-                is_active=True,
+            revenue = orders_qs.filter(
                 paid_at__gte=day_start,
                 paid_at__lt=day_end
             ).aggregate(total=Sum('total'))['total'] or 0
@@ -377,10 +391,7 @@ class DashboardChartsView(APIView):
         
         # Order status distribution
         order_statuses = dict(
-            Order.objects.filter(
-                account_id__in=account_ids,
-                is_active=True
-            ).values('status')
+            orders_qs.values('status')
             .annotate(count=Count('id'))
             .values_list('status', 'count')
         )

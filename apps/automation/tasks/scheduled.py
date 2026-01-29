@@ -11,6 +11,7 @@ from celery import shared_task
 from django.utils import timezone
 from django.conf import settings
 from django.core.mail import EmailMessage
+from django.db import models
 
 logger = logging.getLogger(__name__)
 
@@ -149,9 +150,8 @@ def generate_report(self, schedule_id: str = None, report_type: str = None,
     """Generate a report."""
     from ..models import ReportSchedule, GeneratedReport
     from apps.whatsapp.models import Message, WhatsAppAccount
-    from apps.orders.models import Order
     from apps.conversations.models import Conversation
-    from apps.payments.models import Payment
+    from apps.stores.models import StoreOrder, StoreIntegration
     from apps.automation.models import CustomerSession, AutomationLog
     
     start_time = time.time()
@@ -193,6 +193,20 @@ def generate_report(self, schedule_id: str = None, report_type: str = None,
         data = {}
         records_count = 0
         
+        store_ids = None
+        if account_id:
+            try:
+                account = WhatsAppAccount.objects.get(id=account_id)
+                integrations = StoreIntegration.objects.filter(
+                    integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+                ).filter(
+                    models.Q(phone_number_id=account.phone_number_id) |
+                    models.Q(waba_id=account.waba_id)
+                ).values_list('store_id', flat=True)
+                store_ids = list(integrations)
+            except Exception:
+                store_ids = []
+
         if report_type in ['messages', 'full']:
             queryset = Message.objects.filter(created_at__gte=start, created_at__lte=end)
             if account_id:
@@ -204,12 +218,16 @@ def generate_report(self, schedule_id: str = None, report_type: str = None,
             records_count += len(data['messages'])
         
         if report_type in ['orders', 'full']:
-            queryset = Order.objects.filter(created_at__gte=start, created_at__lte=end)
-            if account_id:
-                queryset = queryset.filter(account_id=account_id)
+            queryset = StoreOrder.objects.select_related('store').filter(
+                created_at__gte=start,
+                created_at__lte=end
+            )
+            if store_ids is not None:
+                queryset = queryset.filter(store_id__in=store_ids)
             data['orders'] = list(queryset.values(
-                'id', 'order_number', 'customer_phone', 'customer_name', 
-                'status', 'total', 'created_at'
+                'id', 'order_number', 'customer_phone', 'customer_name',
+                'status', 'payment_status', 'payment_method', 'total',
+                'store__name', 'store__slug', 'created_at'
             )[:5000])
             records_count += len(data['orders'])
         
@@ -224,10 +242,15 @@ def generate_report(self, schedule_id: str = None, report_type: str = None,
             records_count += len(data['conversations'])
         
         if report_type in ['payments', 'full']:
-            queryset = Payment.objects.filter(created_at__gte=start, created_at__lte=end)
+            queryset = StoreOrder.objects.select_related('store').filter(
+                created_at__gte=start,
+                created_at__lte=end
+            )
+            if store_ids is not None:
+                queryset = queryset.filter(store_id__in=store_ids)
             data['payments'] = list(queryset.values(
-                'id', 'payment_id', 'status', 'payment_method', 'amount', 
-                'currency', 'paid_at', 'created_at'
+                'id', 'order_number', 'payment_status', 'payment_method',
+                'total', 'paid_at', 'created_at', 'store__name', 'store__slug'
             )[:5000])
             records_count += len(data['payments'])
         

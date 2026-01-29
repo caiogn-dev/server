@@ -641,7 +641,7 @@ class CustomerSession(BaseModel):
     
     # Order reference
     order = models.ForeignKey(
-        'orders.Order',
+        'stores.StoreOrder',
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

@@ -29,7 +29,7 @@ def get_user_from_token(token_key):
         logger.info(f"WebSocket token auth success: user={token.user.email}")
         return token.user
     except Token.DoesNotExist:
-        logger.warning(f"WebSocket token auth failed: token not found (first 8 chars: {token_key[:8] if token_key else 'none'})")
+        logger.warning("WebSocket token auth failed: token not found")
         return AnonymousUser()
     except Exception as e:
         logger.error(f"WebSocket token auth error: {e}")

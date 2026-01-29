@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
-from django.db.models import Max
+from django.db.models import Max, Q
 from django.utils import timezone
 
 from ..models import Campaign, CampaignRecipient, ContactList
@@ -99,8 +99,20 @@ class SystemContactsView(APIView):
         # Get contacts from orders
         if source in ['all', 'orders']:
             try:
-                from apps.orders.models import Order
-                orders = Order.objects.values(
+                from apps.stores.models import StoreOrder, StoreIntegration
+                orders_qs = StoreOrder.objects.all()
+                if account_id:
+                    from apps.whatsapp.models import WhatsAppAccount
+                    account = WhatsAppAccount.objects.get(id=account_id)
+                    store_ids = StoreIntegration.objects.filter(
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).filter(
+                        Q(phone_number_id=account.phone_number_id) |
+                        Q(waba_id=account.waba_id)
+                    ).values_list('store_id', flat=True)
+                    orders_qs = orders_qs.filter(store_id__in=list(store_ids))
+
+                orders = orders_qs.values(
                     'customer_phone', 'customer_name'
                 ).annotate(
                     last_order=Max('created_at')

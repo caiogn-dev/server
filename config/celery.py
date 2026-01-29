@@ -15,8 +15,6 @@ app.autodiscover_tasks()
 
 app.conf.task_routes = {
     'apps.whatsapp.tasks.*': {'queue': 'whatsapp'},
-    'apps.orders.tasks.*': {'queue': 'orders'},
-    'apps.payments.tasks.*': {'queue': 'payments'},
     'apps.langflow.tasks.*': {'queue': 'langflow'},
     'apps.automation.tasks.*': {'queue': 'automation'},
     'apps.campaigns.tasks.*': {'queue': 'campaigns'},
@@ -39,15 +37,6 @@ app.conf.beat_schedule = {
     # Retry failed webhook events
     'retry-failed-webhook-events': {
         'task': 'apps.whatsapp.tasks.retry_failed_webhook_events',
-        'schedule': 300.0,  # Every 5 minutes
-    },
-    'check-pending-orders': {
-        'task': 'apps.orders.tasks.check_pending_orders',
-        'schedule': 600.0,
-    },
-    # Store cart abandoned (email notifications)
-    'check-store-abandoned-carts': {
-        'task': 'apps.orders.tasks.check_store_abandoned_carts',
         'schedule': 300.0,  # Every 5 minutes
     },
     # Automation tasks (WhatsApp sessions)

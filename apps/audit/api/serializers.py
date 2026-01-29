@@ -36,7 +36,7 @@ class DataExportLogSerializer(serializers.ModelSerializer):
 class ExportRequestSerializer(serializers.Serializer):
     """Serializer for export requests."""
     export_type = serializers.ChoiceField(
-        choices=['messages', 'orders', 'conversations', 'payments']
+        choices=['messages', 'orders', 'conversations']
     )
     export_format = serializers.ChoiceField(
         choices=['csv', 'excel'],

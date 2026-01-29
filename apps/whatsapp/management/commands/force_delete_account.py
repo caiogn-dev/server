@@ -3,6 +3,7 @@ Management command to force delete a WhatsApp account and all related data.
 """
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.db.models import Q
 from apps.whatsapp.models import WhatsAppAccount
 
 
@@ -64,16 +65,25 @@ class Command(BaseCommand):
             counts['campaigns'] = '?'
             
         try:
-            from apps.orders.models import Order
-            counts['orders'] = Order.objects.filter(account=account).count()
+            from apps.automation.models import CompanyProfile
+            counts['company_profiles'] = CompanyProfile.objects.filter(account=account).count()
         except:
-            counts['orders'] = '?'
-            
+            counts['company_profiles'] = '?'
+
         try:
-            from apps.payments.models import Payment
-            counts['payments'] = Payment.objects.filter(account=account).count()
+            from apps.stores.models import StoreIntegration, StoreOrder
+            store_ids = StoreIntegration.objects.filter(
+                integration_type=StoreIntegration.IntegrationType.WHATSAPP
+            ).filter(
+                Q(phone_number_id=account.phone_number_id) |
+                Q(waba_id=account.waba_id)
+            ).values_list('store_id', flat=True)
+            store_ids = list(store_ids)
+            counts['store_integrations'] = len(store_ids)
+            counts['store_orders'] = StoreOrder.objects.filter(store_id__in=store_ids).count()
         except:
-            counts['payments'] = '?'
+            counts['store_integrations'] = '?'
+            counts['store_orders'] = '?'
         
         self.stdout.write(f'\nRelated objects to be deleted:')
         for key, value in counts.items():
@@ -142,33 +152,50 @@ class Command(BaseCommand):
                 # Delete automation sessions
                 try:
                     from apps.automation.models import CustomerSession
-                    sessions = CustomerSession.objects.filter(account=account)
+                    sessions = CustomerSession.objects.filter(company__account=account)
                     deleted_counts['automation_sessions'] = sessions.count()
                     sessions.delete()
                     self.stdout.write(f'  ✓ Deleted {deleted_counts["automation_sessions"]} automation sessions')
                 except Exception as e:
                     self.stdout.write(self.style.WARNING(f'  ! Could not delete automation sessions: {e}'))
                 
-                # Delete orders
+                # Delete company profiles
                 try:
-                    from apps.orders.models import Order
-                    orders = Order.objects.filter(account=account)
-                    deleted_counts['orders'] = orders.count()
-                    orders.delete()
-                    self.stdout.write(f'  ✓ Deleted {deleted_counts["orders"]} orders')
+                    from apps.automation.models import CompanyProfile
+                    profiles = CompanyProfile.objects.filter(account=account)
+                    deleted_counts['company_profiles'] = profiles.count()
+                    profiles.delete()
+                    self.stdout.write(f'  ??? Deleted {deleted_counts["company_profiles"]} company profiles')
                 except Exception as e:
-                    self.stdout.write(self.style.WARNING(f'  ! Could not delete orders: {e}'))
+                    self.stdout.write(self.style.WARNING(f'  ! Could not delete company profiles: {e}'))
                 
-                # Delete payments
+                # Delete store integrations and orders linked to this WhatsApp account
                 try:
-                    from apps.payments.models import Payment
-                    payments = Payment.objects.filter(account=account)
-                    deleted_counts['payments'] = payments.count()
-                    payments.delete()
-                    self.stdout.write(f'  ✓ Deleted {deleted_counts["payments"]} payments')
+                    from apps.stores.models import StoreIntegration, StoreOrder
+                    store_ids = StoreIntegration.objects.filter(
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).filter(
+                        Q(phone_number_id=account.phone_number_id) |
+                        Q(waba_id=account.waba_id)
+                    ).values_list('store_id', flat=True)
+                    store_ids = list(store_ids)
+                    deleted_counts['store_orders'] = StoreOrder.objects.filter(store_id__in=store_ids).count()
+                    StoreOrder.objects.filter(store_id__in=store_ids).delete()
+                    deleted_counts['store_integrations'] = StoreIntegration.objects.filter(
+                        store_id__in=store_ids,
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).count()
+                    StoreIntegration.objects.filter(
+                        store_id__in=store_ids,
+                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                    ).delete()
+                    self.stdout.write(
+                        f'  ??? Deleted {deleted_counts["store_orders"]} store orders and '
+                        f'{deleted_counts["store_integrations"]} store integrations'
+                    )
                 except Exception as e:
-                    self.stdout.write(self.style.WARNING(f'  ! Could not delete payments: {e}'))
-                
+                    self.stdout.write(self.style.WARNING(f'  ! Could not delete store integrations/orders: {e}'))
+
                 # Delete langflow integrations
                 try:
                     from apps.langflow.models import LangflowIntegration
