@@ -142,8 +142,8 @@ class SystemContactsView(APIView):
         # Get contacts from automation sessions
         if source in ['all', 'sessions']:
             try:
-                from apps.automation.models import AutomationSession
-                sessions_qs = AutomationSession.objects.all()
+                from apps.automation.models import CustomerSession
+                sessions_qs = CustomerSession.objects.all()
                 if account_id:
                     sessions_qs = sessions_qs.filter(account_id=account_id)
                 

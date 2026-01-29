@@ -139,8 +139,8 @@ class Command(BaseCommand):
                 
                 # Delete automation sessions
                 try:
-                    from apps.automation.models import AutomationSession
-                    sessions = AutomationSession.objects.filter(account=account)
+                    from apps.automation.models import CustomerSession
+                    sessions = CustomerSession.objects.filter(account=account)
                     deleted_counts['automation_sessions'] = sessions.count()
                     sessions.delete()
                     self.stdout.write(f'  ✓ Deleted {deleted_counts["automation_sessions"]} automation sessions')
