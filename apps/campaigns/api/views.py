@@ -12,7 +12,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Max
 
-from ..models import Campaign, CampaignRecipient, ScheduledMessage, ContactList
+from ..models import Campaign, CampaignRecipient, ContactList
+from apps.automation.models import ScheduledMessage  # Use unified model
 from ..services import CampaignService, SchedulerService
 from .serializers import (
     CampaignSerializer,

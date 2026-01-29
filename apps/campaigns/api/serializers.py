@@ -2,7 +2,8 @@
 Campaign API serializers.
 """
 from rest_framework import serializers
-from ..models import Campaign, CampaignRecipient, ScheduledMessage, ContactList
+from ..models import Campaign, CampaignRecipient, ContactList
+from apps.automation.models import ScheduledMessage  # Use unified model
 
 
 class CampaignRecipientSerializer(serializers.ModelSerializer):
@@ -70,23 +71,26 @@ class AddRecipientsSerializer(serializers.Serializer):
 
 
 class ScheduledMessageSerializer(serializers.ModelSerializer):
-    """Serializer for ScheduledMessage model."""
+    """Serializer for ScheduledMessage model (unified from automation app)."""
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    account_name = serializers.CharField(source='account.name', read_only=True)
     
     class Meta:
         model = ScheduledMessage
         fields = [
-            'id', 'account', 'to_number', 'contact_name',
-            'message_type', 'content', 'template', 'template_variables',
-            'scheduled_at', 'timezone', 'status',
-            'message_id', 'whatsapp_message_id', 'sent_at',
-            'error_code', 'error_message',
+            'id', 'account', 'account_name', 'to_number', 'contact_name',
+            'message_type', 'message_text', 'template_name', 'template_language',
+            'template_components', 'media_url', 'buttons', 'content',
+            'scheduled_at', 'timezone', 'status', 'status_display',
+            'whatsapp_message_id', 'sent_at', 'error_code', 'error_message',
             'is_recurring', 'recurrence_rule', 'next_occurrence',
+            'source', 'campaign_id', 'notes',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'status', 'message_id', 'whatsapp_message_id',
+            'id', 'status', 'status_display', 'whatsapp_message_id',
             'sent_at', 'error_code', 'error_message',
-            'next_occurrence', 'created_at', 'updated_at',
+            'next_occurrence', 'created_at', 'updated_at', 'account_name',
         ]
 
 
@@ -94,16 +98,25 @@ class ScheduledMessageCreateSerializer(serializers.Serializer):
     """Serializer for creating scheduled messages."""
     account_id = serializers.UUIDField()
     to_number = serializers.CharField(max_length=20)
-    contact_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
-    message_type = serializers.CharField(max_length=20, default='text')
+    contact_name = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    message_type = serializers.ChoiceField(
+        choices=ScheduledMessage.MessageType.choices,
+        default=ScheduledMessage.MessageType.TEXT
+    )
+    message_text = serializers.CharField(required=False, allow_blank=True, default='')
+    template_name = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+    template_language = serializers.CharField(max_length=10, default='pt_BR')
+    template_components = serializers.ListField(required=False, default=list)
+    media_url = serializers.URLField(required=False, allow_blank=True, default='')
+    buttons = serializers.ListField(required=False, default=list)
     content = serializers.DictField(required=False, default=dict)
-    template_id = serializers.UUIDField(required=False, allow_null=True)
-    template_variables = serializers.DictField(required=False, default=dict)
     scheduled_at = serializers.DateTimeField()
-    timezone = serializers.CharField(max_length=50, default='UTC')
+    timezone = serializers.CharField(max_length=50, default='America/Sao_Paulo')
     is_recurring = serializers.BooleanField(default=False)
-    recurrence_rule = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    recurrence_rule = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
     metadata = serializers.DictField(required=False, default=dict)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    source = serializers.CharField(max_length=20, default='manual')
 
 
 class ContactListSerializer(serializers.ModelSerializer):

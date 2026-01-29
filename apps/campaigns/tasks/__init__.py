@@ -1,5 +1,8 @@
 """
 Celery tasks for campaigns.
+
+NOTE: process_scheduled_messages has been moved to apps.automation.tasks.scheduled
+to avoid duplication. The unified ScheduledMessage model is in apps.automation.models.
 """
 from celery import shared_task
 import logging
@@ -22,18 +25,6 @@ def process_campaign(campaign_id: str):
             break
         
         logger.info(f"Campaign {campaign_id}: processed {result['processed']}, remaining {result['remaining']}")
-
-
-@shared_task
-def process_scheduled_messages():
-    """Process pending scheduled messages."""
-    from ..services import SchedulerService
-    
-    service = SchedulerService()
-    result = service.process_scheduled_messages(batch_size=50)
-    
-    logger.info(f"Processed scheduled messages: sent={result['sent']}, failed={result['failed']}")
-    return result
 
 
 @shared_task

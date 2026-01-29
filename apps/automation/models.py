@@ -11,6 +11,8 @@ User = get_user_model()
 class ScheduledMessage(BaseModel):
     """
     Scheduled messages for future delivery.
+    This is the unified model for all scheduled WhatsApp messages.
+    Used by both automation and campaigns apps.
     """
     
     class Status(models.TextChoices):
@@ -31,7 +33,7 @@ class ScheduledMessage(BaseModel):
     account = models.ForeignKey(
         'whatsapp.WhatsAppAccount',
         on_delete=models.CASCADE,
-        related_name='automation_scheduled_messages'
+        related_name='scheduled_messages'
     )
     
     # Recipient
@@ -51,6 +53,9 @@ class ScheduledMessage(BaseModel):
     media_url = models.URLField(blank=True)
     buttons = models.JSONField(default=list, blank=True)
     
+    # Additional content field for flexibility (used by campaigns)
+    content = models.JSONField(default=dict, blank=True, help_text="Additional content data")
+    
     # Scheduling
     scheduled_at = models.DateTimeField(db_index=True)
     timezone = models.CharField(max_length=50, default='America/Sao_Paulo')
@@ -65,7 +70,13 @@ class ScheduledMessage(BaseModel):
     
     # Result
     whatsapp_message_id = models.CharField(max_length=255, blank=True)
+    error_code = models.CharField(max_length=50, blank=True)
     error_message = models.TextField(blank=True)
+    
+    # Recurrence support
+    is_recurring = models.BooleanField(default=False)
+    recurrence_rule = models.CharField(max_length=255, blank=True, help_text="RRULE format")
+    next_occurrence = models.DateTimeField(null=True, blank=True)
     
     # Metadata
     created_by = models.ForeignKey(
@@ -73,23 +84,50 @@ class ScheduledMessage(BaseModel):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='automation_scheduled_messages'
+        related_name='scheduled_messages'
     )
     notes = models.TextField(blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    
+    # Source tracking
+    source = models.CharField(
+        max_length=20,
+        default='manual',
+        help_text="Source: manual, campaign, automation, api"
+    )
+    campaign_id = models.UUIDField(null=True, blank=True, help_text="Related campaign if from campaign")
 
     class Meta:
-        db_table = 'automation_scheduled_messages'
+        db_table = 'scheduled_messages'
         verbose_name = 'Scheduled Message'
         verbose_name_plural = 'Scheduled Messages'
         ordering = ['scheduled_at']
         indexes = [
             models.Index(fields=['account', 'status', 'scheduled_at']),
             models.Index(fields=['status', 'scheduled_at']),
+            models.Index(fields=['source', 'status']),
         ]
 
     def __str__(self):
         return f"{self.to_number} - {self.scheduled_at} ({self.status})"
+    
+    def get_message_content(self) -> dict:
+        """Get message content in a unified format."""
+        if self.message_type == self.MessageType.TEXT:
+            return {'text': self.message_text}
+        elif self.message_type == self.MessageType.TEMPLATE:
+            return {
+                'template_name': self.template_name,
+                'language': self.template_language,
+                'components': self.template_components,
+            }
+        elif self.message_type == self.MessageType.IMAGE:
+            return {'image_url': self.media_url, 'caption': self.message_text}
+        elif self.message_type == self.MessageType.DOCUMENT:
+            return {'document_url': self.media_url, 'caption': self.message_text}
+        elif self.message_type == self.MessageType.INTERACTIVE:
+            return {'body_text': self.message_text, 'buttons': self.buttons}
+        return self.content or {}
 
 
 class ReportSchedule(BaseModel):

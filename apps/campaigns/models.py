@@ -170,83 +170,8 @@ class CampaignRecipient(models.Model):
         return f"{self.phone_number} - {self.status}"
 
 
-class ScheduledMessage(models.Model):
-    """Scheduled message model."""
-    
-    class MessageStatus(models.TextChoices):
-        SCHEDULED = 'scheduled', 'Scheduled'
-        PROCESSING = 'processing', 'Processing'
-        SENT = 'sent', 'Sent'
-        FAILED = 'failed', 'Failed'
-        CANCELLED = 'cancelled', 'Cancelled'
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    account = models.ForeignKey(
-        WhatsAppAccount,
-        on_delete=models.CASCADE,
-        related_name='scheduled_messages'
-    )
-    
-    # Recipient
-    to_number = models.CharField(max_length=20)
-    contact_name = models.CharField(max_length=255, blank=True)
-    
-    # Message content
-    message_type = models.CharField(max_length=20, default='text')
-    content = models.JSONField(default=dict)
-    template = models.ForeignKey(
-        MessageTemplate,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-    template_variables = models.JSONField(default=dict, blank=True)
-    
-    # Scheduling
-    scheduled_at = models.DateTimeField()
-    timezone = models.CharField(max_length=50, default='UTC')
-    
-    # Status
-    status = models.CharField(
-        max_length=20,
-        choices=MessageStatus.choices,
-        default=MessageStatus.SCHEDULED
-    )
-    
-    # Result
-    message_id = models.CharField(max_length=100, blank=True)
-    whatsapp_message_id = models.CharField(max_length=100, blank=True)
-    sent_at = models.DateTimeField(null=True, blank=True)
-    error_code = models.CharField(max_length=50, blank=True)
-    error_message = models.TextField(blank=True)
-    
-    # Recurrence
-    is_recurring = models.BooleanField(default=False)
-    recurrence_rule = models.CharField(max_length=255, blank=True)  # RRULE format
-    next_occurrence = models.DateTimeField(null=True, blank=True)
-    
-    # Metadata
-    created_by = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        related_name='scheduled_messages'
-    )
-    metadata = models.JSONField(default=dict, blank=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    is_active = models.BooleanField(default=True)
-    
-    class Meta:
-        ordering = ['scheduled_at']
-        indexes = [
-            models.Index(fields=['account', 'status', 'scheduled_at']),
-            models.Index(fields=['scheduled_at', 'status']),
-        ]
-    
-    def __str__(self):
-        return f"Message to {self.to_number} at {self.scheduled_at}"
+# NOTE: ScheduledMessage model has been moved to apps.automation.models
+# Import it from there: from apps.automation.models import ScheduledMessage
 
 
 class ContactList(models.Model):

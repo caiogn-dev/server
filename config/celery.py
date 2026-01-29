@@ -87,10 +87,8 @@ app.conf.beat_schedule = {
         'task': 'apps.campaigns.tasks.check_scheduled_campaigns',
         'schedule': 60.0,  # Every minute
     },
-    'process-campaign-scheduled-messages': {
-        'task': 'apps.campaigns.tasks.process_scheduled_messages',
-        'schedule': 60.0,  # Every minute
-    },
+    # NOTE: process_scheduled_messages is now unified in apps.automation.tasks.scheduled
+    # The task 'process-scheduled-messages' above handles all scheduled messages
 }
 
 
