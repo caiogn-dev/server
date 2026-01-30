@@ -37,6 +37,10 @@ class WhatsAppAPIService:
         """Make HTTP request to WhatsApp API."""
         url = f"{self.base_url}/{endpoint}"
         
+        logger.debug(
+            'WhatsApp API request',
+            extra={'endpoint': endpoint, 'payload': data, 'params': params}
+        )
         try:
             response = requests.request(
                 method=method,
@@ -82,20 +86,28 @@ class WhatsAppAPIService:
         reply_to: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send a text message."""
+        if not self.phone_number_id:
+            raise WhatsAppAPIError(
+                message='WhatsApp phone_number_id is not configured',
+                code='missing_phone_number_id'
+            )
+
         payload = {
             'messaging_product': 'whatsapp',
             'recipient_type': 'individual',
             'to': to,
             'type': 'text',
             'text': {
-                'preview_url': preview_url,
                 'body': text
             }
         }
-        
+
+        if preview_url:
+            payload['text']['preview_url'] = True
+
         if reply_to:
             payload['context'] = {'message_id': reply_to}
-        
+
         return self._make_request(
             'POST',
             f'{self.phone_number_id}/messages',

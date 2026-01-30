@@ -254,9 +254,12 @@ class StoreOrder(BaseModel):
                 order_number=self.order_number,
             )
 
-            phone = ''.join(filter(str.isdigit, self.customer_phone))
-            if not phone.startswith('55'):
-                phone = '55' + phone
+            phone = self._normalize_phone_number(self.customer_phone)
+            if not phone:
+                logger.warning(
+                    f"Invalid phone number for WhatsApp notification (order {self.order_number})"
+                )
+                return
 
             from apps.automation.models import CompanyProfile
             from apps.whatsapp.models import WhatsAppAccount
@@ -325,6 +328,11 @@ class StoreOrder(BaseModel):
             if not account:
                 logger.warning(f"No WhatsApp account found to notify order {self.order_number}")
                 return
+            if not account.phone_number_id:
+                logger.warning(
+                    f"WhatsApp account {account.id} missing phone_number_id for order {self.order_number}"
+                )
+                return
 
             message_service = MessageService()
             message_service.send_text_message(
@@ -366,6 +374,17 @@ class StoreOrder(BaseModel):
             })
         except Exception as e:
             logger.error(f"Failed to send webhook for order {self.order_number}: {e}")
+
+    def _normalize_phone_number(self, raw_phone: str) -> str:
+        """Ensure the phone number is digits-only and has the Brazil prefix."""
+        digits = ''.join(filter(str.isdigit, raw_phone or ''))
+        if not digits:
+            return ''
+        if not digits.startswith('55'):
+            digits = '55' + digits
+        if len(digits) < 11:
+            return ''
+        return digits
 
 
 class StoreOrderItem(models.Model):
