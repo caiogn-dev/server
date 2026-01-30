@@ -19,6 +19,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
+from apps.core.dashboard_views import DashboardStatsView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
 
@@ -31,6 +33,7 @@ urlpatterns = [
     path('api/v1/', include([
         # Core (auth, users, csrf)
         path('', include('apps.core.urls')),
+
 
         # Unified Store API (PRIMARY - used by frontends)
         path('stores/', include('apps.stores.urls')),
@@ -50,6 +53,8 @@ urlpatterns = [
         path('campaigns/', include('apps.campaigns.urls')),  # WhatsApp campaigns
         path('audit/', include('apps.audit.urls')),
     ])),
+
+    path('api/v1/core/dashboard-stats/', DashboardStatsView.as_view(), name='core-dashboard-stats'),
 
     # Webhooks (public endpoints)
     # IMPORTANT: Meta's WhatsApp API sends webhooks WITHOUT trailing slash

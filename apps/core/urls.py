@@ -3,7 +3,12 @@ Core URLs - Health check, system endpoints, dashboard, auth, and export.
 """
 from django.urls import path
 from .api import HealthCheckView, SystemInfoView
-from .dashboard_views import DashboardOverviewView, DashboardActivityView, DashboardChartsView
+from .dashboard_views import (
+    DashboardOverviewView,
+    DashboardActivityView,
+    DashboardChartsView,
+    DashboardStatsView,
+)
 from .auth_views import (
     LoginView, LogoutView, CurrentUserView, ChangePasswordView,
     RegisterView, CSRFTokenView, ProfileView
@@ -35,6 +40,7 @@ urlpatterns = [
     path('dashboard/overview/', DashboardOverviewView.as_view(), name='dashboard-overview'),
     path('dashboard/activity/', DashboardActivityView.as_view(), name='dashboard-activity'),
     path('dashboard/charts/', DashboardChartsView.as_view(), name='dashboard-charts'),
+    path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard-stats'),
     
     # Export
     path('export/messages/', export_messages, name='export-messages'),

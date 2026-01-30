@@ -2,9 +2,12 @@
 Dashboard API views - Aggregated metrics and statistics.
 """
 import logging
+import uuid
 from datetime import timedelta
+from typing import Optional
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, Q
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -12,8 +15,9 @@ from drf_spectacular.utils import extend_schema
 
 from apps.whatsapp.models import WhatsAppAccount, Message, WebhookEvent
 from apps.conversations.models import Conversation
-from apps.stores.models import StoreOrder
+from apps.stores.models import StoreOrder, Store
 from apps.langflow.models import LangflowFlow, LangflowSession, LangflowLog
+from apps.core.services.dashboard_stats import DashboardStatsAggregator
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +188,46 @@ class DashboardOverviewView(APIView):
             },
             'timestamp': now.isoformat(),
         })
+
+
+class DashboardStatsView(APIView):
+    """Single-query dashboard summary (today/week/month)."""
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Dashboard stats summary",
+        description="Return pre-aggregated totals for today, week and month for a single store.",
+        responses={
+            200: dict,
+            400: dict,
+            404: dict,
+        }
+    )
+    def get(self, request):
+        store_param = (
+            request.query_params.get('store_id')
+            or request.query_params.get('store_slug')
+            or request.query_params.get('store')
+        )
+        if not store_param:
+            return Response(
+                {'detail': 'store_id or store slug query parameter is required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        store = self._resolve_store(store_param)
+        if not store:
+            return Response({'detail': 'Store not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        payload = DashboardStatsAggregator(store).build_payload()
+        return Response(payload)
+
+    @staticmethod
+    def _resolve_store(identifier: str) -> Optional[Store]:
+        try:
+            return Store.objects.get(id=uuid.UUID(identifier))
+        except (ValueError, Store.DoesNotExist):
+            return Store.objects.filter(slug=identifier).first()
 
 
 class DashboardActivityView(APIView):
