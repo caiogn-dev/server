@@ -2,7 +2,7 @@
 URL configuration for Pastita E-commerce Platform.
 
 Main API endpoints:
-- /api/v1/stores/s/{store_slug}/ - Unified store API (catalog, cart, checkout, etc.)
+- /api/v1/stores/{store_slug}/ - Unified store API (catalog, cart, checkout, etc.; legacy /stores/s/{store_slug}/ paths remain available)
 - /api/v1/auth/ - Authentication (login, register, logout)
 - /api/v1/users/ - User profile management
 

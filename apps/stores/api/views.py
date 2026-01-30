@@ -1401,10 +1401,10 @@ class StoreWishlistViewSet(viewsets.ViewSet):
     ViewSet for managing user wishlists per store.
     
     Endpoints:
-    - GET /stores/s/{store_slug}/wishlist/ - Get user's wishlist
-    - POST /stores/s/{store_slug}/wishlist/add/ - Add product to wishlist
-    - POST /stores/s/{store_slug}/wishlist/remove/ - Remove product from wishlist
-    - POST /stores/s/{store_slug}/wishlist/toggle/ - Toggle product in wishlist
+    - GET /stores/{store_slug}/wishlist/ - Get user's wishlist (legacy /stores/s/{store_slug}/ paths also remain)
+    - POST /stores/{store_slug}/wishlist/add/ - Add product to wishlist (legacy /stores/s/{store_slug}/ paths also remain)
+    - POST /stores/{store_slug}/wishlist/remove/ - Remove product from wishlist (legacy /stores/s/{store_slug}/ paths also remain)
+    - POST /stores/{store_slug}/wishlist/toggle/ - Toggle product in wishlist (legacy /stores/s/{store_slug}/ paths also remain)
     """
     permission_classes = [permissions.IsAuthenticated]
     

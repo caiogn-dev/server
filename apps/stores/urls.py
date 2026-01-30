@@ -3,7 +3,7 @@ URL configuration for the stores app.
 Unified API for all stores including cart, checkout, catalog, maps, and webhooks.
 
 This is the UNIFIED e-commerce API that all frontends should use.
-Pastita-3D and other store frontends should use /api/v1/stores/s/{store_slug}/ endpoints.
+Pastita-3D and other store frontends should use /api/v1/stores/{store_slug}/ endpoints (legacy /stores/s/{store_slug}/ paths remain for backward compatibility).
 """
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -64,9 +64,33 @@ stores_router.register(r'orders', StoreOrderViewSet, basename='store-orders')
 stores_router.register(r'customers', StoreCustomerViewSet, basename='store-customers')
 
 # Nested router for product variants
+
 products_router = nested_routers.NestedDefaultRouter(router, r'products', lookup='product')
 products_router.register(r'variants', StoreProductVariantViewSet, basename='product-variants')
 
+store_frontend_patterns = [
+    path('', StorePublicView.as_view(), name='store-public'),
+    path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
+    path('cart/', StoreCartViewSet.as_view({'get': 'get_cart_by_store'}), name='store-cart'),
+    path('cart/add/', StoreCartViewSet.as_view({'post': 'add_item'}), name='store-cart-add'),
+    path('cart/item/<uuid:item_id>/', StoreCartViewSet.as_view({
+        'patch': 'update_item',
+        'delete': 'remove_item',
+    }), name='store-cart-item'),
+    path('cart/clear/', StoreCartViewSet.as_view({'delete': 'clear_cart'}), name='store-cart-clear'),
+    path('checkout/', StoreCheckoutView.as_view(), name='store-checkout'),
+    path('delivery-fee/', StoreDeliveryFeeView.as_view(), name='store-delivery-fee'),
+    path('validate-coupon/', StoreCouponValidateView.as_view(), name='store-validate-coupon'),
+    path('wishlist/', StoreWishlistViewSet.as_view({'get': 'list'}), name='store-wishlist'),
+    path('wishlist/add/', StoreWishlistViewSet.as_view({'post': 'add'}), name='store-wishlist-add'),
+    path('wishlist/remove/', StoreWishlistViewSet.as_view({'post': 'remove'}), name='store-wishlist-remove'),
+    path('wishlist/toggle/', StoreWishlistViewSet.as_view({'post': 'toggle'}), name='store-wishlist-toggle'),
+    path('route/', StoreRouteView.as_view(), name='store-route'),
+    path('validate-delivery/', StoreValidateDeliveryView.as_view(), name='store-validate-delivery'),
+    path('delivery-zones/', StoreDeliveryZonesView.as_view(), name='store-delivery-zones'),
+    path('autosuggest/', StoreAutosuggestView.as_view(), name='store-autosuggest'),
+    path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
+]
 app_name = 'stores'
 
 urlpatterns = [
@@ -79,52 +103,14 @@ urlpatterns = [
     
     # ==========================================================================
     # PUBLIC STOREFRONT ENDPOINTS (by store slug)
-    # Base: /api/v1/stores/s/{store_slug}/
+    # Base: /api/v1/stores/{store_slug}/ (legacy /stores/s/{store_slug}/ kept for compatibility)
     # ==========================================================================
     
-    # Store info (public)
-    path('s/<slug:store_slug>/', StorePublicView.as_view(), name='store-public'),
+    # Store-specific storefront endpoints (use the /stores/{store_slug}/ base)
+    path('s/<slug:store_slug>/', include(store_frontend_patterns)),
+    path('<slug:store_slug>/', include(store_frontend_patterns)),
     
-    # Catalog - GET /stores/s/{store_slug}/catalog/
-    path('s/<slug:store_slug>/catalog/', StoreCatalogView.as_view(), name='store-catalog'),
-    
-    # Cart endpoints
-    path('s/<slug:store_slug>/cart/', StoreCartViewSet.as_view({
-        'get': 'get_cart_by_store',
-    }), name='store-cart'),
-    path('s/<slug:store_slug>/cart/add/', StoreCartViewSet.as_view({
-        'post': 'add_item',
-    }), name='store-cart-add'),
-    path('s/<slug:store_slug>/cart/item/<uuid:item_id>/', StoreCartViewSet.as_view({
-        'patch': 'update_item',
-        'delete': 'remove_item',
-    }), name='store-cart-item'),
-    path('s/<slug:store_slug>/cart/clear/', StoreCartViewSet.as_view({
-        'delete': 'clear_cart',
-    }), name='store-cart-clear'),
-    
-    # Checkout
-    path('s/<slug:store_slug>/checkout/', StoreCheckoutView.as_view(), name='store-checkout'),
-    
-    # Delivery & Coupons
-    path('s/<slug:store_slug>/delivery-fee/', StoreDeliveryFeeView.as_view(), name='store-delivery-fee'),
-    path('s/<slug:store_slug>/validate-coupon/', StoreCouponValidateView.as_view(), name='store-validate-coupon'),
-    
-    # Wishlist endpoints
-    path('s/<slug:store_slug>/wishlist/', StoreWishlistViewSet.as_view({
-        'get': 'list',
-    }), name='store-wishlist'),
-    path('s/<slug:store_slug>/wishlist/add/', StoreWishlistViewSet.as_view({
-        'post': 'add',
-    }), name='store-wishlist-add'),
-    path('s/<slug:store_slug>/wishlist/remove/', StoreWishlistViewSet.as_view({
-        'post': 'remove',
-    }), name='store-wishlist-remove'),
-    path('s/<slug:store_slug>/wishlist/toggle/', StoreWishlistViewSet.as_view({
-        'post': 'toggle',
-    }), name='store-wishlist-toggle'),
-    
-    # ==========================================================================
+    # ========================================================================== 
     # HERE MAPS ENDPOINTS
     # ==========================================================================
     
@@ -133,21 +119,12 @@ urlpatterns = [
     path('maps/reverse-geocode/', StoreReverseGeocodeView.as_view(), name='maps-reverse-geocode'),
     path('maps/autosuggest/', StoreAutosuggestView.as_view(), name='maps-autosuggest'),
     
-    # Store-specific maps endpoints
-    path('s/<slug:store_slug>/route/', StoreRouteView.as_view(), name='store-route'),
-    path('s/<slug:store_slug>/validate-delivery/', StoreValidateDeliveryView.as_view(), name='store-validate-delivery'),
-    path('s/<slug:store_slug>/delivery-zones/', StoreDeliveryZonesView.as_view(), name='store-delivery-zones'),
-    path('s/<slug:store_slug>/autosuggest/', StoreAutosuggestView.as_view(), name='store-autosuggest'),
-    
     # ==========================================================================
     # PAYMENT WEBHOOKS
     # ==========================================================================
     
     # Global webhook (finds store from order)
     path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='webhook-mercadopago'),
-    
-    # Store-specific webhook
-    path('s/<slug:store_slug>/webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     
     # Payment status check (requires token for security)
     path('orders/<str:order_id>/payment-status/', PaymentStatusView.as_view(), name='order-payment-status'),

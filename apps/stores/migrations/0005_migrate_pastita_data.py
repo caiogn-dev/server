@@ -9,9 +9,9 @@ This migration:
 5. Migrates Pedido to StoreOrder with StoreOrderItem
 
 After this migration, the Pastita-3D frontend should use:
-- /api/v1/stores/s/pastita/catalog/
-- /api/v1/stores/s/pastita/cart/
-- /api/v1/stores/s/pastita/checkout/
+- /api/v1/stores/pastita/catalog/
+- /api/v1/stores/pastita/cart/
+- /api/v1/stores/pastita/checkout/
 """
 from django.db import migrations
 from django.utils.text import slugify

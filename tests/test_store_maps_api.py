@@ -42,7 +42,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
 
     def test_store_catalog_endpoint_is_available(self):
         """The store catalog endpoint should still respond 200 even when empty."""
-        response = self.client.get(f'/api/v1/stores/s/{self.store.slug}/catalog/')
+        response = self.client.get(f'/api/v1/stores/{self.store.slug}/catalog/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
     @patch('apps.stores.api.maps_views.here_maps_service')
@@ -85,7 +85,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
             {'minutes': 10, 'polygons': []}
         ]
 
-        response = self.client.get(f'/api/v1/stores/s/{self.store.slug}/delivery-zones/')
+        response = self.client.get(f'/api/v1/stores/{self.store.slug}/delivery-zones/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('zones', response.data)
 
@@ -108,7 +108,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
             'lat': '-10.1847',
             'lng': '-48.3337',
         }
-        response = self.client.post(f'/api/v1/stores/s/{self.store.slug}/validate-delivery/', payload)
+        response = self.client.post(f'/api/v1/stores/{self.store.slug}/validate-delivery/', payload)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('delivery_fee', response.data)
         self.assertEqual(

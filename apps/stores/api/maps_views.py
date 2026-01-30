@@ -79,8 +79,8 @@ class StoreRouteView(APIView):
     
     def get(self, request, store_slug):
         """
-        GET /api/v1/stores/s/{store_slug}/route/?dest_lat=...&dest_lng=...
-        Calculate route from store to destination.
+        GET /api/v1/stores/{store_slug}/route/?dest_lat=...&dest_lng=...
+        Calculate route from store to destination (legacy /stores/s/{store_slug}/ route remains available).
         """
         store = get_object_or_404(Store, slug=store_slug, status='active')
         
@@ -140,7 +140,8 @@ class StoreValidateDeliveryView(APIView):
     
     def post(self, request, store_slug):
         """
-        POST /api/v1/stores/s/{store_slug}/validate-delivery/
+        POST /api/v1/stores/{store_slug}/validate-delivery/
+        (legacy /stores/s/{store_slug}/ validate-delivery/ path is still served)
         
         Body:
         {
@@ -228,8 +229,8 @@ class StoreDeliveryZonesView(APIView):
     
     def get(self, request, store_slug):
         """
-        GET /api/v1/stores/s/{store_slug}/delivery-zones/
-        Returns isoline polygons for delivery zones.
+        GET /api/v1/stores/{store_slug}/delivery-zones/
+        Returns isoline polygons for delivery zones (legacy /stores/s/{store_slug}/ delivery-zones/ also available).
         """
         store = get_object_or_404(Store, slug=store_slug, status='active')
         
@@ -270,9 +271,10 @@ class StoreAutosuggestView(APIView):
     
     def get(self, request, store_slug=None):
         """
-        GET /api/v1/stores/s/{store_slug}/autosuggest/?q=...
+        GET /api/v1/stores/{store_slug}/autosuggest/?q=...
         or
         GET /api/v1/stores/maps/autosuggest/?q=...
+        (legacy /stores/s/{store_slug}/autosuggest/?q=... stays available)
         """
         query = request.query_params.get('q')
         if not query or len(query) < 3:

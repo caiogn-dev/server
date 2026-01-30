@@ -51,12 +51,12 @@ This Django backend serves multiple frontends:
 
 ### Primary API (v1)
 - `/api/v1/stores/` - Store management
-- `/api/v1/stores/s/{slug}/` - Store-specific operations
-- `/api/v1/stores/s/{slug}/products/` - Products
-- `/api/v1/stores/s/{slug}/orders/` - Orders
-- `/api/v1/stores/s/{slug}/categories/` - Categories
-- `/api/v1/stores/s/{slug}/coupons/` - Coupons
-- `/api/v1/stores/s/{slug}/delivery-zones/` - Delivery zones
+- `/api/v1/stores/{slug}/` - Store-specific operations
+- `/api/v1/stores/{slug}/products/` - Products
+- `/api/v1/stores/{slug}/orders/` - Orders
+- `/api/v1/stores/{slug}/categories/` - Categories
+- `/api/v1/stores/{slug}/coupons/` - Coupons
+- `/api/v1/stores/{slug}/delivery-zones/` - Delivery zones
 
 ### Legacy API (Deprecated)
 - `/api/v1/orders/` - Legacy orders (mostly wrappers; prefer `/api/v1/stores/...`)
