@@ -733,11 +733,6 @@ class StoreCustomerViewSet(viewsets.ModelViewSet):
         return Response(StoreCustomerSerializer(customer).data)
 
 
-# Import timezone for cancel action
-from django.utils import timezone
-from decimal import Decimal
-from django.db import transaction
-
 from apps.stores.models import StoreCart, StoreCartItem, StoreCombo, StoreProductType
 from apps.stores.services import cart_service, checkout_service
 from .serializers import (

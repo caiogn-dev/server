@@ -377,14 +377,8 @@ class StoreOrder(BaseModel):
 
     def _normalize_phone_number(self, raw_phone: str) -> str:
         """Ensure the phone number is digits-only and has the Brazil prefix."""
-        digits = ''.join(filter(str.isdigit, raw_phone or ''))
-        if not digits:
-            return ''
-        if not digits.startswith('55'):
-            digits = '55' + digits
-        if len(digits) < 11:
-            return ''
-        return digits
+        from apps.core.utils import normalize_phone_number
+        return normalize_phone_number(raw_phone or '')
 
 
 class StoreOrderItem(models.Model):
