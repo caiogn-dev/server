@@ -50,7 +50,7 @@ def add_fields_and_create_wishlist(apps, schema_editor):
                     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                     created_at timestamp with time zone DEFAULT now(),
                     updated_at timestamp with time zone DEFAULT now(),
-                    store_id uuid NOT NULL REFERENCES stores_store(id) ON DELETE CASCADE,
+                    store_id uuid NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
                     user_id integer NOT NULL REFERENCES auth_user(id) ON DELETE CASCADE,
                     UNIQUE(store_id, user_id)
                 )
@@ -100,7 +100,7 @@ def add_fields_and_create_wishlist(apps, schema_editor):
                         id char(36) PRIMARY KEY,
                         created_at datetime DEFAULT CURRENT_TIMESTAMP,
                         updated_at datetime DEFAULT CURRENT_TIMESTAMP,
-                        store_id char(36) NOT NULL REFERENCES stores_store(id),
+                        store_id char(36) NOT NULL REFERENCES stores(id),
                         user_id integer NOT NULL REFERENCES auth_user(id),
                         UNIQUE(store_id, user_id)
                     )

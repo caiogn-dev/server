@@ -21,7 +21,7 @@ def forwards(apps, schema_editor):
                     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                     created_at timestamp with time zone DEFAULT now(),
                     updated_at timestamp with time zone DEFAULT now(),
-                    store_id uuid NOT NULL REFERENCES stores_store(id) ON DELETE CASCADE,
+                    store_id uuid NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
                     customer_phone varchar(20) NOT NULL DEFAULT '',
                     customer_email varchar(254) DEFAULT '',
                     product_id uuid NOT NULL REFERENCES store_products(id) ON DELETE CASCADE
@@ -51,7 +51,7 @@ def forwards(apps, schema_editor):
                     id char(36) PRIMARY KEY,
                     created_at datetime DEFAULT CURRENT_TIMESTAMP,
                     updated_at datetime DEFAULT CURRENT_TIMESTAMP,
-                    store_id char(36) NOT NULL REFERENCES stores_store(id),
+                    store_id char(36) NOT NULL REFERENCES stores(id),
                     customer_phone varchar(20) NOT NULL DEFAULT '',
                     customer_email varchar(254) DEFAULT '',
                     product_id char(36) NOT NULL REFERENCES store_products(id)
