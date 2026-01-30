@@ -115,9 +115,9 @@ class CheckoutService:
         """
         # Get configuration from store metadata or use defaults
         metadata = store.metadata or {}
-        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or 5.0)))
+        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or 8.0)))
         fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', 1.0)))
-        free_km_threshold = Decimal(str(metadata.get('delivery_free_km', 2.0)))
+        free_km_threshold = Decimal(str(metadata.get('delivery_free_km', 3.0)))
         max_fee = Decimal(str(metadata.get('delivery_max_fee', 25.0)))
         
         # If no distance provided, return base fee
