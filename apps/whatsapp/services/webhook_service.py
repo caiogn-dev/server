@@ -10,6 +10,7 @@ from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
+from celery import current_app
 from apps.core.utils import verify_webhook_signature, generate_idempotency_key, normalize_phone_number
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
@@ -300,7 +301,7 @@ class WebhookService:
         return deleted
 
     @transaction.atomic
-    def process_event(self, event: WebhookEvent) -> Optional[Message]:
+    def process_event(self, event: WebhookEvent, post_process_inbound: bool = False) -> Optional[Message]:
         """
         Process a webhook event and broadcast updates.
         
@@ -321,6 +322,8 @@ class WebhookService:
             
             if event.event_type == WebhookEvent.EventType.MESSAGE:
                 message = self._process_inbound_message(event)
+                if post_process_inbound and message:
+                    self.post_process_inbound_message(event, message)
                 self.mark_event_completed(event)
                 return message
             
@@ -343,6 +346,57 @@ class WebhookService:
             logger.error(f"Error processing event {event.id}: {e}", exc_info=True)
             self.mark_event_failed(event, str(e))
             raise
+
+    def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
+        """Run automation/langflow handlers after a message is created."""
+        from apps.automation.services import AutomationService
+        from apps.conversations.services import ConversationService
+
+        payload = event.payload
+        message_data = payload.get('message', {})
+        contact_info = payload.get('contact', {})
+
+        # Ensure conversation exists (in case it wasn't created)
+        if not message.conversation:
+            conversation_service = ConversationService()
+            conversation = conversation_service.get_or_create_conversation(
+                account=event.account,
+                phone_number=message.from_number,
+                contact_name=contact_info.get('profile', {}).get('name', '')
+            )
+            message.conversation = conversation
+            message.save(update_fields=['conversation'])
+
+        # Update contact name if missing
+        contact_name = contact_info.get('profile', {}).get('name', '')
+        if message.conversation and contact_name and not message.conversation.contact_name:
+            message.conversation.contact_name = contact_name
+            message.conversation.save(update_fields=['contact_name', 'updated_at'])
+
+        # Try automation service first (for companies with CompanyProfile)
+        try:
+            automation_service = AutomationService()
+            automation_response = automation_service.handle_incoming_message(
+                account_id=str(event.account.id),
+                from_number=message.from_number,
+                message_text=message.text_body or '',
+                message_type=message.message_type,
+                message_data=message_data
+            )
+
+            # If automation handled it, we're done
+            if automation_response:
+                logger.info(f"Message handled by automation service: {message.id}")
+                return
+        except Exception as e:
+            logger.warning(f"Automation service error: {str(e)}")
+
+        # Fall back to Langflow if enabled and automation didn't handle it
+        if event.account.auto_response_enabled and not message.processed_by_langflow:
+            try:
+                current_app.send_task('apps.whatsapp.tasks.process_message_with_langflow', args=[str(message.id)])
+            except Exception as e:
+                logger.warning(f"Failed to enqueue Langflow task: {str(e)}")
 
     def _process_inbound_message(self, event: WebhookEvent) -> Optional[Message]:
         """Process an inbound message event."""

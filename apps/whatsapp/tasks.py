@@ -114,7 +114,7 @@ def process_webhook_event(event_id: str):
             return {'status': 'skipped', 'reason': 'in_progress'}
             
         service = WebhookService()
-        message = service.process_event(event)
+        message = service.process_event(event, post_process_inbound=True)
         
         logger.info(f"Processed webhook event: {event_id}, type: {event.event_type}")
         

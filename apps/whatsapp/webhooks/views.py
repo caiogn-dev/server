@@ -28,18 +28,18 @@ def process_event_sync_or_async(event):
         from ..tasks import process_webhook_event
         process_webhook_event.delay(str(event.id))
         logger.info(f"Event {event.id} dispatched to Celery")
-        return 'async'
     except Exception as e:
-        # Celery not available, process synchronously
-        logger.warning(f"Celery not available, processing event {event.id} synchronously: {e}")
-        try:
-            service = WebhookService()
-            service.process_event(event)
-            logger.info(f"Event {event.id} processed synchronously")
-            return 'sync'
-        except Exception as sync_error:
-            logger.error(f"Error processing event {event.id} synchronously: {sync_error}", exc_info=True)
-            return 'error'
+        logger.warning(f"Celery not available for event {event.id}: {e}")
+
+    # Always process synchronously to guarantee delivery/status updates
+    try:
+        service = WebhookService()
+        service.process_event(event, post_process_inbound=True)
+        logger.info(f"Event {event.id} processed synchronously")
+        return 'sync'
+    except Exception as sync_error:
+        logger.error(f"Error processing event {event.id} synchronously: {sync_error}", exc_info=True)
+        return 'error'
 
 
 class WhatsAppWebhookView(APIView):

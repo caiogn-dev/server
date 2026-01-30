@@ -258,24 +258,84 @@ class StoreOrder(BaseModel):
                 phone = '55' + phone
 
             from apps.automation.models import CompanyProfile
+            from apps.whatsapp.models import WhatsAppAccount
             from apps.whatsapp.services import MessageService
+            from apps.stores.models import StoreIntegration
 
-            company_profile = CompanyProfile.objects.select_related('account').filter(
-                is_active=True,
-                account__is_active=True
-            ).first()
+            account = None
 
-            if company_profile and company_profile.account:
-                message_service = MessageService()
-                message_service.send_text_message(
-                    account_id=str(company_profile.account.id),
-                    to=phone,
-                    text=message_text,
-                    metadata={'source': 'store_order_notification', 'order_id': str(self.id)}
-                )
+            # 1) Store metadata override (whatsapp_account_id)
+            store_metadata = (self.store.metadata or {}) if self.store else {}
+            account_id = store_metadata.get('whatsapp_account_id') or (self.metadata or {}).get('whatsapp_account_id')
+            if account_id:
+                try:
+                    account = WhatsAppAccount.objects.filter(
+                        id=account_id,
+                        is_active=True,
+                        status=WhatsAppAccount.AccountStatus.ACTIVE
+                    ).first()
+                except Exception:
+                    account = None
 
-                self.metadata[notification_key] = timezone.now().isoformat()
-                self.save(update_fields=['metadata'])
+            # 2) Store integration mapping
+            if not account and self.store:
+                integration = StoreIntegration.objects.filter(
+                    store=self.store,
+                    integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+                    status=StoreIntegration.IntegrationStatus.ACTIVE
+                ).first()
+
+                if integration:
+                    if integration.external_id:
+                        try:
+                            account = WhatsAppAccount.objects.filter(
+                                id=integration.external_id,
+                                is_active=True,
+                                status=WhatsAppAccount.AccountStatus.ACTIVE
+                            ).first()
+                        except Exception:
+                            account = None
+
+                    if not account and integration.phone_number_id:
+                        account = WhatsAppAccount.objects.filter(
+                            phone_number_id=integration.phone_number_id,
+                            is_active=True,
+                            status=WhatsAppAccount.AccountStatus.ACTIVE
+                        ).first()
+
+                    if not account and integration.waba_id:
+                        account = WhatsAppAccount.objects.filter(
+                            waba_id=integration.waba_id,
+                            is_active=True,
+                            status=WhatsAppAccount.AccountStatus.ACTIVE
+                        ).first()
+
+            # 3) Company profile fallback (single-account setups)
+            if not account:
+                company_profile = CompanyProfile.objects.select_related('account').filter(
+                    is_active=True,
+                    account__is_active=True
+                ).first()
+                account = company_profile.account if company_profile and company_profile.account else None
+
+            if not account:
+                logger.warning(f"No WhatsApp account found to notify order {self.order_number}")
+                return
+
+            message_service = MessageService()
+            message_service.send_text_message(
+                account_id=str(account.id),
+                to=phone,
+                text=message_text,
+                metadata={
+                    'source': 'store_order_notification',
+                    'order_id': str(self.id),
+                    'customer_name': self.customer_name or ''
+                }
+            )
+
+            self.metadata[notification_key] = timezone.now().isoformat()
+            self.save(update_fields=['metadata'])
 
         except Exception as e:
             logger.error(f"Failed to send WhatsApp notification for order {self.order_number}: {e}")

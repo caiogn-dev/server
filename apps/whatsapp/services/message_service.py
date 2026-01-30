@@ -518,6 +518,13 @@ class MessageService:
         # Get or create conversation for this contact
         conversation = self._get_or_create_conversation(account, to)
         
+        # Fill contact name if provided in metadata
+        meta = metadata or {}
+        contact_name = meta.get('contact_name') or meta.get('customer_name')
+        if contact_name and not conversation.contact_name:
+            conversation.contact_name = contact_name
+            conversation.save(update_fields=['contact_name', 'updated_at'])
+        
         message = self.message_repo.create(
             account=account,
             conversation=conversation,
@@ -534,7 +541,7 @@ class MessageService:
             media_url=media_url,
             media_id=media_id,
             context_message_id=context_message_id,
-            metadata=metadata or {}
+            metadata=meta
         )
         
         # Update conversation last message time

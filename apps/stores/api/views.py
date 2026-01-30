@@ -463,6 +463,12 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         order.cancelled_at = timezone.now()
         order.internal_notes = f"{order.internal_notes}\nCancelled: {reason}".strip()
         order.save()
+
+        # Trigger WhatsApp notification
+        try:
+            order._trigger_status_whatsapp_notification(StoreOrder.OrderStatus.CANCELLED)
+        except Exception as e:
+            logger.error(f"Failed to trigger WhatsApp notification for order {order.order_number}: {e}")
         
         # Restore stock
         for item in order.items.all():
@@ -498,6 +504,12 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             'tracking_url': order.tracking_url,
             'carrier': order.carrier,
         })
+
+        # Trigger WhatsApp notification
+        try:
+            order._trigger_status_whatsapp_notification(StoreOrder.OrderStatus.SHIPPED)
+        except Exception as e:
+            logger.error(f"Failed to trigger WhatsApp notification for order {order.order_number}: {e}")
         
         return Response(StoreOrderSerializer(order).data)
 
@@ -534,6 +546,12 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             trigger_order_email_automation(order, 'payment_confirmed')
         except Exception as e:
             logger.error(f"Failed to trigger email automation for order {order.order_number}: {e}")
+
+        # Trigger WhatsApp payment notification
+        try:
+            order._trigger_status_whatsapp_notification(StoreOrder.OrderStatus.PAID)
+        except Exception as e:
+            logger.error(f"Failed to trigger WhatsApp notification for order {order.order_number}: {e}")
         
         # Refresh from database to ensure we have latest data
         order.refresh_from_db()
@@ -563,9 +581,16 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 order.status = StoreOrder.OrderStatus.CONFIRMED
         
         order.save(update_fields=['payment_status', 'paid_at', 'status', 'updated_at'])
-        
+
         logger.info(f"Order {order.order_number} payment status changed: {old_payment_status} -> {new_payment_status}")
-        
+
+        # Trigger WhatsApp notification when payment is confirmed
+        if new_payment_status == StoreOrder.PaymentStatus.PAID:
+            try:
+                order._trigger_status_whatsapp_notification(StoreOrder.OrderStatus.PAID)
+            except Exception as e:
+                logger.error(f"Failed to trigger WhatsApp notification for order {order.order_number}: {e}")
+
         return Response(StoreOrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])

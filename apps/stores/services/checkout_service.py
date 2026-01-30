@@ -577,6 +577,12 @@ class CheckoutService:
                     send_purchase_event(order)
                 except Exception as exc:
                     logger.warning(f"Meta Pixel CAPI failed for {order.order_number}: {exc}")
+
+            # Trigger WhatsApp notification for status changes
+            try:
+                order._trigger_status_whatsapp_notification(order.status)
+            except Exception as exc:
+                logger.warning(f"WhatsApp notification failed for {order.order_number}: {exc}")
             
             logger.info(f"Order {order.order_number} status updated: {old_status} -> {order_status}")
         

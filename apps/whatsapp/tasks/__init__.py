@@ -35,11 +35,7 @@ def process_webhook_event(self, event_id: str):
             return
         
         service = WebhookService()
-        message = service.process_event(event)
-        
-        # Post-process inbound messages (automation/langflow)
-        if event.event_type == WebhookEvent.EventType.MESSAGE and message:
-            _post_process_inbound_message(event, message)
+        service.process_event(event, post_process_inbound=True)
         
         logger.info(f"Webhook event processed: {event_id}")
         
@@ -50,49 +46,6 @@ def process_webhook_event(self, event_id: str):
         except Exception:
             logger.error("Failed to mark webhook event as failed", exc_info=True)
         raise self.retry(exc=e)
-
-
-def _post_process_inbound_message(event, message):
-    """Run automation/langflow handlers after a message is created."""
-    from apps.automation.services import AutomationService
-    from apps.conversations.services import ConversationService
-    
-    payload = event.payload
-    message_data = payload.get('message', {})
-    contact_info = payload.get('contact', {})
-    
-    # Ensure conversation exists (in case it wasn't created)
-    if not message.conversation:
-        conversation_service = ConversationService()
-        conversation = conversation_service.get_or_create_conversation(
-            account=event.account,
-            phone_number=message.from_number,
-            contact_name=contact_info.get('profile', {}).get('name', '')
-        )
-        message.conversation = conversation
-        message.save(update_fields=['conversation'])
-    
-    # Try automation service first (for companies with CompanyProfile)
-    try:
-        automation_service = AutomationService()
-        automation_response = automation_service.handle_incoming_message(
-            account_id=str(event.account.id),
-            from_number=message.from_number,
-            message_text=message.text_body or '',
-            message_type=message.message_type,
-            message_data=message_data
-        )
-        
-        # If automation handled it, we're done
-        if automation_response:
-            logger.info(f"Message handled by automation service: {message.id}")
-            return
-    except Exception as e:
-        logger.warning(f"Automation service error: {str(e)}")
-    
-    # Fall back to Langflow if enabled and automation didn't handle it
-    if event.account.auto_response_enabled and not message.processed_by_langflow:
-        process_message_with_langflow.delay(str(message.id))
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
