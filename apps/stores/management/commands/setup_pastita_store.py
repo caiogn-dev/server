@@ -49,7 +49,7 @@ class Command(BaseCommand):
                 ))
                 return
             self.stdout.write(self.style.WARNING('Deleting existing Pastita store...'))
-            self._remove_legacy_ecommerce_coupons(existing_store.id)
+            self._cleanup_legacy_ecommerce_rows(existing_store.id)
             existing_store.delete()
 
         # Get or create owner
@@ -89,7 +89,7 @@ class Command(BaseCommand):
             
             # Contact
             email='contato@pastita.com.br',
-            phone='(63) 99295-7931',
+            phone='(63) 9117-2166',
             whatsapp_number=pastita_whatsapp_number,
             
             # Address (Palmas, TO) - Ivoneth Banqueteria
@@ -359,10 +359,16 @@ class Command(BaseCommand):
         else:
             self.stdout.write('  WhatsApp integration remains pending because the default account is not configured.')
 
-    def _remove_legacy_ecommerce_coupons(self, store_id):
-        """Delete rows from the legacy ecommerce_coupon table so the FK doesn't block the store delete."""
+    def _cleanup_legacy_ecommerce_rows(self, store_id):
+        """Delete rows from the legacy ecommerce tables that reference stores."""
+        cleanup_statements = [
+            "DELETE FROM ecommerce_coupon WHERE store_id = %s",
+            "DELETE FROM ecommerce_deliveryzone WHERE store_id = %s",
+        ]
+
         try:
             with connection.cursor() as cursor:
-                cursor.execute("DELETE FROM ecommerce_coupon WHERE store_id = %s", [str(store_id)])
+                for stmt in cleanup_statements:
+                    cursor.execute(stmt, [str(store_id)])
         except Exception:
             pass

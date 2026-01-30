@@ -59,8 +59,8 @@ This Django backend serves multiple frontends:
 - `/api/v1/stores/s/{slug}/delivery-zones/` - Delivery zones
 
 ### Legacy API (Deprecated)
-- `/api/v1/orders/` - Legacy orders
-- `/api/v1/ecommerce/` - Legacy e-commerce
+- `/api/v1/orders/` - Legacy orders (mostly wrappers; prefer `/api/v1/stores/...`)
+- Legacy e-commerce endpoints (migrated into `/api/v1/stores/`)
 
 ## Migration Guide
 
