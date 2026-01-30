@@ -11,6 +11,7 @@ Cache Strategy:
 """
 import logging
 import hashlib
+import math
 import requests
 from decimal import Decimal
 from typing import Optional, Dict, List, Tuple
@@ -39,6 +40,20 @@ CACHE_TTL_DEFAULT = 3600  # 1 hour - fallback
 def _round_coords(lat: float, lng: float, precision: int = 4) -> Tuple[float, float]:
     """Round coordinates to reduce cache key variations."""
     return (round(lat, precision), round(lng, precision))
+
+
+def _haversine_km(origin: Tuple[float, float], destination: Tuple[float, float]) -> float:
+    """Calculate straight-line distance between two points in km."""
+    lat1, lon1 = origin
+    lat2, lon2 = destination
+    r = 6371.0
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r * c
 
 
 def _make_cache_key(prefix: str, *args) -> str:
@@ -188,6 +203,23 @@ class HereMapsService:
             logger.debug(f"Route cache hit: {origin} -> {destination}")
             return cached
         
+        def fallback_route() -> Dict:
+            distance_km = round(_haversine_km(origin, destination), 2)
+            avg_speed_kmh = 30.0
+            duration_minutes = round((distance_km / avg_speed_kmh) * 60, 1) if avg_speed_kmh > 0 else 0
+            return {
+                'distance_km': distance_km,
+                'duration_minutes': duration_minutes,
+                'polyline': '',
+                'departure': {},
+                'arrival': {},
+                'fallback': True,
+            }
+
+        if not self.api_key:
+            logger.warning("HERE_API_KEY not configured, using fallback route estimation")
+            return fallback_route()
+
         try:
             logger.info(f"Calculating route: {origin} -> {destination}")
             response = requests.get(
@@ -204,7 +236,7 @@ class HereMapsService:
             
             if response.status_code != 200:
                 logger.error(f"HERE API error: {response.status_code} - {response.text}")
-                return None
+                return fallback_route()
             
             data = response.json()
             
@@ -226,11 +258,11 @@ class HereMapsService:
                 return result
             
             logger.warning(f"No routes found in response: {data}")
-            return None
+            return fallback_route()
         
         except Exception as e:
             logger.error(f"Route calculation error: {e}", exc_info=True)
-            return None
+            return fallback_route()
     
     def calculate_distance(
         self,
