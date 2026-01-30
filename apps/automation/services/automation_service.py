@@ -96,36 +96,93 @@ class AutomationService:
 
     def _create_default_auto_messages(self, profile: CompanyProfile):
         """Create default auto messages for a new company profile."""
-        default_messages = [
+        self.ensure_auto_messages(profile)
+
+    def ensure_auto_messages(self, profile: CompanyProfile, force: bool = False) -> Dict[str, int]:
+        """Ensure default auto messages exist for a company profile."""
+        created = 0
+        replaced = 0
+        templates = self._get_default_auto_messages(profile)
+
+        for template in templates:
+            existing = AutoMessage.objects.filter(
+                company=profile,
+                event_type=template['event_type'],
+                name=template['name']
+            )
+
+            if force and existing.exists():
+                replaced += existing.count()
+                existing.delete()
+
+            auto_message, was_created = AutoMessage.objects.get_or_create(
+                company=profile,
+                event_type=template['event_type'],
+                name=template['name'],
+                defaults={
+                    'message_text': template['message_text'],
+                    'media_url': template.get('media_url', ''),
+                    'media_type': template.get('media_type', ''),
+                    'buttons': template.get('buttons', []),
+                    'delay_seconds': template.get('delay_seconds', 0),
+                    'priority': template.get('priority', 100),
+                    'is_active': template.get('is_active', True),
+                    'conditions': template.get('conditions', {}),
+                }
+            )
+
+            if was_created:
+                created += 1
+
+        return {'created': created, 'replaced': replaced}
+
+    def _get_default_auto_messages(self, profile: CompanyProfile) -> List[Dict[str, Any]]:
+        """Return the default auto message templates."""
+        menu_link = profile.menu_url or profile.website_url or 'https://pastita.com.br/cardapio'
+        company_name = profile.company_name or 'nosso time'
+        cart_delay = max(60, profile.abandoned_cart_delay_minutes * 60)
+
+        return [
             {
                 'event_type': AutoMessage.EventType.WELCOME,
-                'name': 'Boas-vindas padrão',
+                'name': 'Boas-vindas principal',
                 'message_text': (
-                    f"Olá! 👋 Bem-vindo(a) à *{profile.company_name}*!\n\n"
+                    "Olá {customer_name}! 👋\n\n"
+                    f"Bem-vindo(a) à *{company_name}*!\n"
                     "Como posso ajudar você hoje?"
                 ),
                 'priority': 1,
             },
             {
                 'event_type': AutoMessage.EventType.MENU,
-                'name': 'Envio de cardápio',
+                'name': 'Envio automático do cardápio',
                 'message_text': (
-                    f"📋 Confira nosso cardápio/catálogo:\n\n"
-                    f"👉 {profile.menu_url or profile.website_url or '{menu_url}'}\n\n"
-                    "Qualquer dúvida, estou à disposição!"
+                    "📋 Aqui está nosso cardápio/catálogo:\n"
+                    f"{menu_link}\n\n"
+                    "Qualquer dúvida, basta responder aqui."
                 ),
                 'priority': 2,
+            },
+            {
+                'event_type': AutoMessage.EventType.OUT_OF_HOURS,
+                'name': 'Mensagem fora do horário',
+                'message_text': (
+                    f"Obrigado por entrar em contato com a *{company_name}*.\n\n"
+                    "No momento estamos fora do horário de atendimento.\n"
+                    "Responderemos o mais breve possível!"
+                ),
+                'priority': 1,
             },
             {
                 'event_type': AutoMessage.EventType.CART_ABANDONED,
                 'name': 'Carrinho abandonado',
                 'message_text': (
                     "Oi {customer_name}! 🛒\n\n"
-                    "Notei que você deixou alguns itens no carrinho.\n"
-                    "Valor total: *R$ {cart_total}*\n\n"
-                    "Posso ajudar a finalizar seu pedido?"
+                    "Percebi que você deixou alguns itens no carrinho.\n"
+                    "Total: *R$ {cart_total}*.\n\n"
+                    "Deseja finalizar agora com um cupom especial?"
                 ),
-                'delay_seconds': 1800,  # 30 minutes
+                'delay_seconds': cart_delay,
                 'priority': 1,
             },
             {
@@ -133,9 +190,9 @@ class AutomationService:
                 'name': 'PIX gerado',
                 'message_text': (
                     "💰 *PIX Gerado!*\n\n"
-                    "Valor: *R$ {amount}*\n"
-                    "Pedido: #{order_number}\n\n"
-                    "O código PIX foi gerado. Deseja receber o código aqui ou prefere gerar um novo?"
+                    "Pedido: #{order_number}\n"
+                    "Valor: *R$ {amount}*.\n\n"
+                    "Você quer receber o código aqui ou gerar um novo?"
                 ),
                 'buttons': [
                     {'id': 'send_pix', 'title': '📱 Receber código'},
@@ -144,13 +201,68 @@ class AutomationService:
                 'priority': 1,
             },
             {
+                'event_type': AutoMessage.EventType.PIX_REMINDER,
+                'name': 'Lembrete PIX',
+                'message_text': (
+                    "⏰ O pagamento PIX ainda não foi confirmado.\n\n"
+                    "Valor: *R$ {amount}*.\n"
+                    "Quer que eu envie o código de novo?"
+                ),
+                'priority': 1,
+            },
+            {
+                'event_type': AutoMessage.EventType.PIX_EXPIRED,
+                'name': 'PIX expirado',
+                'message_text': (
+                    "⚠️ O código PIX expirou.\n\n"
+                    "Deseja gerar um novo pagamento agora?"
+                ),
+                'priority': 1,
+            },
+            {
                 'event_type': AutoMessage.EventType.PAYMENT_CONFIRMED,
                 'name': 'Pagamento confirmado',
                 'message_text': (
-                    "✅ *Pagamento Confirmado!*\n\n"
+                    "✅ Pagamento confirmado!\n\n"
                     "Pedido: #{order_number}\n"
-                    "Valor: R$ {amount}\n\n"
-                    "Obrigado! Seu pedido está sendo preparado. 🎉"
+                    "Valor: R$ {amount}.\n\n"
+                    "Seu pedido já está sendo preparado."
+                ),
+                'priority': 1,
+            },
+            {
+                'event_type': AutoMessage.EventType.PAYMENT_FAILED,
+                'name': 'Pagamento falhou',
+                'message_text': (
+                    "❌ O pagamento não foi identificado.\n\n"
+                    "Deseja gerar outro PIX ou pagar por cartão?"
+                ),
+                'priority': 1,
+            },
+            {
+                'event_type': AutoMessage.EventType.ORDER_CONFIRMED,
+                'name': 'Pedido confirmado',
+                'message_text': (
+                    "🎉 Pedido confirmado!\n\n"
+                    "Pedido #{order_number} está confirmado e já entrou na fila."
+                ),
+                'priority': 1,
+            },
+            {
+                'event_type': AutoMessage.EventType.ORDER_PREPARING,
+                'name': 'Pedido em preparo',
+                'message_text': (
+                    "👨‍🍳 Estamos preparando seu pedido #{order_number}.\n\n"
+                    "Em breve estará a caminho!"
+                ),
+                'priority': 1,
+            },
+            {
+                'event_type': AutoMessage.EventType.ORDER_READY,
+                'name': 'Pedido pronto',
+                'message_text': (
+                    "⏱️ Pedido #{order_number} pronto para retirada.\n\n"
+                    "Aguarde a chegada do entregador ou venha buscar!"
                 ),
                 'priority': 1,
             },
@@ -158,10 +270,18 @@ class AutomationService:
                 'event_type': AutoMessage.EventType.ORDER_SHIPPED,
                 'name': 'Pedido enviado',
                 'message_text': (
-                    "🚚 *Pedido Enviado!*\n\n"
-                    "Seu pedido #{order_number} saiu para entrega!\n\n"
-                    "Código de rastreio: {tracking_code}\n"
-                    "Previsão: {delivery_estimate}"
+                    "🚚 Pedido #{order_number} saiu para entrega!\n\n"
+                    "Rastreio: {tracking_code}.\n"
+                    "Previsão: {delivery_estimate}."
+                ),
+                'priority': 1,
+            },
+            {
+                'event_type': AutoMessage.EventType.ORDER_OUT_FOR_DELIVERY,
+                'name': 'Saiu para entrega',
+                'message_text': (
+                    "📍 Pedido #{order_number} está a caminho!\n\n"
+                    "Fique atento ao entregador."
                 ),
                 'priority': 1,
             },
@@ -169,29 +289,30 @@ class AutomationService:
                 'event_type': AutoMessage.EventType.ORDER_DELIVERED,
                 'name': 'Pedido entregue',
                 'message_text': (
-                    "📦 *Pedido Entregue!*\n\n"
-                    "Seu pedido #{order_number} foi entregue!\n\n"
-                    "Esperamos que goste! 😊\n"
-                    "Qualquer problema, estamos à disposição."
+                    "🍽️ Pedido #{order_number} entregue!\n\n"
+                    "Esperamos que aproveite e conte com a gente sempre."
                 ),
                 'priority': 1,
             },
             {
-                'event_type': AutoMessage.EventType.OUT_OF_HOURS,
-                'name': 'Fora do horário',
+                'event_type': AutoMessage.EventType.ORDER_CANCELLED,
+                'name': 'Pedido cancelado',
                 'message_text': (
-                    f"Olá! 🌙\n\n"
-                    f"Obrigado por entrar em contato com a *{profile.company_name}*.\n\n"
-                    "No momento estamos fora do horário de atendimento.\n"
-                    "Retornaremos assim que possível!\n\n"
-                    f"Enquanto isso, confira nosso site: {profile.website_url or '{website_url}'}"
+                    "🛑 Pedido #{order_number} foi cancelado.\n\n"
+                    "Se precisar de ajuda, fale conosco aqui."
                 ),
                 'priority': 1,
             },
+            {
+                'event_type': AutoMessage.EventType.FEEDBACK_REQUEST,
+                'name': 'Solicitar avaliação',
+                'message_text': (
+                    "💬 Oi {customer_name}, gostaríamos de saber como foi.\n\n"
+                    "Você pode responder esta mensagem com sua avaliação?"
+                ),
+                'priority': 2,
+            },
         ]
-
-        for msg_data in default_messages:
-            AutoMessage.objects.create(company=profile, **msg_data)
 
     # ==================== Message Handling ====================
 

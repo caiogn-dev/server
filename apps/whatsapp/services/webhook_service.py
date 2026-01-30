@@ -3,19 +3,28 @@ Webhook Service - Process incoming webhooks from Meta.
 """
 import logging
 import hashlib
-from typing import Dict, Any, Optional, List
+import mimetypes
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from django.db import IntegrityError
 from django.db.models import Q
 from django.conf import settings
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.db import transaction
 from celery import current_app
-from apps.core.utils import verify_webhook_signature, generate_idempotency_key, normalize_phone_number
+from apps.core.utils import (
+    verify_webhook_signature,
+    generate_idempotency_key,
+    normalize_phone_number,
+    build_absolute_media_url
+)
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
 from ..repositories import WebhookEventRepository, WhatsAppAccountRepository
 from .broadcast_service import get_broadcast_service
+from .whatsapp_api_service import WhatsAppAPIService
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +435,7 @@ class WebhookService:
         media_id = ''
         media_url = ''
         media_mime_type = ''
+        media_sha256 = ''
         
         if message_type == 'text':
             text_body = message_data.get('text', {}).get('body', '')
@@ -436,6 +446,7 @@ class WebhookService:
             media_mime_type = media_data.get('mime_type', '')
             text_body = media_data.get('caption', '')
             content = {message_type: media_data}
+            media_url, media_sha256 = self._fetch_and_store_media(account, media_id, media_mime_type)
         elif message_type == 'location':
             location = message_data.get('location', {})
             content = {'location': location}
@@ -487,7 +498,9 @@ class WebhookService:
             content=content,
             text_body=text_body,
             media_id=media_id,
+            media_url=media_url,
             media_mime_type=media_mime_type,
+            media_sha256=media_sha256,
             context_message_id=message_data.get('context', {}).get('id', ''),
             delivered_at=timezone.now(),
             metadata={
@@ -680,6 +693,8 @@ class WebhookService:
             'content': message.content,
             'media_id': message.media_id,
             'media_url': message.media_url,
+            'media_mime_type': message.media_mime_type,
+            'media_sha256': message.media_sha256,
             'created_at': message.created_at.isoformat(),
             'delivered_at': message.delivered_at.isoformat() if message.delivered_at else None,
         }
@@ -715,3 +730,34 @@ class WebhookService:
             'system': Message.MessageType.SYSTEM,
         }
         return type_map.get(meta_type, Message.MessageType.UNKNOWN)
+
+    def _fetch_and_store_media(
+        self,
+        account: WhatsAppAccount,
+        media_id: str,
+        mime_type: str
+    ) -> Tuple[str, str]:
+        """Download media from WhatsApp and store it locally or on the configured storage."""
+        if not media_id:
+            return '', ''
+
+        try:
+            api_service = WhatsAppAPIService(account)
+            url = api_service.get_media_url(media_id)
+            if not url:
+                return '', ''
+
+            media_bytes = api_service.download_media(url)
+            sha256 = hashlib.sha256(media_bytes).hexdigest()
+            extension = mimetypes.guess_extension(mime_type or '') or ''
+            filename = f"whatsapp/{account.id}/{media_id}{extension}"
+
+            if default_storage.exists(filename):
+                return build_absolute_media_url(filename), sha256
+
+            saved_path = default_storage.save(filename, ContentFile(media_bytes))
+            return build_absolute_media_url(saved_path), sha256
+
+        except Exception as exc:
+            logger.warning(f"Failed to persist media {media_id}: {exc}")
+            return '', ''
