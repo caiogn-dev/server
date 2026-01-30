@@ -33,7 +33,7 @@ INSTALLED_APPS = [
     'storages',
     # Local apps
     'apps.core',
-    'apps.whatsapp',
+    'apps.whatsapp.apps.WhatsAppConfig',
     'apps.conversations',
     'apps.langflow',
     'apps.notifications',
@@ -236,6 +236,33 @@ WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', 'your-verify-token')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
+
+# Default WhatsApp account configuration (existing account lookup + optional auto-create)
+DEFAULT_WHATSAPP_ACCOUNT_NAME = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_NAME', 'Pastita WhatsApp Business')
+DEFAULT_WHATSAPP_ACCOUNT_ID = os.environ.get(
+    'DEFAULT_WHATSAPP_ACCOUNT_ID', os.environ.get('ECOMMERCE_DEFAULT_ACCOUNT_ID', '')
+).strip()
+DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER = os.environ.get(
+    'DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER', os.environ.get('PASTITA_WHATSAPP_NUMBER', '')
+).strip()
+DEFAULT_WHATSAPP_ACCOUNT_DISPLAY_NUMBER = os.environ.get(
+    'DEFAULT_WHATSAPP_ACCOUNT_DISPLAY_NUMBER', DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER
+).strip()
+DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER_ID = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER_ID', '').strip()
+DEFAULT_WHATSAPP_ACCOUNT_WABA_ID = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_WABA_ID', '').strip()
+DEFAULT_WHATSAPP_ACCOUNT_ACCESS_TOKEN = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_ACCESS_TOKEN', '').strip()
+DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL = os.environ.get(
+    'DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL', os.environ.get('ADMIN_EMAIL', '')
+).strip()
+DEFAULT_WHATSAPP_ACCOUNT_STATUS = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_STATUS', 'active').strip().lower()
+DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE = os.environ.get(
+    'DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE', 'False'
+).strip().lower() == 'true'
+_DEFAULT_WHATSAPP_STORE_SLUGS = os.environ.get('DEFAULT_WHATSAPP_STORE_SLUGS', '')
+DEFAULT_WHATSAPP_STORE_SLUGS = [
+    slug.strip() for slug in _DEFAULT_WHATSAPP_STORE_SLUGS.split(',') if slug.strip()
+]
+DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
 
 # Instagram API Configuration
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')

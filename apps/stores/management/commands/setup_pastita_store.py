@@ -10,6 +10,7 @@ from django.db import transaction
 from django.conf import settings
 
 from apps.stores.models import Store, StoreCategory, StoreIntegration, StoreDeliveryZone, StoreCoupon
+from apps.whatsapp.utils import get_default_whatsapp_account
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -40,13 +41,13 @@ class Command(BaseCommand):
 
         # Check if store already exists
         existing_store = Store.objects.filter(slug='pastita').first()
-        if existing_store and not force:
-            self.stdout.write(self.style.WARNING(
-                f'Pastita store already exists (ID: {existing_store.id}). Use --force to recreate.'
-            ))
-            return
-
-        if existing_store and force:
+        if existing_store:
+            self.ensure_whatsapp_integration(existing_store)
+            if not force:
+                self.stdout.write(self.style.WARNING(
+                    f'Pastita store already exists (ID: {existing_store.id}). Use --force to recreate.'
+                ))
+                return
             self.stdout.write(self.style.WARNING('Deleting existing Pastita store...'))
             existing_store.delete()
 
@@ -68,6 +69,7 @@ class Command(BaseCommand):
             self.stdout.write(f'Using existing owner: {owner_email}')
 
         here_api_key = getattr(settings, 'HERE_API_KEY', '').strip()
+        pastita_whatsapp_number = getattr(settings, 'PASTITA_WHATSAPP_NUMBER', '').strip()
         store_metadata = {
             'legacy_app': 'pastita',
             'product_types': ['molho', 'carne', 'rondelli', 'combo'],
@@ -87,7 +89,7 @@ class Command(BaseCommand):
             # Contact
             email='contato@pastita.com.br',
             phone='(63) 99295-7931',
-            whatsapp_number='5563992957931',
+            whatsapp_number=pastita_whatsapp_number,
             
             # Address (Palmas, TO) - Ivoneth Banqueteria
             address='Q. 112 Sul Rua SR 1, conj. 06 lote 04 - Plano Diretor Sul',
@@ -229,19 +231,7 @@ class Command(BaseCommand):
         )
         self.stdout.write(f'  Created Mercado Pago integration')
 
-        # Create WhatsApp Integration
-        wa_integration = StoreIntegration.objects.create(
-            store=store,
-            integration_type=StoreIntegration.IntegrationType.WHATSAPP,
-            name='WhatsApp Business - Pastita',
-            status=StoreIntegration.IntegrationStatus.PENDING,
-            external_id='5563992957931',
-            settings={
-                'greeting_message': 'Olá! Bem-vindo à Pastita - Massas Artesanais! 🍝',
-                'auto_reply': True,
-            }
-        )
-        self.stdout.write(f'  Created WhatsApp integration')
+        self.ensure_whatsapp_integration(store)
 
         # Create default coupons if none exist (using StoreCoupon)
         if not StoreCoupon.objects.filter(store=store).exists():
@@ -298,3 +288,72 @@ class Command(BaseCommand):
         self.stdout.write(f'  Categories: {store.categories.count()}')
         self.stdout.write(f'  Integrations: {store.integrations.count()}')
         self.stdout.write(f'  Delivery Zones: {store.delivery_zones.count()}')
+
+    def ensure_whatsapp_integration(self, store):
+        """
+        Ensure the store has a WhatsApp integration and link it to the default account when available.
+        """
+        account = get_default_whatsapp_account(create_if_missing=False)
+        status = StoreIntegration.IntegrationStatus.ACTIVE if account else StoreIntegration.IntegrationStatus.PENDING
+
+        defaults = {
+            'name': 'WhatsApp Business - Pastita',
+            'status': status,
+            'settings': {'auto_reply': True, 'auto_linked': bool(account)},
+            'metadata': {'auto_linked': bool(account)},
+        }
+
+        if account:
+            defaults.update({
+                'external_id': str(account.id),
+                'phone_number_id': account.phone_number_id or '',
+                'waba_id': account.waba_id or '',
+            })
+
+        integration, created = StoreIntegration.objects.get_or_create(
+            store=store,
+            integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+            defaults=defaults
+        )
+
+        if account and not created:
+            updated_fields = []
+            if integration.external_id != str(account.id):
+                integration.external_id = str(account.id)
+                updated_fields.append('external_id')
+            if account.phone_number_id and integration.phone_number_id != account.phone_number_id:
+                integration.phone_number_id = account.phone_number_id
+                updated_fields.append('phone_number_id')
+            if account.waba_id and integration.waba_id != account.waba_id:
+                integration.waba_id = account.waba_id
+                updated_fields.append('waba_id')
+            if integration.status != StoreIntegration.IntegrationStatus.ACTIVE:
+                integration.status = StoreIntegration.IntegrationStatus.ACTIVE
+                updated_fields.append('status')
+
+            settings_meta = integration.settings or {}
+            if settings_meta.get('auto_linked') is not True:
+                settings_meta['auto_linked'] = True
+                integration.settings = settings_meta
+                updated_fields.append('settings')
+
+            metadata_key = getattr(settings, 'DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
+            metadata_value = integration.metadata or {}
+            if metadata_value.get('auto_linked') is not True:
+                metadata_value['auto_linked'] = True
+                integration.metadata = metadata_value
+                updated_fields.append('metadata')
+
+            if updated_fields:
+                integration.save(update_fields=updated_fields + ['updated_at'])
+
+        metadata_key = getattr(settings, 'DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
+        metadata = store.metadata or {}
+        desired_account_id = str(account.id) if account else ''
+        if desired_account_id:
+            if metadata.get(metadata_key) != desired_account_id:
+                metadata[metadata_key] = desired_account_id
+                store.metadata = metadata
+                store.save(update_fields=['metadata'])
+        else:
+            self.stdout.write('  WhatsApp integration remains pending because the default account is not configured.')

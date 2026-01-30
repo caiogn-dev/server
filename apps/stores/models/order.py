@@ -8,6 +8,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from apps.core.models import BaseModel
+from apps.whatsapp.utils import get_default_whatsapp_account
 from .base import Store
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,9 @@ class StoreOrder(BaseModel):
                     account__is_active=True
                 ).first()
                 account = company_profile.account if company_profile and company_profile.account else None
+
+            if not account:
+                account = get_default_whatsapp_account(create_if_missing=False)
 
             if not account:
                 logger.warning(f"No WhatsApp account found to notify order {self.order_number}")
