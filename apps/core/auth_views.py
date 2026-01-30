@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
+    email = serializers.CharField()
     password = serializers.CharField(write_only=True)
 
 
@@ -97,14 +97,18 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        email = serializer.validated_data['email']
+        identifier = serializer.validated_data['email'].strip()
         password = serializer.validated_data['password']
         
         # Find user by email
-        try:
-            user_obj = User.objects.get(email=email)
+        normalized_email = identifier.lower()
+        user_obj = User.objects.filter(email__iexact=normalized_email).first()
+        if not user_obj:
+            user_obj = User.objects.filter(username__iexact=identifier).first()
+
+        if user_obj:
             user = authenticate(username=user_obj.username, password=password)
-        except User.DoesNotExist:
+        else:
             user = None
         
         if user is None:
@@ -262,16 +266,18 @@ class RegisterView(APIView):
         serializer.is_valid(raise_exception=True)
         
         data = serializer.validated_data
-        
+        email = data['email'].strip().lower()
+        data['email'] = email
+
         # Check if email already exists
-        if User.objects.filter(email=data['email']).exists():
+        if User.objects.filter(email__iexact=email).exists():
             return Response(
                 {'error': 'Email already exists'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Generate username from email (use part before @)
-        base_username = data['email'].split('@')[0]
+        base_username = email.split('@')[0]
         username = base_username
         counter = 1
         while User.objects.filter(username=username).exists():
