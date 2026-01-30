@@ -8,6 +8,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_business
       - DB_HOST=db
       - DB_NAME=whatsapp_business
@@ -28,6 +29,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_business
       - DB_HOST=db
       - DB_NAME=whatsapp_business
@@ -47,6 +49,7 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
       - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_business
       - DB_HOST=db
       - DB_NAME=whatsapp_business

@@ -19,12 +19,20 @@ COPY . .
 
 RUN mkdir -p logs staticfiles
 
-# Collectstatic with build-time settings to satisfy production checks
-RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
+# Create non-root user and fix permissions
+RUN addgroup --system appuser \
+    && adduser --system --ingroup appuser appuser \
+    && chown -R appuser:appuser /app
 
 # Copy and setup entrypoint
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh \
+    && chown appuser:appuser /entrypoint.sh
+
+USER appuser
+
+# Collectstatic with build-time settings to satisfy production checks
+RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
 
 EXPOSE 8000
 
