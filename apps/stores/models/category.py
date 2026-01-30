@@ -3,6 +3,7 @@ Store category model.
 """
 import uuid
 from django.db import models
+from apps.core.utils import build_absolute_media_url
 from .base import Store
 
 
@@ -48,5 +49,5 @@ class StoreCategory(models.Model):
 
     def get_image_url(self):
         if self.image:
-            return self.image.url
-        return self.image_url or ''
+            return build_absolute_media_url(self.image.url)
+        return build_absolute_media_url(self.image_url or '')

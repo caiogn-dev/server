@@ -15,6 +15,8 @@ Webhooks:
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
 urlpatterns = [
@@ -60,3 +62,7 @@ urlpatterns = [
     # Handle webhook without trailing slash (Meta sends POST to /webhooks/whatsapp)
     path('webhooks/whatsapp', include('apps.whatsapp.webhooks.urls')),
 ]
+
+# Serve media files when not using S3 (e.g., local/dev or fallback)
+if not getattr(settings, 'USE_S3', False):
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -4,6 +4,7 @@ Store combo models - StoreCombo, StoreComboItem.
 import uuid
 from decimal import Decimal
 from django.db import models
+from apps.core.utils import build_absolute_media_url
 
 
 class StoreCombo(models.Model):
@@ -41,8 +42,8 @@ class StoreCombo(models.Model):
 
     def get_image_url(self):
         if self.image:
-            return self.image.url
-        return self.image_url or ''
+            return build_absolute_media_url(self.image.url)
+        return build_absolute_media_url(self.image_url or '')
 
     @property
     def savings(self):

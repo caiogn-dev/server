@@ -3,6 +3,7 @@ Store product models - StoreProduct, StoreProductVariant, StoreProductType, Stor
 """
 import uuid
 from django.db import models
+from apps.core.utils import build_absolute_media_url
 from apps.core.models import BaseModel
 from .base import Store
 from .category import StoreCategory
@@ -162,8 +163,8 @@ class StoreProduct(BaseModel):
 
     def get_main_image_url(self):
         if self.main_image:
-            return self.main_image.url
-        return self.main_image_url or ''
+            return build_absolute_media_url(self.main_image.url)
+        return build_absolute_media_url(self.main_image_url or '')
 
     @property
     def is_on_sale(self):
@@ -244,9 +245,9 @@ class StoreProductVariant(models.Model):
 
     def get_image_url(self):
         if self.image:
-            return self.image.url
+            return build_absolute_media_url(self.image.url)
         if self.image_url:
-            return self.image_url
+            return build_absolute_media_url(self.image_url)
         return self.product.get_main_image_url()
 
 

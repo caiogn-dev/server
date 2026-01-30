@@ -57,6 +57,18 @@ def mask_token(token: str, visible_chars: int = 4) -> str:
     return f"{token[:visible_chars]}{'*' * (len(token) - visible_chars * 2)}{token[-visible_chars:]}"
 
 
+def build_absolute_media_url(url: str) -> str:
+    """Ensure media URL is absolute using BACKEND_URL when needed."""
+    if not url:
+        return ''
+    if url.startswith('http://') or url.startswith('https://'):
+        return url
+    base = settings.BACKEND_URL.rstrip('/')
+    if not url.startswith('/'):
+        url = f'/{url}'
+    return f"{base}{url}"
+
+
 def normalize_phone_number(phone: str) -> str:
     """Normalize phone number to E.164 format."""
     phone = ''.join(filter(str.isdigit, phone))

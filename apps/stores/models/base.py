@@ -8,7 +8,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from apps.core.models import BaseModel
-from apps.core.utils import token_encryption, mask_token
+from apps.core.utils import token_encryption, mask_token, build_absolute_media_url
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -113,13 +113,13 @@ class Store(BaseModel):
 
     def get_logo_url(self):
         if self.logo:
-            return self.logo.url
-        return self.logo_url or ''
+            return build_absolute_media_url(self.logo.url)
+        return build_absolute_media_url(self.logo_url or '')
 
     def get_banner_url(self):
         if self.banner:
-            return self.banner.url
-        return self.banner_url or ''
+            return build_absolute_media_url(self.banner.url)
+        return build_absolute_media_url(self.banner_url or '')
 
     def is_open(self):
         """Check if store is currently open based on operating hours."""
