@@ -165,6 +165,9 @@ class RateLimitMiddleware:
             return self.get_response(request)
 
         client_ip = self.get_client_ip(request)
+        whitelist = getattr(settings, 'RATE_LIMIT_WHITELIST_PATHS', [])
+        if any(request.path.startswith(path) for path in whitelist):
+            return self.get_response(request)
         cache_key = f"rate_limit:{client_ip}"
 
         request_count = cache.get(cache_key, 0)
