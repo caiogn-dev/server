@@ -260,7 +260,7 @@ class StoreWishlist(models.Model):
         on_delete=models.CASCADE,
         related_name='wishlists'
     )
-    customer_phone = models.CharField(max_length=20, db_index=True)
+    customer_phone = models.CharField(max_length=20, db_index=True, blank=True, default='')
     customer_email = models.EmailField(blank=True)
     product = models.ForeignKey(
         StoreProduct,
