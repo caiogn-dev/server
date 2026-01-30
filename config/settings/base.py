@@ -256,6 +256,12 @@ MERCADO_PAGO_PUBLIC_KEY = os.environ.get('MERCADO_PAGO_PUBLIC_KEY', '')
 PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '5563992957931')
 PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', 'https://agriao.shop')
 
+# Meta Pixel (Conversions API)
+META_PIXEL_ID = os.environ.get('META_PIXEL_ID', '').strip()
+META_CAPI_ACCESS_TOKEN = os.environ.get('META_CAPI_ACCESS_TOKEN', '').strip()
+META_CAPI_TEST_EVENT_CODE = os.environ.get('META_CAPI_TEST_EVENT_CODE', '').strip()
+META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v20.0').strip()
+
 # Langflow
 LANGFLOW_API_URL = os.environ.get('LANGFLOW_API_URL', 'http://localhost:7860')
 LANGFLOW_API_KEY = os.environ.get('LANGFLOW_API_KEY', '')

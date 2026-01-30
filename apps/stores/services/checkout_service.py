@@ -570,6 +570,13 @@ class CheckoutService:
                     trigger_order_email_automation(order, 'order_cancelled')
             
             order.save()
+
+            if status == 'approved':
+                try:
+                    from apps.stores.services.meta_pixel_service import send_purchase_event
+                    send_purchase_event(order)
+                except Exception as exc:
+                    logger.warning(f"Meta Pixel CAPI failed for {order.order_number}: {exc}")
             
             logger.info(f"Order {order.order_number} status updated: {old_status} -> {order_status}")
         
