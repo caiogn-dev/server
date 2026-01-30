@@ -11,14 +11,11 @@ logger = logging.getLogger(__name__)
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def process_webhook_event(self, event_id: str):
     """Process a webhook event asynchronously."""
-    from ..models import WebhookEvent, Message
-    from ..services import WebhookService, MessageService
+    from ..models import WebhookEvent
+    from ..services import WebhookService
     from ..repositories import WebhookEventRepository
-    from apps.langflow.services import LangflowService
-    from apps.conversations.services import ConversationService
     
     webhook_repo = WebhookEventRepository()
-    message_service = MessageService()
     
     try:
         event = webhook_repo.get_by_id(event_id)
@@ -33,51 +30,47 @@ def process_webhook_event(self, event_id: str):
             logger.info(f"Event already processed: {event_id}")
             return
         
-        webhook_repo.mark_as_processing(event)
+        if event.processing_status == WebhookEvent.ProcessingStatus.PROCESSING:
+            logger.info(f"Event is already processing: {event_id}")
+            return
         
-        if event.event_type == WebhookEvent.EventType.MESSAGE:
-            _process_message_event(event, message_service)
-        elif event.event_type == WebhookEvent.EventType.STATUS:
-            _process_status_event(event, message_service)
-        elif event.event_type == WebhookEvent.EventType.ERROR:
-            _process_error_event(event, message_service)
+        service = WebhookService()
+        message = service.process_event(event)
         
-        webhook_repo.mark_as_completed(event)
+        # Post-process inbound messages (automation/langflow)
+        if event.event_type == WebhookEvent.EventType.MESSAGE and message:
+            _post_process_inbound_message(event, message)
+        
         logger.info(f"Webhook event processed: {event_id}")
         
     except Exception as e:
         logger.error(f"Error processing webhook event {event_id}: {str(e)}")
-        webhook_repo.mark_as_failed(event, str(e))
+        try:
+            webhook_repo.mark_as_failed(event, str(e))
+        except Exception:
+            logger.error("Failed to mark webhook event as failed", exc_info=True)
         raise self.retry(exc=e)
 
 
-def _process_message_event(event, message_service):
-    """Process a message webhook event."""
-    from apps.langflow.services import LangflowService
-    from apps.conversations.services import ConversationService
+def _post_process_inbound_message(event, message):
+    """Run automation/langflow handlers after a message is created."""
     from apps.automation.services import AutomationService
+    from apps.conversations.services import ConversationService
     
     payload = event.payload
     message_data = payload.get('message', {})
     contact_info = payload.get('contact', {})
     
-    message = message_service.process_inbound_message(
-        account=event.account,
-        message_data=message_data
-    )
-    
-    event.related_message = message
-    event.save(update_fields=['related_message'])
-    
-    conversation_service = ConversationService()
-    conversation = conversation_service.get_or_create_conversation(
-        account=event.account,
-        phone_number=message.from_number,
-        contact_name=contact_info.get('profile', {}).get('name', '')
-    )
-    
-    message.conversation = conversation
-    message.save(update_fields=['conversation'])
+    # Ensure conversation exists (in case it wasn't created)
+    if not message.conversation:
+        conversation_service = ConversationService()
+        conversation = conversation_service.get_or_create_conversation(
+            account=event.account,
+            phone_number=message.from_number,
+            contact_name=contact_info.get('profile', {}).get('name', '')
+        )
+        message.conversation = conversation
+        message.save(update_fields=['conversation'])
     
     # Try automation service first (for companies with CompanyProfile)
     try:
@@ -188,7 +181,7 @@ def send_langflow_response(self, account_id: str, to: str, response_text: str, r
 
 
 def _process_status_event(event, message_service):
-    """Process a status update webhook event."""
+    """Legacy status handler (kept for backward compatibility)."""
     payload = event.payload
     
     message_id = payload.get('id')
@@ -226,7 +219,7 @@ def _process_status_event(event, message_service):
 
 
 def _process_error_event(event, message_service):
-    """Process an error webhook event."""
+    """Legacy error handler (kept for backward compatibility)."""
     payload = event.payload
     
     error_code = payload.get('code')

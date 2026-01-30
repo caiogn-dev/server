@@ -5,10 +5,12 @@ import logging
 import hashlib
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from django.db import IntegrityError
+from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
-from apps.core.utils import verify_webhook_signature, generate_idempotency_key
+from apps.core.utils import verify_webhook_signature, generate_idempotency_key, normalize_phone_number
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
 from ..repositories import WebhookEventRepository, WhatsAppAccountRepository
@@ -67,6 +69,7 @@ class WebhookService:
         
         for entry in entries:
             changes = entry.get('changes', [])
+            waba_id = entry.get('id')
             
             for change in changes:
                 if change.get('field') != 'messages':
@@ -75,11 +78,23 @@ class WebhookService:
                 value = change.get('value', {})
                 metadata = value.get('metadata', {})
                 phone_number_id = metadata.get('phone_number_id')
+                display_phone = metadata.get('display_phone_number')
                 
-                account = self.account_repo.get_by_phone_number_id(phone_number_id)
+                account = self._resolve_account(
+                    phone_number_id=phone_number_id,
+                    display_phone=display_phone,
+                    waba_id=waba_id
+                )
                 
                 if not account:
-                    logger.warning(f"Account not found for phone_number_id: {phone_number_id}")
+                    logger.warning(
+                        "Account not found for webhook event",
+                        extra={
+                            'phone_number_id': phone_number_id,
+                            'display_phone': display_phone,
+                            'waba_id': waba_id,
+                        }
+                    )
                     continue
                 
                 messages = value.get('messages', [])
@@ -114,6 +129,52 @@ class WebhookService:
                         events.append(event)
         
         return events
+
+    def _resolve_account(
+        self,
+        phone_number_id: Optional[str],
+        display_phone: Optional[str],
+        waba_id: Optional[str]
+    ) -> Optional[WhatsAppAccount]:
+        """Resolve WhatsApp account from webhook metadata with fallbacks."""
+        account = None
+        
+        if phone_number_id:
+            account = self.account_repo.get_by_phone_number_id(phone_number_id)
+        
+        if not account and display_phone:
+            normalized = normalize_phone_number(display_phone)
+            if normalized:
+                account = WhatsAppAccount.objects.filter(
+                    is_active=True
+                ).filter(
+                    Q(display_phone_number__icontains=normalized) |
+                    Q(phone_number__icontains=normalized)
+                ).first()
+        
+        if not account and waba_id:
+            account = WhatsAppAccount.objects.filter(
+                is_active=True,
+                waba_id=waba_id
+            ).first()
+        
+        # If we found an account but phone_number_id has changed, update it
+        if account and phone_number_id and account.phone_number_id != phone_number_id:
+            try:
+                account.phone_number_id = phone_number_id
+                if display_phone and not account.display_phone_number:
+                    account.display_phone_number = display_phone
+                account.save(update_fields=['phone_number_id', 'display_phone_number', 'updated_at'])
+                logger.warning(
+                    f"Updated account phone_number_id from webhook: account={account.id}"
+                )
+            except IntegrityError:
+                logger.error(
+                    "Failed to update phone_number_id (unique conflict)",
+                    extra={'account_id': str(account.id), 'phone_number_id': phone_number_id}
+                )
+        
+        return account
 
     def _process_message_event(
         self,
