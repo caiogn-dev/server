@@ -6,7 +6,7 @@ import logging
 from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
-from django.db import transaction
+from django.db import connection, transaction
 from django.conf import settings
 
 from apps.stores.models import Store, StoreCategory, StoreIntegration, StoreDeliveryZone, StoreCoupon
@@ -49,6 +49,7 @@ class Command(BaseCommand):
                 ))
                 return
             self.stdout.write(self.style.WARNING('Deleting existing Pastita store...'))
+            self._remove_legacy_ecommerce_coupons(existing_store.id)
             existing_store.delete()
 
         # Get or create owner
@@ -357,3 +358,11 @@ class Command(BaseCommand):
                 store.save(update_fields=['metadata'])
         else:
             self.stdout.write('  WhatsApp integration remains pending because the default account is not configured.')
+
+    def _remove_legacy_ecommerce_coupons(self, store_id):
+        """Delete rows from the legacy ecommerce_coupon table so the FK doesn't block the store delete."""
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM ecommerce_coupon WHERE store_id = %s", [str(store_id)])
+        except Exception:
+            pass
