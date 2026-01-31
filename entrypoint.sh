@@ -8,12 +8,6 @@ import sys
 
 port = os.environ.get('PORT', '8080')
 
-# Generate migrations automatically (for Railway deployment)
-print("=== Generating database migrations ===")
-subprocess.run([
-    sys.executable, 'manage.py', 'makemigrations', '--noinput'
-])
-
 # Run migrations
 print("=== Applying database migrations ===")
 migrate_result = subprocess.run([
