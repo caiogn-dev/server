@@ -36,6 +36,9 @@ from .api.export_views import (
     OrdersExportView, RevenueReportView, ProductsReportView,
     StockReportView, CustomersReportView, DashboardStatsView
 )
+from .api.payment_views import (
+    StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
+)
 
 # Main router for admin/management endpoints
 router = DefaultRouter()
@@ -53,6 +56,16 @@ router.register(r'coupons', StoreCouponViewSet, basename='coupon')
 router.register(r'delivery-zones', StoreDeliveryZoneViewSet, basename='delivery-zone')
 # Admin viewset for product types (full CRUD)
 router.register(r'admin/product-types', StoreProductTypeAdminViewSet, basename='admin-product-type')
+
+# Payment routers
+payment_router = DefaultRouter()
+payment_router.register(r'', StorePaymentViewSet, basename='payment')
+
+gateway_router = DefaultRouter()
+gateway_router.register(r'', StorePaymentGatewayViewSet, basename='payment-gateway')
+
+webhook_event_router = DefaultRouter()
+webhook_event_router.register(r'', StorePaymentWebhookEventViewSet, basename='payment-webhook-event')
 
 # Nested routers for store-specific resources
 stores_router = nested_routers.NestedDefaultRouter(router, r'stores', lookup='store')
@@ -166,4 +179,17 @@ urlpatterns = [
     
     # Dashboard stats overview
     path('reports/dashboard/', DashboardStatsView.as_view(), name='dashboard-stats'),
+    
+    # ==========================================================================
+    # PAYMENT ENDPOINTS (require auth)
+    # ==========================================================================
+    
+    # Payments CRUD + actions
+    path('payments/', include(payment_router.urls)),
+    
+    # Payment Gateways CRUD
+    path('payments/gateways/', include(gateway_router.urls)),
+    
+    # Payment Webhook Events (read-only)
+    path('payments/webhook-events/', include(webhook_event_router.urls)),
 ]

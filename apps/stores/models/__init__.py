@@ -37,6 +37,13 @@ from .coupon import StoreCoupon
 # Delivery
 from .delivery import StoreDeliveryZone
 
+# Payment
+from .payment import (
+    StorePaymentGateway,
+    StorePayment,
+    StorePaymentWebhookEvent,
+)
+
 
 __all__ = [
     # Base
@@ -67,4 +74,8 @@ __all__ = [
     'StoreCoupon',
     # Delivery
     'StoreDeliveryZone',
+    # Payment
+    'StorePaymentGateway',
+    'StorePayment',
+    'StorePaymentWebhookEvent',
 ]
