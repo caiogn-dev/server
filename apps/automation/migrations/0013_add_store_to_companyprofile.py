@@ -1,0 +1,40 @@
+# Generated manually for CompanyProfile.store field
+from django.db import migrations, models
+import django.db.models.deletion
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ('stores', '0019_alter_storeorder_payment_method_and_more'),
+        ('automation', '0012_alter_companyprofile_business_type_and_more'),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name='companyprofile',
+            name='store',
+            field=models.OneToOneField(
+                blank=True,
+                help_text='Store associated with this profile (source of business data)',
+                null=True,
+                on_delete=django.db.models.deletion.CASCADE,
+                related_name='automation_profile',
+                to='stores.store',
+            ),
+        ),
+        migrations.RenameField(
+            model_name='companyprofile',
+            old_name='company_name',
+            new_name='_company_name',
+        ),
+        migrations.RenameField(
+            model_name='companyprofile',
+            old_name='business_type',
+            new_name='_business_type',
+        ),
+        migrations.RenameField(
+            model_name='companyprofile',
+            old_name='description',
+            new_name='_description',
+        ),
+    ]
