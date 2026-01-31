@@ -9,17 +9,43 @@ from ..models import (
 
 
 class CompanyProfileSerializer(serializers.ModelSerializer):
-    """Serializer for CompanyProfile."""
+    """Serializer for CompanyProfile.
+    
+    Includes store data if profile is linked to a store.
+    """
     account_phone = serializers.CharField(source='account.phone_number', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
+    
+    # Store data (read-only, comes from Store model)
+    store_id = serializers.UUIDField(source='store.id', read_only=True)
+    store_slug = serializers.CharField(source='store.slug', read_only=True)
+    store_name = serializers.CharField(source='store.name', read_only=True)
+    store_email = serializers.CharField(source='store.email', read_only=True)
+    store_phone = serializers.CharField(source='store.phone', read_only=True)
+    store_whatsapp = serializers.CharField(source='store.whatsapp_number', read_only=True)
+    store_address = serializers.CharField(source='store.address', read_only=True)
+    store_city = serializers.CharField(source='store.city', read_only=True)
+    store_state = serializers.CharField(source='store.state', read_only=True)
+    store_type = serializers.CharField(source='store.store_type', read_only=True)
+    
+    # Computed URLs
+    computed_menu_url = serializers.SerializerMethodField()
+    computed_order_url = serializers.SerializerMethodField()
     
     class Meta:
         model = CompanyProfile
         fields = [
             'id', 'account', 'account_phone', 'account_name',
+            # Store linkage
+            'store_id', 'store_slug', 'store_name', 'store_email',
+            'store_phone', 'store_whatsapp', 'store_address',
+            'store_city', 'store_state', 'store_type',
+            # Profile data (may come from store via properties)
             'company_name', 'business_type', 'description',
             'website_url', 'menu_url', 'order_url',
+            'computed_menu_url', 'computed_order_url',
             'business_hours',
+            # Automation settings
             'auto_reply_enabled', 'welcome_message_enabled', 'menu_auto_send',
             'abandoned_cart_notification', 'abandoned_cart_delay_minutes',
             'pix_notification_enabled', 'payment_confirmation_enabled',
@@ -30,15 +56,28 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'external_api_key', 'webhook_secret', 'created_at', 'updated_at']
+    
+    def get_computed_menu_url(self, obj):
+        return obj.get_menu_url()
+    
+    def get_computed_order_url(self, obj):
+        return obj.get_order_url()
 
 
 class CreateCompanyProfileSerializer(serializers.Serializer):
-    """Serializer for creating a company profile."""
+    """Serializer for creating a company profile.
+    
+    If store_id is provided, business data is auto-populated from Store.
+    Otherwise, manual data entry is required.
+    """
     account_id = serializers.UUIDField()
-    company_name = serializers.CharField(max_length=255)
+    store_id = serializers.UUIDField(required=False, allow_null=True)
+    
+    # Optional: Override store data
+    company_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     business_type = serializers.ChoiceField(
         choices=CompanyProfile.BusinessType.choices,
-        default='other'
+        required=False
     )
     description = serializers.CharField(required=False, allow_blank=True)
     website_url = serializers.URLField(required=False, allow_blank=True)

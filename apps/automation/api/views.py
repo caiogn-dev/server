@@ -70,13 +70,172 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         
         return queryset
     
+    @action(detail=False, methods=['get'])
+    def store_data(self, request):
+        """
+        Get store data for pre-filling company profile.
+        Returns store information based on account_id or store_slug.
+        """
+        account_id = request.query_params.get('account_id')
+        store_slug = request.query_params.get('store_slug')
+        
+        if not account_id and not store_slug:
+            return Response(
+                {'error': 'account_id or store_slug is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            from apps.stores.models import Store
+            
+            # Try to find store by slug first
+            if store_slug:
+                store = Store.objects.get(slug=store_slug, is_active=True)
+            else:
+                # Try to find store by WhatsApp account
+                from apps.whatsapp.models import WhatsAppAccount
+                account = WhatsAppAccount.objects.get(id=account_id)
+                
+                # Look for store with matching whatsapp_number
+                store = Store.objects.filter(
+                    whatsapp_number=account.phone_number,
+                    is_active=True
+                ).first()
+                
+                if not store:
+                    # Try by owner
+                    store = Store.objects.filter(
+                        owner=account.owner,
+                        is_active=True
+                    ).first()
+            
+            if not store:
+                return Response(
+                    {'error': 'Store not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Build business hours from store.operating_hours
+            business_hours = {}
+            if store.operating_hours:
+                day_map = {
+                    'monday': 'mon', 'tuesday': 'tue', 'wednesday': 'wed',
+                    'thursday': 'thu', 'friday': 'fri', 'saturday': 'sat', 'sunday': 'sun'
+                }
+                for day, hours in store.operating_hours.items():
+                    short_day = day_map.get(day.lower(), day.lower()[:3])
+                    business_hours[short_day] = {
+                        'open': hours.get('open', '09:00'),
+                        'close': hours.get('close', '18:00'),
+                        'closed': hours.get('open') == '' or hours.get('close') == ''
+                    }
+            
+            # Map store type to business type
+            business_type_map = {
+                'food': 'restaurant',
+                'retail': 'retail',
+                'services': 'services',
+                'digital': 'ecommerce',
+                'other': 'other'
+            }
+            
+            data = {
+                'company_name': store.name,
+                'business_type': business_type_map.get(store.store_type, 'other'),
+                'description': store.description or '',
+                'website_url': '',  # Can be filled from integrations
+                'menu_url': f"https://{store.slug}.pastita.com.br" if hasattr(store, 'slug') else '',
+                'order_url': f"https://{store.slug}.pastita.com.br/cardapio" if hasattr(store, 'slug') else '',
+                'business_hours': business_hours,
+                'phone_number': store.whatsapp_number or store.phone or '',
+                'email': store.email or '',
+                'address': store.address or '',
+                'city': store.city or '',
+                'state': store.state or '',
+                'store_id': str(store.id),
+                'store_slug': store.slug,
+            }
+            
+            return Response(data)
+            
+        except Exception as e:
+            logger.error(f"Error fetching store data: {e}", exc_info=True)
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def create(self, request, *args, **kwargs):
-        """Create a new company profile."""
+        """Create a new company profile.
+        
+        If store_id is provided, automatically populates business data from Store.
+        Manual fields can override store data.
+        """
         serializer = CreateCompanyProfileSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        service = AutomationService()
-        profile = service.create_company_profile(**serializer.validated_data)
+        data = serializer.validated_data.copy()
+        store_id = data.pop('store_id', None)
+        
+        # If store_id provided, fetch store data
+        if store_id:
+            try:
+                from apps.stores.models import Store
+                store = Store.objects.get(id=store_id, is_active=True)
+                
+                # Auto-populate from store if not manually provided
+                if not data.get('company_name'):
+                    data['company_name'] = store.name
+                if not data.get('description'):
+                    data['description'] = store.description or ''
+                if not data.get('menu_url'):
+                    data['menu_url'] = f"https://{store.slug}.pastita.com.br"
+                if not data.get('order_url'):
+                    data['order_url'] = f"https://{store.slug}.pastita.com.br/cardapio"
+                
+                # Map store_type to business_type
+                if not data.get('business_type'):
+                    type_mapping = {
+                        'food': 'restaurant',
+                        'retail': 'retail',
+                        'services': 'services',
+                        'digital': 'ecommerce',
+                    }
+                    data['business_type'] = type_mapping.get(store.store_type, 'other')
+                
+                # Convert operating_hours to business_hours
+                if not data.get('business_hours') and store.operating_hours:
+                    day_map = {
+                        'monday': 'mon', 'tuesday': 'tue', 'wednesday': 'wed',
+                        'thursday': 'thu', 'friday': 'fri', 'saturday': 'sat', 'sunday': 'sun'
+                    }
+                    business_hours = {}
+                    for day, hours in store.operating_hours.items():
+                        short_day = day_map.get(day.lower(), day.lower()[:3])
+                        business_hours[short_day] = {
+                            'open': hours.get('open', '09:00'),
+                            'close': hours.get('close', '18:00'),
+                            'closed': not hours.get('open') or not hours.get('close')
+                        }
+                    data['business_hours'] = business_hours
+                
+                # Create profile with store
+                service = AutomationService()
+                profile = service.create_company_profile(**data)
+                
+                # Link store to profile
+                profile.store = store
+                profile.save(update_fields=['store'])
+                
+            except Store.DoesNotExist:
+                return Response(
+                    {'error': 'Store not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        else:
+            # Create without store (legacy mode)
+            service = AutomationService()
+            profile = service.create_company_profile(**data)
         
         return Response(
             CompanyProfileSerializer(profile).data,
