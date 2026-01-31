@@ -31,6 +31,7 @@ from .serializers import (
     UpdateCompanyProfileSerializer,
     AutoMessageSerializer,
     CreateAutoMessageSerializer,
+    UpdateAutoMessageSerializer,
     CustomerSessionSerializer,
     AutomationLogSerializer,
     ScheduledMessageSerializer,
@@ -235,6 +236,23 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         return Response(
             AutoMessageSerializer(auto_message).data,
             status=status.HTTP_201_CREATED
+        )
+    
+    def update(self, request, *args, **kwargs):
+        """Update an auto message."""
+        instance = self.get_object()
+        serializer = UpdateAutoMessageSerializer(data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        
+        # Update only provided fields
+        data = serializer.validated_data
+        for field, value in data.items():
+            setattr(instance, field, value)
+        
+        instance.save()
+        
+        return Response(
+            AutoMessageSerializer(instance).data
         )
     
     def destroy(self, request, *args, **kwargs):

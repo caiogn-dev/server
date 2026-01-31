@@ -112,6 +112,24 @@ class CreateAutoMessageSerializer(serializers.Serializer):
     priority = serializers.IntegerField(default=100, min_value=1)
 
 
+class UpdateAutoMessageSerializer(serializers.Serializer):
+    """Serializer for updating an auto message."""
+    event_type = serializers.ChoiceField(choices=AutoMessage.EventType.choices, required=False)
+    name = serializers.CharField(max_length=255, required=False)
+    message_text = serializers.CharField(required=False)
+    media_url = serializers.URLField(required=False, allow_blank=True)
+    media_type = serializers.ChoiceField(
+        choices=[('image', 'Image'), ('document', 'Document'), ('video', 'Video')],
+        required=False,
+        allow_blank=True
+    )
+    buttons = serializers.JSONField(required=False)
+    is_active = serializers.BooleanField(required=False)
+    delay_seconds = serializers.IntegerField(required=False, min_value=0)
+    conditions = serializers.JSONField(required=False)
+    priority = serializers.IntegerField(required=False, min_value=1)
+
+
 class CustomerSessionSerializer(serializers.ModelSerializer):
     """Serializer for CustomerSession."""
     company_name = serializers.CharField(source='company.company_name', read_only=True)
