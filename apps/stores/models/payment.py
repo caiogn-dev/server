@@ -155,6 +155,7 @@ class StorePayment(BaseModel):
         max_length=100,
         unique=True,
         db_index=True,
+        default='',
         help_text='Internal payment ID (UUID)'
     )
     external_id = models.CharField(
@@ -260,7 +261,7 @@ class StorePayment(BaseModel):
         return f"Payment {self.payment_id} - {self.status} - {self.amount}"
 
     def save(self, *args, **kwargs):
-        # Generate payment_id if not set
+        # Generate payment_id if not set or empty
         if not self.payment_id:
             self.payment_id = str(uuid.uuid4())
         
