@@ -13,6 +13,11 @@ SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'y
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
+# Add Railway domain automatically
+ALLOWED_HOSTS.extend([
+    'server-production-1e57.up.railway.app',
+    '.up.railway.app',
+])
 
 INSTALLED_APPS = [
     'daphne',
