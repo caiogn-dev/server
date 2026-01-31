@@ -277,8 +277,8 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         # Optionally send the message
         send = request.data.get('send', False)
         if send:
-            from apps.whatsapp.services import WhatsAppService
-            service = WhatsAppService()
+            from apps.whatsapp.services import MessageService
+            service = MessageService()
             
             try:
                 if auto_message.buttons:

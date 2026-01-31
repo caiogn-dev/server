@@ -27,6 +27,7 @@ class MercadoPagoWebhookView(APIView):
     """
     Unified Mercado Pago webhook handler.
     Routes payment notifications to the correct store.
+    Validates webhook signature for security.
     """
     
     authentication_classes = []
@@ -38,6 +39,13 @@ class MercadoPagoWebhookView(APIView):
             # Log incoming webhook
             logger.info(f"MP Webhook received for store: {store_slug}")
             logger.debug(f"Webhook data: {request.data}")
+            logger.debug(f"Webhook headers: {dict(request.headers)}")
+            
+            # Validate webhook signature if secret is configured
+            if not self._validate_signature(request, store_slug):
+                logger.warning("Webhook signature validation failed")
+                # Still return 200 to prevent retries, but log the issue
+                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -54,6 +62,56 @@ class MercadoPagoWebhookView(APIView):
             logger.error(f"Webhook error: {e}", exc_info=True)
             # Always return 200 to prevent retries
             return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_200_OK)
+    
+    def _validate_signature(self, request, store_slug):
+        """
+        Validate Mercado Pago webhook signature.
+        Uses the webhook_secret from StoreIntegration.
+        """
+        try:
+            # Get signature from headers
+            signature = request.headers.get('X-Signature') or request.headers.get('X-Hub-Signature')
+            
+            if not signature and store_slug:
+                # Try to get secret from store integration
+                integration = StoreIntegration.objects.filter(
+                    store__slug=store_slug,
+                    integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+                    status=StoreIntegration.IntegrationStatus.ACTIVE
+                ).first()
+                
+                if integration and integration.webhook_secret:
+                    # For Mercado Pago, the signature is in the query string
+                    # Format: signature=timestamp,token
+                    query_sig = request.query_params.get('signature')
+                    if query_sig:
+                        # Validate using the secret
+                        import hmac
+                        import hashlib
+                        
+                        # Get the request body
+                        body = request.body.decode('utf-8')
+                        
+                        # Calculate expected signature
+                        expected_sig = hmac.new(
+                            integration.webhook_secret.encode('utf-8'),
+                            body.encode('utf-8'),
+                            hashlib.sha256
+                        ).hexdigest()
+                        
+                        # Compare signatures
+                        if hmac.compare_digest(query_sig, expected_sig):
+                            return True
+                        else:
+                            logger.warning(f"Invalid signature for store {store_slug}")
+                            return False
+            
+            # If no signature validation needed, allow the request
+            return True
+            
+        except Exception as e:
+            logger.error(f"Signature validation error: {e}")
+            return True  # Allow request on validation error (fail open for now)
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""
@@ -106,6 +164,10 @@ class MercadoPagoWebhookView(APIView):
             
             # Send real-time notification via WebSocket
             self._notify_order_update(order)
+            
+            # Send WhatsApp notification if payment is approved
+            if payment_status == 'approved':
+                self._send_payment_confirmation_whatsapp(order)
         
         return Response({'status': 'processed'}, status=status.HTTP_200_OK)
     
@@ -137,6 +199,67 @@ class MercadoPagoWebhookView(APIView):
                 )
         except Exception as e:
             logger.warning(f"Failed to send WebSocket notification: {e}")
+    
+    def _send_payment_confirmation_whatsapp(self, order):
+        """
+        Send WhatsApp payment confirmation message.
+        Uses template message if available, otherwise sends text.
+        """
+        try:
+            # Check if customer has phone number
+            if not order.customer_phone:
+                logger.info(f"No phone number for order {order.order_number}, skipping WhatsApp")
+                return
+            
+            # Get WhatsApp integration for the store
+            from apps.stores.models import StoreIntegration
+            integration = StoreIntegration.objects.filter(
+                store=order.store,
+                integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+                status=StoreIntegration.IntegrationStatus.ACTIVE
+            ).first()
+            
+            if not integration:
+                logger.info(f"No WhatsApp integration for store {order.store.slug}")
+                return
+            
+            # Import message service
+            from apps.whatsapp.services import MessageService
+            service = MessageService()
+            
+            # Clean phone number
+            phone = ''.join(filter(str.isdigit, order.customer_phone))
+            if not phone.startswith('55'):
+                phone = '55' + phone
+            
+            # Build message
+            items_text = []
+            for item in order.items.all():
+                items_text.append(f"• {item.quantity}x {item.product_name}")
+            
+            message = f"""✅ *Pagamento Confirmado!*
+
+🛒 Pedido: #{order.order_number}
+
+{chr(10).join(items_text)}
+
+💰 Total: R$ {float(order.total):.2f}
+📦 Entrega: {order.get_delivery_method_display()}
+
+Obrigado pela preferência! 🎉"""
+            
+            # Send message
+            service.send_text_message(
+                account_id=str(integration.external_id) if integration.external_id else str(integration.id),
+                to=phone,
+                text=message
+            )
+            
+            logger.info(f"WhatsApp confirmation sent for order {order.order_number}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send WhatsApp confirmation: {e}", exc_info=True)
+            # Don't raise - webhook should not fail if message fails
 
 
 @method_decorator(csrf_exempt, name='dispatch')

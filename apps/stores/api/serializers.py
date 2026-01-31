@@ -9,7 +9,8 @@ from rest_framework import serializers
 from apps.stores.models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
     StoreProduct, StoreProductVariant, StoreOrder, StoreOrderItem,
-    StoreCustomer, StoreWishlist, StoreProductType
+    StoreCustomer, StoreWishlist, StoreProductType,
+    StorePaymentGateway, StorePayment, StorePaymentWebhookEvent
 )
 
 
