@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 """
 Production entrypoint for Railway deployment.
-DO NOT run makemigrations in production - migrations should be committed to git.
 """
 import os
 import subprocess
@@ -9,7 +8,13 @@ import sys
 
 port = os.environ.get('PORT', '8080')
 
-# Run migrations only (DO NOT run makemigrations in production)
+# Generate migrations automatically (for Railway deployment)
+print("=== Generating database migrations ===")
+subprocess.run([
+    sys.executable, 'manage.py', 'makemigrations', '--noinput'
+])
+
+# Run migrations
 print("=== Applying database migrations ===")
 migrate_result = subprocess.run([
     sys.executable, 'manage.py', 'migrate', '--noinput'
