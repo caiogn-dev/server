@@ -6,7 +6,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
     dependencies = [
         ('stores', '0019_alter_storeorder_payment_method_and_more'),
-        ('automation', '0012_alter_companyprofile_business_type_and_more'),
+        ('automation', '0005_rename_automation__account_7d45de_idx_scheduled_m_account_8f1cce_idx_and_more'),
     ]
 
     operations = [
