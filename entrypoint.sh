@@ -1,41 +1,24 @@
-#!/usr/bin/env python
-"""
-Production entrypoint for Railway deployment.
-"""
-import os
-import subprocess
-import sys
+#!/bin/bash
+# Production entrypoint for Railway deployment
 
-port = os.environ.get('PORT', '8080')
+set -e
 
-# Run migrations
-print("=== Applying database migrations ===")
-migrate_result = subprocess.run([
-    sys.executable, 'manage.py', 'migrate', '--noinput'
-])
-if migrate_result.returncode != 0:
-    print("ERROR: migrate failed!")
-    sys.exit(1)
+PORT="${PORT:-8080}"
 
-# Setup Pastita store if not exists
-print("=== Setting up Pastita store ===")
-setup_result = subprocess.run([
-    sys.executable, 'manage.py', 'setup_pastita_store'
-])
-if setup_result.returncode != 0:
-    print("WARNING: setup_pastita_store had issues, but continuing...")
+echo "=== Applying database migrations ==="
+python manage.py migrate --noinput
 
-# Collect static files
-print("=== Collecting static files ===")
-subprocess.run([sys.executable, 'manage.py', 'collectstatic', '--noinput'])
+echo "=== Setting up Pastita store ==="
+python manage.py setup_pastita_store || echo "WARNING: setup_pastita_store had issues, but continuing..."
 
-print(f"=== Starting daphne (ASGI) on port {port} ===")
+echo "=== Collecting static files ==="
+python manage.py collectstatic --noinput
 
-subprocess.run([
-    sys.executable, '-m', 'daphne',
-    '-b', '0.0.0.0',
-    '-p', str(port),
-    '--proxy-headers',
-    '--access-log', '-',
-    'config.asgi:application'
-])
+echo "=== Starting daphne (ASGI) on port ${PORT} ==="
+
+exec python -m daphne \
+    -b 0.0.0.0 \
+    -p "${PORT}" \
+    --proxy-headers \
+    --access-log - \
+    config.asgi:application
