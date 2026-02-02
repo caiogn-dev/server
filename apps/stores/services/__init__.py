@@ -3,6 +3,7 @@ from .store_service import store_service
 from .cart_service import cart_service, CartService
 from .checkout_service import checkout_service, CheckoutService
 from .here_maps_service import here_maps_service, HereMapsService
+from .payment_service import PaymentService, get_payment_service
 
 __all__ = [
     'webhook_service',
@@ -13,4 +14,6 @@ __all__ = [
     'CheckoutService',
     'here_maps_service',
     'HereMapsService',
+    'PaymentService',
+    'get_payment_service',
 ]

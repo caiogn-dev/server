@@ -204,3 +204,122 @@ class RateLimitMiddleware:
         if x_forwarded_for:
             return x_forwarded_for.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR', '')
+
+
+# ============================================
+# Multi-Tenant Middleware
+# ============================================
+
+
+class TenantMiddleware:
+    """
+    Middleware that detects and sets the current tenant for each request.
+    
+    Tenant detection order:
+    1. Subdomain (tenant.pastita.com)
+    2. Header (X-Tenant-ID)
+    3. Query parameter (?tenant=slug)
+    4. Path prefix (/api/v1/stores/{tenant}/)
+    """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+    
+    def __call__(self, request):
+        from apps.stores.models import Store
+        
+        # Detect tenant
+        tenant = self._detect_tenant(request, Store)
+        
+        if tenant:
+            request.tenant = tenant
+            request.tenant_id = tenant.id
+            request.tenant_slug = tenant.slug
+        else:
+            request.tenant = None
+            request.tenant_id = None
+            request.tenant_slug = None
+        
+        response = self.get_response(request)
+        
+        # Add tenant headers to response
+        if hasattr(request, 'tenant_slug') and request.tenant_slug:
+            response['X-Tenant-ID'] = request.tenant_slug
+        
+        return response
+    
+    def _detect_tenant(self, request, Store):
+        """Detect tenant from various sources."""
+        from django.core.exceptions import ObjectDoesNotExist
+        
+        # 1. Check subdomain
+        host = request.get_host().split(':')[0]
+        if '.' in host and not host.startswith(('localhost', '127.0.0.1', 'web-production')):
+            subdomain = host.split('.')[0]
+            if subdomain not in ['www', 'api', 'admin', 'app']:
+                try:
+                    return Store.objects.get(slug=subdomain, is_active=True)
+                except ObjectDoesNotExist:
+                    pass
+        
+        # 2. Check header
+        tenant_slug = request.headers.get('X-Tenant-ID') or request.headers.get('X-Store-Slug')
+        if tenant_slug:
+            try:
+                return Store.objects.get(slug=tenant_slug, is_active=True)
+            except ObjectDoesNotExist:
+                pass
+        
+        # 3. Check query parameter
+        tenant_slug = request.GET.get('tenant') or request.GET.get('store')
+        if tenant_slug:
+            try:
+                return Store.objects.get(slug=tenant_slug, is_active=True)
+            except ObjectDoesNotExist:
+                pass
+        
+        # 4. Check path (for store-scoped URLs)
+        path_parts = request.path.strip('/').split('/')
+        if len(path_parts) >= 3 and path_parts[0] == 'api':
+            # Check for /api/v1/stores/{slug}/ pattern
+            if 'stores' in path_parts:
+                store_index = path_parts.index('stores')
+                if len(path_parts) > store_index + 1:
+                    tenant_slug = path_parts[store_index + 1]
+                    try:
+                        return Store.objects.get(slug=tenant_slug, is_active=True)
+                    except ObjectDoesNotExist:
+                        pass
+        
+        return None
+
+
+class TenantRequiredMiddleware:
+    """
+    Middleware that enforces tenant requirement for certain paths.
+    """
+    
+    def __init__(self, get_response):
+        self.get_response = get_response
+        # Paths that don't require tenant
+        self.exempt_paths = [
+            '/api/v1/auth/',
+            '/api/v1/users/',
+            '/admin/',
+            '/health/',
+            '/webhooks/',
+        ]
+    
+    def __call__(self, request):
+        # Check if path requires tenant
+        requires_tenant = not any(
+            request.path.startswith(path) for path in self.exempt_paths
+        )
+        
+        if requires_tenant and not getattr(request, 'tenant', None):
+            return JsonResponse(
+                {'error': 'Tenant required', 'code': 'TENANT_REQUIRED'},
+                status=400
+            )
+        
+        return self.get_response(request)

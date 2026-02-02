@@ -133,3 +133,78 @@ def create_user_profile(sender, instance, created, **kwargs):
     """Create UserProfile when a new User is created."""
     if created:
         UserProfile.objects.get_or_create(user=instance)
+
+
+# ============================================
+# Multi-Tenant Models
+# ============================================
+
+
+class TenantModel(models.Model):
+    """
+    Abstract base model for all multi-tenant models.
+    
+    Every model that belongs to a tenant should inherit from this.
+    Provides automatic tenant filtering and isolation.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        'stores.Store',
+        on_delete=models.CASCADE,
+        related_name='%(class)s_set',
+        help_text='The tenant/store this record belongs to'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='%(class)s_created'
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='%(class)s_updated'
+    )
+    
+    class Meta:
+        abstract = True
+        indexes = [
+            models.Index(fields=['tenant', 'created_at']),
+            models.Index(fields=['tenant', 'updated_at']),
+        ]
+
+
+class TenantQuerySet(models.QuerySet):
+    """
+    QuerySet that automatically filters by tenant.
+    """
+    
+    def for_tenant(self, tenant):
+        """Filter by specific tenant."""
+        return self.filter(tenant=tenant)
+    
+    def for_request(self, request):
+        """Filter by tenant from request."""
+        if hasattr(request, 'tenant') and request.tenant:
+            return self.filter(tenant=request.tenant)
+        return self.none()
+
+
+class TenantManager(models.Manager):
+    """
+    Manager that returns TenantQuerySet.
+    """
+    
+    def get_queryset(self):
+        return TenantQuerySet(self.model, using=self._db)
+    
+    def for_tenant(self, tenant):
+        return self.get_queryset().for_tenant(tenant)
+    
+    def for_request(self, request):
+        return self.get_queryset().for_request(request)

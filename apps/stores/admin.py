@@ -2,7 +2,8 @@ from django.contrib import admin
 from .models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
     StoreProduct, StoreProductVariant, StoreOrder, StoreOrderItem,
-    StoreCustomer
+    StoreCustomer,
+    StorePaymentGateway, StorePayment, StorePaymentWebhookEvent,
 )
 
 
@@ -71,3 +72,29 @@ class StoreCustomerAdmin(admin.ModelAdmin):
     list_display = ['store', 'user', 'phone', 'total_orders', 'total_spent', 'created_at']
     list_filter = ['store', 'accepts_marketing']
     search_fields = ['user__email', 'phone', 'whatsapp']
+
+
+@admin.register(StorePaymentGateway)
+class StorePaymentGatewayAdmin(admin.ModelAdmin):
+    list_display = ['name', 'store', 'gateway_type', 'is_enabled', 'is_default', 'is_sandbox', 'created_at']
+    list_filter = ['gateway_type', 'is_enabled', 'is_default', 'is_sandbox', 'store']
+    search_fields = ['name', 'store__name']
+    readonly_fields = ['created_at', 'updated_at']
+
+
+@admin.register(StorePayment)
+class StorePaymentAdmin(admin.ModelAdmin):
+    list_display = ['payment_id', 'order', 'gateway', 'status', 'amount', 'currency', 'created_at']
+    list_filter = ['status', 'payment_method', 'gateway__gateway_type', 'created_at']
+    search_fields = ['payment_id', 'external_id', 'order__order_number', 'payer_email', 'payer_name']
+    readonly_fields = ['payment_id', 'created_at', 'updated_at', 'paid_at']
+    date_hierarchy = 'created_at'
+
+
+@admin.register(StorePaymentWebhookEvent)
+class StorePaymentWebhookEventAdmin(admin.ModelAdmin):
+    list_display = ['event_type', 'gateway', 'processing_status', 'created_at']
+    list_filter = ['processing_status', 'event_type', 'gateway__gateway_type', 'created_at']
+    search_fields = ['event_id', 'event_type']
+    readonly_fields = ['event_id', 'payload', 'headers', 'created_at', 'processed_at']
+    date_hierarchy = 'created_at'

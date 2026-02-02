@@ -13,6 +13,11 @@ SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'y
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
 ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
+# Add Railway domain automatically
+ALLOWED_HOSTS.extend([
+    'server-production-1e57.up.railway.app',
+    '.up.railway.app',
+])
 
 INSTALLED_APPS = [
     'daphne',
@@ -56,6 +61,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'apps.core.middleware.TenantMiddleware',
     'apps.core.middleware.RequestLoggingMiddleware',
     'apps.core.middleware.RateLimitMiddleware',
 ]
@@ -195,6 +201,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:12001",
     "https://www.pastita.com.br",
     "https://pastita.com.br",
+    "https://painel.pastita.com.br",
     "https://work-1-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
     "https://work-2-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
     "https://work-1-zdllsooldjqqzgtd.prod-runtime.all-hands.dev",
@@ -203,6 +210,33 @@ CORS_ALLOWED_ORIGINS = [
 cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins:
     CORS_ALLOWED_ORIGINS.extend([o.strip() for o in cors_origins.split(',') if o.strip()])
+
+# Additional CORS settings
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-tenant-slug',
+    'x-store-slug',
+]
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+CORS_EXPOSE_HEADERS = [
+    'content-type',
+    'x-csrftoken',
+]
 
 # Celery
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', REDIS_URL or 'redis://localhost:6379/0')
