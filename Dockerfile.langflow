@@ -1,0 +1,28 @@
+# Langflow Otimizado para Railway
+# Versão estável com pré-cache de componentes
+
+FROM langflowai/langflow:1.7.2
+
+# Configurações de ambiente para Railway
+ENV LANGFLOW_HOST=0.0.0.0
+ENV LANGFLOW_PORT=${PORT:-7860}
+ENV LANGFLOW_WORKERS=1
+ENV PYTHONUNBUFFERED=1
+ENV LANGFLOW_DO_NOT_TRACK=true
+
+# Desabilitar auto-login evita problemas de inicialização
+ENV LANGFLOW_AUTO_LOGIN=true
+ENV LANGFLOW_SUPERUSER=admin
+ENV LANGFLOW_SUPERUSER_PASSWORD=admin
+
+# Timeout maior para inicialização
+ENV UVICORN_TIMEOUT_KEEP_ALIVE=120
+ENV UVICORN_TIMEOUT_GRACEFUL_SHUTDOWN=30
+
+# Comando otimizado para Railway
+# Usa --preload para carregar antes do fork (melhor para containers)
+CMD python -m langflow run \
+    --host $LANGFLOW_HOST \
+    --port $LANGFLOW_PORT \
+    --workers $LANGFLOW_WORKERS \
+    --log-level info
