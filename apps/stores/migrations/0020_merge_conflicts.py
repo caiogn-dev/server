@@ -13,7 +13,7 @@ class Migration(migrations.Migration):
     """
 
     dependencies = [
-        ('stores', '0017_add_whatsapp_account_to_store'),
+        ('stores', '0017_add_payment_models'),
         ('stores', '0019_remove_storepaymentwebhookevent_store_pay_webhook_gateway_idx_and_more'),
     ]
 

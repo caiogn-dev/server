@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
     """
 
     dependencies = [
-        ('automation', '0006_add_store_to_companyprofile'),
+        ('automation', '0006_companyprofile_store_and_renames'),
         ('automation', '0007_alter_companyprofile__business_type_and_more'),
     ]
 
