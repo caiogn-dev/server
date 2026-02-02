@@ -1,9 +1,22 @@
 {
-  "$schema": "https://railway.app/railway.schema.json",
+  "$schema": "https://railway.com/railway.schema.json",
   "build": {
-    "builder": "DOCKERFILE"
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "server/Dockerfile"
   },
   "deploy": {
+    "startCommand": "gunicorn --bind 0.0.0.0:$PORT --workers 4 --threads 4 --worker-class uvicorn.workers.UvicornWorker --access-logfile - --error-logfile - --capture-output --enable-stdio-inheritance config.asgi:application",
+    "healthcheckPath": "/api/v1/stores/stores/",
+    "healthcheckTimeout": 60,
+    "runtime": "V2",
+    "numReplicas": 1,
+    "sleepApplication": false,
+    "useLegacyStacker": false,
+    "multiRegionConfig": {
+      "us-west2": {
+        "numReplicas": 1
+      }
+    },
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
