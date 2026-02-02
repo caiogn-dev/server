@@ -5,7 +5,9 @@
 
 set -e
 
-# Skip wait for db/redis - Railway handles this
+# Generate missing migrations automatically
+python manage.py makemigrations --no-input automation messaging stores webhooks 2>/dev/null || true
+
 # Run migrations
 python manage.py migrate --noinput
 
