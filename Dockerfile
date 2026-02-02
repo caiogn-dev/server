@@ -37,3 +37,5 @@ RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret python ma
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "4", "--worker-class", "uvicorn.workers.UvicornWorker", "--access-logfile", "-", "--error-logfile", "-", "--capture-output", "--enable-stdio-inheritance", "config.asgi:application"]
