@@ -17,6 +17,7 @@ ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
 ALLOWED_HOSTS.extend([
     'server-production-1e57.up.railway.app',
     '.up.railway.app',
+    'healthcheck.railway.app',
 ])
 
 INSTALLED_APPS = [
