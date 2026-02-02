@@ -5,9 +5,11 @@
 
 set -e
 
-# Generate and apply migrations in one go
-python manage.py makemigrations --no-input automation messaging stores webhooks 2>/dev/null | head -20 && \
+# Generate migrations for all apps that need it
+python manage.py makemigrations --no-input automation messaging stores webhooks
+
+# Apply all migrations
 python manage.py migrate --noinput
 
-# Execute command
+# Start the application
 exec "$@"
