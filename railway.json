@@ -5,8 +5,6 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "healthcheckPath": "/api/v1/stores/stores/",
-    "healthcheckTimeout": 60,
     "runtime": "V2",
     "numReplicas": 1,
     "sleepApplication": false,
