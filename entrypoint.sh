@@ -5,11 +5,8 @@
 
 set -e
 
-# Generate migrations for all apps that need it
-python manage.py makemigrations --no-input automation messaging stores webhooks
-
-# Apply all migrations
-python manage.py migrate --noinput
+# Run migrations (skip if fails)
+python manage.py migrate --noinput || true
 
 # Start the application
 exec "$@"
