@@ -1,82 +1,209 @@
+# ============================================================================
+# PASTITA PLATFORM - DOCKER COMPOSE (Development)
+# ============================================================================
+
 version: '3.8'
 
 services:
+  # Django Web Application
   web:
-    build: .
+    build:
+      context: .
+      target: production
+    container_name: pastita-web
     ports:
       - "8000:8000"
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_business
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,*}
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
       - DB_HOST=db
-      - DB_NAME=whatsapp_business
+      - DB_NAME=pastita
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LANGFLOW_API_URL=http://langflow:7860
+      - LANGFLOW_API_KEY=${LANGFLOW_API_KEY:-}
+      - MERCADO_PAGO_ACCESS_TOKEN=${MERCADO_PAGO_ACCESS_TOKEN:-}
+      - RESEND_API_KEY=${RESEND_API_KEY:-}
+      - DEBUG=${DEBUG:-True}
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     volumes:
       - static_volume:/app/staticfiles
+      - media_volume:/app/media
       - logs_volume:/app/logs
+    networks:
+      - pastita-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/stores/stores/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
+  # Celery Worker
   celery:
-    build: .
-    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,langflow,automation,campaigns
+    build:
+      context: .
+      target: celery
+    container_name: pastita-celery
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_business
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
       - DB_HOST=db
-      - DB_NAME=whatsapp_business
+      - DB_NAME=pastita
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - LANGFLOW_API_URL=http://langflow:7860
+      - SKIP_MIGRATIONS=1
     depends_on:
       - db
       - redis
     volumes:
       - logs_volume:/app/logs
+    networks:
+      - pastita-network
+    restart: unless-stopped
 
+  # Celery Beat
   celery-beat:
-    build: .
-    command: celery -A config.celery beat -l info
+    build:
+      context: .
+      target: beat
+    container_name: pastita-beat
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/whatsapp_business
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
       - DB_HOST=db
-      - DB_NAME=whatsapp_business
+      - DB_NAME=pastita
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - REDIS_URL=redis://redis:6379/1
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - SKIP_MIGRATIONS=1
     depends_on:
       - db
       - redis
+    networks:
+      - pastita-network
+    restart: unless-stopped
 
-  db:
-    image: postgres:15
+  # Langflow Worker
+  celery-langflow:
+    build:
+      context: .
+      target: langflow-worker
+    container_name: pastita-langflow-worker
     environment:
-      - POSTGRES_DB=whatsapp_business
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - LANGFLOW_API_URL=http://langflow:7860
+      - SKIP_MIGRATIONS=1
+    depends_on:
+      - db
+      - redis
+      - langflow
+    networks:
+      - pastita-network
+    restart: unless-stopped
+
+  # Langflow Service
+  langflow:
+    image: langflowai/langflow:latest
+    container_name: pastita-langflow
+    ports:
+      - "7860:7860"
+    environment:
+      - LANGFLOW_HOST=0.0.0.0
+      - LANGFLOW_PORT=7860
+      - LANGFLOW_AUTO_LOGIN=false
+      - LANGFLOW_SUPERUSER=${LANGFLOW_SUPERUSER:-admin}
+      - LANGFLOW_SUPERUSER_PASSWORD=${LANGFLOW_SUPERUSER_PASSWORD:-admin}
+      - LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY:-langflow-secret-key}
+      - LANGFLOW_DATABASE_URL=postgresql://postgres:postgres@db:5432/langflow
+    depends_on:
+      - db
+    volumes:
+      - langflow_data:/root/.cache/langflow
+    networks:
+      - pastita-network
+    restart: unless-stopped
+
+  # PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: pastita-db
+    environment:
+      - POSTGRES_DB=pastita
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pastita-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
+  # Redis
   redis:
     image: redis:7-alpine
+    container_name: pastita-redis
     volumes:
       - redis_data:/data
+    networks:
+      - pastita-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Nginx (Reverse Proxy)
+  nginx:
+    image: nginx:alpine
+    container_name: pastita-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_volume:/app/staticfiles:ro
+      - media_volume:/app/media:ro
+    depends_on:
+      - web
+      - langflow
+    networks:
+      - pastita-network
+    restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
   static_volume:
+  media_volume:
   logs_volume:
+  langflow_data:
+
+networks:
+  pastita-network:
+    driver: bridge

@@ -99,6 +99,16 @@ class Store(BaseModel):
         blank=True
     )
 
+    # WhatsApp Account - Direct Link (NEW)
+    whatsapp_account = models.ForeignKey(
+        'whatsapp.WhatsAppAccount',
+        on_delete=models.SET_NULL,
+        related_name='stores',
+        null=True,
+        blank=True,
+        help_text="Primary WhatsApp account for this store"
+    )
+    
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)
 
@@ -135,6 +145,71 @@ class Store(BaseModel):
 
         current_time = now.strftime('%H:%M')
         return hours.get('open', '00:00') <= current_time <= hours.get('close', '23:59')
+    
+    def get_whatsapp_account(self):
+        """
+        Get the WhatsApp account for this store.
+        Priority: 1) Direct FK, 2) From automation_profile, 3) From integrations
+        """
+        # 1. Direct FK (new way)
+        if self.whatsapp_account_id:
+            return self.whatsapp_account
+        
+        # 2. From automation profile (migration path)
+        if hasattr(self, 'automation_profile') and self.automation_profile.account_id:
+            return self.automation_profile.account
+        
+        # 3. From integrations (legacy)
+        integration = self.integrations.filter(
+            integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+            status=StoreIntegration.IntegrationStatus.ACTIVE
+        ).first()
+        
+        if integration:
+            # Import here to avoid circular imports
+            from apps.whatsapp.models import WhatsAppAccount
+            try:
+                return WhatsAppAccount.objects.filter(
+                    phone_number_id=integration.phone_number_id
+                ).first()
+            except WhatsAppAccount.DoesNotExist:
+                pass
+        
+        return None
+    
+    def get_automation_profile(self):
+        """
+        Get or create the automation profile for this store.
+        This links Store to CompanyProfile.
+        """
+        if hasattr(self, 'automation_profile'):
+            return self.automation_profile
+        
+        # Import here to avoid circular imports
+        from apps.automation.models import CompanyProfile
+        
+        # Try to find by whatsapp_account
+        whatsapp_account = self.get_whatsapp_account()
+        if whatsapp_account:
+            # Check if there's a CompanyProfile linked to this account
+            try:
+                if hasattr(whatsapp_account, 'company_profile'):
+                    profile = whatsapp_account.company_profile
+                    # Link to this store
+                    profile.store = self
+                    profile.save(update_fields=['store'])
+                    return profile
+            except CompanyProfile.DoesNotExist:
+                pass
+        
+        # Create new profile
+        profile = CompanyProfile.objects.create(
+            store=self,
+            account=whatsapp_account,
+            _company_name=self.name,
+            _description=self.description
+        )
+        return profile
 
 
 class StoreIntegration(BaseModel):

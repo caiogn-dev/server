@@ -1,0 +1,67 @@
+# ============================================================================
+# PASTITA PLATFORM - WEB SERVICE (Django ASGI)
+# ============================================================================
+# Serviço: Django Web (HTTP + WebSocket)
+# Porta: 8000 (ou $PORT do Railway)
+# ============================================================================
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DJANGO_SETTINGS_MODULE=config.settings.production \
+    PORT=8000
+
+WORKDIR /app
+
+# Instala dependências do sistema
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    curl \
+    netcat-traditional \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instala dependências Python
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copia código da aplicação
+COPY . .
+
+# Cria diretórios necessários
+RUN mkdir -p logs staticfiles media
+
+# Cria usuário não-root
+RUN addgroup --system appuser \
+    && adduser --system --ingroup appuser appuser \
+    && chown -R appuser:appuser /app
+
+# Collect static files
+RUN DJANGO_ALLOWED_HOSTS=localhost \
+    DJANGO_SECRET_KEY=build-time-secret \
+    DATABASE_URL=sqlite:///tmp/db.sqlite3 \
+    REDIS_URL=redis://localhost:6379/1 \
+    python manage.py collectstatic --noinput 2>/dev/null || true
+
+# Copia entrypoint
+COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+USER appuser
+
+EXPOSE $PORT
+
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Comando: ASGI com Uvicorn (suporta WebSocket)
+CMD exec gunicorn \
+    --bind 0.0.0.0:$PORT \
+    --workers 4 \
+    --threads 4 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --access-logfile - \
+    --error-logfile - \
+    --capture-output \
+    --enable-stdio-inheritance \
+    config.asgi:application

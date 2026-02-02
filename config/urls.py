@@ -56,16 +56,19 @@ urlpatterns = [
 
     path('api/v1/core/dashboard-stats/', DashboardStatsView.as_view(), name='core-dashboard-stats'),
 
-    # Webhooks (public endpoints)
+    # NEW: Unified Webhooks v1 (centralized handlers)
+    path('webhooks/v1/', include('apps.webhooks.urls')),
+    
+    # Webhooks (public endpoints) - DEPRECATED: Will be removed in v2.0
     # IMPORTANT: Meta's WhatsApp API sends webhooks WITHOUT trailing slash
     # We need to handle both /webhooks/whatsapp and /webhooks/whatsapp/
     path('webhooks/', include([
-        path('whatsapp/', include('apps.whatsapp.webhooks.urls')),
-        path('payments/mercadopago/', include('apps.stores.webhooks_urls')),
-        path('automation/', include('apps.automation.webhooks.urls')),
+        path('whatsapp/', include('apps.whatsapp.webhooks.urls')),  # DEPRECATED
+        path('payments/mercadopago/', include('apps.stores.webhooks_urls')),  # DEPRECATED
+        path('automation/', include('apps.automation.webhooks.urls')),  # DEPRECATED
     ])),
     # Handle webhook without trailing slash (Meta sends POST to /webhooks/whatsapp)
-    path('webhooks/whatsapp', include('apps.whatsapp.webhooks.urls')),
+    path('webhooks/whatsapp', include('apps.whatsapp.webhooks.urls')),  # DEPRECATED
 ]
 
 # Serve media files when not using S3 (e.g., local/dev or fallback)

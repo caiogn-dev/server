@@ -261,67 +261,14 @@ class StoreOrder(BaseModel):
                 )
                 return
 
-            from apps.automation.models import CompanyProfile
-            from apps.whatsapp.models import WhatsAppAccount
             from apps.whatsapp.services import MessageService
-            from apps.stores.models import StoreIntegration
 
+            # Use the new centralized method to get WhatsApp account
             account = None
-
-            # 1) Store metadata override (whatsapp_account_id)
-            store_metadata = (self.store.metadata or {}) if self.store else {}
-            account_id = store_metadata.get('whatsapp_account_id') or (self.metadata or {}).get('whatsapp_account_id')
-            if account_id:
-                try:
-                    account = WhatsAppAccount.objects.filter(
-                        id=account_id,
-                        is_active=True,
-                        status=WhatsAppAccount.AccountStatus.ACTIVE
-                    ).first()
-                except Exception:
-                    account = None
-
-            # 2) Store integration mapping
-            if not account and self.store:
-                integration = StoreIntegration.objects.filter(
-                    store=self.store,
-                    integration_type=StoreIntegration.IntegrationType.WHATSAPP,
-                    status=StoreIntegration.IntegrationStatus.ACTIVE
-                ).first()
-
-                if integration:
-                    if integration.external_id:
-                        try:
-                            account = WhatsAppAccount.objects.filter(
-                                id=integration.external_id,
-                                is_active=True,
-                                status=WhatsAppAccount.AccountStatus.ACTIVE
-                            ).first()
-                        except Exception:
-                            account = None
-
-                    if not account and integration.phone_number_id:
-                        account = WhatsAppAccount.objects.filter(
-                            phone_number_id=integration.phone_number_id,
-                            is_active=True,
-                            status=WhatsAppAccount.AccountStatus.ACTIVE
-                        ).first()
-
-                    if not account and integration.waba_id:
-                        account = WhatsAppAccount.objects.filter(
-                            waba_id=integration.waba_id,
-                            is_active=True,
-                            status=WhatsAppAccount.AccountStatus.ACTIVE
-                        ).first()
-
-            # 3) Company profile fallback (single-account setups)
-            if not account:
-                company_profile = CompanyProfile.objects.select_related('account').filter(
-                    is_active=True,
-                    account__is_active=True
-                ).first()
-                account = company_profile.account if company_profile and company_profile.account else None
-
+            if self.store:
+                account = self.store.get_whatsapp_account()
+            
+            # Fallback to default account only if no store-linked account found
             if not account:
                 account = get_default_whatsapp_account(create_if_missing=False)
 

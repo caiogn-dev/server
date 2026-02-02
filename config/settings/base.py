@@ -43,6 +43,8 @@ INSTALLED_APPS = [
     'apps.stores',  # Multi-store management (unified)
     'apps.marketing',  # Email marketing with Resend
     'apps.instagram',  # Instagram Messaging API integration
+    'apps.messaging',  # Unified messaging dispatcher
+    'apps.webhooks',  # Centralized webhook handling
 ]
 
 MIDDLEWARE = [

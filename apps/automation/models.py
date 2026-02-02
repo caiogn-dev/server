@@ -351,8 +351,12 @@ class GeneratedReport(BaseModel):
 
 class CompanyProfile(BaseModel):
     """
-    Company profile linked to a WhatsApp account.
-    Contains all business information and automation settings.
+    Company profile linked to a WhatsApp account AND a Store.
+    Contains automation settings only - business data comes from Store.
+    
+    MIGRATION NOTE: This model is being refactored to be a OneToOne extension
+    of Store. Fields company_name, business_type, description, business_hours
+    are now read from Store via properties for backward compatibility.
     """
     
     class BusinessType(models.TextChoices):
@@ -364,32 +368,46 @@ class CompanyProfile(BaseModel):
         EDUCATION = 'education', 'Educação'
         OTHER = 'other', 'Outro'
 
-    # Link to WhatsApp account
+    # Link to WhatsApp account (kept for backward compatibility)
     account = models.OneToOneField(
         'whatsapp.WhatsAppAccount',
         on_delete=models.CASCADE,
-        related_name='company_profile'
+        related_name='company_profile',
+        null=True,  # Allow null temporarily for migration
+        blank=True
     )
     
-    # Basic company info
-    company_name = models.CharField(max_length=255)
-    business_type = models.CharField(
+    # NEW: Link to Store (source of truth for business data)
+    store = models.OneToOneField(
+        'stores.Store',
+        on_delete=models.CASCADE,
+        related_name='automation_profile',
+        null=True,  # Allow null temporarily for migration
+        blank=True
+    )
+    
+    # DEPRECATED: Basic company info - now read from Store via properties
+    # These fields will be removed after full migration
+    _company_name = models.CharField(max_length=255, db_column='company_name', blank=True)
+    _business_type = models.CharField(
         max_length=20,
         choices=BusinessType.choices,
-        default=BusinessType.OTHER
+        default=BusinessType.OTHER,
+        db_column='business_type'
     )
-    description = models.TextField(blank=True)
+    _description = models.TextField(blank=True, db_column='description')
     
     # Website and links
     website_url = models.URLField(blank=True)
     menu_url = models.URLField(blank=True, help_text="URL do cardápio/catálogo")
     order_url = models.URLField(blank=True, help_text="URL para fazer pedidos")
     
-    # Business hours (JSON format)
-    business_hours = models.JSONField(
+    # DEPRECATED: Business hours - now read from Store via property
+    _business_hours = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Horário de funcionamento por dia da semana"
+        db_column='business_hours',
+        help_text="DEPRECATED: Use store.operating_hours instead"
     )
     
     # Automation settings
@@ -463,6 +481,72 @@ class CompanyProfile(BaseModel):
         self.webhook_secret = secrets.token_urlsafe(32)
         self.save(update_fields=['webhook_secret'])
         return self.webhook_secret
+    
+    # =========================================================================
+    # PROPERTIES: Backward compatibility - read from Store when available
+    # =========================================================================
+    
+    @property
+    def company_name(self):
+        """Return store name if linked, otherwise legacy field."""
+        if self.store_id:
+            return self.store.name
+        return self._company_name
+    
+    @company_name.setter
+    def company_name(self, value):
+        """Set legacy field for backward compatibility."""
+        self._company_name = value
+    
+    @property
+    def description(self):
+        """Return store description if linked, otherwise legacy field."""
+        if self.store_id:
+            return self.store.description
+        return self._description
+    
+    @description.setter
+    def description(self, value):
+        """Set legacy field for backward compatibility."""
+        self._description = value
+    
+    @property
+    def business_hours(self):
+        """Return store operating_hours if linked, otherwise legacy field."""
+        if self.store_id:
+            return self.store.operating_hours
+        return self._business_hours
+    
+    @business_hours.setter
+    def business_hours(self, value):
+        """Set legacy field for backward compatibility."""
+        self._business_hours = value
+    
+    @property
+    def business_type(self):
+        """Return store store_type if linked, otherwise legacy field."""
+        if self.store_id:
+            # Map store types to business types
+            mapping = {
+                'food': 'restaurant',
+                'retail': 'retail',
+                'services': 'services',
+                'digital': 'ecommerce',
+                'other': 'other'
+            }
+            return mapping.get(self.store.store_type, 'other')
+        return self._business_type
+    
+    @business_type.setter
+    def business_type(self, value):
+        """Set legacy field for backward compatibility."""
+        self._business_type = value
+    
+    def __str__(self):
+        """Return string representation."""
+        name = self.company_name if self.company_name else "Unnamed"
+        phone = self.account.phone_number if self.account_id else "No WhatsApp"
+        return f"{name} ({phone})"
 
 
 class AutoMessage(BaseModel):

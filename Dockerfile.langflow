@@ -1,0 +1,21 @@
+# ============================================================================
+# LANGFLOW SERVICE DOCKERFILE
+# ============================================================================
+# Standalone Langflow service for Railway deployment
+# ============================================================================
+
+FROM langflowai/langflow:latest
+
+# Railway requires the PORT environment variable
+ENV LANGFLOW_HOST=0.0.0.0
+ENV LANGFLOW_PORT=${PORT:-7860}
+ENV LANGFLOW_AUTO_LOGIN=false
+ENV LANGFLOW_SAVE_DB_IN_ROOT=false
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT}/api/v1/health || exit 1
+
+EXPOSE ${PORT}
+
+CMD ["langflow", "run"]
