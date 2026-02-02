@@ -5,10 +5,8 @@
 
 set -e
 
-# Generate missing migrations automatically
-python manage.py makemigrations --no-input automation messaging stores webhooks 2>/dev/null || true
-
-# Run migrations
+# Generate and apply migrations in one go
+python manage.py makemigrations --no-input automation messaging stores webhooks 2>/dev/null | head -20 && \
 python manage.py migrate --noinput
 
 # Execute command
