@@ -5,8 +5,8 @@
 
 set -e
 
-# Run migrations (skip if fails)
-python manage.py migrate --noinput || true
+# Apply migrations
+python manage.py migrate --noinput
 
 # Start the application
 exec "$@"
