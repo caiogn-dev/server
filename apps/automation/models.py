@@ -351,17 +351,12 @@ class GeneratedReport(BaseModel):
 
 class CompanyProfile(BaseModel):
     """
-<<<<<<< HEAD
     Company profile linked to a WhatsApp account AND a Store.
     Contains automation settings only - business data comes from Store.
     
     MIGRATION NOTE: This model is being refactored to be a OneToOne extension
     of Store. Fields company_name, business_type, description, business_hours
     are now read from Store via properties for backward compatibility.
-=======
-    Company profile linked to a WhatsApp account and Store.
-    Contains automation settings. Business data comes from Store.
->>>>>>> 67b1c5e12c818d03387d3994f4a88d352f30a960
     """
     
     class BusinessType(models.TextChoices):
@@ -382,16 +377,11 @@ class CompanyProfile(BaseModel):
         blank=True
     )
     
-<<<<<<< HEAD
     # NEW: Link to Store (source of truth for business data)
-=======
-    # Link to Store (source of truth for business data)
->>>>>>> 67b1c5e12c818d03387d3994f4a88d352f30a960
     store = models.OneToOneField(
         'stores.Store',
         on_delete=models.CASCADE,
         related_name='automation_profile',
-<<<<<<< HEAD
         null=True,  # Allow null temporarily for migration
         blank=True
     )
@@ -399,15 +389,6 @@ class CompanyProfile(BaseModel):
     # DEPRECATED: Basic company info - now read from Store via properties
     # These fields will be removed after full migration
     _company_name = models.CharField(max_length=255, db_column='company_name', blank=True)
-=======
-        null=True, blank=True,
-        help_text='Store associated with this profile (source of business data)'
-    )
-    
-    # Basic company info - DEPRECATED: Use store data instead
-    # These fields are kept for backward compatibility but should not be used
-    _company_name = models.CharField(max_length=255, db_column='company_name')
->>>>>>> 67b1c5e12c818d03387d3994f4a88d352f30a960
     _business_type = models.CharField(
         max_length=20,
         choices=BusinessType.choices,
@@ -421,13 +402,8 @@ class CompanyProfile(BaseModel):
     menu_url = models.URLField(blank=True, help_text="URL do cardápio/catálogo")
     order_url = models.URLField(blank=True, help_text="URL para fazer pedidos")
     
-<<<<<<< HEAD
     # DEPRECATED: Business hours - now read from Store via property
     _business_hours = models.JSONField(
-=======
-    # Business hours - can be derived from store.operating_hours
-    business_hours = models.JSONField(
->>>>>>> 67b1c5e12c818d03387d3994f4a88d352f30a960
         default=dict,
         blank=True,
         db_column='business_hours',
