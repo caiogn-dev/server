@@ -203,6 +203,13 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.pastita.com.br",
     "https://pastita.com.br",
     "https://painel.pastita.com.br",
+    "https://dash.pastita.com.br",
+    "https://admin.pastita.com.br",
+    # Vercel deployments
+    "https://pastita-dash.vercel.app",
+    "https://pastita-dash-git-main.vercel.app",
+    "https://pastita-store.vercel.app",
+    "https://pastita-store-git-main.vercel.app",
     "https://work-1-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
     "https://work-2-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
     "https://work-1-zdllsooldjqqzgtd.prod-runtime.all-hands.dev",

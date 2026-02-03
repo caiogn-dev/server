@@ -1,0 +1,57 @@
+# Dockerfile de Produção - Backend Django
+# Multi-stage build para otimizar tamanho
+
+FROM python:3.11-slim as builder
+
+# Instalar dependências de build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Criar ambiente virtual
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copiar e instalar requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Stage final
+FROM python:3.11-slim
+
+# Instalar apenas dependências de runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar ambiente virtual do builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Criar usuário não-root
+RUN useradd -m -u 1000 appuser && mkdir -p /app && chown -R appuser:appuser /app
+
+# Diretório da aplicação
+WORKDIR /app
+
+# Copiar código
+COPY --chown=appuser:appuser . .
+
+# Criar diretórios necessários
+RUN mkdir -p staticfiles media logs && chown -R appuser:appuser staticfiles media logs
+
+# Mudar para usuário não-root
+USER appuser
+
+# Expor porta
+EXPOSE 8000
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/stores/stores/ || exit 1
+
+# Comando padrão (será sobrescrito pelo docker-compose)
+CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]

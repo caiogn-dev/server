@@ -38,6 +38,9 @@ if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['*'] or '*' in ALLOWED_HOSTS:
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False
 
+# CSRF Trusted Origins
+CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
+
 # Override logging for production - use only console (no file handler)
 LOGGING = {
     'version': 1,

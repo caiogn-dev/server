@@ -1,0 +1,107 @@
+# Dockerfile ALL-IN-ONE
+# PostgreSQL + Redis + Django + Celery em um único container
+# Ideal para PC antigo ou VPS simples
+
+FROM ubuntu:22.04
+
+# Evitar prompts interativos
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+
+# Instalar todos os serviços necessários
+RUN apt-get update && apt-get install -y \
+    # Python
+    python3.11 python3.11-dev python3-pip python3-venv \
+    # PostgreSQL
+    postgresql-14 postgresql-contrib-14 \
+    # Redis
+    redis-server \
+    # Supervisor (gerenciador de processos)
+    supervisor \
+    # Outros
+    build-essential libpq-dev curl net-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+# Criar ambiente Python
+RUN python3.11 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copiar requirements e instalar
+COPY server/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt && \
+    pip install --no-cache-dir supervisor
+
+# Configurar PostgreSQL
+RUN service postgresql start && \
+    su - postgres -c "psql -c \"CREATE USER root WITH SUPERUSER PASSWORD 'postgres';\"" && \
+    su - postgres -c "psql -c \"CREATE DATABASE pastita OWNER root;\"" && \
+    service postgresql stop
+
+# Criar diretórios
+RUN mkdir -p /app /var/log/supervisor /var/run/postgresql /data/redis /data/media
+
+# Copiar código do projeto
+COPY server/ /app/
+WORKDIR /app
+
+# Coletar static files
+RUN mkdir -p staticfiles media logs
+
+# Copiar configuração do supervisor
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Script de inicialização
+RUN echo '#!/bin/bash\n\
+echo "🚀 Iniciando Pastita Server (All-in-One)..."\n\
+\n\
+# Iniciar PostgreSQL\n\
+echo "📦 Iniciando PostgreSQL..."\n\
+service postgresql start\n\
+sleep 3\n\
+\n\
+# Criar banco se não existir\n\
+su - postgres -c "psql -c \"CREATE DATABASE pastita;\"" 2>/dev/null || true\n\
+su - postgres -c "psql -c \"ALTER USER postgres WITH PASSWORD '${DB_PASSWORD:-postgres123}';\""\n\
+\n\
+# Iniciar Redis\n\
+echo "📦 Iniciando Redis..."\n\
+redis-server --daemonize yes --appendonly yes --dir /data/redis\n\
+sleep 2\n\
+\n\
+# Migrações Django\n\
+echo "📦 Executando migrações..."\n\
+python manage.py migrate --noinput\n\
+\n\
+# Criar superuser se não existir\n\
+echo "📦 Verificando superuser..."\n\
+python -c "\n\
+import os\n\
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.production')\n\
+import django\n\
+django.setup()\n\
+from django.contrib.auth import get_user_model\n\
+User = get_user_model()\n\
+if not User.objects.filter(username='admin').exists():\n\
+    User.objects.create_superuser('admin', 'admin@pastita.com', 'admin123')\n\
+    print('✅ Superuser criado: admin / admin123')\n\
+" 2>/dev/null || true\n\
+\n\
+# Coletar static files\n\
+echo "📦 Coletando static files..."\n\
+python manage.py collectstatic --noinput\n\
+\n\
+# Iniciar Supervisor (gerencia Django + Celery)\n\
+echo "🚀 Iniciando serviços..."\n\
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf\n\
+' > /start.sh && chmod +x /start.sh
+
+# Expor portas
+EXPOSE 8000 7860 5432 6379
+
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/api/v1/stores/stores/ || exit 1
+
+# Comando de inicialização
+CMD ["/start.sh"]
