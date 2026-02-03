@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'apps.whatsapp.apps.WhatsAppConfig',
     'apps.conversations',
     'apps.langflow',
+    'apps.agents',  # Langchain AI Agents (replaces Langflow)
     'apps.notifications',
     'apps.audit',
     'apps.campaigns',
@@ -194,26 +195,9 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://localhost:12001",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:12001",
-    "https://www.pastita.com.br",
-    "https://pastita.com.br",
     "https://painel.pastita.com.br",
-    "https://dash.pastita.com.br",
-    "https://admin.pastita.com.br",
-    # Vercel deployments
-    "https://pastita-dash.vercel.app",
-    "https://pastita-dash-git-main.vercel.app",
-    "https://pastita-store.vercel.app",
-    "https://pastita-store-git-main.vercel.app",
-    "https://work-1-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
-    "https://work-2-gvluusmmjgqnmmmw.prod-runtime.all-hands.dev",
-    "https://work-1-zdllsooldjqqzgtd.prod-runtime.all-hands.dev",
-    "https://work-2-zdllsooldjqqzgtd.prod-runtime.all-hands.dev",
+    "https://pastita.com.br",
+    "http://*.pastita.com.br",  
 ]
 cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins:

@@ -47,6 +47,7 @@ urlpatterns = [
         path('conversations/', include('apps.conversations.urls')),
         path('automation/', include('apps.automation.urls')),
         path('langflow/', include('apps.langflow.urls')),
+        path('agents/', include('apps.agents.urls')),  # Langchain Agents
 
         # Marketing & Audit
         path('marketing/', include('apps.marketing.urls')),
