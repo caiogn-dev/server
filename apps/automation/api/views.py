@@ -50,23 +50,38 @@ logger = logging.getLogger(__name__)
 class CompanyProfileViewSet(viewsets.ModelViewSet):
     """ViewSet for CompanyProfile CRUD operations."""
     
-    queryset = CompanyProfile.objects.select_related('account').filter(is_active=True)
+    queryset = CompanyProfile.objects.select_related('account', 'store').filter(is_active=True)
     serializer_class = CompanyProfileSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's stores or accounts
+        # Users should only see profiles for stores they own/manage or accounts they own
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(store__owner=user) | 
+                Q(store__staff=user) | 
+                Q(account__owner=user)
+            ).distinct()
         
         # Filter by account if provided
         account_id = self.request.query_params.get('account_id')
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         
+        # Filter by store if provided
+        store_slug = self.request.query_params.get('store_slug')
+        if store_slug:
+            queryset = queryset.filter(store__slug=store_slug)
+        
         # Filter by business type
         business_type = self.request.query_params.get('business_type')
         if business_type:
-            queryset = queryset.filter(business_type=business_type)
+            queryset = queryset.filter(_business_type=business_type)
         
         return queryset
     
@@ -349,13 +364,22 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
 class AutoMessageViewSet(viewsets.ModelViewSet):
     """ViewSet for AutoMessage CRUD operations."""
     
-    queryset = AutoMessage.objects.select_related('company').filter(is_active=True)
+    queryset = AutoMessage.objects.select_related('company', 'company__store', 'company__account').filter(is_active=True)
     serializer_class = AutoMessageSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's stores or accounts
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(company__store__owner=user) | 
+                Q(company__store__staff=user) | 
+                Q(company__account__owner=user)
+            ).distinct()
         
         # Filter by company
         company_id = self.request.query_params.get('company_id')
@@ -534,13 +558,22 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
 class CustomerSessionViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for CustomerSession (read-only with actions)."""
     
-    queryset = CustomerSession.objects.select_related('company', 'conversation', 'order').filter(is_active=True)
+    queryset = CustomerSession.objects.select_related('company', 'company__store', 'company__account', 'conversation', 'order').filter(is_active=True)
     serializer_class = CustomerSessionSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's stores or accounts
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(company__store__owner=user) | 
+                Q(company__store__staff=user) | 
+                Q(company__account__owner=user)
+            ).distinct()
         
         # Filter by company
         company_id = self.request.query_params.get('company_id')
@@ -649,13 +682,22 @@ class CustomerSessionViewSet(viewsets.ReadOnlyModelViewSet):
 class AutomationLogViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for AutomationLog (read-only)."""
     
-    queryset = AutomationLog.objects.select_related('company', 'session')
+    queryset = AutomationLog.objects.select_related('company', 'company__store', 'company__account', 'session')
     serializer_class = AutomationLogSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's stores or accounts
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(company__store__owner=user) | 
+                Q(company__store__staff=user) | 
+                Q(company__account__owner=user)
+            ).distinct()
         
         # Filter by company
         company_id = self.request.query_params.get('company_id')
@@ -746,6 +788,11 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's accounts
+        if not user.is_superuser:
+            queryset = queryset.filter(account__owner=user)
         
         # Filter by account
         account_id = self.request.query_params.get('account_id')
@@ -918,13 +965,23 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
 class ReportScheduleViewSet(viewsets.ModelViewSet):
     """ViewSet for ReportSchedule CRUD operations."""
     
-    queryset = ReportSchedule.objects.select_related('account', 'company', 'created_by').filter(is_active=True)
+    queryset = ReportSchedule.objects.select_related('account', 'company', 'company__store', 'created_by').filter(is_active=True)
     serializer_class = ReportScheduleSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's accounts/stores or created by user
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(account__owner=user) |
+                Q(company__store__owner=user) |
+                Q(company__store__staff=user) |
+                Q(created_by=user)
+            ).distinct()
         
         # Filter by status
         schedule_status = self.request.query_params.get('status')
@@ -1043,13 +1100,23 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
 class GeneratedReportViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for GeneratedReport (read-only)."""
     
-    queryset = GeneratedReport.objects.select_related('schedule', 'created_by')
+    queryset = GeneratedReport.objects.select_related('schedule', 'schedule__account', 'schedule__company', 'schedule__company__store', 'created_by')
     serializer_class = GeneratedReportSerializer
     permission_classes = [IsAuthenticated]
     pagination_class = StandardResultsSetPagination
     
     def get_queryset(self):
         queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Security: Filter by user's accounts/stores or created by user
+        if not user.is_superuser:
+            queryset = queryset.filter(
+                Q(schedule__account__owner=user) |
+                Q(schedule__company__store__owner=user) |
+                Q(schedule__company__store__staff=user) |
+                Q(created_by=user)
+            ).distinct()
         
         # Filter by schedule
         schedule_id = self.request.query_params.get('schedule_id')
