@@ -12,7 +12,6 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
-from apps.stores.services import order_service
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
     StoreCustomerSerializer
