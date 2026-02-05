@@ -9,43 +9,38 @@
 - Webhooks centralizados com handlers
 - Permissions bem definidas (`IsStoreOwner`, `IsStoreStaff`)
 - Models divididos em módulos (stores/models/)
+- **NOVO**: Estrutura modular de views para stores (`stores/api/views/`)
+- **NOVO**: Instagram Provider para messaging dispatcher
+- **NOVO**: Backward compatibility mantida durante migração
 
 ### ⚠️ Problemas Identificados
 
-#### 1. **Arquivos de Views Muito Grandes**
-| Arquivo | Linhas | Problema |
-|---------|--------|----------|
-| `stores/api/views.py` | 1570 | Monolítico, difícil manutenção |
-| `automation/api/views.py` | 1216 | Muitos ViewSets em um arquivo |
-| `marketing/api/views.py` | 909 | Lógica misturada |
-| `instagram/api/views.py` | 650 | Poderia ser dividido |
+#### 1. **Arquivos de Views Muito Grandes** 🔄 EM PROGRESSO
+| Arquivo | Linhas | Status |
+|---------|--------|--------|
+| `stores/api/views.py` | 1570 | ✅ Estrutura modular criada em `views/` |
+| `automation/api/views.py` | 1216 | ✅ Estrutura criada com backward compat |
+| `marketing/api/views.py` | 909 | ⏳ Pendente |
+| `instagram/api/views.py` | 650 | ⏳ Pendente |
 
-**Solução**: Dividir em múltiplos arquivos por feature
-
-#### 2. **Services Fragmentados por Canal**
+#### 2. **Services Fragmentados por Canal** ✅ PARCIALMENTE RESOLVIDO
 ```
-apps/
-├── whatsapp/services/message_service.py (608 linhas)
-├── instagram/services/message_service.py (343 linhas)
-├── automation/services/automation_service.py (858 linhas)
-├── campaigns/services/campaign_service.py (474 linhas)
-└── marketing/services/email_marketing_service.py (555 linhas)
+messaging/providers/
+├── base.py               # ✅ Interface base
+├── whatsapp_provider.py  # ✅ Implementado
+├── email_provider.py     # ✅ Implementado
+├── instagram_provider.py # ✅ NOVO - Implementado
+└── sms_provider.py       # ⏳ Futuro
 ```
 
-**Problema**: Lógica de envio duplicada entre canais
+#### 3. **Inconsistência de Permissões** ✅ RESOLVIDO
+- ✅ automation views filtram por store/account
+- ✅ Permissions base criadas em `stores/api/views/base.py`
 
-**Solução**: Já existe `messaging/dispatcher.py` - migrar todos para usar ele
-
-#### 3. **Inconsistência de Permissões**
-- Algumas views usam `IsAuthenticated` sem filtro de store
-- ✅ CORRIGIDO: automation views agora filtram por store/account
-
-#### 4. **Apps Legados Ainda Referenciados**
+#### 4. **Apps Legados Ainda Referenciados** ⏳ PENDENTE
 - `orders` (legado) vs `stores.StoreOrder` (novo)
 - `ecommerce` (legado) vs `stores.StoreProduct` (novo)
 - `payments` (legado) vs `stores.StorePayment` (novo)
-
-**Solução**: Criar migration script para remover referências
 
 ---
 
@@ -245,37 +240,173 @@ apps/
 
 ## 🎯 Checklist de Implementação
 
-### Imediato (Esta Sprint)
+### ✅ Completado (Sprint Atual)
 - [x] Adicionar filtro de ownership em automation views
-- [ ] Dividir `stores/api/views.py` em módulos
-- [ ] Dividir `automation/api/views.py` em módulos
+- [x] Criar estrutura modular para `stores/api/views/` (base, store_views, product_views, order_views, coupon_views, delivery_views)
+- [x] Criar estrutura modular para `automation/api/views/` (base, com backward compatibility)
+- [x] Criar Instagram provider para messaging (`messaging/providers/instagram_provider.py`)
+- [x] Registrar Instagram provider no MessageDispatcher
 
-### Próxima Sprint
-- [ ] Criar Instagram provider para messaging
+### 🔄 Em Progresso (Próxima Sprint)
+- [ ] Migrar views restantes de stores (Cart, Checkout, Wishlist, Catalog)
 - [ ] Migrar campanhas WhatsApp para usar dispatcher
-- [ ] Adicionar caching em endpoints frequentes
+- [ ] Adicionar Redis caching em endpoints frequentes
+- [ ] Completar migração modular de automation views
 
-### Futuro
-- [ ] Remover apps legados (orders, ecommerce, payments)
-- [ ] Implementar API versioning (v2)
-- [ ] Adicionar rate limiting por tenant
+### 📋 Backlog (Próximas Sprints)
+
+#### Sprint 3 - API Rate Limiting & Quotas
+- [ ] **Rate Limiter**: Implementar throttling por tenant/endpoint
+- [ ] **API Quotas**: Sistema de quotas por plano (free/pro/enterprise)
+- [ ] **Usage Dashboard**: Endpoint para visualizar uso de API
+- [ ] **Overage Alerts**: Notificações quando próximo do limite
+
+#### Sprint 4 - Sistema de Pagamentos
+- [ ] **PIX Integration**: Pagamento via PIX (EFI/Gerencianet)
+- [ ] **Card Payments**: Integração Stripe/PagSeguro
+- [ ] **Boleto**: Geração de boletos bancários
+- [ ] **Split Payments**: Divisão automática de pagamentos
+- [ ] **Refund System**: Sistema de estornos
+
+#### Sprint 5 - Webhooks Avançados
+- [ ] **Outbound Webhooks**: Sistema de webhooks de saída
+- [ ] **Retry Logic**: Exponential backoff para falhas
+- [ ] **Webhook Logs**: Histórico detalhado de entregas
+- [ ] **Webhook Builder**: Interface para criar webhooks customizados
+
+#### Sprint 6 - Sistema de Cache
+- [ ] **Redis Cache**: Cache layer para queries frequentes
+- [ ] **Cache Invalidation**: Invalidação automática por signals
+- [ ] **Cache Warming**: Pré-carregamento de dados críticos
+- [ ] **Cache Analytics**: Métricas de hit/miss
+
+#### Sprint 7 - Audit & Compliance
+- [ ] **Audit Logging**: Log de todas ações sensíveis
+- [ ] **User Activity**: Trail de auditoria por usuário
+- [ ] **Export Logs**: Export para compliance (CSV/JSON)
+- [ ] **Data Retention**: Políticas de retenção configuráveis
+
+#### Sprint 8 - Testes & Qualidade
+- [ ] **Unit Tests**: Coverage mínimo de 80%
+- [ ] **Integration Tests**: Testes de integração com DB
+- [ ] **API Tests**: Testes automatizados de endpoints
+- [ ] **Load Tests**: Testes de carga com Locust
+
+### 🚀 Futuro (Roadmap)
+
+#### Infraestrutura
+- [ ] **GraphQL API**: API alternativa com subscriptions
+- [ ] **Microservices**: Separar messaging em serviço próprio
+- [ ] **Kubernetes**: Deploy em K8s com auto-scaling
+- [ ] **Multi-region**: Suporte a múltiplas regiões
+
+#### Integrações
+- [ ] **iFood API**: Integração com marketplace
+- [ ] **Rappi API**: Integração com marketplace
+- [ ] **Correios API**: Cálculo de frete automático
+- [ ] **NFe**: Emissão de notas fiscais
+
+#### IA & Analytics
+- [ ] **ML Pipeline**: Pipeline para treinar modelos
+- [ ] **Recommendation Engine**: Recomendação de produtos
+- [ ] **Anomaly Detection**: Detecção de fraudes
+- [ ] **Predictive Analytics**: Previsão de vendas
+
+---
+
+## 🆕 Novas Features Planejadas
+
+### 1. 💳 Sistema de Pagamentos Integrado
+```python
+# apps/payments/providers/
+├── base.py           # Interface base
+├── pix_provider.py   # PIX via EFI/Gerencianet
+├── stripe_provider.py
+├── pagseguro_provider.py
+└── boleto_provider.py
+
+# Fluxo de pagamento
+class PaymentService:
+    def create_payment(self, order, method):
+        provider = self.get_provider(method)
+        return provider.create(order)
+    
+    def handle_webhook(self, provider, data):
+        payment = provider.process_webhook(data)
+        if payment.is_confirmed:
+            self.notify_order_paid(payment.order)
+```
+
+### 2. 🔄 Sistema de Webhooks Outbound
+```python
+# Eventos disponíveis
+WEBHOOK_EVENTS = [
+    'order.created',
+    'order.paid',
+    'order.shipped',
+    'order.delivered',
+    'order.cancelled',
+    'product.low_stock',
+    'customer.created',
+    'message.received',
+    'payment.confirmed',
+    'payment.failed',
+]
+
+# Configuração por store
+class StoreWebhookConfig(models.Model):
+    store = models.ForeignKey(Store)
+    url = models.URLField()
+    events = ArrayField(models.CharField())
+    secret = models.CharField()  # HMAC signing
+    is_active = models.BooleanField()
+    retry_count = models.IntegerField(default=3)
+```
+
+### 3. 📊 Analytics Engine
+```python
+# Métricas calculadas em real-time
+class AnalyticsService:
+    def get_store_metrics(self, store_id, period):
+        return {
+            'revenue': self.calculate_revenue(store_id, period),
+            'orders': self.count_orders(store_id, period),
+            'aov': self.average_order_value(store_id, period),
+            'conversion_rate': self.conversion_rate(store_id, period),
+            'top_products': self.top_products(store_id, period),
+            'customer_retention': self.retention_rate(store_id, period),
+            'hourly_distribution': self.orders_by_hour(store_id, period),
+        }
+```
+
+### 4. 🤖 AI Service Layer
+```python
+# apps/ai/services/
+├── sentiment_analyzer.py   # Análise de sentimento
+├── intent_classifier.py    # Classificação de intenção
+├── reply_suggester.py      # Sugestões de resposta
+├── demand_forecaster.py    # Previsão de demanda
+└── fraud_detector.py       # Detecção de fraudes
+```
 
 ---
 
 ## 📊 Métricas de Sucesso
 
-| Métrica | Atual | Meta |
-|---------|-------|------|
-| Maior arquivo de views | 1570 linhas | <300 linhas |
-| Tempo médio de resposta | ~200ms | <100ms |
-| Coverage de testes | ~30% | 70% |
-| Duplicação de código | ~15% | <5% |
+| Métrica | Atual | Meta Sprint 3 | Meta Final |
+|---------|-------|---------------|------------|
+| Maior arquivo de views | 1570 linhas | 500 linhas | <300 linhas |
+| Tempo médio de resposta | ~200ms | 150ms | <100ms |
+| Coverage de testes | ~30% | 60% | 80% |
+| Duplicação de código | ~15% | 8% | <5% |
+| Uptime | 99% | 99.5% | 99.9% |
+| P95 Latency | 500ms | 300ms | <200ms |
 
 ---
 
 ## 🔒 Segurança
 
-### Já Implementado
+### ✅ Já Implementado
 - ✅ `IsStoreOwner` permission
 - ✅ `IsStoreStaff` permission  
 - ✅ `HasStoreAccess` permission
@@ -283,11 +414,15 @@ apps/
 - ✅ Webhook signature validation
 - ✅ Token encryption para integrações
 
-### A Implementar
-- [ ] Rate limiting por tenant
-- [ ] Audit log para operações sensíveis
-- [ ] IP allowlist para webhooks
-- [ ] 2FA para admin
+### 📋 A Implementar
+- [ ] **Rate Limiting**: Por tenant e endpoint
+- [ ] **Audit Logging**: Todas operações sensíveis
+- [ ] **IP Allowlist**: Para webhooks críticos
+- [ ] **2FA Admin**: Autenticação em dois fatores
+- [ ] **Secret Rotation**: Rotação automática de secrets
+- [ ] **RBAC**: Role-based access control granular
+- [ ] **Data Encryption**: Encryption at rest
+- [ ] **PCI Compliance**: Para processamento de pagamentos
 
 ---
 
@@ -297,3 +432,6 @@ apps/
 - [Two Scoops of Django](https://www.feldroy.com/books/two-scoops-of-django-3-x)
 - [Django Channels](https://channels.readthedocs.io/)
 - [Celery Best Practices](https://docs.celeryq.dev/en/stable/userguide/tasks.html#best-practices)
+- [The Twelve-Factor App](https://12factor.net/)
+- [Stripe API Design](https://stripe.com/docs/api)
+- [GitHub REST API Guidelines](https://docs.github.com/en/rest)

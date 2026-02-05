@@ -14,6 +14,7 @@ from .models import Message, MessageRule, MessageLog
 from .providers.base import BaseProvider
 from .providers.whatsapp_provider import WhatsAppProvider
 from .providers.email_provider import EmailProvider
+from .providers.instagram_provider import InstagramProvider
 from .exceptions import MessageError, ChannelError, RateLimitError, QuietHoursError
 
 logger = logging.getLogger(__name__)
@@ -52,8 +53,8 @@ class MessageDispatcher:
         self._providers = {
             Message.Channel.WHATSAPP: WhatsAppProvider(),
             Message.Channel.EMAIL: EmailProvider(),
+            Message.Channel.INSTAGRAM: InstagramProvider(),
             # Add more providers as needed:
-            # Message.Channel.INSTAGRAM: InstagramProvider(),
             # Message.Channel.SMS: SMSProvider(),
         }
     
