@@ -32,7 +32,7 @@ services:
 
   web:
     build:
-      context: ./server
+      context:.
       dockerfile: Dockerfile.prod
     container_name: pastita_web
     restart: unless-stopped
@@ -86,7 +86,7 @@ services:
 
   celery:
     build:
-      context: ./server
+      context: .
       dockerfile: Dockerfile.prod
     container_name: pastita_celery
     restart: unless-stopped
@@ -109,7 +109,7 @@ services:
 
   celery-beat:
     build:
-      context: ./server
+      context: .
       dockerfile: Dockerfile.prod
     container_name: pastita_celery_beat
     restart: unless-stopped
