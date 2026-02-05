@@ -8,13 +8,14 @@ from ..models import WhatsAppAccount, Message, MessageTemplate
 class WhatsAppAccountSerializer(serializers.ModelSerializer):
     """Serializer for WhatsApp Account."""
     masked_token = serializers.CharField(read_only=True)
+    default_agent_name = serializers.CharField(source='default_agent.name', read_only=True, allow_null=True)
     
     class Meta:
         model = WhatsAppAccount
         fields = [
             'id', 'name', 'phone_number_id', 'waba_id', 'phone_number',
             'display_phone_number', 'status', 'token_version',
-            'default_langflow_flow_id', 'auto_response_enabled',
+            'default_agent', 'default_agent_name', 'auto_response_enabled',
             'human_handoff_enabled', 'metadata', 'masked_token',
             'created_at', 'updated_at', 'is_active'
         ]
@@ -32,7 +33,7 @@ class WhatsAppAccountCreateSerializer(serializers.ModelSerializer):
         fields = [
             'name', 'phone_number_id', 'waba_id', 'phone_number',
             'display_phone_number', 'access_token', 'webhook_verify_token',
-            'default_langflow_flow_id', 'auto_response_enabled',
+            'default_agent', 'auto_response_enabled',
             'human_handoff_enabled', 'metadata'
         ]
 
@@ -53,7 +54,7 @@ class WhatsAppAccountUpdateSerializer(serializers.ModelSerializer):
         model = WhatsAppAccount
         fields = [
             'name', 'display_phone_number', 'access_token',
-            'webhook_verify_token', 'default_langflow_flow_id',
+            'webhook_verify_token', 'default_agent',
             'auto_response_enabled', 'human_handoff_enabled', 'metadata'
         ]
 
@@ -84,7 +85,7 @@ class MessageSerializer(serializers.ModelSerializer):
             'template_name', 'template_language', 'context_message_id',
             'sent_at', 'delivered_at', 'read_at', 'failed_at',
             'error_code', 'error_message', 'metadata',
-            'processed_by_langflow', 'created_at', 'updated_at'
+            'processed_by_agent', 'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'whatsapp_message_id', 'sent_at', 'delivered_at',

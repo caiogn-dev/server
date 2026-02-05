@@ -8,6 +8,69 @@ from ..models import (
 )
 
 
+class BusinessHoursField(serializers.Field):
+    """
+    Field that handles business hours in two formats:
+    
+    Backend Store format: { "monday": { "open": "09:00", "close": "18:00" } }
+    Frontend format: { "monday": { "open": true, "start": "09:00", "end": "18:00" } }
+    
+    Converts between formats transparently.
+    """
+    
+    def to_representation(self, value):
+        """Convert backend format to frontend format for reading."""
+        if not value:
+            return {}
+        
+        result = {}
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        
+        for day in days:
+            day_data = value.get(day)
+            if day_data is None:
+                result[day] = {'open': False}
+            elif isinstance(day_data, dict):
+                # Check if it's already in frontend format
+                if 'open' in day_data and isinstance(day_data.get('open'), bool):
+                    result[day] = day_data
+                # Backend Store format: { "open": "09:00", "close": "18:00" }
+                elif 'open' in day_data and 'close' in day_data:
+                    result[day] = {
+                        'open': True,
+                        'start': day_data.get('open', '09:00'),
+                        'end': day_data.get('close', '18:00')
+                    }
+                else:
+                    result[day] = {'open': False}
+            else:
+                result[day] = {'open': False}
+        
+        return result
+    
+    def to_internal_value(self, data):
+        """Convert frontend format to backend format for writing."""
+        if not data:
+            return {}
+        
+        result = {}
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        
+        for day in days:
+            day_data = data.get(day)
+            if day_data and isinstance(day_data, dict):
+                is_open = day_data.get('open', False)
+                if is_open:
+                    # Convert to Store format
+                    result[day] = {
+                        'open': day_data.get('start', '09:00'),
+                        'close': day_data.get('end', '18:00')
+                    }
+                # If not open, don't include the day (closed)
+        
+        return result
+
+
 class CompanyProfileSerializer(serializers.ModelSerializer):
     """Serializer for CompanyProfile.
     
@@ -27,6 +90,9 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     store_city = serializers.CharField(source='store.city', read_only=True)
     store_state = serializers.CharField(source='store.state', read_only=True)
     store_type = serializers.CharField(source='store.store_type', read_only=True)
+    
+    # Business hours with format conversion
+    business_hours = BusinessHoursField(read_only=True)
     
     # Computed URLs
     computed_menu_url = serializers.SerializerMethodField()
@@ -51,7 +117,7 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
             'pix_notification_enabled', 'payment_confirmation_enabled',
             'order_status_notification_enabled', 'delivery_notification_enabled',
             'external_api_key', 'webhook_secret',
-            'use_langflow', 'langflow_flow_id',
+            'use_ai_agent', 'default_agent',
             'settings',
             'created_at', 'updated_at',
         ]
@@ -97,7 +163,7 @@ class UpdateCompanyProfileSerializer(serializers.Serializer):
     website_url = serializers.URLField(required=False, allow_blank=True)
     menu_url = serializers.URLField(required=False, allow_blank=True)
     order_url = serializers.URLField(required=False, allow_blank=True)
-    business_hours = serializers.JSONField(required=False)
+    business_hours = BusinessHoursField(required=False)
     
     auto_reply_enabled = serializers.BooleanField(required=False)
     welcome_message_enabled = serializers.BooleanField(required=False)
@@ -111,8 +177,8 @@ class UpdateCompanyProfileSerializer(serializers.Serializer):
     order_status_notification_enabled = serializers.BooleanField(required=False)
     delivery_notification_enabled = serializers.BooleanField(required=False)
     
-    use_langflow = serializers.BooleanField(required=False)
-    langflow_flow_id = serializers.UUIDField(required=False, allow_null=True)
+    use_ai_agent = serializers.BooleanField(required=False)
+    default_agent = serializers.UUIDField(required=False, allow_null=True)
     
     settings = serializers.JSONField(required=False)
 

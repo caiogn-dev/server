@@ -11,6 +11,7 @@ from apps.core.exceptions import ValidationError, NotFoundError
 from ..models import WhatsAppAccount, Message
 from ..repositories import MessageRepository, WhatsAppAccountRepository
 from .whatsapp_api_service import WhatsAppAPIService
+from .broadcast_service import get_broadcast_service
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class MessageService:
     def __init__(self):
         self.message_repo = MessageRepository()
         self.account_repo = WhatsAppAccountRepository()
+        self.broadcast = get_broadcast_service()
 
     def send_text_message(
         self,
@@ -570,7 +572,7 @@ class MessageService:
         return conversation
 
     def _update_message_sent(self, message: Message, response: Dict) -> None:
-        """Update message after successful send."""
+        """Update message after successful send and broadcast to WebSocket."""
         messages = response.get('messages', [])
         if messages:
             whatsapp_id = messages[0].get('id')
@@ -579,6 +581,29 @@ class MessageService:
         message.status = Message.MessageStatus.SENT
         message.sent_at = timezone.now()
         message.save()
+        
+        # Broadcast outbound message to WebSocket clients
+        try:
+            message_data = {
+                'id': str(message.id),
+                'whatsapp_message_id': message.whatsapp_message_id,
+                'direction': message.direction,
+                'message_type': message.message_type,
+                'status': message.status,
+                'from_number': message.from_number,
+                'to_number': message.to_number,
+                'text_body': message.text_body,
+                'sent_at': message.sent_at.isoformat() if message.sent_at else None,
+                'created_at': message.created_at.isoformat(),
+                'conversation_id': str(message.conversation_id) if message.conversation_id else None,
+            }
+            self.broadcast.broadcast_message_sent(
+                account_id=str(message.account_id),
+                message=message_data,
+                conversation_id=str(message.conversation_id) if message.conversation_id else None
+            )
+        except Exception as e:
+            logger.warning(f"Failed to broadcast outbound message: {e}")
 
     def _update_message_failed(self, message: Message, error: str) -> None:
         """Update message after failed send."""
@@ -586,6 +611,18 @@ class MessageService:
         message.failed_at = timezone.now()
         message.error_message = error
         message.save()
+        
+        # Broadcast failure to WebSocket clients
+        try:
+            self.broadcast.broadcast_status_update(
+                account_id=str(message.account_id),
+                message_id=str(message.id),
+                status=Message.MessageStatus.FAILED,
+                whatsapp_message_id=message.whatsapp_message_id,
+                timestamp=message.failed_at
+            )
+        except Exception as e:
+            logger.warning(f"Failed to broadcast message failure: {e}")
 
     def _map_message_type(self, type_str: str) -> str:
         """Map WhatsApp message type to model type."""

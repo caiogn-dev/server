@@ -178,16 +178,6 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                     deleted_counts['store_orders'] = 0
                     deleted_counts['store_integrations'] = 0
                 
-                # Delete langflow integrations
-                try:
-                    from apps.langflow.models import LangflowIntegration
-                    integrations = LangflowIntegration.objects.filter(account=account)
-                    deleted_counts['langflow_integrations'] = integrations.count()
-                    integrations.delete()
-                except Exception as e:
-                    logger.warning(f"Could not delete langflow integrations: {e}")
-                    deleted_counts['langflow_integrations'] = 0
-                
                 # Finally delete the account
                 account.delete()
                 
@@ -306,10 +296,24 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['account', 'direction', 'status', 'message_type']
+    filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
-        return Message.objects.select_related('account', 'conversation').all()
+        queryset = Message.objects.select_related('account', 'conversation').all()
+        
+        # Filter by phone_number (from_number OR to_number)
+        phone_number = self.request.query_params.get('phone_number')
+        if phone_number:
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(from_number__icontains=phone_number) | Q(to_number__icontains=phone_number)
+            )
+        
+        # Default ordering by created_at desc
+        ordering = self.request.query_params.get('ordering', '-created_at')
+        queryset = queryset.order_by(ordering)
+        
+        return queryset
 
     @extend_schema(
         summary="Send text message",

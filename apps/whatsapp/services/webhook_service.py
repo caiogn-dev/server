@@ -400,12 +400,14 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"Automation service error: {str(e)}")
 
-        # Fall back to Langflow if enabled and automation didn't handle it
-        if event.account.auto_response_enabled and not message.processed_by_langflow:
+        # Fall back to AI Agent if enabled and automation didn't handle it
+        if event.account.auto_response_enabled and not message.processed_by_agent:
             try:
-                current_app.send_task('apps.whatsapp.tasks.process_message_with_langflow', args=[str(message.id)])
+                # Process with AI Agent (Langchain) if configured
+                if hasattr(event.account, 'default_agent') and event.account.default_agent:
+                    current_app.send_task('apps.whatsapp.tasks.process_message_with_agent', args=[str(message.id)])
             except Exception as e:
-                logger.warning(f"Failed to enqueue Langflow task: {str(e)}")
+                logger.warning(f"Failed to enqueue Agent task: {str(e)}")
 
     def _process_inbound_message(self, event: WebhookEvent) -> Optional[Message]:
         """Process an inbound message event."""
@@ -446,7 +448,7 @@ class WebhookService:
             media_mime_type = media_data.get('mime_type', '')
             text_body = media_data.get('caption', '')
             content = {message_type: media_data}
-            media_url, media_sha256 = self._fetch_and_store_media(account, media_id, media_mime_type)
+            media_url, media_sha256 = self._fetch_and_store_media(event.account, media_id, media_mime_type)
         elif message_type == 'location':
             location = message_data.get('location', {})
             content = {'location': location}
@@ -753,10 +755,12 @@ class WebhookService:
             filename = f"whatsapp/{account.id}/{media_id}{extension}"
 
             if default_storage.exists(filename):
-                return build_absolute_media_url(filename), sha256
+                # Use default_storage.url() to get correct URL (works with S3 and local)
+                return default_storage.url(filename), sha256
 
             saved_path = default_storage.save(filename, ContentFile(media_bytes))
-            return build_absolute_media_url(saved_path), sha256
+            # Use default_storage.url() to get correct URL (works with S3 and local)
+            return default_storage.url(saved_path), sha256
 
         except Exception as exc:
             logger.warning(f"Failed to persist media {media_id}: {exc}")

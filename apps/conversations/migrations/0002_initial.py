@@ -12,6 +12,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('conversations', '0001_initial'),
         ('whatsapp', '0001_initial'),
+        ('agents', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
@@ -25,6 +26,11 @@ class Migration(migrations.Migration):
             model_name='conversation',
             name='assigned_agent',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='assigned_conversations', to=settings.AUTH_USER_MODEL),
+        ),
+        migrations.AddField(
+            model_name='conversation',
+            name='ai_agent',
+            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='whatsapp_conversations', to='agents.agent', help_text='Agente IA vinculado a esta conversa'),
         ),
         migrations.AddField(
             model_name='conversationnote',

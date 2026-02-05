@@ -19,6 +19,57 @@ from .instagram_api import InstagramAPIService, InstagramAPIError
 logger = logging.getLogger(__name__)
 
 
+def _broadcast_message(account, message, conversation, is_incoming=True):
+    """Helper to broadcast message via WebSocket."""
+    try:
+        from apps.instagram.consumers import (
+            broadcast_instagram_message,
+            broadcast_instagram_message_sent,
+            broadcast_conversation_updated
+        )
+        
+        message_data = {
+            'id': str(message.id),
+            'instagram_message_id': message.instagram_message_id,
+            'direction': message.direction,
+            'message_type': message.message_type,
+            'text_content': message.text_content,
+            'media_url': message.media_url,
+            'media_type': message.media_type,
+            'status': message.status,
+            'created_at': message.created_at.isoformat() if message.created_at else None,
+            'sent_at': message.sent_at.isoformat() if message.sent_at else None,
+        }
+        
+        conversation_data = {
+            'id': str(conversation.id),
+            'participant_id': conversation.participant_id,
+            'participant_username': conversation.participant_username,
+            'participant_name': conversation.participant_name,
+            'participant_profile_pic': conversation.participant_profile_pic,
+            'last_message_at': conversation.last_message_at.isoformat() if conversation.last_message_at else None,
+            'last_message_preview': conversation.last_message_preview,
+            'unread_count': conversation.unread_count,
+            'status': conversation.status,
+        }
+        
+        if is_incoming:
+            sender_data = {
+                'id': message.sender_id,
+                'username': conversation.participant_username,
+                'name': conversation.participant_name,
+            }
+            broadcast_instagram_message(str(account.id), message_data, conversation_data, sender_data)
+        else:
+            broadcast_instagram_message_sent(str(account.id), message_data, str(conversation.id))
+        
+        # Also broadcast conversation update
+        broadcast_conversation_updated(str(account.id), conversation_data)
+        
+    except Exception as e:
+        logger.warning(f"Failed to broadcast Instagram message: {e}")
+
+
 class InstagramMessageService:
     """Service for managing Instagram messages."""
     
@@ -56,6 +107,9 @@ class InstagramMessageService:
             conversation.last_message_preview = text[:255]
             conversation.message_count += 1
             conversation.save(update_fields=['last_message_at', 'last_message_preview', 'message_count', 'updated_at'])
+            
+            # Broadcast via WebSocket
+            _broadcast_message(self.account, message, conversation, is_incoming=False)
             
             logger.info(f"Sent Instagram message to {recipient_id}: {message.instagram_message_id}")
             return message
@@ -166,6 +220,9 @@ class InstagramMessageService:
             
             # Try to fetch user profile
             self._update_participant_info(conversation, sender_id)
+            
+            # Broadcast via WebSocket
+            _broadcast_message(self.account, message, conversation, is_incoming=True)
             
             logger.info(f"Processed incoming Instagram message: {message_id}")
             return message

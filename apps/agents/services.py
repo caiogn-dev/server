@@ -9,12 +9,10 @@ from typing import List, Dict, Any, Optional
 from django.conf import settings
 from django.core.cache import cache
 from langchain_openai import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage, AIMessage
-from langchain.memory import ConversationBufferMemory
-from langchain.chains import ConversationChain
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
-from apps.core.exceptions import APIError
+from apps.core.exceptions import BaseAPIException
 from .models import Agent, AgentConversation, AgentMessage
 
 
@@ -31,7 +29,7 @@ class LangchainService:
         base_url = self.agent.base_url or getattr(settings, 'KIMI_BASE_URL', 'https://api.kimi.com/coding/v1')
         
         if not api_key:
-            raise APIError("API Key não configurada para o agente")
+            raise BaseAPIException("API Key não configurada para o agente")
         
         return ChatOpenAI(
             model_name=self.agent.model_name,
@@ -42,7 +40,7 @@ class LangchainService:
             base_url=base_url,
         )
     
-    def _get_memory(self, session_id: str) -> Optional[ConversationBufferMemory]:
+    def _get_memory(self, session_id: str) -> Optional[RedisChatMessageHistory]:
         """Get conversation memory from Redis."""
         if not self.agent.use_memory:
             return None
@@ -54,10 +52,7 @@ class LangchainService:
                 url=redis_url,
                 ttl=self.agent.memory_ttl
             )
-            return ConversationBufferMemory(
-                chat_memory=history,
-                return_messages=True
-            )
+            return history
         except Exception as e:
             print(f"Error creating memory: {e}")
             return None
@@ -100,7 +95,7 @@ class LangchainService:
         # Add memory/history if enabled
         memory = self._get_memory(session_id)
         if memory:
-            history_messages = memory.load_memory_variables({}).get('history', [])
+            history_messages = memory.messages
             messages.extend(history_messages)
         
         # Add user message
@@ -112,17 +107,15 @@ class LangchainService:
             response_text = response.content
             tokens_used = response.response_metadata.get('token_usage', {}).get('total_tokens')
         except Exception as e:
-            raise APIError(f"Erro ao chamar LLM: {str(e)}")
+            raise BaseAPIException(f"Erro ao chamar LLM: {str(e)}")
         
         # Calculate response time
         response_time_ms = int((time.time() - start_time) * 1000)
         
         # Save to memory if enabled
         if memory:
-            memory.save_context(
-                {"input": message},
-                {"output": response_text}
-            )
+            memory.add_user_message(message)
+            memory.add_ai_message(response_text)
         
         # Save to database
         if save_to_db:
@@ -177,7 +170,7 @@ class LangchainService:
             if not memory:
                 return []
             
-            history = memory.load_memory_variables({}).get('history', [])
+            history = memory.messages
             return [
                 {
                     'role': 'user' if isinstance(msg, HumanMessage) else 'assistant',
@@ -192,6 +185,42 @@ class LangchainService:
 
 class AgentService:
     """Service for managing agents and their operations."""
+    
+    def __init__(self, agent: Optional[Agent] = None):
+        """Initialize with an optional agent."""
+        self.agent = agent
+        self._langchain_service = None
+        
+        if agent:
+            self._langchain_service = LangchainService(agent)
+    
+    def process_message(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        save_to_db: bool = True
+    ) -> str:
+        """
+        Process a message with the configured agent.
+        
+        Returns the response text or empty string if no response.
+        """
+        if not self.agent or not self._langchain_service:
+            return ''
+        
+        try:
+            result = self._langchain_service.process_message(
+                message=message,
+                session_id=session_id,
+                phone_number=phone_number,
+                save_to_db=save_to_db
+            )
+            return result.get('response', '')
+        except Exception as e:
+            print(f"Error processing message: {e}")
+            return ''
     
     @staticmethod
     def get_active_agents(account_id: Optional[str] = None):
@@ -217,10 +246,10 @@ class AgentService:
         try:
             agent = Agent.objects.get(id=agent_id, is_active=True)
         except Agent.DoesNotExist:
-            raise APIError("Agente não encontrado")
+            raise BaseAPIException("Agente não encontrado")
         
         if agent.status != Agent.AgentStatus.ACTIVE:
-            raise APIError("Agente não está ativo")
+            raise BaseAPIException("Agente não está ativo")
         
         service = LangchainService(agent)
         return service.process_message(message, session_id, phone_number)

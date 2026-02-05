@@ -49,11 +49,11 @@ def process_webhook_event(self, event_id: str):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def process_message_with_langflow(self, message_id: str):
-    """Process a message with Langflow."""
+def process_message_with_agent(self, message_id: str):
+    """Process a message with AI Agent (Langchain)."""
     from ..models import Message
     from ..repositories import MessageRepository
-    from apps.langflow.services import LangflowService
+    from apps.agents.services import LangchainService
     from apps.conversations.services import ConversationService
     
     message_repo = MessageRepository()
@@ -64,23 +64,24 @@ def process_message_with_langflow(self, message_id: str):
             logger.error(f"Message not found: {message_id}")
             return
         
-        if message.processed_by_langflow:
-            logger.info(f"Message already processed by Langflow: {message_id}")
+        if message.processed_by_agent:
+            logger.info(f"Message already processed by AI Agent: {message_id}")
             return
         
         account = message.account
         
-        if not account.default_langflow_flow_id:
-            logger.info(f"No Langflow flow configured for account: {account.id}")
+        if not account.default_agent:
+            logger.info(f"No AI Agent configured for account: {account.id}")
             return
         
         conversation_service = ConversationService()
         
         if message.conversation and message.conversation.mode == 'human':
-            logger.info(f"Conversation in human mode, skipping Langflow: {message_id}")
+            logger.info(f"Conversation in human mode, skipping AI Agent: {message_id}")
             return
         
-        langflow_service = LangflowService()
+        agent = account.default_agent
+        service = LangchainService(agent)
         
         context = {
             'account_id': str(account.id),
@@ -89,32 +90,33 @@ def process_message_with_langflow(self, message_id: str):
             'message_type': message.message_type,
         }
         
-        response = langflow_service.process_message(
-            flow_id=str(account.default_langflow_flow_id),
+        result = service.process_message(
             message=message.text_body,
+            session_id=str(message.conversation.id) if message.conversation else None,
+            phone_number=message.from_number,
             context=context
         )
         
-        message_repo.mark_as_processed_by_langflow(message)
+        message_repo.mark_as_processed_by_agent(message)
         
-        if response and response.get('response'):
-            send_langflow_response.delay(
+        if result and result.get('response'):
+            send_agent_response.delay(
                 str(account.id),
                 message.from_number,
-                response['response'],
+                result['response'],
                 str(message.whatsapp_message_id)
             )
         
-        logger.info(f"Message processed by Langflow: {message_id}")
+        logger.info(f"Message processed by AI Agent: {message_id}")
         
     except Exception as e:
-        logger.error(f"Error processing message with Langflow {message_id}: {str(e)}")
+        logger.error(f"Error processing message with AI Agent {message_id}: {str(e)}")
         raise self.retry(exc=e)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_langflow_response(self, account_id: str, to: str, response_text: str, reply_to: str = None):
-    """Send Langflow response as WhatsApp message."""
+def send_agent_response(self, account_id: str, to: str, response_text: str, reply_to: str = None):
+    """Send AI Agent response as WhatsApp message."""
     from ..services import MessageService
     
     try:
@@ -124,12 +126,12 @@ def send_langflow_response(self, account_id: str, to: str, response_text: str, r
             to=to,
             text=response_text,
             reply_to=reply_to,
-            metadata={'source': 'langflow'}
+            metadata={'source': 'ai_agent'}
         )
-        logger.info(f"Langflow response sent to {to}")
+        logger.info(f"AI Agent response sent to {to}")
         
     except Exception as e:
-        logger.error(f"Error sending Langflow response: {str(e)}")
+        logger.error(f"Error sending AI Agent response: {str(e)}")
         raise self.retry(exc=e)
 
 

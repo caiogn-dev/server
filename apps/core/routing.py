@@ -6,6 +6,7 @@ from . import consumers
 from apps.automation.consumers import AutomationConsumer
 from apps.stores.consumers import StoreOrdersConsumer, CustomerOrderConsumer
 from apps.whatsapp.consumers import WhatsAppConsumer, WhatsAppDashboardConsumer
+from apps.instagram.consumers import InstagramConsumer
 
 websocket_urlpatterns = [
     re_path(r'ws/notifications/$', consumers.NotificationConsumer.as_asgi()),
@@ -19,4 +20,6 @@ websocket_urlpatterns = [
     # WhatsApp real-time updates
     re_path(r'ws/whatsapp/(?P<account_id>[0-9a-f-]+)/$', WhatsAppConsumer.as_asgi()),
     re_path(r'ws/whatsapp/dashboard/$', WhatsAppDashboardConsumer.as_asgi()),
+    # Instagram real-time updates
+    re_path(r'ws/instagram/(?P<account_id>[0-9a-f-]+)/$', InstagramConsumer.as_asgi()),
 ]

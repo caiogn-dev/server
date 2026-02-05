@@ -24,7 +24,7 @@ class WhatsAppAccountAdmin(admin.ModelAdmin):
         }),
         ('Automation', {
             'fields': (
-                'default_langflow_flow_id', 'auto_response_enabled',
+                'default_agent', 'auto_response_enabled',
                 'human_handoff_enabled'
             )
         }),

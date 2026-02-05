@@ -12,7 +12,7 @@ from apps.core.exceptions import NotFoundError, ValidationError
 from apps.whatsapp.models import WhatsAppAccount, Message
 from apps.whatsapp.services import MessageService as WhatsAppService
 from apps.conversations.models import Conversation
-from apps.langflow.services import LangflowService
+from apps.agents.services import AgentService
 
 from ..models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog
 
@@ -53,13 +53,13 @@ class AutomationService:
             raise NotFoundError(message="WhatsApp account not found")
 
         # Check if profile already exists
-        if hasattr(account, 'company_profile'):
+        if hasattr(account, 'company_profile') and account.company_profile:
             raise ValidationError(message="Company profile already exists for this account")
 
         profile = CompanyProfile.objects.create(
             account=account,
-            company_name=company_name,
-            business_type=business_type,
+            _company_name=company_name,
+            _business_type=business_type,
             website_url=website_url,
             menu_url=menu_url,
             **kwargs
@@ -86,6 +86,50 @@ class AutomationService:
         except CompanyProfile.DoesNotExist:
             raise NotFoundError(message="Company profile not found")
 
+        # Handle business_hours specially - if linked to Store, update Store instead
+        business_hours = kwargs.pop('business_hours', None)
+        if business_hours is not None:
+            if profile.store_id:
+                # Update Store operating_hours instead
+                profile.store.operating_hours = business_hours
+                profile.store.save(update_fields=['operating_hours', 'updated_at'])
+                logger.info(f"Updated Store operating_hours for {profile.store.name}")
+            else:
+                # Update profile's internal field
+                profile._business_hours = business_hours
+        
+        # Handle fields that map to Store when linked
+        if profile.store_id:
+            # These fields should update the Store if linked
+            store_fields = ['company_name', 'description']
+            store_updates = {}
+            
+            for field in store_fields:
+                if field in kwargs:
+                    value = kwargs.pop(field)
+                    if field == 'company_name':
+                        store_updates['name'] = value
+                    else:
+                        store_updates[field] = value
+            
+            if store_updates:
+                for key, value in store_updates.items():
+                    setattr(profile.store, key, value)
+                profile.store.save(update_fields=list(store_updates.keys()) + ['updated_at'])
+                logger.info(f"Updated Store fields for {profile.store.name}")
+
+        # Handle ForeignKey fields that receive UUIDs
+        fk_fields = ['default_agent']
+        for fk_field in fk_fields:
+            if fk_field in kwargs:
+                fk_value = kwargs.pop(fk_field)
+                if fk_value:
+                    # Set using _id suffix for ForeignKey
+                    setattr(profile, f'{fk_field}_id', fk_value)
+                else:
+                    setattr(profile, f'{fk_field}_id', None)
+
+        # Update remaining fields on profile
         for key, value in kwargs.items():
             if hasattr(profile, key):
                 setattr(profile, key, value)
@@ -365,9 +409,9 @@ class AutomationService:
             
             return response
 
-        # If Langflow is enabled, use it for complex responses
-        if profile.use_langflow and profile.langflow_flow_id:
-            return self._process_with_langflow(profile, session, message_text)
+        # If AI Agent is enabled, use it for complex responses
+        if profile.use_ai_agent and profile.default_agent:
+            return self._process_with_agent(profile, session, message_text)
 
         # Default: no auto-response for regular messages
         return None
@@ -429,28 +473,34 @@ class AutomationService:
         except Conversation.DoesNotExist:
             return None
 
-    def _process_with_langflow(
+    def _process_with_agent(
         self,
         profile: CompanyProfile,
         session: CustomerSession,
         message_text: str
     ) -> Optional[str]:
-        """Process message with Langflow."""
+        """Process message with AI Agent (Langchain)."""
         try:
-            langflow_service = LangflowService()
-            response = langflow_service.process_message(
-                flow_id=str(profile.langflow_flow_id),
+            from apps.agents.services import LangchainService
+            
+            agent = profile.default_agent
+            if not agent:
+                return None
+            
+            service = LangchainService(agent)
+            result = service.process_message(
                 message=message_text,
+                session_id=session.session_id,
+                phone_number=session.phone_number,
                 context={
                     'company_name': profile.company_name,
                     'customer_phone': session.phone_number,
                     'customer_name': session.customer_name,
-                    'session_id': session.session_id,
                 }
             )
-            return response.get('response')
+            return result.get('response')
         except Exception as e:
-            logger.error(f"Langflow error: {str(e)}")
+            logger.error(f"AI Agent error: {str(e)}")
             return None
 
     # ==================== Customer Sessions ====================

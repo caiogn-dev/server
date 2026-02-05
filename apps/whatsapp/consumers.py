@@ -3,16 +3,16 @@ WhatsApp WebSocket consumers for real-time message updates.
 """
 import json
 import logging
-from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
+from apps.core.base_consumer import ThrottledWebSocketConsumer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-class WhatsAppConsumer(AsyncJsonWebsocketConsumer):
+class WhatsAppConsumer(ThrottledWebSocketConsumer):
     """
     WebSocket consumer for WhatsApp real-time updates.
     
@@ -230,7 +230,7 @@ class WhatsAppConsumer(AsyncJsonWebsocketConsumer):
             return False
 
 
-class WhatsAppDashboardConsumer(AsyncJsonWebsocketConsumer):
+class WhatsAppDashboardConsumer(ThrottledWebSocketConsumer):
     """
     WebSocket consumer for WhatsApp dashboard overview.
     
@@ -254,24 +254,28 @@ class WhatsAppDashboardConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4001)
             return
         
-        # Get all accounts user has access to and join their groups
-        account_ids = await self.get_user_account_ids()
-        
-        for account_id in account_ids:
-            group_name = f"whatsapp_{account_id}"
-            await self.channel_layer.group_add(group_name, self.channel_name)
-            self.account_groups.add(group_name)
-        
-        # Join user-specific group
-        await self.channel_layer.group_add(f"user_{self.user.id}_whatsapp", self.channel_name)
-        
-        await self.accept()
-        
-        await self.send_json({
-            'type': 'connection_established',
-            'accounts': account_ids,
-            'message': 'Connected to WhatsApp dashboard service'
-        })
+        try:
+            # Get all accounts user has access to and join their groups
+            account_ids = await self.get_user_account_ids()
+            
+            for account_id in account_ids:
+                group_name = f"whatsapp_{account_id}"
+                await self.channel_layer.group_add(group_name, self.channel_name)
+                self.account_groups.add(group_name)
+            
+            # Join user-specific group
+            await self.channel_layer.group_add(f"user_{self.user.id}_whatsapp", self.channel_name)
+            
+            await self.accept()
+            
+            await self.send_json({
+                'type': 'connection_established',
+                'accounts': account_ids,
+                'message': 'Connected to WhatsApp dashboard service'
+            })
+        except Exception as e:
+            logger.error(f"WhatsApp Dashboard WS connect error: {e}")
+            await self.close(code=4000)
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
@@ -287,6 +291,44 @@ class WhatsAppDashboardConsumer(AsyncJsonWebsocketConsumer):
         
         if message_type == 'ping':
             await self.send_json({'type': 'pong'})
+        
+        elif message_type == 'subscribe_conversation':
+            # Subscribe to a specific conversation for typing indicators
+            conversation_id = content.get('conversation_id')
+            if conversation_id:
+                group_name = f"whatsapp_conv_{conversation_id}"
+                await self.channel_layer.group_add(group_name, self.channel_name)
+                self.account_groups.add(group_name)
+                await self.send_json({
+                    'type': 'subscribed',
+                    'conversation_id': conversation_id
+                })
+        
+        elif message_type == 'unsubscribe_conversation':
+            conversation_id = content.get('conversation_id')
+            if conversation_id:
+                group_name = f"whatsapp_conv_{conversation_id}"
+                await self.channel_layer.group_discard(group_name, self.channel_name)
+                self.account_groups.discard(group_name)
+                await self.send_json({
+                    'type': 'unsubscribed',
+                    'conversation_id': conversation_id
+                })
+        
+        elif message_type == 'typing':
+            # Broadcast typing indicator to conversation
+            conversation_id = content.get('conversation_id')
+            is_typing = content.get('is_typing', False)
+            if conversation_id:
+                await self.channel_layer.group_send(
+                    f"whatsapp_conv_{conversation_id}",
+                    {
+                        'type': 'whatsapp_typing',
+                        'user_id': self.user.id,
+                        'conversation_id': conversation_id,
+                        'is_typing': is_typing
+                    }
+                )
     
     # Event handlers - same as WhatsAppConsumer
     async def whatsapp_message_received(self, event):
@@ -312,6 +354,35 @@ class WhatsAppDashboardConsumer(AsyncJsonWebsocketConsumer):
             'account_id': event.get('account_id')
         })
     
+    async def whatsapp_message_sent(self, event):
+        """Handle outbound message confirmation."""
+        await self.send_json({
+            'type': 'message_sent',
+            'message': event['message'],
+            'account_id': event.get('account_id'),
+            'conversation_id': event.get('conversation_id')
+        })
+    
+    async def whatsapp_typing(self, event):
+        """Handle typing indicator."""
+        # Don't send typing indicator to the user who is typing
+        if event.get('user_id') != self.user.id:
+            await self.send_json({
+                'type': 'typing',
+                'conversation_id': event['conversation_id'],
+                'is_typing': event['is_typing']
+            })
+    
+    async def whatsapp_error(self, event):
+        """Handle error event."""
+        await self.send_json({
+            'type': 'error',
+            'error_code': event.get('error_code'),
+            'error_message': event.get('error_message'),
+            'message_id': event.get('message_id'),
+            'account_id': event.get('account_id')
+        })
+    
     def _extract_token(self, query_string: str) -> str:
         if not query_string:
             return ''
@@ -333,9 +404,9 @@ class WhatsAppDashboardConsumer(AsyncJsonWebsocketConsumer):
         
         if self.user.is_staff:
             # Staff can see all accounts
-            return list(WhatsAppAccount.objects.values_list('id', flat=True))
+            return [str(id) for id in WhatsAppAccount.objects.values_list('id', flat=True)]
         else:
             # Regular users see only their accounts
-            return list(
-                WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
-            )
+            return [
+                str(id) for id in WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
+            ]

@@ -87,6 +87,16 @@ class PaymentGatewayError(ExternalServiceError):
 
 def custom_exception_handler(exc, context):
     """Custom exception handler for DRF."""
+    from rest_framework.exceptions import AuthenticationFailed
+    
+    # Check if it's an auth error on a public endpoint
+    view = context.get('view')
+    if view and hasattr(view, 'authentication_classes') and not view.authentication_classes:
+        # This is a public endpoint - ignore authentication errors
+        if isinstance(exc, AuthenticationFailed):
+            # Let the request proceed without authentication
+            return None
+    
     response = exception_handler(exc, context)
 
     if isinstance(exc, BaseAPIException):

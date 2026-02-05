@@ -45,7 +45,7 @@ class Agent(BaseModel):
     )
     base_url = models.URLField(
         blank=True,
-        default='https://api.kimi.com/coding/v1',
+        default='https://api.moonshot.cn/v1',
         verbose_name='Base URL'
     )
     

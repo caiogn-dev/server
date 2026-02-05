@@ -98,10 +98,10 @@ class MessageRepository:
         message.save()
         return message
 
-    def mark_as_processed_by_langflow(self, message: Message) -> Message:
-        """Mark message as processed by Langflow."""
-        message.processed_by_langflow = True
-        message.save(update_fields=['processed_by_langflow', 'updated_at'])
+    def mark_as_processed_by_agent(self, message: Message) -> Message:
+        """Mark message as processed by AI Agent."""
+        message.processed_by_agent = True
+        message.save(update_fields=['processed_by_agent', 'updated_at'])
         return message
 
     def get_pending_messages(self, limit: int = 100) -> QuerySet[Message]:
@@ -130,7 +130,7 @@ class MessageRepository:
         """Get unprocessed inbound messages."""
         return Message.objects.filter(
             direction=Message.MessageDirection.INBOUND,
-            processed_by_langflow=False
+            processed_by_agent=False
         ).select_related('account', 'conversation')[:limit]
 
     def get_message_stats(

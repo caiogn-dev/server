@@ -228,6 +228,39 @@ class ConversationViewSet(viewsets.ModelViewSet):
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
+        summary="Mark conversation as read",
+        description="Marks all unread messages in this conversation as read",
+        responses={200: ConversationSerializer}
+    )
+    @action(detail=True, methods=['post'])
+    def mark_as_read(self, request, pk=None):
+        """Mark all messages in conversation as read."""
+        conversation = self.get_object()
+        
+        # Update all unread inbound messages in this conversation
+        from apps.whatsapp.models import WhatsAppMessage
+        from apps.instagram.models import InstagramMessage
+        
+        # Mark WhatsApp messages as read
+        WhatsAppMessage.objects.filter(
+            conversation_id=conversation.id,
+            direction='inbound',
+            status__in=['delivered', 'sent']
+        ).update(status='read')
+        
+        # Mark Instagram messages as read
+        InstagramMessage.objects.filter(
+            conversation_id=conversation.id,
+            direction='inbound',
+            status__in=['delivered', 'sent']
+        ).update(status='read')
+        
+        # Refresh conversation to update unread_count
+        conversation.refresh_from_db()
+        
+        return Response(ConversationSerializer(conversation).data)
+
+    @extend_schema(
         summary="Get conversation statistics",
         responses={200: dict}
     )

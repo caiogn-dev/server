@@ -35,7 +35,7 @@ class AgentDetailSerializer(serializers.ModelSerializer):
         }
     
     def get_accounts(self, obj):
-        from apps.whatsapp.serializers import WhatsAppAccountSerializer
+        from apps.whatsapp.api.serializers import WhatsAppAccountSerializer
         return WhatsAppAccountSerializer(obj.accounts.all(), many=True).data
 
 

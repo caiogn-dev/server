@@ -41,7 +41,7 @@ INSTALLED_APPS = [
     'apps.core',
     'apps.whatsapp.apps.WhatsAppConfig',
     'apps.conversations',
-    'apps.langflow',
+    # 'apps.langflow',  # DEPRECATED: Replaced by apps.agents (Langchain)
     'apps.agents',  # Langchain AI Agents (replaces Langflow)
     'apps.notifications',
     'apps.audit',
@@ -197,7 +197,12 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "https://painel.pastita.com.br",
     "https://pastita.com.br",
-    "http://*.pastita.com.br",  
+    "https://www.pastita.com.br",
+    "https://ce-saladas.vercel.app",
+    "https://backend.pastita.com.br",
+    "https://api.pastita.com.br",
+    "http://localhost:3000",
+    "http://localhost:8000",
 ]
 cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins:
@@ -297,12 +302,33 @@ INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
 
+# ============================================================================
+# LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
+# ============================================================================
+# Kimi API (Moonshot - Default)
+KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
+KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.moonshot.cn/v1')
+KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'moonshot-v1-8k')
+
+# OpenAI (opcional)
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
+
+# Anthropic (opcional)
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
+
+# Ollama (local - opcional)
+OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_MODEL_NAME = os.environ.get('OLLAMA_MODEL_NAME', 'llama3.2')
+
 # Maps (HERE)
 HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
 
 # Base URL for webhooks and callbacks
-BASE_URL = os.environ.get('BASE_URL', 'http://localhost:12000')
-API_BASE_URL = os.environ.get('API_BASE_URL', 'https://web-production-3e83a.up.railway.app')
+BASE_URL = os.environ.get('BASE_URL', 'https://backend.pastita.com.br')
+API_BASE_URL = os.environ.get('API_BASE_URL', os.environ.get('BACKEND_URL', 'https://backend.pastita.com.br'))
 DASHBOARD_URL = os.environ.get('DASHBOARD_URL', 'https://painel.pastita.com.br')
 
 # Mercado Pago Integration
@@ -317,9 +343,19 @@ META_CAPI_ACCESS_TOKEN = os.environ.get('META_CAPI_ACCESS_TOKEN', '').strip()
 META_CAPI_TEST_EVENT_CODE = os.environ.get('META_CAPI_TEST_EVENT_CODE', '').strip()
 META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v20.0').strip()
 
-# Langflow
-LANGFLOW_API_URL = os.environ.get('LANGFLOW_API_URL', 'http://localhost:7860')
-LANGFLOW_API_KEY = os.environ.get('LANGFLOW_API_KEY', '')
+# Langchain AI Configuration
+KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
+KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.moonshot.cn/v1')
+KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-coder')
+
+# OpenAI (opcional)
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
+
+# Anthropic (opcional)
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
 
 # Rate Limiting
 RATE_LIMIT_ENABLED = os.environ.get('RATE_LIMIT_ENABLED', 'True').lower() == 'true'

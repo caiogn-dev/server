@@ -50,6 +50,15 @@ class InstagramAPIService:
         params['access_token'] = self.access_token
         
         try:
+            logger.info(f"Instagram API Request: {method} {url}", extra={
+                'endpoint': endpoint,
+                'method': method,
+                'has_json_data': bool(json_data),
+                'json_data': json_data if json_data else None,
+                'params': {k: v for k, v in params.items() if k != 'access_token'} if params else None,
+                'full_url': url
+            })
+            
             response = requests.request(
                 method=method,
                 url=url,
@@ -58,28 +67,59 @@ class InstagramAPIService:
                 timeout=timeout
             )
             
+            logger.info(f"Instagram API Response: {response.status_code}", extra={
+                'status_code': response.status_code,
+                'response_text': response.text[:1000],
+                'headers': dict(response.headers)
+            })
+            
             data = response.json()
             
             if 'error' in data:
                 error = data['error']
+                error_code = error.get('code')
+                error_subcode = error.get('error_subcode')
+                error_message = error.get('message', 'An unknown error has occurred.')
+                
+                # Traduzir mensagens de erro comuns
+                if error_code == 10 and error_subcode == 2534022:
+                    error_message = "Não é possível enviar mensagem. A janela de 24 horas expirou. O usuário precisa enviar uma nova mensagem primeiro."
+                elif error_code == 100:
+                    error_message = f"Parâmetro inválido: {error_message}"
+                elif error_code == 1:
+                    # Error code 1 - Unknown error, provide more context
+                    error_details = [
+                        "Erro desconhecido da API do Instagram.",
+                        f"Mensagem original: {error_message}",
+                        "Possíveis causas:",
+                        "- Recipient ID inválido ou não existe",
+                        "- Conta do Instagram não configurada corretamente",
+                        "- Permissões insuficientes no app",
+                        "- Token expirado ou inválido"
+                    ]
+                    error_message = " ".join(error_details)
+                
                 logger.error(
-                    f"Instagram API Error: {error.get('message')}",
+                    f"Instagram API Error: {error_message}",
                     extra={
-                        'error_code': error.get('code'),
-                        'error_subcode': error.get('error_subcode'),
-                        'endpoint': endpoint
+                        'error_code': error_code,
+                        'error_subcode': error_subcode,
+                        'error_type': error.get('type'),
+                        'fbtrace_id': error.get('fbtrace_id'),
+                        'endpoint': endpoint,
+                        'full_error': error
                     }
                 )
                 raise InstagramAPIError(
-                    message=error.get('message'),
-                    code=error.get('code'),
-                    subcode=error.get('error_subcode')
+                    message=error_message,
+                    code=error_code,
+                    subcode=error_subcode
                 )
             
             return data
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Instagram API Request failed: {str(e)}")
+            logger.error(f"Instagram API Request failed: {str(e)}", exc_info=True)
             raise InstagramAPIError(message=str(e))
     
     # ==================== Account Management ====================
@@ -149,15 +189,35 @@ class InstagramAPIService:
     # ==================== Conversations ====================
     
     def get_conversations(self, limit: int = 50) -> Dict[str, Any]:
-        """Get list of conversations for this Instagram account."""
-        return self._make_request(
-            'GET',
-            f"{self.instagram_account_id}/conversations",
-            params={
-                'fields': 'id,participants,updated_time,messages{id,from,to,message,created_time}',
-                'limit': limit
-            }
-        )
+        """Get list of conversations for this Instagram account.
+        
+        Uses Facebook Page ID with platform=instagram for Page Access Tokens.
+        """
+        # For Page Access Tokens, we need to use the Page ID with platform filter
+        page_id = self.account.facebook_page_id if self.account else None
+        
+        if page_id:
+            # Use Facebook Graph API with Page ID
+            return self._make_request(
+                'GET',
+                f"{page_id}/conversations",
+                params={
+                    'platform': 'instagram',
+                    'fields': 'id,participants,updated_time,messages{id,from,to,message,created_time}',
+                    'limit': limit
+                },
+                use_facebook_api=True
+            )
+        else:
+            # Fallback to Instagram Graph API (for IGAA tokens)
+            return self._make_request(
+                'GET',
+                f"{self.instagram_account_id}/conversations",
+                params={
+                    'fields': 'id,participants,updated_time,messages{id,from,to,message,created_time}',
+                    'limit': limit
+                }
+            )
     
     def get_conversation_messages(self, conversation_id: str, limit: int = 50) -> Dict[str, Any]:
         """Get messages from a specific conversation."""
@@ -190,7 +250,30 @@ class InstagramAPIService:
         Returns:
             API response with message_id
         """
-        endpoint = f"{self.instagram_account_id}/messages"
+        if not recipient_id:
+            raise InstagramAPIError("recipient_id is required")
+        
+        if not message_text and not attachment_url:
+            raise InstagramAPIError("Either message_text or attachment_url is required")
+        
+        # IMPORTANT: For Instagram messaging with Page Access Token:
+        # Use the Facebook Page ID as endpoint (/{page-id}/messages)
+        # The API will automatically route to Instagram based on the recipient
+        # Reference: https://developers.facebook.com/docs/messenger-platform/instagram/features/send-message
+        page_id = self.account.facebook_page_id if self.account else None
+        if not page_id:
+            raise InstagramAPIError("facebook_page_id is required for sending Instagram messages")
+        
+        endpoint = f"{page_id}/messages"
+        
+        logger.info(f"Sending Instagram message", extra={
+            'recipient_id': recipient_id,
+            'has_text': bool(message_text),
+            'has_attachment': bool(attachment_url),
+            'page_id': page_id,
+            'instagram_business_id': self.account.instagram_account_id if self.account else None,
+            'endpoint': endpoint
+        })
         
         payload = {
             'recipient': {'id': recipient_id}
@@ -206,7 +289,8 @@ class InstagramAPIService:
                 }
             }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        # Use Facebook Graph API with Instagram Business Account ID
+        return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=True)
     
     def send_text_message(self, recipient_id: str, text: str) -> Dict[str, Any]:
         """Send a text message."""
@@ -238,7 +322,10 @@ class InstagramAPIService:
             text: Message text
             quick_replies: List of quick reply options [{'title': '...', 'payload': '...'}]
         """
-        endpoint = f"{self.instagram_account_id}/messages"
+        page_id = self.account.facebook_page_id if self.account else None
+        if not page_id:
+            raise InstagramAPIError("facebook_page_id is required")
+        endpoint = f"{page_id}/messages"
         
         payload = {
             'recipient': {'id': recipient_id},
@@ -255,7 +342,7 @@ class InstagramAPIService:
             }
         }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=True)
     
     def send_generic_template(
         self, 
@@ -269,7 +356,10 @@ class InstagramAPIService:
             recipient_id: Instagram-scoped user ID
             elements: List of template elements (max 10)
         """
-        endpoint = f"{self.instagram_account_id}/messages"
+        page_id = self.account.facebook_page_id if self.account else None
+        if not page_id:
+            raise InstagramAPIError("facebook_page_id is required")
+        endpoint = f"{page_id}/messages"
         
         payload = {
             'recipient': {'id': recipient_id},
@@ -284,47 +374,67 @@ class InstagramAPIService:
             }
         }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=True)
     
     def get_conversation(self, user_id: str) -> Dict[str, Any]:
         """Get conversation with a specific user."""
-        endpoint = f"{self.instagram_account_id}/conversations"
+        # Use Page ID with platform filter for Page Access Tokens
+        page_id = self.account.facebook_page_id if self.account else None
         
-        return self._make_request('GET', endpoint, params={
-            'user_id': user_id,
-            'fields': 'messages{id,message,from,to,created_time}'
-        })
+        if page_id:
+            return self._make_request('GET', f"{page_id}/conversations", params={
+                'platform': 'instagram',
+                'user_id': user_id,
+                'fields': 'messages{id,message,from,to,created_time}'
+            }, use_facebook_api=True)
+        else:
+            endpoint = f"{self.instagram_account_id}/conversations"
+            return self._make_request('GET', endpoint, params={
+                'user_id': user_id,
+                'fields': 'messages{id,message,from,to,created_time}'
+            })
     
-    def get_conversations(self, limit: int = 25) -> Dict[str, Any]:
-        """Get all conversations."""
-        endpoint = f"{self.instagram_account_id}/conversations"
-        
-        return self._make_request('GET', endpoint, params={
-            'fields': 'participants,messages.limit(1){id,message,from,created_time}',
-            'limit': limit
-        })
+    # NOTE: get_conversations is already defined above (line ~151) with proper Page ID support
+    # Removed duplicate definition that was overriding the correct one
     
     def mark_seen(self, recipient_id: str) -> Dict[str, Any]:
         """Mark messages as seen (send read receipt)."""
-        endpoint = f"{self.instagram_account_id}/messages"
+        page_id = self.account.facebook_page_id if self.account else None
+        if not page_id:
+            raise InstagramAPIError("facebook_page_id is required")
+        endpoint = f"{page_id}/messages"
         
         payload = {
             'recipient': {'id': recipient_id},
             'sender_action': 'mark_seen'
         }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=True)
     
     def send_typing_indicator(self, recipient_id: str, typing_on: bool = True) -> Dict[str, Any]:
-        """Send typing indicator."""
-        endpoint = f"{self.instagram_account_id}/messages"
+        """Send typing indicator.
+        
+        Note: Typing indicators may not be supported for all Instagram accounts.
+        The API may return error code 1 if not supported.
+        """
+        page_id = self.account.facebook_page_id if self.account else None
+        if not page_id:
+            raise InstagramAPIError("facebook_page_id is required")
+        endpoint = f"{page_id}/messages"
         
         payload = {
             'recipient': {'id': recipient_id},
             'sender_action': 'typing_on' if typing_on else 'typing_off'
         }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        try:
+            return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=True)
+        except InstagramAPIError as e:
+            # Error code 1 means feature not supported - log but don't raise
+            if e.code == 1:
+                logger.warning(f"Typing indicator not supported for this account: {e}")
+                return {'success': False, 'reason': 'not_supported'}
+            raise
     
     # ==================== Ice Breakers ====================
     
@@ -335,7 +445,9 @@ class InstagramAPIService:
         Args:
             ice_breakers: List of ice breakers [{'question': '...', 'payload': '...'}]
         """
-        endpoint = f"{self.instagram_account_id}/messenger_profile"
+        page_id = self.account.facebook_page_id if self.account else None
+        endpoint_id = page_id if page_id else self.instagram_account_id
+        endpoint = f"{endpoint_id}/messenger_profile"
         
         payload = {
             'ice_breakers': [
@@ -347,23 +459,27 @@ class InstagramAPIService:
             ]
         }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=bool(page_id))
     
     def get_ice_breakers(self) -> Dict[str, Any]:
         """Get current ice breakers."""
-        endpoint = f"{self.instagram_account_id}/messenger_profile"
+        page_id = self.account.facebook_page_id if self.account else None
+        endpoint_id = page_id if page_id else self.instagram_account_id
+        endpoint = f"{endpoint_id}/messenger_profile"
         
         return self._make_request('GET', endpoint, params={
             'fields': 'ice_breakers'
-        })
+        }, use_facebook_api=bool(page_id))
     
     def delete_ice_breakers(self) -> Dict[str, Any]:
         """Delete all ice breakers."""
-        endpoint = f"{self.instagram_account_id}/messenger_profile"
+        page_id = self.account.facebook_page_id if self.account else None
+        endpoint_id = page_id if page_id else self.instagram_account_id
+        endpoint = f"{endpoint_id}/messenger_profile"
         
         return self._make_request('DELETE', endpoint, params={
             'fields': 'ice_breakers'
-        })
+        }, use_facebook_api=bool(page_id))
     
     # ==================== Persistent Menu ====================
     
@@ -374,7 +490,9 @@ class InstagramAPIService:
         Args:
             menu_items: List of menu items
         """
-        endpoint = f"{self.instagram_account_id}/messenger_profile"
+        page_id = self.account.facebook_page_id if self.account else None
+        endpoint_id = page_id if page_id else self.instagram_account_id
+        endpoint = f"{endpoint_id}/messenger_profile"
         
         payload = {
             'persistent_menu': [
@@ -385,7 +503,7 @@ class InstagramAPIService:
             ]
         }
         
-        return self._make_request('POST', endpoint, json_data=payload)
+        return self._make_request('POST', endpoint, json_data=payload, use_facebook_api=bool(page_id))
     
     # ==================== User Info ====================
     

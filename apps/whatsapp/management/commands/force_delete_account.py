@@ -195,16 +195,6 @@ class Command(BaseCommand):
                     )
                 except Exception as e:
                     self.stdout.write(self.style.WARNING(f'  ! Could not delete store integrations/orders: {e}'))
-
-                # Delete langflow integrations
-                try:
-                    from apps.langflow.models import LangflowIntegration
-                    integrations = LangflowIntegration.objects.filter(account=account)
-                    deleted_counts['langflow_integrations'] = integrations.count()
-                    integrations.delete()
-                    self.stdout.write(f'  ✓ Deleted {deleted_counts["langflow_integrations"]} langflow integrations')
-                except Exception as e:
-                    self.stdout.write(self.style.WARNING(f'  ! Could not delete langflow integrations: {e}'))
                 
                 # Finally delete the account
                 account_name = account.name

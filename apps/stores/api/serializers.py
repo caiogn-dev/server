@@ -804,8 +804,40 @@ class StoreCouponSerializer(serializers.ModelSerializer):
         return valid
 
 
+class StoreSlugOrIdField(serializers.Field):
+    """Field that accepts either store UUID or slug."""
+    
+    def to_representation(self, value):
+        return str(value.id) if value else None
+    
+    def to_internal_value(self, data):
+        import uuid as uuid_module
+        from apps.stores.models import Store
+        
+        if not data:
+            return None
+        
+        # Try UUID first
+        try:
+            uuid_module.UUID(str(data))
+            store = Store.objects.filter(id=data).first()
+            if store:
+                return store
+        except (ValueError, AttributeError):
+            pass
+        
+        # Try slug
+        store = Store.objects.filter(slug=data).first()
+        if store:
+            return store
+        
+        raise serializers.ValidationError(f"Loja não encontrada: {data}")
+
+
 class StoreCouponCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating coupons."""
+    
+    store = StoreSlugOrIdField(required=False, allow_null=True)
     
     class Meta:
         model = StoreCoupon

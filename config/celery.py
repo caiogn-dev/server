@@ -15,7 +15,7 @@ app.autodiscover_tasks()
 
 app.conf.task_routes = {
     'apps.whatsapp.tasks.*': {'queue': 'whatsapp'},
-    'apps.langflow.tasks.*': {'queue': 'langflow'},
+    'apps.agents.tasks.*': {'queue': 'agents'},
     'apps.automation.tasks.*': {'queue': 'automation'},
     'apps.campaigns.tasks.*': {'queue': 'campaigns'},
 }
@@ -75,6 +75,11 @@ app.conf.beat_schedule = {
     'check-scheduled-campaigns': {
         'task': 'apps.campaigns.tasks.check_scheduled_campaigns',
         'schedule': 60.0,  # Every minute
+    },
+    # Instagram token refresh (daily at 3 AM)
+    'refresh-instagram-tokens': {
+        'task': 'apps.instagram.tasks.refresh_access_tokens',
+        'schedule': 86400.0,  # Daily
     },
     # NOTE: process_scheduled_messages is now unified in apps.automation.tasks.scheduled
     # The task 'process-scheduled-messages' above handles all scheduled messages

@@ -36,7 +36,15 @@ class WhatsAppAccount(BaseModel):
     
     webhook_verify_token = models.CharField(max_length=255, blank=True)
     
-    default_langflow_flow_id = models.UUIDField(null=True, blank=True)
+    # AI Agent (Langchain) configuration
+    default_agent = models.ForeignKey(
+        'agents.Agent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_accounts',
+        help_text='Agente IA padrão para respostas automáticas'
+    )
     auto_response_enabled = models.BooleanField(default=True)
     human_handoff_enabled = models.BooleanField(default=True)
     
@@ -158,7 +166,7 @@ class Message(BaseModel):
     error_message = models.TextField(blank=True)
     
     metadata = models.JSONField(default=dict, blank=True)
-    processed_by_langflow = models.BooleanField(default=False)
+    processed_by_agent = models.BooleanField(default=False, help_text='Processado pelo agente IA')
 
     class Meta:
         db_table = 'whatsapp_messages'

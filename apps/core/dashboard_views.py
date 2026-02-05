@@ -16,7 +16,7 @@ from drf_spectacular.utils import extend_schema
 from apps.whatsapp.models import WhatsAppAccount, Message, WebhookEvent
 from apps.conversations.models import Conversation
 from apps.stores.models import StoreOrder, Store
-from apps.langflow.models import LangflowFlow, LangflowSession, LangflowLog
+from apps.agents.models import Agent, AgentConversation, AgentMessage
 from apps.core.services.dashboard_stats import DashboardStatsAggregator
 
 logger = logging.getLogger(__name__)
@@ -126,28 +126,20 @@ class DashboardOverviewView(APIView):
             paid_at__gte=today_start
         ).count()
 
-        # Langflow metrics
-        langflow_logs_qs = LangflowLog.objects.filter(
-            flow__accounts__id__in=account_ids
+        # Agent metrics (replaces Langflow)
+        agent_messages_qs = AgentMessage.objects.filter(
+            conversation__agent__accounts__id__in=account_ids
         ).distinct()
         
-        langflow_interactions_today = langflow_logs_qs.filter(
-            created_at__gte=today_start
+        agent_interactions_today = agent_messages_qs.filter(
+            created_at__gte=today_start,
+            role='assistant'
         ).count()
         
-        langflow_avg_duration = langflow_logs_qs.filter(
+        agent_avg_duration = agent_messages_qs.filter(
             created_at__gte=today_start,
-            duration_ms__isnull=False
-        ).aggregate(avg=Avg('duration_ms'))['avg'] or 0
-        
-        langflow_success_rate = 0
-        langflow_total = langflow_logs_qs.filter(created_at__gte=today_start).count()
-        if langflow_total > 0:
-            langflow_success = langflow_logs_qs.filter(
-                created_at__gte=today_start,
-                status='success'
-            ).count()
-            langflow_success_rate = round((langflow_success / langflow_total) * 100, 1)
+            response_time_ms__isnull=False
+        ).aggregate(avg=Avg('response_time_ms'))['avg'] or 0
 
         # Accounts summary
         accounts_summary = {
@@ -181,10 +173,9 @@ class DashboardOverviewView(APIView):
                 'pending': payments_pending,
                 'completed_today': payments_completed_today,
             },
-            'langflow': {
-                'interactions_today': langflow_interactions_today,
-                'avg_duration_ms': round(langflow_avg_duration, 2),
-                'success_rate': langflow_success_rate,
+            'agents': {
+                'interactions_today': agent_interactions_today,
+                'avg_duration_ms': round(agent_avg_duration, 2),
             },
             'timestamp': now.isoformat(),
         })

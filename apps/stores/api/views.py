@@ -1050,6 +1050,7 @@ class StoreCatalogView(APIView):
     """
     
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []  # Disable authentication completely for public catalog
     
     def get(self, request, store_slug):
         """Get full catalog for a store."""
@@ -1108,6 +1109,7 @@ class StorePublicView(APIView):
     """View for getting public store info."""
     
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []  # Disable authentication for public store info
     
     def get(self, request, store_slug):
         """Get public store information."""
@@ -1238,11 +1240,18 @@ class StoreCouponViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get coupon statistics."""
-        store_id = request.query_params.get('store')
+        import uuid as uuid_module
+        store_param = request.query_params.get('store')
         queryset = self.get_queryset()
         
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
+        if store_param:
+            # Accept both UUID and slug
+            try:
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                # Fallback to slug
+                queryset = queryset.filter(store__slug=store_param)
         
         from django.db.models import Sum, Count
         from django.utils import timezone

@@ -5,7 +5,7 @@ from .models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog
 @admin.register(CompanyProfile)
 class CompanyProfileAdmin(admin.ModelAdmin):
     list_display = ['company_name', 'account', 'store', 'auto_reply_enabled', 'created_at']
-    list_filter = ['auto_reply_enabled', 'use_langflow', 'created_at']
+    list_filter = ['auto_reply_enabled', 'use_ai_agent', 'created_at']
     search_fields = ['company_name', 'account__phone_number', 'store__name']
     readonly_fields = ['external_api_key', 'webhook_secret', 'company_name', 'business_type']
     
@@ -31,7 +31,7 @@ class CompanyProfileAdmin(admin.ModelAdmin):
             ),
         }),
         ('Integrations', {
-            'fields': ('external_api_key', 'webhook_secret', 'use_langflow', 'langflow_flow_id'),
+            'fields': ('external_api_key', 'webhook_secret', 'use_ai_agent', 'default_agent'),
         }),
         ('Advanced', {
             'fields': ('business_hours', 'settings'),

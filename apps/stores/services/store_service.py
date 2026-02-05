@@ -360,6 +360,192 @@ class StoreService:
             ]
         }
     
+    @transaction.atomic
+    def sync_pastita_to_store(self, store) -> Dict[str, Any]:
+        """
+        Sync Pastita products to a store.
+        Copies products from the Pastita template store to the target store.
+        """
+        from apps.stores.models import Store, StoreProduct, StoreCategory
+        
+        # Find Pastita source store (template store)
+        pastita_store = Store.objects.filter(
+            slug__icontains='pastita'
+        ).exclude(id=store.id).first()
+        
+        if not pastita_store:
+            # Create default Pastita products if no source store
+            return self._create_default_pastita_products(store)
+        
+        synced_products = 0
+        synced_categories = 0
+        
+        # Sync categories first
+        source_categories = StoreCategory.objects.filter(store=pastita_store)
+        category_map = {}  # Map source category ID to new category
+        
+        for src_cat in source_categories:
+            new_cat, created = StoreCategory.objects.get_or_create(
+                store=store,
+                slug=src_cat.slug,
+                defaults={
+                    'name': src_cat.name,
+                    'description': src_cat.description,
+                    'sort_order': src_cat.sort_order,
+                    'is_active': src_cat.is_active,
+                }
+            )
+            category_map[src_cat.id] = new_cat
+            if created:
+                synced_categories += 1
+        
+        # Sync products
+        source_products = StoreProduct.objects.filter(store=pastita_store)
+        
+        for src_product in source_products:
+            # Check if product already exists
+            existing = StoreProduct.objects.filter(
+                store=store,
+                slug=src_product.slug
+            ).first()
+            
+            if existing:
+                # Update existing product
+                existing.name = src_product.name
+                existing.description = src_product.description
+                existing.price = src_product.price
+                existing.compare_at_price = src_product.compare_at_price
+                existing.status = src_product.status
+                if src_product.category_id and src_product.category_id in category_map:
+                    existing.category = category_map[src_product.category_id]
+                existing.save()
+            else:
+                # Create new product
+                new_category = None
+                if src_product.category_id and src_product.category_id in category_map:
+                    new_category = category_map[src_product.category_id]
+                
+                StoreProduct.objects.create(
+                    store=store,
+                    category=new_category,
+                    name=src_product.name,
+                    slug=src_product.slug,
+                    description=src_product.description,
+                    short_description=src_product.short_description,
+                    price=src_product.price,
+                    compare_at_price=src_product.compare_at_price,
+                    cost_price=src_product.cost_price,
+                    sku=src_product.sku,
+                    status=src_product.status,
+                    is_featured=src_product.is_featured,
+                    track_stock=src_product.track_stock,
+                    stock_quantity=src_product.stock_quantity,
+                    low_stock_threshold=src_product.low_stock_threshold,
+                    weight=src_product.weight,
+                    dimensions=src_product.dimensions,
+                    tags=src_product.tags,
+                    metadata=src_product.metadata,
+                )
+                synced_products += 1
+        
+        logger.info(f"Synced Pastita to store {store.name}: {synced_products} products, {synced_categories} categories")
+        
+        return {
+            'products_synced': synced_products,
+            'categories_synced': synced_categories,
+            'source_store': pastita_store.name if pastita_store else 'default'
+        }
+    
+    def _create_default_pastita_products(self, store) -> Dict[str, Any]:
+        """Create default Pastita products if no source store exists."""
+        from apps.stores.models import StoreProduct, StoreCategory
+        from decimal import Decimal
+        
+        # Create categories
+        categories_data = [
+            ('massas-frescas', 'Massas Frescas', 'Massas artesanais feitas diariamente'),
+            ('molhos', 'Molhos', 'Molhos caseiros para acompanhar'),
+            ('combos', 'Combos', 'Combinações especiais com desconto'),
+        ]
+        
+        categories = {}
+        for slug, name, desc in categories_data:
+            cat, _ = StoreCategory.objects.get_or_create(
+                store=store,
+                slug=slug,
+                defaults={'name': name, 'description': desc}
+            )
+            categories[slug] = cat
+        
+        # Create sample products
+        products_data = [
+            {
+                'category': 'massas-frescas',
+                'name': 'Tagliatelle Tradicional',
+                'slug': 'tagliatelle-tradicional',
+                'description': 'Massa fresca de tagliatelle feita com farinha especial',
+                'price': Decimal('24.90'),
+            },
+            {
+                'category': 'massas-frescas',
+                'name': 'Ravioli de Queijo',
+                'slug': 'ravioli-queijo',
+                'description': 'Ravioli recheado com blend de queijos',
+                'price': Decimal('32.90'),
+            },
+            {
+                'category': 'massas-frescas',
+                'name': 'Gnocchi de Batata',
+                'slug': 'gnocchi-batata',
+                'description': 'Gnocchi artesanal de batata',
+                'price': Decimal('28.90'),
+            },
+            {
+                'category': 'molhos',
+                'name': 'Molho Pomodoro',
+                'slug': 'molho-pomodoro',
+                'description': 'Molho de tomate italiano tradicional',
+                'price': Decimal('18.90'),
+            },
+            {
+                'category': 'molhos',
+                'name': 'Molho Alfredo',
+                'slug': 'molho-alfredo',
+                'description': 'Molho cremoso com parmesão',
+                'price': Decimal('22.90'),
+            },
+            {
+                'category': 'combos',
+                'name': 'Combo Família',
+                'slug': 'combo-familia',
+                'description': '3 massas + 2 molhos para toda família',
+                'price': Decimal('89.90'),
+                'compare_at_price': Decimal('115.00'),
+            },
+        ]
+        
+        created_count = 0
+        for prod_data in products_data:
+            cat_slug = prod_data.pop('category')
+            category = categories.get(cat_slug)
+            
+            _, created = StoreProduct.objects.get_or_create(
+                store=store,
+                slug=prod_data['slug'],
+                defaults={
+                    'category': category,
+                    'status': 'active',
+                    **prod_data
+                }
+            )
+            if created:
+                created_count += 1
+        
+        return {
+            'products_synced': created_count,
+            'categories_synced': len(categories),
+            'source_store': 'default_template'
+        }
 
 
 # Import models at module level to avoid circular imports

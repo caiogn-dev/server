@@ -179,7 +179,8 @@ class InstagramMessageSerializer(serializers.ModelSerializer):
 class SendMessageSerializer(serializers.Serializer):
     """Serializer for sending messages."""
     
-    recipient_id = serializers.CharField(required=True)
+    recipient_id = serializers.CharField(required=False, allow_blank=True)
+    conversation_id = serializers.UUIDField(required=False, allow_null=True)
     text = serializers.CharField(required=False, allow_blank=True)
     image_url = serializers.URLField(required=False, allow_blank=True)
     video_url = serializers.URLField(required=False, allow_blank=True)
@@ -190,8 +191,14 @@ class SendMessageSerializer(serializers.Serializer):
     )
     
     def validate(self, data):
+        # Validar que ao menos recipient_id ou conversation_id foi fornecido
+        if not data.get('recipient_id') and not data.get('conversation_id'):
+            raise serializers.ValidationError("Either recipient_id or conversation_id is required")
+        
+        # Validar que ao menos um tipo de conteúdo foi fornecido
         if not data.get('text') and not data.get('image_url') and not data.get('video_url'):
             raise serializers.ValidationError("At least one of text, image_url, or video_url is required")
+        
         return data
 
 

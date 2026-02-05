@@ -200,6 +200,107 @@ def retry_failed_webhook_events(max_retries: int = 3, batch_size: int = 50):
 
 
 @shared_task(
+    name='apps.whatsapp.tasks.process_message_with_agent',
+    bind=True,
+    max_retries=2,
+    default_retry_delay=5
+)
+def process_message_with_agent(self, message_id: str):
+    """
+    Process an inbound message with AI Agent (Langchain).
+    
+    This task:
+    1. Loads the message and its associated account
+    2. Gets the configured AI Agent for the account
+    3. Sends the message to the agent for processing
+    4. Sends the agent's response back to the customer
+    """
+    from .models import Message, WhatsAppAccount
+    from .services.message_service import MessageService
+    from apps.agents.models import Agent
+    from apps.agents.services import AgentService
+    
+    try:
+        message = Message.objects.select_related('account', 'conversation').get(id=message_id)
+        
+        # Already processed?
+        if message.processed_by_agent:
+            logger.info(f"Message {message_id} already processed by agent")
+            return {'status': 'skipped', 'reason': 'already_processed'}
+        
+        account = message.account
+        
+        # Get the default agent for this account
+        agent = None
+        if hasattr(account, 'default_agent') and account.default_agent:
+            agent = account.default_agent
+        else:
+            # Try to get from company profile
+            if hasattr(account, 'company_profile') and account.company_profile:
+                profile = account.company_profile
+                if profile.use_ai_agent and profile.default_agent:
+                    agent = profile.default_agent
+        
+        if not agent or agent.status != Agent.AgentStatus.ACTIVE:
+            logger.info(f"No active agent configured for account {account.id}")
+            return {'status': 'skipped', 'reason': 'no_agent'}
+        
+        # Process with agent
+        agent_service = AgentService(agent)
+        
+        # Get or create session for this conversation
+        session_id = None
+        if message.conversation:
+            session_id = message.conversation.agent_session_id or str(message.conversation.id)
+        
+        # Call agent
+        response_text = agent_service.process_message(
+            message=message.text_body or '',
+            session_id=session_id,
+            phone_number=message.from_number,
+            context={
+                'message_type': message.message_type,
+                'conversation_id': str(message.conversation_id) if message.conversation_id else None,
+            }
+        )
+        
+        if response_text:
+            # Send response via WhatsApp
+            msg_service = MessageService()
+            msg_service.send_text_message(
+                account_id=str(account.id),
+                to=message.from_number,
+                text=response_text,
+                reply_to=message.whatsapp_message_id
+            )
+            
+            # Update conversation session if needed
+            if message.conversation and session_id:
+                message.conversation.agent_session_id = session_id
+                message.conversation.ai_agent = agent
+                message.conversation.save(update_fields=['agent_session_id', 'ai_agent', 'updated_at'])
+        
+        # Mark as processed
+        message.processed_by_agent = True
+        message.save(update_fields=['processed_by_agent', 'updated_at'])
+        
+        logger.info(f"Message {message_id} processed by agent {agent.name}")
+        return {
+            'status': 'success',
+            'message_id': str(message_id),
+            'agent': agent.name,
+            'response_sent': bool(response_text)
+        }
+        
+    except Message.DoesNotExist:
+        logger.error(f"Message not found: {message_id}")
+        return {'status': 'error', 'reason': 'message_not_found'}
+    except Exception as e:
+        logger.error(f"Error processing message with agent: {e}", exc_info=True)
+        raise self.retry(exc=e)
+
+
+@shared_task(
     name='apps.whatsapp.tasks.send_campaign_message',
     bind=True,
     max_retries=3,

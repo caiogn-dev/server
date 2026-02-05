@@ -210,18 +210,18 @@ class ConversationService:
         conversation = self.get_conversation(conversation_id)
         return self.repo.remove_tag(conversation, tag)
 
-    def set_langflow_session(
+    def set_agent_session(
         self,
         conversation_id: str,
-        flow_id: str,
+        agent_id: str,
         session_id: str
     ) -> Conversation:
-        """Set Langflow session for a conversation."""
+        """Set AI Agent session for a conversation."""
         conversation = self.get_conversation(conversation_id)
-        conversation.langflow_flow_id = flow_id
-        conversation.langflow_session_id = session_id
+        conversation.ai_agent_id = agent_id
+        conversation.agent_session_id = session_id
         conversation.save(update_fields=[
-            'langflow_flow_id', 'langflow_session_id', 'updated_at'
+            'ai_agent_id', 'agent_session_id', 'updated_at'
         ])
         
         return conversation

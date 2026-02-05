@@ -210,8 +210,8 @@ class InstagramMessage(BaseModel):
         related_name='messages'
     )
     
-    # Instagram message ID
-    instagram_message_id = models.CharField(max_length=100, unique=True, db_index=True)
+    # Instagram message ID (can be very long - up to 255 chars)
+    instagram_message_id = models.CharField(max_length=255, unique=True, db_index=True)
     
     direction = models.CharField(max_length=10, choices=MessageDirection.choices)
     message_type = models.CharField(max_length=20, choices=MessageType.choices)

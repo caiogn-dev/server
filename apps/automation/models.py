@@ -442,15 +442,18 @@ class CompanyProfile(BaseModel):
         help_text="Secret para validar webhooks do site"
     )
     
-    # Langflow integration (optional)
-    use_langflow = models.BooleanField(
+    # AI Agent (Langchain) integration
+    use_ai_agent = models.BooleanField(
         default=False,
-        help_text="Usar Langflow para respostas avançadas"
+        help_text="Usar Agente IA (Langchain) para respostas avançadas"
     )
-    langflow_flow_id = models.UUIDField(
+    default_agent = models.ForeignKey(
+        'agents.Agent',
+        on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        help_text="ID do flow no Langflow"
+        related_name='company_profiles',
+        help_text="Agente IA padrão para respostas automáticas"
     )
     
     # Custom settings

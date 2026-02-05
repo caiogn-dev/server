@@ -21,6 +21,9 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 
 from apps.core.dashboard_views import DashboardStatsView
 
+# Import Instagram OAuth views directly to avoid circular imports
+# from apps.instagram.api.views import InstagramOAuthCallbackView, InstagramOAuthStartView
+
 urlpatterns = [
     path('admin/', admin.site.urls),
 
@@ -46,7 +49,7 @@ urlpatterns = [
         path('instagram/', include('apps.instagram.urls')),
         path('conversations/', include('apps.conversations.urls')),
         path('automation/', include('apps.automation.urls')),
-        path('langflow/', include('apps.langflow.urls')),
+        # path('langflow/', include('apps.langflow.urls')),  # DEPRECATED
         path('agents/', include('apps.agents.urls')),  # Langchain Agents
 
         # Marketing & Audit
@@ -70,6 +73,18 @@ urlpatterns = [
     ])),
     # Handle webhook without trailing slash (Meta sends POST to /webhooks/whatsapp)
     path('webhooks/whatsapp', include('apps.whatsapp.webhooks.urls')),  # DEPRECATED
+]
+
+# Import Instagram OAuth views after urlpatterns to avoid circular imports
+from apps.instagram.api.views import InstagramOAuthCallbackView, InstagramOAuthStartView
+
+# SHORT Instagram OAuth URIs (alternative for Meta OAuth)
+# Use: https://backend.pastita.com.br/ig/callback
+urlpatterns += [
+    path('ig/callback', InstagramOAuthCallbackView.as_view(), name='instagram-oauth-callback-short'),
+    path('ig/callback/', InstagramOAuthCallbackView.as_view(), name='instagram-oauth-callback-short-slash'),
+    path('ig/start', InstagramOAuthStartView.as_view(), name='instagram-oauth-start-short'),
+    path('ig/start/', InstagramOAuthStartView.as_view(), name='instagram-oauth-start-short-slash'),
 ]
 
 # Serve media files when not using S3 (e.g., local/dev or fallback)

@@ -110,15 +110,52 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def set_ice_breakers(self, request, pk=None):
-        """Set ice breakers for the account."""
+        """Set ice breakers for the account.
+        
+        Ice breakers allow users to start conversations with predefined questions.
+        Example: [{'question': 'Ver cardápio', 'payload': 'GET_MENU'}, ...]
+        """
         account = self.get_object()
         ice_breakers = request.data.get('ice_breakers', [])
+        
+        if not isinstance(ice_breakers, list):
+            return Response(
+                {'error': 'ice_breakers must be a list'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Validate format
+        for ib in ice_breakers:
+            if not isinstance(ib, dict) or 'question' not in ib or 'payload' not in ib:
+                return Response(
+                    {'error': 'Each ice breaker must have "question" and "payload"'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         try:
             api = InstagramAPIService(account)
             result = api.set_ice_breakers(ice_breakers)
-            return Response({'success': True, 'result': result})
+            
+            # Store in account metadata for reference
+            account.metadata = account.metadata or {}
+            account.metadata['ice_breakers'] = ice_breakers
+            account.save(update_fields=['metadata', 'updated_at'])
+            
+            logger.info(f"Ice breakers configured for account {account.id}", extra={
+                'account_id': account.id,
+                'ice_breakers_count': len(ice_breakers)
+            })
+            
+            return Response({
+                'success': True,
+                'result': result,
+                'ice_breakers': ice_breakers
+            })
         except InstagramAPIError as e:
+            logger.error(f"Failed to set ice breakers: {e}", extra={
+                'account_id': account.id,
+                'error_code': getattr(e, 'code', None)
+            })
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['get'])
@@ -314,7 +351,7 @@ class InstagramMessageViewSet(viewsets.ModelViewSet):
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         
-        return queryset.select_related('account', 'conversation')
+        return queryset.select_related('account', 'conversation').order_by('created_at')
     
     def create(self, request, *args, **kwargs):
         """Send a new message."""
@@ -322,17 +359,52 @@ class InstagramMessageViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         account_id = request.data.get('account_id')
+        conversation_id = request.data.get('conversation_id')
+        
+        if not account_id:
+            return Response(
+                {'error': 'account_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         account = get_object_or_404(
             InstagramAccount, 
             id=account_id, 
             owner=request.user
         )
         
+        # Se conversation_id foi fornecido, buscar o recipient_id da conversa
+        recipient_id = serializer.validated_data.get('recipient_id')
+        if conversation_id and not recipient_id:
+            conversation = get_object_or_404(
+                InstagramConversation,
+                id=conversation_id,
+                account=account
+            )
+            recipient_id = conversation.participant_id
+            logger.info(f"Resolved recipient_id from conversation", extra={
+                'conversation_id': conversation_id,
+                'recipient_id': recipient_id
+            })
+        
+        if not recipient_id:
+            return Response(
+                {'error': 'Either recipient_id or conversation_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         service = InstagramMessageService(account)
         
         try:
             data = serializer.validated_data
-            recipient_id = data['recipient_id']
+            
+            logger.info(f"Sending Instagram message to {recipient_id}", extra={
+                'account_id': account_id,
+                'conversation_id': conversation_id,
+                'recipient_id': recipient_id,
+                'has_text': bool(data.get('text')),
+                'has_image': bool(data.get('image_url'))
+            })
             
             if data.get('text'):
                 if data.get('quick_replies'):
@@ -357,9 +429,46 @@ class InstagramMessageViewSet(viewsets.ModelViewSet):
             )
             
         except InstagramAPIError as e:
+            error_code = getattr(e, 'code', None)
+            error_subcode = getattr(e, 'subcode', None)
+            
+            logger.error(f"Instagram API error sending message: {e}", extra={
+                'account_id': account_id,
+                'conversation_id': conversation_id,
+                'recipient_id': recipient_id,
+                'error_code': error_code,
+                'error_subcode': error_subcode,
+                'error_details': getattr(e, 'details', None)
+            })
+            
+            # Friendly error messages
+            error_message = str(e)
+            if error_code == 10 and error_subcode == 2534022:
+                error_message = (
+                    "Janela de 24 horas expirou. Você só pode responder mensagens "
+                    "dentro de 24 horas após receber a última mensagem do usuário."
+                )
+            elif error_code == 10:
+                error_message = f"Erro de permissão: {str(e)}"
+            elif error_code == 100:
+                error_message = f"Parâmetro inválido: {str(e)}"
+            
             return Response(
-                {'error': str(e)},
+                {
+                    'error': error_message,
+                    'code': error_code,
+                    'subcode': error_subcode
+                },
                 status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error sending Instagram message: {e}", exc_info=True, extra={
+                'account_id': account_id,
+                'conversation_id': conversation_id
+            })
+            return Response(
+                {'error': f'An unexpected error occurred: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @action(detail=False, methods=['post'])
@@ -367,6 +476,12 @@ class InstagramMessageViewSet(viewsets.ModelViewSet):
         """Mark conversation as seen."""
         account_id = request.data.get('account_id')
         recipient_id = request.data.get('recipient_id')
+        
+        if not account_id or not recipient_id:
+            return Response(
+                {'error': 'account_id and recipient_id are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         account = get_object_or_404(
             InstagramAccount,
@@ -379,14 +494,29 @@ class InstagramMessageViewSet(viewsets.ModelViewSet):
             api.mark_seen(recipient_id)
             return Response({'success': True})
         except InstagramAPIError as e:
+            logger.error(f"Instagram mark_seen error: {e}", extra={
+                'account_id': account_id,
+                'recipient_id': recipient_id,
+                'error_code': getattr(e, 'code', None)
+            })
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['post'])
     def typing(self, request):
-        """Send typing indicator."""
+        """Send typing indicator.
+        
+        Note: Typing indicators may not be supported for Instagram Business accounts.
+        Returns success=True even if not supported to avoid breaking the UI.
+        """
         account_id = request.data.get('account_id')
         recipient_id = request.data.get('recipient_id')
         typing_on = request.data.get('typing_on', True)
+        
+        if not account_id or not recipient_id:
+            return Response(
+                {'error': 'account_id and recipient_id are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         account = get_object_or_404(
             InstagramAccount,
@@ -396,10 +526,50 @@ class InstagramMessageViewSet(viewsets.ModelViewSet):
         
         try:
             api = InstagramAPIService(account)
-            api.send_typing_indicator(recipient_id, typing_on)
-            return Response({'success': True})
+            result = api.send_typing_indicator(recipient_id, typing_on)
+            
+            # If not supported, still return success to avoid breaking UI
+            if isinstance(result, dict) and result.get('success') is False:
+                return Response({
+                    'success': True,
+                    'supported': False,
+                    'message': 'Typing indicator not supported for this account'
+                })
+            
+            return Response({'success': True, 'supported': True})
         except InstagramAPIError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            # Log error but return success for code 1 (not supported)
+            if e.code == 1:
+                logger.warning(f'Instagram typing indicator not supported: {e}', extra={
+                    'account_id': account_id,
+                    'recipient_id': recipient_id
+                })
+                return Response({
+                    'success': True,
+                    'supported': False,
+                    'message': 'Typing indicator not supported'
+                })
+            
+            logger.error(f'Instagram typing indicator error: {e}', extra={
+                'account_id': account_id,
+                'recipient_id': recipient_id,
+                'error_code': e.code if hasattr(e, 'code') else None
+            })
+            return Response({
+                'error': str(e),
+                'code': e.code if hasattr(e, 'code') else None
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f'Unexpected error in typing indicator: {e}', extra={
+                'account_id': account_id,
+                'recipient_id': recipient_id
+            })
+            # Return success to avoid breaking UI
+            return Response({
+                'success': True,
+                'supported': False,
+                'message': 'Feature not available'
+            })
 
 
 class InstagramWebhookView(APIView):
@@ -419,24 +589,16 @@ class InstagramWebhookView(APIView):
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
         
-        # Get expected verify token from settings or any active account
-        from django.conf import settings
-        expected_token = getattr(settings, 'INSTAGRAM_WEBHOOK_VERIFY_TOKEN', None)
+        # Token fixo para verificação
+        expected_token = 'pastita-ig-verify'
         
-        if not expected_token:
-            # Try to find from any account
-            account = InstagramAccount.objects.filter(
-                webhook_verify_token__isnull=False
-            ).exclude(webhook_verify_token='').first()
-            
-            if account:
-                expected_token = account.webhook_verify_token
+        logger.info(f"Instagram webhook verification: mode={mode}, token={token}, challenge={challenge}")
         
         if mode == 'subscribe' and token == expected_token:
             logger.info("Instagram webhook verified successfully")
             return HttpResponse(challenge, content_type='text/plain')
         
-        logger.warning(f"Instagram webhook verification failed. Mode: {mode}, Token match: {token == expected_token}")
+        logger.warning(f"Instagram webhook verification failed. mode={mode}, token={token}, expected={expected_token}")
         return Response(
             {'error': 'Verification failed'},
             status=status.HTTP_403_FORBIDDEN
@@ -501,8 +663,11 @@ class InstagramOAuthView(APIView):
     GRAPH_API_URL = "https://graph.instagram.com"
     FACEBOOK_GRAPH_URL = "https://graph.facebook.com/v21.0"
     
-    def get_redirect_uri(self):
-        return f"{settings.API_BASE_URL}/api/v1/instagram/oauth/callback/"
+    def get_redirect_uri(self, short=False):
+        # Sem barra final - Meta é inconsistente com trailing slash
+        if short:
+            return f"{settings.API_BASE_URL}/ig/callback"
+        return f"{settings.API_BASE_URL}/api/v1/instagram/oauth/callback"
     
     def get_app_credentials(self):
         return {
@@ -524,6 +689,9 @@ class InstagramOAuthStartView(InstagramOAuthView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
         
+        # Check if using short URI (from /ig/start endpoint)
+        use_short = request.path.startswith('/ig/')
+        
         # Store state for CSRF protection
         import secrets
         state = secrets.token_urlsafe(32)
@@ -531,10 +699,11 @@ class InstagramOAuthStartView(InstagramOAuthView):
         
         params = {
             'client_id': creds['app_id'],
-            'redirect_uri': self.get_redirect_uri(),
-            'scope': 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish',
+            'redirect_uri': self.get_redirect_uri(short=use_short),
+            'scope': 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish,instagram_business_manage_insights',
             'response_type': 'code',
             'state': state,
+            'force_reauth': 'true',
         }
         
         auth_url = f"{self.INSTAGRAM_OAUTH_URL}?{urlencode(params)}"
@@ -549,6 +718,9 @@ class InstagramOAuthCallbackView(InstagramOAuthView):
         code = request.query_params.get('code')
         error = request.query_params.get('error')
         error_description = request.query_params.get('error_description', '')
+        
+        # Check if using short URI (from /ig/callback endpoint)
+        use_short = request.path.startswith('/ig/')
         
         # Dashboard URL for redirecting after OAuth
         dashboard_url = getattr(settings, 'DASHBOARD_URL', 'https://painel.pastita.com.br')
@@ -570,7 +742,7 @@ class InstagramOAuthCallbackView(InstagramOAuthView):
                     'client_id': creds['app_id'],
                     'client_secret': creds['app_secret'],
                     'grant_type': 'authorization_code',
-                    'redirect_uri': self.get_redirect_uri(),
+                    'redirect_uri': self.get_redirect_uri(short=use_short),
                     'code': code,
                 }
             )
@@ -603,48 +775,105 @@ class InstagramOAuthCallbackView(InstagramOAuthView):
                 access_token = long_lived_data.get('access_token')
                 expires_in = long_lived_data.get('expires_in', 5184000)  # 60 days
             
-            # Step 3: Get user profile info
+            # Step 3: Get Instagram Business Account info
+            # First try to get from /me endpoint
             profile_response = requests.get(
                 f"{self.GRAPH_API_URL}/me",
                 params={
-                    'fields': 'id,username,account_type,media_count,profile_picture_url',
+                    'fields': 'id,username,account_type,media_count,profile_picture_url,followers_count',
                     'access_token': access_token,
                 }
             )
             
             profile_data = profile_response.json() if profile_response.status_code == 200 else {}
-            username = profile_data.get('username', f'user_{user_id}')
+            logger.info(f"Instagram OAuth - /me response: {profile_data}")
             
-            # Step 4: Create or update Instagram account
+            # If we got a username, use that data
+            if profile_data.get('username'):
+                username = profile_data.get('username')
+                instagram_account_id = profile_data.get('id', str(user_id))
+            else:
+                # Fallback: Try to get Instagram Business Account from Facebook Pages
+                # This requires pages_show_list and instagram_basic permissions
+                logger.info("No username from /me, trying Facebook Pages API...")
+                
+                pages_response = requests.get(
+                    f"{self.FACEBOOK_GRAPH_URL}/me/accounts",
+                    params={
+                        'fields': 'id,name,instagram_business_account{id,username,profile_picture_url,followers_count}',
+                        'access_token': access_token,
+                    }
+                )
+                
+                pages_data = pages_response.json() if pages_response.status_code == 200 else {}
+                logger.info(f"Instagram OAuth - Pages response: {pages_data}")
+                
+                # Find first page with Instagram Business Account
+                instagram_account_id = str(user_id)
+                username = f'user_{user_id}'
+                facebook_page_id = ''
+                
+                for page in pages_data.get('data', []):
+                    ig_account = page.get('instagram_business_account')
+                    if ig_account:
+                        instagram_account_id = ig_account.get('id', instagram_account_id)
+                        username = ig_account.get('username', username)
+                        facebook_page_id = page.get('id', '')
+                        profile_data = {
+                            'id': instagram_account_id,
+                            'username': username,
+                            'profile_picture_url': ig_account.get('profile_picture_url', ''),
+                            'followers_count': ig_account.get('followers_count', 0),
+                        }
+                        logger.info(f"Found Instagram Business Account: @{username} (ID: {instagram_account_id})")
+                        break
+            
+            logger.info(f"Instagram OAuth - Final profile: {profile_data}")
+            
+            # Step 4: CREATE OR UPDATE Instagram account in database
             from django.utils import timezone
             from datetime import timedelta
+            from apps.core.models import User
             
-            # For now, we'll store the data and redirect to dashboard
-            # The user will need to complete the setup in the dashboard
+            # Get or create a default owner (first superuser or first user)
+            owner = User.objects.filter(is_superuser=True).first() or User.objects.first()
             
-            # Encode data to pass to dashboard
-            import base64
-            import json
+            if not owner:
+                logger.error("No user found to assign Instagram account")
+                return redirect(f"{dashboard_url}/instagram/accounts?error=no_user")
             
-            account_data = {
-                'instagram_user_id': user_id,
-                'instagram_account_id': profile_data.get('id', user_id),
-                'username': username,
-                'access_token': access_token,
-                'expires_in': expires_in,
-                'profile_picture_url': profile_data.get('profile_picture_url', ''),
-            }
+            # Calculate token expiration
+            token_expires_at = timezone.now() + timedelta(seconds=expires_in)
             
-            encoded_data = base64.urlsafe_b64encode(
-                json.dumps(account_data).encode()
-            ).decode()
+            # Get facebook_page_id if we found it
+            fb_page_id = locals().get('facebook_page_id', '')
             
-            logger.info(f"Instagram OAuth successful for @{username}")
+            # Create or update account
+            account, created = InstagramAccount.objects.update_or_create(
+                instagram_account_id=instagram_account_id,
+                defaults={
+                    'owner': owner,
+                    'name': f'@{username}',
+                    'username': username,
+                    'instagram_user_id': str(user_id),
+                    'facebook_page_id': fb_page_id,
+                    'access_token': access_token,
+                    'token_expires_at': token_expires_at,
+                    'status': InstagramAccount.AccountStatus.ACTIVE,
+                    'profile_picture_url': profile_data.get('profile_picture_url', ''),
+                    'followers_count': profile_data.get('followers_count', 0),
+                    'app_id': creds['app_id'],
+                    'messaging_enabled': True,
+                }
+            )
+            
+            action = "created" if created else "updated"
+            logger.info(f"Instagram account {action}: @{username} (ID: {account.id})")
             
             return redirect(
-                f"{dashboard_url}/instagram/accounts?oauth_success=true&data={encoded_data}"
+                f"{dashboard_url}/instagram/accounts?oauth_success=true&account_id={account.id}&username={username}"
             )
             
         except Exception as e:
             logger.error(f"Instagram OAuth error: {e}", exc_info=True)
-            return redirect(f"{dashboard_url}/instagram/accounts?error=server_error")
+            return redirect(f"{dashboard_url}/instagram/accounts?error=server_error&message={str(e)}")

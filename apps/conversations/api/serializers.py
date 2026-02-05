@@ -13,15 +13,23 @@ class ConversationSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True
     )
+    ai_agent_name = serializers.CharField(
+        source='ai_agent.name',
+        read_only=True,
+        allow_null=True
+    )
     message_count = serializers.SerializerMethodField()
+    last_message_preview = serializers.SerializerMethodField()
+    unread_count = serializers.SerializerMethodField()
     
     class Meta:
         model = Conversation
         fields = [
             'id', 'account', 'account_name', 'phone_number', 'contact_name',
             'mode', 'status', 'assigned_agent', 'assigned_agent_name',
-            'langflow_flow_id', 'langflow_session_id', 'context', 'tags',
-            'last_message_at', 'last_customer_message_at', 'last_agent_message_at',
+            'ai_agent', 'ai_agent_name', 'agent_session_id', 'context', 'tags',
+            'last_message_at', 'last_message_preview', 'unread_count',
+            'last_customer_message_at', 'last_agent_message_at',
             'closed_at', 'resolved_at', 'message_count',
             'created_at', 'updated_at', 'is_active'
         ]
@@ -33,6 +41,24 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     def get_message_count(self, obj):
         return obj.messages.count() if hasattr(obj, 'messages') else 0
+
+    def get_last_message_preview(self, obj):
+        """Get preview of the last message in the conversation."""
+        if hasattr(obj, 'messages'):
+            last_msg = obj.messages.order_by('-created_at').first()
+            if last_msg:
+                text = last_msg.text_body or ''
+                return text[:50] + '...' if len(text) > 50 else text
+        return ''
+
+    def get_unread_count(self, obj):
+        """Count unread inbound messages."""
+        if hasattr(obj, 'messages'):
+            return obj.messages.filter(
+                direction='inbound',
+                read_at__isnull=True
+            ).count()
+        return 0
 
 
 class ConversationNoteSerializer(serializers.ModelSerializer):

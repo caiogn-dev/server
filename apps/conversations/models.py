@@ -47,8 +47,20 @@ class Conversation(BaseModel):
         related_name='assigned_conversations'
     )
     
-    langflow_flow_id = models.UUIDField(null=True, blank=True)
-    langflow_session_id = models.CharField(max_length=100, blank=True)
+    # AI Agent (Langchain) configuration
+    ai_agent = models.ForeignKey(
+        'agents.Agent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='whatsapp_conversations',
+        help_text='Agente IA vinculado a esta conversa'
+    )
+    agent_session_id = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text='ID da sessão do agente para memória'
+    )
     
     context = models.JSONField(default=dict, blank=True)
     tags = models.JSONField(default=list, blank=True)
