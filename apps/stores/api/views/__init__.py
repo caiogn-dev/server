@@ -44,6 +44,17 @@ from .delivery_views import (
     StoreDeliveryZoneViewSet,
 )
 
+# Storefront views (public-facing)
+from .storefront_views import (
+    StoreCartViewSet,
+    StoreCheckoutView,
+    StoreDeliveryFeeView,
+    StoreCouponValidateView,
+    StoreCatalogView,
+    StorePublicView,
+    StoreWishlistViewSet,
+)
+
 __all__ = [
     # Base
     'IsStoreOwnerOrStaff',
@@ -67,4 +78,12 @@ __all__ = [
     'StoreCouponViewSet',
     # Delivery
     'StoreDeliveryZoneViewSet',
+    # Storefront
+    'StoreCartViewSet',
+    'StoreCheckoutView',
+    'StoreDeliveryFeeView',
+    'StoreCouponValidateView',
+    'StoreCatalogView',
+    'StorePublicView',
+    'StoreWishlistViewSet',
 ]
