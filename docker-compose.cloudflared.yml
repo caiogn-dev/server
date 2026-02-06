@@ -9,8 +9,6 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -21,8 +19,6 @@ services:
     image: redis:7-alpine
     container_name: pastita_redis
     restart: unless-stopped
-    # Em vez de ln -sf no entrypoint, instalamos o coreutils se necessário, 
-    # mas para Redis puro, o comando padrão é melhor.
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -42,21 +38,26 @@ services:
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
       - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${SECRET_KEY}
       - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
       - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS}
       - DEBUG=False
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME}
+      - RESEND_API_KEY=${RESEND_API_KEY}
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media
+      - logs_files:/app/logs
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Migrations devem rodar no deploy, mas cuidado com concorrência se escalar 'web'
     command: >
       sh -c "python manage.py migrate --noinput &&
              python manage.py collectstatic --noinput &&
@@ -66,7 +67,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
 
   celery:
     image: pastita_backend:latest
@@ -118,7 +119,8 @@ services:
     restart: unless-stopped
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    command: tunnel --no-autoupdate run
+    # Redirecionamento direto para o Nginx para resolver o erro 503
+    command: tunnel --no-autoupdate run --url http://nginx:80
     depends_on:
       - nginx
 
@@ -127,6 +129,7 @@ volumes:
   redis_data:
   static_files:
   media_files:
+  logs_files:
 
 networks:
   default:
