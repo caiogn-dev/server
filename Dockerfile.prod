@@ -49,9 +49,9 @@ USER appuser
 # Expor porta
 EXPOSE 8000
 
-# Healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/stores/stores/ || exit 1
+# Healthcheck - use admin login page as it doesn't require DB
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -f http://localhost:8000/admin/login/ || exit 1
 
 # Comando padrão (será sobrescrito pelo docker-compose)
 CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]

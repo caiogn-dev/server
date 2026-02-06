@@ -547,6 +547,260 @@ class StoreService:
             'source_store': 'default_template'
         }
 
+    def test_integration(self, integration) -> Dict[str, Any]:
+        """
+        Test an integration connection.
+        Verifies connectivity and authentication for various integration types.
+        """
+        import requests
+        from django.conf import settings
+        
+        integration_type = integration.integration_type
+        result = {
+            'success': False,
+            'integration_type': integration_type,
+            'integration_name': integration.name,
+            'message': '',
+            'details': {}
+        }
+        
+        try:
+            if integration_type == 'whatsapp':
+                result = self._test_whatsapp_integration(integration, result)
+            elif integration_type == 'mercadopago':
+                result = self._test_mercadopago_integration(integration, result)
+            elif integration_type == 'instagram':
+                result = self._test_instagram_integration(integration, result)
+            elif integration_type == 'webhook':
+                result = self._test_webhook_integration(integration, result)
+            elif integration_type == 'email':
+                result = self._test_email_integration(integration, result)
+            else:
+                result['message'] = f'Testing not implemented for integration type: {integration_type}'
+                result['success'] = True  # Consider unknown types as success (no test needed)
+            
+            # Update integration last_sync_at if successful
+            if result['success']:
+                integration.last_sync_at = timezone.now()
+                integration.save(update_fields=['last_sync_at'])
+                
+        except Exception as e:
+            result['success'] = False
+            result['message'] = f'Error testing integration: {str(e)}'
+            logger.error(f"Integration test error for {integration.name}: {e}")
+        
+        return result
+    
+    def _test_whatsapp_integration(self, integration, result: Dict) -> Dict:
+        """Test WhatsApp Business API integration."""
+        import requests
+        
+        access_token = integration.access_token
+        phone_number_id = integration.phone_number_id
+        
+        if not access_token or not phone_number_id:
+            result['message'] = 'Missing access_token or phone_number_id'
+            return result
+        
+        # Test by getting phone number info
+        url = f"https://graph.facebook.com/v18.0/{phone_number_id}"
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                result['success'] = True
+                result['message'] = 'WhatsApp Business API connection successful'
+                result['details'] = {
+                    'phone_number': data.get('display_phone_number', 'N/A'),
+                    'verified_name': data.get('verified_name', 'N/A'),
+                    'quality_rating': data.get('quality_rating', 'N/A'),
+                }
+            else:
+                result['message'] = f'WhatsApp API error: {response.status_code}'
+                result['details'] = {'error': response.text[:500]}
+        except requests.RequestException as e:
+            result['message'] = f'Connection error: {str(e)}'
+        
+        return result
+    
+    def _test_mercadopago_integration(self, integration, result: Dict) -> Dict:
+        """Test Mercado Pago integration."""
+        import requests
+        
+        access_token = integration.access_token
+        
+        if not access_token:
+            result['message'] = 'Missing access_token'
+            return result
+        
+        # Test by getting user info
+        url = "https://api.mercadopago.com/users/me"
+        headers = {'Authorization': f'Bearer {access_token}'}
+        
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                result['success'] = True
+                result['message'] = 'Mercado Pago connection successful'
+                result['details'] = {
+                    'user_id': data.get('id'),
+                    'nickname': data.get('nickname', 'N/A'),
+                    'email': data.get('email', 'N/A'),
+                    'site_id': data.get('site_id', 'N/A'),
+                }
+            else:
+                result['message'] = f'Mercado Pago API error: {response.status_code}'
+                result['details'] = {'error': response.text[:500]}
+        except requests.RequestException as e:
+            result['message'] = f'Connection error: {str(e)}'
+        
+        return result
+    
+    def _test_instagram_integration(self, integration, result: Dict) -> Dict:
+        """Test Instagram API integration."""
+        import requests
+        
+        access_token = integration.access_token
+        instagram_id = integration.external_id
+        
+        if not access_token:
+            result['message'] = 'Missing access_token'
+            return result
+        
+        # Test by getting account info
+        url = f"https://graph.facebook.com/v18.0/{instagram_id or 'me'}"
+        params = {'fields': 'id,username,name,account_type', 'access_token': access_token}
+        
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                result['success'] = True
+                result['message'] = 'Instagram API connection successful'
+                result['details'] = {
+                    'account_id': data.get('id'),
+                    'username': data.get('username', 'N/A'),
+                    'name': data.get('name', 'N/A'),
+                    'account_type': data.get('account_type', 'N/A'),
+                }
+            else:
+                result['message'] = f'Instagram API error: {response.status_code}'
+                result['details'] = {'error': response.text[:500]}
+        except requests.RequestException as e:
+            result['message'] = f'Connection error: {str(e)}'
+        
+        return result
+    
+    def _test_webhook_integration(self, integration, result: Dict) -> Dict:
+        """Test webhook endpoint connectivity."""
+        import requests
+        
+        webhook_url = integration.webhook_url
+        
+        if not webhook_url:
+            result['message'] = 'Missing webhook_url'
+            return result
+        
+        # Send a test ping to the webhook
+        test_payload = {
+            'event': 'test.ping',
+            'timestamp': timezone.now().isoformat(),
+            'store_id': str(integration.store.id),
+            'integration_id': str(integration.id),
+        }
+        
+        headers = {'Content-Type': 'application/json'}
+        if integration.webhook_secret:
+            import hashlib
+            import hmac
+            import json
+            payload_str = json.dumps(test_payload)
+            signature = hmac.new(
+                integration.webhook_secret.encode(),
+                payload_str.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            headers['X-Webhook-Signature'] = signature
+        
+        try:
+            response = requests.post(
+                webhook_url,
+                json=test_payload,
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201, 202, 204]:
+                result['success'] = True
+                result['message'] = 'Webhook endpoint reachable'
+                result['details'] = {
+                    'status_code': response.status_code,
+                    'response_time_ms': response.elapsed.total_seconds() * 1000,
+                }
+            else:
+                result['message'] = f'Webhook returned error: {response.status_code}'
+                result['details'] = {
+                    'status_code': response.status_code,
+                    'response': response.text[:500],
+                }
+        except requests.RequestException as e:
+            result['message'] = f'Webhook connection error: {str(e)}'
+        
+        return result
+    
+    def _test_email_integration(self, integration, result: Dict) -> Dict:
+        """Test email service integration."""
+        from django.conf import settings
+        
+        # Check for required settings
+        email_settings = integration.settings or {}
+        api_key = integration.api_key
+        
+        if not api_key and not email_settings.get('smtp_host'):
+            result['message'] = 'Missing email configuration (API key or SMTP settings)'
+            return result
+        
+        if api_key:
+            # Test Resend or similar API
+            import requests
+            try:
+                response = requests.get(
+                    "https://api.resend.com/domains",
+                    headers={'Authorization': f'Bearer {api_key}'},
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    result['success'] = True
+                    result['message'] = 'Email API connection successful'
+                    result['details'] = {'provider': 'resend'}
+                else:
+                    result['message'] = f'Email API error: {response.status_code}'
+            except requests.RequestException as e:
+                result['message'] = f'Connection error: {str(e)}'
+        else:
+            # Test SMTP connection
+            import smtplib
+            try:
+                smtp_host = email_settings.get('smtp_host')
+                smtp_port = email_settings.get('smtp_port', 587)
+                smtp_user = email_settings.get('smtp_user')
+                smtp_pass = email_settings.get('smtp_pass')
+                
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+                    server.starttls()
+                    if smtp_user and smtp_pass:
+                        server.login(smtp_user, smtp_pass)
+                    result['success'] = True
+                    result['message'] = 'SMTP connection successful'
+                    result['details'] = {'host': smtp_host, 'port': smtp_port}
+            except Exception as e:
+                result['message'] = f'SMTP connection error: {str(e)}'
+        
+        return result
+
 
 # Import models at module level to avoid circular imports
 from django.db import models

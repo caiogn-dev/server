@@ -505,6 +505,143 @@ class HereMapsService:
             'polyline': polyline,
             'message': 'Endereço válido para entrega',
         }
+    
+    def calculate_delivery_fee(
+        self,
+        store,
+        customer_lat: float,
+        customer_lng: float
+    ) -> Dict:
+        """
+        Calculate delivery fee for a customer location based on store settings.
+        
+        Uses store delivery zones if configured, otherwise calculates based on distance.
+        
+        Args:
+            store: The Store instance
+            customer_lat: Customer latitude
+            customer_lng: Customer longitude
+        
+        Returns:
+            Dict with fee, distance_km, duration_minutes, is_within_area, zone info
+        """
+        from decimal import Decimal
+        from apps.stores.models import StoreDeliveryZone
+        
+        # Get store location
+        store_lat = getattr(store, 'latitude', None) or store.address_data.get('lat') if hasattr(store, 'address_data') else None
+        store_lng = getattr(store, 'longitude', None) or store.address_data.get('lng') if hasattr(store, 'address_data') else None
+        
+        if not store_lat or not store_lng:
+            # Use default fee if no store location
+            return {
+                'fee': float(store.default_delivery_fee or Decimal('0.00')),
+                'distance_km': None,
+                'duration_minutes': None,
+                'is_within_area': True,
+                'zone': None,
+                'message': 'Taxa de entrega padrão aplicada',
+            }
+        
+        # Calculate route
+        route = self.calculate_route(
+            (float(store_lat), float(store_lng)),
+            (customer_lat, customer_lng)
+        )
+        
+        if not route:
+            return {
+                'fee': float(store.default_delivery_fee or Decimal('0.00')),
+                'distance_km': None,
+                'duration_minutes': None,
+                'is_within_area': False,
+                'zone': None,
+                'message': 'Não foi possível calcular a rota',
+            }
+        
+        distance_km = route['distance_km']
+        duration_minutes = route['duration_minutes']
+        
+        # Check if store has delivery zones configured
+        delivery_zones = StoreDeliveryZone.objects.filter(
+            store=store,
+            is_active=True
+        ).order_by('min_distance')
+        
+        if delivery_zones.exists():
+            # Find matching zone based on distance
+            matched_zone = None
+            for zone in delivery_zones:
+                if zone.min_distance <= distance_km:
+                    if zone.max_distance is None or distance_km <= zone.max_distance:
+                        matched_zone = zone
+                        break
+            
+            if matched_zone:
+                # Check free delivery threshold
+                fee = matched_zone.fee
+                if store.free_delivery_threshold and hasattr(store, 'free_delivery_threshold'):
+                    # Will be checked at checkout with actual cart subtotal
+                    pass
+                
+                return {
+                    'fee': float(fee),
+                    'distance_km': distance_km,
+                    'duration_minutes': duration_minutes,
+                    'is_within_area': True,
+                    'zone': {
+                        'id': str(matched_zone.id),
+                        'name': matched_zone.name,
+                        'min_distance': matched_zone.min_distance,
+                        'max_distance': matched_zone.max_distance,
+                    },
+                    'polyline': route.get('polyline'),
+                    'message': f'Entrega na zona: {matched_zone.name}',
+                }
+            else:
+                # Outside all delivery zones
+                return {
+                    'fee': None,
+                    'distance_km': distance_km,
+                    'duration_minutes': duration_minutes,
+                    'is_within_area': False,
+                    'zone': None,
+                    'polyline': route.get('polyline'),
+                    'message': 'Endereço fora da área de entrega',
+                }
+        else:
+            # No zones configured - use distance-based calculation or default fee
+            max_delivery_distance = getattr(store, 'max_delivery_distance_km', None) or 20.0
+            
+            if distance_km > max_delivery_distance:
+                return {
+                    'fee': None,
+                    'distance_km': distance_km,
+                    'duration_minutes': duration_minutes,
+                    'is_within_area': False,
+                    'zone': None,
+                    'polyline': route.get('polyline'),
+                    'message': f'Endereço fora da área de entrega (máx: {max_delivery_distance}km)',
+                }
+            
+            # Calculate fee based on distance if per_km_fee is set
+            per_km_fee = getattr(store, 'delivery_fee_per_km', None)
+            base_fee = store.default_delivery_fee or Decimal('0.00')
+            
+            if per_km_fee:
+                fee = float(base_fee) + (distance_km * float(per_km_fee))
+            else:
+                fee = float(base_fee)
+            
+            return {
+                'fee': fee,
+                'distance_km': distance_km,
+                'duration_minutes': duration_minutes,
+                'is_within_area': True,
+                'zone': None,
+                'polyline': route.get('polyline'),
+                'message': 'Taxa de entrega calculada por distância',
+            }
 
 
 # Singleton instance

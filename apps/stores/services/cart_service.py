@@ -43,6 +43,27 @@ class CartService:
             raise ValueError("Either user or session_key must be provided")
     
     @staticmethod
+    def get_or_create_cart(store: Store, user=None, session_key=None) -> StoreCart:
+        """Alias for get_cart - get or create a cart for a user or session."""
+        return CartService.get_cart(store, user, session_key)
+    
+    @staticmethod
+    @transaction.atomic
+    def add_item(
+        cart: StoreCart,
+        product_id,
+        quantity: int = 1,
+        variant_id=None,
+        notes: str = ''
+    ) -> StoreCartItem:
+        """Add an item to the cart by product_id."""
+        product = StoreProduct.objects.get(id=product_id, store=cart.store)
+        variant = None
+        if variant_id:
+            variant = StoreProductVariant.objects.get(id=variant_id, product=product)
+        return CartService.add_product(cart, product, quantity, variant, notes=notes)
+    
+    @staticmethod
     @transaction.atomic
     def add_product(
         cart: StoreCart,
@@ -125,9 +146,30 @@ class CartService:
     
     @staticmethod
     @transaction.atomic
-    def update_item_quantity(item: StoreCartItem, quantity: int) -> StoreCartItem:
-        """Update item quantity with stock validation."""
-        if quantity <= 0:
+    def update_item_quantity(cart_or_item, item_id_or_quantity=None, quantity=None) -> StoreCartItem:
+        """
+        Update item quantity with stock validation.
+        
+        Supports two calling conventions:
+        - update_item_quantity(item, quantity) - direct item update
+        - update_item_quantity(cart, item_id, quantity) - lookup item by ID
+        """
+        # Determine calling convention
+        if isinstance(cart_or_item, StoreCartItem):
+            # Old style: update_item_quantity(item, quantity)
+            item = cart_or_item
+            qty = item_id_or_quantity
+        else:
+            # New style: update_item_quantity(cart, item_id, quantity)
+            cart = cart_or_item
+            item_id = item_id_or_quantity
+            qty = quantity
+            try:
+                item = StoreCartItem.objects.get(id=item_id, cart=cart)
+            except StoreCartItem.DoesNotExist:
+                raise ValueError(f"Item {item_id} not found in cart")
+        
+        if qty <= 0:
             item.delete()
             return None
         
@@ -137,10 +179,10 @@ class CartService:
             if item.variant and item.variant.stock_quantity is not None:
                 available = item.variant.stock_quantity
             
-            if quantity > available:
+            if qty > available:
                 raise ValueError(f"Estoque insuficiente. Disponível: {available}")
         
-        item.quantity = quantity
+        item.quantity = qty
         item.save()
         return item
     
@@ -160,8 +202,24 @@ class CartService:
         return item
     
     @staticmethod
-    def remove_item(item: StoreCartItem):
-        """Remove an item from the cart."""
+    def remove_item(cart_or_item, item_id=None):
+        """
+        Remove an item from the cart.
+        
+        Supports two calling conventions:
+        - remove_item(item) - direct item deletion
+        - remove_item(cart, item_id) - lookup item by ID and delete
+        """
+        if isinstance(cart_or_item, StoreCartItem):
+            # Old style: remove_item(item)
+            item = cart_or_item
+        else:
+            # New style: remove_item(cart, item_id)
+            cart = cart_or_item
+            try:
+                item = StoreCartItem.objects.get(id=item_id, cart=cart)
+            except StoreCartItem.DoesNotExist:
+                return  # Item already removed or doesn't exist
         item.delete()
     
     @staticmethod
