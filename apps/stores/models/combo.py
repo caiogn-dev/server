@@ -27,6 +27,7 @@ class StoreCombo(models.Model):
     featured = models.BooleanField(default=False)
     track_stock = models.BooleanField(default=False)
     stock_quantity = models.IntegerField(default=0)
+    sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -35,7 +36,7 @@ class StoreCombo(models.Model):
         verbose_name = 'Store Combo'
         verbose_name_plural = 'Store Combos'
         unique_together = ['store', 'slug']
-        ordering = ['store', '-created_at']
+        ordering = ['store', 'sort_order', 'name']
 
     def __str__(self):
         return f"{self.store.name} - {self.name}"
