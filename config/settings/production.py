@@ -18,40 +18,47 @@ STORAGES["staticfiles"] = {
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
-# Disable SSL redirect - Railway handles HTTPS at the proxy level
+
+# Disable SSL redirect - Cloudflare/Nginx handles HTTPS at the proxy level
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
+
+# Trust headers from Cloudflare/Nginx
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
 
 # Enforce required production settings
 if SECRET_KEY == 'your-secret-key-change-in-production':
     raise ImproperlyConfigured('SECRET_KEY must be set in production.')
 
-# Allow wildcard hosts when explicitly set (for docker/dev environments)
-# In production, this should be properly configured via DJANGO_ALLOWED_HOSTS
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured('ALLOWED_HOSTS must be set in production.')
 
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False
 
-# CSRF Trusted Origins
-CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', '').split(',') if os.environ.get('CSRF_TRUSTED_ORIGINS') else []
+# ==============================================================================
+# CSRF TRUSTED ORIGINS (FIX CRÍTICO)
+# ==============================================================================
+# Lê DJANGO_CSRF_TRUSTED_ORIGINS primeiro, fallback para CSRF_TRUSTED_ORIGINS
+_csrf_env = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS')
 
-# Override logging for production - use only console (no file handler)
+if _csrf_env:
+    # Remove espaços em branco e cria a lista
+    CSRF_TRUSTED_ORIGINS = [url.strip() for url in _csrf_env.split(',') if url.strip()]
+else:
+    CSRF_TRUSTED_ORIGINS = []
+
+# Logging Configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
-        },
         'json': {
             '()': 'apps.core.logging.JsonFormatter',
         },
@@ -70,6 +77,11 @@ LOGGING = {
         'django': {
             'handlers': ['console'],
             'level': os.environ.get('DJANGO_LOG_LEVEL', 'INFO'),
+            'propagate': False,
+        },
+        'django.security.csrf': {
+            'handlers': ['console'],
+            'level': 'WARNING',  # Para ver os erros de 403 no log
             'propagate': False,
         },
         'apps': {
