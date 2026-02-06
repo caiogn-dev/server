@@ -1,209 +1,160 @@
-# ============================================================================
-# PASTITA PLATFORM - DOCKER COMPOSE (Development)
-# ============================================================================
-
-version: '3.8'
-
 services:
-  # Django Web Application
+  db:
+    image: postgres:15-alpine
+    container_name: pastita_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pastita
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pastita_redis
+    restart: unless-stopped
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             redis-server --appendonly yes"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   web:
     build:
       context: .
-      target: production
-    container_name: pastita-web
-    ports:
-      - "8000:8000"
+      dockerfile: Dockerfile.prod
+    image: pastita_backend:latest
+    container_name: pastita_web
+    restart: unless-stopped
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,*}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
-      - DB_HOST=db
-      - DB_NAME=pastita
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - REDIS_URL=redis://redis:6379/1
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - LANGFLOW_API_URL=http://langflow:7860
-      - LANGFLOW_API_KEY=${LANGFLOW_API_KEY:-}
-      - MERCADO_PAGO_ACCESS_TOKEN=${MERCADO_PAGO_ACCESS_TOKEN:-}
-      - RESEND_API_KEY=${RESEND_API_KEY:-}
-      - DEBUG=${DEBUG:-True}
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS}
+      - DEBUG=False
+    volumes:
+      - static_files:/app/staticfiles
+      - media_files:/app/media
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - static_volume:/app/staticfiles
-      - media_volume:/app/media
-      - logs_volume:/app/logs
-    networks:
-      - pastita-network
-    restart: unless-stopped
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/stores/stores/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/admin/login/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
 
-  # Celery Worker
   celery:
-    build:
-      context: .
-      target: celery
-    container_name: pastita-celery
+    image: pastita_backend:latest
+    container_name: pastita_celery
+    restart: unless-stopped
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
-      - DB_HOST=db
-      - DB_NAME=pastita
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - REDIS_URL=redis://redis:6379/1
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - LANGFLOW_API_URL=http://langflow:7860
-      - SKIP_MIGRATIONS=1
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
     depends_on:
-      - db
-      - redis
-    volumes:
-      - logs_volume:/app/logs
-    networks:
-      - pastita-network
-    restart: unless-stopped
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,agents,automation,campaigns,default --concurrency=2
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config.celery inspect ping --destination celery@$$HOSTNAME 2>/dev/null | grep -q OK || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
-  # Celery Beat
   celery-beat:
-    build:
-      context: .
-      target: beat
-    container_name: pastita-beat
+    image: pastita_backend:latest
+    container_name: pastita_celery_beat
+    restart: unless-stopped
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
-      - DB_HOST=db
-      - DB_NAME=pastita
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - REDIS_URL=redis://redis:6379/1
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - SKIP_MIGRATIONS=1
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
     depends_on:
-      - db
-      - redis
-    networks:
-      - pastita-network
-    restart: unless-stopped
-
-  # Langflow Worker
-  celery-langflow:
-    build:
-      context: .
-      target: langflow-worker
-    container_name: pastita-langflow-worker
-    environment:
-      - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-dev-secret-key}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/pastita
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - LANGFLOW_API_URL=http://langflow:7860
-      - SKIP_MIGRATIONS=1
-    depends_on:
-      - db
-      - redis
-      - langflow
-    networks:
-      - pastita-network
-    restart: unless-stopped
-
-  # Langflow Service
-  langflow:
-    image: langflowai/langflow:latest
-    container_name: pastita-langflow
-    ports:
-      - "7860:7860"
-    environment:
-      - LANGFLOW_HOST=0.0.0.0
-      - LANGFLOW_PORT=7860
-      - LANGFLOW_AUTO_LOGIN=false
-      - LANGFLOW_SUPERUSER=${LANGFLOW_SUPERUSER:-admin}
-      - LANGFLOW_SUPERUSER_PASSWORD=${LANGFLOW_SUPERUSER_PASSWORD:-admin}
-      - LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY:-langflow-secret-key}
-      - LANGFLOW_DATABASE_URL=postgresql://postgres:postgres@db:5432/langflow
-    depends_on:
-      - db
-    volumes:
-      - langflow_data:/root/.cache/langflow
-    networks:
-      - pastita-network
-    restart: unless-stopped
-
-  # PostgreSQL
-  db:
-    image: postgres:15-alpine
-    container_name: pastita-db
-    environment:
-      - POSTGRES_DB=pastita
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - pastita-network
-    restart: unless-stopped
+      celery:
+        condition: service_healthy
+    command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q 'celery beat' || exit 1"]
+      interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
+      start_period: 30s
 
-  # Redis
-  redis:
-    image: redis:7-alpine
-    container_name: pastita-redis
-    volumes:
-      - redis_data:/data
-    networks:
-      - pastita-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # Nginx (Reverse Proxy)
   nginx:
     image: nginx:alpine
-    container_name: pastita-nginx
+    container_name: pastita_nginx
+    restart: unless-stopped
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             nginx -g 'daemon off;'"
     ports:
       - "80:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - static_volume:/app/staticfiles:ro
-      - media_volume:/app/media:ro
+      - static_files:/var/www/static:ro
+      - media_files:/var/www/media:ro
     depends_on:
-      - web
-      - langflow
-    networks:
-      - pastita-network
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/admin/login/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pastita_cloudflared
     restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             cloudflared tunnel --no-autoupdate run --url http://nginx:80 --token ${CLOUDFLARE_TUNNEL_TOKEN}"
+    depends_on:
+      nginx:
+        condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
-  static_volume:
-  media_volume:
-  logs_volume:
-  langflow_data:
+  static_files:
+  media_files:
 
 networks:
-  pastita-network:
-    driver: bridge
+  default:
+    name: pastita_network
+    external: true

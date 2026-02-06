@@ -21,7 +21,9 @@ services:
     image: redis:7-alpine
     container_name: pastita_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             redis-server --appendonly yes"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -39,11 +41,13 @@ services:
     restart: unless-stopped
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
       - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=${REDIS_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS}
       - DEBUG=False
     volumes:
       - static_files:/app/staticfiles
@@ -62,6 +66,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 40s
 
   celery:
     image: pastita_backend:latest
@@ -69,14 +74,22 @@ services:
     restart: unless-stopped
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
     depends_on:
-      - db
-      - redis
-      - web
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,agents,automation,campaigns,default --concurrency=2
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config.celery inspect ping --destination celery@$$HOSTNAME 2>/dev/null | grep -q OK || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   celery-beat:
     image: pastita_backend:latest
@@ -84,19 +97,28 @@ services:
     restart: unless-stopped
     environment:
       - DJANGO_SETTINGS_MODULE=config.settings.production
-      - DJANGO_SECRET_KEY=${SECRET_KEY}
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
       - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
     depends_on:
-      - db
-      - redis
-      - celery
+      celery:
+        condition: service_healthy
     command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    healthcheck:
+      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q 'celery beat' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   nginx:
     image: nginx:alpine
     container_name: pastita_nginx
     restart: unless-stopped
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             nginx -g 'daemon off;'"
     ports:
       - "80:80"
     volumes:
@@ -106,6 +128,12 @@ services:
     depends_on:
       web:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/admin/login/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -113,9 +141,12 @@ services:
     restart: unless-stopped
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    command: tunnel --no-autoupdate run --url http://nginx:80 --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             cloudflared tunnel --no-autoupdate run --url http://nginx:80 --token ${CLOUDFLARE_TUNNEL_TOKEN}"
     depends_on:
-      - nginx
+      nginx:
+        condition: service_healthy
 
 volumes:
   postgres_data:
@@ -126,3 +157,4 @@ volumes:
 networks:
   default:
     name: pastita_network
+    external: true

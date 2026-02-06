@@ -47,6 +47,14 @@ class StoreCatalogView(APIView):
         """Get store catalog with categories, products, and combos."""
         store = get_object_or_404(Store, slug=store_slug, status='active')
         
+        # Get all active products for the store
+        products = StoreProduct.objects.filter(
+            store=store, status='active'
+        ).order_by('sort_order', 'name')
+        
+        # Get featured products
+        featured_products = products.filter(featured=True)
+        
         # Get active categories with their products
         categories = StoreCategory.objects.filter(
             store=store, is_active=True
@@ -57,10 +65,23 @@ class StoreCatalogView(APIView):
             )
         ).order_by('sort_order', 'name')
         
+        # Build products_by_category
+        products_by_category = []
+        for category in categories:
+            category_products = products.filter(category=category)
+            if category_products.exists():
+                products_by_category.append({
+                    'category': StoreCategorySerializer(category).data,
+                    'products': StoreProductSerializer(category_products, many=True).data
+                })
+        
         # Get combos
         combos = StoreCombo.objects.filter(
             store=store, is_active=True
         ).prefetch_related('items__product').order_by('sort_order', 'name')
+        
+        # Get featured combos (combos_destaque)
+        combos_destaque = combos.filter(featured=True)
         
         # Get product types
         product_types = StoreProductType.objects.filter(
@@ -70,8 +91,12 @@ class StoreCatalogView(APIView):
         return Response({
             'store': StoreSerializer(store).data,
             'categories': StoreCategorySerializer(categories, many=True).data,
+            'products': StoreProductSerializer(products, many=True).data,
+            'featured_products': StoreProductSerializer(featured_products, many=True).data,
             'combos': StoreComboSerializer(combos, many=True).data,
+            'combos_destaque': StoreComboSerializer(combos_destaque, many=True).data,
             'product_types': StoreProductTypeSerializer(product_types, many=True).data,
+            'products_by_category': products_by_category,
         })
 
 
@@ -319,81 +344,146 @@ class StoreCouponValidateView(APIView):
 
 class StoreWishlistViewSet(viewsets.ViewSet):
     """ViewSet for managing user wishlists per store."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.AllowAny]
     
     def get_store(self, store_slug):
         return get_object_or_404(Store, slug=store_slug, status='active')
     
-    def get_wishlist(self, user, store):
-        wishlist, _ = StoreWishlist.objects.get_or_create(user=user, store=store)
-        return wishlist
+    def _get_customer_id(self, request):
+        """Get customer identifier from request."""
+        if request.user.is_authenticated:
+            return {'customer_email': request.user.email}
+        # Try to get from session or request data
+        phone = request.data.get('customer_phone') or request.session.get('customer_phone')
+        email = request.data.get('customer_email') or request.session.get('customer_email')
+        if phone:
+            return {'customer_phone': phone}
+        if email:
+            return {'customer_email': email}
+        return None
     
     def list(self, request, store_slug=None):
         """Get user's wishlist for a store."""
         store = self.get_store(store_slug)
-        wishlist = self.get_wishlist(request.user, store)
-        serializer = StoreWishlistSerializer(wishlist)
-        return Response(serializer.data)
+        customer_id = self._get_customer_id(request)
+        
+        if not customer_id:
+            return Response({
+                'products': [],
+                'count': 0
+            })
+        
+        wishlist_items = StoreWishlist.objects.filter(store=store, **customer_id)
+        products = [item.product for item in wishlist_items]
+        
+        return Response({
+            'products': StoreProductSerializer(products, many=True).data,
+            'count': len(products)
+        })
     
     @action(detail=False, methods=['post'])
     def add(self, request, store_slug=None):
         """Add a product to the wishlist."""
         store = self.get_store(store_slug)
+        customer_id = self._get_customer_id(request)
+        
+        if not customer_id:
+            return Response(
+                {'error': 'Authentication required or customer_phone/email needed'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
         serializer = WishlistAddRemoveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         product_id = serializer.validated_data['product_id']
         product = get_object_or_404(StoreProduct, id=product_id, store=store, status='active')
         
-        wishlist = self.get_wishlist(request.user, store)
-        wishlist.products.add(product)
+        wishlist_item, created = StoreWishlist.objects.get_or_create(
+            store=store,
+            product=product,
+            **customer_id
+        )
+        
+        wishlist_count = StoreWishlist.objects.filter(store=store, **customer_id).count()
         
         return Response({
             'message': 'Product added to wishlist',
             'product_id': str(product_id),
-            'wishlist_count': wishlist.products.count()
+            'wishlist_count': wishlist_count
         })
     
     @action(detail=False, methods=['post'])
     def remove(self, request, store_slug=None):
         """Remove a product from the wishlist."""
         store = self.get_store(store_slug)
+        customer_id = self._get_customer_id(request)
+        
+        if not customer_id:
+            return Response(
+                {'error': 'Authentication required or customer_phone/email needed'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
         serializer = WishlistAddRemoveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         product_id = serializer.validated_data['product_id']
         
-        wishlist = self.get_wishlist(request.user, store)
-        wishlist.products.filter(id=product_id).delete()
+        StoreWishlist.objects.filter(
+            store=store,
+            product_id=product_id,
+            **customer_id
+        ).delete()
+        
+        wishlist_count = StoreWishlist.objects.filter(store=store, **customer_id).count()
         
         return Response({
             'message': 'Product removed from wishlist',
             'product_id': str(product_id),
-            'wishlist_count': wishlist.products.count()
+            'wishlist_count': wishlist_count
         })
     
     @action(detail=False, methods=['post'])
     def toggle(self, request, store_slug=None):
         """Toggle a product in the wishlist."""
         store = self.get_store(store_slug)
+        customer_id = self._get_customer_id(request)
+        
+        if not customer_id:
+            return Response(
+                {'error': 'Authentication required or customer_phone/email needed'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
         serializer = WishlistAddRemoveSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         product_id = serializer.validated_data['product_id']
         product = get_object_or_404(StoreProduct, id=product_id, store=store, status='active')
         
-        wishlist = self.get_wishlist(request.user, store)
+        wishlist_item = StoreWishlist.objects.filter(
+            store=store,
+            product=product,
+            **customer_id
+        ).first()
         
-        if wishlist.products.filter(id=product_id).exists():
-            wishlist.products.remove(product)
+        if wishlist_item:
+            wishlist_item.delete()
             added = False
         else:
-            wishlist.products.add(product)
+            StoreWishlist.objects.create(
+                store=store,
+                product=product,
+                **customer_id
+            )
             added = True
+        
+        wishlist_count = StoreWishlist.objects.filter(store=store, **customer_id).count()
         
         return Response({
             'message': 'Product added to wishlist' if added else 'Product removed from wishlist',
             'product_id': str(product_id),
             'in_wishlist': added,
-            'wishlist_count': wishlist.products.count()
+            'wishlist_count': wishlist_count
         })
