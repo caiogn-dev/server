@@ -1,34 +1,43 @@
 # Stage 1: Build
 FROM python:3.11-alpine AS builder
 
-# Variáveis de ambiente de build
+# Evita arquivos .pyc e buffer de log
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PYTHONUNBUFFERED=1
 
-# Instalar dependências de sistema para compilação
-# coreutils: garante /usr/bin/ls e comandos GNU
-# build-base: compilador C/C++ (gcc, g++, make)
-# postgresql-dev: headers para psycopg2/psycopg
+# Instala dependências de compilação + coreutils (GNU)
 RUN apk add --no-cache \
-    coreutils \
     build-base \
     postgresql-dev \
+    coreutils \
     libffi-dev \
     linux-headers
 
-# Criar venv para isolar dependências
+WORKDIR /build
+
+# Instalação isolada em venv
 RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # ---
-# Stage 2: Final
+# Stage 2: Runtime
 FROM python:3.11-alpine
 
-# Variáveis de runtime
+# Coreutils garante /usr/bin/ls para compatibilidade
+# libpq: runtime do postgres
+# curl: healthcheck
+# tzdata: essencial para Django gerenciar fusos horários corretamente
+RUN apk add --no-cache \
+    coreutils \
+    libpq \
+    curl \
+    tzdata
+
+# Configurações de ambiente
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
@@ -36,39 +45,30 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Instalar apenas o essencial para execução
-# libpq: biblioteca runtime do postgres
-# tzdata: para controle de timezone correto no Django
-RUN apk add --no-cache \
-    coreutils \
-    libpq \
-    curl \
-    tzdata
-
-# Copiar venv e garantir permissões
+# Copia apenas o venv do builder
 COPY --from=builder /opt/venv /opt/venv
 
-# Segurança: Criar usuário e diretórios antes de copiar o código
-RUN addgroup -S django && \
-    adduser -S django -G django -u 1000 && \
+# Cria usuário de sistema e estrutura de pastas antes de copiar o código
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup -u 1000 && \
     mkdir -p /app/staticfiles /app/media /app/logs && \
-    chown -R django:django /app
+    chown -R appuser:appgroup /app
 
-# Copiar projeto
-COPY --chown=django:django . .
+# Copia o código com permissões corretas (evita camadas extras de chown)
+COPY --chown=appuser:appgroup . .
 
-USER django
+# Switch para usuário não-root
+USER appuser
 
-# Documentar porta
 EXPOSE 8000
 
-# Healthcheck robusto
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+# Healthcheck usando curl (mais confiável que wget no Alpine para headers)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://localhost:8000/admin/login/ || exit 1
 
-# Gunicorn com UvicornWorker para suporte a ASGI
+# Usa exec form para que o Gunicorn receba sinais do Docker (SIGTERM)
 CMD ["gunicorn", "config.asgi:application", \
-     "--workers", "4", \
+     "--workers", "3", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
      "--bind", "0.0.0.0:8000", \
      "--access-logfile", "-", \
