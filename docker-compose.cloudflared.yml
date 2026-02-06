@@ -21,7 +21,10 @@ services:
     image: redis:7-alpine
     container_name: pastita_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    # Fix for Dockhand compatibility - create symlink for ls
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             redis-server --appendonly yes"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -102,6 +105,10 @@ services:
     image: nginx:alpine
     container_name: pastita_nginx
     restart: unless-stopped
+    # Fix for Dockhand compatibility - create symlink for ls before starting nginx
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             nginx -g 'daemon off;'"
     ports:
       - "80:80"
     volumes:
@@ -118,7 +125,10 @@ services:
     restart: unless-stopped
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    command: tunnel --no-autoupdate run --url http://nginx:80 --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    # Fix for Dockhand compatibility - create symlink for ls before starting cloudflared
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             cloudflared tunnel --no-autoupdate run --url http://nginx:80 --token ${CLOUDFLARE_TUNNEL_TOKEN}"
     depends_on:
       - nginx
 
@@ -131,3 +141,5 @@ volumes:
 networks:
   default:
     name: pastita_network
+    external: true
+    
