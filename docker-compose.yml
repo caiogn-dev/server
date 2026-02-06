@@ -99,20 +99,6 @@ services:
         condition: service_started
     command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
-  langflow:
-    image: langflowai/langflow:latest
-    container_name: pastita_langflow
-    restart: unless-stopped
-    environment:
-      - LANGFLOW_HOST=0.0.0.0
-      - LANGFLOW_PORT=7860
-      - LANGFLOW_DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/pastita
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - langflow_data:/root/.cache/langflow
-
   nginx:
     image: nginx:alpine
     container_name: pastita_nginx
@@ -133,7 +119,7 @@ services:
     restart: unless-stopped
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
-    # CORREÇÃO: Apontando explicitamente para o container nginx
+    # Redirecionamento direto para o Nginx para resolver o erro 503
     command: tunnel --no-autoupdate run --url http://nginx:80
     depends_on:
       - nginx
@@ -144,7 +130,6 @@ volumes:
   static_files:
   media_files:
   logs_files:
-  langflow_data:
 
 networks:
   default:
