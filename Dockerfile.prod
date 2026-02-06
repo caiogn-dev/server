@@ -1,63 +1,75 @@
-# Dockerfile de Produção - Backend Django
-# Multi-stage build para otimizar tamanho
+# Stage 1: Build
+FROM python:3.11-alpine AS builder
 
-FROM python:3.11-slim AS builder
+# Variáveis de ambiente de build
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH"
 
-# Fix for Dockhand compatibility - create symlink for ls
-RUN ln -sf /bin/ls /usr/bin/ls
+# Instalar dependências de sistema para compilação
+# coreutils: garante /usr/bin/ls e comandos GNU
+# build-base: compilador C/C++ (gcc, g++, make)
+# postgresql-dev: headers para psycopg2/psycopg
+RUN apk add --no-cache \
+    coreutils \
+    build-base \
+    postgresql-dev \
+    libffi-dev \
+    linux-headers
 
-# Instalar dependências de build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Criar ambiente virtual
+# Criar venv para isolar dependências
 RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
 
-# Copiar e instalar requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Stage final
-FROM python:3.11-slim
+# ---
+# Stage 2: Final
+FROM python:3.11-alpine
 
-# Fix for Dockhand compatibility - create symlink for ls
-RUN ln -sf /bin/ls /usr/bin/ls
+# Variáveis de runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app"
 
-# Instalar apenas dependências de runtime
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copiar ambiente virtual do builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Criar usuário não-root
-RUN useradd -m -u 1000 appuser && mkdir -p /app && chown -R appuser:appuser /app
-
-# Diretório da aplicação
 WORKDIR /app
 
-# Copiar código
-COPY --chown=appuser:appuser . .
+# Instalar apenas o essencial para execução
+# libpq: biblioteca runtime do postgres
+# tzdata: para controle de timezone correto no Django
+RUN apk add --no-cache \
+    coreutils \
+    libpq \
+    curl \
+    tzdata
 
-# Criar diretórios necessários
-RUN mkdir -p staticfiles media logs && chown -R appuser:appuser staticfiles media logs
+# Copiar venv e garantir permissões
+COPY --from=builder /opt/venv /opt/venv
 
-# Mudar para usuário não-root
-USER appuser
+# Segurança: Criar usuário e diretórios antes de copiar o código
+RUN addgroup -S django && \
+    adduser -S django -G django -u 1000 && \
+    mkdir -p /app/staticfiles /app/media /app/logs && \
+    chown -R django:django /app
 
-# Expor porta
+# Copiar projeto
+COPY --chown=django:django . .
+
+USER django
+
+# Documentar porta
 EXPOSE 8000
 
-# Healthcheck - use admin login page as it doesn't require DB
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+# Healthcheck robusto
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/admin/login/ || exit 1
 
-# Comando padrão (será sobrescrito pelo docker-compose)
-CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+# Gunicorn com UvicornWorker para suporte a ASGI
+CMD ["gunicorn", "config.asgi:application", \
+     "--workers", "4", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]
