@@ -62,10 +62,6 @@ USER appuser
 
 EXPOSE 8000
 
-# Healthcheck usando curl (mais confiável que wget no Alpine para headers)
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD curl -f http://localhost:8000/admin/login/ || exit 1
-
 # Usa exec form para que o Gunicorn receba sinais do Docker (SIGTERM)
 CMD ["gunicorn", "config.asgi:application", \
      "--workers", "3", \
