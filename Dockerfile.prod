@@ -1,57 +1,144 @@
-# Dockerfile de Produção - Backend Django
-# Multi-stage build para otimizar tamanho
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: pastita_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pastita
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
-FROM python:3.11-slim as builder
+  redis:
+    image: redis:7-alpine
+    container_name: pastita_redis
+    restart: unless-stopped
+    # Fix for Dockhand compatibility - create symlink for ls
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             redis-server --appendonly yes"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-# Instalar dependências de build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: pastita_backend:latest
+    container_name: pastita_web
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${SECRET_KEY}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-*}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS}
+      - DEBUG=False
+    volumes:
+      - static_files:/app/staticfiles
+      - media_files:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/admin/login/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
-# Criar ambiente virtual
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+  celery:
+    image: pastita_backend:latest
+    container_name: pastita_celery
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+    depends_on:
+      - db
+      - redis
+      - web
+    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,agents,automation,campaigns,default --concurrency=2
 
-# Copiar e instalar requirements
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+  celery-beat:
+    image: pastita_backend:latest
+    container_name: pastita_celery_beat
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.production
+      - SECRET_KEY=${SECRET_KEY}
+      - DJANGO_SECRET_KEY=${SECRET_KEY}
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+    depends_on:
+      - db
+      - redis
+      - celery
+    command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
 
-# Stage final
-FROM python:3.11-slim
+  nginx:
+    image: nginx:alpine
+    container_name: pastita_nginx
+    restart: unless-stopped
+    # Fix for Dockhand compatibility - create symlink for ls before starting nginx
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             nginx -g 'daemon off;'"
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_files:/var/www/static:ro
+      - media_files:/var/www/media:ro
+    depends_on:
+      web:
+        condition: service_healthy
 
-# Instalar apenas dependências de runtime
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: pastita_cloudflared
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    # Fix for Dockhand compatibility - create symlink for ls before starting cloudflared
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
+             cloudflared tunnel --no-autoupdate run --url http://nginx:80 --token ${CLOUDFLARE_TUNNEL_TOKEN}"
+    depends_on:
+      - nginx
 
-# Copiar ambiente virtual do builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+  media_files:
 
-# Criar usuário não-root
-RUN useradd -m -u 1000 appuser && mkdir -p /app && chown -R appuser:appuser /app
-
-# Diretório da aplicação
-WORKDIR /app
-
-# Copiar código
-COPY --chown=appuser:appuser . .
-
-# Criar diretórios necessários
-RUN mkdir -p staticfiles media logs && chown -R appuser:appuser staticfiles media logs
-
-# Mudar para usuário não-root
-USER appuser
-
-# Expor porta
-EXPOSE 8000
-
-# Healthcheck - use admin login page as it doesn't require DB
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
-    CMD curl -f http://localhost:8000/admin/login/ || exit 1
-
-# Comando padrão (será sobrescrito pelo docker-compose)
-CMD ["gunicorn", "config.asgi:application", "-k", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000"]
+networks:
+  default:
+    name: pastita_network
+    external: true
