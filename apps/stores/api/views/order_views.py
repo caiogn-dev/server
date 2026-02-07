@@ -87,7 +87,7 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        valid_statuses = [s[0] for s in StoreOrder.Status.choices]
+        valid_statuses = [s[0] for s in StoreOrder.OrderStatus.choices]
         if new_status not in valid_statuses:
             return Response(
                 {'error': f'Invalid status. Valid options: {valid_statuses}'},
@@ -182,7 +182,7 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             }
         }
         
-        for status_choice, _ in StoreOrder.Status.choices:
+        for status_choice, _ in StoreOrder.OrderStatus.choices:
             stats['by_status'][status_choice] = queryset.filter(status=status_choice).count()
         
         return Response(stats)
