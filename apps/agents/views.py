@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
+from django.conf import settings
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from .models import Agent, AgentConversation, AgentMessage
@@ -121,6 +122,63 @@ class AgentViewSet(viewsets.ModelViewSet):
         
         serializer = AgentConversationSerializer(conversations, many=True)
         return Response(serializer.data)
+    
+    @extend_schema(summary="Listar modelos disponíveis por provider")
+    @action(detail=False, methods=['get'])
+    def available_models(self, request):
+        """Get available models for each provider."""
+        models = {
+            'kimi': [
+                {'value': 'kimi-for-coding', 'label': 'Kimi for Coding'},
+                {'value': 'kimi-k2', 'label': 'Kimi K2'},
+                {'value': 'kimi-k2.5', 'label': 'Kimi K2.5'},
+            ],
+            'openai': [
+                {'value': 'gpt-4o', 'label': 'GPT-4o'},
+                {'value': 'gpt-4o-mini', 'label': 'GPT-4o Mini'},
+                {'value': 'gpt-4-turbo', 'label': 'GPT-4 Turbo'},
+            ],
+            'anthropic': [
+                {'value': 'claude-opus-4', 'label': 'Claude Opus 4'},
+                {'value': 'claude-sonnet-4', 'label': 'Claude Sonnet 4'},
+                {'value': 'claude-haiku-4', 'label': 'Claude Haiku 4'},
+            ],
+            'ollama': [
+                {'value': 'llama3', 'label': 'Llama 3'},
+                {'value': 'mistral', 'label': 'Mistral'},
+                {'value': 'codellama', 'label': 'Code Llama'},
+            ]
+        }
+        return Response(models)
+
+    
+    @extend_schema(summary="Configuração dos providers (base URLs do backend)")
+    @action(detail=False, methods=['get'])
+    def provider_config(self, request):
+        """Get provider configuration including base URLs from backend."""
+        config = {
+            'kimi': {
+                'base_url': getattr(settings, 'KIMI_BASE_URL', 'https://api.kimi.com/coding/'),
+                'model_name': getattr(settings, 'KIMI_MODEL_NAME', 'kimi-for-coding'),
+                'api_style': 'anthropic',
+            },
+            'openai': {
+                'base_url': getattr(settings, 'OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+                'model_name': getattr(settings, 'OPENAI_MODEL_NAME', 'gpt-4o-mini'),
+                'api_style': 'openai',
+            },
+            'anthropic': {
+                'base_url': getattr(settings, 'ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
+                'model_name': getattr(settings, 'ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022'),
+                'api_style': 'anthropic',
+            },
+            'ollama': {
+                'base_url': getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
+                'model_name': getattr(settings, 'OLLAMA_MODEL_NAME', 'llama3'),
+                'api_style': 'openai',
+            },
+        }
+        return Response(config)
 
 
 class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):

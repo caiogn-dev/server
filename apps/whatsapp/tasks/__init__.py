@@ -53,7 +53,7 @@ def process_message_with_agent(self, message_id: str):
     """Process a message with AI Agent (Langchain)."""
     from ..models import Message
     from ..repositories import MessageRepository
-    from apps.agents.services import LangchainService
+    from apps.agents.services import AgentService
     from apps.conversations.services import ConversationService
     
     message_repo = MessageRepository()
@@ -81,7 +81,7 @@ def process_message_with_agent(self, message_id: str):
             return
         
         agent = account.default_agent
-        service = LangchainService(agent)
+        service = AgentService(agent)
         
         context = {
             'account_id': str(account.id),
@@ -90,8 +90,8 @@ def process_message_with_agent(self, message_id: str):
             'message_type': message.message_type,
         }
         
-        result = service.process_message(
-            message=message.text_body,
+        response_text = service.process_message(
+            message=message.text_body or '',
             session_id=str(message.conversation.id) if message.conversation else None,
             phone_number=message.from_number,
             context=context
@@ -99,11 +99,11 @@ def process_message_with_agent(self, message_id: str):
         
         message_repo.mark_as_processed_by_agent(message)
         
-        if result and result.get('response'):
+        if response_text:
             send_agent_response.delay(
                 str(account.id),
                 message.from_number,
-                result['response'],
+                response_text,
                 str(message.whatsapp_message_id)
             )
         

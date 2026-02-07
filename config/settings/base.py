@@ -305,10 +305,10 @@ INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN'
 # ============================================================================
 # LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
 # ============================================================================
-# Kimi API (Moonshot - Default)
+# Kimi API (Kimi Coding API - Anthropic-style)
 KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.moonshot.cn/v1')
-KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'moonshot-v1-8k')
+KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
+KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
 
 # OpenAI (opcional)
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
@@ -345,8 +345,8 @@ META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v20.0').strip()
 
 # Langchain AI Configuration
 KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.moonshot.cn/v1')
-KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-coder')
+KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
+KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
 
 # OpenAI (opcional)
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')

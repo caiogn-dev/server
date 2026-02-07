@@ -1,5 +1,5 @@
 """
-Langchain Service for Agent management
+Langchain Service for Agent management - Fixed for Kimi Coding API
 """
 import json
 import time
@@ -8,7 +8,6 @@ from typing import List, Dict, Any, Optional
 
 from django.conf import settings
 from django.core.cache import cache
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
@@ -23,22 +22,49 @@ class LangchainService:
         self.agent = agent
         self.llm = self._create_llm()
     
-    def _create_llm(self) -> ChatOpenAI:
-        """Create Langchain LLM instance based on agent configuration."""
+    def _create_llm(self):
+        """Create Langchain LLM instance based on provider."""
         api_key = self.agent.api_key or getattr(settings, 'KIMI_API_KEY', '')
-        base_url = self.agent.base_url or getattr(settings, 'KIMI_BASE_URL', 'https://api.kimi.com/coding/v1')
+        base_url = self.agent.base_url or getattr(settings, 'KIMI_BASE_URL', 'https://api.kimi.com/coding/')
         
         if not api_key:
             raise BaseAPIException("API Key não configurada para o agente")
         
-        return ChatOpenAI(
-            model_name=self.agent.model_name,
-            temperature=self.agent.temperature,
-            max_tokens=self.agent.max_tokens,
-            timeout=self.agent.timeout,
-            api_key=api_key,
-            base_url=base_url,
-        )
+        # Use ChatAnthropic for Kimi (Anthropic-compatible API)
+        if self.agent.provider == Agent.AgentProvider.KIMI:
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                model=self.agent.model_name,  # "kimi-for-coding" or "kimi-k2"
+                temperature=self.agent.temperature,
+                max_tokens=self.agent.max_tokens,
+                timeout=self.agent.timeout,
+                api_key=api_key,
+                anthropic_api_url=base_url,
+            )
+        # Use ChatAnthropic for Anthropic API
+        elif self.agent.provider == Agent.AgentProvider.ANTHROPIC:
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                model=self.agent.model_name,
+                temperature=self.agent.temperature,
+                max_tokens=self.agent.max_tokens,
+                timeout=self.agent.timeout,
+                api_key=api_key,
+                anthropic_api_url=base_url,
+            )
+        # Use ChatOpenAI for OpenAI
+        elif self.agent.provider == Agent.AgentProvider.OPENAI:
+            from langchain_anthropic import ChatAnthropic
+            return ChatAnthropic(
+                model=self.agent.model_name,
+                temperature=self.agent.temperature,
+                max_tokens=self.agent.max_tokens,
+                timeout=self.agent.timeout,
+                api_key=api_key,
+                base_url=base_url if base_url else None,
+            )
+        else:
+            raise BaseAPIException(f"Provedor não suportado: {self.agent.provider}")
     
     def _get_memory(self, session_id: str) -> Optional[RedisChatMessageHistory]:
         """Get conversation memory from Redis."""
@@ -57,6 +83,10 @@ class LangchainService:
             print(f"Error creating memory: {e}")
             return None
     
+    def _generate_session_id(self) -> str:
+        """Generate a unique session ID."""
+        return str(uuid.uuid4())
+    
     def process_message(
         self,
         message: str,
@@ -74,16 +104,25 @@ class LangchainService:
         
         # Generate or use existing session_id
         if not session_id:
-            session_id = str(uuid.uuid4())
+            session_id = self._generate_session_id()
         
         # Get or create conversation
-        conversation, created = AgentConversation.objects.get_or_create(
-            session_id=session_id,
-            defaults={
-                'agent': self.agent,
-                'phone_number': phone_number or '',
-            }
-        )
+        try:
+            conversation, created = AgentConversation.objects.get_or_create(
+                session_id=session_id,
+                defaults={
+                    'agent': self.agent,
+                    'phone_number': phone_number or '',
+                }
+            )
+        except AgentConversation.DoesNotExist:
+            # Se não existe, cria uma nova
+            conversation = AgentConversation.objects.create(
+                session_id=session_id,
+                agent=self.agent,
+                phone_number=phone_number or '',
+            )
+            created = True
         
         # Build messages
         messages = []
@@ -105,7 +144,11 @@ class LangchainService:
         try:
             response = self.llm.invoke(messages)
             response_text = response.content
-            tokens_used = response.response_metadata.get('token_usage', {}).get('total_tokens')
+            # Try to get token usage from response metadata
+            try:
+                tokens_used = response.response_metadata.get('usage', {}).get('total_tokens')
+            except (AttributeError, KeyError):
+                tokens_used = None
         except Exception as e:
             raise BaseAPIException(f"Erro ao chamar LLM: {str(e)}")
         
