@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("stores", "0022_store_whatsapp_account"),
+        ("stores", "0023_alter_store_whatsapp_account"),
     ]
 
     operations = [
