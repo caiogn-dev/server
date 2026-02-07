@@ -128,6 +128,19 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'])
+    def mark_paid(self, request, pk=None):
+        """Mark order as paid (convenience endpoint)."""
+        order = self.get_object()
+        
+        order.payment_status = StoreOrder.PaymentStatus.PAID
+        order.paid_at = timezone.now()
+        order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+        
+        logger.info(f"Order {order.order_number} marked as paid")
+        
+        return Response(StoreOrderSerializer(order).data)
+    
+    @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """Cancel an order."""
         order = self.get_object()
