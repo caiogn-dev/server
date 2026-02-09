@@ -273,10 +273,18 @@ class LangchainService:
         memory = self._get_memory(session_id)
         if memory:
             history_messages = memory.messages
-            messages.extend(history_messages)
+            if history_messages:
+                print(f"[AGENT DEBUG] Loaded {len(history_messages)} messages from memory for session {session_id}")
+                messages.extend(history_messages)
+            else:
+                print(f"[AGENT DEBUG] No history found in memory for session {session_id}")
+        else:
+            print(f"[AGENT DEBUG] Memory not available for session {session_id}")
         
         # Add user message
         messages.append(HumanMessage(content=message))
+        
+        print(f"[AGENT DEBUG] Sending {len(messages)} messages to LLM (session: {session_id})")
         
         # Call LLM
         try:
