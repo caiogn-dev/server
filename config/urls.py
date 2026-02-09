@@ -51,6 +51,7 @@ urlpatterns = [
         path('conversations/', include('apps.conversations.urls')),
         path('automation/', include('apps.automation.urls')),
         path('handover/', include('apps.handover.urls')),
+        path('users/', include('apps.users.urls')),  # NEW: Unified users
         # path('langflow/', include('apps.langflow.urls')),  # DEPRECATED
         path('agents/', include('apps.agents.urls')),  # Langchain Agents
 

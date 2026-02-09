@@ -53,6 +53,7 @@ INSTALLED_APPS = [
     'apps.messaging',  # Unified messaging dispatcher (includes Messenger)
     'apps.webhooks',  # Centralized webhook handling
     'apps.handover',  # Handover Protocol (Bot/Human transfer)
+    'apps.users',  # Unified user management (NEW)
 ]
 
 MIDDLEWARE = [
