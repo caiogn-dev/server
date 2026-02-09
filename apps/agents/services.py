@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 
 from django.conf import settings
 from django.core.cache import cache
+from django.db import models
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
@@ -87,6 +88,139 @@ class LangchainService:
         """Generate a unique session ID."""
         return str(uuid.uuid4())
     
+    def _build_dynamic_context(self, phone_number: str, conversation_id: Optional[str] = None) -> str:
+        """
+        Build dynamic context with menu, customer info, order history, etc.
+        This provides the agent with real-time business data.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        context_parts = []
+        
+        # Add agent's static context prompt
+        if self.agent.context_prompt:
+            context_parts.append(self.agent.context_prompt)
+        
+        # 1. Load customer info and order history
+        try:
+            from apps.conversations.models import Conversation
+            from apps.orders.models import Order
+            
+            # Get customer name from conversation
+            customer_name = ""
+            if conversation_id:
+                try:
+                    conv = Conversation.objects.get(id=conversation_id)
+                    if conv.contact_name:
+                        customer_name = conv.contact_name
+                        context_parts.append(f"Nome do cliente: {customer_name}")
+                except Conversation.DoesNotExist:
+                    pass
+            
+            # Get recent orders from this customer
+            if phone_number:
+                recent_orders = Order.objects.filter(
+                    customer_phone=phone_number,
+                    status__in=['completed', 'delivered']
+                ).select_related('store').prefetch_related('items')[:3]
+                
+                if recent_orders:
+                    orders_text = "📦 HISTÓRICO DE PEDIDOS RECENTES:\n"
+                    for order in recent_orders:
+                        items = order.items.all()[:3]
+                        items_text = ", ".join([f"{item.quantity}x {item.product_name}" for item in items])
+                        if len(order.items.all()) > 3:
+                            items_text += " e mais..."
+                        orders_text += f"- {order.created_at.strftime('%d/%m/%Y')}: {items_text} - Total: R$ {order.total}\n"
+                    context_parts.append(orders_text)
+                    
+                    # Add favorite products based on order history
+                    from collections import Counter
+                    all_items = []
+                    for order in recent_orders:
+                        for item in order.items.all():
+                            all_items.append(item.product_name)
+                    
+                    if all_items:
+                        favorites = Counter(all_items).most_common(3)
+                        fav_text = "❤️ PRODUTOS FAVORITOS DO CLIENTE: " + ", ".join([f[0] for f in favorites])
+                        context_parts.append(fav_text)
+                        
+        except Exception as e:
+            logger.error(f"Error loading customer/order data: {e}")
+        
+        # 2. Load store menu/catalog
+        try:
+            # Try to get store from conversation or agent accounts
+            store = None
+            
+            # First try from conversation
+            if conversation_id:
+                try:
+                    from apps.conversations.models import Conversation
+                    conv = Conversation.objects.select_related('account').get(id=conversation_id)
+                    if hasattr(conv.account, 'store'):
+                        store = conv.account.store
+                except:
+                    pass
+            
+            # If not found, try from agent's associated accounts
+            if not store:
+                try:
+                    from apps.stores.models import Store
+                    # Get first store from agent's accounts
+                    agent_accounts = self.agent.accounts.all()
+                    if agent_accounts:
+                        first_account = agent_accounts.first()
+                        if hasattr(first_account, 'store'):
+                            store = first_account.store
+                except:
+                    pass
+            
+            # Load products from store
+            if store:
+                try:
+                    from apps.catalog.models import Product
+                    products = Product.objects.filter(
+                        store=store,
+                        is_active=True,
+                        is_available=True
+                    )[:15]
+                    
+                    if products:
+                        menu_text = f"🍽️ CARDÁPIO ATUAL - {store.name}:\n"
+                        for p in products:
+                            price_display = f"R$ {p.price:.2f}"
+                            if p.compare_at_price and p.compare_at_price > p.price:
+                                price_display += f" (de R$ {p.compare_at_price:.2f})"
+                            menu_text += f"- {p.name}: {price_display}\n"
+                            if p.description:
+                                menu_text += f"  {p.description[:80]}...\n"
+                        context_parts.append(menu_text)
+                        
+                        # Add promotional info if exists
+                        promos = products.filter(compare_at_price__gt=models.F('price'))[:5]
+                        if promos:
+                            promo_text = "🔥 PROMOÇÕES ATIVAS: " + ", ".join([p.name for p in promos])
+                            context_parts.append(promo_text)
+                            
+                except Exception as e:
+                    logger.error(f"Error loading products: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error loading store/menu data: {e}")
+        
+        # 3. Add current time context
+        from datetime import datetime
+        now = datetime.now()
+        time_context = f"📅 Data e hora atual: {now.strftime('%d/%m/%Y %H:%M')}"
+        context_parts.append(time_context)
+        
+        # Join all context parts
+        return "\n\n".join(context_parts)
+
+    
     def process_message(
         self,
         message: str,
@@ -127,9 +261,13 @@ class LangchainService:
         # Build messages
         messages = []
         
-        # Add system prompt
+        # Add system prompt with dynamic context
         system_prompt = self.agent.get_full_prompt()
-        messages.append(SystemMessage(content=system_prompt))
+        dynamic_context = self._build_dynamic_context(phone_number, session_id)
+        
+        # Combine system prompt with dynamic context
+        full_system_prompt = f"{system_prompt}\n\n{dynamic_context}"
+        messages.append(SystemMessage(content=full_system_prompt))
         
         # Add memory/history if enabled
         memory = self._get_memory(session_id)

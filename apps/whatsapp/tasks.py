@@ -241,9 +241,21 @@ def process_message_with_agent(self, message_id: str):
                 if profile.use_ai_agent and profile.default_agent:
                     agent = profile.default_agent
         
-        if not agent or agent.status != Agent.AgentStatus.ACTIVE:
+        if not agent or not agent.is_active or agent.status != Agent.AgentStatus.ACTIVE:
             logger.info(f"No active agent configured for account {account.id}")
             return {'status': 'skipped', 'reason': 'no_agent'}
+        
+        # Check handover status - don't respond if in human mode
+        if message.conversation:
+            handover = getattr(message.conversation, 'handover', None)
+            if handover and handover.current_owner == 'human':
+                logger.info(f"Conversation {message.conversation.id} in human mode, skipping agent")
+                return {'status': 'skipped', 'reason': 'human_mode'}
+            
+            # Check conversation handover status (legacy field)
+            if hasattr(message.conversation, 'handover_status') and message.conversation.handover_status == 'human':
+                logger.info(f"Conversation {message.conversation.id} handover_status is human, skipping agent")
+                return {'status': 'skipped', 'reason': 'human_mode'}
         
         # Process with agent
         agent_service = AgentService(agent)

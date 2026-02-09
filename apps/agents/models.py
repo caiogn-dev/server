@@ -84,9 +84,9 @@ class Agent(BaseModel):
     # Redis configuration for memory
     use_memory = models.BooleanField(default=True, verbose_name='Usar Memória')
     memory_ttl = models.PositiveIntegerField(
-        default=3600,
+        default=86400,  # 24 hours
         verbose_name='TTL da Memória (segundos)',
-        help_text='Tempo que as conversas ficam armazenadas no Redis'
+        help_text='Tempo que as conversas ficam armazenadas no Redis (padrão: 24h)'
     )
     
     class Meta:
