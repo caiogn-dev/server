@@ -47,8 +47,10 @@ urlpatterns = [
         # WhatsApp, Instagram & Automation
         path('whatsapp/', include('apps.whatsapp.urls')),
         path('instagram/', include('apps.instagram.urls')),
+        path('messaging/', include('apps.messaging.urls')),
         path('conversations/', include('apps.conversations.urls')),
         path('automation/', include('apps.automation.urls')),
+        path('handover/', include('apps.handover.urls')),
         # path('langflow/', include('apps.langflow.urls')),  # DEPRECATED
         path('agents/', include('apps.agents.urls')),  # Langchain Agents
 
