@@ -8,7 +8,7 @@ import uuid
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('conversations', '0002_initial'),
+        ('conversations', '0002_add_fields'),
     ]
 
     operations = [

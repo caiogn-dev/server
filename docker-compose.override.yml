@@ -16,11 +16,10 @@ services:
       - DJANGO_SETTINGS_MODULE=config.settings.development
     volumes:
       - ./:/app
-      - static_volume:/app/staticfiles
-      - media_volume:/app/media
+      - static_files:/app/staticfiles
+      - media_files:/app/media
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -c "python manage.py runserver 0.0.0.0:8000"
     # For Daphne (WebSocket support in dev):
     # command: >
     #   sh -c "python manage.py migrate &&
@@ -32,7 +31,6 @@ services:
       - DJANGO_SETTINGS_MODULE=config.settings.development
     volumes:
       - ./:/app
-      - logs_volume:/app/logs
     command: >
       watchmedo auto-restart
       --directory=/app

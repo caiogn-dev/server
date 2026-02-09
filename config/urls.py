@@ -36,6 +36,7 @@ urlpatterns = [
     path('api/v1/', include([
         # Core (auth, users, csrf)
         path('', include('apps.core.urls')),
+        path('auth/', include('apps.core.auth.urls')),  # NEW: WhatsApp Auth
 
 
         # Unified Store API (PRIMARY - used by frontends)

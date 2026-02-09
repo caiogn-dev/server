@@ -96,6 +96,9 @@ class LangchainService:
         import logging
         logger = logging.getLogger(__name__)
         
+        # DEBUG: Log início da construção do contexto
+        logger.info(f"[AGENT CONTEXT DEBUG] Building context for phone: {phone_number}, conversation: {conversation_id}")
+        
         context_parts = []
         
         # Add agent's static context prompt
@@ -110,8 +113,11 @@ class LangchainService:
                 context_parts.append("═══ DADOS DO CLIENTE ═══")
                 context_parts.append(user_context)
                 context_parts.append("═══════════════════════════")
+                logger.info(f"[AGENT CONTEXT DEBUG] UnifiedUser context loaded: {len(user_context)} chars")
+            else:
+                logger.warning(f"[AGENT CONTEXT DEBUG] No UnifiedUser found for phone: {phone_number}")
         except Exception as e:
-            logger.error(f"Error loading UnifiedUser context: {e}")
+            logger.error(f"[AGENT CONTEXT DEBUG] Error loading UnifiedUser context: {e}")
         
         # 1. Load customer info and order history (fallback se UnifiedUser não existir)
         try:
