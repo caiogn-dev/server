@@ -102,7 +102,18 @@ class LangchainService:
         if self.agent.context_prompt:
             context_parts.append(self.agent.context_prompt)
         
-        # 1. Load customer info and order history
+        # NOVO: Carregar contexto do UnifiedUser
+        try:
+            from apps.users.services import UnifiedUserService
+            user_context = UnifiedUserService.get_context_for_agent(phone_number)
+            if user_context:
+                context_parts.append("═══ DADOS DO CLIENTE ═══")
+                context_parts.append(user_context)
+                context_parts.append("═══════════════════════════")
+        except Exception as e:
+            logger.error(f"Error loading UnifiedUser context: {e}")
+        
+        # 1. Load customer info and order history (fallback se UnifiedUser não existir)
         try:
             from apps.conversations.models import Conversation
             from apps.orders.models import Order
@@ -114,12 +125,13 @@ class LangchainService:
                     conv = Conversation.objects.get(id=conversation_id)
                     if conv.contact_name:
                         customer_name = conv.contact_name
-                        context_parts.append(f"Nome do cliente: {customer_name}")
+                        if not any("CLIENTE:" in part for part in context_parts):
+                            context_parts.append(f"Nome do cliente: {customer_name}")
                 except Conversation.DoesNotExist:
                     pass
             
-            # Get recent orders from this customer
-            if phone_number:
+            # Get recent orders from this customer (se não veio do UnifiedUser)
+            if phone_number and not any("HISTÓRICO DE PEDIDOS" in part for part in context_parts):
                 recent_orders = Order.objects.filter(
                     customer_phone=phone_number,
                     status__in=['completed', 'delivered']
