@@ -2,6 +2,7 @@
 Conversation API views.
 """
 import logging
+from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -249,11 +250,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
         ).update(status='read')
         
         # Mark Instagram messages as read
+        # InstagramMessage usa 'is_from_business' em vez de 'direction'
         InstagramMessage.objects.filter(
             conversation_id=conversation.id,
-            direction='inbound',
-            status__in=['delivered', 'sent']
-        ).update(status='read')
+            is_from_business=False,  # Mensagens do cliente (inbound)
+            is_read=False
+        ).update(is_read=True, read_at=timezone.now())
         
         # Refresh conversation to update unread_count
         conversation.refresh_from_db()
