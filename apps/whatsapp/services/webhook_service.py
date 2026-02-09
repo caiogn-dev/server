@@ -403,9 +403,14 @@ class WebhookService:
         # Fall back to AI Agent if enabled and automation didn't handle it
         if event.account.auto_response_enabled and not message.processed_by_agent:
             try:
-                # Process with AI Agent (Langchain) if configured
+                # Process with AI Agent (Langchain) if configured and active
                 if hasattr(event.account, 'default_agent') and event.account.default_agent:
-                    current_app.send_task('apps.whatsapp.tasks.process_message_with_agent', args=[str(message.id)])
+                    agent = event.account.default_agent
+                    # ✅ FIX: Check if agent is active before processing
+                    if agent.is_active:
+                        current_app.send_task('apps.whatsapp.tasks.process_message_with_agent', args=[str(message.id)])
+                    else:
+                        logger.info(f"Agent {agent.id} is inactive, skipping AI processing for message {message.id}")
             except Exception as e:
                 logger.warning(f"Failed to enqueue Agent task: {str(e)}")
 
