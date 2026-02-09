@@ -382,6 +382,14 @@ class WebhookService:
             message.conversation.contact_name = contact_name
             message.conversation.save(update_fields=['contact_name', 'updated_at'])
 
+        # Extract name from message if user says "my name is" or similar
+        if message.conversation and message.text_body and not message.conversation.contact_name:
+            extracted_name = self._extract_name_from_message(message.text_body)
+            if extracted_name:
+                message.conversation.contact_name = extracted_name
+                message.conversation.save(update_fields=['contact_name', 'updated_at'])
+                logger.info(f"Extracted name from message: {extracted_name} for conversation {message.conversation.id}")
+
         # Try automation service first (for companies with CompanyProfile)
         try:
             automation_service = AutomationService()
@@ -408,6 +416,35 @@ class WebhookService:
                     current_app.send_task('apps.whatsapp.tasks.process_message_with_agent', args=[str(message.id)])
             except Exception as e:
                 logger.warning(f"Failed to enqueue Agent task: {str(e)}")
+
+    def _extract_name_from_message(self, text: str) -> str:
+        """Extract name from message patterns like 'my name is John', 'sou o Carlos', etc."""
+        import re
+        
+        text_lower = text.lower().strip()
+        
+        # Patterns to match name introductions
+        patterns = [
+            r'meu nome [é|e]\s+(.+)',
+            r'meu nome eh\s+(.+)',
+            r'sou (?:o|a)\s+(.+)',
+            r'(?:o|a) meu nome [é|e]\s+(.+)',
+            r'pode me chamar de\s+(.+)',
+            r'(?:eu sou|sou)\s+(.+)',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text_lower)
+            if match:
+                name = match.group(1).strip()
+                # Remove punctuation at the end
+                name = re.sub(r'[.!?;,]$', '', name)
+                # Capitalize first letter of each word
+                name = name.title()
+                if len(name) > 1 and len(name) < 50:  # Reasonable name length
+                    return name
+        
+        return ""
 
     def _process_inbound_message(self, event: WebhookEvent) -> Optional[Message]:
         """Process an inbound message event."""
