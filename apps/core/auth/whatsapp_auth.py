@@ -43,9 +43,57 @@ class WhatsAppAuthService:
     MAX_ATTEMPTS = 3
     
     # Template oficial do WhatsApp para autenticação
-    # Deve ser criado no Meta Business Manager
+    # Criado no Meta Business Manager: auth_verification_v1
     TEMPLATE_NAME = 'auth_verification_v1'
     TEMPLATE_LANGUAGE = 'pt_BR'
+    
+    # Fallback: Template de marketing (caso auth não funcione)
+    FALLBACK_TEMPLATE_NAME = 'codigo_verificacao'
+    USE_FALLBACK = False  # Mude para True se auth_verification_v1 falhar
+    
+    @classmethod
+    def _get_template_data(cls, code: str) -> dict:
+        """
+        Retorna os dados do template conforme o tipo.
+        Authentication Template tem formato específico.
+        """
+        if cls.USE_FALLBACK:
+            # Template de Marketing (formato mais simples)
+            return {
+                'name': cls.FALLBACK_TEMPLATE_NAME,
+                'language': {'code': cls.TEMPLATE_LANGUAGE},
+                'components': [
+                    {
+                        'type': 'body',
+                        'parameters': [
+                            {'type': 'text', 'text': code},
+                        ]
+                    }
+                ]
+            }
+        
+        # Authentication Template (oficial da Meta)
+        # Obrigatório ter button do tipo copy_code
+        return {
+            'name': cls.TEMPLATE_NAME,
+            'language': {'code': cls.TEMPLATE_LANGUAGE},
+            'components': [
+                {
+                    'type': 'body',
+                    'parameters': [
+                        {'type': 'text', 'text': code},  # {{1}} = código
+                    ]
+                },
+                {
+                    'type': 'button',
+                    'sub_type': 'copy_code',
+                    'index': 0,
+                    'parameters': [
+                        {'type': 'text', 'text': code}  # Código para copiar
+                    ]
+                }
+            ]
+        }
     
     @staticmethod
     def generate_code() -> str:
@@ -111,6 +159,11 @@ class WhatsAppAuthService:
         # Gera novo código
         code = cls.generate_code()
         
+        # DEBUG: Log do código gerado (remover em produção)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[WHATSAPP AUTH DEBUG] Generated code for {clean_phone}: {code}")
+        
         # Salva no cache
         cache_data = {
             'code': code,
@@ -122,37 +175,27 @@ class WhatsAppAuthService:
         cache.set(cache_key, cache_data, timeout=60 * cls.CODE_TTL_MINUTES)
         
         # Prepara template de autenticação
-        # Formato do template da Meta:
-        # "Seu código de verificação é: {{1}}\n\nVálido por 15 minutos."
-        template_data = {
-            'name': cls.TEMPLATE_NAME,
-            'language': {'code': cls.TEMPLATE_LANGUAGE},
-            'components': [
-                {
-                    'type': 'body',
-                    'parameters': [
-                        {'type': 'text', 'text': code},  # {{1}} = código
-                    ]
-                },
-                {
-                    'type': 'button',
-                    'sub_type': 'copy_code',
-                    'index': 0,
-                    'parameters': [
-                        {'type': 'text', 'text': code}  # Código para copiar
-                    ]
-                }
-            ]
-        }
+        template_data = cls._get_template_data(code)
+        
+        # DEBUG: Log do template
+        logger.info(f"[WHATSAPP AUTH DEBUG] Using template: {template_data['name']}")
+        logger.info(f"[WHATSAPP AUTH DEBUG] Template data: {template_data}")
         
         # Envia mensagem
         try:
             message_service = MessageService()
+            
+            # DEBUG: Log antes de enviar
+            logger.info(f"[WHATSAPP AUTH DEBUG] Sending to {clean_phone} using account {whatsapp_account_id}")
+            
             result = message_service.send_template_message(
                 account_id=whatsapp_account_id,
                 to=clean_phone,
                 template=template_data
             )
+            
+            # DEBUG: Log do resultado
+            logger.info(f"[WHATSAPP AUTH DEBUG] Message sent successfully: {result}")
             
             expires_at = timezone.now() + timedelta(minutes=cls.CODE_TTL_MINUTES)
             
@@ -163,9 +206,13 @@ class WhatsAppAuthService:
                 'expires_at': expires_at.isoformat(),
                 'expires_in_minutes': cls.CODE_TTL_MINUTES,
                 'phone_number': clean_phone,
+                'code': code,  # DEBUG: Remover em produção!
             }
             
         except Exception as e:
+            # DEBUG: Log do erro
+            logger.error(f"[WHATSAPP AUTH DEBUG] Error sending message: {str(e)}")
+            
             # Invalida cache em caso de erro
             cache.delete(cache_key)
             raise WhatsAppAuthError(f"Falha ao enviar código: {str(e)}")

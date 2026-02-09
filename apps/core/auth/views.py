@@ -28,11 +28,17 @@ def send_whatsapp_auth_code(request):
         "message_id": "wamid....",
         "expires_at": "2024-01-01T12:15:00Z",
         "expires_in_minutes": 15,
-        "phone_number": "5511999999999"
+        "phone_number": "5511999999999",
+        "code": "123456"  # Apenas em DEBUG
     }
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     phone = request.data.get('phone_number')
     account_id = request.data.get('whatsapp_account_id')
+    
+    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
     
     if not phone:
         return Response(
@@ -50,11 +56,20 @@ def send_whatsapp_auth_code(request):
         result = WhatsAppAuthService.send_auth_code(phone, account_id)
         
         if result.get('success'):
+            # Em desenvolvimento, retorna o código para facilitar testes
+            from django.conf import settings
+            if settings.DEBUG:
+                logger.info(f"[WHATSAPP AUTH API] Code sent (DEBUG mode): {result.get('code')}")
+            else:
+                # Remove código do response em produção
+                result.pop('code', None)
+            
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
     except WhatsAppAuthError as e:
+        logger.error(f"[WHATSAPP AUTH API] Error: {str(e)}")
         return Response(
             {'error': 'send_error', 'message': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
