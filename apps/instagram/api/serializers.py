@@ -1,221 +1,152 @@
-"""
-Instagram API Serializers.
-"""
 from rest_framework import serializers
-from apps.instagram.models import (
-    InstagramAccount,
-    InstagramConversation,
-    InstagramMessage,
-    InstagramWebhookEvent
+from ..models import (
+    InstagramAccount, InstagramMedia, InstagramMediaItem,
+    InstagramProductTag, InstagramCatalog, InstagramProduct,
+    InstagramLive, InstagramLiveComment, InstagramConversation,
+    InstagramMessage, InstagramScheduledPost, InstagramInsight
 )
 
 
 class InstagramAccountSerializer(serializers.ModelSerializer):
-    """Serializer for Instagram accounts."""
-    
-    masked_token = serializers.ReadOnlyField()
-    
     class Meta:
         model = InstagramAccount
         fields = [
-            'id',
-            'name',
-            'instagram_account_id',
-            'instagram_user_id',
-            'facebook_page_id',
-            'username',
-            'app_id',
-            'status',
-            'messaging_enabled',
-            'auto_response_enabled',
-            'human_handoff_enabled',
-            'profile_picture_url',
-            'followers_count',
-            'masked_token',
-            'token_expires_at',
-            'created_at',
-            'updated_at'
+            'id', 'platform', 'username', 'instagram_business_id',
+            'followers_count', 'follows_count', 'media_count',
+            'profile_picture_url', 'biography', 'website',
+            'is_active', 'is_verified', 'created_at', 'updated_at', 'last_sync_at'
         ]
-        read_only_fields = [
-            'id', 
-            'instagram_account_id',
-            'instagram_user_id',
-            'status',
-            'masked_token',
-            'token_expires_at',
-            'profile_picture_url',
-            'followers_count',
-            'created_at', 
-            'updated_at'
-        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class InstagramAccountCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating Instagram accounts."""
-    
-    access_token = serializers.CharField(write_only=True)
-    app_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    facebook_page_id = serializers.CharField(required=False, allow_blank=True)
+class InstagramMediaItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstagramMediaItem
+        fields = ['id', 'media_type', 'media_url', 'thumbnail_url', 'order']
+
+
+class InstagramProductTagSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstagramProductTag
+        fields = ['id', 'product_id', 'product_name', 'position_x', 'position_y']
+
+
+class InstagramMediaSerializer(serializers.ModelSerializer):
+    items = InstagramMediaItemSerializer(many=True, read_only=True)
+    product_tags = InstagramProductTagSerializer(many=True, read_only=True)
     
     class Meta:
-        model = InstagramAccount
+        model = InstagramMedia
         fields = [
-            'name',
-            'instagram_account_id',
-            'instagram_user_id',
-            'facebook_page_id',
-            'username',
-            'app_id',
-            'app_secret',
-            'access_token',
-            'webhook_verify_token',
-            'messaging_enabled',
-            'auto_response_enabled'
+            'id', 'account', 'instagram_media_id', 'media_type',
+            'caption', 'media_url', 'thumbnail_url', 'permalink',
+            'likes_count', 'comments_count', 'shares_count', 'saves_count',
+            'reach', 'impressions', 'status', 'scheduled_at', 'published_at',
+            'has_product_tags', 'items', 'product_tags',
+            'created_at', 'updated_at'
         ]
-    
-    def create(self, validated_data):
-        access_token = validated_data.pop('access_token')
-        app_secret = validated_data.pop('app_secret', '')
-        
-        account = InstagramAccount(**validated_data)
-        account.access_token = access_token
-        account.app_secret = app_secret or ''
-        account.status = InstagramAccount.AccountStatus.ACTIVE
-        account.save()
-        
-        return account
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class InstagramConversationSerializer(serializers.ModelSerializer):
-    """Serializer for Instagram conversations."""
-    
-    unread_count = serializers.SerializerMethodField()
+class InstagramProductSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstagramProduct
+        fields = [
+            'id', 'catalog', 'product_id', 'retailer_id',
+            'name', 'description', 'price', 'currency',
+            'availability', 'condition', 'image_url',
+            'additional_image_urls', 'url', 'is_active',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class InstagramCatalogSerializer(serializers.ModelSerializer):
+    products_count = serializers.IntegerField(source='products.count', read_only=True)
     
     class Meta:
-        model = InstagramConversation
-        fields = [
-            'id',
-            'participant_id',
-            'participant_username',
-            'participant_name',
-            'participant_profile_pic',
-            'status',
-            'message_count',
-            'unread_count',
-            'last_message_at',
-            'last_message_preview',
-            'assigned_to',
-            'created_at',
-            'updated_at'
-        ]
-        read_only_fields = [
-            'id',
-            'participant_id',
-            'participant_username',
-            'participant_name',
-            'participant_profile_pic',
-            'message_count',
-            'last_message_at',
-            'last_message_preview',
-            'created_at',
-            'updated_at'
-        ]
+        model = InstagramCatalog
+        fields = ['id', 'catalog_id', 'name', 'products_count', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class InstagramLiveCommentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstagramLiveComment
+        fields = ['id', 'username', 'text', 'created_at']
+
+
+class InstagramLiveSerializer(serializers.ModelSerializer):
+    comments = InstagramLiveCommentSerializer(many=True, read_only=True)
     
-    def get_unread_count(self, obj):
-        return InstagramMessage.objects.filter(
-            conversation=obj,
-            direction=InstagramMessage.MessageDirection.INBOUND,
-            status__in=[
-                InstagramMessage.MessageStatus.DELIVERED,
-                InstagramMessage.MessageStatus.PENDING
-            ]
-        ).count()
+    class Meta:
+        model = InstagramLive
+        fields = [
+            'id', 'title', 'description', 'status',
+            'viewers_count', 'max_viewers', 'comments_count',
+            'stream_url', 'stream_key', 'scheduled_at',
+            'started_at', 'ended_at', 'comments',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'stream_key', 'created_at', 'updated_at']
 
 
 class InstagramMessageSerializer(serializers.ModelSerializer):
-    """Serializer for Instagram messages."""
+    reply_to = serializers.PrimaryKeyRelatedField(read_only=True)
     
     class Meta:
         model = InstagramMessage
         fields = [
-            'id',
-            'instagram_message_id',
-            'conversation',
-            'direction',
-            'message_type',
-            'status',
-            'sender_id',
-            'recipient_id',
-            'text_content',
-            'media_url',
-            'media_type',
-            'shared_media_id',
-            'shared_media_url',
-            'reply_to_message_id',
-            'sent_at',
-            'delivered_at',
-            'seen_at',
-            'error_code',
-            'error_message',
-            'created_at'
+            'id', 'instagram_message_id', 'message_type',
+            'content', 'media_url', 'reaction_type',
+            'reply_to', 'is_unsent', 'is_from_business',
+            'is_read', 'read_at', 'sent_at', 'created_at'
         ]
-        read_only_fields = [
-            'id',
-            'instagram_message_id',
-            'direction',
-            'message_type',
-            'status',
-            'sender_id',
-            'recipient_id',
-            'sent_at',
-            'delivered_at',
-            'seen_at',
-            'error_code',
-            'error_message',
-            'created_at'
-        ]
+        read_only_fields = ['id', 'created_at']
 
 
-class SendMessageSerializer(serializers.Serializer):
-    """Serializer for sending messages."""
-    
-    recipient_id = serializers.CharField(required=False, allow_blank=True)
-    conversation_id = serializers.UUIDField(required=False, allow_null=True)
-    text = serializers.CharField(required=False, allow_blank=True)
-    image_url = serializers.URLField(required=False, allow_blank=True)
-    video_url = serializers.URLField(required=False, allow_blank=True)
-    quick_replies = serializers.ListField(
-        child=serializers.DictField(),
-        required=False,
-        allow_empty=True
-    )
-    
-    def validate(self, data):
-        # Validar que ao menos recipient_id ou conversation_id foi fornecido
-        if not data.get('recipient_id') and not data.get('conversation_id'):
-            raise serializers.ValidationError("Either recipient_id or conversation_id is required")
-        
-        # Validar que ao menos um tipo de conteúdo foi fornecido
-        if not data.get('text') and not data.get('image_url') and not data.get('video_url'):
-            raise serializers.ValidationError("At least one of text, image_url, or video_url is required")
-        
-        return data
-
-
-class InstagramWebhookEventSerializer(serializers.ModelSerializer):
-    """Serializer for webhook events (for debugging)."""
+class InstagramConversationSerializer(serializers.ModelSerializer):
+    last_message = serializers.SerializerMethodField()
     
     class Meta:
-        model = InstagramWebhookEvent
+        model = InstagramConversation
         fields = [
-            'id',
-            'event_id',
-            'event_type',
-            'processing_status',
-            'payload',
-            'processed_at',
-            'retry_count',
-            'error_message',
-            'created_at'
+            'id', 'instagram_conversation_id',
+            'participant_id', 'participant_username',
+            'participant_name', 'participant_profile_pic',
+            'is_active', 'unread_count', 'last_message_at',
+            'last_message', 'created_at', 'updated_at'
         ]
-        read_only_fields = fields
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_last_message(self, obj):
+        last_msg = obj.messages.filter(is_unsent=False).order_by('-created_at').first()
+        if last_msg:
+            return {
+                'type': last_msg.message_type,
+                'content': last_msg.content[:100] if last_msg.content else None,
+                'created_at': last_msg.created_at.isoformat()
+            }
+        return None
+
+
+class InstagramScheduledPostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstagramScheduledPost
+        fields = [
+            'id', 'media_type', 'caption', 'media_files',
+            'schedule_time', 'timezone', 'product_tags',
+            'status', 'instagram_media_id', 'error_message',
+            'published_at', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class InstagramInsightSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InstagramInsight
+        fields = [
+            'date', 'impressions', 'reach', 'profile_views',
+            'website_clicks', 'follower_count', 'followers_gained',
+            'followers_lost', 'engagement', 'created_at'
+        ]

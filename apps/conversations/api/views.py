@@ -238,7 +238,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = self.get_object()
         
         # Update all unread inbound messages in this conversation
-        from apps.whatsapp.models import WhatsAppMessage
+        from apps.whatsapp.models import Message as WhatsAppMessage
         from apps.instagram.models import InstagramMessage
         
         # Mark WhatsApp messages as read

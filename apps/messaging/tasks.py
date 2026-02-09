@@ -1,147 +1,189 @@
-"""
-Celery tasks for messaging.
-"""
-import logging
 from celery import shared_task
+import logging
+from datetime import datetime, timedelta
 from django.utils import timezone
 
-from .dispatcher import MessageDispatcher
-from .models import Message
+from .models import MessengerBroadcast, MessengerSponsoredMessage, MessengerMessage, MessengerConversation
+from .services import MessengerService, MessengerPlatformService, MessengerBroadcastService
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task(name='messaging.process_scheduled_messages')
-def process_scheduled_messages(batch_size: int = 100):
-    """
-    Process scheduled messages that are due.
-    Run every minute via Celery beat.
-    """
-    dispatcher = MessageDispatcher()
-    processed = dispatcher.process_scheduled(batch_size=batch_size)
+@shared_task
+def send_scheduled_broadcasts():
+    """Envia broadcasts agendados"""
+    now = timezone.now()
     
-    if processed > 0:
-        logger.info(f"Processed {processed} scheduled messages")
-    
-    return {'processed': processed}
-
-
-@shared_task(name='messaging.retry_failed_messages')
-def retry_failed_messages(max_retries: int = 3, batch_size: int = 50):
-    """
-    Retry failed messages.
-    Run every 5 minutes via Celery beat.
-    """
-    dispatcher = MessageDispatcher()
-    retried = dispatcher.retry_failed(
-        max_retries=max_retries,
-        batch_size=batch_size
+    broadcasts = MessengerBroadcast.objects.filter(
+        status='SCHEDULED',
+        scheduled_at__lte=now
     )
     
-    if retried > 0:
-        logger.info(f"Retried {retried} failed messages")
-    
-    return {'retried': retried}
+    for broadcast in broadcasts:
+        try:
+            messenger = MessengerService(broadcast.account)
+            broadcast_service = MessengerBroadcastService(messenger)
+            
+            broadcast_service.send_broadcast(str(broadcast.id))
+            logger.info(f"Broadcast {broadcast.id} sent successfully")
+            
+        except Exception as e:
+            broadcast.status = 'FAILED'
+            broadcast.save()
+            logger.error(f"Error sending broadcast {broadcast.id}: {e}")
 
 
-@shared_task(name='messaging.send_message_async', bind=True, max_retries=3)
-def send_message_async(self, message_id: str):
-    """
-    Send a message asynchronously.
-    Used when we need to send without blocking the request.
-    """
-    try:
-        message = Message.objects.get(id=message_id)
-    except Message.DoesNotExist:
-        logger.error(f"Message not found: {message_id}")
-        return {'error': 'Message not found'}
+@shared_task
+def update_messenger_accounts():
+    """Atualiza informações de páginas do Messenger"""
+    from .models import MessengerAccount
     
-    dispatcher = MessageDispatcher()
+    accounts = MessengerAccount.objects.filter(is_active=True)
+    
+    for account in accounts:
+        try:
+            messenger = MessengerService(account)
+            platform = MessengerPlatformService(messenger)
+            
+            # Obtém informações da página
+            page_info = messenger.get(account.page_id)
+            account.page_name = page_info.get('name', account.page_name)
+            account.category = page_info.get('category', '')
+            account.followers_count = page_info.get('followers_count', 0)
+            account.last_sync_at = timezone.now()
+            account.save()
+            
+            logger.info(f"Account {account.page_name} updated")
+        except Exception as e:
+            logger.error(f"Error updating account {account.page_name}: {e}")
+
+
+@shared_task
+def process_messenger_webhook(payload: dict):
+    """Processa webhook do Messenger"""
+    from .models import MessengerWebhookLog, MessengerAccount
     
     try:
-        result = dispatcher._send_via_provider(
-            message,
-            dispatcher.get_provider(message.channel)
+        # Cria log
+        log = MessengerWebhookLog.objects.create(
+            object_type=payload.get('object'),
+            payload=payload
         )
-        return {
-            'success': result.success,
-            'external_id': result.external_id,
-            'error': result.error_message
-        }
+        
+        # Processa mensagens
+        for entry in payload.get('entry', []):
+            page_id = entry.get('id')
+            
+            try:
+                account = MessengerAccount.objects.get(page_id=page_id)
+            except MessengerAccount.DoesNotExist:
+                logger.warning(f"Account not found for page {page_id}")
+                continue
+            
+            messenger = MessengerService(account)
+            platform = MessengerPlatformService(messenger)
+            
+            for messaging_event in entry.get('messaging', []):
+                sender_id = messaging_event.get('sender', {}).get('id')
+                
+                # Obtém ou cria conversa
+                conversation = platform.get_or_create_conversation(sender_id)
+                
+                # Processa mensagem
+                if 'message' in messaging_event:
+                    message_data = messaging_event['message']
+                    
+                    # Atualiza contador de mensagens não lidas
+                    if not message_data.get('is_echo', False):
+                        conversation.unread_count += 1
+                        conversation.save()
+                        
+                        # Cria mensagem
+                        MessengerMessage.objects.create(
+                            conversation=conversation,
+                            messenger_message_id=message_data.get('mid'),
+                            message_type='TEXT' if 'text' in message_data else 'ATTACHMENT',
+                            content=message_data.get('text', ''),
+                            attachment_url=message_data.get('attachments', [{}])[0].get('payload', {}).get('url'),
+                            is_from_page=message_data.get('is_echo', False)
+                        )
+                
+                # Processa delivery
+                elif 'delivery' in messaging_event:
+                    delivery = messaging_event['delivery']
+                    for mid in delivery.get('mids', []):
+                        MessengerMessage.objects.filter(
+                            messenger_message_id=mid
+                        ).update(
+                            delivered_at=timezone.now()
+                        )
+                
+                # Processa leitura
+                elif 'read' in messaging_event:
+                    read = messaging_event['read']
+                    conversation.messages.filter(
+                        is_from_page=True,
+                        is_read=False
+                    ).update(
+                        is_read=True,
+                        read_at=timezone.now()
+                    )
+                
+                # Processa postback
+                elif 'postback' in messaging_event:
+                    postback = messaging_event['postback']
+                    MessengerMessage.objects.create(
+                        conversation=conversation,
+                        message_type='POSTBACK',
+                        content=postback.get('payload', ''),
+                        is_from_page=False
+                    )
+        
+        log.is_processed = True
+        log.processed_at = timezone.now()
+        log.save()
+        
     except Exception as e:
-        logger.exception(f"Failed to send message {message_id}")
-        
-        # Retry with exponential backoff
-        if self.request.retries < self.max_retries:
-            self.retry(countdown=60 * (2 ** self.request.retries))
-        
-        return {'error': str(e)}
+        logger.error(f"Error processing webhook: {e}")
 
 
-@shared_task(name='messaging.cleanup_old_messages')
-def cleanup_old_messages(days: int = 90):
-    """
-    Clean up old message logs and soft-delete old messages.
-    Run daily via Celery beat.
-    """
-    from datetime import timedelta
+@shared_task
+def cleanup_old_messenger_logs():
+    """Limpa logs antigos do Messenger"""
+    from .models import MessengerWebhookLog
     
-    cutoff_date = timezone.now() - timedelta(days=days)
-    
-    # Delete old logs first
-    from .models import MessageLog
-    logs_deleted, _ = MessageLog.objects.filter(
-        created_at__lt=cutoff_date
+    threshold = timezone.now() - timedelta(days=30)
+    deleted_count, _ = MessengerWebhookLog.objects.filter(
+        created_at__lt=threshold
     ).delete()
     
-    # Soft delete old messages
-    messages_updated = Message.objects.filter(
-        created_at__lt=cutoff_date,
-        is_active=True
-    ).update(is_active=False)
-    
-    logger.info(f"Cleanup complete: {logs_deleted} logs deleted, {messages_updated} messages archived")
-    
-    return {
-        'logs_deleted': logs_deleted,
-        'messages_archived': messages_updated
-    }
+    logger.info(f"Deleted {deleted_count} old messenger webhook logs")
 
 
-@shared_task(name='messaging.sync_message_status')
-def sync_message_status(batch_size: int = 100):
-    """
-    Sync message status with providers for pending messages.
-    Run every 10 minutes via Celery beat.
-    """
-    # Get pending/sent messages without final status
-    messages = Message.objects.filter(
-        status__in=[Message.Status.SENT, Message.Status.PENDING],
-        external_id__isnull=False,
-        created_at__gte=timezone.now() - timezone.timedelta(hours=24)
-    )[:batch_size]
+@shared_task
+def sync_messenger_insights():
+    """Sincroniza métricas de broadcasts e sponsored messages"""
+    # Atualiza métricas de broadcasts em andamento
+    active_broadcasts = MessengerBroadcast.objects.filter(
+        status__in=['PROCESSING', 'COMPLETED']
+    )
     
-    updated = 0
-    dispatcher = MessageDispatcher()
-    
-    for message in messages:
+    for broadcast in active_broadcasts:
         try:
-            provider = dispatcher.get_provider(message.channel)
-            status = provider.get_status(message.external_id)
-            
-            if status:
-                if status == 'delivered':
-                    message.mark_delivered()
-                elif status == 'read':
-                    message.mark_read()
-                elif status in ['failed', 'undelivered']:
-                    message.mark_failed(error_message='Provider reported failure')
-                
-                updated += 1
+            # Aqui seria feita a atualização real das métricas
+            # via API do Facebook
+            pass
         except Exception as e:
-            logger.warning(f"Failed to sync status for message {message.id}: {e}")
+            logger.error(f"Error syncing insights for broadcast {broadcast.id}: {e}")
     
-    if updated > 0:
-        logger.info(f"Synced status for {updated} messages")
+    # Atualiza métricas de sponsored messages ativas
+    active_sponsored = MessengerSponsoredMessage.objects.filter(
+        status='ACTIVE'
+    )
     
-    return {'synced': updated}
+    for sponsored in active_sponsored:
+        try:
+            # Aqui seria feita a atualização real via Facebook Marketing API
+            pass
+        except Exception as e:
+            logger.error(f"Error syncing insights for sponsored {sponsored.id}: {e}")

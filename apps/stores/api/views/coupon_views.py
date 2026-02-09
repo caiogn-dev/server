@@ -111,11 +111,18 @@ class StoreCouponViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get coupon statistics."""
-        store_id = request.query_params.get('store')
+        store_param = request.query_params.get('store')
         queryset = self.get_queryset()
         
-        if store_id:
-            queryset = queryset.filter(store_id=store_id)
+        # Handle store filtering by UUID or slug (same logic as get_queryset)
+        if store_param:
+            try:
+                # Try to parse as UUID
+                uuid_module.UUID(store_param)
+                queryset = queryset.filter(store_id=store_param)
+            except (ValueError, AttributeError):
+                # If not UUID, treat as slug
+                queryset = queryset.filter(store__slug=store_param)
         
         now = timezone.now()
         stats = {

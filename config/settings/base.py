@@ -52,8 +52,6 @@ INSTALLED_APPS = [
     'apps.instagram',  # Instagram Messaging API integration
     'apps.messaging',  # Unified messaging dispatcher
     'apps.webhooks',  # Centralized webhook handling
-    'apps.handover',  # Handover Protocol (Bot/Human transfer)
-    'apps.messenger',  # Facebook Messenger Platform
 ]
 
 MIDDLEWARE = [

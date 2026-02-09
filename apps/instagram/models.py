@@ -1,328 +1,442 @@
-"""
-Instagram models - Instagram accounts, messages, and webhook events.
-Uses Meta Graph API for Instagram Messaging.
-"""
 from django.db import models
-from django.contrib.auth import get_user_model
-from apps.core.models import BaseModel
-from apps.core.utils import token_encryption, mask_token
-
-User = get_user_model()
+from django.conf import settings
+import uuid
 
 
-class InstagramAccount(BaseModel):
-    """Instagram Business Account configuration."""
+class InstagramAccount(models.Model):
+    """Conta do Instagram conectada via Graph API"""
+    PLATFORM_CHOICES = [
+        ('instagram', 'Instagram'),
+        ('facebook', 'Facebook'),
+    ]
     
-    class AccountStatus(models.TextChoices):
-        ACTIVE = 'active', 'Active'
-        INACTIVE = 'inactive', 'Inactive'
-        SUSPENDED = 'suspended', 'Suspended'
-        PENDING = 'pending', 'Pending Verification'
-        EXPIRED = 'expired', 'Token Expired'
-
-    name = models.CharField(max_length=255, help_text="Display name for this account")
-    instagram_account_id = models.CharField(
-        max_length=50, 
-        unique=True, 
-        db_index=True,
-        help_text="Instagram Business Account ID (IGBA ID)"
-    )
-    instagram_user_id = models.CharField(
-        max_length=50, 
-        db_index=True,
-        help_text="Instagram User ID"
-    )
-    facebook_page_id = models.CharField(
-        max_length=50,
-        db_index=True,
-        help_text="Connected Facebook Page ID"
-    )
-    username = models.CharField(max_length=100, help_text="Instagram @username")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='instagram_accounts')
+    platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES, default='instagram')
     
-    # App credentials (from Meta Developer Console)
-    app_id = models.CharField(max_length=50, help_text="Instagram App ID")
-    app_secret_encrypted = models.TextField(help_text="Encrypted App Secret")
+    # Identificadores da API
+    instagram_business_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    facebook_page_id = models.CharField(max_length=255, null=True, blank=True)
+    username = models.CharField(max_length=255)
     
-    # Access token (long-lived)
-    access_token_encrypted = models.TextField(help_text="Encrypted access token")
+    # Tokens de acesso
+    access_token = models.TextField()
     token_expires_at = models.DateTimeField(null=True, blank=True)
-    token_version = models.PositiveIntegerField(default=1)
     
-    status = models.CharField(
-        max_length=20,
-        choices=AccountStatus.choices,
-        default=AccountStatus.PENDING
-    )
+    # Metadados
+    followers_count = models.IntegerField(default=0)
+    follows_count = models.IntegerField(default=0)
+    media_count = models.IntegerField(default=0)
+    profile_picture_url = models.URLField(null=True, blank=True)
+    biography = models.TextField(blank=True)
+    website = models.URLField(null=True, blank=True)
     
-    # Webhook configuration
-    webhook_verify_token = models.CharField(max_length=255, blank=True)
+    # Status
+    is_active = models.BooleanField(default=True)
+    is_verified = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_sync_at = models.DateTimeField(null=True, blank=True)
     
-    # Features
-    messaging_enabled = models.BooleanField(default=True)
-    auto_response_enabled = models.BooleanField(default=False)
-    human_handoff_enabled = models.BooleanField(default=True)
-    
-    # Profile info (cached from API)
-    profile_picture_url = models.URLField(blank=True)
-    followers_count = models.PositiveIntegerField(default=0)
-    
-    metadata = models.JSONField(default=dict, blank=True)
-    owner = models.ForeignKey(
-        User,
-        on_delete=models.CASCADE,
-        related_name='instagram_accounts',
-        null=True,
-        blank=True
-    )
-
     class Meta:
         db_table = 'instagram_accounts'
+        ordering = ['-created_at']
         verbose_name = 'Instagram Account'
         verbose_name_plural = 'Instagram Accounts'
+    
+    def __str__(self):
+        return f"@{self.username}"
+
+
+class InstagramMedia(models.Model):
+    """Posts, Stories e Reels do Instagram"""
+    MEDIA_TYPES = [
+        ('IMAGE', 'Imagem'),
+        ('VIDEO', 'Vídeo'),
+        ('CAROUSEL_ALBUM', 'Carrossel'),
+        ('REELS', 'Reels'),
+        ('STORY', 'Story'),
+        ('LIVE', 'Live'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('PUBLISHED', 'Publicado'),
+        ('SCHEDULED', 'Agendado'),
+        ('DRAFT', 'Rascunho'),
+        ('PROCESSING', 'Processando'),
+        ('FAILED', 'Falhou'),
+        ('ARCHIVED', 'Arquivado'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(InstagramAccount, on_delete=models.CASCADE, related_name='media')
+    
+    # Identificadores da API
+    instagram_media_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    shortcode = models.CharField(max_length=255, null=True, blank=True)
+    permalink = models.URLField(null=True, blank=True)
+    
+    # Conteúdo
+    media_type = models.CharField(max_length=20, choices=MEDIA_TYPES)
+    caption = models.TextField(blank=True)
+    media_url = models.URLField(null=True, blank=True)
+    thumbnail_url = models.URLField(null=True, blank=True)
+    
+    # Métricas
+    likes_count = models.IntegerField(default=0)
+    comments_count = models.IntegerField(default=0)
+    shares_count = models.IntegerField(default=0)
+    saves_count = models.IntegerField(default=0)
+    reach = models.IntegerField(default=0)
+    impressions = models.IntegerField(default=0)
+    
+    # Agendamento
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='DRAFT')
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    
+    # Shopping tags
+    has_product_tags = models.BooleanField(default=False)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'instagram_media'
+        ordering = ['-created_at']
+        verbose_name = 'Instagram Media'
+        verbose_name_plural = 'Instagram Media'
+    
+    def __str__(self):
+        return f"{self.media_type} - {self.caption[:50] if self.caption else 'Sem legenda'}"
+
+
+class InstagramMediaItem(models.Model):
+    """Itens individuais de um carrossel/album"""
+    media = models.ForeignKey(InstagramMedia, on_delete=models.CASCADE, related_name='items')
+    instagram_media_id = models.CharField(max_length=255)
+    media_type = models.CharField(max_length=20, choices=[('IMAGE', 'Imagem'), ('VIDEO', 'Vídeo')])
+    media_url = models.URLField()
+    thumbnail_url = models.URLField(null=True, blank=True)
+    order = models.PositiveIntegerField(default=0)
+    
+    class Meta:
+        db_table = 'instagram_media_items'
+        ordering = ['order']
+
+
+class InstagramProductTag(models.Model):
+    """Tags de produtos em mídias (Shopping)"""
+    media = models.ForeignKey(InstagramMedia, on_delete=models.CASCADE, related_name='product_tags')
+    product_id = models.CharField(max_length=255)
+    product_name = models.CharField(max_length=255)
+    position_x = models.FloatField()  # 0.0 a 1.0
+    position_y = models.FloatField()  # 0.0 a 1.0
+    
+    class Meta:
+        db_table = 'instagram_product_tags'
+
+
+class InstagramCatalog(models.Model):
+    """Catálogo de produtos do Instagram Shopping"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(InstagramAccount, on_delete=models.CASCADE, related_name='catalogs')
+    
+    # Identificadores
+    catalog_id = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'instagram_catalogs'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return self.name
+
+
+class InstagramProduct(models.Model):
+    """Produtos do catálogo"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    catalog = models.ForeignKey(InstagramCatalog, on_delete=models.CASCADE, related_name='products')
+    
+    # Identificadores
+    product_id = models.CharField(max_length=255, unique=True)
+    retailer_id = models.CharField(max_length=255, null=True, blank=True)
+    
+    # Informações do produto
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default='BRL')
+    availability = models.CharField(max_length=20, default='in stock')
+    condition = models.CharField(max_length=20, default='new')
+    
+    # Mídia
+    image_url = models.URLField()
+    additional_image_urls = models.JSONField(default=list, blank=True)
+    
+    # Links
+    url = models.URLField()
+    
+    # Status
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'instagram_products'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return self.name
+
+
+class InstagramLive(models.Model):
+    """Transmissões ao vivo do Instagram"""
+    STATUS_CHOICES = [
+        ('SCHEDULED', 'Agendada'),
+        ('LIVE', 'Ao vivo'),
+        ('ENDED', 'Finalizada'),
+        ('CANCELLED', 'Cancelada'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(InstagramAccount, on_delete=models.CASCADE, related_name='lives')
+    
+    # Identificadores
+    live_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    stream_url = models.URLField(null=True, blank=True)
+    stream_key = models.CharField(max_length=255, null=True, blank=True)
+    
+    # Informações
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    
+    # Métricas
+    viewers_count = models.IntegerField(default=0)
+    max_viewers = models.IntegerField(default=0)
+    comments_count = models.IntegerField(default=0)
+    
+    # Agendamento
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='SCHEDULED')
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    ended_at = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'instagram_lives'
+        ordering = ['-created_at']
+        verbose_name = 'Instagram Live'
+        verbose_name_plural = 'Instagram Lives'
+    
+    def __str__(self):
+        return self.title
+
+
+class InstagramLiveComment(models.Model):
+    """Comentários de lives"""
+    live = models.ForeignKey(InstagramLive, on_delete=models.CASCADE, related_name='comments')
+    comment_id = models.CharField(max_length=255)
+    username = models.CharField(max_length=255)
+    text = models.TextField()
+    created_at = models.DateTimeField()
+    
+    class Meta:
+        db_table = 'instagram_live_comments'
         ordering = ['-created_at']
 
-    def __str__(self):
-        return f"{self.name} (@{self.username})"
 
-    @property
-    def access_token(self) -> str:
-        """Decrypt and return the access token."""
-        return token_encryption.decrypt(self.access_token_encrypted)
-
-    @access_token.setter
-    def access_token(self, value: str):
-        """Encrypt and store the access token."""
-        self.access_token_encrypted = token_encryption.encrypt(value)
-        self.token_version += 1
-
-    @property
-    def app_secret(self) -> str:
-        """Decrypt and return the app secret."""
-        return token_encryption.decrypt(self.app_secret_encrypted)
-
-    @app_secret.setter
-    def app_secret(self, value: str):
-        """Encrypt and store the app secret."""
-        self.app_secret_encrypted = token_encryption.encrypt(value)
-
-    @property
-    def masked_token(self) -> str:
-        """Return masked token for display."""
-        return mask_token(self.access_token)
-
-    def rotate_token(self, new_token: str):
-        """Rotate the access token."""
-        self.access_token = new_token
-        self.save(update_fields=['access_token_encrypted', 'token_version', 'updated_at'])
-
-
-class InstagramConversation(BaseModel):
-    """Instagram DM conversation thread."""
+class InstagramConversation(models.Model):
+    """Conversas do Instagram Direct"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(InstagramAccount, on_delete=models.CASCADE, related_name='conversations')
     
-    class ConversationStatus(models.TextChoices):
-        ACTIVE = 'active', 'Active'
-        CLOSED = 'closed', 'Closed'
-        ARCHIVED = 'archived', 'Archived'
-
-    account = models.ForeignKey(
-        InstagramAccount,
-        on_delete=models.CASCADE,
-        related_name='conversations'
-    )
+    # Identificadores
+    instagram_conversation_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     
-    # Instagram user info
-    participant_id = models.CharField(max_length=50, db_index=True)
-    participant_username = models.CharField(max_length=100, blank=True)
+    # Participantes
+    participant_id = models.CharField(max_length=255)  # ID do usuário no Instagram
+    participant_username = models.CharField(max_length=255)
     participant_name = models.CharField(max_length=255, blank=True)
-    participant_profile_pic = models.URLField(blank=True)
+    participant_profile_pic = models.URLField(null=True, blank=True)
     
-    status = models.CharField(
-        max_length=20,
-        choices=ConversationStatus.choices,
-        default=ConversationStatus.ACTIVE
-    )
+    # Status
+    is_active = models.BooleanField(default=True)
+    unread_count = models.IntegerField(default=0)
     
-    # Stats
-    message_count = models.PositiveIntegerField(default=0)
+    # Timestamps
     last_message_at = models.DateTimeField(null=True, blank=True)
-    last_message_preview = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
-    # Agent/Support
-    assigned_to = models.ForeignKey(
-        User,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='assigned_ig_conversations'
-    )
-    
-    metadata = models.JSONField(default=dict, blank=True)
-
     class Meta:
         db_table = 'instagram_conversations'
+        ordering = ['-last_message_at', '-created_at']
         verbose_name = 'Instagram Conversation'
         verbose_name_plural = 'Instagram Conversations'
-        ordering = ['-last_message_at']
-        unique_together = ['account', 'participant_id']
-        indexes = [
-            models.Index(fields=['account', 'status', '-last_message_at']),
-        ]
-
+    
     def __str__(self):
-        return f"@{self.participant_username or self.participant_id}"
+        return f"Chat com {self.participant_username}"
 
 
-class InstagramMessage(BaseModel):
-    """Instagram DM message."""
+class InstagramMessage(models.Model):
+    """Mensagens do Instagram Direct"""
+    MESSAGE_TYPES = [
+        ('TEXT', 'Texto'),
+        ('IMAGE', 'Imagem'),
+        ('VIDEO', 'Vídeo'),
+        ('AUDIO', 'Áudio/Voz'),
+        ('FILE', 'Arquivo'),
+        ('STICKER', 'Sticker'),
+        ('REACTION', 'Reação'),
+        ('SHARE', 'Compartilhamento'),
+        ('STORY_REPLY', 'Resposta a Story'),
+        ('POST_SHARE', 'Compartilhamento de Post'),
+    ]
     
-    class MessageType(models.TextChoices):
-        TEXT = 'text', 'Text'
-        IMAGE = 'image', 'Image'
-        VIDEO = 'video', 'Video'
-        AUDIO = 'audio', 'Audio'
-        FILE = 'file', 'File'
-        SHARE = 'share', 'Share (Post/Reel/Story)'
-        STORY_MENTION = 'story_mention', 'Story Mention'
-        STORY_REPLY = 'story_reply', 'Story Reply'
-        REACTION = 'reaction', 'Reaction'
-        DELETED = 'deleted', 'Deleted'
-        UNKNOWN = 'unknown', 'Unknown'
-
-    class MessageDirection(models.TextChoices):
-        INBOUND = 'inbound', 'Inbound (received)'
-        OUTBOUND = 'outbound', 'Outbound (sent)'
-
-    class MessageStatus(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        SENT = 'sent', 'Sent'
-        DELIVERED = 'delivered', 'Delivered'
-        SEEN = 'seen', 'Seen'
-        FAILED = 'failed', 'Failed'
-
-    account = models.ForeignKey(
-        InstagramAccount,
-        on_delete=models.CASCADE,
-        related_name='messages'
-    )
-    conversation = models.ForeignKey(
-        InstagramConversation,
-        on_delete=models.CASCADE,
-        related_name='messages'
-    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(InstagramConversation, on_delete=models.CASCADE, related_name='messages')
     
-    # Instagram message ID (can be very long - up to 255 chars)
-    instagram_message_id = models.CharField(max_length=255, unique=True, db_index=True)
+    # Identificadores
+    instagram_message_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     
-    direction = models.CharField(max_length=10, choices=MessageDirection.choices)
-    message_type = models.CharField(max_length=20, choices=MessageType.choices)
-    status = models.CharField(
-        max_length=20,
-        choices=MessageStatus.choices,
-        default=MessageStatus.PENDING
-    )
+    # Conteúdo
+    message_type = models.CharField(max_length=20, choices=MESSAGE_TYPES, default='TEXT')
+    content = models.TextField(blank=True)
+    media_url = models.URLField(null=True, blank=True)
     
-    # Participants
-    sender_id = models.CharField(max_length=50, db_index=True)
-    recipient_id = models.CharField(max_length=50, db_index=True)
+    # Reações e respostas
+    reply_to_message = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='replies')
+    reaction_type = models.CharField(max_length=50, null=True, blank=True)  # ❤️, 👍, 😂, etc
     
-    # Content
-    text_content = models.TextField(blank=True)
+    # Remoção
+    is_unsent = models.BooleanField(default=False)
+    unsent_at = models.DateTimeField(null=True, blank=True)
     
-    # Media attachments
-    media_url = models.URLField(blank=True)
-    media_type = models.CharField(max_length=50, blank=True)
+    # Direção
+    is_from_business = models.BooleanField(default=False)  # True = enviada pela empresa
     
-    # For shares (posts, reels, stories)
-    shared_media_id = models.CharField(max_length=100, blank=True)
-    shared_media_url = models.URLField(blank=True)
-    
-    # Reply context
-    reply_to_message_id = models.CharField(max_length=100, blank=True)
+    # Status
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
     
     # Timestamps
     sent_at = models.DateTimeField(null=True, blank=True)
-    delivered_at = models.DateTimeField(null=True, blank=True)
-    seen_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
     
-    # Error handling
-    error_code = models.CharField(max_length=50, blank=True)
-    error_message = models.TextField(blank=True)
-    
-    metadata = models.JSONField(default=dict, blank=True)
-
     class Meta:
         db_table = 'instagram_messages'
+        ordering = ['created_at']
         verbose_name = 'Instagram Message'
         verbose_name_plural = 'Instagram Messages'
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['conversation', '-created_at']),
-            models.Index(fields=['account', 'sender_id', '-created_at']),
-            models.Index(fields=['status', '-created_at']),
-        ]
-
+    
     def __str__(self):
-        return f"{self.direction}: {self.sender_id} -> {self.recipient_id} ({self.message_type})"
+        return f"{self.message_type}: {self.content[:50] if self.content else '(sem texto)'}"
 
 
-class InstagramWebhookEvent(BaseModel):
-    """Webhook event log for idempotency and debugging."""
+class InstagramWebhookLog(models.Model):
+    """Logs de webhooks do Instagram"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
-    class EventType(models.TextChoices):
-        MESSAGES = 'messages', 'Messages'
-        MESSAGING_POSTBACKS = 'messaging_postbacks', 'Messaging Postbacks'
-        MESSAGING_SEEN = 'messaging_seen', 'Messaging Seen'
-        MESSAGING_REFERRAL = 'messaging_referral', 'Messaging Referral'
-        COMMENTS = 'comments', 'Comments'
-        UNKNOWN = 'unknown', 'Unknown'
-
-    class ProcessingStatus(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        PROCESSING = 'processing', 'Processing'
-        COMPLETED = 'completed', 'Completed'
-        FAILED = 'failed', 'Failed'
-        DUPLICATE = 'duplicate', 'Duplicate'
-
-    account = models.ForeignKey(
-        InstagramAccount,
-        on_delete=models.CASCADE,
-        related_name='webhook_events',
-        null=True,
-        blank=True
-    )
-    
-    event_id = models.CharField(max_length=100, unique=True, db_index=True)
-    event_type = models.CharField(max_length=30, choices=EventType.choices)
-    processing_status = models.CharField(
-        max_length=20,
-        choices=ProcessingStatus.choices,
-        default=ProcessingStatus.PENDING
-    )
-    
+    # Dados do webhook
+    object_type = models.CharField(max_length=50)  # instagram, page, etc
+    field = models.CharField(max_length=50)  # messages, mentions, etc
     payload = models.JSONField()
-    headers = models.JSONField(default=dict)
     
+    # Status de processamento
+    is_processed = models.BooleanField(default=False)
     processed_at = models.DateTimeField(null=True, blank=True)
-    retry_count = models.PositiveIntegerField(default=0)
     error_message = models.TextField(blank=True)
     
-    related_message = models.ForeignKey(
-        InstagramMessage,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='webhook_events'
-    )
-
+    created_at = models.DateTimeField(auto_now_add=True)
+    
     class Meta:
-        db_table = 'instagram_webhook_events'
-        verbose_name = 'Instagram Webhook Event'
-        verbose_name_plural = 'Instagram Webhook Events'
+        db_table = 'instagram_webhook_logs'
         ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['processing_status', '-created_at']),
-            models.Index(fields=['event_type', '-created_at']),
-        ]
 
-    def __str__(self):
-        return f"{self.event_type}: {self.event_id} ({self.processing_status})"
+
+class InstagramScheduledPost(models.Model):
+    """Posts agendados do Instagram"""
+    MEDIA_TYPES = [
+        ('IMAGE', 'Imagem'),
+        ('VIDEO', 'Vídeo'),
+        ('CAROUSEL', 'Carrossel'),
+        ('REELS', 'Reels'),
+        ('STORY', 'Story'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('PENDING', 'Pendente'),
+        ('PROCESSING', 'Processando'),
+        ('PUBLISHED', 'Publicado'),
+        ('FAILED', 'Falhou'),
+        ('CANCELLED', 'Cancelado'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(InstagramAccount, on_delete=models.CASCADE, related_name='scheduled_posts')
+    
+    # Conteúdo
+    media_type = models.CharField(max_length=20, choices=MEDIA_TYPES)
+    caption = models.TextField(blank=True)
+    media_files = models.JSONField(default=list)  # Lista de URLs/arquivos
+    
+    # Configurações
+    schedule_time = models.DateTimeField()
+    timezone = models.CharField(max_length=50, default='America/Sao_Paulo')
+    
+    # Shopping
+    product_tags = models.JSONField(default=list, blank=True)
+    
+    # Status
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    instagram_media_id = models.CharField(max_length=255, null=True, blank=True)
+    
+    # Resultado
+    error_message = models.TextField(blank=True)
+    published_at = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'instagram_scheduled_posts'
+        ordering = ['schedule_time']
+
+
+class InstagramInsight(models.Model):
+    """Métricas e insights do Instagram"""
+    account = models.ForeignKey(InstagramAccount, on_delete=models.CASCADE, related_name='insights')
+    media = models.ForeignKey(InstagramMedia, on_delete=models.CASCADE, related_name='insights', null=True, blank=True)
+    
+    # Período
+    date = models.DateField()
+    
+    # Métricas da conta
+    impressions = models.IntegerField(default=0)
+    reach = models.IntegerField(default=0)
+    profile_views = models.IntegerField(default=0)
+    website_clicks = models.IntegerField(default=0)
+    
+    # Métricas de seguidores
+    follower_count = models.IntegerField(default=0)
+    followers_gained = models.IntegerField(default=0)
+    followers_lost = models.IntegerField(default=0)
+    
+    # Métricas de engajamento
+    engagement = models.IntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'instagram_insights'
+        ordering = ['-date']
+        unique_together = ['account', 'media', 'date']

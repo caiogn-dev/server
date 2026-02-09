@@ -1,21 +1,19 @@
+# Messaging Module
 """
-Messaging App - Centralized message dispatching system.
+Módulo de integração com Messenger Platform.
 
-This app provides a unified interface for sending messages across multiple channels:
-- WhatsApp
-- Instagram
-- Email
+Funcionalidades:
+- Messenger Platform (webhooks, profile)
+- Messenger Advanced (broadcast, sponsored messages, extensions)
+- Handover Protocol
+- One-Time Notification
 
-Usage:
-    from apps.messaging.dispatcher import MessageDispatcher
-    
-    dispatcher = MessageDispatcher()
-    result = dispatcher.send_message(
-        channel='whatsapp',
-        recipient='+5511999999999',
-        content={'text': 'Hello!'},
-        store_id='store-uuid'
-    )
+Estrutura:
+- models.py: Modelos de dados
+- services/: Serviços de integração com APIs
+- api/: Views e serializers REST
+- tasks.py: Tarefas Celery
+- admin.py: Configuração do Django Admin
 """
 
 default_app_config = 'apps.messaging.apps.MessagingConfig'

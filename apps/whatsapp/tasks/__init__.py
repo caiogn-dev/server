@@ -2,10 +2,37 @@
 WhatsApp Celery tasks.
 """
 import logging
+import time
 from celery import shared_task
 from django.utils import timezone
+from django.conf import settings
+import redis
 
 logger = logging.getLogger(__name__)
+
+# Redis client for distributed locking
+def get_redis_client():
+    """Get Redis client for locking."""
+    try:
+        return redis.from_url(settings.CELERY_BROKER_URL)
+    except Exception:
+        return None
+
+def acquire_lock(lock_name, timeout=60):
+    """Acquire a distributed lock using Redis."""
+    client = get_redis_client()
+    if not client:
+        return True  # No Redis, no lock
+    
+    # Try to acquire lock with NX (only if not exists)
+    acquired = client.set(lock_name, "1", nx=True, ex=timeout)
+    return acquired
+
+def release_lock(lock_name):
+    """Release a distributed lock."""
+    client = get_redis_client()
+    if client:
+        client.delete(lock_name)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
@@ -57,6 +84,12 @@ def process_message_with_agent(self, message_id: str):
     from apps.conversations.services import ConversationService
     
     message_repo = MessageRepository()
+    
+    # Acquire distributed lock to prevent duplicate processing
+    lock_name = f"process_message_with_agent:{message_id}"
+    if not acquire_lock(lock_name, timeout=120):
+        logger.info(f"Message {message_id} is already being processed by another worker")
+        return
     
     try:
         message = message_repo.get_by_id(message_id)
@@ -112,6 +145,9 @@ def process_message_with_agent(self, message_id: str):
     except Exception as e:
         logger.error(f"Error processing message with AI Agent {message_id}: {str(e)}")
         raise self.retry(exc=e)
+    finally:
+        # Always release the lock
+        release_lock(lock_name)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -121,9 +157,12 @@ def send_agent_response(self, account_id: str, to: str, response_text: str, repl
     
     try:
         message_service = MessageService()
+        # Ensure phone number has + prefix for E.164 format
+        formatted_to = to if to.startswith('+') else '+' + to
+        
         message_service.send_text_message(
             account_id=account_id,
-            to=to,
+            to=formatted_to,
             text=response_text,
             reply_to=reply_to,
             metadata={'source': 'ai_agent'}

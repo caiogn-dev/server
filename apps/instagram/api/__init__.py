@@ -1,21 +1,29 @@
 from .views import (
     InstagramAccountViewSet,
+    InstagramMediaViewSet,
+    InstagramShoppingViewSet,
+    InstagramLiveViewSet,
     InstagramConversationViewSet,
     InstagramMessageViewSet,
-    InstagramWebhookView
+    InstagramWebhookViewSet
 )
 from .serializers import (
     InstagramAccountSerializer,
+    InstagramMediaSerializer,
     InstagramConversationSerializer,
     InstagramMessageSerializer
 )
 
 __all__ = [
     'InstagramAccountViewSet',
-    'InstagramConversationViewSet', 
+    'InstagramMediaViewSet',
+    'InstagramShoppingViewSet',
+    'InstagramLiveViewSet',
+    'InstagramConversationViewSet',
     'InstagramMessageViewSet',
-    'InstagramWebhookView',
+    'InstagramWebhookViewSet',
     'InstagramAccountSerializer',
+    'InstagramMediaSerializer',
     'InstagramConversationSerializer',
     'InstagramMessageSerializer'
 ]
