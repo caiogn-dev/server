@@ -56,7 +56,7 @@ class ConversationHandover(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        related_name='assigned_conversations',
+        related_name='assigned_handovers',
         verbose_name='Atribuído a'
     )
     last_transfer_at = models.DateTimeField(
