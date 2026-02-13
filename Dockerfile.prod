@@ -1,0 +1,71 @@
+# Stage 1: Build
+FROM python:3.11-alpine AS builder
+
+# Evita arquivos .pyc e buffer de log
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Instala dependências de compilação + coreutils (GNU)
+RUN apk add --no-cache \
+    build-base \
+    postgresql-dev \
+    coreutils \
+    libffi-dev \
+    linux-headers
+
+WORKDIR /build
+
+# Instalação isolada em venv
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ---
+# Stage 2: Runtime
+FROM python:3.11-alpine
+
+# Coreutils garante /usr/bin/ls para compatibilidade
+# libpq: runtime do postgres
+# curl: healthcheck
+# tzdata: essencial para Django gerenciar fusos horários corretamente
+RUN apk add --no-cache \
+    coreutils \
+    libpq \
+    curl \
+    tzdata
+
+# Configurações de ambiente
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app"
+
+WORKDIR /app
+
+# Copia apenas o venv do builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Cria usuário de sistema e estrutura de pastas antes de copiar o código
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup -u 1000 && \
+    mkdir -p /app/staticfiles /app/media /app/logs && \
+    chown -R appuser:appgroup /app
+
+# Copia o código com permissões corretas (evita camadas extras de chown)
+COPY --chown=appuser:appgroup . .
+
+# Switch para usuário não-root
+USER appuser
+
+EXPOSE 8000
+
+# Usa exec form para que o Gunicorn receba sinais do Docker (SIGTERM)
+CMD ["gunicorn", "config.asgi:application", \
+     "--workers", "3", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]

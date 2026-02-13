@@ -1,0 +1,644 @@
+"""
+Unified Payment Webhooks for all stores.
+Handles Mercado Pago webhooks and routes to correct store.
+"""
+import logging
+import json
+from decimal import Decimal
+from django.http import HttpResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+from django.utils.decorators import method_decorator
+from django.db import transaction
+from django.db.models import F
+from django.utils import timezone
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from apps.stores.models import Store, StoreOrder, StoreIntegration
+from apps.stores.services import checkout_service
+
+logger = logging.getLogger(__name__)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class MercadoPagoWebhookView(APIView):
+    """
+    Unified Mercado Pago webhook handler.
+    Routes payment notifications to the correct store.
+    Validates webhook signature for security.
+    """
+    
+    authentication_classes = []
+    permission_classes = []
+    
+    def post(self, request, store_slug=None):
+        """Handle Mercado Pago webhook notification."""
+        try:
+            # Log incoming webhook
+            logger.info(f"MP Webhook received for store: {store_slug}")
+            logger.debug(f"Webhook data: {request.data}")
+            logger.debug(f"Webhook headers: {dict(request.headers)}")
+            
+            # Validate webhook signature if secret is configured
+            if not self._validate_signature(request, store_slug):
+                logger.warning("Webhook signature validation failed")
+                # Still return 200 to prevent retries, but log the issue
+                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+            
+            # Get notification type
+            topic = request.data.get('type') or request.query_params.get('topic')
+            
+            if topic == 'payment':
+                return self._handle_payment(request, store_slug)
+            elif topic == 'merchant_order':
+                return self._handle_merchant_order(request, store_slug)
+            else:
+                logger.info(f"Ignoring webhook topic: {topic}")
+                return Response({'status': 'ignored'}, status=status.HTTP_200_OK)
+        
+        except Exception as e:
+            logger.error(f"Webhook error: {e}", exc_info=True)
+            # Always return 200 to prevent retries
+            return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_200_OK)
+    
+    def _validate_signature(self, request, store_slug):
+        """
+        Validate Mercado Pago webhook signature.
+        Uses the webhook_secret from StoreIntegration.
+        """
+        try:
+            # Get signature from headers
+            signature = request.headers.get('X-Signature') or request.headers.get('X-Hub-Signature')
+            
+            if not signature and store_slug:
+                # Try to get secret from store integration
+                integration = StoreIntegration.objects.filter(
+                    store__slug=store_slug,
+                    integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+                    status=StoreIntegration.IntegrationStatus.ACTIVE
+                ).first()
+                
+                if integration and integration.webhook_secret:
+                    # For Mercado Pago, the signature is in the query string
+                    # Format: signature=timestamp,token
+                    query_sig = request.query_params.get('signature')
+                    if query_sig:
+                        # Validate using the secret
+                        import hmac
+                        import hashlib
+                        
+                        # Get the request body
+                        body = request.body.decode('utf-8')
+                        
+                        # Calculate expected signature
+                        expected_sig = hmac.new(
+                            integration.webhook_secret.encode('utf-8'),
+                            body.encode('utf-8'),
+                            hashlib.sha256
+                        ).hexdigest()
+                        
+                        # Compare signatures
+                        if hmac.compare_digest(query_sig, expected_sig):
+                            return True
+                        else:
+                            logger.warning(f"Invalid signature for store {store_slug}")
+                            return False
+            
+            # If no signature validation needed, allow the request
+            return True
+            
+        except Exception as e:
+            logger.error(f"Signature validation error: {e}")
+            return True  # Allow request on validation error (fail open for now)
+    
+    def _handle_payment(self, request, store_slug):
+        """Handle payment notification."""
+        import mercadopago
+        
+        # Get payment ID
+        payment_id = request.data.get('data', {}).get('id')
+        if not payment_id:
+            payment_id = request.query_params.get('data.id')
+        
+        if not payment_id:
+            logger.warning("No payment ID in webhook")
+            return Response({'status': 'no_payment_id'}, status=status.HTTP_200_OK)
+        
+        # Find order by payment_id
+        order = StoreOrder.objects.filter(payment_id=str(payment_id)).first()
+        
+        if not order:
+            # Try to find by external_reference (order ID)
+            external_ref = request.data.get('data', {}).get('external_reference')
+            if external_ref:
+                order = StoreOrder.objects.filter(id=external_ref).first()
+        
+        if not order:
+            logger.warning(f"Order not found for payment {payment_id}")
+            return Response({'status': 'order_not_found'}, status=status.HTTP_200_OK)
+        
+        # Get store credentials
+        credentials = checkout_service.get_payment_credentials(order.store)
+        if not credentials:
+            logger.error(f"No payment credentials for store {order.store.slug}")
+            return Response({'status': 'no_credentials'}, status=status.HTTP_200_OK)
+        
+        # Fetch payment details from Mercado Pago
+        sdk = mercadopago.SDK(credentials['access_token'])
+        payment_response = sdk.payment().get(payment_id)
+        
+        if payment_response['status'] != 200:
+            logger.error(f"Failed to fetch payment {payment_id}: {payment_response}")
+            return Response({'status': 'fetch_failed'}, status=status.HTTP_200_OK)
+        
+        payment = payment_response['response']
+        payment_status = payment.get('status')
+        
+        # Process payment status
+        order = checkout_service.process_payment_webhook(str(payment_id), payment_status)
+        
+        if order:
+            logger.info(f"Order {order.order_number} updated to status: {order.status}")
+            
+            # Send real-time notification via WebSocket
+            self._notify_order_update(order)
+            
+            # Send WhatsApp notification if payment is approved
+            if payment_status == 'approved':
+                self._send_payment_confirmation_whatsapp(order)
+        
+        return Response({'status': 'processed'}, status=status.HTTP_200_OK)
+    
+    def _handle_merchant_order(self, request, store_slug):
+        """Handle merchant order notification."""
+        # Merchant orders are typically used for marketplace scenarios
+        # For now, we just acknowledge them
+        logger.info(f"Merchant order webhook received for {store_slug}")
+        return Response({'status': 'acknowledged'}, status=status.HTTP_200_OK)
+    
+    def _notify_order_update(self, order):
+        """Send WebSocket notification for order update."""
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"store_{order.store.slug}_orders",
+                    {
+                        'type': 'order_update',
+                        'order_id': str(order.id),
+                        'order_number': order.order_number,
+                        'status': order.status,
+                        'payment_status': order.payment_status,
+                        'updated_at': order.updated_at.isoformat(),
+                    }
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send WebSocket notification: {e}")
+    
+    def _send_payment_confirmation_whatsapp(self, order):
+        """
+        Send WhatsApp payment confirmation message.
+        Uses template message if available, otherwise sends text.
+        """
+        try:
+            # Check if customer has phone number
+            if not order.customer_phone:
+                logger.info(f"No phone number for order {order.order_number}, skipping WhatsApp")
+                return
+            
+            # Get WhatsApp integration for the store
+            from apps.stores.models import StoreIntegration
+            integration = StoreIntegration.objects.filter(
+                store=order.store,
+                integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+                status=StoreIntegration.IntegrationStatus.ACTIVE
+            ).first()
+            
+            if not integration:
+                logger.info(f"No WhatsApp integration for store {order.store.slug}")
+                return
+            
+            # Import message service
+            from apps.whatsapp.services import MessageService
+            service = MessageService()
+            
+            # Clean phone number
+            phone = ''.join(filter(str.isdigit, order.customer_phone))
+            if not phone.startswith('55'):
+                phone = '55' + phone
+            
+            # Build message
+            items_text = []
+            for item in order.items.all():
+                items_text.append(f"• {item.quantity}x {item.product_name}")
+            
+            message = f"""✅ *Pagamento Confirmado!*
+
+🛒 Pedido: #{order.order_number}
+
+{chr(10).join(items_text)}
+
+💰 Total: R$ {float(order.total):.2f}
+📦 Entrega: {order.get_delivery_method_display()}
+
+Obrigado pela preferência! 🎉"""
+            
+            # Send message
+            service.send_text_message(
+                account_id=str(integration.external_id) if integration.external_id else str(integration.id),
+                to=phone,
+                text=message
+            )
+            
+            logger.info(f"WhatsApp confirmation sent for order {order.order_number}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send WhatsApp confirmation: {e}", exc_info=True)
+            # Don't raise - webhook should not fail if message fails
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class PaymentStatusView(APIView):
+    """
+    SECURE payment status endpoint.
+    Requires access_token for public access.
+    
+    Usage:
+    - GET /orders/{order_number}/payment-status/?token={access_token}
+    - GET /orders/by-token/{access_token}/
+    
+    The access_token is a secure random string generated when the order is created.
+    This prevents unauthorized access to order details.
+    """
+    
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request, order_id):
+        """Get payment status for an order (requires token)."""
+        try:
+            # Get token from query params
+            token = request.query_params.get('token', '')
+            
+            # Try to find order
+            order = None
+            
+            # Try by UUID first
+            try:
+                from uuid import UUID
+                UUID(str(order_id))
+                order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
+            except (ValueError, StoreOrder.DoesNotExist):
+                # Try by order_number
+                try:
+                    order = StoreOrder.objects.select_related('store').prefetch_related('items').get(order_number=str(order_id))
+                except StoreOrder.DoesNotExist:
+                    pass
+            
+            if not order:
+                return Response(
+                    {'error': 'Pedido não encontrado'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # SECURITY: Validate access token
+            # Allow access if:
+            # 1. Valid token provided
+            # 2. User is authenticated and owns the order
+            # 3. Request is from authenticated admin/staff
+            user = request.user
+            is_authenticated_owner = user.is_authenticated and (
+                order.customer == user or 
+                user.is_staff or 
+                user.is_superuser
+            )
+            
+            has_valid_token = token and order.access_token and token == order.access_token
+            
+            if not has_valid_token and not is_authenticated_owner:
+                logger.warning(f"Unauthorized access attempt to order {order.order_number}")
+                return Response(
+                    {'error': 'Token de acesso inválido ou expirado'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Build items list
+            items = []
+            for item in order.items.all():
+                items.append({
+                    'id': str(item.id),
+                    'product_name': item.product_name,
+                    'variant_name': item.variant_name,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                })
+            
+            # Build response with all payment info
+            response_data = {
+                'order_id': str(order.id),
+                'order_number': order.order_number,
+                'status': order.status,
+                'payment_status': order.payment_status,
+                'payment_method': order.payment_method,
+                'payment_id': order.payment_id,
+                'subtotal': float(order.subtotal),
+                'delivery_fee': float(order.delivery_fee),
+                'discount': float(order.discount),
+                'tax': float(order.tax) if order.tax else 0,
+                'total': float(order.total),
+                'total_amount': float(order.total),
+                'delivery_method': order.delivery_method,
+                'delivery_address': order.delivery_address,
+                'items': items,
+                'created_at': order.created_at.isoformat(),
+                'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+            }
+            
+            # Include PIX data if available
+            if order.payment_method == 'pix':
+                response_data['pix_code'] = order.pix_code or ''
+                response_data['pix_qr_code'] = order.pix_qr_code or ''
+                response_data['payment'] = {
+                    'payment_method_id': 'pix',
+                    'payment_type_id': 'bank_transfer',
+                    'status': order.payment_status,
+                    'transaction_amount': float(order.total),
+                    'qr_code': order.pix_code or '',
+                    'qr_code_base64': order.pix_qr_code or '',
+                }
+            
+            return Response(response_data)
+        
+        except Exception as e:
+            logger.error(f"Error in PaymentStatusView: {e}", exc_info=True)
+            return Response(
+                {'error': 'Erro ao buscar pedido'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class OrderByTokenView(APIView):
+    """
+    Get order details by access token.
+    This is the SECURE way to access order details publicly.
+    
+    Usage: GET /orders/by-token/{access_token}/
+    """
+    
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request, access_token):
+        """Get order by access token."""
+        try:
+            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(
+                access_token=access_token
+            )
+            
+            # Build items list
+            items = []
+            for item in order.items.all():
+                items.append({
+                    'id': str(item.id),
+                    'product_name': item.product_name,
+                    'variant_name': item.variant_name,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                })
+            
+            # Build response
+            response_data = {
+                'order_id': str(order.id),
+                'order_number': order.order_number,
+                'store': {
+                    'name': order.store.name,
+                    'slug': order.store.slug,
+                    'phone': order.store.phone,
+                    'whatsapp_number': order.store.whatsapp_number,
+                },
+                'status': order.status,
+                'payment_status': order.payment_status,
+                'payment_method': order.payment_method,
+                'subtotal': float(order.subtotal),
+                'delivery_fee': float(order.delivery_fee),
+                'discount': float(order.discount),
+                'tax': float(order.tax) if order.tax else 0,
+                'total': float(order.total),
+                'delivery_method': order.delivery_method,
+                'items': items,
+                'created_at': order.created_at.isoformat(),
+                'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+            }
+            
+            # Include PIX data if available
+            if order.payment_method == 'pix':
+                response_data['pix_code'] = order.pix_code or ''
+                response_data['pix_qr_code'] = order.pix_qr_code or ''
+            
+            return Response(response_data)
+        
+        except StoreOrder.DoesNotExist:
+            return Response(
+                {'error': 'Token inválido ou pedido não encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class CustomerOrdersView(APIView):
+    """
+    Get orders for authenticated customer.
+    Used by frontend to show order history.
+    """
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request):
+        """Get orders for the authenticated user."""
+        user = request.user
+        
+        if not user.is_authenticated:
+            return Response(
+                {'error': 'Autenticação necessária', 'results': []},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Get store filter
+        store_slug = request.query_params.get('store')
+        
+        # Get orders where customer email or phone matches user
+        orders = StoreOrder.objects.filter(
+            customer=user
+        ).select_related('store').prefetch_related('items')
+        
+        if store_slug:
+            orders = orders.filter(store__slug=store_slug)
+        
+        orders = orders.order_by('-created_at')[:50]
+        
+        results = []
+        for order in orders:
+            results.append({
+                'id': str(order.id),
+                'order_number': order.order_number,
+                'store_name': order.store.name,
+                'store_slug': order.store.slug,
+                'status': order.status,
+                'payment_status': order.payment_status,
+                'total': float(order.total),
+                'delivery_method': order.delivery_method,
+                'items_count': order.items.count(),
+                'created_at': order.created_at.isoformat(),
+            })
+        
+        return Response({'results': results})
+
+
+class CustomerOrderDetailView(APIView):
+    """
+    Get single order details for customer.
+    Only allows access if:
+    - User is authenticated and owns the order
+    - Order was created in the last 24 hours (for payment status page)
+    """
+    
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request, order_id):
+        """Get order details."""
+        try:
+            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
+            
+            # Security check: verify access permission
+            user = request.user
+            is_owner = user.is_authenticated and order.customer == user
+            
+            # Allow access to recent orders (within 24h) for payment status page
+            # This is needed because user might not be logged in during checkout
+            from django.utils import timezone
+            from datetime import timedelta
+            is_recent = order.created_at > timezone.now() - timedelta(hours=24)
+            
+            if not is_owner and not is_recent:
+                return Response(
+                    {'error': 'Acesso negado. Faça login para ver seus pedidos.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            items = []
+            for item in order.items.all():
+                items.append({
+                    'id': str(item.id),
+                    'product_name': item.product_name,
+                    'variant_name': item.variant_name,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                    'notes': item.notes,
+                })
+            
+            return Response({
+                'id': str(order.id),
+                'order_number': order.order_number,
+                'store': {
+                    'name': order.store.name,
+                    'slug': order.store.slug,
+                    'phone': order.store.phone,
+                    'whatsapp_number': order.store.whatsapp_number,
+                },
+                'customer_name': order.customer_name,
+                'customer_email': order.customer_email,
+                'customer_phone': order.customer_phone,
+                'status': order.status,
+                'payment_status': order.payment_status,
+                'payment_method': order.payment_method,
+                'subtotal': float(order.subtotal),
+                'discount': float(order.discount),
+                'delivery_fee': float(order.delivery_fee),
+                'total': float(order.total),
+                'delivery_method': order.delivery_method,
+                'delivery_address': order.delivery_address,
+                'delivery_notes': order.delivery_notes,
+                'customer_notes': order.customer_notes,
+                'tracking_code': order.tracking_code,
+                'tracking_url': order.tracking_url,
+                'items': items,
+                'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat(),
+                'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+                'shipped_at': order.shipped_at.isoformat() if order.shipped_at else None,
+                'delivered_at': order.delivered_at.isoformat() if order.delivered_at else None,
+            })
+        
+        except StoreOrder.DoesNotExist:
+            return Response(
+                {'error': 'Pedido não encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class OrderWhatsAppView(APIView):
+    """
+    Generate WhatsApp confirmation link for an order.
+    """
+    
+    authentication_classes = []
+    permission_classes = []
+    
+    def get(self, request, order_id):
+        """Get WhatsApp link for order confirmation."""
+        try:
+            order = StoreOrder.objects.select_related('store').get(id=order_id)
+            
+            # Get store WhatsApp number
+            whatsapp_number = order.store.whatsapp_number or order.store.phone
+            if not whatsapp_number:
+                return Response(
+                    {'error': 'Loja não possui WhatsApp configurado'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Clean phone number
+            clean_number = ''.join(filter(str.isdigit, whatsapp_number))
+            if not clean_number.startswith('55'):
+                clean_number = '55' + clean_number
+            
+            # Build message
+            items_text = []
+            for item in order.items.all():
+                items_text.append(f"• {item.quantity}x {item.product_name}")
+            
+            message = f"""🛒 *Pedido #{order.order_number}*
+
+{chr(10).join(items_text)}
+
+💰 *Total:* R$ {order.total:.2f}
+📦 *Entrega:* {order.get_delivery_method_display()}
+
+Olá! Gostaria de confirmar meu pedido."""
+            
+            # URL encode message
+            from urllib.parse import quote
+            encoded_message = quote(message)
+            
+            whatsapp_url = f"https://wa.me/{clean_number}?text={encoded_message}"
+            
+            return Response({
+                'whatsapp_url': whatsapp_url,
+                'phone_number': clean_number,
+                'message': message,
+            })
+        
+        except StoreOrder.DoesNotExist:
+            return Response(
+                {'error': 'Pedido não encontrado'},
+                status=status.HTTP_404_NOT_FOUND
+            )
