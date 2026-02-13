@@ -6,6 +6,8 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.core.exceptions import ObjectDoesNotExist
 from django.middleware.csrf import get_token
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -81,6 +83,7 @@ class UpdateProfileSerializer(serializers.Serializer):
     zip_code = serializers.CharField(max_length=10, required=False, allow_blank=True)
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     """Login endpoint to obtain authentication token."""
     permission_classes = [AllowAny]
