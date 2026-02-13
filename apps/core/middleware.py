@@ -113,14 +113,14 @@ class RequestLoggingMiddleware:
         
         request.request_id = request_id
 
-        # DEBUG: log Authorization header for API requests to diagnose missing credentials
-        try:
-            auth_hdr = request.META.get('HTTP_AUTHORIZATION', None)
-            if request.path.startswith('/api/'):
-                # Use INFO so message appears in production logs
-                logger.info(f"Incoming Authorization header: {auth_hdr}")
-        except Exception:
-            pass
+        # Log auth status (not the actual token!) for debugging
+        if settings.DEBUG and request.path.startswith('/api/'):
+            try:
+                auth_hdr = request.META.get('HTTP_AUTHORIZATION', None)
+                auth_type = auth_hdr.split()[0] if auth_hdr else None
+                logger.debug(f"API request auth type: {auth_type or 'None'}")
+            except Exception:
+                pass
 
         response = self.get_response(request)
 

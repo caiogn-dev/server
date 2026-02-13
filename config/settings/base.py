@@ -12,7 +12,9 @@ SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'y
 
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
-ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', '*').split(',')
+# SECURITY: Don't allow wildcard by default - require explicit configuration
+_allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else ['localhost', '127.0.0.1']
 # Add Railway domain automatically
 ALLOWED_HOSTS.extend([
     'server-production-1e57.up.railway.app',
@@ -185,9 +187,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '1000/minute',
-        'user': '10000/minute',
-        'webhook': '10000/hour',
+        'anon': '60/minute',      # Reduzido de 1000 para segurança
+        'user': '300/minute',     # Reduzido de 10000 para segurança
+        'webhook': '10000/hour',  # Webhooks podem ter volume alto
+        'auth': '10/minute',      # Novo: limite para endpoints de auth
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }

@@ -81,7 +81,7 @@ class LangchainService:
             )
             return history
         except Exception as e:
-            print(f"Error creating memory: {e}")
+            logger.error(f"Error creating memory: {e}")
             return None
     
     def _generate_session_id(self) -> str:
@@ -292,17 +292,17 @@ class LangchainService:
         if memory:
             history_messages = memory.messages
             if history_messages:
-                print(f"[AGENT DEBUG] Loaded {len(history_messages)} messages from memory for session {session_id}")
+                logger.debug(f"[AGENT] Loaded {len(history_messages)} messages from memory for session {session_id}")
                 messages.extend(history_messages)
             else:
-                print(f"[AGENT DEBUG] No history found in memory for session {session_id}")
+                logger.debug(f"[AGENT] No history found in memory for session {session_id}")
         else:
-            print(f"[AGENT DEBUG] Memory not available for session {session_id}")
+            logger.debug(f"[AGENT] Memory not available for session {session_id}")
         
         # Add user message
         messages.append(HumanMessage(content=message))
         
-        print(f"[AGENT DEBUG] Sending {len(messages)} messages to LLM (session: {session_id})")
+        logger.debug(f"[AGENT] Sending {len(messages)} messages to LLM (session: {session_id})")
         
         # Call LLM
         try:
@@ -364,7 +364,7 @@ class LangchainService:
             history.clear()
             return True
         except Exception as e:
-            print(f"Error clearing memory: {e}")
+            logger.error(f"Error clearing memory: {e}")
             return False
     
     def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
@@ -386,7 +386,7 @@ class LangchainService:
                 for msg in history
             ]
         except Exception as e:
-            print(f"Error getting history: {e}")
+            logger.error(f"Error getting history: {e}")
             return []
 
 
@@ -426,7 +426,7 @@ class AgentService:
             )
             return result.get('response', '')
         except Exception as e:
-            print(f"Error processing message: {e}")
+            logger.error(f"Error processing message: {e}")
             return ''
     
     @staticmethod
