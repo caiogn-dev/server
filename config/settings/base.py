@@ -185,9 +185,10 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '1000/minute',
-        'user': '10000/minute',
-        'webhook': '10000/hour',
+        'anon': '60/minute',      # Reduzido de 1000 para segurança
+        'user': '300/minute',     # Reduzido de 10000 para segurança
+        'webhook': '10000/hour',  # Webhooks podem ter volume alto
+        'auth': '10/minute',      # Novo: limite para endpoints de auth
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }

@@ -63,9 +63,15 @@ class Command(BaseCommand):
             }
         )
         if created:
-            owner.set_password('pastita2024!')
+            # Get password from environment or generate a random secure one
+            import secrets
+            import os
+            password = os.environ.get('PASTITA_OWNER_PASSWORD', secrets.token_urlsafe(16))
+            owner.set_password(password)
             owner.save()
             self.stdout.write(self.style.SUCCESS(f'Created owner user: {owner_email}'))
+            if 'PASTITA_OWNER_PASSWORD' not in os.environ:
+                self.stdout.write(self.style.WARNING(f'Generated password (save this!): {password}'))
         else:
             self.stdout.write(f'Using existing owner: {owner_email}')
 
