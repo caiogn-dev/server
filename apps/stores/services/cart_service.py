@@ -291,11 +291,32 @@ class CartService:
         """
         Validate all items have sufficient stock for checkout.
         Returns list of errors if any.
+        
+        IMPORTANT: Uses select_for_update() to prevent race conditions.
+        This locks the product/variant rows until the transaction completes,
+        preventing overselling when multiple checkouts happen simultaneously.
         """
         errors = []
         
+        # Get product IDs and variant IDs from cart
+        product_ids = [item.product_id for item in cart.items.all()]
+        variant_ids = [item.variant_id for item in cart.items.all() if item.variant_id]
+        combo_ids = [item.combo_id for item in cart.combo_items.all()]
+        
+        # Lock products for update to prevent race conditions
+        locked_products = {
+            p.id: p for p in StoreProduct.objects.select_for_update().filter(id__in=product_ids)
+        }
+        locked_variants = {
+            v.id: v for v in StoreProductVariant.objects.select_for_update().filter(id__in=variant_ids)
+        } if variant_ids else {}
+        locked_combos = {
+            c.id: c for c in StoreCombo.objects.select_for_update().filter(id__in=combo_ids)
+        } if combo_ids else {}
+        
         for item in cart.items.select_related('product', 'variant').all():
-            product = item.product
+            # Use the locked product to check stock
+            product = locked_products.get(item.product_id) or item.product
             
             if not product.is_in_stock:
                 errors.append({
@@ -306,9 +327,15 @@ class CartService:
                 continue
             
             if product.track_stock:
-                available = product.stock_quantity
-                if item.variant and item.variant.stock_quantity is not None:
-                    available = item.variant.stock_quantity
+                # Check variant stock if exists
+                if item.variant_id and item.variant_id in locked_variants:
+                    variant = locked_variants[item.variant_id]
+                    if variant.stock_quantity is not None:
+                        available = variant.stock_quantity
+                    else:
+                        available = product.stock_quantity
+                else:
+                    available = product.stock_quantity
                 
                 if item.quantity > available:
                     errors.append({
@@ -320,12 +347,13 @@ class CartService:
                     })
         
         for item in cart.combo_items.select_related('combo').all():
-            if item.combo.track_stock and item.quantity > item.combo.stock_quantity:
+            combo = locked_combos.get(item.combo_id) or item.combo
+            if combo.track_stock and item.quantity > combo.stock_quantity:
                 errors.append({
                     'item_id': str(item.id),
-                    'combo_name': item.combo.name,
-                    'error': f'Estoque insuficiente. Disponível: {item.combo.stock_quantity}',
-                    'available': item.combo.stock_quantity,
+                    'combo_name': combo.name,
+                    'error': f'Estoque insuficiente. Disponível: {combo.stock_quantity}',
+                    'available': combo.stock_quantity,
                     'requested': item.quantity
                 })
         
