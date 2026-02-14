@@ -226,38 +226,83 @@ class StoreCheckoutView(APIView):
         
         # Get cart
         session_id = request.session.session_key
+        if not session_id:
+            request.session.create()
+            session_id = request.session.session_key
         user = request.user if request.user.is_authenticated else None
         cart = cart_service.get_or_create_cart(store, user, session_id)
         
-        if not cart.items.exists():
+        if not cart.items.exists() and not cart.combo_items.exists():
             return Response(
                 {'error': 'Cart is empty'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Extract checkout data
-        checkout_data = {
-            'customer_name': request.data.get('customer_name'),
-            'customer_email': request.data.get('customer_email'),
-            'customer_phone': request.data.get('customer_phone'),
-            'delivery_type': request.data.get('delivery_type', 'delivery'),
-            'delivery_address': request.data.get('delivery_address'),
-            'delivery_lat': request.data.get('delivery_lat'),
-            'delivery_lng': request.data.get('delivery_lng'),
-            'payment_method': request.data.get('payment_method'),
-            'coupon_code': request.data.get('coupon_code'),
-            'notes': request.data.get('notes', ''),
+        # Extract customer data (checkout_service expects 'name', 'email', 'phone')
+        customer_data = {
+            'name': request.data.get('customer_name', ''),
+            'email': request.data.get('customer_email', ''),
+            'phone': request.data.get('customer_phone', ''),
         }
         
+        # Extract delivery data
+        delivery_method = request.data.get('delivery_method') or request.data.get('shipping_method') or 'delivery'
+        delivery_data = {
+            'method': delivery_method,
+            'address': request.data.get('delivery_address', {}),
+            'notes': request.data.get('delivery_notes', ''),
+            'distance_km': request.data.get('delivery_distance_km'),
+            'zip_code': request.data.get('delivery_zip_code'),
+        }
+        
+        coupon_code = request.data.get('coupon_code', '')
+        notes = request.data.get('customer_notes') or request.data.get('notes', '')
+        payment_method = request.data.get('payment_method', 'pix')
+        
         try:
-            order = checkout_service.create_order(cart, checkout_data)
-            return Response({
+            order = checkout_service.create_order(
+                cart=cart,
+                customer_data=customer_data,
+                delivery_data=delivery_data,
+                coupon_code=coupon_code,
+                notes=notes
+            )
+            
+            # Process payment if method specified
+            payment_result = None
+            if payment_method and payment_method != 'cash':
+                payment_result = checkout_service.create_payment(
+                    order, payment_method
+                )
+            
+            # Clear cart after successful order
+            cart_service.clear_cart(cart)
+            
+            response_data = {
                 'order_id': str(order.id),
                 'order_number': order.order_number,
                 'total': str(order.total),
+                'total_amount': float(order.total),
                 'payment_status': order.payment_status,
                 'access_token': order.access_token,
-            }, status=status.HTTP_201_CREATED)
+            }
+            
+            # Include payment data if available
+            if payment_result:
+                if payment_result.get('success'):
+                    response_data['payment'] = {
+                        'status': payment_result.get('status', 'pending'),
+                        'payment_id': payment_result.get('payment_id'),
+                        'payment_method': payment_method,
+                    }
+                    response_data['pix_code'] = payment_result.get('pix_code', '')
+                    response_data['pix_qr_code'] = payment_result.get('pix_qr_code', '')
+                    response_data['pix_ticket_url'] = payment_result.get('ticket_url', '')
+                    response_data['init_point'] = payment_result.get('init_point', '')
+                else:
+                    response_data['payment_error'] = payment_result.get('error', 'Erro no pagamento')
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.error(f"Checkout error: {e}")
             return Response(
