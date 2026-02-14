@@ -117,10 +117,20 @@ class StoreCartViewSet(viewsets.ViewSet):
         user = request.user if request.user.is_authenticated else None
         return cart_service.get_or_create_cart(store, user, session_id)
     
+    def get_cart_with_prefetch(self, request, store):
+        """Get cart with prefetched related objects to avoid N+1 queries."""
+        cart = self.get_cart(request, store)
+        # Prefetch related objects to avoid N+1 queries when serializing
+        return StoreCart.objects.prefetch_related(
+            'items__product',
+            'items__variant',
+            'combo_items__combo'
+        ).get(id=cart.id)
+    
     def get_cart_by_store(self, request, store_slug=None):
         """Get cart for a specific store."""
         store = self.get_store(store_slug)
-        cart = self.get_cart(request, store)
+        cart = self.get_cart_with_prefetch(request, store)
         serializer = StoreCartSerializer(cart)
         return Response(serializer.data)
     

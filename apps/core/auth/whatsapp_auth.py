@@ -7,6 +7,18 @@ Segue as melhores práticas da Meta:
 - Códigos OTP de 6 dígitos
 - Expiração de 15 minutos
 - Com botão de cópia automática
+
+TROUBLESHOOTING:
+- Erro #131008: Template não existe ou nome errado
+- Erro #132018: Parâmetros do template não correspondem à definição
+- Erro #131009: Template não encontrado
+- Erro #132000: Número de parâmetros incorreto
+
+Para resolver, verifique no Meta Business Manager:
+1. Se o template existe e está aprovado
+2. Se o nome do template está correto (case-sensitive)
+3. Se o template tem variáveis {{1}}, {{2}}, etc.
+4. Se os componentes enviados correspondem ao template
 """
 import logging
 import random
@@ -58,6 +70,10 @@ class WhatsAppAuthService:
     # HABILITADO: Usar fallback até que template de auth seja criado no Meta Business Manager
     # O erro #132018 indica problemas nos parâmetros do template de autenticação
     USE_FALLBACK = True
+    
+    # Se True, envia mensagem de texto simples como último recurso
+    # Isso funciona apenas se o usuário já iniciou conversa nas últimas 24h
+    USE_TEXT_FALLBACK = True
     
     # Lista de templates a tentar em ordem de preferência
     # Cada entrada tem: (nome, idioma, tem_parametro)
@@ -233,6 +249,7 @@ class WhatsAppAuthService:
         # Tenta enviar com diferentes templates até um funcionar
         message_service = MessageService()
         last_error = None
+        last_error_details = None
         
         for i, template_data in enumerate(template_configs):
             logger.info(f"[WHATSAPP AUTH] Attempt {i+1}: Template '{template_data['name']}' with components: {template_data.get('components', [])}")
@@ -268,25 +285,75 @@ class WhatsAppAuthService:
                 return response
                 
             except Exception as e:
-                error_str = str(e)
-                logger.warning(f"[WHATSAPP AUTH] Template '{template_data['name']}' failed: {error_str}")
+                error_str = str(e) if str(e) else repr(e)
+                # Tenta extrair detalhes do erro se for WhatsAppAPIError
+                error_details = getattr(e, 'details', {}) if hasattr(e, 'details') else {}
+                error_code = getattr(e, 'code', 'unknown') if hasattr(e, 'code') else 'unknown'
+                
+                logger.warning(
+                    f"[WHATSAPP AUTH] Template '{template_data['name']}' failed: {error_str}",
+                    extra={'error_code': error_code, 'error_details': error_details}
+                )
                 last_error = e
+                last_error_details = error_details
                 
                 # Se é erro de template não encontrado ou parâmetro, tenta próximo
                 # Erros: 131008 (required param missing), 132018 (param issue), 131009 (not found)
-                if any(code in error_str for code in ['131008', '132018', '131009', '132000']):
-                    logger.info(f"[WHATSAPP AUTH] Template error, trying next configuration...")
+                error_codes_to_retry = ['131008', '132018', '131009', '132000']
+                if any(ec in error_str for ec in error_codes_to_retry) or any(ec in str(error_code) for ec in error_codes_to_retry):
+                    logger.info(f"[WHATSAPP AUTH] Template error (code: {error_code}), trying next configuration...")
                     continue
                 else:
                     # Erro diferente, não tenta mais templates
+                    logger.warning(f"[WHATSAPP AUTH] Non-template error, stopping template attempts: {error_code}")
                     break
         
-        # Nenhum template funcionou
-        logger.error(f"[WHATSAPP AUTH] All template attempts failed. Last error: {last_error}")
+        # Tenta enviar mensagem de texto simples como último recurso
+        # Isso só funciona se o usuário já iniciou conversa nas últimas 24h
+        if cls.USE_TEXT_FALLBACK:
+            logger.info(f"[WHATSAPP AUTH] Trying text message fallback...")
+            try:
+                text_message = f"🔐 Seu código de verificação Pastita é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
+                result = message_service.send_text_message(
+                    account_id=whatsapp_account_id,
+                    to=clean_phone,
+                    text=text_message
+                )
+                
+                logger.info(f"[WHATSAPP AUTH] Text message sent successfully: {result}")
+                
+                expires_at = timezone.now() + timedelta(minutes=cls.CODE_TTL_MINUTES)
+                
+                response = {
+                    'success': True,
+                    'message': 'Código enviado com sucesso',
+                    'message_id': str(result.id) if hasattr(result, 'id') else None,
+                    'expires_at': expires_at.isoformat(),
+                    'expires_in_minutes': cls.CODE_TTL_MINUTES,
+                    'phone_number': clean_phone,
+                    'template_used': 'text_fallback',
+                }
+                
+                if settings.DEBUG:
+                    response['code'] = code
+                
+                return response
+                
+            except Exception as text_error:
+                text_error_str = str(text_error) if str(text_error) else repr(text_error)
+                logger.warning(f"[WHATSAPP AUTH] Text fallback also failed: {text_error_str}")
+                # Continue to raise the original template error
+        
+        # Nenhum método funcionou
+        error_message = str(last_error) if last_error and str(last_error) else "Erro desconhecido ao enviar mensagem"
+        if last_error_details:
+            error_message = f"{error_message} - Detalhes: {last_error_details}"
+        
+        logger.error(f"[WHATSAPP AUTH] All attempts failed. Last error: {error_message}")
         
         # Invalida cache em caso de erro
         cache.delete(cache_key)
-        raise WhatsAppAuthError(f"Falha ao enviar código: {str(last_error)}")
+        raise WhatsAppAuthError(f"Falha ao enviar código: {error_message}")
     
     @classmethod
     def verify_code(cls, phone_number: str, code: str) -> dict:
