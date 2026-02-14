@@ -517,15 +517,22 @@ class MessageService:
         metadata: Dict = None
     ) -> Message:
         """Create an outbound message record."""
-        # Get or create conversation for this contact
-        conversation = self._get_or_create_conversation(account, to)
-        
-        # Fill contact name if provided in metadata
         meta = metadata or {}
-        contact_name = meta.get('contact_name') or meta.get('customer_name')
-        if contact_name and not conversation.contact_name:
-            conversation.contact_name = contact_name
-            conversation.save(update_fields=['contact_name', 'updated_at'])
+        
+        # Try to get or create conversation, but make it optional for auth messages
+        conversation = None
+        try:
+            conversation = self._get_or_create_conversation(account, to)
+            
+            # Fill contact name if provided in metadata
+            contact_name = meta.get('contact_name') or meta.get('customer_name')
+            if contact_name and conversation and not conversation.contact_name:
+                conversation.contact_name = contact_name
+                conversation.save(update_fields=['contact_name', 'updated_at'])
+        except Exception as conv_error:
+            # Log but don't fail - conversation is optional for auth messages
+            logger.warning(f"Could not create conversation for {to}: {conv_error}")
+            conversation = None
         
         message = self.message_repo.create(
             account=account,
@@ -546,10 +553,14 @@ class MessageService:
             metadata=meta
         )
         
-        # Update conversation last message time
-        conversation.last_message_at = timezone.now()
-        conversation.last_agent_message_at = timezone.now()
-        conversation.save(update_fields=['last_message_at', 'last_agent_message_at', 'updated_at'])
+        # Update conversation last message time if we have one
+        if conversation:
+            try:
+                conversation.last_message_at = timezone.now()
+                conversation.last_agent_message_at = timezone.now()
+                conversation.save(update_fields=['last_message_at', 'last_agent_message_at', 'updated_at'])
+            except Exception as e:
+                logger.warning(f"Could not update conversation timestamps: {e}")
         
         return message
     
