@@ -42,15 +42,34 @@ class ConversationRepository:
         phone_number: str,
         contact_name: str = ''
     ) -> tuple[Conversation, bool]:
-        """Get or create a conversation."""
-        return Conversation.objects.get_or_create(
-            account=account,
-            phone_number=phone_number,
-            defaults={
-                'contact_name': contact_name,
-                'last_message_at': timezone.now(),
-            }
-        )
+        """Get or create a conversation.
+        
+        Uses transaction-safe approach to handle race conditions where multiple
+        requests try to create a conversation for the same phone number simultaneously.
+        """
+        from django.db import IntegrityError
+        
+        try:
+            return Conversation.objects.get_or_create(
+                account=account,
+                phone_number=phone_number,
+                defaults={
+                    'contact_name': contact_name,
+                    'last_message_at': timezone.now(),
+                }
+            )
+        except IntegrityError:
+            # Race condition: another request created the conversation first
+            # This can happen with unique_together constraint on (account, phone_number)
+            try:
+                conversation = Conversation.objects.get(
+                    account=account,
+                    phone_number=phone_number
+                )
+                return conversation, False
+            except Conversation.DoesNotExist:
+                # This shouldn't happen but re-raise the original error
+                raise
 
     def get_by_account(
         self,
