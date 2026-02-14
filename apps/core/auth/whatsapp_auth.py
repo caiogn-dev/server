@@ -244,12 +244,17 @@ class WhatsAppAuthService:
         
         logger.info(f"[WHATSAPP AUTH] UUID received: '{whatsapp_account_id}' (len={len(whatsapp_account_id) if whatsapp_account_id else 0})")
         logger.info(f"[WHATSAPP AUTH] Will try {len(template_configs)} template configurations")
+        logger.info(f"[WHATSAPP AUTH] Template configs: {template_configs}")
         
         # Tenta enviar com diferentes templates até um funcionar
+        message_service = None
         try:
+            logger.info(f"[WHATSAPP AUTH] Creating MessageService...")
             message_service = MessageService()
+            logger.info(f"[WHATSAPP AUTH] MessageService created successfully")
         except Exception as init_error:
-            logger.error(f"[WHATSAPP AUTH] Failed to initialize MessageService: {init_error}")
+            import traceback
+            logger.error(f"[WHATSAPP AUTH] Failed to initialize MessageService: {init_error}\n{traceback.format_exc()}")
             cache.delete(cache_key)
             raise WhatsAppAuthError(f"Falha ao inicializar serviço de mensagens: {init_error}")
         
@@ -257,12 +262,20 @@ class WhatsAppAuthService:
         last_error_details = None
         templates_tried = 0
         
+        logger.info(f"[WHATSAPP AUTH] Starting template loop with {len(template_configs)} configs...")
+        
         for i, template_data in enumerate(template_configs):
             templates_tried += 1
-            logger.info(f"[WHATSAPP AUTH] Attempt {i+1}: Template '{template_data['name']}' with components: {template_data.get('components', [])}")
+            logger.info(f"[WHATSAPP AUTH] === Attempt {i+1}/{len(template_configs)} ===")
+            logger.info(f"[WHATSAPP AUTH] Template: '{template_data['name']}', Language: {template_data['language']}")
+            logger.info(f"[WHATSAPP AUTH] Components: {template_data.get('components', [])}")
             
             try:
-                logger.info(f"[WHATSAPP AUTH] Calling send_template_message with account_id={whatsapp_account_id}, to={clean_phone}")
+                logger.info(f"[WHATSAPP AUTH] Calling send_template_message...")
+                logger.info(f"[WHATSAPP AUTH]   account_id={whatsapp_account_id}")
+                logger.info(f"[WHATSAPP AUTH]   to={clean_phone}")
+                logger.info(f"[WHATSAPP AUTH]   template_name={template_data['name']}")
+                
                 result = message_service.send_template_message(
                     account_id=whatsapp_account_id,
                     to=clean_phone,
@@ -270,7 +283,7 @@ class WhatsAppAuthService:
                     language_code=template_data['language']['code'],
                     components=template_data.get('components')
                 )
-                logger.info(f"[WHATSAPP AUTH] send_template_message returned: {result}")
+                logger.info(f"[WHATSAPP AUTH] send_template_message returned successfully: {result}")
                 
                 # Sucesso! Log e retorna
                 logger.info(f"[WHATSAPP AUTH] Message sent successfully with template '{template_data['name']}': {result}")
@@ -294,6 +307,7 @@ class WhatsAppAuthService:
                 return response
                 
             except Exception as e:
+                import traceback
                 # Captura todos os detalhes possíveis do erro
                 error_str = str(e) if str(e) else ''
                 error_repr = repr(e)
@@ -301,21 +315,20 @@ class WhatsAppAuthService:
                 error_message = getattr(e, 'message', '') if hasattr(e, 'message') else ''
                 error_details = getattr(e, 'details', {}) if hasattr(e, 'details') else {}
                 error_code = getattr(e, 'code', 'unknown') if hasattr(e, 'code') else 'unknown'
+                error_traceback = traceback.format_exc()
                 
                 # Usa a melhor mensagem disponível
                 final_error_str = error_str or error_message or error_repr or f"Unknown {error_type} error"
                 
-                logger.warning(
-                    f"[WHATSAPP AUTH] Template '{template_data['name']}' failed: {final_error_str}",
-                    extra={
-                        'error_type': error_type,
-                        'error_code': error_code, 
-                        'error_details': error_details,
-                        'error_str': error_str,
-                        'error_message': error_message,
-                        'error_repr': error_repr,
-                    }
-                )
+                logger.error(f"[WHATSAPP AUTH] Template '{template_data['name']}' EXCEPTION:")
+                logger.error(f"[WHATSAPP AUTH]   Type: {error_type}")
+                logger.error(f"[WHATSAPP AUTH]   str(e): '{error_str}'")
+                logger.error(f"[WHATSAPP AUTH]   repr(e): '{error_repr}'")
+                logger.error(f"[WHATSAPP AUTH]   e.message: '{error_message}'")
+                logger.error(f"[WHATSAPP AUTH]   e.code: '{error_code}'")
+                logger.error(f"[WHATSAPP AUTH]   e.details: {error_details}")
+                logger.error(f"[WHATSAPP AUTH]   Traceback:\n{error_traceback}")
+                
                 last_error = e
                 last_error_details = error_details
                 
