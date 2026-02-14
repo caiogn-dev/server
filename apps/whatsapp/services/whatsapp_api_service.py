@@ -55,17 +55,37 @@ class WhatsAppAPIService:
             
             if response.status_code >= 400:
                 error = response_data.get('error', {})
+                
+                # Build a meaningful error message
+                error_message = error.get('message', '')
+                error_code = error.get('code', 'unknown')
+                error_type = error.get('type', '')
+                error_subcode = error.get('error_subcode', '')
+                
+                # If message is empty, build one from available info
+                if not error_message:
+                    error_message = f"WhatsApp API error (code: {error_code})"
+                    if error_type:
+                        error_message += f", type: {error_type}"
+                    if error_subcode:
+                        error_message += f", subcode: {error_subcode}"
+                
+                # Include error code in message for easier debugging
+                full_message = f"(#{error_code}) {error_message}" if error_code != 'unknown' else error_message
+                
                 logger.error(
-                    f"WhatsApp API error: {error}",
+                    f"WhatsApp API error: {full_message}",
                     extra={
                         'status_code': response.status_code,
                         'endpoint': endpoint,
                         'error': error,
+                        'error_code': error_code,
+                        'error_message': error_message,
                     }
                 )
                 raise WhatsAppAPIError(
-                    message=error.get('message', 'WhatsApp API error'),
-                    code=str(error.get('code', 'unknown')),
+                    message=full_message,
+                    code=str(error_code),
                     details=error
                 )
             
