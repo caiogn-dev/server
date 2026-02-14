@@ -678,39 +678,60 @@ class WebhookService:
         phone_number: str,
         contact_name: str = ''
     ):
-        """Get or create a conversation for a phone number."""
+        """Get or create a conversation for a phone number.
+        
+        Uses transaction-safe approach to handle race conditions where multiple
+        webhook events try to create a conversation for the same phone number simultaneously.
+        """
         from apps.conversations.models import Conversation
+        from django.db import IntegrityError
         
-        conversation, created = Conversation.objects.get_or_create(
-            account=account,
-            phone_number=phone_number,
-            defaults={
-                'contact_name': contact_name,
-                'status': Conversation.ConversationStatus.OPEN,
-                'mode': Conversation.ConversationMode.AUTO
-            }
-        )
-        
-        if created:
-            logger.info(f"Created new conversation with {phone_number}")
-            # Broadcast new conversation
-            self.broadcast.broadcast_conversation_update(
-                account_id=str(account.id),
-                conversation={
-                    'id': str(conversation.id),
-                    'phone_number': phone_number,
+        try:
+            conversation, created = Conversation.objects.get_or_create(
+                account=account,
+                phone_number=phone_number,
+                defaults={
                     'contact_name': contact_name,
-                    'status': conversation.status,
-                    'mode': conversation.mode,
-                    'created_at': conversation.created_at.isoformat()
+                    'status': Conversation.ConversationStatus.OPEN,
+                    'mode': Conversation.ConversationMode.AUTO
                 }
             )
-        elif contact_name and not conversation.contact_name:
-            # Update contact name if we didn't have it
-            conversation.contact_name = contact_name
-            conversation.save(update_fields=['contact_name', 'updated_at'])
-        
-        return conversation
+            
+            if created:
+                logger.info(f"Created new conversation with {phone_number}")
+                # Broadcast new conversation
+                self.broadcast.broadcast_conversation_update(
+                    account_id=str(account.id),
+                    conversation={
+                        'id': str(conversation.id),
+                        'phone_number': phone_number,
+                        'contact_name': contact_name,
+                        'status': conversation.status,
+                        'mode': conversation.mode,
+                        'created_at': conversation.created_at.isoformat()
+                    }
+                )
+            elif contact_name and not conversation.contact_name:
+                # Update contact name if we didn't have it
+                conversation.contact_name = contact_name
+                conversation.save(update_fields=['contact_name', 'updated_at'])
+            
+            return conversation
+            
+        except IntegrityError:
+            # Race condition: another request created the conversation first
+            # This can happen with unique_together constraint on (account, phone_number)
+            logger.warning(f"IntegrityError on get_or_create for {phone_number}, retrying get...")
+            try:
+                conversation = Conversation.objects.get(
+                    account=account,
+                    phone_number=phone_number
+                )
+                return conversation
+            except Conversation.DoesNotExist:
+                # This shouldn't happen but handle it gracefully
+                logger.error(f"Conversation not found after IntegrityError for {phone_number}")
+                raise
 
     def _broadcast_new_message(
         self,

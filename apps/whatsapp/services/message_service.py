@@ -517,12 +517,24 @@ class MessageService:
         metadata: Dict = None
     ) -> Message:
         """Create an outbound message record."""
+        from apps.conversations.models import Conversation
+        
         meta = metadata or {}
         
         # Try to get or create conversation, but make it optional for auth messages
         conversation = None
         try:
             conversation = self._get_or_create_conversation(account, to)
+            
+            # Validate conversation exists in DB before using it
+            # This prevents FK violations if the conversation was deleted in another transaction
+            if conversation and conversation.pk:
+                try:
+                    # Refresh from DB to ensure it still exists
+                    conversation.refresh_from_db()
+                except Conversation.DoesNotExist:
+                    logger.warning(f"Conversation {conversation.pk} no longer exists, proceeding without it")
+                    conversation = None
             
             # Fill contact name if provided in metadata
             contact_name = meta.get('contact_name') or meta.get('customer_name')
@@ -565,22 +577,44 @@ class MessageService:
         return message
     
     def _get_or_create_conversation(self, account: WhatsAppAccount, phone_number: str):
-        """Get or create a conversation for a phone number."""
+        """Get or create a conversation for a phone number.
+        
+        Uses transaction-safe approach to handle race conditions where multiple
+        requests try to create a conversation for the same phone number simultaneously.
+        """
         from apps.conversations.models import Conversation
+        from django.db import IntegrityError
         
-        conversation, created = Conversation.objects.get_or_create(
-            account=account,
-            phone_number=phone_number,
-            defaults={
-                'status': Conversation.ConversationStatus.OPEN,
-                'mode': Conversation.ConversationMode.AUTO
-            }
-        )
-        
-        if created:
-            logger.info(f"Created new conversation with {phone_number}")
-        
-        return conversation
+        try:
+            # First try: standard get_or_create
+            conversation, created = Conversation.objects.get_or_create(
+                account=account,
+                phone_number=phone_number,
+                defaults={
+                    'status': Conversation.ConversationStatus.OPEN,
+                    'mode': Conversation.ConversationMode.AUTO
+                }
+            )
+            
+            if created:
+                logger.info(f"Created new conversation with {phone_number}")
+            
+            return conversation
+            
+        except IntegrityError:
+            # Race condition: another request created the conversation first
+            # This can happen with unique_together constraint on (account, phone_number)
+            logger.warning(f"IntegrityError on get_or_create for {phone_number}, retrying get...")
+            try:
+                conversation = Conversation.objects.get(
+                    account=account,
+                    phone_number=phone_number
+                )
+                return conversation
+            except Conversation.DoesNotExist:
+                # This shouldn't happen but handle it gracefully
+                logger.error(f"Conversation not found after IntegrityError for {phone_number}")
+                raise
 
     def _update_message_sent(self, message: Message, response: Dict) -> None:
         """Update message after successful send and broadcast to WebSocket."""
