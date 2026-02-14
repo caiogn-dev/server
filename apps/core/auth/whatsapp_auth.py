@@ -77,10 +77,9 @@ class WhatsAppAuthService:
     
     # Lista de templates a tentar em ordem de preferência
     # Cada entrada tem: (nome, idioma, tem_parametro)
+    # IMPORTANTE: Use apenas templates que existem e estão aprovados no Meta Business Manager
     TEMPLATE_ATTEMPTS = [
         ('codigo_verificacao', 'pt_BR', True),    # Template com {{1}} para código
-        ('codigo_verificacao', 'pt_BR', False),   # Template sem variáveis
-        ('hello_world', 'en_US', False),          # Template padrão da Meta (fallback teste)
     ]
     
     @classmethod
@@ -285,14 +284,27 @@ class WhatsAppAuthService:
                 return response
                 
             except Exception as e:
-                error_str = str(e) if str(e) else repr(e)
-                # Tenta extrair detalhes do erro se for WhatsAppAPIError
+                # Captura todos os detalhes possíveis do erro
+                error_str = str(e) if str(e) else ''
+                error_repr = repr(e)
+                error_type = type(e).__name__
+                error_message = getattr(e, 'message', '') if hasattr(e, 'message') else ''
                 error_details = getattr(e, 'details', {}) if hasattr(e, 'details') else {}
                 error_code = getattr(e, 'code', 'unknown') if hasattr(e, 'code') else 'unknown'
                 
+                # Usa a melhor mensagem disponível
+                final_error_str = error_str or error_message or error_repr or f"Unknown {error_type} error"
+                
                 logger.warning(
-                    f"[WHATSAPP AUTH] Template '{template_data['name']}' failed: {error_str}",
-                    extra={'error_code': error_code, 'error_details': error_details}
+                    f"[WHATSAPP AUTH] Template '{template_data['name']}' failed: {final_error_str}",
+                    extra={
+                        'error_type': error_type,
+                        'error_code': error_code, 
+                        'error_details': error_details,
+                        'error_str': error_str,
+                        'error_message': error_message,
+                        'error_repr': error_repr,
+                    }
                 )
                 last_error = e
                 last_error_details = error_details
@@ -300,12 +312,13 @@ class WhatsAppAuthService:
                 # Se é erro de template não encontrado ou parâmetro, tenta próximo
                 # Erros: 131008 (required param missing), 132018 (param issue), 131009 (not found)
                 error_codes_to_retry = ['131008', '132018', '131009', '132000']
-                if any(ec in error_str for ec in error_codes_to_retry) or any(ec in str(error_code) for ec in error_codes_to_retry):
+                all_error_text = f"{final_error_str} {error_code}"
+                if any(ec in all_error_text for ec in error_codes_to_retry):
                     logger.info(f"[WHATSAPP AUTH] Template error (code: {error_code}), trying next configuration...")
                     continue
                 else:
                     # Erro diferente, não tenta mais templates
-                    logger.warning(f"[WHATSAPP AUTH] Non-template error, stopping template attempts: {error_code}")
+                    logger.warning(f"[WHATSAPP AUTH] Non-template error ({error_type}), stopping template attempts: {error_code}")
                     break
         
         # Tenta enviar mensagem de texto simples como último recurso
@@ -345,7 +358,16 @@ class WhatsAppAuthService:
                 # Continue to raise the original template error
         
         # Nenhum método funcionou
-        error_message = str(last_error) if last_error and str(last_error) else "Erro desconhecido ao enviar mensagem"
+        if last_error:
+            error_str = str(last_error) if str(last_error) else ''
+            error_message_attr = getattr(last_error, 'message', '') if hasattr(last_error, 'message') else ''
+            error_repr = repr(last_error)
+            error_type = type(last_error).__name__
+            
+            error_message = error_str or error_message_attr or error_repr or f"Unknown {error_type} error"
+        else:
+            error_message = "Erro desconhecido ao enviar mensagem"
+        
         if last_error_details:
             error_message = f"{error_message} - Detalhes: {last_error_details}"
         
