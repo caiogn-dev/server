@@ -29,9 +29,10 @@ from django.conf import settings
 from django.utils import timezone
 from typing import Optional, Tuple, List
 
-from apps.users.models import UnifiedUser
-from apps.users.services import UnifiedUserService
+from django.contrib.auth import get_user_model
 from apps.whatsapp.services import MessageService
+
+User = get_user_model()
 
 logger = logging.getLogger(__name__)
 
@@ -454,36 +455,18 @@ class WhatsAppAuthService:
         # Código válido! Remove do cache
         cache.delete(cache_key)
         
-        # Busca ou cria UnifiedUser
-        try:
-            user, created = UnifiedUser.objects.get_or_create(
-                phone_number=clean_phone,
-                defaults={
-                    'name': 'Usuário WhatsApp',  # Será atualizado depois
-                }
-            )
-            
-            # Atualiza last_seen
-            user.save(update_fields=['last_seen_at'])
-            
-            return {
-                'valid': True,
-                'message': 'Autenticação realizada com sucesso',
-                'user': {
-                    'id': str(user.id),
-                    'phone': user.phone_number,
-                    'name': user.name,
-                    'is_new': created,
-                },
-                'phone_number': clean_phone,
-            }
-            
-        except Exception as e:
-            return {
-                'valid': False,
-                'error': 'user_error',
-                'message': f'Erro ao processar usuário: {str(e)}'
-            }
+        # Retorna sucesso - o usuário Django será criado/buscado no views.py
+        # via _get_or_create_auth_user que já lida com UserProfile
+        return {
+            'valid': True,
+            'message': 'Autenticação realizada com sucesso',
+            'user': {
+                'phone': clean_phone,
+                'name': 'Usuário WhatsApp',
+                'is_new': True,  # Será determinado em views.py
+            },
+            'phone_number': clean_phone,
+        }
     
     @classmethod
     def resend_code(cls, phone_number: str, whatsapp_account_id: str) -> dict:
