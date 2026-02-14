@@ -75,11 +75,16 @@ class CartService:
     ) -> StoreCartItem:
         """Add a product to the cart with stock validation."""
         
-        # Validate stock
+        # Validate stock with row locking to prevent race conditions
         if product.track_stock:
-            available = product.stock_quantity
+            # Lock the product row to prevent concurrent modifications
+            locked_product = StoreProduct.objects.select_for_update().get(id=product.id)
+            available = locked_product.stock_quantity
+            
             if variant and variant.stock_quantity is not None:
-                available = variant.stock_quantity
+                # Lock the variant row as well
+                locked_variant = StoreProductVariant.objects.select_for_update().get(id=variant.id)
+                available = locked_variant.stock_quantity
             
             # Check existing quantity in cart
             existing_item = cart.items.filter(product=product, variant=variant).first()
