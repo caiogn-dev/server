@@ -246,14 +246,23 @@ class WhatsAppAuthService:
         logger.info(f"[WHATSAPP AUTH] Will try {len(template_configs)} template configurations")
         
         # Tenta enviar com diferentes templates até um funcionar
-        message_service = MessageService()
+        try:
+            message_service = MessageService()
+        except Exception as init_error:
+            logger.error(f"[WHATSAPP AUTH] Failed to initialize MessageService: {init_error}")
+            cache.delete(cache_key)
+            raise WhatsAppAuthError(f"Falha ao inicializar serviço de mensagens: {init_error}")
+        
         last_error = None
         last_error_details = None
+        templates_tried = 0
         
         for i, template_data in enumerate(template_configs):
+            templates_tried += 1
             logger.info(f"[WHATSAPP AUTH] Attempt {i+1}: Template '{template_data['name']}' with components: {template_data.get('components', [])}")
             
             try:
+                logger.info(f"[WHATSAPP AUTH] Calling send_template_message with account_id={whatsapp_account_id}, to={clean_phone}")
                 result = message_service.send_template_message(
                     account_id=whatsapp_account_id,
                     to=clean_phone,
@@ -261,6 +270,7 @@ class WhatsAppAuthService:
                     language_code=template_data['language']['code'],
                     components=template_data.get('components')
                 )
+                logger.info(f"[WHATSAPP AUTH] send_template_message returned: {result}")
                 
                 # Sucesso! Log e retorna
                 logger.info(f"[WHATSAPP AUTH] Message sent successfully with template '{template_data['name']}': {result}")
@@ -358,6 +368,8 @@ class WhatsAppAuthService:
                 # Continue to raise the original template error
         
         # Nenhum método funcionou
+        logger.error(f"[WHATSAPP AUTH] All attempts failed. Templates tried: {templates_tried}, last_error: {last_error}")
+        
         if last_error:
             error_str = str(last_error) if str(last_error) else ''
             error_message_attr = getattr(last_error, 'message', '') if hasattr(last_error, 'message') else ''
@@ -365,13 +377,15 @@ class WhatsAppAuthService:
             error_type = type(last_error).__name__
             
             error_message = error_str or error_message_attr or error_repr or f"Unknown {error_type} error"
+        elif templates_tried == 0:
+            error_message = "Nenhum template configurado para tentar"
         else:
-            error_message = "Erro desconhecido ao enviar mensagem"
+            error_message = f"Erro desconhecido após {templates_tried} tentativas"
         
         if last_error_details:
             error_message = f"{error_message} - Detalhes: {last_error_details}"
         
-        logger.error(f"[WHATSAPP AUTH] All attempts failed. Last error: {error_message}")
+        logger.error(f"[WHATSAPP AUTH] Final error message: {error_message}")
         
         # Invalida cache em caso de erro
         cache.delete(cache_key)
