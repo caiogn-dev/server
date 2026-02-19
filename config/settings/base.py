@@ -395,6 +395,7 @@ LOGGING = {
             'maxBytes': 10485760,
             'backupCount': 5,
             'formatter': 'json',
+            'delay': True,  # Don't open file immediately
         },
     },
     'root': {
@@ -459,7 +460,7 @@ if USE_S3:
             "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
         },
         "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
         },
     }
 else:
@@ -469,6 +470,34 @@ else:
             "BACKEND": "django.core.files.storage.FileSystemStorage",
         },
         "staticfiles": {
-            "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+            # Use a classe do WhiteNoise que suporta compressão e manifesto
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
         },
     }
+
+# ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
+WHITENOISE_MANIFEST_STRICT = False
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

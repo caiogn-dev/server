@@ -64,12 +64,13 @@ class Command(BaseCommand):
             defaults={
                 'name': name,
                 'status': StoreIntegration.IntegrationStatus.ACTIVE,
-                'api_key': api_key,
+                'access_token': api_key,  # Mercado Pago Access Token
+                'api_key': public_key,     # Public Key (if needed)
                 'webhook_secret': webhook_secret,
                 'settings': {
                     'public_key': public_key,
-                    'webhook_url': f'/webhooks/payments/mercadopago/{store_slug}/',
-                    'ipn_url': f'/webhooks/payments/mercadopago/{store_slug}/',
+                    'webhook_url': f'/webhooks/payments/mercadopago/',
+                    'ipn_url': f'/webhooks/payments/mercadopago/',
                 }
             }
         )

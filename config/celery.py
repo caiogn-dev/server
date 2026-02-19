@@ -7,7 +7,7 @@ from celery import Celery
 
 logger = logging.getLogger(__name__)
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.development')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings.production')
 
 app = Celery('whatsapp_business')
 app.config_from_object('django.conf:settings', namespace='CELERY')

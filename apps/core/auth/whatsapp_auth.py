@@ -462,7 +462,7 @@ class WhatsAppAuthService:
             'message': 'Autenticação realizada com sucesso',
             'user': {
                 'phone': clean_phone,
-                'name': 'Usuário WhatsApp',
+                'name': None,  # Deixar None para que o sistema use o telefone ou peça o nome depois
                 'is_new': True,  # Será determinado em views.py
             },
             'phone_number': clean_phone,
