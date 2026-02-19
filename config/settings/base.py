@@ -395,6 +395,7 @@ LOGGING = {
             'maxBytes': 10485760,
             'backupCount': 5,
             'formatter': 'json',
+            'delay': True,  # Don't open file immediately
         },
     },
     'root': {

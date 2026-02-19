@@ -22,4 +22,9 @@ EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 CORS_ALLOW_ALL_ORIGINS = True
 
+import os
+
+# Ensure logs directory exists
+os.makedirs(BASE_DIR / 'logs', exist_ok=True)
+
 LOGGING['handlers']['file']['filename'] = BASE_DIR / 'logs' / 'dev.log'
