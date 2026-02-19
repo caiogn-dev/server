@@ -178,8 +178,21 @@ class LangchainService:
                         first_account = agent_accounts.first()
                         if hasattr(first_account, 'store'):
                             store = first_account.store
+                        # Try stores many-to-many relation
+                        elif hasattr(first_account, 'stores') and first_account.stores.exists():
+                            store = first_account.stores.first()
                 except:
                     pass
+            
+            # FALLBACK: If no store found, use 'pastita' store
+            if not store:
+                try:
+                    from apps.stores.models import Store
+                    store = Store.objects.filter(slug='pastita').first()
+                    if store:
+                        logger.info(f"[AGENT CONTEXT] Using fallback store: {store.name}")
+                except Exception as e:
+                    logger.error(f"[AGENT CONTEXT] Error loading fallback store: {e}")
             
             # Load products from store
             if store:
@@ -187,8 +200,7 @@ class LangchainService:
                     from apps.stores.models import StoreProduct
                     products = StoreProduct.objects.filter(
                         store=store,
-                        is_active=True,
-                        is_available=True
+                        is_active=True
                     ).select_related('category')[:20]
                     
                     if products:
@@ -200,7 +212,7 @@ class LangchainService:
                                 current_category = product.category.name
                                 menu_text += f"\n【{current_category}】\n"
                             
-                            price = product.sale_price or product.price
+                            price = product.price
                             menu_text += f"• {product.name} - R$ {price}"
                             if product.description:
                                 desc = product.description[:60] + "..." if len(product.description) > 60 else product.description
