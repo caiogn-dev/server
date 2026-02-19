@@ -298,10 +298,8 @@ class LangchainService:
         # Get memory
         memory = self._get_memory(session_id)
         
-        # Build dynamic context
-        dynamic_context = ""
-        if phone_number or conversation_id:
-            dynamic_context = self._build_dynamic_context(phone_number, conversation_id)
+        # Build dynamic context - ALWAYS build to ensure store data is loaded
+        dynamic_context = self._build_dynamic_context(phone_number or "", conversation_id)
         
         # Prepare messages
         messages = []
@@ -310,6 +308,9 @@ class LangchainService:
         system_prompt = self.agent.system_prompt or "Você é um assistente virtual útil."
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
+        else:
+            # Fallback if no context built
+            system_prompt = f"{system_prompt}\n\n⚠️ ERRO: Não foi possível carregar o cardápio. Informe ao cliente que você não tem acesso aos produtos no momento."
         messages.append(SystemMessage(content=system_prompt))
         
         # Add memory/context if available
@@ -508,3 +509,112 @@ class AgentService:
         conversation.save()
         
         return message
+
+    @staticmethod
+    def create_order_from_conversation(
+        phone_number: str,
+        items: List[Dict[str, Any]],
+        customer_name: str = '',
+        delivery_address: str = '',
+        payment_method: str = 'dinheiro',
+        notes: str = ''
+    ) -> Dict[str, Any]:
+        """
+        Create an order from WhatsApp conversation.
+        
+        Args:
+            phone_number: Customer phone number
+            items: List of {'product_id': str, 'quantity': int, 'variant_id': str (optional)}
+            customer_name: Customer name
+            delivery_address: Delivery address
+            payment_method: Payment method (dinheiro, pix, cartao)
+            notes: Additional notes
+            
+        Returns:
+            Dict with order details or error
+        """
+        from apps.stores.models import Store, StoreProduct, StoreCart, StoreOrder
+        from apps.stores.services.cart_service import cart_service
+        from apps.stores.services.checkout_service import CheckoutService
+        from apps.users.models import UnifiedUser
+        
+        try:
+            # Get store (Pastita)
+            store = Store.objects.filter(slug='pastita').first()
+            if not store:
+                return {'success': False, 'error': 'Loja não encontrada'}
+            
+            # Get or create user
+            user = UnifiedUser.objects.filter(phone=phone_number).first()
+            
+            # Create cart
+            cart = StoreCart.objects.create(
+                store=store,
+                user=user,
+                phone=phone_number,
+                session_id=str(uuid.uuid4())
+            )
+            
+            # Add items to cart
+            for item_data in items:
+                product_id = item_data.get('product_id')
+                quantity = item_data.get('quantity', 1)
+                variant_id = item_data.get('variant_id')
+                
+                try:
+                    product = StoreProduct.objects.get(id=product_id, store=store)
+                    cart_service.add_item(
+                        cart=cart,
+                        product_id=str(product.id),
+                        variant_id=variant_id,
+                        quantity=quantity
+                    )
+                except StoreProduct.DoesNotExist:
+                    logger.warning(f"Product {product_id} not found")
+                    continue
+            
+            if cart.items.count() == 0:
+                cart.delete()
+                return {'success': False, 'error': 'Nenhum produto válido no pedido'}
+            
+            # Prepare customer data
+            customer_data = {
+                'name': customer_name or 'Cliente WhatsApp',
+                'phone': phone_number,
+                'email': user.email if user and user.email else f"cliente@{store.slug}.com.br"
+            }
+            
+            # Prepare delivery data
+            delivery_data = None
+            if delivery_address:
+                delivery_data = {
+                    'method': 'delivery',
+                    'address': {'raw': delivery_address},
+                    'notes': notes
+                }
+            else:
+                delivery_data = {'method': 'pickup'}
+            
+            # Create order
+            order = CheckoutService.create_order(
+                cart=cart,
+                customer_data=customer_data,
+                delivery_data=delivery_data,
+                notes=notes
+            )
+            
+            # Clear cart after order creation
+            cart.delete()
+            
+            return {
+                'success': True,
+                'order_id': str(order.id),
+                'order_number': order.order_number,
+                'total': float(order.total),
+                'status': order.status,
+                'payment_status': order.payment_status
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating order: {e}")
+            return {'success': False, 'error': str(e)}

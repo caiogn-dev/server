@@ -492,11 +492,7 @@ class AutomationService:
                 message=message_text,
                 session_id=session.session_id,
                 phone_number=session.phone_number,
-                context={
-                    'company_name': profile.company_name,
-                    'customer_phone': session.phone_number,
-                    'customer_name': session.customer_name,
-                }
+                conversation_id=str(session.id) if hasattr(session, 'id') else None
             )
             return result.get('response')
         except Exception as e:

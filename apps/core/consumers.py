@@ -1,5 +1,5 @@
 """
-WebSocket consumers for real-time updates.
+WebSocket consumers for real-time updates with caching support.
 """
 import json
 import logging
@@ -7,6 +7,11 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
+from django.core.cache import cache
+import hashlib
+
+# Import cached utilities
+from .consumer_cache import get_cached_user_async
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -32,7 +37,10 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             await self.accept()
             await self.send_json({
                 'type': 'connection_established',
-                'message': 'Connected to notification service'
+                'message': 'Connected to notification service',
+                'transport': 'websocket',
+                'fallback_available': True,
+                'sse_endpoint': '/api/sse/notifications/',
             })
         else:
             await self.close()
@@ -47,7 +55,7 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
         message_type = content.get('type')
         
         if message_type == 'ping':
-            await self.send_json({'type': 'pong'})
+            await self.send_json({'type': 'pong', 'timestamp': json.dumps(content.get('timestamp'))})
         elif message_type == 'subscribe':
             # Handle subscription to specific channels
             channel = content.get('channel')
@@ -65,6 +73,13 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
                     'type': 'unsubscribed',
                     'channel': channel
                 })
+        elif message_type == 'check_fallback':
+            await self.send_json({
+                'type': 'fallback_info',
+                'websocket': True,
+                'sse': '/api/sse/notifications/',
+                'polling': '/api/v1/notifications/',
+            })
     
     async def notification_message(self, event):
         """Send notification to WebSocket."""
@@ -94,14 +109,9 @@ class NotificationConsumer(AsyncJsonWebsocketConsumer):
             'conversation': event['conversation']
         })
     
-    @database_sync_to_async
-    def get_user_from_token(self, token_key):
-        """Get user from auth token."""
-        try:
-            token = Token.objects.select_related('user').get(key=token_key)
-            return token.user
-        except Token.DoesNotExist:
-            return None
+    async def get_user_from_token(self, token_key):
+        """Get user from auth token with caching."""
+        return await get_cached_user_async(token_key)
 
 
 class ChatConsumer(AsyncJsonWebsocketConsumer):
@@ -124,7 +134,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self.accept()
             await self.send_json({
                 'type': 'connection_established',
-                'conversation_id': self.conversation_id
+                'conversation_id': self.conversation_id,
+                'transport': 'websocket',
+                'fallback_available': True,
+                'sse_endpoint': f'/api/sse/whatsapp/?conversation_id={self.conversation_id}',
             })
         else:
             await self.close()
@@ -175,14 +188,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             'status': event['status']
         })
     
-    @database_sync_to_async
-    def get_user_from_token(self, token_key):
-        """Get user from auth token."""
-        try:
-            token = Token.objects.select_related('user').get(key=token_key)
-            return token.user
-        except Token.DoesNotExist:
-            return None
+    async def get_user_from_token(self, token_key):
+        """Get user from auth token with caching."""
+        return await get_cached_user_async(token_key)
     
     @database_sync_to_async
     def mark_message_read(self, message_id):
@@ -221,7 +229,13 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
             await self.accept()
             await self.send_json({
                 'type': 'connection_established',
-                'message': 'Connected to dashboard service'
+                'message': 'Connected to dashboard service',
+                'transport': 'websocket',
+                'fallback_available': True,
+                'sse_endpoints': {
+                    'orders': '/api/sse/orders/',
+                    'whatsapp': '/api/sse/whatsapp/',
+                },
             })
         else:
             await self.close()
@@ -249,6 +263,12 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
                     'type': 'subscribed',
                     'account_id': account_id
                 })
+        elif message_type == 'check_health':
+            await self.send_json({
+                'type': 'health',
+                'websocket': True,
+                'timestamp': json.dumps(content.get('timestamp')),
+            })
     
     async def stats_update(self, event):
         """Send stats update to WebSocket."""
@@ -278,11 +298,6 @@ class DashboardConsumer(AsyncJsonWebsocketConsumer):
             'conversation': event['conversation']
         })
     
-    @database_sync_to_async
-    def get_user_from_token(self, token_key):
-        """Get user from auth token."""
-        try:
-            token = Token.objects.select_related('user').get(key=token_key)
-            return token.user
-        except Token.DoesNotExist:
-            return None
+    async def get_user_from_token(self, token_key):
+        """Get user from auth token with caching."""
+        return await get_cached_user_async(token_key)

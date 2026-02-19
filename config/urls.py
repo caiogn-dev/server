@@ -20,6 +20,11 @@ from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
 from apps.core.dashboard_views import DashboardStatsView
+from apps.core.sse_views import (
+    OrderSSEView, 
+    WhatsAppSSEView, 
+    WebSocketHealthCheckView
+)
 
 # Import Instagram OAuth views directly to avoid circular imports
 # from apps.instagram.api.views import InstagramOAuthCallbackView, InstagramOAuthStartView
@@ -63,6 +68,13 @@ urlpatterns = [
     ])),
 
     path('api/v1/core/dashboard-stats/', DashboardStatsView.as_view(), name='core-dashboard-stats'),
+
+    # SSE (Server-Sent Events) - Fallback for WebSocket
+    path('api/sse/', include([
+        path('orders/', OrderSSEView.as_view(), name='sse_orders'),
+        path('whatsapp/', WhatsAppSSEView.as_view(), name='sse_whatsapp'),
+        path('health/', WebSocketHealthCheckView.as_view(), name='sse_health'),
+    ])),
 
     # NEW: Unified Webhooks v1 (centralized handlers)
     path('webhooks/v1/', include('apps.webhooks.urls')),
