@@ -10,6 +10,8 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from datetime import timedelta
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
 
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
 from ..serializers import (
@@ -99,7 +101,30 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         
         logger.info(f"Order {order.order_number} status updated to {new_status}")
         
+        # Notify via WebSocket
+        self._notify_order_update(order, 'order.updated')
+        
         return Response(StoreOrderSerializer(order).data)
+    
+    def _notify_order_update(self, order, event_type='order.update'):
+        """Send WebSocket notification for order updates."""
+        try:
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"store_{order.store.slug}_orders",
+                    {
+                        'type': event_type,
+                        'order_id': str(order.id),
+                        'order_number': order.order_number,
+                        'status': order.status,
+                        'payment_status': order.payment_status,
+                        'updated_at': order.updated_at.isoformat(),
+                    }
+                )
+                logger.info(f"WebSocket notification sent: {event_type} for order {order.order_number}")
+        except Exception as e:
+            logger.error(f"Error sending WebSocket notification: {e}")
     
     @action(detail=True, methods=['post'])
     def update_payment_status(self, request, pk=None):
@@ -138,6 +163,9 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         
         logger.info(f"Order {order.order_number} marked as paid")
         
+        # Notify via WebSocket
+        self._notify_order_update(order, 'order.paid')
+        
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -162,6 +190,9 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 if item.product and item.product.track_stock:
                     item.product.stock_quantity += item.quantity
                     item.product.save(update_fields=['stock_quantity'])
+        
+        # Notify via WebSocket
+        self._notify_order_update(order, 'order.cancelled')
         
         return Response(StoreOrderSerializer(order).data)
     
