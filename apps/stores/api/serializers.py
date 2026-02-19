@@ -979,11 +979,14 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     payment_status_display = serializers.CharField(source='get_payment_status_display', read_only=True)
     delivery_method_display = serializers.CharField(source='get_delivery_method_display', read_only=True)
+    store_name = serializers.CharField(source='store.name', read_only=True)
+    store_slug = serializers.CharField(source='store.slug', read_only=True)
+    items_count = serializers.SerializerMethodField()
     
     class Meta:
         model = StoreOrder
         fields = [
-            'id', 'store', 'order_number', 'access_token',
+            'id', 'store', 'store_name', 'store_slug', 'order_number', 'access_token',
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
@@ -995,13 +998,16 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
             'tracking_code', 'tracking_url', 'carrier',
             'customer_notes', 'internal_notes',
             'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at',
-            'items', 'combo_items', 'metadata',
+            'items', 'combo_items', 'items_count', 'metadata',
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
             'id', 'order_number', 'access_token', 'created_at', 'updated_at',
             'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at'
         ]
+    
+    def get_items_count(self, obj):
+        return obj.items.count()
 
 
 # =============================================================================

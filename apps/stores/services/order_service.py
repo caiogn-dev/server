@@ -179,26 +179,64 @@ class OrderService:
     def _send_status_notification(self, order, old_status: str, new_status: str):
         """Send WhatsApp notification about order status change."""
         try:
-            from apps.whatsapp.services import whatsapp_service
-            
+            from apps.whatsapp.services import MessageService
+            from apps.whatsapp.utils import get_default_whatsapp_account
+            from apps.core.utils import normalize_phone_number
+
+            # Get WhatsApp account for the store
+            account = None
+            if order.store:
+                account = order.store.get_whatsapp_account()
+
+            # Fallback to default account if no store-linked account
+            if not account:
+                account = get_default_whatsapp_account(create_if_missing=False)
+
+            if not account:
+                logger.warning(f"No WhatsApp account found for order {order.order_number}")
+                return
+
+            if not account.phone_number_id:
+                logger.warning(f"WhatsApp account {account.id} missing phone_number_id")
+                return
+
             status_messages = {
-                'confirmed': f'✅ Seu pedido #{order.order_number} foi confirmado!',
-                'preparing': f'👨‍🍳 Seu pedido #{order.order_number} está sendo preparado!',
-                'ready': f'🎉 Seu pedido #{order.order_number} está pronto!',
-                'out_for_delivery': f'🚗 Seu pedido #{order.order_number} saiu para entrega!',
-                'delivered': f'✅ Seu pedido #{order.order_number} foi entregue!',
-                'cancelled': f'❌ Seu pedido #{order.order_number} foi cancelado.',
+                'confirmed': f"✅ *Pedido Confirmado!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} foi confirmado!",
+                'preparing': f"👨‍🍳 *Pedido em Preparo!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} está sendo preparado!",
+                'ready': f"📦 *Pedido Pronto!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} está pronto para retirada!",
+                'out_for_delivery': f"🚚 *Pedido em Entrega!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} saiu para entrega!",
+                'delivered': f"✅ *Pedido Entregue!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} foi entregue! Agradecemos a preferência!",
+                'cancelled': f"❌ *Pedido Cancelado*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} foi cancelado.",
             }
-            
-            message = status_messages.get(new_status)
-            if message:
-                whatsapp_service.send_message(
-                    store=order.store,
-                    to=order.customer_phone,
-                    message=message
-                )
+
+            message_text = status_messages.get(new_status)
+            if not message_text:
+                return
+
+            # Normalize phone number
+            phone = normalize_phone_number(order.customer_phone or '')
+            if not phone:
+                logger.warning(f"Invalid phone number for order {order.order_number}")
+                return
+
+            # Send message using MessageService
+            message_service = MessageService()
+            message_service.send_text_message(
+                account_id=str(account.id),
+                to=phone,
+                text=message_text,
+                metadata={
+                    'source': 'order_status_notification',
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                    'status': new_status
+                }
+            )
+
+            logger.info(f"WhatsApp status notification sent for order {order.order_number}: {new_status}")
+
         except Exception as e:
-            logger.warning(f"Failed to send status notification: {e}")
+            logger.error(f"Failed to send status notification for order {order.order_number}: {e}")
 
     @transaction.atomic
     def cancel_order(
