@@ -3,12 +3,15 @@ Checkout Service - Unified checkout for all stores.
 Handles order creation, payment processing, and stock management.
 """
 import logging
+import re
 import uuid
 from decimal import Decimal
 from django.db import models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from django.conf import settings
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem,
@@ -18,6 +21,28 @@ from apps.stores.models import (
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
+
+
+def get_valid_email_for_payment(order: StoreOrder) -> str:
+    """
+    Get a valid email for payment processing.
+    Mercado Pago doesn't accept emails with .local domains.
+    """
+    email = order.customer_email
+    
+    # Check if email is valid for Mercado Pago
+    # Reject .local domains and obvious invalid emails
+    if email and re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+        domain = email.split('@')[-1].lower()
+        if not domain.endswith('.local') and not domain.endswith('.test'):
+            return email
+    
+    # Try to get email from store owner
+    if order.store and order.store.owner and order.store.owner.email:
+        return order.store.owner.email
+    
+    # Fallback to a generic email
+    return f"cliente{order.order_number}@pastita.com.br"
 
 
 def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_context: dict = None):
@@ -427,6 +452,10 @@ class CheckoutService:
         
         sdk = mercadopago.SDK(credentials['access_token'])
         
+        # Get valid email for payment
+        payer_email = get_valid_email_for_payment(order)
+        logger.info(f"Using email for payment: {payer_email} (original: {order.customer_email})")
+        
         # Build payment data
         if payment_method == 'pix':
             payment_data = {
@@ -434,7 +463,7 @@ class CheckoutService:
                 "description": f"Pedido #{order.order_number} - {order.store.name}",
                 "payment_method_id": "pix",
                 "payer": {
-                    "email": order.customer_email,
+                    "email": payer_email,
                     "first_name": order.customer_name.split()[0] if order.customer_name else "Cliente",
                     "last_name": " ".join(order.customer_name.split()[1:]) if order.customer_name else "",
                 },
@@ -493,7 +522,7 @@ class CheckoutService:
                     }
                 ],
                 "payer": {
-                    "email": order.customer_email,
+                    "email": payer_email,
                     "name": order.customer_name,
                     "phone": {"number": order.customer_phone},
                 },
