@@ -126,6 +126,11 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
             'updated_at': event.get('updated_at'),
         })
     
+    # Alias for order.updated event type
+    async def order_updated(self, event):
+        """Handle order.updated event (alias for order_update)."""
+        await self.order_update(event)
+    
     async def order_created(self, event):
         """Handle new order event."""
         await self.send_json({
@@ -137,6 +142,11 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
             'created_at': event.get('created_at'),
         })
     
+    # Alias for order.created event type
+    async def order_created_alias(self, event):
+        """Handle order.created event."""
+        await self.order_created(event)
+
     async def order_paid(self, event):
         """Handle order paid event."""
         await self.send_json({
@@ -146,6 +156,11 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
             'paid_at': event.get('paid_at'),
         })
     
+    # Alias for order.paid event type
+    async def order_paid_alias(self, event):
+        """Handle order.paid event."""
+        await self.order_paid(event)
+
     async def order_cancelled(self, event):
         """Handle order cancelled event."""
         await self.send_json({
@@ -155,6 +170,11 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
             'cancelled_at': event.get('cancelled_at'),
             'reason': event.get('reason'),
         })
+    
+    # Alias for order.cancelled event type
+    async def order_cancelled_alias(self, event):
+        """Handle order.cancelled event."""
+        await self.order_cancelled(event)
     
     @database_sync_to_async
     def check_store_access(self):
