@@ -330,6 +330,16 @@ class CheckoutService:
             }
         )
         
+        # Update user name from checkout data if provided
+        if cart.user and customer_data.get('name'):
+            full_name = customer_data['name'].strip()
+            if full_name and (cart.user.first_name == 'Usuário' or not cart.user.first_name):
+                name_parts = full_name.split(' ', 1)
+                cart.user.first_name = name_parts[0]
+                if len(name_parts) > 1:
+                    cart.user.last_name = name_parts[1]
+                cart.user.save(update_fields=['first_name', 'last_name'])
+        
         # Create order items and decrement stock
         for item in cart.items.select_related('product', 'variant').all():
             StoreOrderItem.objects.create(
