@@ -266,7 +266,7 @@ def process_message_with_agent(self, message_id: str):
             session_id = message.conversation.agent_session_id or str(message.conversation.id)
         
         # Call agent
-        response_text = agent_service.process_message(
+        result = agent_service.process_message(
             message=message.text_body or '',
             session_id=session_id,
             phone_number=message.from_number,
@@ -275,6 +275,8 @@ def process_message_with_agent(self, message_id: str):
                 'conversation_id': str(message.conversation_id) if message.conversation_id else None,
             }
         )
+        
+        response_text = result.get('response', '') if isinstance(result, dict) else str(result)
         
         if response_text:
             # Send response via WhatsApp

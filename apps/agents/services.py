@@ -4,6 +4,7 @@ Langchain Service for Agent management - Fixed for Kimi Coding API
 import json
 import time
 import uuid
+import logging
 from typing import List, Dict, Any, Optional
 
 from django.conf import settings
@@ -14,6 +15,8 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from apps.core.exceptions import BaseAPIException
 from .models import Agent, AgentConversation, AgentMessage
+
+logger = logging.getLogger(__name__)
 
 
 class LangchainService:
@@ -55,14 +58,25 @@ class LangchainService:
             )
         # Use ChatOpenAI for OpenAI
         elif self.agent.provider == Agent.AgentProvider.OPENAI:
-            from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
                 model=self.agent.model_name,
                 temperature=self.agent.temperature,
                 max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
                 api_key=api_key,
                 base_url=base_url if base_url else None,
+            )
+        # Use ChatOpenAI for Ollama (OpenAI-compatible API)
+        elif self.agent.provider == Agent.AgentProvider.OLLAMA:
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model=self.agent.model_name,
+                temperature=self.agent.temperature,
+                max_tokens=self.agent.max_tokens,
+                timeout=self.agent.timeout,
+                api_key=api_key or "ollama",
+                base_url=base_url,
             )
         else:
             raise BaseAPIException(f"Provedor não suportado: {self.agent.provider}")
@@ -93,11 +107,8 @@ class LangchainService:
         Build dynamic context with menu, customer info, order history, etc.
         This provides the agent with real-time business data.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-        
         # DEBUG: Log início da construção do contexto
-        logger.info(f"[AGENT CONTEXT DEBUG] Building context for phone: {phone_number}, conversation: {conversation_id}")
+        logger.info(f"[AGENT CONTEXT] Building context for phone: {phone_number}, conversation: {conversation_id}")
         
         context_parts = []
         
@@ -105,24 +116,10 @@ class LangchainService:
         if self.agent.context_prompt:
             context_parts.append(self.agent.context_prompt)
         
-        # NOVO: Carregar contexto do UnifiedUser
-        try:
-            from apps.users.services import UnifiedUserService
-            user_context = UnifiedUserService.get_context_for_agent(phone_number)
-            if user_context:
-                context_parts.append("═══ DADOS DO CLIENTE ═══")
-                context_parts.append(user_context)
-                context_parts.append("═══════════════════════════")
-                logger.info(f"[AGENT CONTEXT DEBUG] UnifiedUser context loaded: {len(user_context)} chars")
-            else:
-                logger.warning(f"[AGENT CONTEXT DEBUG] No UnifiedUser found for phone: {phone_number}")
-        except Exception as e:
-            logger.error(f"[AGENT CONTEXT DEBUG] Error loading UnifiedUser context: {e}")
-        
-        # 1. Load customer info and order history (fallback se UnifiedUser não existir)
+        # 1. Load customer info and order history
         try:
             from apps.conversations.models import Conversation
-            from apps.orders.models import Order
+            from apps.stores.models import StoreOrder
             
             # Get customer name from conversation
             customer_name = ""
@@ -131,16 +128,15 @@ class LangchainService:
                     conv = Conversation.objects.get(id=conversation_id)
                     if conv.contact_name:
                         customer_name = conv.contact_name
-                        if not any("CLIENTE:" in part for part in context_parts):
-                            context_parts.append(f"Nome do cliente: {customer_name}")
+                        context_parts.append(f"Nome do cliente: {customer_name}")
                 except Conversation.DoesNotExist:
                     pass
             
-            # Get recent orders from this customer (se não veio do UnifiedUser)
-            if phone_number and not any("HISTÓRICO DE PEDIDOS" in part for part in context_parts):
-                recent_orders = Order.objects.filter(
+            # Get recent orders from this customer
+            if phone_number:
+                recent_orders = StoreOrder.objects.filter(
                     customer_phone=phone_number,
-                    status__in=['completed', 'delivered']
+                    status__in=['completed', 'delivered', 'paid']
                 ).select_related('store').prefetch_related('items')[:3]
                 
                 if recent_orders:
@@ -166,7 +162,7 @@ class LangchainService:
                         context_parts.append(fav_text)
                         
         except Exception as e:
-            logger.error(f"Error loading customer/order data: {e}")
+            logger.error(f"[AGENT CONTEXT] Error loading customer/order data: {e}")
         
         # 2. Load store menu/catalog
         try:
@@ -189,274 +185,326 @@ class LangchainService:
                     from apps.stores.models import Store
                     # Get first store from agent's accounts
                     agent_accounts = self.agent.accounts.all()
+                    logger.info(f"[AGENT CONTEXT] Agent accounts count: {agent_accounts.count()}")
                     if agent_accounts:
                         first_account = agent_accounts.first()
-                        if hasattr(first_account, 'store'):
+                        logger.info(f"[AGENT CONTEXT] First account: {first_account}")
+                        if hasattr(first_account, 'store') and first_account.store:
                             store = first_account.store
-                except:
-                    pass
+                            logger.info(f"[AGENT CONTEXT] Found store via account.store: {store.name}")
+                        # Try stores many-to-many relation
+                        elif hasattr(first_account, 'stores') and first_account.stores.exists():
+                            store = first_account.stores.first()
+                            logger.info(f"[AGENT CONTEXT] Found store via account.stores: {store.name}")
+                except Exception as e:
+                    logger.error(f"[AGENT CONTEXT] Error loading store from accounts: {e}")
+            
+            # FALLBACK: If no store found, use 'pastita' store
+            if not store:
+                try:
+                    from apps.stores.models import Store
+                    store = Store.objects.filter(slug='pastita').first()
+                    if store:
+                        logger.info(f"[AGENT CONTEXT] Using fallback store: {store.name}")
+                    else:
+                        logger.warning("[AGENT CONTEXT] Fallback store 'pastita' not found!")
+                except Exception as e:
+                    logger.error(f"[AGENT CONTEXT] Error loading fallback store: {e}")
             
             # Load products from store
             if store:
                 try:
-                    from apps.catalog.models import Product
-                    products = Product.objects.filter(
+                    from apps.stores.models import StoreProduct
+                    products = StoreProduct.objects.filter(
                         store=store,
-                        is_active=True,
-                        is_available=True
-                    )[:15]
+                        is_active=True
+                    ).select_related('category')[:20]
                     
                     if products:
-                        menu_text = f"🍽️ CARDÁPIO ATUAL - {store.name}:\n"
-                        for p in products:
-                            price_display = f"R$ {p.price:.2f}"
-                            if p.compare_at_price and p.compare_at_price > p.price:
-                                price_display += f" (de R$ {p.compare_at_price:.2f})"
-                            menu_text += f"- {p.name}: {price_display}\n"
-                            if p.description:
-                                menu_text += f"  {p.description[:80]}...\n"
+                        menu_text = f"\n📋 CARDÁPIO - {store.name}:\n"
+                        current_category = None
+                        
+                        for product in products:
+                            if product.category and product.category.name != current_category:
+                                current_category = product.category.name
+                                menu_text += f"\n【{current_category}】\n"
+                            
+                            price = product.price
+                            menu_text += f"• {product.name} - R$ {price}"
+                            if product.description:
+                                desc = product.description[:60] + "..." if len(product.description) > 60 else product.description
+                                menu_text += f" ({desc})"
+                            menu_text += "\n"
+                        
                         context_parts.append(menu_text)
                         
-                        # Add promotional info if exists
-                        promos = products.filter(compare_at_price__gt=models.F('price'))[:5]
-                        if promos:
-                            promo_text = "🔥 PROMOÇÕES ATIVAS: " + ", ".join([p.name for p in promos])
-                            context_parts.append(promo_text)
+                        # Add delivery info
+                        if store.delivery_enabled:
+                            delivery_text = f"\n🚚 ENTREGA:\n"
+                            delivery_text += f"• Taxa de entrega: R$ {store.default_delivery_fee}\n"
+                            if store.free_delivery_threshold:
+                                delivery_text += f"• Grátis acima de: R$ {store.free_delivery_threshold}\n"
+                            context_parts.append(delivery_text)
                             
                 except Exception as e:
-                    logger.error(f"Error loading products: {e}")
-                    
+                    logger.error(f"[AGENT CONTEXT] Error loading store products: {e}")
+            
         except Exception as e:
-            logger.error(f"Error loading store/menu data: {e}")
+            logger.error(f"[AGENT CONTEXT] Error loading store menu: {e}")
         
-        # 3. Add current time context
-        from datetime import datetime
-        now = datetime.now()
-        time_context = f"📅 Data e hora atual: {now.strftime('%d/%m/%Y %H:%M')}"
-        context_parts.append(time_context)
+        # 3. Load business hours
+        try:
+            if store and store.operating_hours:
+                hours_text = "\n⏰ HORÁRIO DE FUNCIONAMENTO:\n"
+                for day, hours in store.operating_hours.items():
+                    hours_text += f"• {day}: {hours.get('open', '--:--')} - {hours.get('close', '--:--')}\n"
+                context_parts.append(hours_text)
+        except Exception as e:
+            logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
         
-        # Join all context parts
-        return "\n\n".join(context_parts)
-
+        # Combine all context parts
+        full_context = "\n\n".join(context_parts)
+        
+        # DEBUG: Log tamanho do contexto
+        logger.info(f"[AGENT CONTEXT] Context built: {len(full_context)} chars, {len(context_parts)} parts")
+        
+        return full_context
     
     def process_message(
         self,
         message: str,
         session_id: Optional[str] = None,
         phone_number: Optional[str] = None,
-        save_to_db: bool = True
+        conversation_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process a message through the agent.
         
+        Args:
+            message: The user's message
+            session_id: Optional session ID for memory
+            phone_number: Optional phone number for context
+            conversation_id: Optional conversation ID for context
+            
         Returns:
-            Dict with 'response', 'session_id', 'tokens_used', etc.
+            Dict with response text and metadata
         """
         start_time = time.time()
         
-        # Generate or use existing session_id
+        # Generate or use session ID
         if not session_id:
             session_id = self._generate_session_id()
         
-        # Get or create conversation
-        try:
-            conversation, created = AgentConversation.objects.get_or_create(
-                session_id=session_id,
-                defaults={
-                    'agent': self.agent,
-                    'phone_number': phone_number or '',
-                }
-            )
-        except AgentConversation.DoesNotExist:
-            # Se não existe, cria uma nova
-            conversation = AgentConversation.objects.create(
-                session_id=session_id,
-                agent=self.agent,
-                phone_number=phone_number or '',
-            )
-            created = True
+        # Get memory
+        memory = self._get_memory(session_id)
         
-        # Build messages
+        # Build dynamic context
+        dynamic_context = ""
+        if phone_number or conversation_id:
+            dynamic_context = self._build_dynamic_context(phone_number, conversation_id)
+        
+        # Prepare messages
         messages = []
         
         # Add system prompt with dynamic context
-        system_prompt = self.agent.get_full_prompt()
-        dynamic_context = self._build_dynamic_context(phone_number, session_id)
+        system_prompt = self.agent.system_prompt or "Você é um assistente virtual útil."
+        if dynamic_context:
+            system_prompt = f"{system_prompt}\n\n{dynamic_context}"
+        messages.append(SystemMessage(content=system_prompt))
         
-        # Combine system prompt with dynamic context
-        full_system_prompt = f"{system_prompt}\n\n{dynamic_context}"
-        messages.append(SystemMessage(content=full_system_prompt))
-        
-        # Add memory/history if enabled
-        memory = self._get_memory(session_id)
+        # Add memory/context if available
         if memory:
-            history_messages = memory.messages
-            if history_messages:
-                logger.debug(f"[AGENT] Loaded {len(history_messages)} messages from memory for session {session_id}")
-                messages.extend(history_messages)
-            else:
-                logger.debug(f"[AGENT] No history found in memory for session {session_id}")
-        else:
-            logger.debug(f"[AGENT] Memory not available for session {session_id}")
+            try:
+                history = memory.messages
+                messages.extend(history[-self.agent.max_context_messages:])
+            except Exception as e:
+                logger.warning(f"Error loading memory: {e}")
         
         # Add user message
         messages.append(HumanMessage(content=message))
         
-        logger.debug(f"[AGENT] Sending {len(messages)} messages to LLM (session: {session_id})")
-        
-        # Call LLM
         try:
+            # Call LLM
             response = self.llm.invoke(messages)
+            
+            # Extract response text
             response_text = response.content
-            # Try to get token usage from response metadata
-            try:
-                tokens_used = response.response_metadata.get('usage', {}).get('total_tokens')
-            except (AttributeError, KeyError):
-                tokens_used = None
-        except Exception as e:
-            raise BaseAPIException(f"Erro ao chamar LLM: {str(e)}")
-        
-        # Calculate response time
-        response_time_ms = int((time.time() - start_time) * 1000)
-        
-        # Save to memory if enabled
-        if memory:
-            memory.add_user_message(message)
-            memory.add_ai_message(response_text)
-        
-        # Save to database
-        if save_to_db:
-            AgentMessage.objects.create(
-                conversation=conversation,
-                role=AgentMessage.MessageRole.USER,
-                content=message
-            )
-            AgentMessage.objects.create(
-                conversation=conversation,
-                role=AgentMessage.MessageRole.ASSISTANT,
-                content=response_text,
-                tokens_used=tokens_used,
-                response_time_ms=response_time_ms
-            )
             
-            # Update conversation metrics
-            conversation.message_count += 2
-            conversation.save()
-        
-        return {
-            'response': response_text,
-            'session_id': session_id,
-            'tokens_used': tokens_used,
-            'response_time_ms': response_time_ms,
-        }
-    
-    def clear_memory(self, session_id: str) -> bool:
-        """Clear conversation memory for a session."""
-        if not self.agent.use_memory:
-            return False
-        
-        try:
-            redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
-            history = RedisChatMessageHistory(
-                session_id=f"agent_{self.agent.id}_{session_id}",
-                url=redis_url
-            )
-            history.clear()
-            return True
-        except Exception as e:
-            logger.error(f"Error clearing memory: {e}")
-            return False
-    
-    def get_conversation_history(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get conversation history from memory."""
-        if not self.agent.use_memory:
-            return []
-        
-        try:
-            memory = self._get_memory(session_id)
-            if not memory:
-                return []
+            # Save to memory if enabled
+            if memory:
+                try:
+                    memory.add_user_message(message)
+                    memory.add_ai_message(response_text)
+                except Exception as e:
+                    logger.warning(f"Error saving to memory: {e}")
             
-            history = memory.messages
-            return [
-                {
-                    'role': 'user' if isinstance(msg, HumanMessage) else 'assistant',
-                    'content': msg.content
-                }
-                for msg in history
-            ]
+            # Calculate processing time
+            processing_time = time.time() - start_time
+            
+            return {
+                'response': response_text,
+                'session_id': session_id,
+                'processing_time': processing_time,
+                'model': self.agent.model_name,
+                'tokens_used': getattr(response, 'usage', {}).get('total_tokens', 0),
+            }
+            
         except Exception as e:
-            logger.error(f"Error getting history: {e}")
-            return []
-
-
-class AgentService:
-    """Service for managing agents and their operations."""
+            logger.error(f"Error processing message: {e}")
+            raise BaseAPIException(f"Erro ao processar mensagem: {str(e)}")
     
-    def __init__(self, agent: Optional[Agent] = None):
-        """Initialize with an optional agent."""
-        self.agent = agent
-        self._langchain_service = None
-        
-        if agent:
-            self._langchain_service = LangchainService(agent)
-    
-    def process_message(
+    def process_message_stream(
         self,
         message: str,
         session_id: Optional[str] = None,
         phone_number: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        save_to_db: bool = True
-    ) -> str:
+        conversation_id: Optional[str] = None
+    ):
         """
-        Process a message with the configured agent.
+        Process a message with streaming response.
         
-        Returns the response text or empty string if no response.
+        Yields chunks of the response as they arrive.
         """
-        if not self.agent or not self._langchain_service:
-            return ''
+        start_time = time.time()
+        
+        # Generate or use session ID
+        if not session_id:
+            session_id = self._generate_session_id()
+        
+        # Get memory
+        memory = self._get_memory(session_id)
+        
+        # Build dynamic context
+        dynamic_context = ""
+        if phone_number or conversation_id:
+            dynamic_context = self._build_dynamic_context(phone_number, conversation_id)
+        
+        # Prepare messages
+        messages = []
+        
+        # Add system prompt with dynamic context
+        system_prompt = self.agent.system_prompt or "Você é um assistente virtual útil."
+        if dynamic_context:
+            system_prompt = f"{system_prompt}\n\n{dynamic_context}"
+        messages.append(SystemMessage(content=system_prompt))
+        
+        # Add memory/context if available
+        if memory:
+            try:
+                history = memory.messages
+                messages.extend(history[-self.agent.max_context_messages:])
+            except Exception as e:
+                logger.warning(f"Error loading memory: {e}")
+        
+        # Add user message
+        messages.append(HumanMessage(content=message))
         
         try:
-            result = self._langchain_service.process_message(
-                message=message,
-                session_id=session_id,
-                phone_number=phone_number,
-                save_to_db=save_to_db
-            )
-            return result.get('response', '')
+            # Call LLM with streaming
+            full_response = ""
+            for chunk in self.llm.stream(messages):
+                if chunk.content:
+                    full_response += chunk.content
+                    yield {
+                        'type': 'chunk',
+                        'content': chunk.content,
+                        'session_id': session_id,
+                    }
+            
+            # Save to memory if enabled
+            if memory:
+                try:
+                    memory.add_user_message(message)
+                    memory.add_ai_message(full_response)
+                except Exception as e:
+                    logger.warning(f"Error saving to memory: {e}")
+            
+            # Calculate processing time
+            processing_time = time.time() - start_time
+            
+            # Yield final message
+            yield {
+                'type': 'final',
+                'response': full_response,
+                'session_id': session_id,
+                'processing_time': processing_time,
+                'model': self.agent.model_name,
+            }
+            
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
-            return ''
+            logger.error(f"Error processing message stream: {e}")
+            yield {
+                'type': 'error',
+                'error': str(e),
+                'session_id': session_id,
+            }
+
+
+class AgentService:
+    """Service for agent management operations."""
     
     @staticmethod
-    def get_active_agents(account_id: Optional[str] = None):
-        """Get all active agents, optionally filtered by account."""
-        queryset = Agent.objects.filter(
-            status=Agent.AgentStatus.ACTIVE,
-            is_active=True
-        )
-        
-        if account_id:
-            queryset = queryset.filter(accounts__id=account_id)
-        
-        return queryset
-    
-    @staticmethod
-    def process_with_agent(
+    def get_agent_response(
         agent_id: str,
         message: str,
         session_id: Optional[str] = None,
-        phone_number: Optional[str] = None
+        phone_number: Optional[str] = None,
+        conversation_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """Process a message with a specific agent."""
+        """
+        Get response from an agent.
+        
+        This is the main entry point for agent interactions.
+        """
         try:
             agent = Agent.objects.get(id=agent_id, is_active=True)
         except Agent.DoesNotExist:
-            raise BaseAPIException("Agente não encontrado")
-        
-        if agent.status != Agent.AgentStatus.ACTIVE:
-            raise BaseAPIException("Agente não está ativo")
+            raise BaseAPIException("Agente não encontrado ou inativo")
         
         service = LangchainService(agent)
-        return service.process_message(message, session_id, phone_number)
+        return service.process_message(
+            message=message,
+            session_id=session_id,
+            phone_number=phone_number,
+            conversation_id=conversation_id
+        )
+    
+    @staticmethod
+    def create_conversation(
+        agent_id: str,
+        user_id: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> AgentConversation:
+        """Create a new conversation with an agent."""
+        agent = Agent.objects.get(id=agent_id)
+        
+        conversation = AgentConversation.objects.create(
+            agent=agent,
+            user_id=user_id,
+            session_id=str(uuid.uuid4()),
+            metadata=metadata or {}
+        )
+        
+        return conversation
+    
+    @staticmethod
+    def add_message(
+        conversation_id: str,
+        role: str,
+        content: str,
+        metadata: Optional[Dict] = None
+    ) -> AgentMessage:
+        """Add a message to a conversation."""
+        conversation = AgentConversation.objects.get(id=conversation_id)
+        
+        message = AgentMessage.objects.create(
+            conversation=conversation,
+            role=role,
+            content=content,
+            metadata=metadata or {}
+        )
+        
+        # Update conversation timestamp
+        conversation.save()
+        
+        return message

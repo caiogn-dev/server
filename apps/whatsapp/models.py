@@ -483,7 +483,9 @@ class MessageContext(models.Model):
         Message,
         on_delete=models.CASCADE,
         related_name='context',
-        verbose_name='Mensagem'
+        verbose_name='Mensagem',
+        null=True,
+        blank=True
     )
     
     # ID da mensagem original citada
