@@ -318,7 +318,8 @@ class LangchainService:
         # DEBUG: Log tamanho do contexto
         logger.info(f"[AGENT CONTEXT] Context built: {len(full_context)} chars, {len(context_parts)} parts")
         
-        return full_context
+        # Remove accents to avoid encoding issues with API
+        return remove_accents(full_context)
     
     def process_message(
         self,
@@ -368,7 +369,11 @@ class LangchainService:
         if memory:
             try:
                 history = memory.messages
-                messages.extend(history[-self.agent.max_context_messages:])
+                # Add memory messages with accents removed
+                for hist_msg in history[-self.agent.max_context_messages:]:
+                    if hasattr(hist_msg, 'content') and hist_msg.content:
+                        hist_msg.content = remove_accents(hist_msg.content)
+                    messages.append(hist_msg)
             except Exception as e:
                 logger.warning(f"Error loading memory: {e}")
         
@@ -376,16 +381,27 @@ class LangchainService:
         messages.append(HumanMessage(content=remove_accents(message)))
         
         try:
-            # Call LLM - Remove accents to avoid encoding issues
+            # Call LLM - Create new messages with accents removed
+            # This avoids encoding issues with the Kimi API
             encoded_messages = []
             for msg in messages:
                 if hasattr(msg, 'content') and msg.content:
-                    # Remove accents from content
                     content = msg.content
                     if isinstance(content, bytes):
                         content = content.decode('utf-8')
-                    msg.content = remove_accents(content)
-                encoded_messages.append(msg)
+                    cleaned_content = remove_accents(content)
+                    
+                    # Create new message object with cleaned content
+                    if isinstance(msg, SystemMessage):
+                        encoded_messages.append(SystemMessage(content=cleaned_content))
+                    elif isinstance(msg, HumanMessage):
+                        encoded_messages.append(HumanMessage(content=cleaned_content))
+                    elif isinstance(msg, AIMessage):
+                        encoded_messages.append(AIMessage(content=cleaned_content))
+                    else:
+                        encoded_messages.append(msg)
+                else:
+                    encoded_messages.append(msg)
             
             response = self.llm.invoke(encoded_messages)
             
