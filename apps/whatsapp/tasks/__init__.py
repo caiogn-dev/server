@@ -114,52 +114,82 @@ def process_message_with_agent(self, message_id: str):
             return
         
         agent = account.default_agent
+        response_text = None
         
-        # Use AgentService static method directly
-        result = AgentService.get_agent_response(
-            agent_id=str(agent.id),
-            message=message.text_body or '',
-            session_id=str(message.conversation.id) if message.conversation else None,
-            phone_number=message.from_number,
-            conversation_id=str(message.conversation.id) if message.conversation else None
-        )
+        try:
+            # Use AgentService static method directly with timeout protection
+            logger.info(f"Calling AgentService for message: {message_id}")
+            result = AgentService.get_agent_response(
+                agent_id=str(agent.id),
+                message=message.text_body or '',
+                session_id=str(message.conversation.id) if message.conversation else None,
+                phone_number=message.from_number,
+                conversation_id=str(message.conversation.id) if message.conversation else None
+            )
+            
+            response_text = result.get('response', '')
+            logger.info(f"Agent returned response of length {len(response_text) if response_text else 0} for message: {message_id}")
+            
+        except Exception as agent_error:
+            logger.error(f"AgentService error for message {message_id}: {str(agent_error)}", exc_info=True)
+            # Send fallback message on agent error
+            response_text = "Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente?"
         
-        response_text = result.get('response', '')
-        
-        message_repo.mark_as_processed_by_agent(message)
+        # Always mark as processed, even if there was an error
+        try:
+            message_repo.mark_as_processed_by_agent(message)
+        except Exception as mark_error:
+            logger.warning(f"Failed to mark message as processed: {str(mark_error)}")
         
         # Try to create order if conversation indicates a purchase intent
-        order_result = None
-        if message.conversation:
-            # Check if response indicates order confirmation
-            confirmation_words = [
-                'pedido confirmado', 'pedido registrado', 'pedido realizado',
-                'pedido foi confirmado', 'pedido foi registrado',
-                'resumo do pedido', 'total do pedido'
-            ]
-            response_lower = response_text.lower()
-            if any(word in response_lower for word in confirmation_words):
-                logger.info(f"Attempting to create order from conversation: {message.conversation.id}")
-                order_result = try_create_order_from_conversation(
-                    message.conversation,
-                    message.from_number
-                )
-                if order_result and order_result.get('success'):
-                    logger.info(f"Order created successfully: {order_result.get('order_number')}")
-                    # Append order info to response
-                    response_text += f"\n\n📋 *Pedido #{order_result.get('order_number')}* criado no sistema!"
-                else:
-                    logger.warning(f"Could not create order: {order_result}")
+        if response_text and message.conversation:
+            try:
+                confirmation_words = [
+                    'pedido confirmado', 'pedido registrado', 'pedido realizado',
+                    'pedido foi confirmado', 'pedido foi registrado',
+                    'resumo do pedido', 'total do pedido'
+                ]
+                response_lower = response_text.lower()
+                if any(word in response_lower for word in confirmation_words):
+                    logger.info(f"Attempting to create order from conversation: {message.conversation.id}")
+                    order_result = try_create_order_from_conversation(
+                        message.conversation,
+                        message.from_number
+                    )
+                    if order_result and order_result.get('success'):
+                        logger.info(f"Order created successfully: {order_result.get('order_number')}")
+                        response_text += f"\n\n📋 *Pedido #{order_result.get('order_number')}* criado no sistema!"
+                    else:
+                        logger.warning(f"Could not create order: {order_result}")
+            except Exception as order_error:
+                logger.warning(f"Order creation error: {str(order_error)}")
         
+        # Send response if we have one
         if response_text:
-            send_agent_response.delay(
-                str(account.id),
-                message.from_number,
-                response_text,
-                str(message.whatsapp_message_id)
-            )
+            try:
+                send_agent_response.delay(
+                    str(account.id),
+                    message.from_number,
+                    response_text,
+                    str(message.whatsapp_message_id)
+                )
+                logger.info(f"Response queued for sending: {message_id}")
+            except Exception as send_error:
+                logger.error(f"Failed to queue response for message {message_id}: {str(send_error)}")
+                # Try one more time with basic fallback
+                try:
+                    send_agent_response.delay(
+                        str(account.id),
+                        message.from_number,
+                        "Obrigado pela mensagem! Em breve retornaremos.",
+                        None
+                    )
+                except:
+                    pass
+        else:
+            logger.warning(f"No response text generated for message: {message_id}")
         
-        logger.info(f"Message processed by AI Agent: {message_id}")
+        logger.info(f"Message processing completed: {message_id}")
         
     except Exception as e:
         logger.error(f"Error processing message with AI Agent {message_id}: {str(e)}")
