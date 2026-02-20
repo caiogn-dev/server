@@ -357,49 +357,112 @@ class WebhookService:
             raise
 
     def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
-        """Run automation/langflow handlers after a message is created."""
-        from apps.automation.services import AutomationService
+        """
+        Processa mensagem recebida com múltiplos níveis de fallback.
+        
+        Ordem de prioridade:
+        1. WhatsAppAutomationService (novo sistema com Intent Detection)
+        2. AutomationService (sistema antigo como fallback)
+        3. AI Agent (último recurso)
+        """
         from apps.conversations.services import ConversationService
 
         payload = event.payload
         message_data = payload.get('message', {})
         contact_info = payload.get('contact', {})
 
-        # Ensure conversation exists (in case it wasn't created)
+        # Ensure conversation exists
         if not message.conversation:
-            conversation_service = ConversationService()
-            conversation = conversation_service.get_or_create_conversation(
-                account=event.account,
-                phone_number=message.from_number,
-                contact_name=contact_info.get('profile', {}).get('name', '')
-            )
-            message.conversation = conversation
-            message.save(update_fields=['conversation'])
+            try:
+                conversation_service = ConversationService()
+                conversation = conversation_service.get_or_create_conversation(
+                    account=event.account,
+                    phone_number=message.from_number,
+                    contact_name=contact_info.get('profile', {}).get('name', '')
+                )
+                message.conversation = conversation
+                message.save(update_fields=['conversation'])
+            except Exception as e:
+                logger.error(f"[post_process] Failed to create conversation: {e}")
 
         # Update contact name if missing
-        contact_name = contact_info.get('profile', {}).get('name', '')
-        if message.conversation and contact_name and not message.conversation.contact_name:
-            message.conversation.contact_name = contact_name
-            message.conversation.save(update_fields=['contact_name', 'updated_at'])
-
-        # Extract name from message if user says "my name is" or similar
-        if message.conversation and message.text_body and not message.conversation.contact_name:
-            extracted_name = self._extract_name_from_message(message.text_body)
-            if extracted_name:
-                message.conversation.contact_name = extracted_name
+        try:
+            contact_name = contact_info.get('profile', {}).get('name', '')
+            if message.conversation and contact_name and not message.conversation.contact_name:
+                message.conversation.contact_name = contact_name
                 message.conversation.save(update_fields=['contact_name', 'updated_at'])
-                logger.info(f"Extracted name from message: {extracted_name} for conversation {message.conversation.id}")
 
-        # Process message with timeout protection
-        # Wrap automation and agent processing to ensure webhook responds quickly
+            # Extract name from message
+            if message.conversation and message.text_body and not message.conversation.contact_name:
+                extracted_name = self._extract_name_from_message(message.text_body)
+                if extracted_name:
+                    message.conversation.contact_name = extracted_name
+                    message.conversation.save(update_fields=['contact_name', 'updated_at'])
+                    logger.info(f"[post_process] Extracted name: {extracted_name}")
+        except Exception as e:
+            logger.warning(f"[post_process] Error updating contact name: {e}")
+
+        # ========== NÍVEL 1: WhatsAppAutomationService (novo sistema) ==========
+        intent_response = None
+        intent_error = None
+        
         try:
             import threading
-            import time
+            from apps.whatsapp.services import WhatsAppAutomationService
+            
+            def run_intent_automation():
+                nonlocal intent_response, intent_error
+                try:
+                    service = WhatsAppAutomationService(
+                        account=event.account,
+                        conversation=message.conversation,
+                        use_llm=True,
+                        enable_interactive=True,
+                        debug=False
+                    )
+                    intent_response = service.process_message(message.text_body or '')
+                    logger.info(f"[IntentAutomation] Response: {intent_response}")
+                except Exception as e:
+                    intent_error = e
+                    logger.warning(f"[IntentAutomation] Error: {e}")
+            
+            thread = threading.Thread(target=run_intent_automation)
+            thread.start()
+            thread.join(timeout=8)
+            
+            if thread.is_alive():
+                logger.warning("[IntentAutomation] Timeout")
+                intent_error = TimeoutError("Intent automation timeout")
+            
+            # Se obteve resposta válida (não None e não comandos internos)
+            if intent_response and intent_response not in ['BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT', None]:
+                logger.info(f"[IntentAutomation] Sending response: {intent_response[:50]}...")
+                try:
+                    from ..tasks import send_agent_response
+                    send_agent_response.delay(
+                        str(event.account.id),
+                        message.from_number,
+                        intent_response,
+                        str(message.whatsapp_message_id)
+                    )
+                    logger.info("[IntentAutomation] Response queued successfully")
+                    return  # Sucesso! Mensagem processada.
+                except Exception as e:
+                    logger.error(f"[IntentAutomation] Failed to queue response: {e}")
+                    # Continua para fallback
+                    
+        except ImportError as e:
+            logger.warning(f"[IntentAutomation] Import error (module not ready): {e}")
+        except Exception as e:
+            logger.warning(f"[IntentAutomation] Unexpected error: {e}")
+
+        # ========== NÍVEL 2: AutomationService (sistema antigo como fallback) ==========
+        try:
+            from apps.automation.services import AutomationService
             
             automation_response = None
             automation_error = None
             
-            # Define function to run automation with timeout
             def run_automation():
                 nonlocal automation_response, automation_error
                 try:
@@ -413,20 +476,17 @@ class WebhookService:
                     )
                 except Exception as e:
                     automation_error = e
-                    logger.warning(f"Automation service error in thread: {str(e)}")
+                    logger.warning(f"[AutomationService] Error: {e}")
             
-            # Run automation with 10-second timeout to prevent webhook blocking
-            automation_thread = threading.Thread(target=run_automation)
-            automation_thread.start()
-            automation_thread.join(timeout=10)  # Max 10 seconds for automation
+            thread = threading.Thread(target=run_automation)
+            thread.start()
+            thread.join(timeout=10)
             
-            if automation_thread.is_alive():
-                logger.warning(f"Automation service timeout for message: {message.id}")
-                # Don't wait, fall through to agent processing
+            if thread.is_alive():
+                logger.warning("[AutomationService] Timeout")
             
-            # If automation handled it successfully, send the response
             if automation_response:
-                logger.info(f"Message handled by automation service: {message.id}")
+                logger.info(f"[AutomationService] Sending response: {automation_response[:50]}...")
                 try:
                     from ..tasks import send_agent_response
                     send_agent_response.delay(
@@ -435,36 +495,36 @@ class WebhookService:
                         automation_response,
                         str(message.whatsapp_message_id)
                     )
-                    logger.info(f"Automation response queued for sending: {message.id}")
+                    logger.info("[AutomationService] Response queued successfully")
+                    return  # Sucesso!
                 except Exception as e:
-                    logger.error(f"Failed to queue automation response: {str(e)}")
-                return
-            
+                    logger.error(f"[AutomationService] Failed to queue response: {e}")
+                    # Continua para último fallback
+                    
             if automation_error:
-                logger.warning(f"Automation service error: {str(automation_error)}")
+                logger.warning(f"[AutomationService] Error occurred: {automation_error}")
                 
         except Exception as e:
-            logger.warning(f"Automation service wrapper error: {str(e)}")
+            logger.warning(f"[AutomationService] Unexpected error: {e}")
 
-        # Fall back to AI Agent if enabled and automation didn't handle it
+        # ========== NÍVEL 3: AI Agent (último recurso) ==========
         if event.account.auto_response_enabled and not message.processed_by_agent:
             try:
-                # Check if account has default agent configured
                 has_agent = hasattr(event.account, 'default_agent') and event.account.default_agent
                 
                 if has_agent:
-                    logger.info(f"Enqueuing agent processing for message: {message.id}")
+                    logger.info(f"[AI Agent] Enqueuing agent processing for message: {message.id}")
                     current_app.send_task(
                         'apps.whatsapp.tasks.process_message_with_agent', 
                         args=[str(message.id)],
                         queue='default',
-                        countdown=0  # Process immediately
+                        countdown=0
                     )
-                    logger.info(f"Agent task enqueued successfully: {message.id}")
+                    logger.info("[AI Agent] Task enqueued successfully")
                 else:
-                    logger.debug(f"No default agent configured for account: {event.account.id}")
+                    logger.debug(f"[AI Agent] No default agent configured for account: {event.account.id}")
             except Exception as e:
-                logger.error(f"Failed to enqueue Agent task: {str(e)}", exc_info=True)
+                logger.error(f"[AI Agent] Failed to enqueue task: {e}", exc_info=True)
 
     def _extract_name_from_message(self, text: str) -> str:
         """Extract name from message patterns like 'my name is John', 'sou o Carlos', etc."""
