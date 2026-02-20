@@ -22,16 +22,35 @@ class WhatsAppHandler(BaseHandler):
         Delegates to the existing WhatsApp webhook service.
         """
         from apps.whatsapp.services import WebhookService
+        from apps.whatsapp.models import WebhookEvent as WhatsAppWebhookEvent
         
         service = WebhookService()
         
-        # Process the webhook
-        result = service.process_webhook(payload)
+        # Process the webhook (creates WebhookEvent records)
+        whatsapp_events = service.process_webhook(payload, headers)
+        
+        # Dispatch each event to Celery for processing
+        processed_count = 0
+        for whatsapp_event in whatsapp_events:
+            try:
+                from apps.whatsapp.tasks import process_webhook_event
+                process_webhook_event.delay(str(whatsapp_event.id))
+                processed_count += 1
+                logger.info(f"Dispatched WhatsApp event {whatsapp_event.id} to Celery")
+            except Exception as e:
+                # If Celery fails, process synchronously
+                logger.warning(f"Celery dispatch failed for event {whatsapp_event.id}: {e}")
+                try:
+                    service.process_event(whatsapp_event, post_process_inbound=True)
+                    processed_count += 1
+                    logger.info(f"Processed event {whatsapp_event.id} synchronously")
+                except Exception as sync_error:
+                    logger.error(f"Sync processing failed for event {whatsapp_event.id}: {sync_error}")
         
         return {
             'processed': True,
-            'messages_processed': len(result.get('messages', [])),
-            'statuses_processed': len(result.get('statuses', [])),
+            'events_created': len(whatsapp_events),
+            'events_dispatched': processed_count,
         }
     
     def handle_verification(self, request) -> HttpResponse:
