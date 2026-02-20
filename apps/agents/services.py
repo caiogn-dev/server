@@ -402,11 +402,19 @@ class LangchainService:
             
             # Extract response text
             response_text = response.content
+            
+            # DEBUG: Log da resposta
+            logger.info(f"[AGENT RESPONSE] Raw response content: {response_text!r}")
+            logger.info(f"[AGENT RESPONSE] Response type: {type(response_text)}")
+            
             if isinstance(response_text, bytes):
                 response_text = response_text.decode('utf-8')
             elif response_text:
                 # Ensure response is properly decoded
                 response_text = json.loads(json.dumps(response_text, ensure_ascii=False))
+            
+            # DEBUG: Log da resposta processada
+            logger.info(f"[AGENT RESPONSE] Processed response: {response_text!r}")
             
             # Save to memory if enabled
             if memory:

@@ -48,6 +48,15 @@ app.conf.beat_schedule = {
         'task': 'apps.automation.tasks.check_pending_pix_payments',
         'schedule': 600.0,  # Every 10 minutes
     },
+    # NOVAS: Automações proativas WhatsApp
+    'check-pending-payments-new': {
+        'task': 'apps.whatsapp.tasks.automation_tasks.check_pending_payments',
+        'schedule': 600.0,  # Every 10 minutes
+    },
+    'check-abandoned-carts-new': {
+        'task': 'apps.whatsapp.tasks.automation_tasks.check_abandoned_carts',
+        'schedule': 900.0,  # Every 15 minutes
+    },
     'cleanup-expired-sessions': {
         'task': 'apps.automation.tasks.cleanup_expired_sessions',
         'schedule': 86400.0,  # Daily

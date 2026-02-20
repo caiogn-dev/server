@@ -282,6 +282,18 @@ def _process_error_event(event, message_service):
     )
 
 
+# Import automation tasks for easy access
+from .automation_tasks import (
+    send_payment_reminder,
+    check_pending_payments,
+    send_cart_reminder,
+    check_abandoned_carts,
+    notify_order_status_change,
+    request_feedback,
+    schedule_feedback_request,
+)
+
+
 def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
     """
     Try to create an order from conversation history.
