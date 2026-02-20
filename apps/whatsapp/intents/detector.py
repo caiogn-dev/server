@@ -14,6 +14,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Type alias for intent data
+IntentData = Dict[str, Any]
+
 
 class IntentType(Enum):
     """Tipos de intenção do usuário"""

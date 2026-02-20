@@ -6,13 +6,14 @@ Cada handler retorna uma resposta adequada ou None para fallback.
 """
 from typing import Dict, Any, Optional
 from decimal import Decimal
+from datetime import datetime
 import logging
 
 from apps.whatsapp.intents.detector import IntentType, IntentData
 from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
 from apps.automation.models import AutoMessage
 from apps.stores.models import StoreProduct
-from apps.orders.models import Order
+from apps.stores.models.order import StoreOrder as Order
 
 logger = logging.getLogger(__name__)
 

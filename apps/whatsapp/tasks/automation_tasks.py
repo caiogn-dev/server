@@ -24,7 +24,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         order_id: ID do pedido
         reminder_type: 'first' (30min), 'second' (2h), 'final' (24h)
     """
-    from apps.orders.models import Order
+    from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
     
@@ -105,7 +105,7 @@ def check_pending_payments():
     Verifica pagamentos pendentes e agenda lembretes
     Executado a cada 10 minutos
     """
-    from apps.orders.models import Order
+    from apps.stores.models.order import StoreOrder as Order
     
     now = timezone.now()
     
@@ -166,7 +166,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         cart_id: ID do carrinho
         reminder_type: '30min', '2h', '24h'
     """
-    from apps.carts.models import Cart
+    from apps.stores.models.cart import StoreCart as Cart
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
     
@@ -179,7 +179,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
             return
         
         # Verifica se já foi convertido em pedido
-        from apps.orders.models import Order
+        from apps.stores.models.order import StoreOrder as Order
         recent_order = Order.objects.filter(
             customer_phone=cart.customer_phone,
             created_at__gte=cart.updated_at
@@ -255,7 +255,7 @@ def check_abandoned_carts():
     Verifica carrinhos abandonados
     Executado a cada 15 minutos
     """
-    from apps.carts.models import Cart
+    from apps.stores.models.cart import StoreCart as Cart
     
     now = timezone.now()
     
@@ -319,7 +319,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
         order_id: ID do pedido
         new_status: Novo status
     """
-    from apps.orders.models import Order
+    from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
     
@@ -396,7 +396,7 @@ def request_feedback(order_id: str):
     Solicita avaliação após entrega
     Executado 30 minutos após pedido ser marcado como entregue
     """
-    from apps.orders.models import Order
+    from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
     

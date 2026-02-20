@@ -7,7 +7,7 @@ from .detector import (
     IntentType,
     IntentDetector,
     intent_detector,
-    IntentData
+    IntentData,
 )
 from .handlers import (
     IntentHandler,
@@ -50,7 +50,3 @@ __all__ = [
     'ContactHandler',
     'HumanHandoffHandler',
 ]
-
-# Type alias para tipo de dados de intenção
-from typing import Dict, Any
-IntentData = Dict[str, Any]
