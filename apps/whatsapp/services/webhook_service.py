@@ -401,9 +401,21 @@ class WebhookService:
                 message_data=message_data
             )
 
-            # If automation handled it, we're done
+            # If automation handled it, send the response back to WhatsApp
             if automation_response:
                 logger.info(f"Message handled by automation service: {message.id}")
+                # Send automation response back to user
+                try:
+                    from ..tasks import send_agent_response
+                    send_agent_response.delay(
+                        str(event.account.id),
+                        message.from_number,
+                        automation_response,
+                        str(message.whatsapp_message_id)
+                    )
+                    logger.info(f"Automation response queued for sending: {message.id}")
+                except Exception as e:
+                    logger.error(f"Failed to queue automation response: {str(e)}")
                 return
         except Exception as e:
             logger.warning(f"Automation service error: {str(e)}")
