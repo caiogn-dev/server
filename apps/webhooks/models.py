@@ -205,13 +205,12 @@ class WebhookDeadLetter(BaseModel):
         NETWORK_ERROR = 'network_error', 'Network Error'
         UNKNOWN = 'unknown', 'Unknown'
     
-    # Original event reference
-    original_event = models.ForeignKey(
-        WebhookEvent,
-        on_delete=models.SET_NULL,
-        null=True,
+    # Original event reference (stored as string ID to avoid FK constraints)
+    original_event_id = models.CharField(
+        max_length=255,
         blank=True,
-        related_name='dead_letter_entries'
+        db_index=True,
+        help_text='ID of the original webhook event'
     )
     
     # Event data (denormalized for durability)
