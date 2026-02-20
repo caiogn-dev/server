@@ -30,6 +30,35 @@ from .models import Agent, AgentConversation, AgentMessage
 logger = logging.getLogger(__name__)
 
 
+def remove_accents(text):
+    """Remove accents from text to avoid encoding issues."""
+    if not text:
+        return text
+    
+    # Mapping of accented characters to their non-accented equivalents
+    accents_map = {
+        'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a', 'å': 'a',
+        'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
+        'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
+        'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o', 'ø': 'o',
+        'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
+        'ç': 'c',
+        'ñ': 'n',
+        'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A', 'Å': 'A',
+        'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
+        'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
+        'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O', 'Ø': 'O',
+        'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
+        'Ç': 'C',
+        'Ñ': 'N',
+    }
+    
+    result = ''
+    for char in text:
+        result += accents_map.get(char, char)
+    return result
+
+
 class LangchainService:
     """Service for managing Langchain agents."""
     
@@ -326,13 +355,14 @@ class LangchainService:
         messages = []
         
         # Add system prompt with dynamic context
-        system_prompt = self.agent.system_prompt or "Você é um assistente virtual útil."
+        system_prompt = self.agent.system_prompt or "Você é um assistente virtual util."
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         else:
             # Fallback if no context built
-            system_prompt = f"{system_prompt}\n\n⚠️ ERRO: Não foi possível carregar o cardápio. Informe ao cliente que você não tem acesso aos produtos no momento."
-        messages.append(SystemMessage(content=system_prompt))
+            system_prompt = f"{system_prompt}\n\n⚠️ ERRO: Nao foi possivel carregar o cardapio. Informe ao cliente que voce nao tem acesso aos produtos no momento."
+        # Remove accents before creating message
+        messages.append(SystemMessage(content=remove_accents(system_prompt)))
         
         # Add memory/context if available
         if memory:
@@ -342,21 +372,19 @@ class LangchainService:
             except Exception as e:
                 logger.warning(f"Error loading memory: {e}")
         
-        # Add user message
-        messages.append(HumanMessage(content=message))
+        # Add user message (with accents removed)
+        messages.append(HumanMessage(content=remove_accents(message)))
         
         try:
-            # Call LLM - Ensure all messages have proper UTF-8 encoding
-            # This fixes issues with special characters like á, é, í, ó, ú
+            # Call LLM - Remove accents to avoid encoding issues
             encoded_messages = []
             for msg in messages:
                 if hasattr(msg, 'content') and msg.content:
-                    # Ensure content is properly encoded as UTF-8 string
-                    if isinstance(msg.content, bytes):
-                        msg.content = msg.content.decode('utf-8')
-                    else:
-                        # Force string conversion to handle any encoding issues
-                        msg.content = str(msg.content)
+                    # Remove accents from content
+                    content = msg.content
+                    if isinstance(content, bytes):
+                        content = content.decode('utf-8')
+                    msg.content = remove_accents(content)
                 encoded_messages.append(msg)
             
             response = self.llm.invoke(encoded_messages)
@@ -365,6 +393,9 @@ class LangchainService:
             response_text = response.content
             if isinstance(response_text, bytes):
                 response_text = response_text.decode('utf-8')
+            elif response_text:
+                # Ensure response is properly decoded
+                response_text = json.loads(json.dumps(response_text, ensure_ascii=False))
             
             # Save to memory if enabled
             if memory:
