@@ -1,11 +1,22 @@
 """
 Langchain Service for Agent management - Fixed for Kimi Coding API
 """
+import sys
 import json
 import time
 import uuid
 import logging
 from typing import List, Dict, Any, Optional
+
+# Fix encoding issues with special characters (á, é, í, ó, ú, ç, etc.)
+import os
+os.environ['PYTHONIOENCODING'] = 'utf-8'
+os.environ['LC_ALL'] = 'C.UTF-8'
+os.environ['LANG'] = 'C.UTF-8'
+
+# Set default encoding for Python 3
+if hasattr(sys, 'setdefaultencoding'):
+    sys.setdefaultencoding('utf-8')
 
 from django.conf import settings
 from django.core.cache import cache
@@ -34,16 +45,26 @@ class LangchainService:
         if not api_key:
             raise BaseAPIException("API Key não configurada para o agente")
         
-        # Use ChatAnthropic for Kimi (Anthropic-compatible API)
+        # Use ChatOpenAI for Kimi (OpenAI-compatible API)
         if self.agent.provider == Agent.AgentProvider.KIMI:
-            from langchain_anthropic import ChatAnthropic
-            return ChatAnthropic(
+            from langchain_openai import ChatOpenAI
+            import httpx
+            # Create custom HTTP client with UTF-8 encoding headers
+            http_client = httpx.Client(
+                headers={
+                    'Accept': 'application/json',
+                    'Accept-Charset': 'utf-8',
+                    'Content-Type': 'application/json; charset=utf-8'
+                }
+            )
+            return ChatOpenAI(
                 model=self.agent.model_name,  # "kimi-for-coding" or "kimi-k2"
                 temperature=self.agent.temperature,
                 max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
                 api_key=api_key,
-                anthropic_api_url=base_url,
+                base_url=base_url,
+                http_client=http_client,
             )
         # Use ChatAnthropic for Anthropic API
         elif self.agent.provider == Agent.AgentProvider.ANTHROPIC:
@@ -325,11 +346,25 @@ class LangchainService:
         messages.append(HumanMessage(content=message))
         
         try:
-            # Call LLM
-            response = self.llm.invoke(messages)
+            # Call LLM - Ensure all messages have proper UTF-8 encoding
+            # This fixes issues with special characters like á, é, í, ó, ú
+            encoded_messages = []
+            for msg in messages:
+                if hasattr(msg, 'content') and msg.content:
+                    # Ensure content is properly encoded as UTF-8 string
+                    if isinstance(msg.content, bytes):
+                        msg.content = msg.content.decode('utf-8')
+                    else:
+                        # Force string conversion to handle any encoding issues
+                        msg.content = str(msg.content)
+                encoded_messages.append(msg)
+            
+            response = self.llm.invoke(encoded_messages)
             
             # Extract response text
             response_text = response.content
+            if isinstance(response_text, bytes):
+                response_text = response_text.decode('utf-8')
             
             # Save to memory if enabled
             if memory:
