@@ -9,9 +9,8 @@ import uuid
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stores', '0001_initial'),  # Adjust as needed
+        ('stores', '0001_initial'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-        ('webhooks', '0001_initial'),  # Adjust based on actual initial migration
     ]
 
     operations = [
@@ -56,7 +55,7 @@ class Migration(migrations.Migration):
                 ('reprocessed_at', models.DateTimeField(null=True, blank=True)),
                 ('reprocessing_result', models.JSONField(default=dict, blank=True)),
                 ('failure_signature', models.CharField(max_length=255, blank=True, db_index=True, help_text='Hash of error type + message for grouping similar failures')),
-                ('original_event', models.ForeignKey(null=True, blank=True, on_delete=django.db.models.deletion.SET_NULL, related_name='dead_letter_entries', to='webhooks.webhookevent')),
+                ('original_event_id', models.CharField(max_length=255, blank=True, db_index=True, help_text='ID of the original webhook event')),
                 ('reprocessed_by', models.ForeignKey(null=True, blank=True, on_delete=django.db.models.deletion.SET_NULL, related_name='reprocessed_webhooks', to=settings.AUTH_USER_MODEL)),
                 ('store', models.ForeignKey(null=True, blank=True, on_delete=django.db.models.deletion.SET_NULL, related_name='dead_letter_webhooks', to='stores.store')),
             ],
