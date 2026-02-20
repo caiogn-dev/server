@@ -77,15 +77,7 @@ class LangchainService:
         # Use ChatOpenAI for Kimi (OpenAI-compatible API)
         if self.agent.provider == Agent.AgentProvider.KIMI:
             from langchain_openai import ChatOpenAI
-            import httpx
-            # Create custom HTTP client with UTF-8 encoding headers
-            http_client = httpx.Client(
-                headers={
-                    'Accept': 'application/json',
-                    'Accept-Charset': 'utf-8',
-                    'Content-Type': 'application/json; charset=utf-8'
-                }
-            )
+            # Force UTF-8 encoding via default_headers
             return ChatOpenAI(
                 model=self.agent.model_name,  # "kimi-for-coding" or "kimi-k2"
                 temperature=self.agent.temperature,
@@ -93,7 +85,10 @@ class LangchainService:
                 timeout=self.agent.timeout,
                 api_key=api_key,
                 base_url=base_url,
-                http_client=http_client,
+                default_headers={
+                    'Content-Type': 'application/json; charset=utf-8',
+                    'Accept': 'application/json',
+                },
             )
         # Use ChatAnthropic for Anthropic API
         elif self.agent.provider == Agent.AgentProvider.ANTHROPIC:
