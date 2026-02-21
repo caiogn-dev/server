@@ -5,7 +5,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('automation', '0002_intentlog'),
+        ('automation', '0002_expand_event_types'),
     ]
 
     operations = [
