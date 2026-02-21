@@ -293,60 +293,48 @@ class LLMOrchestratorService:
         
         # 5. Instruções para o LLM
         context_parts.append("💡 INSTRUÇÕES:")
-        context_parts.append("- Você é o assistente virtual principal")
-        context_parts.append("- Use os templates de automação acima quando apropriado (adapte se necessário)")
-        context_parts.append("- PREFIRA usar JASPER TEMPLATES quando quiser oferecer BOTÕES interativos")
-        context_parts.append("- Os templates oficiais do WhatsApp são para envio via API (não use no texto)")
-        context_parts.append("- Seja natural, amigável e prestativo")
+        context_parts.append("- Você é o assistente virtual principal e TOMADOR DE DECISÕES")
+        context_parts.append("- Analise a mensagem do cliente e decida a melhor forma de responder")
+        context_parts.append("- Você PODE usar os templates de automação acima como base (adapte se necessário)")
+        context_parts.append("- Para respostas com BOTÕES interativos, use os JASPER TEMPLATES")
+        context_parts.append("- NÃO seja robótico - seja natural, amigável e prestativo")
         context_parts.append("- Se não souber algo, ofereça falar com um atendente humano")
         context_parts.append("")
-        context_parts.append("🎯 QUANDO USAR CADA TIPO:")
-        context_parts.append("- Saudação inicial → Jasper greeting (tem botões de cardápio/pedido)")
-        context_parts.append("- Mostrar menu → Jasper menu_categories (tem botões de categorias)")
-        context_parts.append("- Produto específico → Jasper product_card (tem botões de adicionar)")
-        context_parts.append("- Ver carrinho → Jasper cart_summary (tem botões de finalizar)")
-        context_parts.append("- Pedido confirmado → Jasper order_confirmation (tem botões de PIX)")
-        context_parts.append("- Pagamento OK → Jasper payment_confirmed (tem botões de acompanhar)")
-        context_parts.append("- Não entendeu → Jasper fallback (tem botões de ajuda)")
+        context_parts.append("🎯 COMO INDICAR O TEMPLATE DESEJADO:")
+        context_parts.append("Inclua no início da sua resposta uma das palavras-chave:")
+        context_parts.append("- '[JASPER:greeting]' → Saudação com botões de cardápio/pedido")
+        context_parts.append("- '[JASPER:menu_categories]' → Menu com botões de categorias")
+        context_parts.append("- '[JASPER:product_card]' → Produto com botões de adicionar")
+        context_parts.append("- '[JASPER:cart_summary]' → Carrinho com botões de finalizar")
+        context_parts.append("- '[JASPER:order_confirmation]' → Confirmação com botões de PIX")
+        context_parts.append("- '[JASPER:fallback]' → Quando não entender, com botões de ajuda")
+        context_parts.append("- Ou simplesmente use palavras como 'bem-vindo', 'cardápio', 'produto', 'carrinho', 'pedido confirmado'")
+        context_parts.append("")
+        context_parts.append("📋 EXEMPLO DE RESPOSTA COM TEMPLATE:")
+        context_parts.append("'[JASPER:greeting] Olá! Bem-vindo à Pastita! Como posso te ajudar hoje?'")
+        context_parts.append("")
+        context_parts.append("⚠️ Se não quiser usar template, apenas responda normalmente sem as tags acima.")
         
         return "\n".join(context_parts)
     
     def _get_jasper_template_for_response(self, response_text: str, intent: IntentType) -> Optional[Dict]:
         """
         Verifica se o LLM está tentando usar um Jasper Template.
-        Retorna o template Jasper apropriado baseado na resposta ou intent.
+        Prioriza tags [JASPER:...] explicitas, depois palavras-chave na resposta.
         """
         response_lower = response_text.lower()
         jasper_templates = self._get_jasper_templates()
         
-        # Mapeia intents para Jasper Templates
-        intent_to_jasper = {
-            IntentType.GREETING: 'greeting',
-            IntentType.MENU_REQUEST: 'menu_categories',
-            IntentType.PRODUCT_INQUIRY: 'product_card',
-            IntentType.PRODUCT_MENTION: 'product_card',
-            IntentType.ADD_TO_CART: 'product_card',
-            IntentType.VIEW_CART: 'cart_summary',
-            IntentType.CHECKOUT: 'cart_summary',
-            IntentType.CREATE_ORDER: 'order_confirmation',
-            IntentType.ORDER_STATUS: 'order_status',
-            IntentType.PAYMENT_INFO: 'order_confirmation',
-            IntentType.PAYMENT_STATUS: 'payment_confirmed',
-            IntentType.BUSINESS_HOURS: 'need_help',
-            IntentType.LOCATION: 'need_help',
-            IntentType.HELP: 'need_help',
-            IntentType.FALLBACK: 'fallback',
-            IntentType.UNKNOWN: 'fallback',
-        }
-        
-        # Primeiro tenta detectar pela intent
-        if intent in intent_to_jasper:
-            template_name = intent_to_jasper[intent]
+        # 1. Primeiro verifica se LLM usou tag explicita [JASPER:...]
+        import re
+        jasper_tag_match = re.search(r'\[jasper:(\w+)\]', response_lower)
+        if jasper_tag_match:
+            template_name = jasper_tag_match.group(1)
             for t in jasper_templates:
                 if t['name'] == template_name:
                     return t
         
-        # Depois tenta detectar por palavras-chave na resposta
+        # 2. Depois tenta detectar por palavras-chave na resposta (decisão da LLM)
         keywords_map = {
             'greeting': ['bem-vindo', 'boas-vindas', 'olá', 'oi', 'como posso ajudar'],
             'menu_categories': ['cardápio', 'menu', 'categorias', 'opções'],
@@ -364,16 +352,7 @@ class LLMOrchestratorService:
                     if t['name'] == template_name:
                         return t
         
-        return None
-    
-    def _get_jasper_template_for_intent(self, intent: IntentType) -> Optional[Dict]:
-        """
-        Retorna o Jasper Template apropriado baseado na intent detectada.
-        Isso garante que sempre teremos botões interativos para ações principais.
-        """
-        jasper_templates = self._get_jasper_templates()
-        
-        # Mapeamento completo de intents para templates
+        # 3. Por último, usa intent como hint (menor prioridade)
         intent_to_jasper = {
             IntentType.GREETING: 'greeting',
             IntentType.MENU_REQUEST: 'menu_categories',
@@ -393,8 +372,8 @@ class LLMOrchestratorService:
             IntentType.UNKNOWN: 'fallback',
         }
         
-        template_name = intent_to_jasper.get(intent)
-        if template_name:
+        if intent in intent_to_jasper:
+            template_name = intent_to_jasper[intent]
             for t in jasper_templates:
                 if t['name'] == template_name:
                     return t
@@ -801,13 +780,9 @@ class LLMOrchestratorService:
             
             response_text = result.get('response', '')
             
-            # 5. SEMPRE tenta usar Jasper Template baseado na intent primeiro
-            # Isso garante que teremos botões interativos para as ações principais
-            jasper_template = self._get_jasper_template_for_intent(intent)
-            if not jasper_template:
-                # Fallback: tenta detectar pela resposta do LLM
-                jasper_template = self._get_jasper_template_for_response(response_text, intent)
-            
+            # 5. Verifica se LLM quer usar Jasper Template (templates profissionais com botões)
+            # A LLM decide baseado no contexto fornecido - regex/intent é apenas hint
+            jasper_template = self._get_jasper_template_for_response(response_text, intent)
             if jasper_template:
                 # Renderiza Jasper Template com contexto
                 rendered = self._render_jasper_template(jasper_template, session_data)
