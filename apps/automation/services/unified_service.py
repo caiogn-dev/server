@@ -780,7 +780,9 @@ class LLMOrchestratorService:
             
             # 5. Verifica se LLM quer usar Jasper Template (templates profissionais com botões)
             # A LLM decide baseado no contexto fornecido - regex/intent é apenas hint
+            logger.info(f"[LLMOrchestrator] LLM response: {response_text[:100]}...")
             jasper_template = self._get_jasper_template_for_response(response_text, intent)
+            logger.info(f"[LLMOrchestrator] Jasper template found: {jasper_template}")
             if jasper_template:
                 # Renderiza Jasper Template com contexto
                 rendered = self._render_jasper_template(jasper_template, session_data)
