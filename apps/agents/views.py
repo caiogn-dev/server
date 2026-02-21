@@ -147,6 +147,11 @@ class AgentViewSet(viewsets.ModelViewSet):
                 {'value': 'llama3', 'label': 'Llama 3'},
                 {'value': 'mistral', 'label': 'Mistral'},
                 {'value': 'codellama', 'label': 'Code Llama'},
+            ],
+            'nvidia': [
+                {'value': 'meta/llama-3.1-70b-instruct', 'label': 'Llama 3.1 70B (Recomendado)'},
+                {'value': 'meta/llama-3.1-405b-instruct', 'label': 'Llama 3.1 405B (Melhor)'},
+                {'value': 'meta/llama-3.1-8b-instruct', 'label': 'Llama 3.1 8B (Básico)'},
             ]
         }
         return Response(models)
@@ -175,6 +180,11 @@ class AgentViewSet(viewsets.ModelViewSet):
             'ollama': {
                 'base_url': getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
                 'model_name': getattr(settings, 'OLLAMA_MODEL_NAME', 'llama3'),
+                'api_style': 'openai',
+            },
+            'nvidia': {
+                'base_url': getattr(settings, 'NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1'),
+                'model_name': getattr(settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct'),
                 'api_style': 'openai',
             },
         }

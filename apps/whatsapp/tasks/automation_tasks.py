@@ -60,7 +60,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
                 time_remaining = "expirado"
             
             # Renderiza mensagem
-            message = template.render({
+            message = template.render_message({
                 'customer_name': order.customer_name,
                 'order_number': order.order_number,
                 'amount': order.total,
@@ -211,7 +211,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                 for item in cart.items.all()[:5]
             ])
             
-            message = template.render({
+            message = template.render_message({
                 'customer_name': cart.customer_name or 'Cliente',
                 'cart_items': items_summary,
                 'cart_total': cart.total,
@@ -358,7 +358,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 'cancelled': '❌ Cancelado',
             }.get(new_status, new_status)
             
-            message = template.render({
+            message = template.render_message({
                 'customer_name': order.customer_name,
                 'order_number': order.order_number,
                 'order_status': status_display,
@@ -414,7 +414,7 @@ def request_feedback(order_id: str):
                 is_active=True
             )
             
-            message = template.render({
+            message = template.render_message({
                 'customer_name': order.customer_name,
                 'order_number': order.order_number,
             })

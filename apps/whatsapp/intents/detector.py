@@ -39,7 +39,10 @@ class IntentType(Enum):
     MODIFY_ORDER = "modify_order"            # "Trocar", "Alterar pedido"
     CONFIRM_PAYMENT = "confirm_payment"      # "Paguei", "Comprovante"
     REQUEST_PIX = "request_pix"              # "Gerar PIX", "Pagamento"
+    VIEW_QR_CODE = "view_qr_code"            # "Ver QR Code"
+    COPY_PIX = "copy_pix"                    # "Copiar PIX"
     ADD_TO_CART = "add_to_cart"              # "Quero X", "Adicionar Y"
+    PRODUCT_MENTION = "product_mention"      # "Rondelli", "Pizza" (só o nome)
     
     # ===== NÍVEL 3: LLM Necessário =====
     PRODUCT_INQUIRY = "product_inquiry"      # "Qual a diferença..."
@@ -92,8 +95,8 @@ class IntentDetector:
             r'(meu pedido|onde ficou meu pedido|como est[áa] meu pedido|status da entrega)',
         ],
         IntentType.PAYMENT_STATUS: [
-            r'(pagamento|paguei|pix|status do pagamento|c[oó]digo pix|chave pix)',
-            r'(j[áa] paguei|confirma pagamento|recebeu o pagamento|pagamento confirmado)',
+            r'(status do pagamento|ver pagamento|consultar pagamento)',
+            r'(pix gerado|c[oó]digo pix|chave pix|onde est[áa] o pix)',
         ],
         IntentType.LOCATION: [
             r'(onde (fica|voc[êe]s (est[ãa]o|ficam))|endere[çc]o|localiza[çc][ãa]o|como chegar)',
@@ -107,9 +110,11 @@ class IntentDetector:
             r'(como funciona|como [ée]|qual [ée] a|o que [ée]|me explica|explica como)',
         ],
         IntentType.CREATE_ORDER: [
-            r'(quero (fazer )?pedido|fazer pedido|vou querer|queria (comprar|pedir)|quero comprar)',
+            r'(quero (fazer )?pedido|quero pedir|fazer pedido|vou querer|queria (comprar|pedir)|quero comprar)',
             r'(come[çc]ar pedido|novo pedido|quero encomendar|quero solicitar)',
-            r'(pode fazer pedido|aceita pedido|tem como pedir)',
+            r'(pode fazer pedido|aceita pedido|tem como pedir|pedido rápido)',
+            r'(confirmar pedido|finalizar pedido|fechar pedido|concluir pedido|criar pedido)',
+            r'(quero confirmar|quero finalizar|confirmar compra|finalizar compra)',
         ],
         IntentType.CANCEL_ORDER: [
             r'(cancelar pedido|quero cancelar|posso cancelar|preciso cancelar)',
@@ -123,9 +128,23 @@ class IntentDetector:
         IntentType.REQUEST_PIX: [
             r'(gerar pix|c[oó]digo pix|quero pagar|forma de pagamento|como pago|gerar c[oó]digo)',
         ],
+        IntentType.VIEW_QR_CODE: [
+            r'(qr code|qr-code|ver qr|mostrar qr|c[óo]digo qr)',
+        ],
+        IntentType.COPY_PIX: [
+            r'(copiar pix|copiar c[oó]digo|c[oó]digo pix|pix c[oó]digo|ver pix)',
+        ],
         IntentType.ADD_TO_CART: [
             r'(quero \d+|vou querer \d+|adicionar \d+|me v[êe] \d+|manda \d+)',
             r'(coloca \d+|bota \d+|queria \d+)',  # Pega números como "quero 2 rondelli"
+            r'^\d+\s+(rondelli|rondellis|rondel|rondelis|massa|massas|lasanha|lasanhas|nhoque|nhoques|refri|refrigerante|coca|guaran[áa])',  # Número primeiro: "2 rondelis"
+            r'^\d+\s+de\s+(frango|queijo|presunto|calabresa|mussarela)',  # "2 de frango"
+            r'(rondelli de|rondellis de|rondel de)',  # "rondelli de frango"
+        ],
+        IntentType.PRODUCT_MENTION: [
+            # Só o nome do produto sem número - pergunta sobre o produto
+            r'^(rondelli|rondellis|rondel|rondelis|massa|massas|lasanha|lasanhas|nhoque|nhoques|bolonhesa|bolonhesas)$',
+            r'^(rondelli|rondellis|rondel|rondelis) de (frango|queijo|presunto|calabresa|mussarela|4 queijos|quatro queijos)$',
         ],
         IntentType.HUMAN_HANDOFF: [
             r'(atendente|pessoa|humano|falar com algu[ée]m|n[ãa]o [ée] o que quero|errado|atendente humano)',
@@ -171,6 +190,7 @@ class IntentDetector:
             IntentType.PAYMENT_STATUS,
             IntentType.HUMAN_HANDOFF,
             IntentType.ADD_TO_CART,
+            IntentType.PRODUCT_MENTION,
             IntentType.CONFIRM_PAYMENT,
             IntentType.REQUEST_PIX,
             IntentType.PRICE_CHECK,
@@ -236,12 +256,25 @@ Responda APENAS com o nome da intenção em inglês minúsculo."""),
         ])
         
         try:
+            # Verifica se tem configuração da NVIDIA
+            nvidia_key = getattr(settings, 'NVIDIA_API_KEY', None)
+            if not nvidia_key:
+                logger.warning("NVIDIA_API_KEY not configured, skipping LLM intent detection")
+                return IntentType.UNKNOWN
+            
+            # Usa modelo melhor da NVIDIA (Llama 3.1 70B é mais inteligente que o 8B)
+            model_name = getattr(settings, 'NVIDIA_MODEL_NAME', "meta/llama-3.1-70b-instruct")
+            # Fallback para 70B se estiver usando o 8B antigo
+            if '8b' in model_name.lower():
+                model_name = "meta/llama-3.1-70b-instruct"
+                logger.info("Upgrading to Llama 3.1 70B for better responses")
+            
             model = ChatOpenAI(
-                model=settings.NVIDIA_MODEL_NAME or "meta/llama-3.1-8b-instruct",
-                base_url=settings.NVIDIA_API_BASE_URL or "https://integrate.api.nvidia.com/v1",
-                api_key=settings.NVIDIA_API_KEY,
-                temperature=0,
-                max_tokens=50
+                model=model_name,
+                base_url=getattr(settings, 'NVIDIA_API_BASE_URL', "https://integrate.api.nvidia.com/v1"),
+                api_key=nvidia_key,
+                temperature=0.1,  # Leve criatividade mas controlada
+                max_tokens=100    # Limita respostas longas
             )
             
             chain = prompt | model

@@ -416,7 +416,7 @@ class WebhookService:
                     service = WhatsAppAutomationService(
                         account=event.account,
                         conversation=message.conversation,
-                        use_llm=True,
+                        use_llm=False,  # DESATIVADO - Não usa LLM para evitar alucinações
                         enable_interactive=True,
                         debug=False
                     )
@@ -450,6 +450,10 @@ class WebhookService:
                 except Exception as e:
                     logger.error(f"[IntentAutomation] Failed to queue response: {e}")
                     # Continua para fallback
+            elif intent_response in ['BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT']:
+                # Mensagem interativa já foi enviada pelo automation service
+                logger.info(f"[IntentAutomation] Interactive message already sent: {intent_response}")
+                return  # Sucesso! Mensagem interativa processada.
                     
         except ImportError as e:
             logger.warning(f"[IntentAutomation] Import error (module not ready): {e}")

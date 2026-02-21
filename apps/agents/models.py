@@ -22,6 +22,7 @@ class Agent(BaseModel):
         OPENAI = 'openai', 'OpenAI'
         ANTHROPIC = 'anthropic', 'Anthropic'
         OLLAMA = 'ollama', 'Ollama (Local)'
+        NVIDIA = 'nvidia', 'NVIDIA AI'
 
     name = models.CharField(max_length=255, verbose_name='Nome')
     description = models.TextField(blank=True, verbose_name='Descrição')

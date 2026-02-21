@@ -695,20 +695,27 @@ class AutoMessage(BaseModel):
         MENU = 'menu', 'Cardápio/Catálogo'
         BUSINESS_HOURS = 'business_hours', 'Horário de Funcionamento'
         OUT_OF_HOURS = 'out_of_hours', 'Fora do Horário'
-        
+        FAQ = 'faq', 'Perguntas Frequentes'
+
         # Cart and checkout
         CART_CREATED = 'cart_created', 'Carrinho Criado'
         CART_ABANDONED = 'cart_abandoned', 'Carrinho Abandonado'
         CART_REMINDER = 'cart_reminder', 'Lembrete de Carrinho'
-        
+        CART_REMINDER_30 = 'cart_reminder_30', 'Lembrete Carrinho (30min)'
+        CART_REMINDER_2H = 'cart_reminder_2h', 'Lembrete Carrinho (2h)'
+        CART_REMINDER_24H = 'cart_reminder_24h', 'Lembrete Carrinho (24h)'
+
         # Payment
         PIX_GENERATED = 'pix_generated', 'PIX Gerado'
         PIX_REMINDER = 'pix_reminder', 'Lembrete de PIX'
         PIX_EXPIRED = 'pix_expired', 'PIX Expirado'
         PAYMENT_CONFIRMED = 'payment_confirmed', 'Pagamento Confirmado'
         PAYMENT_FAILED = 'payment_failed', 'Pagamento Falhou'
-        
+        PAYMENT_REMINDER_1 = 'payment_reminder_1', 'Lembrete Pagamento (30min)'
+        PAYMENT_REMINDER_2 = 'payment_reminder_2', 'Lembrete Pagamento (2h)'
+
         # Order status
+        ORDER_RECEIVED = 'order_received', 'Pedido Recebido'
         ORDER_CONFIRMED = 'order_confirmed', 'Pedido Confirmado'
         ORDER_PREPARING = 'order_preparing', 'Pedido em Preparo'
         ORDER_READY = 'order_ready', 'Pedido Pronto'
@@ -716,10 +723,13 @@ class AutoMessage(BaseModel):
         ORDER_OUT_FOR_DELIVERY = 'order_out_for_delivery', 'Saiu para Entrega'
         ORDER_DELIVERED = 'order_delivered', 'Pedido Entregue'
         ORDER_CANCELLED = 'order_cancelled', 'Pedido Cancelado'
-        
-        # Feedback
+
+        # Feedback and Support
         FEEDBACK_REQUEST = 'feedback_request', 'Solicitar Avaliação'
-        
+        FEEDBACK_RECEIVED = 'feedback_received', 'Avaliação Recebida'
+        HUMAN_HANDOFF = 'human_handoff', 'Transferido para Humano'
+        HUMAN_ASSIGNED = 'human_assigned', 'Atendente Atribuído'
+
         # Custom
         CUSTOM = 'custom', 'Personalizado'
 
@@ -975,3 +985,81 @@ class AutomationLog(BaseModel):
 
     def __str__(self):
         return f"{self.company.company_name} - {self.action_type} - {self.created_at}"
+
+
+class IntentLog(BaseModel):
+    """
+    Log de detecção de intenções para analytics e debugging.
+    """
+
+    class MethodType(models.TextChoices):
+        REGEX = 'regex', 'Regex'
+        LLM = 'llm', 'LLM'
+        NONE = 'none', 'Nenhum'
+
+    class ResponseType(models.TextChoices):
+        TEXT = 'text', 'Texto'
+        BUTTONS = 'buttons', 'Botões'
+        LIST = 'list', 'Lista'
+        INTERACTIVE = 'interactive', 'Interativo'
+
+    # Relacionamentos
+    company = models.ForeignKey(
+        CompanyProfile,
+        on_delete=models.CASCADE,
+        related_name='intent_logs'
+    )
+    message = models.ForeignKey(
+        'whatsapp.Message',
+        on_delete=models.CASCADE,
+        related_name='intent_logs',
+        null=True,
+        blank=True
+    )
+    conversation = models.ForeignKey(
+        'conversations.Conversation',
+        on_delete=models.CASCADE,
+        related_name='intent_logs',
+        null=True,
+        blank=True
+    )
+
+    # Dados da mensagem
+    phone_number = models.CharField(max_length=20, db_index=True)
+    message_text = models.TextField()
+
+    # Dados da intenção detectada
+    intent_type = models.CharField(max_length=50, db_index=True)
+    method = models.CharField(max_length=10, choices=MethodType.choices, default=MethodType.REGEX)
+    confidence = models.FloatField(default=0.0)
+
+    # Handler e resposta
+    handler_used = models.CharField(max_length=100, blank=True)
+    response_text = models.TextField(blank=True)
+    response_type = models.CharField(
+        max_length=20,
+        choices=ResponseType.choices,
+        default=ResponseType.TEXT
+    )
+
+    # Performance
+    processing_time_ms = models.IntegerField(default=0)
+
+    # Dados extras
+    entities = models.JSONField(default=dict, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'intent_logs'
+        verbose_name = 'Intent Log'
+        verbose_name_plural = 'Intent Logs'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', '-created_at']),
+            models.Index(fields=['intent_type', '-created_at']),
+            models.Index(fields=['method', '-created_at']),
+            models.Index(fields=['phone_number', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.phone_number} - {self.intent_type} ({self.method}) - {self.created_at}"

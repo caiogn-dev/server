@@ -123,6 +123,23 @@ class LangchainService:
                 api_key=api_key or "ollama",
                 base_url=base_url,
             )
+        # Use ChatOpenAI for NVIDIA (OpenAI-compatible API)
+        elif self.agent.provider == Agent.AgentProvider.NVIDIA:
+            from langchain_openai import ChatOpenAI
+            # Usa modelo melhor da NVIDIA (Llama 3.1 70B)
+            model_name = self.agent.model_name
+            if '8b' in model_name.lower() or not model_name:
+                model_name = "meta/llama-3.1-70b-instruct"
+                logger.info(f"[NVIDIA] Upgrading to better model: {model_name}")
+            
+            return ChatOpenAI(
+                model=model_name,
+                temperature=self.agent.temperature,
+                max_tokens=min(self.agent.max_tokens, 200),  # Limita respostas longas
+                timeout=self.agent.timeout,
+                api_key=api_key,
+                base_url=base_url or "https://integrate.api.nvidia.com/v1",
+            )
         else:
             raise BaseAPIException(f"Provedor não suportado: {self.agent.provider}")
     
