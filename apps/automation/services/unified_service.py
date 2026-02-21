@@ -772,10 +772,23 @@ class LLMOrchestratorService:
                     }
                 )
                 
+                # Processa botões - podem ser strings ou objetos {id, title}
+                processed_buttons = []
+                for i, btn in enumerate(rendered.get('buttons', [])):
+                    if isinstance(btn, dict):
+                        # Já é um objeto com id/title
+                        processed_buttons.append({
+                            'id': btn.get('id', f"btn_{i}"),
+                            'title': btn.get('title', str(btn))
+                        })
+                    else:
+                        # É uma string
+                        processed_buttons.append({'id': f"btn_{i}", 'title': str(btn)})
+                
                 return UnifiedResponse(
                     content=rendered['body'],
                     source=ResponseSource.AGENT_TEMPLATE,
-                    buttons=[{'id': f"btn_{i}", 'title': btn} for i, btn in enumerate(rendered.get('buttons', []))],
+                    buttons=processed_buttons,
                     interactive_type='buttons',
                     metadata={
                         'jasper_template': jasper_template['name'],
