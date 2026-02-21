@@ -1,0 +1,1 @@
+import{r as t}from"./vendor-react-C2HNIXra.js";const i=r=>{const[o,u]=t.useState(null),[c,a]=t.useState(!0),[l,n]=t.useState(null),e=t.useCallback(async()=>{a(!0),n(null);try{const s=await r();u(s)}catch(s){n(s)}finally{a(!1)}},[r]);return t.useEffect(()=>{e()},[e]),{data:o,loading:c,error:l,refresh:e}};export{i as u};

@@ -361,9 +361,10 @@ class WebhookService:
         Processa mensagem recebida com múltiplos níveis de fallback.
         
         Ordem de prioridade:
-        1. WhatsAppAutomationService (novo sistema com Intent Detection)
-        2. AutomationService (sistema antigo como fallback)
-        3. AI Agent (último recurso)
+        1. UnifiedAutomationService (SISTEMA UNIFICADO - Templates → Handlers → Agent)
+        2. WhatsAppAutomationService (sistema anterior com Intent Detection)
+        3. AutomationService (sistema antigo como fallback)
+        4. AI Agent (último recurso)
         """
         from apps.conversations.services import ConversationService
 
@@ -402,7 +403,71 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"[post_process] Error updating contact name: {e}")
 
-        # ========== NÍVEL 1: WhatsAppAutomationService (novo sistema) ==========
+        # ========== NÍVEL 1: LLM ORCHESTRATOR (LLM SEMPRE ATIVO) ==========
+        llm_response = None
+        llm_error = None
+        
+        try:
+            import threading
+            from apps.automation.services import LLMOrchestratorService, UnifiedResponse
+            
+            def run_llm_orchestrator():
+                nonlocal llm_response, llm_error
+                try:
+                    service = LLMOrchestratorService(
+                        account=event.account,
+                        conversation=message.conversation,
+                        use_llm=True,  # Sempre ativo
+                        debug=False
+                    )
+                    response = service.process_message(message.text_body or '')
+                    llm_response = response
+                    logger.info(f"[LLMOrchestrator] Response from {response.source.value}: {response.content[:50]}...")
+                except Exception as e:
+                    llm_error = e
+                    logger.warning(f"[LLMOrchestrator] Error: {e}")
+            
+            thread = threading.Thread(target=run_llm_orchestrator)
+            thread.start()
+            thread.join(timeout=10)  # Timeout maior para LLM
+            
+            if thread.is_alive():
+                logger.warning("[LLMOrchestrator] Timeout")
+                llm_error = TimeoutError("LLM orchestrator timeout")
+            
+            # Processa resposta do LLM
+            if llm_response and isinstance(llm_response, UnifiedResponse):
+                # Se tem botões/interativo, envia mensagem interativa
+                if llm_response.buttons or llm_response.interactive_type:
+                    try:
+                        self._send_unified_interactive(event, message, llm_response)
+                        logger.info("[LLMOrchestrator] Interactive response sent successfully")
+                        return  # Sucesso!
+                    except Exception as e:
+                        logger.error(f"[LLMOrchestrator] Failed to send interactive: {e}")
+                
+                # Se tem conteúdo de texto, envia mensagem
+                if llm_response.content:
+                    try:
+                        from ..tasks import send_agent_response
+                        send_agent_response.delay(
+                            str(event.account.id),
+                            message.from_number,
+                            llm_response.content,
+                            str(message.whatsapp_message_id)
+                        )
+                        logger.info("[LLMOrchestrator] Response queued successfully")
+                        return  # Sucesso!
+                    except Exception as e:
+                        logger.error(f"[LLMOrchestrator] Failed to queue response: {e}")
+                        # Continua para fallback
+                    
+        except ImportError as e:
+            logger.warning(f"[LLMOrchestrator] Import error (module not ready): {e}")
+        except Exception as e:
+            logger.warning(f"[LLMOrchestrator] Unexpected error: {e}")
+
+        # ========== NÍVEL 2: WhatsAppAutomationService (sistema anterior) ==========
         intent_response = None
         intent_error = None
         
@@ -416,7 +481,7 @@ class WebhookService:
                     service = WhatsAppAutomationService(
                         account=event.account,
                         conversation=message.conversation,
-                        use_llm=False,  # DESATIVADO - Não usa LLM para evitar alucinações
+                        use_llm=True,
                         enable_interactive=True,
                         debug=False
                     )
@@ -460,7 +525,7 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"[IntentAutomation] Unexpected error: {e}")
 
-        # ========== NÍVEL 2: AutomationService (sistema antigo como fallback) ==========
+        # ========== NÍVEL 3: AutomationService (sistema antigo como fallback) ==========
         try:
             from apps.automation.services import AutomationService
             
@@ -511,7 +576,7 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"[AutomationService] Unexpected error: {e}")
 
-        # ========== NÍVEL 3: AI Agent (último recurso) ==========
+        # ========== NÍVEL 4: AI Agent (último recurso) ==========
         if event.account.auto_response_enabled and not message.processed_by_agent:
             try:
                 has_agent = hasattr(event.account, 'default_agent') and event.account.default_agent
@@ -529,6 +594,25 @@ class WebhookService:
                     logger.debug(f"[AI Agent] No default agent configured for account: {event.account.id}")
             except Exception as e:
                 logger.error(f"[AI Agent] Failed to enqueue task: {e}", exc_info=True)
+
+    def _send_unified_interactive(self, event, message, unified_response) -> None:
+        """Envia mensagem interativa a partir da resposta unificada."""
+        from ..services import WhatsAppAPIService
+        
+        service = WhatsAppAPIService(event.account)
+        
+        if unified_response.interactive_type == 'buttons' or unified_response.buttons:
+            service.send_interactive_buttons(
+                to=message.from_number,
+                body_text=unified_response.content,
+                buttons=unified_response.buttons
+            )
+        else:
+            # Fallback para mensagem de texto simples
+            service.send_text_message(
+                to=message.from_number,
+                text=unified_response.content
+            )
 
     def _extract_name_from_message(self, text: str) -> str:
         """Extract name from message patterns like 'my name is John', 'sou o Carlos', etc."""

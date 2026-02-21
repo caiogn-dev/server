@@ -11,9 +11,8 @@ from .api.views import (
     ScheduledMessageViewSet,
     ReportScheduleViewSet,
     GeneratedReportViewSet,
-    AgentFlowViewSet,
-    FlowSessionViewSet,
-    FlowExecutionLogViewSet,
+    UnifiedProcessView,
+    UnifiedStatsView,
 )
 
 router = DefaultRouter()
@@ -24,11 +23,10 @@ router.register(r'logs', AutomationLogViewSet, basename='automation-log')
 router.register(r'scheduled-messages', ScheduledMessageViewSet, basename='scheduled-message')
 router.register(r'report-schedules', ReportScheduleViewSet, basename='report-schedule')
 router.register(r'reports', GeneratedReportViewSet, basename='generated-report')
-# Flow Builder endpoints
-router.register(r'flows', AgentFlowViewSet, basename='agent-flow')
-router.register(r'flow-sessions', FlowSessionViewSet, basename='flow-session')
-router.register(r'flow-logs', FlowExecutionLogViewSet, basename='flow-execution-log')
 
 urlpatterns = [
     path('', include(router.urls)),
+    # NOVO: Sistema unificado com LLM como orquestrador
+    path('unified/process/', UnifiedProcessView.as_view(), name='unified-process'),
+    path('unified/stats/', UnifiedStatsView.as_view(), name='unified-stats'),
 ]

@@ -1,0 +1,1 @@
+export { DeliveryZonesPage } from './DeliveryZonesPage';

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <circle cx="100" cy="100" r="100" fill="#9B2335"/>
+  <g fill="#D4A84B" transform="translate(95, 45) rotate(25)">
+    <ellipse cx="0" cy="0" rx="4" ry="12"/>
+    <ellipse cx="8" cy="5" rx="4" ry="10" transform="rotate(15)"/>
+    <ellipse cx="14" cy="12" rx="3" ry="8" transform="rotate(25)"/>
+    <ellipse cx="-8" cy="5" rx="4" ry="10" transform="rotate(-15)"/>
+    <ellipse cx="-14" cy="12" rx="3" ry="8" transform="rotate(-25)"/>
+    <ellipse cx="6" cy="18" rx="3" ry="7" transform="rotate(20)"/>
+    <ellipse cx="-6" cy="18" rx="3" ry="7" transform="rotate(-20)"/>
+    <path d="M0 10 Q5 35 3 50" stroke="#D4A84B" stroke-width="3" fill="none"/>
+  </g>
+  <text x="100" y="125" text-anchor="middle" font-family="Georgia, serif" font-size="42" font-style="italic" fill="white">Pastita</text>
+</svg>
