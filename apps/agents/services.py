@@ -426,9 +426,10 @@ class LangchainService:
             
             if isinstance(response_text, bytes):
                 response_text = response_text.decode('utf-8')
-            elif response_text:
-                # Ensure response is properly decoded
-                response_text = json.loads(json.dumps(response_text, ensure_ascii=False))
+            elif not isinstance(response_text, str):
+                # If response is not a string (e.g., dict, list), convert to JSON string
+                response_text = json.dumps(response_text, ensure_ascii=False)
+            # else: response_text is already a string, keep it as is
             
             # DEBUG: Log da resposta processada
             logger.info(f"[AGENT RESPONSE] Processed response: {response_text!r}")
