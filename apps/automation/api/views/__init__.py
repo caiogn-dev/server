@@ -25,6 +25,9 @@ from .scheduled_message_views import ScheduledMessageViewSet
 # Import report views
 from .report_views import ReportScheduleViewSet, GeneratedReportViewSet
 
+# Import flow views
+from .flow_views import AgentFlowViewSet, FlowSessionViewSet, FlowExecutionLogViewSet
+
 __all__ = [
     'StandardResultsSetPagination',
     'CompanyProfileViewSet',
@@ -34,4 +37,7 @@ __all__ = [
     'ScheduledMessageViewSet',
     'ReportScheduleViewSet',
     'GeneratedReportViewSet',
+    'AgentFlowViewSet',
+    'FlowSessionViewSet',
+    'FlowExecutionLogViewSet',
 ]

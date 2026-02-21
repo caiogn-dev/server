@@ -4,7 +4,8 @@ Automation API serializers.
 from rest_framework import serializers
 from ..models import (
     CompanyProfile, AutoMessage, CustomerSession, AutomationLog,
-    ScheduledMessage, ReportSchedule, GeneratedReport
+    ScheduledMessage, ReportSchedule, GeneratedReport,
+    AgentFlow, FlowSession, FlowExecutionLog
 )
 
 
@@ -534,3 +535,86 @@ class GenerateReportSerializer(serializers.Serializer):
         choices=[('csv', 'CSV'), ('xlsx', 'Excel')],
         default='xlsx'
     )
+
+
+# =============================================================================
+# AGENT FLOW SERIALIZERS - Flow Builder
+# =============================================================================
+
+class AgentFlowSerializer(serializers.ModelSerializer):
+    """Serializer for AgentFlow - Flow Builder."""
+    store_name = serializers.CharField(source='store.name', read_only=True)
+    store_slug = serializers.CharField(source='store.slug', read_only=True)
+    
+    class Meta:
+        model = AgentFlow
+        fields = [
+            'id', 'name', 'description',
+            'store', 'store_name', 'store_slug',
+            'flow_json', 'is_active', 'is_default',
+            'version', 'total_executions', 'success_rate',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class CreateAgentFlowSerializer(serializers.ModelSerializer):
+    """Serializer for creating AgentFlow."""
+    
+    class Meta:
+        model = AgentFlow
+        fields = [
+            'name', 'description',
+            'store', 'flow_json',
+            'is_active', 'is_default',
+            'version',
+        ]
+
+
+class UpdateAgentFlowSerializer(serializers.ModelSerializer):
+    """Serializer for updating AgentFlow."""
+    
+    class Meta:
+        model = AgentFlow
+        fields = [
+            'name', 'description',
+            'flow_json', 'is_active', 'is_default',
+            'version',
+        ]
+
+
+class FlowSessionSerializer(serializers.ModelSerializer):
+    """Serializer for FlowSession."""
+    phone_number = serializers.CharField(source='conversation.phone_number', read_only=True)
+    flow_name = serializers.CharField(source='flow.name', read_only=True)
+    
+    class Meta:
+        model = FlowSession
+        fields = [
+            'id', 'conversation', 'phone_number',
+            'flow', 'flow_name',
+            'current_node_id', 'context', 'node_history',
+            'is_waiting_input', 'input_type_expected',
+            'last_interaction', 'is_expired',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class FlowExecutionLogSerializer(serializers.ModelSerializer):
+    """Serializer for FlowExecutionLog."""
+    phone_number = serializers.CharField(source='session.conversation.phone_number', read_only=True)
+    flow_name = serializers.CharField(source='flow.name', read_only=True)
+    
+    class Meta:
+        model = FlowExecutionLog
+        fields = [
+            'id', 'session', 'phone_number',
+            'flow', 'flow_name',
+            'node_id', 'node_type',
+            'input_message', 'output_message', 'context_snapshot',
+            'execution_time_ms', 'tokens_used',
+            'success', 'error_message',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
