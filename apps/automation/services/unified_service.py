@@ -323,6 +323,20 @@ class LLMOrchestratorService:
         intent_to_jasper = {
             IntentType.GREETING: 'greeting',
             IntentType.MENU_REQUEST: 'menu_categories',
+            IntentType.PRODUCT_INQUIRY: 'product_card',
+            IntentType.PRODUCT_MENTION: 'product_card',
+            IntentType.ADD_TO_CART: 'product_card',
+            IntentType.VIEW_CART: 'cart_summary',
+            IntentType.CHECKOUT: 'cart_summary',
+            IntentType.CREATE_ORDER: 'order_confirmation',
+            IntentType.ORDER_STATUS: 'order_status',
+            IntentType.PAYMENT_INFO: 'order_confirmation',
+            IntentType.PAYMENT_STATUS: 'payment_confirmed',
+            IntentType.BUSINESS_HOURS: 'need_help',
+            IntentType.LOCATION: 'need_help',
+            IntentType.HELP: 'need_help',
+            IntentType.FALLBACK: 'fallback',
+            IntentType.UNKNOWN: 'fallback',
         }
         
         # Primeiro tenta detectar pela intent
@@ -349,6 +363,41 @@ class LLMOrchestratorService:
                 for t in jasper_templates:
                     if t['name'] == template_name:
                         return t
+        
+        return None
+    
+    def _get_jasper_template_for_intent(self, intent: IntentType) -> Optional[Dict]:
+        """
+        Retorna o Jasper Template apropriado baseado na intent detectada.
+        Isso garante que sempre teremos botões interativos para ações principais.
+        """
+        jasper_templates = self._get_jasper_templates()
+        
+        # Mapeamento completo de intents para templates
+        intent_to_jasper = {
+            IntentType.GREETING: 'greeting',
+            IntentType.MENU_REQUEST: 'menu_categories',
+            IntentType.PRODUCT_INQUIRY: 'product_card',
+            IntentType.PRODUCT_MENTION: 'product_card',
+            IntentType.ADD_TO_CART: 'product_card',
+            IntentType.VIEW_CART: 'cart_summary',
+            IntentType.CHECKOUT: 'cart_summary',
+            IntentType.CREATE_ORDER: 'order_confirmation',
+            IntentType.ORDER_STATUS: 'order_status',
+            IntentType.PAYMENT_INFO: 'order_confirmation',
+            IntentType.PAYMENT_STATUS: 'payment_confirmed',
+            IntentType.BUSINESS_HOURS: 'need_help',
+            IntentType.LOCATION: 'need_help',
+            IntentType.HELP: 'need_help',
+            IntentType.FALLBACK: 'fallback',
+            IntentType.UNKNOWN: 'fallback',
+        }
+        
+        template_name = intent_to_jasper.get(intent)
+        if template_name:
+            for t in jasper_templates:
+                if t['name'] == template_name:
+                    return t
         
         return None
     
@@ -752,8 +801,13 @@ class LLMOrchestratorService:
             
             response_text = result.get('response', '')
             
-            # 5. Verifica se deve usar Jasper Template (templates profissionais com botões)
-            jasper_template = self._get_jasper_template_for_response(response_text, intent)
+            # 5. SEMPRE tenta usar Jasper Template baseado na intent primeiro
+            # Isso garante que teremos botões interativos para as ações principais
+            jasper_template = self._get_jasper_template_for_intent(intent)
+            if not jasper_template:
+                # Fallback: tenta detectar pela resposta do LLM
+                jasper_template = self._get_jasper_template_for_response(response_text, intent)
+            
             if jasper_template:
                 # Renderiza Jasper Template com contexto
                 rendered = self._render_jasper_template(jasper_template, session_data)
