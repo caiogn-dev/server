@@ -15,11 +15,11 @@ DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower()
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else ['localhost', '127.0.0.1']
-# Add Railway domain automatically
+# Add tunnel domains
 ALLOWED_HOSTS.extend([
-    'server-production-1e57.up.railway.app',
-    '.up.railway.app',
-    'healthcheck.railway.app',
+    'backend.pastita.com.br',
+    'painel.pastita.com.br',
+    'pastita.com.br',
 ])
 
 INSTALLED_APPS = [
@@ -348,19 +348,64 @@ META_CAPI_ACCESS_TOKEN = os.environ.get('META_CAPI_ACCESS_TOKEN', '').strip()
 META_CAPI_TEST_EVENT_CODE = os.environ.get('META_CAPI_TEST_EVENT_CODE', '').strip()
 META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v20.0').strip()
 
-# Langchain AI Configuration
+# ============================================================================
+# AI/LLM CONFIGURATION - Unified through LiteLLM Proxy (preferred) or direct
+# ============================================================================
+
+# LiteLLM Proxy (RECOMMENDED - centralized management)
+LITELLM_PROXY_URL = os.environ.get('LITELLM_PROXY_URL', 'http://litellm-proxy:4000')
+LITELLM_PROXY_KEY = os.environ.get('LITELLM_PROXY_KEY', '')
+
+# Direct API Keys (fallback when LiteLLM is not available)
+# Kimi API (Primary - Moonshot AI)
 KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
 KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
 KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
 
-# OpenAI (opcional)
+# OpenAI (optional fallback)
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
 
-# Anthropic (opcional)
+# Anthropic (optional fallback)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
+
+# Unified AI Configuration Helper
+def get_ai_config():
+    """
+    Returns unified AI configuration.
+    Prioritizes LiteLLM proxy, falls back to direct API keys.
+    """
+    if LITELLM_PROXY_KEY:
+        return {
+            'mode': 'proxy',
+            'base_url': LITELLM_PROXY_URL,
+            'api_key': LITELLM_PROXY_KEY,
+            'model': 'kimi-coder',  # Model name in LiteLLM
+        }
+    elif KIMI_API_KEY:
+        return {
+            'mode': 'direct',
+            'base_url': KIMI_BASE_URL,
+            'api_key': KIMI_API_KEY,
+            'model': KIMI_MODEL_NAME,
+        }
+    elif OPENAI_API_KEY:
+        return {
+            'mode': 'direct',
+            'base_url': OPENAI_BASE_URL,
+            'api_key': OPENAI_API_KEY,
+            'model': OPENAI_MODEL_NAME,
+        }
+    elif ANTHROPIC_API_KEY:
+        return {
+            'mode': 'direct',
+            'base_url': 'https://api.anthropic.com',
+            'api_key': ANTHROPIC_API_KEY,
+            'model': ANTHROPIC_MODEL_NAME,
+        }
+    return None
 
 # Rate Limiting
 RATE_LIMIT_ENABLED = os.environ.get('RATE_LIMIT_ENABLED', 'True').lower() == 'true'

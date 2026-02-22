@@ -39,25 +39,58 @@ class AutomationService:
 
     def create_company_profile(
         self,
-        account_id: str,
-        company_name: str,
+        account_id: str = None,
+        store_id: str = None,
+        company_name: str = None,
         business_type: str = 'other',
         website_url: str = '',
         menu_url: str = '',
         **kwargs
     ) -> CompanyProfile:
         """Create a new company profile."""
-        try:
-            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
-        except WhatsAppAccount.DoesNotExist:
-            raise NotFoundError(message="WhatsApp account not found")
-
-        # Check if profile already exists
-        if hasattr(account, 'company_profile') and account.company_profile:
+        from apps.stores.models import Store
+        
+        store = None
+        account = None
+        
+        # If store_id provided, get store and its account
+        if store_id:
+            try:
+                store = Store.objects.get(id=store_id, is_active=True)
+                if store.whatsapp_account:
+                    account = store.whatsapp_account
+            except Store.DoesNotExist:
+                raise NotFoundError(message="Store not found")
+        
+        # If account_id provided, get account
+        if account_id:
+            try:
+                account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
+            except WhatsAppAccount.DoesNotExist:
+                raise NotFoundError(message="WhatsApp account not found")
+        
+        # Must have at least store or account
+        if not store and not account:
+            raise ValidationError(message="Either store_id or account_id must be provided")
+        
+        # Check if profile already exists for account
+        if account and hasattr(account, 'company_profile') and account.company_profile:
             raise ValidationError(message="Company profile already exists for this account")
+        
+        # Check if profile already exists for store
+        if store and hasattr(store, 'automation_profile') and store.automation_profile:
+            raise ValidationError(message="Company profile already exists for this store")
+        
+        # Use store name if company_name not provided
+        if not company_name and store:
+            company_name = store.name
+        
+        if not company_name:
+            company_name = account.name if account else 'Minha Empresa'
 
         profile = CompanyProfile.objects.create(
             account=account,
+            store=store,
             _company_name=company_name,
             _business_type=business_type,
             website_url=website_url,

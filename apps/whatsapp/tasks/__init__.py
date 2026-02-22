@@ -224,7 +224,7 @@ def send_agent_response(self, account_id: str, to: str, response_text: str, repl
 
 
 def _process_status_event(event, message_service):
-    """Legacy status handler (kept for backward compatibility)."""
+    """Process status event."""
     payload = event.payload
     
     message_id = payload.get('id')
@@ -262,7 +262,7 @@ def _process_status_event(event, message_service):
 
 
 def _process_error_event(event, message_service):
-    """Legacy error handler (kept for backward compatibility)."""
+    """Process error event."""
     payload = event.payload
     
     error_code = payload.get('code')

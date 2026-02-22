@@ -1,5 +1,8 @@
 """
-Campaign API views.
+Campaign API views - Unified with Automation.
+
+Note: ScheduledMessageViewSet has been moved to apps.automation.api.views.
+Use /api/v1/automation/scheduled-messages/ endpoint for scheduled message operations.
 """
 import logging
 import traceback
@@ -14,15 +17,12 @@ from django.db.models import Max, Q
 from django.utils import timezone
 
 from ..models import Campaign, CampaignRecipient, ContactList
-from apps.automation.models import ScheduledMessage  # Use unified model
-from ..services import CampaignService, SchedulerService
+from ..services import CampaignService
 from .serializers import (
     CampaignSerializer,
     CampaignCreateSerializer,
     CampaignRecipientSerializer,
     AddRecipientsSerializer,
-    ScheduledMessageSerializer,
-    ScheduledMessageCreateSerializer,
     ContactListSerializer,
     ContactListCreateSerializer,
     ImportContactsSerializer,
@@ -159,7 +159,6 @@ class SystemContactsView(APIView):
                 from apps.automation.models import CustomerSession
                 sessions_qs = CustomerSession.objects.all()
                 if account_id:
-                    # CustomerSession has company -> CompanyProfile has account
                     sessions_qs = sessions_qs.filter(company__account_id=account_id)
                 
                 sessions = sessions_qs.values(
@@ -338,7 +337,6 @@ class CampaignViewSet(viewsets.ModelViewSet):
         try:
             campaign = Campaign.objects.get(id=pk)
             
-            # If campaign is not running, start it first
             if campaign.status in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
                 campaign.status = Campaign.CampaignStatus.RUNNING
                 campaign.started_at = timezone.now()
@@ -347,28 +345,20 @@ class CampaignViewSet(viewsets.ModelViewSet):
             
             if campaign.status != Campaign.CampaignStatus.RUNNING:
                 return Response(
-                    {'error': f'Campaign cannot be processed (status: {campaign.status})'},
+                    {'error': 'Campaign is not running'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Process batch
-            batch_size = int(request.data.get('batch_size', 50))
-            result = service.process_campaign_batch(str(pk), batch_size=batch_size)
-            
-            logger.info(f"Campaign {pk} processed: {result}")
-            
-            return Response({
-                'success': True,
-                'processed': result.get('processed', 0),
-                'failed': result.get('failed', 0),
-                'remaining': result.get('remaining', 0),
-                'campaign_status': Campaign.objects.get(id=pk).status,
-            })
+            result = service.process_campaign_batch(str(pk), batch_size=50)
+            return Response(result)
             
         except Campaign.DoesNotExist:
-            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+            return Response(
+                {'error': 'Campaign not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
-            logger.error(f"Campaign {pk} process error: {e}\n{traceback.format_exc()}")
+            logger.exception(f"Error processing campaign {pk}: {e}")
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -379,19 +369,21 @@ class CampaignViewSet(viewsets.ModelViewSet):
     def recipients(self, request, pk=None):
         """Get campaign recipients."""
         campaign = self.get_object()
-        recipients = campaign.recipients.all()
-        
         status_filter = request.query_params.get('status')
+        
+        recipients = campaign.recipients.all()
         if status_filter:
             recipients = recipients.filter(status=status_filter)
         
-        serializer = CampaignRecipientSerializer(recipients[:100], many=True)
+        page = self.paginate_queryset(recipients)
+        if page is not None:
+            serializer = CampaignRecipientSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = CampaignRecipientSerializer(recipients, many=True)
         return Response(serializer.data)
     
-    @extend_schema(
-        summary="Add recipients",
-        request=AddRecipientsSerializer,
-    )
+    @extend_schema(summary="Add recipients to campaign", request=AddRecipientsSerializer)
     @action(detail=True, methods=['post'])
     def add_recipients(self, request, pk=None):
         """Add recipients to a campaign."""
@@ -404,64 +396,6 @@ class CampaignViewSet(viewsets.ModelViewSet):
             return Response({'added': count})
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-
-@extend_schema_view(
-    list=extend_schema(summary="List scheduled messages"),
-    retrieve=extend_schema(summary="Get scheduled message details"),
-)
-class ScheduledMessageViewSet(viewsets.ModelViewSet):
-    """ViewSet for ScheduledMessage management."""
-    serializer_class = ScheduledMessageSerializer
-    permission_classes = [IsAuthenticated]
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['account', 'status', 'message_type']
-    
-    def get_queryset(self):
-        return ScheduledMessage.objects.filter(is_active=True)
-    
-    @extend_schema(
-        summary="Create scheduled message",
-        request=ScheduledMessageCreateSerializer,
-        responses={201: ScheduledMessageSerializer}
-    )
-    def create(self, request, *args, **kwargs):
-        """Create a new scheduled message."""
-        serializer = ScheduledMessageCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        
-        service = SchedulerService()
-        try:
-            message = service.schedule_message(
-                **serializer.validated_data,
-                created_by=request.user
-            )
-            return Response(
-                ScheduledMessageSerializer(message).data,
-                status=status.HTTP_201_CREATED
-            )
-        except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    @extend_schema(summary="Cancel scheduled message")
-    @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """Cancel a scheduled message."""
-        service = SchedulerService()
-        try:
-            message = service.cancel_scheduled_message(str(pk))
-            return Response(ScheduledMessageSerializer(message).data)
-        except ValueError as e:
-            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    @extend_schema(summary="Get scheduled messages statistics")
-    @action(detail=False, methods=['get'])
-    def stats(self, request):
-        """Get scheduled messages statistics."""
-        account_id = request.query_params.get('account_id')
-        service = SchedulerService()
-        stats = service.get_scheduled_messages_stats(account_id)
-        return Response(stats)
 
 
 @extend_schema_view(
@@ -499,11 +433,7 @@ class ContactListViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
     
-    @extend_schema(
-        summary="Import contacts from CSV",
-        request=ImportContactsSerializer,
-        responses={201: ContactListSerializer}
-    )
+    @extend_schema(summary="Import contacts from CSV", request=ImportContactsSerializer)
     @action(detail=False, methods=['post'])
     def import_csv(self, request):
         """Import contacts from CSV."""
@@ -511,14 +441,20 @@ class ContactListViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         service = CampaignService()
-        contact_list = service.import_contacts_from_csv(
-            account_id=str(serializer.validated_data['account_id']),
-            name=serializer.validated_data['name'],
-            csv_content=serializer.validated_data['csv_content'],
-            created_by=request.user
-        )
-        
-        return Response(
-            ContactListSerializer(contact_list).data,
-            status=status.HTTP_201_CREATED
-        )
+        try:
+            contact_list = service.import_contacts_from_csv(
+                account_id=serializer.validated_data['account_id'],
+                name=serializer.validated_data['name'],
+                csv_content=serializer.validated_data['csv_content'],
+                created_by=request.user
+            )
+            return Response(
+                ContactListSerializer(contact_list).data,
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            logger.exception("Error importing contacts from CSV")
+            return Response(
+                {'error': f'Failed to import contacts: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )

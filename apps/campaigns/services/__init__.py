@@ -1,4 +1,9 @@
-from .campaign_service import CampaignService
-from .scheduler_service import SchedulerService
+"""
+Campaign services - Unified with Automation.
 
-__all__ = ['CampaignService', 'SchedulerService']
+Note: SchedulerService has been replaced by UnifiedMessagingService from automation app.
+Use apps.automation.services.UnifiedMessagingService for scheduled message operations.
+"""
+from .campaign_service import CampaignService
+
+__all__ = ['CampaignService']

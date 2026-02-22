@@ -6,9 +6,18 @@ from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
 
+# Unified messaging tasks (consolidates campaigns, automation, scheduled messages)
+from .unified_messaging_tasks import (
+    process_scheduled_messages,
+    process_campaign_batch,
+    schedule_campaign_messages,
+    cleanup_old_scheduled_messages,
+    update_campaign_stats,
+)
+
+# Report tasks
 from .scheduled import (
     send_scheduled_message,
-    process_scheduled_messages,
     generate_report,
     process_scheduled_reports,
     cleanup_old_reports
@@ -28,6 +37,10 @@ __all__ = [
     'generate_report',
     'process_scheduled_reports',
     'cleanup_old_reports',
+    'process_campaign_batch',
+    'schedule_campaign_messages',
+    'cleanup_old_scheduled_messages',
+    'update_campaign_stats',
 ]
 
 

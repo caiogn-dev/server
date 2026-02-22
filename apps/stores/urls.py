@@ -3,7 +3,7 @@ URL configuration for the stores app.
 Unified API for all stores including cart, checkout, catalog, maps, and webhooks.
 
 This is the UNIFIED e-commerce API that all frontends should use.
-Pastita-3D and other store frontends should use /api/v1/stores/{store_slug}/ endpoints (legacy /stores/s/{store_slug}/ paths remain for backward compatibility).
+All frontends must use /api/v1/stores/{store_slug}/ endpoints.
 """
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
@@ -116,11 +116,10 @@ urlpatterns = [
     
     # ==========================================================================
     # PUBLIC STOREFRONT ENDPOINTS (by store slug)
-    # Base: /api/v1/stores/{store_slug}/ (legacy /stores/s/{store_slug}/ kept for compatibility)
+    # Base: /api/v1/stores/{store_slug}/
     # ==========================================================================
     
-    # Store-specific storefront endpoints (use the /stores/{store_slug}/ base)
-    path('s/<slug:store_slug>/', include(store_frontend_patterns)),
+    # Store-specific storefront endpoints
     path('<slug:store_slug>/', include(store_frontend_patterns)),
     
     # ========================================================================== 

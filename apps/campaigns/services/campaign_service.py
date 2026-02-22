@@ -9,6 +9,8 @@ from django.utils import timezone
 
 from apps.whatsapp.models import WhatsAppAccount
 from apps.whatsapp.services import MessageService
+# Import unified messaging service for integration
+from apps.automation.services import UnifiedMessagingService
 from ..models import Campaign, CampaignRecipient, ContactList
 
 logger = logging.getLogger(__name__)
@@ -441,6 +443,42 @@ class CampaignService:
         )
         
         return contact_list
+    
+    def schedule_campaign_messages(
+        self,
+        campaign_id: str,
+    ) -> int:
+        """
+        Schedule campaign messages using UnifiedMessagingService.
+        
+        Args:
+            campaign_id: Campaign ID
+            
+        Returns:
+            Number of messages scheduled
+        """
+        campaign = Campaign.objects.get(id=campaign_id)
+        
+        # Get pending recipients
+        recipients = campaign.recipients.filter(
+            status=CampaignRecipient.RecipientStatus.PENDING
+        ).values('phone_number', 'contact_name', 'variables')
+        
+        # Prepare message data
+        message_data = campaign.message_content or {}
+        if campaign.template:
+            message_data['message_type'] = 'template'
+            message_data['template_name'] = campaign.template.name
+            message_data['template_language'] = campaign.template.language
+        
+        # Use unified service to schedule
+        scheduled_count = UnifiedMessagingService.schedule_campaign_messages(
+            campaign=campaign,
+            recipients=list(recipients),
+        )
+        
+        logger.info(f"Campaign {campaign_id}: {scheduled_count} messages scheduled via UnifiedMessagingService")
+        return scheduled_count
     
     def import_contacts_from_csv(
         self,

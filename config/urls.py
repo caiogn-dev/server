@@ -2,7 +2,7 @@
 URL configuration for Pastita E-commerce Platform.
 
 Main API endpoints:
-- /api/v1/stores/{store_slug}/ - Unified store API (catalog, cart, checkout, etc.; legacy /stores/s/{store_slug}/ paths remain available)
+- /api/v1/stores/{store_slug}/ - Unified store API (catalog, cart, checkout, etc.)
 - /api/v1/auth/ - Authentication (login, register, logout)
 - /api/v1/users/ - User profile management
 
@@ -11,7 +11,7 @@ Admin/Dashboard endpoints:
 - /admin/ - Django admin
 
 Webhooks:
-- /webhooks/whatsapp/ - WhatsApp webhooks
+- /webhooks/v1/{provider}/ - Unified webhook endpoints
 """
 from django.contrib import admin
 from django.urls import path, include
@@ -26,8 +26,14 @@ from apps.core.sse_views import (
     WebSocketHealthCheckView
 )
 
-# Import Instagram OAuth views directly to avoid circular imports
-# from apps.instagram.api.views import InstagramOAuthCallbackView, InstagramOAuthStartView
+from apps.webhooks.handlers.whatsapp_handler import WhatsAppHandler
+from django.views.decorators.csrf import csrf_exempt
+
+@csrf_exempt
+def whatsapp_verification_view(request):
+    """Direct WhatsApp verification endpoint for Meta."""
+    handler = WhatsAppHandler()
+    return handler.handle_verification(request)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -37,33 +43,31 @@ urlpatterns = [
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 
-    # API v1
+    # API v1 - Unified
     path('api/v1/', include([
         # Core (auth, users, csrf)
         path('', include('apps.core.urls')),
-        path('auth/', include('apps.core.auth.urls')),  # NEW: WhatsApp Auth
+        path('auth/', include('apps.core.auth.urls')),
 
-
-        # Unified Store API (PRIMARY - used by frontends)
+        # Unified Store API
         path('stores/', include('apps.stores.urls')),
 
         # Dashboard/Admin APIs
         path('notifications/', include('apps.notifications.urls')),
 
-        # WhatsApp, Instagram & Automation
+        # WhatsApp, Instagram & Automation (Unified)
         path('whatsapp/', include('apps.whatsapp.urls')),
         path('instagram/', include('apps.instagram.urls')),
         path('messaging/', include('apps.messaging.urls')),
         path('conversations/', include('apps.conversations.urls')),
         path('automation/', include('apps.automation.urls')),
         path('handover/', include('apps.handover.urls')),
-        path('users/', include('apps.users.urls')),  # NEW: Unified users
-        # path('langflow/', include('apps.langflow.urls')),  # DEPRECATED
-        path('agents/', include('apps.agents.urls')),  # Langchain Agents
+        path('users/', include('apps.users.urls')),
+        path('agents/', include('apps.agents.urls')),
 
         # Marketing & Audit
         path('marketing/', include('apps.marketing.urls')),
-        path('campaigns/', include('apps.campaigns.urls')),  # WhatsApp campaigns
+        path('campaigns/', include('apps.campaigns.urls')),
         path('audit/', include('apps.audit.urls')),
     ])),
 
@@ -76,23 +80,15 @@ urlpatterns = [
         path('health/', WebSocketHealthCheckView.as_view(), name='sse_health'),
     ])),
 
-    # NEW: Unified Webhooks v1 (centralized handlers)
+    # Unified Webhooks v1 (centralized handlers)
+    # Meta WhatsApp API sends webhooks WITHOUT trailing slash for verification
     path('webhooks/v1/', include('apps.webhooks.urls')),
     
-    # Webhooks (public endpoints) - DEPRECATED: Will be removed in v2.0
-    # IMPORTANT: Meta's WhatsApp API sends webhooks WITHOUT trailing slash
-    # We need to handle both /webhooks/whatsapp and /webhooks/whatsapp/
-    path('webhooks/', include([
-        path('whatsapp/', include('apps.whatsapp.webhooks.urls')),  # DEPRECATED
-        path('payments/mercadopago/', include('apps.stores.webhooks_urls')),  # DEPRECATED
-        path('automation/', include('apps.automation.webhooks.urls')),  # DEPRECATED
-    ])),
-    # Handle webhook without trailing slash (Meta sends POST to /webhooks/whatsapp)
-    path('webhooks/whatsapp', include('apps.whatsapp.webhooks.urls')),  # DEPRECATED
+    # Direct WhatsApp verification endpoint (no trailing slash required by Meta)
+    path('webhooks/v1/whatsapp', whatsapp_verification_view, name='whatsapp_webhook_no_slash'),
+    path('webhooks/v1/whatsapp/', include('apps.webhooks.urls')),  # With trailing slash for regular webhooks
 ]
 
-# Import Instagram OAuth views after urlpatterns to avoid circular imports
-
-# Serve media files when not using S3 (e.g., local/dev or fallback)
+# Serve media files when not using S3
 if not getattr(settings, 'USE_S3', False):
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

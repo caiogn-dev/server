@@ -215,19 +215,16 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
                 service = AutomationService()
                 profile = service.create_company_profile(**data)
                 
-                # Link store to profile
-                profile.store = store
-                profile.save(update_fields=['store'])
-                
             except Store.DoesNotExist:
                 return Response(
                     {'error': 'Store not found'},
                     status=status.HTTP_404_NOT_FOUND
                 )
         else:
-            # Create without store (legacy mode)
-            service = AutomationService()
-            profile = service.create_company_profile(**data)
+            return Response(
+                {'error': 'store_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         return Response(
             CompanyProfileSerializer(profile).data,

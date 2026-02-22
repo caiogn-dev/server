@@ -1,21 +1,22 @@
-from .views import CampaignViewSet, ScheduledMessageViewSet, ContactListViewSet
+"""
+Campaign API - Unified with Automation.
+
+Note: ScheduledMessageViewSet has been moved to apps.automation.api.
+Use /api/v1/automation/scheduled-messages/ for scheduled message operations.
+"""
+from .views import CampaignViewSet, ContactListViewSet
 from .serializers import (
     CampaignSerializer,
     CampaignCreateSerializer,
     CampaignRecipientSerializer,
-    ScheduledMessageSerializer,
-    ScheduledMessageCreateSerializer,
     ContactListSerializer,
 )
 
 __all__ = [
     'CampaignViewSet',
-    'ScheduledMessageViewSet',
     'ContactListViewSet',
     'CampaignSerializer',
     'CampaignCreateSerializer',
     'CampaignRecipientSerializer',
-    'ScheduledMessageSerializer',
-    'ScheduledMessageCreateSerializer',
     'ContactListSerializer',
 ]

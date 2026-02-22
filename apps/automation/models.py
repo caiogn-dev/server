@@ -353,10 +353,6 @@ class CompanyProfile(BaseModel):
     """
     Company profile linked to a WhatsApp account AND a Store.
     Contains automation settings only - business data comes from Store.
-    
-    MIGRATION NOTE: This model is being refactored to be a OneToOne extension
-    of Store. Fields company_name, business_type, description, business_hours
-    are now read from Store via properties for backward compatibility.
     """
     
     class BusinessType(models.TextChoices):
@@ -368,26 +364,25 @@ class CompanyProfile(BaseModel):
         EDUCATION = 'education', 'Educação'
         OTHER = 'other', 'Outro'
 
-    # Link to WhatsApp account (kept for backward compatibility)
+    # Link to WhatsApp account
     account = models.OneToOneField(
         'whatsapp.WhatsAppAccount',
         on_delete=models.CASCADE,
         related_name='company_profile',
-        null=True,  # Allow null temporarily for migration
+        null=True,
         blank=True
     )
     
-    # NEW: Link to Store (source of truth for business data)
+    # Link to Store (source of truth for business data)
     store = models.OneToOneField(
         'stores.Store',
         on_delete=models.CASCADE,
         related_name='automation_profile',
-        null=True,  # Allow null temporarily for migration
+        null=True,
         blank=True
     )
     
-    # DEPRECATED: Basic company info - now read from Store via properties
-    # These fields will be removed after full migration
+    # Internal fields for company info (used when store is not linked)
     _company_name = models.CharField(max_length=255, db_column='company_name', blank=True)
     _business_type = models.CharField(
         max_length=20,
@@ -478,7 +473,7 @@ class CompanyProfile(BaseModel):
     
     @company_name.setter
     def company_name(self, value):
-        """Set company name (stored in profile for backward compatibility)."""
+        """Set company name."""
         self._company_name = value
     
     @property

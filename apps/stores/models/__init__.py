@@ -1,8 +1,7 @@
 """
-Store models - Re-export all models for backward compatibility.
+Store models - Unified exports.
 
-This module structure divides the original 1854-line models.py into smaller,
-more manageable files while maintaining full backward compatibility.
+This module structure divides models into smaller, manageable files.
 """
 
 # Base models
