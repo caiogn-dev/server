@@ -84,15 +84,14 @@ class UnifiedService:
             IntentType.PRODUCT_INQUIRY: 'menu',
             IntentType.PRODUCT_MENTION: 'menu',
             IntentType.ADD_TO_CART: 'cart_created',
-            IntentType.VIEW_CART: 'cart_created',
             IntentType.CREATE_ORDER: 'order_received',
-            IntentType.ORDER_STATUS: 'order_confirmed',
+            IntentType.TRACK_ORDER: 'order_confirmed',
             IntentType.PAYMENT_STATUS: 'payment_confirmed',
             IntentType.REQUEST_PIX: 'pix_generated',
             IntentType.CONFIRM_PAYMENT: 'payment_confirmed',
             IntentType.BUSINESS_HOURS: 'business_hours',
             IntentType.LOCATION: 'business_hours',
-            IntentType.HELP: 'faq',
+            IntentType.FAQ: 'faq',
             IntentType.UNKNOWN: 'welcome',
         }
         return mapping.get(intent, 'custom')
