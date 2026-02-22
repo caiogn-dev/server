@@ -52,10 +52,11 @@ class UnifiedService:
     Prioriza templates do banco, depois LLM.
     """
     
-    def __init__(self, account, conversation, debug: bool = False):
+    def __init__(self, account, conversation, debug: bool = False, use_llm: bool = True):
         self.account = account
         self.conversation = conversation
         self.debug = debug
+        self.use_llm = use_llm  # Mantido para compatibilidade
         self.detector = IntentDetector()
         self.company = self._get_company()
         self.stats = {'template': 0, 'llm': 0, 'handler': 0, 'fallback': 0}
