@@ -20,6 +20,9 @@ ALLOWED_HOSTS.extend([
     'backend.pastita.com.br',
     'painel.pastita.com.br',
     'pastita.com.br',
+    'dev.painel.pastita.com.br',
+    'localhost:3010',
+    '127.0.0.1:3010',
 ])
 
 INSTALLED_APPS = [

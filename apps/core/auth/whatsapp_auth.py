@@ -339,6 +339,10 @@ class WhatsAppAuthService:
                 all_error_text = f"{final_error_str} {error_code}"
                 if any(ec in all_error_text for ec in error_codes_to_retry):
                     logger.info(f"[WHATSAPP AUTH] Template error (code: {error_code}), trying next configuration...")
+                    # Se é erro de botão URL (131008), tenta fallback de texto imediatamente
+                    if '131008' in all_error_text and cls.USE_TEXT_FALLBACK:
+                        logger.info(f"[WHATSAPP AUTH] Button URL parameter error, trying text fallback immediately...")
+                        break  # Sai do loop de templates para tentar texto
                     continue
                 else:
                     # Erro diferente, não tenta mais templates

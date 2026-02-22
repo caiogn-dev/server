@@ -202,17 +202,24 @@ class UnifiedService:
         """Renderiza template com variáveis."""
         text = template.message_text
         
+        # Helper para garantir string
+        def safe_str(value, default=''):
+            if value is None:
+                return default
+            return str(value)
+        
         # Variáveis básicas
-        text = text.replace('{customer_name}', self.conversation.contact_name or 'Cliente')
-        text = text.replace('{company_name}', self.company.company_name if self.company else 'Nossa Loja')
-        text = text.replace('{phone}', self.conversation.phone_number)
+        text = text.replace('{customer_name}', safe_str(self.conversation.contact_name, 'Cliente'))
+        text = text.replace('{company_name}', safe_str(self.company.company_name if self.company else None, 'Nossa Loja'))
+        text = text.replace('{phone}', safe_str(self.conversation.phone_number))
         
         # Carrinho
-        text = text.replace('{cart_total}', f"R$ {session_data.get('cart_total', 0):.2f}")
-        text = text.replace('{cart_items}', str(session_data.get('cart_items_count', 0)))
+        cart_total = session_data.get('cart_total') or 0
+        text = text.replace('{cart_total}', f"R$ {float(cart_total):.2f}")
+        text = text.replace('{cart_items}', safe_str(session_data.get('cart_items_count'), '0'))
         
         # Pedido
-        text = text.replace('{order_id}', session_data.get('order_id', ''))
+        text = text.replace('{order_id}', safe_str(session_data.get('order_id')))
         
         return text
     

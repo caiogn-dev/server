@@ -32,8 +32,20 @@ from django.views.decorators.csrf import csrf_exempt
 @csrf_exempt
 def whatsapp_verification_view(request):
     """Direct WhatsApp verification endpoint for Meta."""
+    from apps.webhooks.handlers.whatsapp_handler import WhatsAppHandler
     handler = WhatsAppHandler()
-    return handler.handle_verification(request)
+    
+    # GET = verification challenge
+    if request.method == 'GET':
+        return handler.handle_verification(request)
+    
+    # POST = webhook message - delegate to dispatcher
+    if request.method == 'POST':
+        from apps.webhooks.dispatcher import WebhookDispatcherView
+        dispatcher = WebhookDispatcherView()
+        return dispatcher._handle_webhook(request, 'whatsapp')
+    
+    return HttpResponse("Method not allowed", status=405)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
