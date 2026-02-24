@@ -21,6 +21,7 @@ ALLOWED_HOSTS.extend([
     'painel.pastita.com.br',
     'pastita.com.br',
     'dev.painel.pastita.com.br',
+    'dev.pastita.com.br',
     'localhost:3010',
     '127.0.0.1:3010',
 ])
@@ -209,8 +210,11 @@ CORS_ALLOWED_ORIGINS = [
     "https://ce-saladas.vercel.app",
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",
+    "https://dev.pastita.com.br",
     "http://localhost:3000",
+    "http://localhost:3010",
     "http://localhost:8000",
+    "http://127.0.0.1:3010",
 ]
 cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins:

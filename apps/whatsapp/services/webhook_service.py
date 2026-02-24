@@ -358,15 +358,11 @@ class WebhookService:
 
     def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
         """
-        Processa mensagem recebida com múltiplos níveis de fallback.
-        
-        Ordem de prioridade:
-        1. UnifiedAutomationService (SISTEMA UNIFICADO - Templates → Handlers → Agent)
-        2. WhatsAppAutomationService (sistema anterior com Intent Detection)
-        3. AutomationService (sistema antigo como fallback)
-        4. AI Agent (último recurso)
+        Processa mensagem recebida usando o novo PastitaOrchestrator.
+        Implementação 100% nova - sem camadas de compatibilidade.
         """
         from apps.conversations.services import ConversationService
+        from apps.automation.services import PastitaOrchestrator
 
         payload = event.payload
         message_data = payload.get('message', {})
@@ -403,40 +399,54 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"[post_process] Error updating contact name: {e}")
 
-        # ========== NÍVEL 1: LLM ORCHESTRATOR (LLM SEMPRE ATIVO) ==========
-        llm_response = None
-        llm_error = None
-        
+        # ===== NOVO ORQUESTRADOR PASTITA =====
         try:
-            import threading
-            from apps.automation.services import LLMOrchestratorService, UnifiedResponse
+            orchestrator = PastitaOrchestrator(
+                account=event.account,
+                conversation=message.conversation,
+                debug=True
+            )
             
-            def run_llm_orchestrator():
-                nonlocal llm_response, llm_error
-                try:
-                    service = LLMOrchestratorService(
-                        account=event.account,
-                        conversation=message.conversation,
-                        use_llm=True,  # Sempre ativo
-                        debug=False
-                    )
-                    response = service.process_message(message.text_body or '')
-                    llm_response = response
-                    logger.info(f"[LLMOrchestrator] Response from {response.source.value}: {response.content[:50]}...")
-                except Exception as e:
-                    llm_error = e
-                    logger.warning(f"[LLMOrchestrator] Error: {e}")
+            response = orchestrator.process_message(message.text_body or '')
             
-            thread = threading.Thread(target=run_llm_orchestrator)
-            thread.start()
-            thread.join(timeout=10)  # Timeout maior para LLM
+            logger.info(f"[PastitaOrchestrator] Intent: {response.intent.value}, Source: {response.source.value}")
             
-            if thread.is_alive():
-                logger.warning("[LLMOrchestrator] Timeout")
-                llm_error = TimeoutError("LLM orchestrator timeout")
+            # Envia resposta
+            if response.buttons:
+                # Resposta com botões
+                self._send_interactive_buttons(
+                    event=event,
+                    message=message,
+                    body_text=response.content,
+                    buttons=response.buttons
+                )
+            else:
+                # Resposta de texto
+                from ..tasks import send_agent_response
+                send_agent_response.delay(
+                    str(event.account.id),
+                    message.from_number,
+                    response.content,
+                    str(message.whatsapp_message_id)
+                )
             
-            # Processa resposta do LLM
-            if llm_response and isinstance(llm_response, UnifiedResponse):
+            logger.info("[PastitaOrchestrator] Response sent successfully")
+            return
+            
+        except Exception as e:
+            logger.exception(f"[PastitaOrchestrator] Error: {e}")
+            
+            # Fallback final
+            try:
+                from ..tasks import send_agent_response
+                send_agent_response.delay(
+                    str(event.account.id),
+                    message.from_number,
+                    "Desculpe, tive um problema. Tente novamente ou digite 'atendente' para falar com uma pessoa.",
+                    str(message.whatsapp_message_id)
+                )
+            except Exception as fallback_error:
+                logger.error(f"[post_process] Fallback failed: {fallback_error}")
                 # Se tem botões/interativo, envia mensagem interativa
                 if llm_response.buttons or llm_response.interactive_type:
                     try:
@@ -594,6 +604,35 @@ class WebhookService:
                     logger.debug(f"[AI Agent] No default agent configured for account: {event.account.id}")
             except Exception as e:
                 logger.error(f"[AI Agent] Failed to enqueue task: {e}", exc_info=True)
+
+    def _send_interactive_buttons(self, event, message, body_text: str, buttons: list) -> None:
+        """Envia mensagem com botões interativos."""
+        from ..services import WhatsAppAPIService
+        
+        service = WhatsAppAPIService(event.account)
+        
+        # Formata botões para API do WhatsApp
+        formatted_buttons = []
+        for btn in buttons:
+            if isinstance(btn, dict):
+                formatted_buttons.append({
+                    'type': 'reply',
+                    'reply': {
+                        'id': btn.get('id', str(len(formatted_buttons))),
+                        'title': btn.get('title', 'Opção')[:20]
+                    }
+                })
+        
+        try:
+            service.send_interactive_buttons(
+                to=message.from_number,
+                body_text=body_text[:1024],
+                buttons=formatted_buttons[:3]
+            )
+            logger.info(f"[WebhookService] Interactive buttons sent: {len(formatted_buttons)}")
+        except Exception as e:
+            logger.error(f"[WebhookService] Failed to send buttons: {e}")
+            service.send_text_message(to=message.from_number, text=body_text)
 
     def _send_unified_interactive(self, event, message, unified_response) -> None:
         """Envia mensagem interativa a partir da resposta unificada."""

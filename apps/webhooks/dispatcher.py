@@ -53,8 +53,11 @@ class WebhookDispatcherView(View):
         
         # Parse payload
         try:
-            if request.content_type == 'application/json':
-                payload = request.json()
+            import json
+            content_type = request.headers.get('Content-Type', '')
+            if 'application/json' in content_type:
+                body = request.body.decode('utf-8', errors='replace')
+                payload = json.loads(body) if body else {}
             else:
                 payload = dict(request.POST)
         except Exception as e:

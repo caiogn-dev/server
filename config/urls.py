@@ -33,17 +33,31 @@ from django.views.decorators.csrf import csrf_exempt
 def whatsapp_verification_view(request):
     """Direct WhatsApp verification endpoint for Meta."""
     from apps.webhooks.handlers.whatsapp_handler import WhatsAppHandler
-    handler = WhatsAppHandler()
+    from apps.webhooks.dispatcher import WebhookDispatcherView
+    import logging
     
-    # GET = verification challenge
+    logger = logging.getLogger(__name__)
+    
+    # GET = verification challenge (Meta sends hub.mode, hub.verify_token, hub.challenge)
     if request.method == 'GET':
-        return handler.handle_verification(request)
+        handler = WhatsAppHandler()
+        mode = request.GET.get('hub.mode')
+        token = request.GET.get('hub.verify_token')
+        challenge = request.GET.get('hub.challenge')
+        
+        logger.info(f"WhatsApp webhook verification: mode={mode}, token={'***' if token else None}, challenge={challenge}")
+        
+        if mode == 'subscribe' and token and challenge:
+            return handler.handle_verification(request)
+        else:
+            # Missing parameters
+            logger.warning(f"Missing verification params: mode={mode}, has_token={bool(token)}, has_challenge={bool(challenge)}")
+            return HttpResponse("Missing verification parameters", status=400)
     
     # POST = webhook message - delegate to dispatcher
     if request.method == 'POST':
-        from apps.webhooks.dispatcher import WebhookDispatcherView
         dispatcher = WebhookDispatcherView()
-        return dispatcher._handle_webhook(request, 'whatsapp')
+        return dispatcher.post(request, 'whatsapp')
     
     return HttpResponse("Method not allowed", status=405)
 

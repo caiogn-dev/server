@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 
-from apps.automation.services import LLMOrchestratorService, ResponseSource
+from apps.automation.services import PastitaOrchestrator, ResponseSource
 from apps.whatsapp.models import WhatsAppAccount
 from apps.conversations.models import Conversation
 
@@ -98,13 +98,12 @@ class UnifiedProcessView(APIView):
         )
         
         try:
-            service = LLMOrchestratorService(
+            orchestrator = PastitaOrchestrator(
                 account=account,
                 conversation=conversation,
-                use_llm=data.get('use_llm', True),
                 debug=True
             )
-            response = service.process_message(message)
+            response = orchestrator.process_message(message)
             
             return Response({
                 'content': response.content,
