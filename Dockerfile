@@ -1,41 +1,71 @@
-FROM python:3.11-slim
+# Stage 1: Build
+FROM python:3.11-alpine AS builder
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV DJANGO_SETTINGS_MODULE=config.settings.production
+# Evita arquivos .pyc e buffer de log
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Instala dependências de compilação + coreutils (GNU)
+RUN apk add --no-cache \
+    build-base \
+    postgresql-dev \
+    coreutils \
+    libffi-dev \
+    linux-headers
+
+WORKDIR /build
+
+# Instalação isolada em venv
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# ---
+# Stage 2: Runtime
+FROM python:3.11-alpine
+
+# Coreutils garante /usr/bin/ls para compatibilidade
+# libpq: runtime do postgres
+# curl: healthcheck
+# tzdata: essencial para Django gerenciar fusos horários corretamente
+RUN apk add --no-cache \
+    coreutils \
+    libpq \
+    curl \
+    tzdata
+
+# Configurações de ambiente
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/app"
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Copia apenas o venv do builder
+COPY --from=builder /opt/venv /opt/venv
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Cria usuário de sistema e estrutura de pastas antes de copiar o código
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup -u 1000 && \
+    mkdir -p /app/staticfiles /app/media /app/logs && \
+    chown -R appuser:appgroup /app
 
-COPY . .
+# Copia o código com permissões corretas (evita camadas extras de chown)
+COPY --chown=appuser:appgroup . .
 
-RUN mkdir -p logs staticfiles
-
-# Create non-root user and fix permissions
-RUN addgroup --system appuser \
-    && adduser --system --ingroup appuser appuser \
-    && chown -R appuser:appuser /app
-
-# Copy and setup entrypoint
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh \
-    && chown appuser:appuser /entrypoint.sh
-
+# Switch para usuário não-root
 USER appuser
-
-# Collectstatic with build-time settings to satisfy production checks
-RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
 
 EXPOSE 8000
 
-ENTRYPOINT ["/entrypoint.sh"]
-
-CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-8000} --workers 4 --threads 4 --worker-class uvicorn.workers.UvicornWorker --access-logfile - --error-logfile - --capture-output --enable-stdio-inheritance config.asgi:application"]
+# Usa exec form para que o Gunicorn receba sinais do Docker (SIGTERM)
+CMD ["gunicorn", "config.asgi:application", \
+     "--workers", "3", \
+     "--worker-class", "uvicorn.workers.UvicornWorker", \
+     "--bind", "0.0.0.0:8000", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-"]

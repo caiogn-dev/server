@@ -735,7 +735,7 @@ class AutoMessage(BaseModel):
     )
     
     event_type = models.CharField(max_length=30, choices=EventType.choices)
-    name = models.CharField(max_length=255, help_text="Nome interno da mensagem")
+    name = models.CharField(max_length=255, help_text="Nome interno da mensagem", default='Mensagem')
     
     # Message content
     message_text = models.TextField(help_text="Texto da mensagem. Use {variáveis} para personalização")
@@ -804,6 +804,9 @@ class CustomerSession(BaseModel):
         ACTIVE = 'active', 'Ativa'
         CART_CREATED = 'cart_created', 'Carrinho Criado'
         CART_ABANDONED = 'cart_abandoned', 'Carrinho Abandonado'
+        AWAITING_DELIVERY_METHOD = 'awaiting_delivery_method', 'Aguardando Método de Entrega'
+        AWAITING_ADDRESS = 'awaiting_address', 'Aguardando Endereço'
+        AWAITING_PAYMENT_METHOD = 'awaiting_payment_method', 'Aguardando Método de Pagamento'
         CHECKOUT = 'checkout', 'Em Checkout'
         PAYMENT_PENDING = 'payment_pending', 'Aguardando Pagamento'
         PAYMENT_CONFIRMED = 'payment_confirmed', 'Pagamento Confirmado'
@@ -836,7 +839,7 @@ class CustomerSession(BaseModel):
     )
     
     status = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=SessionStatus.choices,
         default=SessionStatus.ACTIVE
     )
@@ -861,6 +864,12 @@ class CustomerSession(BaseModel):
     pix_qr_code = models.TextField(blank=True)
     pix_expires_at = models.DateTimeField(null=True, blank=True)
     payment_id = models.CharField(max_length=100, blank=True)
+    
+    # Delivery data - novos campos para fluxo completo
+    delivery_method = models.CharField(max_length=20, blank=True, help_text="delivery, pickup")
+    delivery_address = models.TextField(blank=True)
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    payment_method = models.CharField(max_length=20, blank=True, help_text="pix, cash, card")
     
     # Order reference
     order = models.ForeignKey(

@@ -12,8 +12,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from django.db.models import Count, Avg, Q
+from django.db import connection
 
 from apps.whatsapp.intents.detector import IntentType
+from apps.whatsapp.models.intent_models import IntentLog, IntentDailyStats
 
 
 class IntentStatsViewSet(viewsets.ViewSet):
@@ -33,7 +35,7 @@ class IntentStatsViewSet(viewsets.ViewSet):
         Query params:
         - start_date: Data inicial (YYYY-MM-DD)
         - end_date: Data final (YYYY-MM-DD)
-        - company_id: ID da empresa (opcional)
+        - account_id: ID da conta (opcional)
         """
         # Parâmetros de data
         end_date = timezone.now()
@@ -41,25 +43,56 @@ class IntentStatsViewSet(viewsets.ViewSet):
         
         start_date_str = request.query_params.get('start_date')
         end_date_str = request.query_params.get('end_date')
+        account_id = request.query_params.get('account_id')
         
         if start_date_str:
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
-        # Como ainda não temos um modelo de log persistente,
-        # vamos retornar dados simulados para o frontend funcionar
-        # TODO: Implementar modelo IntentLog para persistir logs
+        # Query base
+        queryset = IntentLog.objects.filter(
+            created_at__gte=start_date,
+            created_at__lte=end_date
+        )
+        
+        if account_id:
+            queryset = queryset.filter(account_id=account_id)
+        
+        # Estatísticas agregadas
+        total_detected = queryset.count()
+        
+        # Por método
+        by_method = {
+            'regex': queryset.filter(method='regex').count(),
+            'llm': queryset.filter(method='llm').count(),
+        }
+        
+        # Por tipo
+        by_type = {}
+        for intent in IntentType:
+            count = queryset.filter(intent_type=intent.value).count()
+            by_type[intent.value] = count
+        
+        # Tempo médio de resposta
+        avg_time = queryset.aggregate(avg_time=Avg('processing_time_ms'))['avg_time'] or 0
+        
+        # Top intenções
+        top_intents = list(
+            queryset.values('intent_type')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:10]
+        )
         
         stats = {
-            'total_detected': 0,
-            'by_type': {intent.value: 0 for intent in IntentType},
-            'by_method': {
-                'regex': 0,
-                'llm': 0,
-            },
-            'avg_response_time_ms': 0,
-            'top_intents': [],
+            'total_detected': total_detected,
+            'by_type': by_type,
+            'by_method': by_method,
+            'avg_response_time_ms': round(avg_time, 2),
+            'top_intents': [
+                {'intent': item['intent_type'], 'count': item['count']}
+                for item in top_intents
+            ],
             'period': {
                 'start': start_date.isoformat(),
                 'end': end_date.isoformat(),
@@ -90,23 +123,94 @@ class IntentLogViewSet(viewsets.ViewSet):
         - method: Filtrar por método (regex/llm)
         - start_date: Data inicial
         - end_date: Data final
+        - account_id: ID da conta
+        - phone_number: Filtrar por telefone
         """
-        # TODO: Implementar quando tivermos modelo IntentLog
+        # Parâmetros
+        limit = int(request.query_params.get('limit', 20))
+        offset = int(request.query_params.get('offset', 0))
+        intent_type = request.query_params.get('intent_type')
+        method = request.query_params.get('method')
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        account_id = request.query_params.get('account_id')
+        phone_number = request.query_params.get('phone_number')
+        
+        # Query base
+        queryset = IntentLog.objects.all()
+        
+        # Filtros
+        if account_id:
+            queryset = queryset.filter(account_id=account_id)
+        if intent_type:
+            queryset = queryset.filter(intent_type=intent_type)
+        if method:
+            queryset = queryset.filter(method=method)
+        if phone_number:
+            queryset = queryset.filter(phone_number__contains=phone_number)
+        if start_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            queryset = queryset.filter(created_at__gte=start_date)
+        if end_date_str:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            queryset = queryset.filter(created_at__lte=end_date)
+        
+        # Ordenação e paginação
+        total_count = queryset.count()
+        queryset = queryset.order_by('-created_at')[offset:offset + limit]
+        
+        # Serialização manual
+        results = []
+        for log in queryset:
+            results.append({
+                'id': str(log.id),
+                'message_id': str(log.message_id) if log.message else None,
+                'conversation_id': str(log.conversation_id) if log.conversation else None,
+                'phone_number': log.phone_number,
+                'message_text': log.message_text,
+                'intent_type': log.intent_type,
+                'method': log.method,
+                'confidence': log.confidence,
+                'handler_used': log.handler_used,
+                'response_text': log.response_text,
+                'response_type': log.response_type,
+                'processing_time_ms': log.processing_time_ms,
+                'created_at': log.created_at.isoformat(),
+            })
         
         return Response({
-            'count': 0,
-            'next': None,
-            'previous': None,
-            'results': [],
+            'count': total_count,
+            'next': offset + limit < total_count,
+            'previous': offset > 0,
+            'results': results,
         })
     
     def retrieve(self, request, pk=None):
         """Retorna um log específico."""
-        # TODO: Implementar quando tivermos modelo IntentLog
-        return Response(
-            {'detail': 'Not implemented yet.'},
-            status=status.HTTP_501_NOT_IMPLEMENTED
-        )
+        try:
+            log = IntentLog.objects.get(id=pk)
+            return Response({
+                'id': str(log.id),
+                'message_id': str(log.message_id) if log.message else None,
+                'conversation_id': str(log.conversation_id) if log.conversation else None,
+                'phone_number': log.phone_number,
+                'message_text': log.message_text,
+                'intent_type': log.intent_type,
+                'method': log.method,
+                'confidence': log.confidence,
+                'handler_used': log.handler_used,
+                'response_text': log.response_text,
+                'response_type': log.response_type,
+                'processing_time_ms': log.processing_time_ms,
+                'context': log.context,
+                'entities': log.entities,
+                'created_at': log.created_at.isoformat(),
+            })
+        except IntentLog.DoesNotExist:
+            return Response(
+                {'detail': 'Log não encontrado.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
     
     @action(detail=False, methods=['get'])
     def export(self, request):
@@ -118,11 +222,71 @@ class IntentLogViewSet(viewsets.ViewSet):
         - start_date: Data inicial
         - end_date: Data final
         """
-        # TODO: Implementar exportação
-        return Response(
-            {'detail': 'Export not implemented yet.'},
-            status=status.HTTP_501_NOT_IMPLEMENTED
-        )
+        export_format = request.query_params.get('format', 'json')
+        start_date_str = request.query_params.get('start_date')
+        end_date_str = request.query_params.get('end_date')
+        account_id = request.query_params.get('account_id')
+        
+        # Query base
+        queryset = IntentLog.objects.all()
+        
+        if account_id:
+            queryset = queryset.filter(account_id=account_id)
+        if start_date_str:
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
+            queryset = queryset.filter(created_at__gte=start_date)
+        if end_date_str:
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
+            queryset = queryset.filter(created_at__lte=end_date)
+        
+        queryset = queryset.order_by('-created_at')
+        
+        if export_format == 'csv':
+            import csv
+            import io
+            from django.http import HttpResponse
+            
+            output = io.StringIO()
+            writer = csv.writer(output)
+            writer.writerow([
+                'ID', 'Data', 'Telefone', 'Mensagem', 'Intenção',
+                'Método', 'Confiança', 'Handler', 'Tempo (ms)'
+            ])
+            
+            for log in queryset:
+                writer.writerow([
+                    str(log.id),
+                    log.created_at.isoformat(),
+                    log.phone_number,
+                    log.message_text[:100],
+                    log.intent_type,
+                    log.method,
+                    log.confidence,
+                    log.handler_used,
+                    log.processing_time_ms,
+                ])
+            
+            response = HttpResponse(output.getvalue(), content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="intent_logs.csv"'
+            return response
+        
+        # JSON
+        results = []
+        for log in queryset:
+            results.append({
+                'id': str(log.id),
+                'created_at': log.created_at.isoformat(),
+                'phone_number': log.phone_number,
+                'message_text': log.message_text,
+                'intent_type': log.intent_type,
+                'method': log.method,
+                'confidence': log.confidence,
+                'handler_used': log.handler_used,
+                'response_text': log.response_text,
+                'processing_time_ms': log.processing_time_ms,
+            })
+        
+        return Response(results)
 
 
 class AutomationDashboardViewSet(viewsets.ViewSet):
@@ -142,20 +306,35 @@ class AutomationDashboardViewSet(viewsets.ViewSet):
         Query params:
         - start_date: Data inicial
         - end_date: Data final
-        - company_id: ID da empresa
+        - account_id: ID da conta
         """
         end_date = timezone.now()
         start_date = end_date - timedelta(days=7)
         
         start_date_str = request.query_params.get('start_date')
         end_date_str = request.query_params.get('end_date')
+        account_id = request.query_params.get('account_id')
         
         if start_date_str:
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d')
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
-        # TODO: Implementar com dados reais quando tivermos os modelos
+        # Query base de logs
+        queryset = IntentLog.objects.filter(
+            created_at__gte=start_date,
+            created_at__lte=end_date
+        )
+        
+        if account_id:
+            queryset = queryset.filter(account_id=account_id)
+        
+        # Estatísticas por tipo de evento (baseado nas intenções)
+        by_event_type = {}
+        for intent in IntentType:
+            count = queryset.filter(intent_type=intent.value).count()
+            if count > 0:
+                by_event_type[intent.value] = count
         
         stats = {
             'period': {
@@ -163,23 +342,23 @@ class AutomationDashboardViewSet(viewsets.ViewSet):
                 'end': end_date.isoformat(),
             },
             'summary': {
-                'total_messages_sent': 0,
-                'total_automations_triggered': 0,
-                'conversion_rate': 0.0,
-                'revenue_from_automations': 0.0,
+                'total_messages_sent': queryset.count(),
+                'total_automations_triggered': queryset.exclude(handler_used='').count(),
+                'conversion_rate': 0.0,  # TODO: Calcular baseado em pedidos
+                'revenue_from_automations': 0.0,  # TODO: Calcular baseado em pedidos
             },
-            'by_event_type': {},
+            'by_event_type': by_event_type,
             'cart_recovery': {
-                'abandoned_carts': 0,
-                'reminders_sent': 0,
-                'recovered': 0,
+                'abandoned_carts': queryset.filter(intent_type='cart_abandoned').count(),
+                'reminders_sent': queryset.filter(intent_type='cart_reminder').count(),
+                'recovered': 0,  # TODO: Calcular
                 'recovery_rate': 0.0,
                 'revenue_recovered': 0.0,
             },
             'payment_reminders': {
-                'pending_payments': 0,
-                'reminders_sent': 0,
-                'paid_after_reminder': 0,
+                'pending_payments': queryset.filter(intent_type='pix_generated').count(),
+                'reminders_sent': queryset.filter(intent_type='pix_reminder').count(),
+                'paid_after_reminder': queryset.filter(intent_type='payment_confirmed').count(),
                 'conversion_rate': 0.0,
             },
         }

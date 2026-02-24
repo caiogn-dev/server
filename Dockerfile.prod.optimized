@@ -1,4 +1,4 @@
-# Stage 1: Build - Otimizado para menor tempo de build
+# Stage 1: Build - OTIMIZADO PARA MENOR TEMPO DE BUILD
 FROM python:3.11-slim AS builder
 
 # Evita arquivos .pyc e buffer de log
@@ -23,12 +23,15 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copia requirements PRIMEIRO (para cachear essa camada)
 COPY requirements.txt .
 
-# Instala dependências
+# Instala dependências com timeout maior e mirrors rápidos
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install \
+    --index-url https://pypi.org/simple \
+    --trusted-host pypi.org \
+    --trusted-host files.pythonhosted.org \
+    -r requirements.txt
 
-# ---
-# Stage 2: Runtime
+# Stage 2: Runtime - mais enxuto
 FROM python:3.11-slim
 
 # Instala apenas runtime dependencies
@@ -36,7 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
     tzdata \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # Configurações de ambiente
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -63,10 +67,17 @@ USER appuser
 
 EXPOSE 8000
 
+# Healthcheck
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health/ || exit 1
+
 CMD ["gunicorn", "config.asgi:application", \
     "--workers", "3", \
     "--worker-class", "uvicorn.workers.UvicornWorker", \
     "--bind", "0.0.0.0:8000", \
     "--access-logfile", "-", \
     "--error-logfile", "-", \
-    "--timeout", "120"]
+    "--timeout", "120", \
+    "--keep-alive", "5", \
+    "--max-requests", "1000", \
+    "--max-requests-jitter", "50"]

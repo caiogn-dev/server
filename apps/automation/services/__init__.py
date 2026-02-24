@@ -5,16 +5,41 @@ from .context_service import AutomationContext, AutomationContextService
 """
 Pastita Automation Services
 
-Novo orquestrador 100% - sem compatibilidade legada.
+Orquestradores e serviços de automação para WhatsApp.
 """
 
-# Novo Orquestrador Completo
+# Orquestrador Legacy (estável)
 from .pastita_orchestrator import (
     PastitaOrchestrator,
     IntentType,
     ResponseSource,
     OrchestratorResponse,
     IntentDetector,
+)
+
+# LangGraph Orchestrator (Novo - Completo)
+from .pastita_langgraph_orchestrator import (
+    LangGraphOrchestrator,
+    ContextRouter,
+    process_whatsapp_message_langgraph,
+    get_orchestrator,
+)
+
+# Tools do sistema
+from .pastita_tools import (
+    PASTITA_TOOLS,
+    get_menu,
+    get_product_info,
+    add_to_cart,
+    remove_from_cart,
+    view_cart,
+    clear_cart,
+    calculate_delivery_fee,
+    create_order,
+    generate_pix,
+    check_order_status,
+    get_automessage_for_status,
+    send_whatsapp_message,
 )
 
 # Serviços de sessão
@@ -31,12 +56,31 @@ def AutomationService():
     return _AutomationService()
 
 __all__ = [
-    # Novo Orquestrador
+    # Orquestrador Legacy
     'PastitaOrchestrator',
     'IntentType',
     'ResponseSource',
     'OrchestratorResponse',
     'IntentDetector',
+    # LangGraph Orchestrator
+    'LangGraphOrchestrator',
+    'ContextRouter',
+    'process_whatsapp_message_langgraph',
+    'get_orchestrator',
+    # Tools
+    'PASTITA_TOOLS',
+    'get_menu',
+    'get_product_info',
+    'add_to_cart',
+    'remove_from_cart',
+    'view_cart',
+    'clear_cart',
+    'calculate_delivery_fee',
+    'create_order',
+    'generate_pix',
+    'check_order_status',
+    'get_automessage_for_status',
+    'send_whatsapp_message',
     # Sessão
     'SessionManager',
     'SessionContext',

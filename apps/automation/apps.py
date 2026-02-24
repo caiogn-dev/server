@@ -12,3 +12,9 @@ class AutomationConfig(AppConfig):
             import apps.automation.signals  # noqa
         except ImportError:
             pass
+        
+        # Import order signals
+        try:
+            import apps.automation.signals.order_signals  # noqa
+        except ImportError:
+            pass
