@@ -462,6 +462,193 @@ class WhatsAppInteractiveMessage:
             sections=sections
         )
 
+    @staticmethod
+    def create_multi_product_message(
+        to: str,
+        header: str,
+        body: str,
+        catalog_id: str,
+        sections: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Cria mensagem Multi-Product (MPM) usando catálogo do Meta.
+        
+        ATENÇÃO: Requer catálogo configurado no Commerce Manager.
+        
+        Args:
+            to: Número do destinatário
+            header: Título do cabeçalho
+            body: Texto do corpo
+            catalog_id: ID do catálogo no Meta
+            sections: Lista de seções com produtos
+                     [{"title": "Seção 1", "product_items": [{"product_retailer_id": "SKU1"}]}]
+        """
+        message = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "product_list",
+                "header": {
+                    "type": "text",
+                    "text": header[:60]
+                },
+                "body": {
+                    "text": body[:4096]
+                },
+                "action": {
+                    "catalog_id": catalog_id,
+                    "sections": sections[:10]  # Máximo 10 seções
+                }
+            }
+        }
+        
+        logger.info(f"[MultiProduct] Created MPM with {len(sections)} sections")
+        return message
+
+    @staticmethod
+    def create_single_product_message(
+        to: str,
+        catalog_id: str,
+        product_retailer_id: str,
+        body: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Cria mensagem Single Product (SPM).
+        Mostra um único produto do catálogo.
+        
+        Args:
+            to: Número do destinatário
+            catalog_id: ID do catálogo no Meta
+            product_retailer_id: SKU do produto
+            body: Texto opcional
+        """
+        message = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "product",
+                "action": {
+                    "catalog_id": catalog_id,
+                    "product_retailer_id": product_retailer_id
+                }
+            }
+        }
+        
+        if body:
+            message["interactive"]["body"] = {"text": body[:4096]}
+        
+        return message
+
+    @staticmethod
+    def create_menu_catalog_simulation(
+        to: str,
+        products: List[Dict[str, Any]],
+        category_name: str = "Cardápio"
+    ) -> Dict[str, Any]:
+        """
+        SIMULAÇÃO de Multi-Product Message usando seu próprio sistema.
+        Não requer catálogo do Meta!
+        
+        Cria uma lista interativa com até 10 produtos do seu cardápio.
+        Cada produto vira um item clicável na lista.
+        
+        Args:
+            to: Número do destinatário
+            products: Lista de produtos do seu sistema
+                     [{"id": "1", "name": "Pizza", "price": 45.90, "description": "..."}]
+            category_name: Nome da categoria/seção
+        """
+        sections = []
+        rows = []
+        
+        # Limita a 10 produtos (máximo da API de listas)
+        for product in products[:10]:
+            prod_id = str(product.get('id', '0'))
+            name = product.get('name', 'Produto')[:24]  # Limite da API
+            price = product.get('price', 0)
+            description = product.get('description', '')[:72]  # Limite da API
+            
+            # Formata descrição com preço
+            desc = f"R$ {price:.2f}"
+            if description:
+                desc = f"{description[:50]} - R$ {price:.2f}"
+            
+            rows.append({
+                "id": f"view_product_{prod_id}",
+                "title": name,
+                "description": desc
+            })
+        
+        if rows:
+            sections.append({
+                "title": category_name[:24],
+                "rows": rows
+            })
+        
+        message = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "interactive",
+            "interactive": {
+                "type": "list",
+                "header": {
+                    "type": "text",
+                    "text": f"📋 {category_name}"[:60]
+                },
+                "body": {
+                    "text": f"Escolha um item para ver detalhes e adicionar ao carrinho:\n\n📦 {len(products)} produtos disponíveis"[:4096]
+                },
+                "footer": {
+                    "text": "Toque em um item para ver mais detalhes"
+                },
+                "action": {
+                    "button": "🛒 Ver Produtos",
+                    "sections": sections
+                }
+            }
+        }
+        
+        logger.info(f"[MenuSimulation] Created catalog simulation with {len(rows)} products")
+        return message
+
+    @staticmethod
+    def create_product_detail_with_add(
+        to: str,
+        product: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Mostra detalhes do produto com botão para adicionar ao carrinho.
+        Usado após o cliente clicar em um item do catálogo simulado.
+        """
+        name = product.get('name', 'Produto')
+        price = product.get('price', 0)
+        description = product.get('description', '')
+        product_id = str(product.get('id', '0'))
+        
+        body = f"💰 *R$ {price:.2f}*\n\n"
+        
+        if description:
+            body += f"_{description}_\n\n"
+        
+        body += "Quantas unidades deseja?"
+        
+        return WhatsAppInteractiveMessage.create_button_message(
+            to=to,
+            header=f"🍽️ {name}",
+            body=body,
+            footer="Escolha a quantidade",
+            buttons=[
+                {"id": f"add_{product_id}_1", "title": "1x 🛒"},
+                {"id": f"add_{product_id}_2", "title": "2x 🛒"},
+                {"id": f"add_{product_id}_3", "title": "3x 🛒"},
+            ]
+        )
+
 
 class QuickReplyBuilder:
     """Builder para quick replies (respostas rápidas)"""
