@@ -173,7 +173,7 @@ class OrchestratorResponse:
     # Novos campos para mensagens interativas
     use_interactive: bool = False
     interactive_type: Optional[str] = None  # 'buttons', 'list'
-    interactive_data: Optional[Dict] = None)
+    interactive_data: Optional[Dict] = None
 
 
 class IntentDetector:
