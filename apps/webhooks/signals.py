@@ -30,7 +30,7 @@ def handle_failed_webhook_event(sender, instance, created, **kwargs):
     if not created and instance.status == WebhookEvent.Status.FAILED:
         # Check if already in DLQ
         existing = WebhookDeadLetter.objects.filter(
-            original_event=instance
+            original_event_id=str(instance.id)
         ).first()
         
         if existing:
@@ -54,7 +54,7 @@ def handle_failed_webhook_event(sender, instance, created, **kwargs):
             failure_reason = _classify_failure(instance.error_message)
             
             dlq_entry = WebhookDeadLetter.objects.create(
-                original_event=instance,
+                original_event_id=str(instance.id),
                 provider=instance.provider,
                 event_type=instance.event_type,
                 event_id=instance.event_id,

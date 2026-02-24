@@ -1049,10 +1049,13 @@ _Depois de pagar, envie o comprovante aqui!_"""
                     payer_name=order.customer_name,
                     payer_email="cliente@pastita.com.br",
                     external_id=str(payment_id),
-                    pix_code=pix_code,
                     gateway_response=payment_info,
                     status='pending'
                 )
+                
+                # Atualizar o pedido com os dados do PIX
+                order.pix_code = pix_code
+                order.save(update_fields=['pix_code', 'updated_at'])
                 
                 session.payment_id = str(payment.id)
                 session.pix_code = pix_code
