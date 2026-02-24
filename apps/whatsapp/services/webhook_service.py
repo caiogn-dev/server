@@ -412,8 +412,15 @@ class WebhookService:
             logger.info(f"[PastitaOrchestrator] Intent: {response.intent.value}, Source: {response.source.value}")
             
             # Envia resposta
-            if response.buttons:
-                # Resposta com botões
+            if response.use_interactive and response.interactive_data:
+                # Nova mensagem interativa com header/footer
+                self._send_interactive_message(
+                    event=event,
+                    message=message,
+                    interactive_data=response.interactive_data
+                )
+            elif response.buttons:
+                # Resposta com botões (formato antigo)
                 self._send_interactive_buttons(
                     event=event,
                     message=message,
@@ -652,6 +659,52 @@ class WebhookService:
                 to=message.from_number,
                 text=unified_response.content
             )
+
+    def _send_interactive_message(self, event, message, interactive_data: dict) -> None:
+        """Envia mensagem interativa com header, body, footer e botões."""
+        from ..services import WhatsAppAPIService
+        
+        service = WhatsAppAPIService(event.account)
+        
+        try:
+            body = interactive_data.get('body', '')
+            header = interactive_data.get('header')
+            footer = interactive_data.get('footer')
+            buttons = interactive_data.get('buttons', [])
+            
+            # Formata botões para API do WhatsApp
+            formatted_buttons = []
+            for btn in buttons[:3]:  # Máximo 3 botões
+                if isinstance(btn, dict):
+                    formatted_buttons.append({
+                        'type': 'reply',
+                        'reply': {
+                            'id': btn.get('id', str(len(formatted_buttons))),
+                            'title': btn.get('title', 'Opção')[:20]
+                        }
+                    })
+            
+            # Monta header no formato da API
+            header_payload = None
+            if header:
+                header_payload = {
+                    'type': 'text',
+                    'text': header[:60]
+                }
+            
+            service.send_interactive_buttons(
+                to=message.from_number,
+                body_text=body[:1024],
+                buttons=formatted_buttons,
+                header=header_payload,
+                footer=footer[:60] if footer else None
+            )
+            logger.info(f"[WebhookService] Interactive message sent with header/footer")
+        except Exception as e:
+            logger.error(f"[WebhookService] Failed to send interactive message: {e}")
+            # Fallback para mensagem de texto
+            body = interactive_data.get('body', 'Mensagem')
+            service.send_text_message(to=message.from_number, text=body)
 
     def _extract_name_from_message(self, text: str) -> str:
         """Extract name from message patterns like 'my name is John', 'sou o Carlos', etc."""

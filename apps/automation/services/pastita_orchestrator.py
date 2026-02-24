@@ -164,12 +164,16 @@ class ResponseSource(Enum):
 
 @dataclass
 class OrchestratorResponse:
-    """Resposta padronizada."""
+    """Resposta padronizada com suporte a mensagens interativas."""
     content: str
     source: ResponseSource
     intent: IntentType
     buttons: Optional[List[Dict[str, str]]] = None
     metadata: Dict = field(default_factory=dict)
+    # Novos campos para mensagens interativas
+    use_interactive: bool = False
+    interactive_type: Optional[str] = None  # 'buttons', 'list'
+    interactive_data: Optional[Dict] = None)
 
 
 class IntentDetector:
@@ -1061,10 +1065,22 @@ _Depois de pagar, envie o comprovante aqui!_"""
                 session.pix_code = pix_code
                 session.save()
                 
+                # Retorna mensagem interativa com botão de copiar PIX
                 return OrchestratorResponse(
-                    content=f"💳 *Código PIX gerado!*\n\nPedido: *{order.order_number}*\nTotal: R$ {order.total:.2f}\n\n*Código:*\n`{pix_code}`\n\n_Válido por 30 minutos_\n\nDepois de pagar, envie *paguei*!",
+                    content=f"💳 *Código PIX gerado!*\n\nPedido: *{order.order_number}*\nTotal: R$ {order.total:.2f}\n\n*Código:*\n`{pix_code}`\n\n_Válido por 30 minutos_",
                     source=ResponseSource.HANDLER,
-                    intent=IntentType.REQUEST_PIX
+                    intent=IntentType.REQUEST_PIX,
+                    use_interactive=True,
+                    interactive_type='buttons',
+                    interactive_data={
+                        'header': f"✅ Pedido #{order.order_number}",
+                        'body': f"💰 Total: R$ {order.total:.2f}\n\nCódigo PIX gerado com sucesso!",
+                        'footer': "Toque em 'Copiar PIX' para copiar o código",
+                        'buttons': [
+                            {'id': f'copy_pix_{order.order_number}', 'title': '📋 Copiar PIX'},
+                            {'id': 'already_paid', 'title': '✅ Já paguei'},
+                        ]
+                    }
                 )
             else:
                 logger.error(f"Erro PIX: {payment_response}")
