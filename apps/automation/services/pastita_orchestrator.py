@@ -399,36 +399,64 @@ class PastitaOrchestrator:
         )
     
     def _handle_menu(self, message: str, data: Dict) -> OrchestratorResponse:
-        from apps.stores.models import StoreProduct
+        from apps.stores.models import StoreProduct, StoreCategory
+        from apps.whatsapp.services.interactive_messages import WhatsAppInteractiveMessage
         
-        products = StoreProduct.objects.filter(
+        # Busca categorias ativas
+        categories = StoreCategory.objects.filter(
             store=self.store,
             is_active=True
-        ).order_by('category__sort_order', 'sort_order', 'name')
+        ).order_by('sort_order', 'name')
         
-        if not products:
-            return self._fallback_response("Cardápio vazio no momento.")
+        if not categories:
+            # Fallback: mostra produtos diretamente
+            products = StoreProduct.objects.filter(
+                store=self.store,
+                is_active=True
+            ).order_by('name')[:10]
+            
+            if not products:
+                return self._fallback_response("Cardápio vazio no momento.")
+            
+            lines = ["📋 *NOSSO CARDÁPIO*\n"]
+            for p in products[:8]:
+                lines.append(f"• {p.name} - R$ {p.price:.2f}")
+            
+            return OrchestratorResponse(
+                content="\n".join(lines),
+                source=ResponseSource.HANDLER,
+                intent=IntentType.MENU_REQUEST,
+                buttons=[
+                    {'id': 'cart', 'title': '🛒 Ver Carrinho'},
+                    {'id': 'order', 'title': '✅ Finalizar'},
+                ]
+            )
         
-        lines = ["📋 *NOSSO CARDÁPIO*\n"]
-        current_category = None
+        # Retorna mensagem interativa com categorias
+        categories_data = [
+            {
+                'id': str(cat.id),
+                'name': cat.name,
+                'product_count': StoreProduct.objects.filter(
+                    category=cat, is_active=True
+                ).count()
+            }
+            for cat in categories[:10]
+        ]
         
-        for p in products:
-            cat_name = p.category.name if p.category else 'Geral'
-            if cat_name != current_category:
-                lines.append(f"\n*{cat_name}*")
-                current_category = cat_name
-            lines.append(f"• {p.name} - R$ {p.price:.2f}")
-        
-        lines.append("\n\n_Digite o nome do produto para adicionar ao carrinho_")
+        # Cria mensagem interativa de categorias
+        interactive_msg = WhatsAppInteractiveMessage.create_category_list(
+            to="",  # Será preenchido pelo serviço
+            categories=categories_data
+        )
         
         return OrchestratorResponse(
-            content="\n".join(lines),
+            content="📋 Escolha uma categoria para ver nossos produtos:",
             source=ResponseSource.HANDLER,
             intent=IntentType.MENU_REQUEST,
-            buttons=[
-                {'id': 'cart', 'title': '🛒 Ver Carrinho'},
-                {'id': 'order', 'title': '✅ Finalizar'},
-            ]
+            use_interactive=True,
+            interactive_type='list',
+            interactive_data=interactive_msg.get('interactive', {})
         )
     
     def _handle_product_inquiry(self, message: str, data: Dict) -> OrchestratorResponse:

@@ -246,6 +246,222 @@ class WhatsAppInteractiveMessage:
             ]
         )
 
+    @staticmethod
+    def create_product_with_suggestions(
+        to: str,
+        product: Dict[str, Any],
+        suggestions: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Cria mensagem de produto com sugestões de complementos.
+        """
+        name = product.get('name', 'Produto')
+        price = product.get('price', 0)
+        description = product.get('description', '')
+        product_id = product.get('id', '0')
+        
+        body = f"💰 *R$ {price:.2f}*\n\n"
+        if description:
+            body += f"_{description}_\n\n"
+        
+        if suggestions:
+            body += "*Sugestões de complementos:*\n"
+            for i, sug in enumerate(suggestions[:2], 1):
+                body += f"{i}. {sug.get('name')} - R$ {sug.get('price', 0):.2f}\n"
+            body += "\n"
+        
+        body += "Deseja adicionar?"
+        
+        buttons = [
+            {"id": f"add_{product_id}_1", "title": "🛒 Adicionar"},
+        ]
+        
+        if suggestions:
+            buttons.append({"id": f"suggest_{product_id}", "title": "💡 Ver sugestões"})
+        
+        buttons.append({"id": "view_more", "title": "⬅️ Voltar"})
+        
+        return WhatsAppInteractiveMessage.create_button_message(
+            to=to,
+            header=f"🍽️ {name}",
+            body=body,
+            footer="Adicione ao carrinho ou veja sugestões",
+            buttons=buttons
+        )
+
+    @staticmethod
+    def create_combo_message(
+        to: str,
+        combo: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Cria mensagem de combo/promoção.
+        """
+        name = combo.get('name', 'Combo')
+        price = combo.get('price', 0)
+        original_price = combo.get('original_price', price)
+        items = combo.get('items', [])
+        combo_id = combo.get('id', '0')
+        
+        discount = ((original_price - price) / original_price * 100) if original_price > price else 0
+        
+        body = f"🔥 *PROMOÇÃO ESPECIAL*\n\n"
+        body += f"*{name}*\n\n"
+        
+        if items:
+            body += "*Inclui:*\n"
+            for item in items:
+                body += f"✓ {item}\n"
+            body += "\n"
+        
+        body += f"💰 *R$ {price:.2f}*"
+        if discount > 0:
+            body += f" _(Economize R$ {original_price - price:.2f})_\n"
+            body += f"📉 *{discount:.0f}% OFF*"
+        
+        return WhatsAppInteractiveMessage.create_button_message(
+            to=to,
+            header=f"🎉 Combo Especial",
+            body=body,
+            footer="Aproveite enquanto dura!",
+            buttons=[
+                {"id": f"add_combo_{combo_id}", "title": "🛒 Quero esse!"},
+                {"id": "view_combos", "title": "📋 Ver mais combos"},
+            ]
+        )
+
+    @staticmethod
+    def create_checkout_summary(
+        to: str,
+        order: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Cria resumo do pedido para checkout.
+        """
+        items = order.get('items', [])
+        subtotal = order.get('subtotal', 0)
+        delivery_fee = order.get('delivery_fee', 0)
+        total = order.get('total', 0)
+        delivery_method = order.get('delivery_method', 'delivery')
+        
+        items_text = ""
+        for item in items[:4]:
+            items_text += f"• {item.get('quantity', 1)}x {item.get('name')}\n"
+        if len(items) > 4:
+            items_text += f"... e mais {len(items) - 4}\n"
+        
+        body = f"{items_text}\n"
+        body += f"Subtotal: R$ {subtotal:.2f}\n"
+        
+        if delivery_method == 'delivery' and delivery_fee > 0:
+            body += f"Entrega: R$ {delivery_fee:.2f}\n"
+        elif delivery_method == 'pickup':
+            body += f"Retirada: Grátis\n"
+        
+        body += f"━━━━━━━━━━━━━━\n"
+        body += f"💰 *Total: R$ {total:.2f}*"
+        
+        return WhatsAppInteractiveMessage.create_button_message(
+            to=to,
+            header=f"🛒 Resumo do Pedido",
+            body=body,
+            footer="Confirme para prosseguir",
+            buttons=[
+                {"id": "confirm_order", "title": "✅ Confirmar"},
+                {"id": "add_more", "title": "➕ Adicionar mais"},
+                {"id": "cancel", "title": "❌ Cancelar"},
+            ]
+        )
+
+    @staticmethod
+    def create_delivery_options(
+        to: str,
+        delivery_fee: float,
+        estimated_time: str = "30-45 min"
+    ) -> Dict[str, Any]:
+        """
+        Cria mensagem com opções de entrega/retirada.
+        """
+        body = f"Como deseja receber seu pedido?\n\n"
+        body += f"🛵 *Entrega*\n"
+        body += f"   Taxa: R$ {delivery_fee:.2f}\n"
+        body += f"   Tempo: {estimated_time}\n\n"
+        body += f"🏪 *Retirada*\n"
+        body += f"   Taxa: Grátis\n"
+        body += f"   Tempo: 20-30 min"
+        
+        return WhatsAppInteractiveMessage.create_button_message(
+            to=to,
+            header=f"📍 Opções de Recebimento",
+            body=body,
+            footer="Escolha a melhor opção para você",
+            buttons=[
+                {"id": "choose_delivery", "title": "🛵 Entrega"},
+                {"id": "choose_pickup", "title": "🏪 Retirada"},
+            ]
+        )
+
+    @staticmethod
+    def create_suggestion_upsell(
+        to: str,
+        current_item: str,
+        suggestion: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Cria mensagem de sugestão/upsell.
+        Quem comprou X também comprou Y.
+        """
+        sug_name = suggestion.get('name', 'Produto')
+        sug_price = suggestion.get('price', 0)
+        sug_id = suggestion.get('id', '0')
+        
+        body = f"Você está pedindo *{current_item}*.\n\n"
+        body += f"💡 *Sugestão:*\n"
+        body += f"{sug_name} - R$ {sug_price:.2f}\n\n"
+        body += f"_Quem pede {current_item} também gosta de adicionar {sug_name}!_"
+        
+        return WhatsAppInteractiveMessage.create_button_message(
+            to=to,
+            header=f"✨ Sugestão Especial",
+            body=body,
+            footer="Aproveite a combinação perfeita",
+            buttons=[
+                {"id": f"add_suggestion_{sug_id}", "title": f"🛒 Adicionar {sug_name}"},
+                {"id": "no_thanks", "title": "❌ Não, obrigado"},
+            ]
+        )
+
+    @staticmethod
+    def create_category_list(
+        to: str,
+        categories: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """
+        Cria lista de categorias.
+        """
+        sections = []
+        rows = []
+        
+        for cat in categories[:10]:
+            rows.append({
+                "id": f"cat_{cat.get('id')}",
+                "title": cat.get('name', 'Categoria')[:24],
+                "description": f"Ver {cat.get('product_count', 0)} produtos"[:72]
+            })
+        
+        if rows:
+            sections.append({
+                "title": "Categorias",
+                "rows": rows
+            })
+        
+        return WhatsAppInteractiveMessage.create_list_message(
+            to=to,
+            body="Escolha uma categoria para ver os produtos disponíveis:",
+            button="📋 Ver Categorias",
+            sections=sections
+        )
+
 
 class QuickReplyBuilder:
     """Builder para quick replies (respostas rápidas)"""
