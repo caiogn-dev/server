@@ -263,6 +263,89 @@ class ConversationViewSet(viewsets.ModelViewSet):
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
+        summary="Get conversation messages",
+        description="Returns all messages for this conversation from WhatsApp, Instagram, and Messenger",
+        responses={200: dict}
+    )
+    @action(detail=True, methods=['get'])
+    def messages(self, request, pk=None):
+        """Get all messages for the conversation."""
+        conversation = self.get_object()
+        
+        # Get messages from different sources
+        from apps.whatsapp.models import Message as WhatsAppMessage
+        from apps.instagram.models import InstagramMessage
+        
+        messages_list = []
+        
+        # Get WhatsApp messages
+        try:
+            wa_messages = WhatsAppMessage.objects.filter(
+                conversation_id=conversation.id
+            ).order_by('created_at')
+            for msg in wa_messages:
+                messages_list.append({
+                    'id': str(msg.id),
+                    'whatsapp_message_id': msg.whatsapp_message_id,
+                    'conversation_id': str(conversation.id),
+                    'direction': msg.direction,
+                    'message_type': msg.message_type,
+                    'status': msg.status,
+                    'from_number': msg.from_number,
+                    'to_number': msg.to_number,
+                    'text_body': msg.text_body,
+                    'content': msg.content,
+                    'media_url': msg.media_url,
+                    'media_mime_type': msg.media_mime_type,
+                    'created_at': msg.created_at.isoformat() if msg.created_at else None,
+                    'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
+                    'delivered_at': msg.delivered_at.isoformat() if msg.delivered_at else None,
+                    'read_at': msg.read_at.isoformat() if msg.read_at else None,
+                    'error_message': msg.error_message,
+                    'timestamp': msg.timestamp.isoformat() if msg.timestamp else None,
+                    'account': str(msg.account.id) if msg.account else None,
+                    'updated_at': msg.updated_at.isoformat() if msg.updated_at else None,
+                })
+        except Exception as e:
+            logger.error(f"Error fetching WhatsApp messages: {e}")
+        
+        # Get Instagram messages
+        try:
+            ig_messages = InstagramMessage.objects.filter(
+                conversation_id=conversation.id
+            ).order_by('created_at')
+            for msg in ig_messages:
+                messages_list.append({
+                    'id': str(msg.id),
+                    'whatsapp_message_id': msg.instagram_message_id or '',
+                    'conversation_id': str(conversation.id),
+                    'direction': 'outbound' if msg.is_from_business else 'inbound',
+                    'message_type': msg.message_type or 'text',
+                    'status': 'read' if msg.is_read else 'sent',
+                    'from_number': msg.sender_id or '',
+                    'to_number': msg.recipient_id or '',
+                    'text_body': msg.text or '',
+                    'content': msg.text or '',
+                    'media_url': msg.media_url,
+                    'media_mime_type': None,
+                    'created_at': msg.created_at.isoformat() if msg.created_at else None,
+                    'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
+                    'delivered_at': None,
+                    'read_at': msg.read_at.isoformat() if msg.read_at else None,
+                    'error_message': msg.error_message,
+                    'timestamp': msg.timestamp.isoformat() if msg.timestamp else None,
+                    'account': str(msg.account.id) if msg.account else None,
+                    'updated_at': msg.updated_at.isoformat() if msg.updated_at else None,
+                })
+        except Exception as e:
+            logger.error(f"Error fetching Instagram messages: {e}")
+        
+        # Sort messages by created_at
+        messages_list.sort(key=lambda x: x['created_at'] or '')
+        
+        return Response(messages_list)
+
+    @extend_schema(
         summary="Get conversation statistics",
         responses={200: dict}
     )
