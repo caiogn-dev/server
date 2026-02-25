@@ -302,9 +302,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
                     'delivered_at': msg.delivered_at.isoformat() if msg.delivered_at else None,
                     'read_at': msg.read_at.isoformat() if msg.read_at else None,
                     'error_message': msg.error_message,
-                    'timestamp': msg.timestamp.isoformat() if msg.timestamp else None,
+                    'timestamp': msg.sent_at.isoformat() if msg.sent_at else msg.created_at.isoformat() if msg.created_at else None,
                     'account': str(msg.account.id) if msg.account else None,
-                    'updated_at': msg.updated_at.isoformat() if msg.updated_at else None,
+                    'updated_at': msg.created_at.isoformat() if msg.created_at else None,
                 })
         except Exception as e:
             logger.error(f"Error fetching WhatsApp messages: {e}")
@@ -333,9 +333,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
                     'delivered_at': None,
                     'read_at': msg.read_at.isoformat() if msg.read_at else None,
                     'error_message': msg.error_message,
-                    'timestamp': msg.timestamp.isoformat() if msg.timestamp else None,
+                    'timestamp': msg.sent_at.isoformat() if msg.sent_at else msg.created_at.isoformat() if msg.created_at else None,
                     'account': str(msg.account.id) if msg.account else None,
-                    'updated_at': msg.updated_at.isoformat() if msg.updated_at else None,
+                    'updated_at': msg.created_at.isoformat() if msg.created_at else None,
                 })
         except Exception as e:
             logger.error(f"Error fetching Instagram messages: {e}")

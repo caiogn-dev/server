@@ -335,6 +335,25 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         )
 
     @extend_schema(
+        summary="Send message (generic endpoint)",
+        request=SendTextMessageSerializer,
+        responses={201: MessageSerializer}
+    )
+    @action(detail=False, methods=['post'], url_path='send-message')
+    def send_message(self, request):
+        """Send a text message (compatibility endpoint)."""
+        serializer = SendTextMessageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        service = MessageService()
+        message = service.send_text_message(**serializer.validated_data)
+        
+        return Response(
+            MessageSerializer(message).data,
+            status=status.HTTP_201_CREATED
+        )
+
+    @extend_schema(
         summary="Send template message",
         request=SendTemplateMessageSerializer,
         responses={201: MessageSerializer}
