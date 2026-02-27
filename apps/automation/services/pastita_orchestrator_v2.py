@@ -29,12 +29,12 @@ class IntentType(Enum):
     CREATE_ORDER = "create_order"
     CONFIRM_ORDER = "confirm_order"
     CANCEL_ORDER = "cancel_order"
-    
+
     # Novos intents para fluxo completo
     DELIVERY_METHOD = "delivery_method"
     DELIVERY_ADDRESS = "delivery_address"
     PAYMENT_METHOD = "payment_method"
-    
+
     REQUEST_PIX = "request_pix"
     CONFIRM_PAYMENT = "confirm_payment"
     ORDER_STATUS = "order_status"
@@ -59,6 +59,10 @@ class OrchestratorResponse:
     intent: IntentType
     buttons: Optional[List[Dict[str, str]]] = None
     metadata: Dict = field(default_factory=dict)
+    # Campos para mensagens interativas compatíveis com webhook_service
+    use_interactive: bool = False
+    interactive_type: Optional[str] = None  # 'buttons', 'list'
+    interactive_data: Optional[Dict] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -67,31 +71,31 @@ class OrchestratorResponse:
 
 class HereApiService:
     """Serviço de integração com HERE API para geocoding e routing."""
-    
+
     def __init__(self):
         self.api_key = getattr(settings, 'HERE_API_KEY', '')
         self.base_url = "https://router.hereapi.com/v8"
         self.geocode_url = "https://geocode.search.hereapi.com/v1"
-    
+
     def geocode_address(self, address: str) -> Optional[Dict]:
         """Converte endereço em coordenadas."""
         if not self.api_key:
             logger.warning("HERE_API_KEY não configurada")
             return None
-        
+
         try:
             import requests
-            
+
             url = f"{self.geocode_url}/geocode"
             params = {
                 'q': address,
                 'apiKey': self.api_key,
                 'limit': 1
             }
-            
+
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
-            
+
             data = response.json()
             if data.get('items'):
                 item = data['items'][0]
@@ -101,19 +105,19 @@ class HereApiService:
                     'lng': item.get('position', {}).get('lng'),
                 }
             return None
-            
+
         except Exception as e:
             logger.error(f"Erro ao geocodificar endereço: {e}")
             return None
-    
+
     def calculate_route(self, origin: Tuple[float, float], destination: Tuple[float, float]) -> Optional[Dict]:
         """Calcula distância e tempo entre dois pontos."""
         if not self.api_key:
             return None
-        
+
         try:
             import requests
-            
+
             url = f"{self.base_url}/routes"
             params = {
                 'transportMode': 'car',
@@ -122,37 +126,37 @@ class HereApiService:
                 'return': 'summary',
                 'apiKey': self.api_key
             }
-            
+
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
-            
+
             data = response.json()
             if data.get('routes'):
                 route = data['routes'][0]
                 section = route.get('sections', [{}])[0]
                 summary = section.get('summary', {})
-                
+
                 return {
                     'distance_m': summary.get('length', 0),
                     'distance_km': round(summary.get('length', 0) / 1000, 2),
                     'duration_min': round(summary.get('duration', 0) / 60, 0),
                 }
             return None
-            
+
         except Exception as e:
             logger.error(f"Erro ao calcular rota: {e}")
             return None
-    
+
     def calculate_delivery_fee(self, distance_km: float) -> Decimal:
         """Calcula taxa de entrega baseada na distância."""
         base_fee = Decimal('5.00')
-        
+
         if distance_km <= 3:
             return base_fee
-        
+
         additional_km = distance_km - 3
         additional_fee = Decimal(str(additional_km)) * Decimal('1.50')
-        
+
         return base_fee + additional_fee
 
 
@@ -162,7 +166,7 @@ class HereApiService:
 
 class IntentDetector:
     """Detector de intenções usando regex."""
-    
+
     PATTERNS = {
         IntentType.GREETING: [
             r'^(oi|ol[áa]|ola|eae|eai|bom dia|boa tarde|boa noite|salve|hey|hi|hello|opa|tudo bem|como vai)',
@@ -196,20 +200,20 @@ class IntentDetector:
             r'(atendente|humano|falar com pessoa|n[ãa]o entendi|n[ãa]o consegui)',
         ],
     }
-    
+
     @classmethod
     def detect(cls, message: str) -> Tuple[IntentType, Dict[str, Any]]:
         """Detecta intenção da mensagem."""
         message_lower = message.lower().strip()
-        
+
         for intent, patterns in cls.PATTERNS.items():
             for pattern in patterns:
                 if re.search(pattern, message_lower, re.IGNORECASE):
                     return intent, {"confidence": 1.0, "method": "regex"}
-        
+
         if re.match(r'^\d+$', message_lower):
             return IntentType.ADD_TO_CART, {"confidence": 0.8, "method": "regex", "quantity": int(message_lower)}
-        
+
         return IntentType.UNKNOWN, {"confidence": 0.0, "method": "none"}
 
 
@@ -219,27 +223,27 @@ class IntentDetector:
 
 class PastitaOrchestrator:
     """Orquestrador principal do bot Pastita com fluxo completo."""
-    
+
     def __init__(self, conversation=None, store=None):
         self.conversation = conversation
         self.store = store
         self.here_api = HereApiService()
-    
+
     def process_message(self, message: str, context: Optional[Dict] = None) -> OrchestratorResponse:
         """Processa mensagem do usuário."""
         try:
             intent, intent_data = IntentDetector.detect(message)
             logger.info(f"[Orchestrator] Intent: {intent.value}")
-            
+
             session = self._get_or_create_session()
             handler = self._get_handler(intent, session, message)
-            
+
             if handler:
                 response = handler(message, intent_data, session)
                 return response
-            
+
             return self._fallback_response(message)
-            
+
         except Exception as e:
             logger.exception(f"[Orchestrator] Error: {e}")
             return OrchestratorResponse(
@@ -247,13 +251,13 @@ class PastitaOrchestrator:
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.UNKNOWN
             )
-    
+
     def _get_or_create_session(self):
         """Obtém ou cria sessão do cliente."""
         from apps.automation.models import CustomerSession, CompanyProfile
-        
+
         company = CompanyProfile.objects.filter(is_active=True).first()
-        
+
         session, created = CustomerSession.objects.get_or_create(
             phone_number=self.conversation.phone_number,
             company=company,
@@ -265,7 +269,7 @@ class PastitaOrchestrator:
             }
         )
         return session
-    
+
     def _get_handler(self, intent: IntentType, session, message: str):
         """Determina qual handler usar baseado no estado."""
         # Verifica estado da sessão primeiro (mais específico)
@@ -275,7 +279,7 @@ class PastitaOrchestrator:
             return self._handle_address_input
         elif session.status == 'awaiting_payment_method':
             return self._handle_payment_method_selection
-        
+
         # Handlers por intenção
         handlers = {
             IntentType.GREETING: self._handle_greeting,
@@ -289,9 +293,9 @@ class PastitaOrchestrator:
             IntentType.CANCEL_ORDER: self._handle_cancel_order,
             IntentType.HUMAN_HANDOFF: self._handle_human_handoff,
         }
-        
+
         return handlers.get(intent)
-    
+
     def _get_store_location(self) -> Dict:
         """Obtém localização da loja."""
         # Tenta obter do banco, senão usa coordenadas padrão de Palmas-TO
@@ -302,41 +306,77 @@ class PastitaOrchestrator:
             }
         # Coordenadas padrão: centro de Palmas-TO
         return {'lat': -10.1849, 'lng': -48.3346}
-    
+
+    def _create_button_response(
+        self,
+        content: str,
+        intent: IntentType,
+        buttons: List[Dict[str, str]],
+        header: Optional[str] = None,
+        footer: Optional[str] = None,
+        metadata: Dict = None
+    ) -> OrchestratorResponse:
+        """Cria resposta padronizada com botões interativos."""
+        return OrchestratorResponse(
+            content=content,
+            source=ResponseSource.HANDLER,
+            intent=intent,
+            buttons=buttons,
+            use_interactive=True,
+            interactive_type='buttons',
+            interactive_data={
+                'body': content,
+                'buttons': buttons,
+                'header': header,
+                'footer': footer
+            },
+            metadata=metadata or {}
+        )
+
     # ========================================================================
     # HANDLERS
     # ========================================================================
-    
+
     def _handle_greeting(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Saudação inicial."""
+        body = "👋 *Olá! Bem-vindo à Pastita!*\n\nSou seu assistente virtual e vou te ajudar com seu pedido. 🍝\n\nO que você gostaria de fazer?"
+        buttons = [
+            {'id': 'menu', 'title': '📋 Ver Cardápio'},
+            {'id': 'hours', 'title': '🕐 Horários'},
+        ]
         return OrchestratorResponse(
-            content="👋 *Olá! Bem-vindo à Pastita!*\n\nSou seu assistente virtual e vou te ajudar com seu pedido. 🍝\n\nO que você gostaria de fazer?",
+            content=body,
             source=ResponseSource.HANDLER,
             intent=IntentType.GREETING,
-            buttons=[
-                {'id': 'menu', 'title': '📋 Ver Cardápio'},
-                {'id': 'hours', 'title': '🕐 Horários'},
-            ]
+            buttons=buttons,
+            use_interactive=True,
+            interactive_type='buttons',
+            interactive_data={
+                'body': body,
+                'buttons': buttons,
+                'header': None,
+                'footer': None
+            }
         )
-    
+
     def _handle_menu(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Mostra cardápio."""
         from apps.stores.models import StoreProduct
-        
+
         products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
         ).order_by('sort_order')[:10]
-        
+
         if not products:
             return OrchestratorResponse(
                 content="❌ Cardápio não disponível no momento.",
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.MENU_REQUEST
             )
-        
+
         lines = ["📋 *Cardápio Pastita*\n", "Escolha seus produtos:\n"]
-        
+
         for i, product in enumerate(products, 1):
             price = getattr(product, 'price', getattr(product, 'base_price', 0))
             lines.append(f"*{i}* - {product.name}")
@@ -344,55 +384,52 @@ class PastitaOrchestrator:
             if hasattr(product, 'description') and product.description:
                 lines.append(f"    _{product.description[:50]}..._")
             lines.append("")
-        
+
         lines.append("_Digite o número ou nome do produto_")
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content="\n".join(lines),
-            source=ResponseSource.HANDLER,
             intent=IntentType.MENU_REQUEST,
-            buttons=[
-                {'id': 'cart', 'title': '🛒 Ver Carrinho'},
-            ]
+            buttons=[{'id': 'cart', 'title': '🛒 Ver Carrinho'},]
         )
-    
+
     def _handle_add_to_cart(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Adiciona item ao carrinho."""
         from apps.stores.models import StoreProduct
-        
+
         quantity = 1
         product_name = message
-        
+
         qty_match = re.match(r'(\d+)\s+(.+)', message.lower())
         if qty_match:
             quantity = int(qty_match.group(1))
             product_name = qty_match.group(2)
-        
+
         product = StoreProduct.objects.filter(
             store=self.store,
             name__icontains=product_name,
             is_active=True
         ).first()
-        
+
         if not product:
             return OrchestratorResponse(
                 content=f"❌ Produto não encontrado: *{product_name}*\n\nDigite *cardápio* para ver as opções.",
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.ADD_TO_CART
             )
-        
+
         if not session.cart_data:
             session.cart_data = {'items': []}
-        
+
         price = getattr(product, 'price', getattr(product, 'base_price', 0))
-        
+
         session.cart_data['items'].append({
             'product_id': str(product.id),
             'name': product.name,
             'quantity': quantity,
             'price': str(price)
         })
-        
+
         session.cart_total = sum(
             Decimal(item['price']) * item['quantity']
             for item in session.cart_data['items']
@@ -400,64 +437,52 @@ class PastitaOrchestrator:
         session.cart_items_count = sum(item['quantity'] for item in session.cart_data['items'])
         session.status = 'cart_created'
         session.save()
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content=f"✅ *{quantity}x {product.name}* adicionado!\n\n🛒 Total: R$ {session.cart_total:.2f}",
-            source=ResponseSource.HANDLER,
             intent=IntentType.ADD_TO_CART,
-            buttons=[
-                {'id': 'cart', 'title': '🛒 Ver Carrinho'},
-                {'id': 'menu', 'title': '📋 Continuar'},
-            ]
+            buttons=[{'id': 'cart', 'title': '🛒 Ver Carrinho'},
+                {'id': 'menu', 'title': '📋 Continuar'},]
         )
-    
+
     def _handle_view_cart(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Mostra carrinho."""
         if not session.cart_data or not session.cart_data.get('items'):
-            return OrchestratorResponse(
-                content="🛒 *Carrinho vazio*\n\nDigite *cardápio* para ver opções!",
-                source=ResponseSource.HANDLER,
-                intent=IntentType.VIEW_CART,
-                buttons=[
-                    {'id': 'menu', 'title': '📋 Ver Cardápio'},
-                ]
-            )
-        
+            return self._create_button_response(
+            content="🛒 *Carrinho vazio*\n\nDigite *cardápio* para ver opções!",
+            intent=IntentType.VIEW_CART,
+            buttons=[{'id': 'menu', 'title': '📋 Ver Cardápio'},]
+        )
+
         lines = ["🛒 *Seu Carrinho*\n"]
-        
+
         for item in session.cart_data['items']:
             subtotal = Decimal(item['price']) * item['quantity']
             lines.append(f"• {item['quantity']}x {item['name']} - R$ {subtotal:.2f}")
-        
+
         lines.append(f"\n*Total: R$ {session.cart_total:.2f}*")
         lines.append("\n_Digite *finalizar* para concluir_")
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content="\n".join(lines),
-            source=ResponseSource.HANDLER,
             intent=IntentType.VIEW_CART,
-            buttons=[
-                {'id': 'checkout', 'title': '✅ Finalizar'},
-                {'id': 'menu', 'title': '📋 Adicionar Mais'},
-            ]
+            buttons=[{'id': 'checkout', 'title': '✅ Finalizar'},
+                {'id': 'menu', 'title': '📋 Adicionar Mais'},]
         )
-    
+
     def _handle_clear_cart(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Limpa carrinho."""
         session.cart_data = {'items': []}
         session.cart_total = Decimal('0')
         session.cart_items_count = 0
         session.save()
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content="🗑️ *Carrinho limpo!*\n\nDigite *cardápio* para começar.",
-            source=ResponseSource.HANDLER,
             intent=IntentType.CLEAR_CART,
-            buttons=[
-                {'id': 'menu', 'title': '📋 Ver Cardápio'},
-            ]
+            buttons=[{'id': 'menu', 'title': '📋 Ver Cardápio'},]
         )
-    
+
     def _handle_create_order(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Inicia processo de finalização - pergunta entrega/retirada."""
         if not session.cart_data or not session.cart_data.get('items'):
@@ -466,145 +491,133 @@ class PastitaOrchestrator:
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.CREATE_ORDER
             )
-        
+
         session.status = 'awaiting_delivery_method'
         session.save()
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content="🚚 *Como deseja receber?*\n\nEscolha uma opção:",
-            source=ResponseSource.HANDLER,
             intent=IntentType.DELIVERY_METHOD,
-            buttons=[
-                {'id': 'delivery', 'title': '🛵 Entrega'},
-                {'id': 'pickup', 'title': '🏪 Retirada'},
-            ]
+            buttons=[{'id': 'delivery', 'title': '🛵 Entrega'},
+                {'id': 'pickup', 'title': '🏪 Retirada'},]
         )
-    
+
     def _handle_delivery_method_selection(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Processa seleção de entrega/retirada."""
         message_lower = message.lower().strip()
-        
+
         if message_lower in ['entrega', 'delivery', '1', '🛵']:
             session.delivery_method = 'delivery'
             session.status = 'awaiting_address'
             session.save()
-            
+
             return OrchestratorResponse(
                 content="📍 *Informe seu endereço completo:*\n\nExemplo: _Rua das Flores, 123, Centro, Palmas-TO_",
                 source=ResponseSource.HANDLER,
                 intent=IntentType.DELIVERY_ADDRESS
             )
-        
+
         elif message_lower in ['retirada', 'pickup', '2', '🏪', 'buscar']:
             session.delivery_method = 'pickup'
             session.status = 'awaiting_payment_method'
             session.save()
-            
-            return OrchestratorResponse(
-                content="🏪 *Retirada na loja*\n\nComo deseja pagar?",
-                source=ResponseSource.HANDLER,
-                intent=IntentType.PAYMENT_METHOD,
-                buttons=[
-                    {'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'},
-                    {'id': 'pay_pix', 'title': '💳 PIX'},
-                ]
-            )
-        
+
+            return self._create_button_response(
+            content="🏪 *Retirada na loja*\n\nComo deseja pagar?",
+            intent=IntentType.PAYMENT_METHOD,
+            buttons=[{'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'},
+                    {'id': 'pay_pix', 'title': '💳 PIX'},]
+        )
+
         return OrchestratorResponse(
             content="❌ Opção não reconhecida.\n\nDigite *entrega* ou *retirada*.",
             source=ResponseSource.FALLBACK,
             intent=IntentType.DELIVERY_METHOD
         )
-    
+
     def _handle_address_input(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Processa endereço de entrega."""
         address_data = self.here_api.geocode_address(message)
-        
+
         if not address_data:
             return OrchestratorResponse(
                 content="❌ Endereço não encontrado.\n\nFormato: _Rua, Número, Bairro, Cidade-UF_",
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.DELIVERY_ADDRESS
             )
-        
+
         store_location = self._get_store_location()
         route = self.here_api.calculate_route(
             (store_location['lat'], store_location['lng']),
             (address_data['lat'], address_data['lng'])
         )
-        
+
         if route:
             distance_km = route['distance_km']
             delivery_fee = self.here_api.calculate_delivery_fee(distance_km)
-            
+
             session.delivery_address = address_data['address']
             session.distance_km = distance_km
             session.delivery_fee = delivery_fee
             session.status = 'awaiting_payment_method'
             session.save()
-            
+
             total_with_delivery = session.cart_total + delivery_fee
-            
-            return OrchestratorResponse(
-                content=f"📍 *Endereço:* {address_data['address']}\n📏 Distância: {distance_km} km\n🛵 Taxa: R$ {delivery_fee:.2f}\n\n💰 *Total: R$ {total_with_delivery:.2f}*\n\nComo deseja pagar?",
-                source=ResponseSource.HANDLER,
-                intent=IntentType.PAYMENT_METHOD,
-                buttons=[
-                    {'id': 'pay_delivery', 'title': '💵 Pagar na Entrega'},
-                    {'id': 'pay_pix', 'title': '💳 PIX'},
-                ]
-            )
+
+            return self._create_button_response(
+            content=f"📍 *Endereço:* {address_data['address']}\n📏 Distância: {distance_km} km\n🛵 Taxa: R$ {delivery_fee:.2f}\n\n💰 *Total: R$ {total_with_delivery:.2f}*\n\nComo deseja pagar?",
+            intent=IntentType.PAYMENT_METHOD,
+            buttons=[{'id': 'pay_delivery', 'title': '💵 Pagar na Entrega'},
+                    {'id': 'pay_pix', 'title': '💳 PIX'},]
+        )
         else:
             session.delivery_address = address_data['address']
             session.status = 'awaiting_payment_method'
             session.save()
-            
-            return OrchestratorResponse(
-                content=f"📍 *Endereço:* {address_data['address']}\n💰 *Total: R$ {session.cart_total:.2f}*\n\nComo deseja pagar?",
-                source=ResponseSource.HANDLER,
-                intent=IntentType.PAYMENT_METHOD,
-                buttons=[
-                    {'id': 'pay_delivery', 'title': '💵 Pagar na Entrega'},
-                    {'id': 'pay_pix', 'title': '💳 PIX'},
-                ]
-            )
-    
+
+            return self._create_button_response(
+            content=f"📍 *Endereço:* {address_data['address']}\n💰 *Total: R$ {session.cart_total:.2f}*\n\nComo deseja pagar?",
+            intent=IntentType.PAYMENT_METHOD,
+            buttons=[{'id': 'pay_delivery', 'title': '💵 Pagar na Entrega'},
+                    {'id': 'pay_pix', 'title': '💳 PIX'},]
+        )
+
     def _handle_payment_method_selection(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Processa seleção de método de pagamento."""
         message_lower = message.lower().strip()
-        
+
         if message_lower in ['pix', 'pagar pix', '2', '💳']:
             session.payment_method = 'pix'
             session.status = 'checkout'
             session.save()
             return self._create_order_and_generate_pix(session)
-        
+
         elif message_lower in ['dinheiro', 'pagar na entrega', 'pagar na retirada', '1', '💵']:
             session.payment_method = 'cash'
             session.status = 'checkout'
             session.save()
             return self._create_order_cash(session)
-        
+
         elif message_lower in ['cartão', 'cartao', 'máquina', 'maquina', '3']:
             session.payment_method = 'card'
             session.status = 'checkout'
             session.save()
             return self._create_order_card(session)
-        
+
         return OrchestratorResponse(
             content="❌ Opção não reconhecida.\n\nDigite *PIX*, *dinheiro* ou *cartão*.",
             source=ResponseSource.FALLBACK,
             intent=IntentType.PAYMENT_METHOD
         )
-    
+
     def _create_order_and_generate_pix(self, session) -> OrchestratorResponse:
         """Cria pedido e gera PIX."""
         from apps.stores.models import StoreOrder, StoreOrderItem, StorePayment
-        
+
         total = session.cart_total
         if session.delivery_fee:
             total += session.delivery_fee
-        
+
         order = StoreOrder.objects.create(
             store=self.store,
             customer_name=self.conversation.contact_name or 'Cliente',
@@ -617,7 +630,7 @@ class PastitaOrchestrator:
             subtotal=session.cart_total,
             total=total
         )
-        
+
         for item_data in session.cart_data['items']:
             StoreOrderItem.objects.create(
                 order=order,
@@ -627,21 +640,21 @@ class PastitaOrchestrator:
                 unit_price=Decimal(item_data.get('price', '0')),
                 subtotal=Decimal(item_data.get('price', '0')) * item_data.get('quantity', 1)
             )
-        
+
         session.order_id = str(order.id)
         session.status = 'awaiting_payment'
         session.save()
-        
+
         return self._generate_pix_for_order(order, session)
-    
+
     def _create_order_cash(self, session) -> OrchestratorResponse:
         """Cria pedido com pagamento em dinheiro."""
         from apps.stores.models import StoreOrder, StoreOrderItem
-        
+
         total = session.cart_total
         if session.delivery_fee:
             total += session.delivery_fee
-        
+
         order = StoreOrder.objects.create(
             store=self.store,
             customer_name=self.conversation.contact_name or 'Cliente',
@@ -655,7 +668,7 @@ class PastitaOrchestrator:
             subtotal=session.cart_total,
             total=total
         )
-        
+
         for item_data in session.cart_data['items']:
             StoreOrderItem.objects.create(
                 order=order,
@@ -665,30 +678,27 @@ class PastitaOrchestrator:
                 unit_price=Decimal(item_data.get('price', '0')),
                 subtotal=Decimal(item_data.get('price', '0')) * item_data.get('quantity', 1)
             )
-        
+
         session.order_id = str(order.id)
         session.status = 'order_confirmed'
         session.save()
-        
+
         delivery_text = "será entregue" if session.delivery_method == 'delivery' else "estará pronto para retirada"
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content=f"✅ *Pedido confirmado!*\n\nNúmero: *{order.order_number}*\nTotal: R$ {order.total:.2f}\nPagamento: Dinheiro\n\nSeu pedido {delivery_text} em breve!\n\nObrigado pela preferência! 🍝",
-            source=ResponseSource.HANDLER,
             intent=IntentType.CONFIRM_ORDER,
-            buttons=[
-                {'id': 'status', 'title': '📊 Status do Pedido'},
-            ]
+            buttons=[{'id': 'status', 'title': '📊 Status do Pedido'},]
         )
-    
+
     def _create_order_card(self, session) -> OrchestratorResponse:
         """Cria pedido com pagamento em cartão."""
         from apps.stores.models import StoreOrder, StoreOrderItem
-        
+
         total = session.cart_total
         if session.delivery_fee:
             total += session.delivery_fee
-        
+
         order = StoreOrder.objects.create(
             store=self.store,
             customer_name=self.conversation.contact_name or 'Cliente',
@@ -702,7 +712,7 @@ class PastitaOrchestrator:
             subtotal=session.cart_total,
             total=total
         )
-        
+
         for item_data in session.cart_data['items']:
             StoreOrderItem.objects.create(
                 order=order,
@@ -712,29 +722,26 @@ class PastitaOrchestrator:
                 unit_price=Decimal(item_data.get('price', '0')),
                 subtotal=Decimal(item_data.get('price', '0')) * item_data.get('quantity', 1)
             )
-        
+
         session.order_id = str(order.id)
         session.status = 'order_confirmed'
         session.save()
-        
+
         delivery_text = "será entregue" if session.delivery_method == 'delivery' else "estará pronto para retirada"
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content=f"✅ *Pedido confirmado!*\n\nNúmero: *{order.order_number}*\nTotal: R$ {order.total:.2f}\nPagamento: Cartão\n\nSeu pedido {delivery_text} em breve!\n\nObrigado! 🍝",
-            source=ResponseSource.HANDLER,
             intent=IntentType.CONFIRM_ORDER,
-            buttons=[
-                {'id': 'status', 'title': '📊 Status do Pedido'},
-            ]
+            buttons=[{'id': 'status', 'title': '📊 Status do Pedido'},]
         )
-    
+
     def _generate_pix_for_order(self, order, session) -> OrchestratorResponse:
         """Gera PIX para o pedido."""
         from apps.stores.models import StorePayment, StorePaymentGateway
-        
+
         try:
             import mercadopago
-            
+
             access_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', '')
             if not access_token:
                 return OrchestratorResponse(
@@ -742,9 +749,9 @@ class PastitaOrchestrator:
                     source=ResponseSource.FALLBACK,
                     intent=IntentType.REQUEST_PIX
                 )
-            
+
             sdk = mercadopago.SDK(access_token)
-            
+
             payment_data = {
                 "transaction_amount": float(order.total),
                 "description": f"Pedido {order.order_number} - Pastita",
@@ -755,19 +762,19 @@ class PastitaOrchestrator:
                 },
                 "external_reference": order.order_number,
             }
-            
+
             payment_response = sdk.payment().create(payment_data)
-            
+
             if payment_response["status"] == 201:
                 payment_info = payment_response["response"]
                 pix_code = payment_info.get("point_of_interaction", {}).get("transaction_data", {}).get("qr_code", "")
                 payment_id = payment_info.get("id", "")
-                
+
                 gateway = StorePaymentGateway.objects.filter(
                     store=self.store,
                     gateway_type='mercadopago'
                 ).first()
-                
+
                 payment = StorePayment.objects.create(
                     order=order,
                     gateway=gateway,
@@ -780,12 +787,12 @@ class PastitaOrchestrator:
                     gateway_response=payment_info,
                     status='pending'
                 )
-                
+
                 session.payment_id = str(payment.id)
                 session.pix_code = pix_code
                 session.pix_expires_at = payment_info.get("date_of_expiration")
                 session.save()
-                
+
                 return OrchestratorResponse(
                     content=f"💳 *Código PIX gerado!*\n\nPedido: *{order.order_number}*\nTotal: R$ {order.total:.2f}\n\n*Código:*\n`{pix_code}`\n\n_Válido por 30 minutos_\n\nDepois de pagar, envie *paguei* aqui!",
                     source=ResponseSource.HANDLER,
@@ -798,7 +805,7 @@ class PastitaOrchestrator:
                     source=ResponseSource.FALLBACK,
                     intent=IntentType.REQUEST_PIX
                 )
-                
+
         except Exception as e:
             logger.exception(f"Erro PIX: {e}")
             return OrchestratorResponse(
@@ -806,7 +813,7 @@ class PastitaOrchestrator:
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.REQUEST_PIX
             )
-    
+
     def _handle_request_pix(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Handler para solicitação de PIX."""
         if not session.order_id:
@@ -815,7 +822,7 @@ class PastitaOrchestrator:
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.REQUEST_PIX
             )
-        
+
         from apps.stores.models import StoreOrder
         try:
             order = StoreOrder.objects.get(id=session.order_id)
@@ -826,26 +833,26 @@ class PastitaOrchestrator:
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.REQUEST_PIX
             )
-    
+
     def _handle_confirm_payment(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Processa confirmação de pagamento."""
         from apps.stores.models import StoreOrder, StorePayment
-        
+
         if not session.order_id:
             return OrchestratorResponse(
                 content="❌ Nenhum pedido em andamento.",
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.CONFIRM_PAYMENT
             )
-        
+
         try:
             order = StoreOrder.objects.get(id=session.order_id)
-            
+
             # Atualiza status do pedido
             order.payment_status = 'confirmed'
             order.status = 'confirmed'
             order.save()
-            
+
             # Atualiza pagamento se existir
             if session.payment_id:
                 try:
@@ -854,32 +861,29 @@ class PastitaOrchestrator:
                     payment.save()
                 except StorePayment.DoesNotExist:
                     pass
-            
+
             session.status = 'order_confirmed'
             session.save()
-            
+
             delivery_text = "será entregue" if order.delivery_method == 'delivery' else "estará pronto para retirada"
-            
-            return OrchestratorResponse(
-                content=f"✅ *Pagamento confirmado!*\n\nPedido: *{order.order_number}*\n\nSeu pedido {delivery_text} em breve!\n\nAgradecemos a preferência! 🍝",
-                source=ResponseSource.HANDLER,
-                intent=IntentType.CONFIRM_PAYMENT,
-                buttons=[
-                    {'id': 'status', 'title': '📊 Status'},
-                ]
-            )
-            
+
+            return self._create_button_response(
+            content=f"✅ *Pagamento confirmado!*\n\nPedido: *{order.order_number}*\n\nSeu pedido {delivery_text} em breve!\n\nAgradecemos a preferência! 🍝",
+            intent=IntentType.CONFIRM_PAYMENT,
+            buttons=[{'id': 'status', 'title': '📊 Status'},]
+        )
+
         except StoreOrder.DoesNotExist:
             return OrchestratorResponse(
                 content="❌ Pedido não encontrado.",
                 source=ResponseSource.FALLBACK,
                 intent=IntentType.CONFIRM_PAYMENT
             )
-    
+
     def _handle_cancel_order(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Cancela pedido."""
         from apps.stores.models import StoreOrder
-        
+
         if session.order_id:
             try:
                 order = StoreOrder.objects.get(id=session.order_id)
@@ -887,34 +891,31 @@ class PastitaOrchestrator:
                 order.save()
             except StoreOrder.DoesNotExist:
                 pass
-        
+
         session.cart_data = {'items': []}
         session.cart_total = Decimal('0')
         session.order_id = None
         session.payment_id = None
         session.status = 'active'
         session.save()
-        
-        return OrchestratorResponse(
+
+        return self._create_button_response(
             content="❌ Pedido cancelado.\n\nDigite *cardápio* para começar novamente.",
-            source=ResponseSource.HANDLER,
             intent=IntentType.CANCEL_ORDER,
-            buttons=[
-                {'id': 'menu', 'title': '📋 Cardápio'},
-            ]
+            buttons=[{'id': 'menu', 'title': '📋 Cardápio'},]
         )
-    
+
     def _handle_human_handoff(self, message: str, data: Dict, session) -> OrchestratorResponse:
         """Transferência para atendente."""
         session.status = 'human_handoff'
         session.save()
-        
+
         return OrchestratorResponse(
             content="👨‍💼 *Transferindo para atendente...*\n\nUm de nossos atendentes vai te atender em breve.\n\nPor favor, aguarde.",
             source=ResponseSource.HANDLER,
             intent=IntentType.HUMAN_HANDOFF
         )
-    
+
     def _fallback_response(self, message: str) -> OrchestratorResponse:
         """Resposta padrão para mensagens não reconhecidas."""
         return OrchestratorResponse(

@@ -191,6 +191,19 @@ class WhatsAppAutomationService:
 
             try:
                 result = handler.handle(intent_data)
+                
+                # Log detalhado do resultado do handler
+                logger.info(f"[Automation] Handler result: use_interactive={result.use_interactive if result else 'None'}, "
+                           f"interactive_type={result.interactive_type if result else 'None'}, "
+                           f"has_response_text={bool(result.response_text) if result else 'None'}")
+
+                if result is None:
+                    logger.error(f"[Automation] Handler {handler_used} returned None!")
+                    final_result = self._get_fallback_message()
+                    response_text = final_result
+                    response_type = "handler_none_fallback"
+                    self._log_intent(intent_data, handler_used, response_text, response_type, start_time)
+                    return final_result
 
                 if result.requires_llm and self.use_llm:
                     # Handler indica que precisa de LLM

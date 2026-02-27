@@ -1,6 +1,5 @@
-"""
-WebSocket URL routing.
-"""rom django.urls import re_path
+""" WebSocket URL routing. """
+from django.urls import re_path
 from . import consumers
 from apps.automation.consumers import AutomationConsumer
 from apps.stores.consumers import StoreOrdersConsumer, CustomerOrderConsumer
@@ -18,10 +17,10 @@ websocket_urlpatterns = [
     # Customer order tracking
     re_path(r'ws/orders/(?P<order_id>[0-9a-f-]+)/$', CustomerOrderConsumer.as_asgi()),
     # WhatsApp real-time updates
-    re_path(r'ws/whatsapp/(?P<account_id>[0-9a-f-]+)/$', WhatsAppConsumer.as_asgi()),
-    re_path(r'ws/whatsapp/dashboard/$', WhatsAppDashboardConsumer.as_asgi()),
+    re_path(r'ws/whatsapp/(?P<account_id>[^/]+)/$', WhatsAppConsumer.as_asgi()),
+    re_path(r'ws/whatsapp-dashboard/(?P<account_id>[^/]+)/$', WhatsAppDashboardConsumer.as_asgi()),
     # Instagram real-time updates
-    re_path(r'ws/instagram/(?P<account_id>[0-9a-f-]+)/$', InstagramConsumer.as_asgi()),
-    # Handover Protocol
-    re_path(r'ws/handover/$', HandoverConsumer.as_asgi()),
+    re_path(r'ws/instagram/(?P<account_id>[^/]+)/$', InstagramConsumer.as_asgi()),
+    # Handover system
+    re_path(r'ws/handover/(?P<conversation_id>[^/]+)/$', HandoverConsumer.as_asgi()),
 ]
