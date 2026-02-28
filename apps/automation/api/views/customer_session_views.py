@@ -36,10 +36,15 @@ class CustomerSessionViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(company__account__owner=user)
             ).distinct()
         
-        # Filter by company
-        company_id = self.request.query_params.get('company_id')
-        if company_id:
-            queryset = queryset.filter(company_id=company_id)
+        # Filter by store (preferred) or company (legacy)
+        store_id = self.request.query_params.get('store_id')
+        if store_id:
+            queryset = queryset.filter(company__store_id=store_id)
+        else:
+            # Legacy: filter by company_id
+            company_id = self.request.query_params.get('company_id')
+            if company_id:
+                queryset = queryset.filter(company_id=company_id)
         
         # Filter by status
         session_status = self.request.query_params.get('status')
@@ -65,7 +70,6 @@ class CustomerSessionViewSet(viewsets.ReadOnlyModelViewSet):
     def by_phone(self, request):
         """Get sessions by phone number."""
         phone_number = request.query_params.get('phone_number')
-        company_id = request.query_params.get('company_id')
         
         if not phone_number:
             return Response(
@@ -75,6 +79,8 @@ class CustomerSessionViewSet(viewsets.ReadOnlyModelViewSet):
         
         queryset = self.get_queryset().filter(phone_number=phone_number)
         
+        # Legacy support for company_id (store_id is preferred)
+        company_id = request.query_params.get('company_id')
         if company_id:
             queryset = queryset.filter(company_id=company_id)
         

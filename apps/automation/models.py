@@ -595,7 +595,90 @@ class CompanyProfile(BaseModel):
         self.save(update_fields=['business_hours', 'menu_url', 'order_url'])
 
     def __str__(self):
-        return f"{self.company_name} ({self.phone_number})"
+        """Return string representation."""
+        name = self.company_name if self.company_name else "Unnamed"
+        phone = self.account.phone_number if self.account_id else "No WhatsApp"
+        return f"{name} ({phone})"
+
+    # ============================================================================
+    # Properties - Store as Source of Truth
+    # ============================================================================
+    
+    @property
+    def company_name(self):
+        """Get company name from Store if linked, otherwise from deprecated field."""
+        if self.store_id:
+            return self.store.name
+        return self._company_name
+    
+    @company_name.setter
+    def company_name(self, value):
+        """Set company name - deprecated, use Store instead."""
+        import warnings
+        warnings.warn(
+            "CompanyProfile.company_name is deprecated. Use Store.name instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        self._company_name = value
+    
+    @property
+    def business_type(self):
+        """Get business type from Store if linked, otherwise from deprecated field."""
+        if self.store_id:
+            return self.store.store_type
+        return self._business_type
+    
+    @business_type.setter
+    def business_type(self, value):
+        """Set business type - deprecated, use Store instead."""
+        import warnings
+        warnings.warn(
+            "CompanyProfile.business_type is deprecated. Use Store.store_type instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        self._business_type = value
+    
+    @property
+    def description(self):
+        """Get description from Store if linked, otherwise from deprecated field."""
+        if self.store_id:
+            return self.store.description
+        return self._description
+    
+    @description.setter
+    def description(self, value):
+        """Set description - deprecated, use Store instead."""
+        import warnings
+        warnings.warn(
+            "CompanyProfile.description is deprecated. Use Store.description instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        self._description = value
+    
+    @property
+    def business_hours(self):
+        """Get business hours from Store if linked, otherwise from deprecated field."""
+        if self.store_id:
+            return self.store.operating_hours
+        return self._business_hours
+    
+    @business_hours.setter
+    def business_hours(self, value):
+        """Set business hours - deprecated, use Store instead."""
+        import warnings
+        warnings.warn(
+            "CompanyProfile.business_hours is deprecated. Use Store.operating_hours instead.",
+            DeprecationWarning,
+            stacklevel=2
+        )
+        self._business_hours = value
+
+    # ============================================================================
+    # Methods
+    # ============================================================================
 
     def generate_api_key(self):
         """Generate a new API key for external integrations."""
@@ -610,72 +693,6 @@ class CompanyProfile(BaseModel):
         self.webhook_secret = secrets.token_urlsafe(32)
         self.save(update_fields=['webhook_secret'])
         return self.webhook_secret
-    
-    # =========================================================================
-    # PROPERTIES: Backward compatibility - read from Store when available
-    # =========================================================================
-    
-    @property
-    def company_name(self):
-        """Return store name if linked, otherwise legacy field."""
-        if self.store_id:
-            return self.store.name
-        return self._company_name
-    
-    @company_name.setter
-    def company_name(self, value):
-        """Set legacy field for backward compatibility."""
-        self._company_name = value
-    
-    @property
-    def description(self):
-        """Return store description if linked, otherwise legacy field."""
-        if self.store_id:
-            return self.store.description
-        return self._description
-    
-    @description.setter
-    def description(self, value):
-        """Set legacy field for backward compatibility."""
-        self._description = value
-    
-    @property
-    def business_hours(self):
-        """Return store operating_hours if linked, otherwise legacy field."""
-        if self.store_id:
-            return self.store.operating_hours
-        return self._business_hours
-    
-    @business_hours.setter
-    def business_hours(self, value):
-        """Set legacy field for backward compatibility."""
-        self._business_hours = value
-    
-    @property
-    def business_type(self):
-        """Return store store_type if linked, otherwise legacy field."""
-        if self.store_id:
-            # Map store types to business types
-            mapping = {
-                'food': 'restaurant',
-                'retail': 'retail',
-                'services': 'services',
-                'digital': 'ecommerce',
-                'other': 'other'
-            }
-            return mapping.get(self.store.store_type, 'other')
-        return self._business_type
-    
-    @business_type.setter
-    def business_type(self, value):
-        """Set legacy field for backward compatibility."""
-        self._business_type = value
-    
-    def __str__(self):
-        """Return string representation."""
-        name = self.company_name if self.company_name else "Unnamed"
-        phone = self.account.phone_number if self.account_id else "No WhatsApp"
-        return f"{name} ({phone})"
 
 
 class AutoMessage(BaseModel):

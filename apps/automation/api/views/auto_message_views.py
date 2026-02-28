@@ -39,10 +39,15 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
                 Q(company__account__owner=user)
             ).distinct()
         
-        # Filter by company
-        company_id = self.request.query_params.get('company_id')
-        if company_id:
-            queryset = queryset.filter(company_id=company_id)
+        # Filter by store (preferred) or company (legacy)
+        store_id = self.request.query_params.get('store_id')
+        if store_id:
+            queryset = queryset.filter(company__store_id=store_id)
+        else:
+            # Legacy: filter by company_id
+            company_id = self.request.query_params.get('company_id')
+            if company_id:
+                queryset = queryset.filter(company_id=company_id)
         
         # Filter by event type
         event_type = self.request.query_params.get('event_type')
@@ -62,13 +67,27 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         data = serializer.validated_data
-        company_id = data.pop('company_id')
+        
+        # Support both store_id (preferred) and company_id (legacy)
+        store_id = data.pop('store_id', None)
+        company_id = data.pop('company_id', None)
         
         try:
-            company = CompanyProfile.objects.get(id=company_id, is_active=True)
-        except CompanyProfile.DoesNotExist:
+            if store_id:
+                # Get company profile linked to store
+                from apps.stores.models import Store
+                store = Store.objects.get(id=store_id)
+                company = store.automation_profile
+            elif company_id:
+                company = CompanyProfile.objects.get(id=company_id, is_active=True)
+            else:
+                return Response(
+                    {'error': 'Either store_id or company_id is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except (CompanyProfile.DoesNotExist, Store.DoesNotExist):
             return Response(
-                {'error': 'Company profile not found'},
+                {'error': 'Company profile or store not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
         

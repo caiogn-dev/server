@@ -279,7 +279,8 @@ def export_orders(request):
 
 @extend_schema(
     parameters=[
-        OpenApiParameter(name='company_id', type=str, required=False),
+        OpenApiParameter(name='store_id', type=str, required=False, description='Filter by store (preferred)'),
+        OpenApiParameter(name='company_id', type=str, required=False, description='Filter by company (legacy)'),
         OpenApiParameter(name='start_date', type=str, required=False),
         OpenApiParameter(name='end_date', type=str, required=False),
         OpenApiParameter(name='format', type=str, required=False, enum=['csv', 'xlsx']),
@@ -293,7 +294,8 @@ def export_sessions(request):
     """Export customer sessions to CSV or Excel."""
     from apps.automation.models import CustomerSession
     
-    # Get parameters
+    # Get parameters - store_id is preferred, company_id is legacy
+    store_id = request.query_params.get('store_id')
     company_id = request.query_params.get('company_id')
     start_date = request.query_params.get('start_date')
     end_date = request.query_params.get('end_date')
@@ -301,9 +303,11 @@ def export_sessions(request):
     session_status = request.query_params.get('status')
     
     # Build queryset
-    queryset = CustomerSession.objects.select_related('company').all()
+    queryset = CustomerSession.objects.select_related('company', 'company__store').all()
     
-    if company_id:
+    if store_id:
+        queryset = queryset.filter(company__store_id=store_id)
+    elif company_id:
         queryset = queryset.filter(company_id=company_id)
     
     if start_date:
@@ -331,6 +335,7 @@ def export_sessions(request):
     for session in queryset:
         data.append({
             'id': str(session.id),
+            'store_name': session.company.store.name if session.company and session.company.store else '',
             'company_name': session.company.company_name if session.company else '',
             'phone_number': session.phone_number,
             'customer_name': session.customer_name,
@@ -353,7 +358,8 @@ def export_sessions(request):
 
 @extend_schema(
     parameters=[
-        OpenApiParameter(name='company_id', type=str, required=False),
+        OpenApiParameter(name='store_id', type=str, required=False, description='Filter by store (preferred)'),
+        OpenApiParameter(name='company_id', type=str, required=False, description='Filter by company (legacy)'),
         OpenApiParameter(name='start_date', type=str, required=False),
         OpenApiParameter(name='end_date', type=str, required=False),
         OpenApiParameter(name='format', type=str, required=False, enum=['csv', 'xlsx']),
@@ -368,7 +374,8 @@ def export_automation_logs(request):
     """Export automation logs to CSV or Excel."""
     from apps.automation.models import AutomationLog
     
-    # Get parameters
+    # Get parameters - store_id is preferred, company_id is legacy
+    store_id = request.query_params.get('store_id')
     company_id = request.query_params.get('company_id')
     start_date = request.query_params.get('start_date')
     end_date = request.query_params.get('end_date')
@@ -377,9 +384,11 @@ def export_automation_logs(request):
     is_error = request.query_params.get('is_error')
     
     # Build queryset
-    queryset = AutomationLog.objects.select_related('company').all()
+    queryset = AutomationLog.objects.select_related('company', 'company__store').all()
     
-    if company_id:
+    if store_id:
+        queryset = queryset.filter(company__store_id=store_id)
+    elif company_id:
         queryset = queryset.filter(company_id=company_id)
     
     if start_date:
@@ -410,6 +419,7 @@ def export_automation_logs(request):
     for log in queryset:
         data.append({
             'id': str(log.id),
+            'store_name': log.company.store.name if log.company and log.company.store else '',
             'company_name': log.company.company_name if log.company else '',
             'action_type': log.action_type,
             'description': log.description,

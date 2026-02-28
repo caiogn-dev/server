@@ -201,7 +201,10 @@ class AutoMessageSerializer(serializers.ModelSerializer):
 
 class CreateAutoMessageSerializer(serializers.Serializer):
     """Serializer for creating an auto message."""
-    company_id = serializers.UUIDField()
+    # Support both store_id (preferred) and company_id (legacy)
+    store_id = serializers.UUIDField(required=False)
+    company_id = serializers.UUIDField(required=False)
+    
     event_type = serializers.ChoiceField(choices=AutoMessage.EventType.choices)
     name = serializers.CharField(max_length=255)
     message_text = serializers.CharField()
@@ -216,6 +219,14 @@ class CreateAutoMessageSerializer(serializers.Serializer):
     delay_seconds = serializers.IntegerField(default=0, min_value=0)
     conditions = serializers.JSONField(required=False, default=dict)
     priority = serializers.IntegerField(default=100, min_value=1)
+    
+    def validate(self, data):
+        """Ensure either store_id or company_id is provided."""
+        if not data.get('store_id') and not data.get('company_id'):
+            raise serializers.ValidationError(
+                "Either store_id or company_id must be provided."
+            )
+        return data
 
 
 class UpdateAutoMessageSerializer(serializers.Serializer):

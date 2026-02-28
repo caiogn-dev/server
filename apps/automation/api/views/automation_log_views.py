@@ -37,10 +37,15 @@ class AutomationLogViewSet(viewsets.ReadOnlyModelViewSet):
                 Q(company__account__owner=user)
             ).distinct()
         
-        # Filter by company
-        company_id = self.request.query_params.get('company_id')
-        if company_id:
-            queryset = queryset.filter(company_id=company_id)
+        # Filter by store (preferred) or company (legacy)
+        store_id = self.request.query_params.get('store_id')
+        if store_id:
+            queryset = queryset.filter(company__store_id=store_id)
+        else:
+            # Legacy: filter by company_id
+            company_id = self.request.query_params.get('company_id')
+            if company_id:
+                queryset = queryset.filter(company_id=company_id)
         
         # Filter by action type
         action_type = self.request.query_params.get('action_type')
@@ -70,9 +75,10 @@ class AutomationLogViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get log statistics."""
-        company_id = request.query_params.get('company_id')
-        
         queryset = self.get_queryset()
+        
+        # Legacy: filter by company_id if provided (but store_id is preferred)
+        company_id = request.query_params.get('company_id')
         if company_id:
             queryset = queryset.filter(company_id=company_id)
         
