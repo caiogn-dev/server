@@ -1,5 +1,6 @@
-"""
-Conversation admin configuration.
+"""Conversations admin - LEGACY (WhatsApp específico).
+
+Use messaging_v2 para a versão unificada.
 """
 from django.contrib import admin
 from .models import Conversation, ConversationNote
@@ -7,24 +8,18 @@ from .models import Conversation, ConversationNote
 
 @admin.register(Conversation)
 class ConversationAdmin(admin.ModelAdmin):
-    list_display = [
-        'id', 'account', 'phone_number', 'contact_name', 'mode',
-        'status', 'assigned_agent', 'last_message_at', 'created_at'
-    ]
-    list_filter = ['status', 'mode', 'account', 'assigned_agent']
+    list_display = ['phone_number', 'contact_name', 'status', 'created_at']
+    list_filter = ['status', 'created_at']
     search_fields = ['phone_number', 'contact_name']
-    readonly_fields = [
-        'id', 'last_message_at', 'last_customer_message_at',
-        'last_agent_message_at', 'closed_at', 'resolved_at',
-        'created_at', 'updated_at'
-    ]
-    raw_id_fields = ['account', 'assigned_agent']
+
+    def get_model_perms(self, request):
+        """Não mostrar no índice do admin."""
+        return {}
 
 
 @admin.register(ConversationNote)
 class ConversationNoteAdmin(admin.ModelAdmin):
-    list_display = ['id', 'conversation', 'author', 'created_at']
-    list_filter = ['author']
-    search_fields = ['content']
-    readonly_fields = ['id', 'created_at', 'updated_at']
-    raw_id_fields = ['conversation', 'author']
+    list_display = ['conversation', 'author', 'created_at']
+
+    def get_model_perms(self, request):
+        return {}

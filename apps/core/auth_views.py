@@ -22,8 +22,16 @@ logger = logging.getLogger(__name__)
 
 
 class LoginSerializer(serializers.Serializer):
-    email = serializers.CharField()
+    email = serializers.CharField(required=False, allow_blank=True)
+    username = serializers.CharField(required=False, allow_blank=True)
     password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        if not data.get('email') and not data.get('username'):
+            raise serializers.ValidationError({
+                'email': 'Este campo é obrigatório.'
+            })
+        return data
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -99,7 +107,8 @@ class LoginView(APIView):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        identifier = serializer.validated_data['email'].strip()
+        # Accept either email or username
+        identifier = serializer.validated_data.get('email', '').strip() or serializer.validated_data.get('username', '').strip()
         password = serializer.validated_data['password']
         
         # Find user by email

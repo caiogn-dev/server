@@ -69,6 +69,12 @@ urlpatterns = [
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 
+    # API v2 - New consolidated architecture (gradual migration)
+    path('api/v2/', include([
+        path('messaging/', include('apps.messaging_v2.urls')),
+        path('marketing/', include('apps.marketing_v2.urls')),
+    ])),
+
     # API v1 - Unified
     path('api/v1/', include([
         # Core (auth, users, csrf)

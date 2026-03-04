@@ -1,0 +1,124 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: pastita_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: pastita
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: pastita_redis
+    restart: unless-stopped
+    entrypoint: >
+      sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true && redis-server --appendonly yes"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: pastita_backend:latest
+    container_name: pastita_web
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.new
+      - SECRET_KEY=${SECRET_KEY:-new-secret-key}
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres123@db:5432/pastita}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      - DEBUG=False
+    volumes:
+      - static_files:/app/staticfiles
+      - media_files:/app/media
+      # Montar código atualizado
+      - ./apps/core_v2:/app/apps/core_v2
+      - ./apps/commerce:/app/apps/commerce
+      - ./apps/messaging_v2:/app/apps/messaging_v2
+      - ./apps/marketing_v2:/app/apps/marketing_v2
+      - ./config/settings/new.py:/app/config/settings/new.py
+      - ./config/urls_new.py:/app/config/urls_new.py
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # SEM MIGRATE - já foi feito manualmente
+    command: >
+      sh -c "python manage.py collectstatic --noinput --settings=config.settings.new && 
+             gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/admin/login/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  celery:
+    image: pastita_backend:latest
+    container_name: pastita_celery
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.new
+      - SECRET_KEY=${SECRET_KEY:-new-secret-key}
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres123@db:5432/pastita}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - ./apps/core_v2:/app/apps/core_v2
+      - ./apps/commerce:/app/apps/commerce
+      - ./apps/messaging_v2:/app/apps/messaging_v2
+      - ./apps/marketing_v2:/app/apps/marketing_v2
+      - ./config/settings/new.py:/app/config/settings/new.py
+    depends_on:
+      - redis
+      - db
+    command: celery -A config worker --loglevel=info -Q celery -n worker@%h
+
+  celery-beat:
+    image: pastita_backend:latest
+    container_name: pastita_celery_beat
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.new
+      - SECRET_KEY=${SECRET_KEY:-new-secret-key}
+      - DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres123@db:5432/pastita}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+    volumes:
+      - ./apps/core_v2:/app/apps/core_v2
+      - ./apps/commerce:/app/apps/commerce
+      - ./apps/messaging_v2:/app/apps/messaging_v2
+      - ./apps/marketing_v2:/app/apps/marketing_v2
+      - ./config/settings/new.py:/app/config/settings/new.py
+    depends_on:
+      - redis
+      - db
+    command: celery -A config beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_files:
+  media_files:

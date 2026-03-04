@@ -43,7 +43,15 @@ INSTALLED_APPS = [
     'channels',
     'django_celery_beat',
     'storages',
-    # Local apps
+    # Local apps - v2 (new consolidated architecture)
+    'apps.core_v2',
+    'apps.messaging_v2',
+    'apps.marketing_v2',
+
+    # Local apps - commerce (Lojas, Produtos, Pedidos)
+    'apps.commerce',
+
+    # Local apps - legacy (to be deprecated)
     'apps.core',
     'apps.whatsapp.apps.WhatsAppConfig',
     'apps.conversations',

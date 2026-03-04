@@ -1,37 +1,40 @@
-"""
-Marketing admin configuration.
+"""Marketing admin - LEGACY, mantido apenas para compatibilidade.
+
+Use campaigns/admin.py para gerenciar campanhas unificadas.
 """
 from django.contrib import admin
 from .models import EmailTemplate, EmailCampaign, EmailRecipient, Subscriber
 
 
-@admin.register(EmailTemplate)
-class EmailTemplateAdmin(admin.ModelAdmin):
-    list_display = ['name', 'store', 'template_type', 'subject', 'created_at']
-    list_filter = ['template_type', 'store', 'is_active']
-    search_fields = ['name', 'subject']
-    readonly_fields = ['id', 'created_at', 'updated_at']
-
-
 @admin.register(EmailCampaign)
 class EmailCampaignAdmin(admin.ModelAdmin):
-    list_display = ['name', 'store', 'status', 'emails_sent', 'emails_opened', 'created_at']
-    list_filter = ['status', 'store', 'audience_type']
-    search_fields = ['name', 'subject']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'started_at', 'completed_at']
+    list_display = ['name', 'store', 'status', 'created_at']
+    list_filter = ['status', 'created_at']
+    search_fields = ['name']
+
+    def get_model_perms(self, request):
+        return {}
 
 
 @admin.register(EmailRecipient)
 class EmailRecipientAdmin(admin.ModelAdmin):
-    list_display = ['email', 'campaign', 'status', 'sent_at', 'opened_at']
-    list_filter = ['status', 'campaign']
-    search_fields = ['email', 'name']
-    readonly_fields = ['id', 'created_at', 'updated_at']
+    list_display = ['email', 'campaign', 'status']
+
+    def get_model_perms(self, request):
+        return {}
+
+
+@admin.register(EmailTemplate)
+class EmailTemplateAdmin(admin.ModelAdmin):
+    list_display = ['name', 'store', 'template_type']
+
+    def get_model_perms(self, request):
+        return {}
 
 
 @admin.register(Subscriber)
 class SubscriberAdmin(admin.ModelAdmin):
-    list_display = ['email', 'name', 'store', 'status', 'total_orders', 'subscribed_at']
-    list_filter = ['status', 'store', 'accepts_marketing']
-    search_fields = ['email', 'name', 'phone']
-    readonly_fields = ['id', 'created_at', 'updated_at', 'subscribed_at']
+    list_display = ['email', 'name', 'store']
+
+    def get_model_perms(self, request):
+        return {}

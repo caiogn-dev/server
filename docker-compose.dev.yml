@@ -1,0 +1,104 @@
+# Docker Compose for Development with SQLite
+# No PostgreSQL required - uses SQLite for simplicity
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: pastita_redis_dev
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    image: pastita_backend:latest
+    container_name: pastita_web_dev
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DJANGO_SECRET_KEY=dev-secret-key-change-in-production-min-50-chars-long-12345
+      - DJANGO_ALLOWED_HOSTS=*
+      - DATABASE_URL=  # Empty = use SQLite
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DEBUG=True
+    volumes:
+      - .:/app
+      - static_files:/app/staticfiles
+      - media_files:/app/media
+      - sqlite_data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             python manage.py runserver 0.0.0.0:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/sse/health/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 5
+
+  celery:
+    image: pastita_backend:latest
+    container_name: pastita_celery_dev
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DJANGO_SECRET_KEY=dev-secret-key-change-in-production-min-50-chars-long-12345
+      - DATABASE_URL=  # Empty = use SQLite
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DEBUG=True
+    volumes:
+      - .:/app
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+      - web
+    command: celery -A config.celery worker -l info -Q whatsapp,orders,payments,agents,automation,campaigns,default --concurrency=2
+
+  celery-beat:
+    image: pastita_backend:latest
+    container_name: pastita_celery_beat_dev
+    restart: unless-stopped
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.development
+      - DJANGO_SECRET_KEY=dev-secret-key-change-in-production-min-50-chars-long-12345
+      - DATABASE_URL=  # Empty = use SQLite
+      - REDIS_URL=redis://redis:6379/1
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DEBUG=True
+    volumes:
+      - .:/app
+      - sqlite_data:/app/data
+    depends_on:
+      - redis
+      - celery
+    command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+
+volumes:
+  redis_data:
+  static_files:
+  media_files:
+  sqlite_data:
+
+networks:
+  default:
+    name: pastita_dev_network
