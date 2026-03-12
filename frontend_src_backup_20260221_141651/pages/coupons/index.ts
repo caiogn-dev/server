@@ -1,1 +1,0 @@
-export { CouponsPage } from './CouponsPage';

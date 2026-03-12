@@ -6,6 +6,7 @@ Este módulo fornece endpoints SSE para quando WebSocket não está disponível.
 import json
 import time
 import logging
+import uuid as uuid_module
 from django.http import StreamingHttpResponse, JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
@@ -220,7 +221,11 @@ class OrderSSEView(BaseSSEView):
                 return
         elif store_id:
             # Store orders
-            last_count = StoreOrder.objects.filter(store_id=store_id).count()
+            try:
+                uuid_module.UUID(str(store_id))
+                last_count = StoreOrder.objects.filter(store_id=store_id).count()
+            except (ValueError, AttributeError):
+                last_count = StoreOrder.objects.filter(store__slug=store_id).count()
             last_order_id = None
         else:
             # All orders user has access to
@@ -236,7 +241,7 @@ class OrderSSEView(BaseSSEView):
                     order = StoreOrder.objects.get(id=order_id)
                     if order.status != last_status:
                         yield SSEEvent(
-                            event_type='order_update',
+                            event_type='order_updated',
                             data={
                                 'order_id': str(order.id),
                                 'order_number': order.order_number,
@@ -258,7 +263,11 @@ class OrderSSEView(BaseSSEView):
                 # Check for new orders
                 query = StoreOrder.objects.all()
                 if store_id:
-                    query = query.filter(store_id=store_id)
+                    try:
+                        uuid_module.UUID(str(store_id))
+                        query = query.filter(store_id=store_id)
+                    except (ValueError, AttributeError):
+                        query = query.filter(store__slug=store_id)
                 
                 current_count = query.count()
                 
@@ -271,7 +280,7 @@ class OrderSSEView(BaseSSEView):
                     
                     for order in new_orders:
                         yield SSEEvent(
-                            event_type='new_order',
+                            event_type='order_created',
                             data={
                                 'order_id': str(order.id),
                                 'order_number': order.order_number,
@@ -294,7 +303,7 @@ class OrderSSEView(BaseSSEView):
                 
                 for order in recent_orders:
                     yield SSEEvent(
-                        event_type='order_update',
+                        event_type='order_updated',
                         data={
                             'order_id': str(order.id),
                             'order_number': order.order_number,

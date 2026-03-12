@@ -119,7 +119,9 @@ urlpatterns = [
     # Base: /api/v1/stores/{store_slug}/
     # ==========================================================================
     
-    # Store-specific storefront endpoints
+    # Legacy alias kept for backwards compatibility with older frontends
+    path('s/<slug:store_slug>/', include(store_frontend_patterns)),
+    # Store-specific storefront endpoints (canonical)
     path('<slug:store_slug>/', include(store_frontend_patterns)),
     
     # ========================================================================== 
@@ -149,7 +151,7 @@ urlpatterns = [
     # ==========================================================================
     
     # Customer orders list (requires auth)
-    path('orders/', CustomerOrdersView.as_view(), name='customer-orders'),
+    path('customer/orders/', CustomerOrdersView.as_view(), name='customer-orders'),
     
     # Single order detail (public - by order ID)
     path('orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail'),

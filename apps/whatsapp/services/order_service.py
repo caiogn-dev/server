@@ -234,15 +234,13 @@ class WhatsAppOrderService:
         """Atualiza sessão do cliente com dados do pedido"""
         try:
             from apps.automation.services import get_session_manager
-            from apps.automation.models import CompanyProfile
-            
-            # Busca CompanyProfile pelo nome da loja
-            company_profile = CompanyProfile.objects.filter(
-                company_name=self.store.name
-            ).first()
-            
+            from apps.automation.services.context_service import AutomationContextService
+
+            context = AutomationContextService.resolve(store=self.store, create_profile=True)
+            company_profile = context.profile
+
             if not company_profile:
-                logger.warning(f"[_update_session] CompanyProfile não encontrado para {self.store.name}")
+                logger.warning(f"[_update_session] CompanyProfile não encontrado para loja {self.store.id}")
                 return
             
             session_manager = get_session_manager(

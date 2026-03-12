@@ -2,121 +2,66 @@
 
 ## Overview
 
-This Django backend serves multiple frontends:
-- **pastita-3d**: Customer-facing storefront (React/Next.js)
-- **pastita-dash**: Admin dashboard (React/TypeScript)
+`server` is the shared backend for:
 
-## App Structure
+- `ce-saladas` (customer storefront)
+- `pastita-3d` (customer storefront)
+- `pastita-dash` (operations dashboard)
 
-### Core Apps (Active)
+The current API contract is centralized under `/api/v1/` with `stores` as the ecommerce core.
 
-| App | Purpose | Status |
-|-----|---------|--------|
-| `stores` | Multi-tenant store management | **Primary** |
-| `whatsapp` | WhatsApp Business API integration | Active |
-| `conversations` | Chat/conversation management | Active |
-| `marketing` | Marketing campaigns and stats | Active |
-| `automation` | Workflow automation | Active |
-| `notifications` | Push notifications | Active |
-| `audit` | Audit logging | Active |
-| `core` | Shared utilities and base models | Active |
+## Architecture Layers
 
-### Legacy Apps (Deprecated)
+- `config/`: Django settings, URL routing, ASGI/WSGI, Celery setup
+- `apps/`: domain modules (stores, automation, messaging, etc.)
+- `domain/`: domain entities/use-cases abstractions
+- `infrastructure/`: external integrations and messaging infra
 
-| App | Purpose | Replacement |
-|-----|---------|-------------|
-| `ecommerce` | Legacy e-commerce models | `stores` |
-| `orders` | Legacy order management | `stores.StoreOrder` |
-| `payments` | Generic payment processing | `stores` payment fields |
+## Core Routing
 
-## Model Mapping
+Main router: `config/urls.py`
 
-### Orders
-- **Legacy**: `orders.Order` - Generic orders tied to WhatsApp conversations
-- **New**: `stores.StoreOrder` - Multi-tenant store orders
+Key groups:
 
-### Products
-- **Legacy**: `ecommerce.Product` - Single-tenant products
-- **New**: `stores.StoreProduct` - Multi-tenant products with dynamic types
+- `/api/v1/stores/` -> `apps.stores.urls`
+- `/api/v1/auth/` and `/api/v1/` core auth/profile -> `apps.core.urls`, `apps.core.auth.urls`
+- `/api/v1/whatsapp/`, `/instagram/`, `/messaging/`, `/conversations/`
+- `/api/v1/automation/`, `/marketing/`, `/campaigns/`, `/audit/`, `/users/`, `/agents/`
+- `/api/sse/` fallback event streams
 
-### Cart
-- **Legacy**: `ecommerce.Cart`, `ecommerce.CartItem`
-- **New**: `stores.StoreCart`, `stores.StoreCartItem`
+## Ecommerce Contract (Current)
 
-### Coupons
-- **Legacy**: `ecommerce.Coupon`
-- **New**: `stores.StoreCoupon`
+Storefront endpoints (canonical):
 
-## API Endpoints
+- `/api/v1/stores/{store_slug}/`
+- `/api/v1/stores/{store_slug}/catalog/`
+- `/api/v1/stores/{store_slug}/cart/`
+- `/api/v1/stores/{store_slug}/checkout/`
 
-### Primary API (v1)
-- `/api/v1/stores/` - Store management
-- `/api/v1/stores/{slug}/` - Store-specific operations
-- `/api/v1/stores/{slug}/products/` - Products
-- `/api/v1/stores/{slug}/orders/` - Orders
-- `/api/v1/stores/{slug}/categories/` - Categories
-- `/api/v1/stores/{slug}/coupons/` - Coupons
-- `/api/v1/stores/{slug}/delivery-zones/` - Delivery zones
+Compatibility alias maintained:
 
-### Legacy API (Deprecated)
-- `/api/v1/orders/` - Legacy orders (mostly wrappers; prefer `/api/v1/stores/...`)
-- Legacy e-commerce endpoints (migrated into `/api/v1/stores/`)
+- `/api/v1/stores/s/{store_slug}/...`
 
-## Migration Guide
+Global store endpoints:
 
-### For New Features
-1. Always use `stores` app models
-2. Use `StoreOrder` for orders
-3. Use `StoreProduct` for products
-4. Use `StoreCart` for shopping carts
+- `/api/v1/stores/orders/`
+- `/api/v1/stores/orders/by-token/{access_token}/`
+- `/api/v1/stores/orders/{order_id}/payment-status/`
+- `/api/v1/stores/maps/geocode/`
+- `/api/v1/stores/maps/reverse-geocode/`
 
-### For Existing Code
-1. Check if code uses legacy models
-2. Plan migration to `stores` equivalents
-3. Update imports and references
-4. Test thoroughly before deploying
+## Realtime
 
-## Database Schema
+- WebSocket routes are defined in `apps.core.routing`
+- Store/customer order channels:
+  - `/ws/stores/{store_slug}/orders/`
+  - `/ws/orders/{order_id}/`
+- SSE fallback:
+  - `/api/sse/orders/`
+  - `/api/sse/whatsapp/`
 
-The `stores` app uses the following tables:
-- `stores` - Store configuration
-- `store_products` - Products
-- `store_categories` - Categories
-- `store_orders` - Orders
-- `store_order_items` - Order line items
-- `store_carts` - Shopping carts
-- `store_cart_items` - Cart items
-- `store_coupons` - Discount coupons
-- `store_delivery_zones` - Delivery areas
-- `store_product_types` - Dynamic product types
+## Settings Split
 
-## Environment Variables
-
-```bash
-# Database
-DATABASE_URL=postgres://...
-
-# Redis
-REDIS_URL=redis://...
-
-# Security
-SECRET_KEY=...
-ALLOWED_HOSTS=...
-
-# External Services
-MERCADOPAGO_ACCESS_TOKEN=...
-WHATSAPP_API_TOKEN=...
-```
-
-## Development
-
-```bash
-# Run migrations
-python manage.py migrate
-
-# Start development server
-python manage.py runserver
-
-# Run tests
-python manage.py test
-```
+- `config/settings/base.py`: shared defaults, apps, middleware, DRF, CORS, caches, integrations
+- `config/settings/development.py`: DEBUG mode, SQLite, permissive local CORS
+- `config/settings/production.py`: security hardening, trusted origins, WhiteNoise

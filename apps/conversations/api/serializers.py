@@ -1,6 +1,7 @@
 """
 Conversation API serializers.
 """
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 from ..models import Conversation, ConversationNote
 
@@ -21,6 +22,9 @@ class ConversationSerializer(serializers.ModelSerializer):
     message_count = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
+    handover_status = serializers.SerializerMethodField()
+    handover_assigned_to = serializers.SerializerMethodField()
+    handover_assigned_to_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Conversation
@@ -29,6 +33,7 @@ class ConversationSerializer(serializers.ModelSerializer):
             'mode', 'status', 'assigned_agent', 'assigned_agent_name',
             'ai_agent', 'ai_agent_name', 'agent_session_id', 'context', 'tags',
             'last_message_at', 'last_message_preview', 'unread_count',
+            'handover_status', 'handover_assigned_to', 'handover_assigned_to_name',
             'last_customer_message_at', 'last_agent_message_at',
             'closed_at', 'resolved_at', 'message_count',
             'created_at', 'updated_at', 'is_active'
@@ -59,6 +64,35 @@ class ConversationSerializer(serializers.ModelSerializer):
                 read_at__isnull=True
             ).count()
         return 0
+
+    def _get_handover(self, obj):
+        try:
+            return obj.handover
+        except (AttributeError, ObjectDoesNotExist):
+            pass
+
+        try:
+            return obj.handovers.filter(status='active').order_by('-started_at').first()
+        except Exception:
+            return None
+
+    def get_handover_status(self, obj):
+        handover = self._get_handover(obj)
+        if handover:
+            return getattr(handover, 'status', None)
+        return 'bot' if obj.mode == Conversation.ConversationMode.AUTO else obj.mode
+
+    def get_handover_assigned_to(self, obj):
+        handover = self._get_handover(obj)
+        assignee = getattr(handover, 'assigned_to', None) or obj.assigned_agent
+        return str(assignee.id) if assignee else None
+
+    def get_handover_assigned_to_name(self, obj):
+        handover = self._get_handover(obj)
+        assignee = getattr(handover, 'assigned_to', None) or obj.assigned_agent
+        if not assignee:
+            return None
+        return getattr(assignee, 'get_full_name', lambda: '')() or getattr(assignee, 'username', None)
 
 
 class ConversationNoteSerializer(serializers.ModelSerializer):

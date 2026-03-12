@@ -5,6 +5,8 @@ This is the UNIFIED e-commerce serializer module supporting all stores.
 All product types are DYNAMIC - stores can create their own types with custom fields.
 Products store type-specific values in the type_attributes JSONField.
 """
+import uuid as uuid_module
+from decimal import Decimal, InvalidOperation
 from rest_framework import serializers
 from apps.stores.models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
@@ -475,30 +477,165 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         return obj.items.count()
 
 
+class StoreOrderCreateItemSerializer(serializers.Serializer):
+    """Line item payload for order creation."""
+
+    product_id = serializers.UUIDField()
+    quantity = serializers.IntegerField(min_value=1)
+    options = serializers.DictField(required=False, default=dict)
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+
+
 class StoreOrderCreateSerializer(serializers.Serializer):
     """Serializer for creating orders."""
-    
+
+    store = serializers.CharField(required=False)
     customer_name = serializers.CharField(max_length=255)
-    customer_email = serializers.EmailField()
+    customer_email = serializers.EmailField(required=False, allow_blank=True)
     customer_phone = serializers.CharField(max_length=20)
     customer_notes = serializers.CharField(required=False, allow_blank=True)
-    
-    items = serializers.ListField(
-        child=serializers.DictField(),
-        min_length=1
-    )
-    
+
+    items = StoreOrderCreateItemSerializer(many=True, min_length=1)
+
     delivery_method = serializers.ChoiceField(
         choices=['delivery', 'pickup', 'digital'],
         default='delivery'
     )
-    delivery_address = serializers.DictField(required=False)
+    delivery_address = serializers.JSONField(required=False, default=dict)
     delivery_notes = serializers.CharField(required=False, allow_blank=True)
     delivery_fee = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
     scheduled_date = serializers.DateField(required=False)
     scheduled_time = serializers.CharField(required=False, allow_blank=True)
-    
+
+    payment_method = serializers.CharField(required=False, allow_blank=True)
     coupon_code = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def _resolve_store(self, validated_data):
+        """Resolve store from payload, query params, or nested router kwargs."""
+        request = self.context.get('request')
+        view = self.context.get('view')
+
+        store_param = validated_data.get('store')
+        if not store_param and view:
+            store_param = view.kwargs.get('store_pk')
+        if not store_param and request:
+            store_param = request.query_params.get('store')
+
+        if not store_param:
+            raise serializers.ValidationError({'store': 'store is required'})
+
+        try:
+            uuid_module.UUID(str(store_param))
+            store = Store.objects.filter(id=store_param).first()
+        except (ValueError, AttributeError):
+            store = Store.objects.filter(slug=str(store_param)).first()
+
+        if not store:
+            raise serializers.ValidationError({'store': 'Store not found'})
+
+        if request and request.user.is_authenticated and not request.user.is_staff:
+            has_access = (
+                store.owner_id == request.user.id
+                or store.staff.filter(id=request.user.id).exists()
+            )
+            if not has_access:
+                raise serializers.ValidationError({'store': 'No access to this store'})
+
+        return store
+
+    def create(self, validated_data):
+        store = self._resolve_store(validated_data)
+        request = self.context.get('request')
+        items_data = validated_data.pop('items', [])
+        validated_data.pop('store', None)
+
+        subtotal = Decimal('0.00')
+        resolved_items = []
+
+        for idx, item in enumerate(items_data):
+            product = StoreProduct.objects.filter(
+                id=item['product_id'],
+                store=store,
+                is_active=True
+            ).first()
+            if not product:
+                raise serializers.ValidationError({
+                    'items': f'Product not found for item index {idx}'
+                })
+
+            quantity = item.get('quantity', 1)
+            unit_price = product.price or Decimal('0.00')
+            line_subtotal = unit_price * quantity
+            subtotal += line_subtotal
+
+            resolved_items.append({
+                'product': product,
+                'quantity': quantity,
+                'unit_price': unit_price,
+                'subtotal': line_subtotal,
+                'options': item.get('options', {}),
+                'notes': item.get('notes', ''),
+            })
+
+        delivery_fee = validated_data.get('delivery_fee', Decimal('0.00'))
+        try:
+            delivery_fee = Decimal(str(delivery_fee))
+        except (ValueError, InvalidOperation):
+            delivery_fee = Decimal('0.00')
+
+        discount = Decimal('0.00')
+        tax = Decimal('0.00')
+        total = subtotal - discount + tax + delivery_fee
+        delivery_address = validated_data.get('delivery_address', {})
+        if isinstance(delivery_address, str):
+            delivery_address = {'address': delivery_address}
+
+        customer_email = validated_data.get('customer_email', '').strip()
+        if not customer_email:
+            digits = ''.join(ch for ch in validated_data.get('customer_phone', '') if ch.isdigit())
+            suffix = digits[-8:] if digits else 'cliente'
+            customer_email = f'{suffix}@local.invalid'
+
+        order = StoreOrder.objects.create(
+            store=store,
+            customer=request.user if request and request.user.is_authenticated else None,
+            customer_name=validated_data['customer_name'],
+            customer_email=customer_email,
+            customer_phone=validated_data['customer_phone'],
+            status=StoreOrder.OrderStatus.PENDING,
+            payment_status=StoreOrder.PaymentStatus.PENDING,
+            subtotal=subtotal,
+            discount=discount,
+            coupon_code=validated_data.get('coupon_code', ''),
+            tax=tax,
+            delivery_fee=delivery_fee,
+            total=total,
+            payment_method=validated_data.get('payment_method', ''),
+            delivery_method=validated_data.get('delivery_method', 'delivery'),
+            delivery_address=delivery_address,
+            delivery_notes=validated_data.get('delivery_notes', ''),
+            scheduled_date=validated_data.get('scheduled_date'),
+            scheduled_time=validated_data.get('scheduled_time', ''),
+            customer_notes=validated_data.get('customer_notes') or validated_data.get('notes', ''),
+        )
+
+        for item in resolved_items:
+            StoreOrderItem.objects.create(
+                order=order,
+                product=item['product'],
+                variant=None,
+                product_name=item['product'].name,
+                variant_name='',
+                sku=item['product'].sku,
+                unit_price=item['unit_price'],
+                quantity=item['quantity'],
+                subtotal=item['subtotal'],
+                options=item['options'],
+                notes=item['notes'],
+            )
+
+        return order
 
 
 class StoreOrderUpdateSerializer(serializers.ModelSerializer):

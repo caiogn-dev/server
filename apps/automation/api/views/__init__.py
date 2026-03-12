@@ -27,6 +27,7 @@ from .report_views import ReportScheduleViewSet, GeneratedReportViewSet
 
 # NOVO: Import unified views
 from .unified_views import UnifiedProcessView, UnifiedStatsView
+from .flow_views import AgentFlowViewSet, FlowSessionViewSet, FlowExecutionLogViewSet
 
 __all__ = [
     'StandardResultsSetPagination',
@@ -40,4 +41,7 @@ __all__ = [
     # Novos exports
     'UnifiedProcessView',
     'UnifiedStatsView',
+    'AgentFlowViewSet',
+    'FlowSessionViewSet',
+    'FlowExecutionLogViewSet',
 ]

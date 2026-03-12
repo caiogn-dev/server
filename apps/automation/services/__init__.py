@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+from .context_service import AutomationContext, AutomationContextService
 from .session_manager import SessionManager, SessionContext, get_session_manager
 
 # Import existing AutomationService
@@ -17,6 +18,8 @@ __all__ = [
     'SessionManager',
     'SessionContext',
     'get_session_manager',
+    'AutomationContext',
+    'AutomationContextService',
     'AutomationService',
     'LLMOrchestratorService',
     'ResponseSource',

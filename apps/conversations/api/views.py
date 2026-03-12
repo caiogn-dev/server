@@ -247,7 +247,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
             conversation_id=conversation.id,
             direction='inbound',
             status__in=['delivered', 'sent']
-        ).update(status='read')
+        ).update(status='read', read_at=timezone.now())
         
         # Mark Instagram messages as read
         # InstagramMessage usa 'is_from_business' em vez de 'direction'

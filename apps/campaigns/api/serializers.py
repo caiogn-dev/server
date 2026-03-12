@@ -24,6 +24,12 @@ class CampaignSerializer(serializers.ModelSerializer):
     """Serializer for Campaign model."""
     delivery_rate = serializers.FloatField(read_only=True)
     read_rate = serializers.FloatField(read_only=True)
+    # Backward-compatible API field name mapped to model field.
+    delay_between_seconds = serializers.IntegerField(
+        source='delay_between_messages',
+        required=False,
+        min_value=0,
+    )
     
     class Meta:
         model = Campaign

@@ -14,3 +14,5 @@ staticfiles/
 media/
 .coverage
 htmlcov/
+.venv/
+.idea/

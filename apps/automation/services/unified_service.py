@@ -20,6 +20,7 @@ from django.conf import settings
 from apps.agents.models import Agent
 from apps.agents.services import LangchainService
 from apps.automation.models import CompanyProfile, AutoMessage, CustomerSession, IntentLog
+from apps.automation.services.context_service import AutomationContextService
 from apps.whatsapp.intents.detector import IntentDetector, IntentType
 from apps.whatsapp.intents.handlers import get_handler, HandlerResult
 from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
@@ -58,20 +59,22 @@ class UnifiedService:
         self.debug = debug
         self.use_llm = use_llm  # Mantido para compatibilidade
         self.detector = IntentDetector()
-        self.company = self._get_company()
+        self.context = AutomationContextService.resolve(
+            account=account,
+            conversation=conversation,
+            create_profile=False,
+        )
+        self.company = self.context.profile
         self.stats = {'template': 0, 'llm': 0, 'handler': 0, 'fallback': 0}
     
     def _get_company(self) -> Optional[CompanyProfile]:
         """Busca CompanyProfile da conta."""
-        try:
-            return CompanyProfile.objects.get(account=self.account, is_active=True)
-        except CompanyProfile.DoesNotExist:
-            return None
+        return self.context.profile
     
     def _get_store(self):
         """Busca Store associada."""
-        if self.company and hasattr(self.company, 'store') and self.company.store_id:
-            return self.company.store
+        if self.context.store:
+            return self.context.store
         # Fallback: busca store 'pastita'
         from apps.stores.models import Store
         return Store.objects.filter(slug='pastita').first()

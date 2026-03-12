@@ -103,6 +103,7 @@ class ConversationService:
             raise ValidationError(message="Human handoff is not enabled for this account")
         
         conversation = self.repo.switch_to_human(conversation, agent)
+        self._sync_handover_state(conversation, to_human=True, agent=agent)
         logger.info(f"Conversation switched to human mode: {conversation.id}")
         
         return conversation
@@ -111,6 +112,7 @@ class ConversationService:
         """Switch conversation to auto mode."""
         conversation = self.get_conversation(conversation_id)
         conversation = self.repo.switch_to_auto(conversation)
+        self._sync_handover_state(conversation, to_human=False)
         logger.info(f"Conversation switched to auto mode: {conversation.id}")
         
         return conversation
@@ -124,6 +126,7 @@ class ConversationService:
         conversation = self.get_conversation(conversation_id)
         conversation.assigned_agent = agent
         conversation.save(update_fields=['assigned_agent', 'updated_at'])
+        self._sync_handover_assignment(conversation, agent)
         logger.info(f"Agent {agent.id} assigned to conversation: {conversation.id}")
         
         return conversation
@@ -133,6 +136,7 @@ class ConversationService:
         conversation = self.get_conversation(conversation_id)
         conversation.assigned_agent = None
         conversation.save(update_fields=['assigned_agent', 'updated_at'])
+        self._sync_handover_assignment(conversation, None)
         logger.info(f"Agent unassigned from conversation: {conversation.id}")
         
         return conversation
@@ -243,3 +247,47 @@ class ConversationService:
             'by_status': {s['status']: s['count'] for s in stats},
             'by_mode': {m['mode']: m['count'] for m in mode_stats},
         }
+
+    def _sync_handover_state(self, conversation: Conversation, to_human: bool, agent=None) -> None:
+        """
+        Keep the dedicated handover module aligned with conversation.mode.
+
+        The handover app is the canonical place for operator transfer state, while
+        conversation.mode remains the compatibility field used by existing pages.
+        """
+        try:
+            from apps.handover.models import ConversationHandover
+        except Exception as exc:
+            logger.warning("Handover sync unavailable for conversation %s: %s", conversation.id, exc)
+            return
+
+        handover, _ = ConversationHandover.objects.get_or_create(conversation=conversation)
+        try:
+            if to_human:
+                handover.transfer_to_human(
+                    user=agent,
+                    assigned_to=agent,
+                    reason='Synced from conversation mode switch',
+                )
+            else:
+                handover.transfer_to_bot(
+                    user=agent,
+                    reason='Synced from conversation mode switch',
+                )
+        except Exception as exc:
+            logger.warning("Failed to sync handover state for conversation %s: %s", conversation.id, exc)
+
+    def _sync_handover_assignment(self, conversation: Conversation, agent) -> None:
+        try:
+            handover = getattr(conversation, 'handover', None)
+        except Exception:
+            handover = None
+
+        if not handover:
+            return
+
+        if handover.status != 'human':
+            return
+
+        handover.assigned_to = agent
+        handover.save(update_fields=['assigned_to', 'updated_at'])

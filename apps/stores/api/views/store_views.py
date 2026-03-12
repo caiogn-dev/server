@@ -78,6 +78,36 @@ class StoreViewSet(viewsets.ModelViewSet):
         store.save(update_fields=['status', 'updated_at'])
         return Response({'status': store.status})
 
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):
+        """Explicitly activate a store."""
+        store = self.get_object()
+        store.status = 'active'
+        store.save(update_fields=['status', 'updated_at'])
+        return Response({'status': store.status})
+
+    @action(detail=True, methods=['post'])
+    def deactivate(self, request, pk=None):
+        """Explicitly deactivate a store."""
+        store = self.get_object()
+        store.status = 'inactive'
+        store.save(update_fields=['status', 'updated_at'])
+        return Response({'status': store.status})
+
+    @action(detail=True, methods=['post'], url_path='sync_pastita')
+    def sync_pastita(self, request, pk=None):
+        """Sync Pastita template catalog into the target store."""
+        store = self.get_object()
+        result = store_service.sync_pastita_to_store(store)
+        return Response({
+            'message': 'Sincronizacao concluida com sucesso',
+            'synced': {
+                'products': result.get('products_synced', 0),
+                'categories': result.get('categories_synced', 0),
+            },
+            'source_store': result.get('source_store'),
+        })
+
 
 class StoreIntegrationViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store integrations."""

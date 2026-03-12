@@ -76,6 +76,10 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         if self.action in ['update', 'partial_update']:
             return StoreOrderUpdateSerializer
         return StoreOrderSerializer
+
+    def perform_create(self, serializer):
+        order = serializer.save()
+        self._notify_order_update(order, 'order.created')
     
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
@@ -125,6 +129,99 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 logger.info(f"WebSocket notification sent: {event_type} for order {order.order_number}")
         except Exception as e:
             logger.error(f"Error sending WebSocket notification: {e}")
+
+    @action(detail=True, methods=['post'], url_path='add_tracking')
+    def add_tracking(self, request, pk=None):
+        """Attach tracking details and mark order as shipped."""
+        order = self.get_object()
+        order.tracking_code = request.data.get('tracking_code', order.tracking_code or '')
+        order.tracking_url = request.data.get('tracking_url', order.tracking_url or '')
+        order.carrier = request.data.get('carrier', order.carrier or '')
+
+        if order.status not in ['shipped', 'out_for_delivery', 'delivered', 'completed']:
+            order.status = 'shipped'
+            if not order.shipped_at:
+                order.shipped_at = timezone.now()
+
+        order.save(update_fields=[
+            'tracking_code', 'tracking_url', 'carrier',
+            'status', 'shipped_at', 'updated_at'
+        ])
+
+        self._notify_order_update(order, 'order.shipped')
+        return Response(StoreOrderSerializer(order).data)
+
+    @action(detail=True, methods=['post'], url_path='add_note')
+    def add_note(self, request, pk=None):
+        """Append note to internal or customer notes."""
+        order = self.get_object()
+        note = (request.data.get('note') or '').strip()
+        is_internal = request.data.get('is_internal', True)
+
+        if not note:
+            return Response(
+                {'error': 'note is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        target_field = 'internal_notes' if is_internal else 'customer_notes'
+        existing = getattr(order, target_field) or ''
+        combined = f"{existing}\n{note}".strip() if existing else note
+        setattr(order, target_field, combined)
+        order.save(update_fields=[target_field, 'updated_at'])
+
+        self._notify_order_update(order, 'order.updated')
+        return Response(StoreOrderSerializer(order).data)
+
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None):
+        """Return a lightweight timeline for the order."""
+        order = self.get_object()
+        events = [
+            {
+                'id': f'{order.id}-created',
+                'order_id': str(order.id),
+                'event_type': 'created',
+                'description': f'Pedido criado com status {order.status}',
+                'created_at': order.created_at.isoformat(),
+            }
+        ]
+
+        if order.paid_at:
+            events.append({
+                'id': f'{order.id}-paid',
+                'order_id': str(order.id),
+                'event_type': 'payment_paid',
+                'description': 'Pagamento confirmado',
+                'created_at': order.paid_at.isoformat(),
+            })
+        if order.shipped_at:
+            events.append({
+                'id': f'{order.id}-shipped',
+                'order_id': str(order.id),
+                'event_type': 'shipped',
+                'description': 'Pedido enviado',
+                'created_at': order.shipped_at.isoformat(),
+            })
+        if order.delivered_at:
+            events.append({
+                'id': f'{order.id}-delivered',
+                'order_id': str(order.id),
+                'event_type': 'delivered',
+                'description': 'Pedido entregue',
+                'created_at': order.delivered_at.isoformat(),
+            })
+        if order.cancelled_at:
+            events.append({
+                'id': f'{order.id}-cancelled',
+                'order_id': str(order.id),
+                'event_type': 'cancelled',
+                'description': 'Pedido cancelado',
+                'created_at': order.cancelled_at.isoformat(),
+            })
+
+        events.sort(key=lambda event: event['created_at'], reverse=True)
+        return Response(events)
     
     @action(detail=True, methods=['post'])
     def update_payment_status(self, request, pk=None):

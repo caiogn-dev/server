@@ -15,6 +15,7 @@ Webhooks:
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.http import HttpResponse
 from django.conf import settings
 from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
@@ -26,7 +27,6 @@ from apps.core.sse_views import (
     WebSocketHealthCheckView
 )
 
-from apps.webhooks.handlers.whatsapp_handler import WhatsAppHandler
 from django.views.decorators.csrf import csrf_exempt
 
 @csrf_exempt

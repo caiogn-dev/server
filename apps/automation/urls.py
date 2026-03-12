@@ -13,6 +13,9 @@ from .api.views import (
     GeneratedReportViewSet,
     UnifiedProcessView,
     UnifiedStatsView,
+    AgentFlowViewSet,
+    FlowSessionViewSet,
+    FlowExecutionLogViewSet,
 )
 
 router = DefaultRouter()
@@ -23,6 +26,9 @@ router.register(r'logs', AutomationLogViewSet, basename='automation-log')
 router.register(r'scheduled-messages', ScheduledMessageViewSet, basename='scheduled-message')
 router.register(r'report-schedules', ReportScheduleViewSet, basename='report-schedule')
 router.register(r'reports', GeneratedReportViewSet, basename='generated-report')
+router.register(r'flows', AgentFlowViewSet, basename='agent-flow')
+router.register(r'flow-sessions', FlowSessionViewSet, basename='flow-session')
+router.register(r'flow-logs', FlowExecutionLogViewSet, basename='flow-log')
 
 urlpatterns = [
     path('', include(router.urls)),

@@ -15,6 +15,7 @@ from apps.conversations.models import Conversation
 from apps.agents.services import AgentService
 
 from ..models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog
+from .context_service import AutomationContextService
 
 logger = logging.getLogger(__name__)
 
@@ -30,12 +31,12 @@ class AutomationService:
     def get_company_profile(self, account_id: str) -> Optional[CompanyProfile]:
         """Get company profile by WhatsApp account ID."""
         try:
-            return CompanyProfile.objects.select_related('account').get(
-                account_id=account_id,
-                is_active=True
-            )
-        except CompanyProfile.DoesNotExist:
+            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
+        except WhatsAppAccount.DoesNotExist:
             return None
+
+        context = AutomationContextService.resolve(account=account, create_profile=False)
+        return context.profile
 
     def create_company_profile(
         self,

@@ -11,8 +11,13 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
 
-from apps.automation.models import CustomerSession
+from django.utils import timezone
+
+from apps.automation.models import CompanyProfile, CustomerSession
+from apps.stores.models import Store
 from apps.whatsapp.models import WhatsAppAccount
+
+from .context_service import AutomationContextService
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +87,24 @@ class SessionManager:
     como pedidos, pagamentos, etc.
     """
     
-    def __init__(self, account: WhatsAppAccount, phone_number: str):
-        self.account = account
+    def __init__(self, account: WhatsAppAccount | CompanyProfile | Store, phone_number: str):
         self.phone_number = phone_number
-        self.company = getattr(account, 'company_profile', None)
+        context_kwargs: Dict[str, Any] = {}
+        if isinstance(account, WhatsAppAccount):
+            context_kwargs['account'] = account
+        elif isinstance(account, CompanyProfile):
+            context_kwargs['company'] = account
+        elif isinstance(account, Store):
+            context_kwargs['store'] = account
+
+        self.context = AutomationContextService.resolve(create_profile=True, **context_kwargs)
+        self.account = self.context.account
+        self.company = self.context.profile
+        self.store = self.context.store
         self._session: Optional[CustomerSession] = None
         self._context: Optional[SessionContext] = None
     
-    def get_or_create_session(self) -> CustomerSession:
+    def get_or_create_session(self) -> Optional[CustomerSession]:
         """Obtém ou cria uma sessão para o cliente"""
         if self._session:
             return self._session
@@ -112,7 +127,7 @@ class SessionManager:
         
         if session:
             # Atualiza última atividade
-            session.last_activity_at = datetime.now()
+            session.last_activity_at = timezone.now()
             session.save(update_fields=['last_activity_at'])
             logger.info(f"[SessionManager] Found existing session: {session.id}")
         else:
@@ -120,7 +135,7 @@ class SessionManager:
             session = CustomerSession.objects.create(
                 company=self.company,
                 phone_number=self.phone_number,
-                session_id=f"whatsapp_{self.phone_number}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                session_id=f"whatsapp_{self.phone_number}_{timezone.now().strftime('%Y%m%d%H%M%S')}",
                 status=CustomerSession.SessionStatus.ACTIVE
             )
             logger.info(f"[SessionManager] Created new session: {session.id}")
@@ -161,7 +176,7 @@ class SessionManager:
             session.cart_data = {'items': items}
             session.cart_total = total
             session.cart_items_count = len(items)
-            session.cart_updated_at = datetime.now()
+            session.cart_updated_at = timezone.now()
             session.status = CustomerSession.SessionStatus.CART_CREATED
             session.save()
             logger.info(f"[SessionManager] Cart updated: {len(items)} items, R$ {total}")
@@ -173,7 +188,7 @@ class SessionManager:
             session.pix_code = pix_code
             session.pix_qr_code = pix_qr_code
             session.payment_id = payment_id
-            session.pix_expires_at = datetime.now() + timedelta(hours=24)
+            session.pix_expires_at = timezone.now() + timedelta(hours=24)
             session.status = CustomerSession.SessionStatus.PAYMENT_PENDING
             session.save()
             logger.info(f"[SessionManager] Payment pending set for {self.phone_number}")
@@ -234,6 +249,6 @@ class SessionManager:
         }
 
 
-def get_session_manager(account: WhatsAppAccount, phone_number: str) -> SessionManager:
+def get_session_manager(account: WhatsAppAccount | CompanyProfile | Store, phone_number: str) -> SessionManager:
     """Factory function para criar SessionManager"""
     return SessionManager(account, phone_number)
