@@ -12,6 +12,14 @@ SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'y
 
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
+# Multi-store defaults (no hardcoded store slugs in runtime logic)
+DEFAULT_STORE_SLUG = os.environ.get('DEFAULT_STORE_SLUG', '').strip()
+DEFAULT_STORE_NAME = os.environ.get('DEFAULT_STORE_NAME', 'Default Store').strip() or 'Default Store'
+
+# Fallback domains for generated system emails
+LOCAL_AUTH_EMAIL_DOMAIN = os.environ.get('LOCAL_AUTH_EMAIL_DOMAIN', 'app.local').strip() or 'app.local'
+PAYMENT_FALLBACK_EMAIL_DOMAIN = os.environ.get('PAYMENT_FALLBACK_EMAIL_DOMAIN', 'example.com').strip() or 'example.com'
+
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else ['localhost', '127.0.0.1']

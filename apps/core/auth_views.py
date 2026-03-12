@@ -4,6 +4,7 @@ Authentication views for the API.
 import logging
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
@@ -230,14 +231,15 @@ class RegisterView(APIView):
             from apps.marketing.services.email_automation_service import email_automation_service
             from apps.stores.models import Store
             
-            # Get store by slug or use default (pastita)
+            # Get store by slug or configured default
             store = None
             if store_slug:
                 store = Store.objects.filter(slug=store_slug, is_active=True).first()
             
             if not store:
-                # Try to get default store (pastita)
-                store = Store.objects.filter(slug='pastita', is_active=True).first()
+                default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+                if default_store_slug:
+                    store = Store.objects.filter(slug=default_store_slug, is_active=True).first()
             
             if not store:
                 # Get any active store
@@ -280,8 +282,9 @@ class RegisterView(APIView):
         email = data.get('email', '').strip().lower() if data.get('email') else ''
         
         if not email and phone:
-            # Create email from phone: +5511999999999 -> 5511999999999@pastita.local
-            email = f"{phone.replace('+', '').replace('-', '').replace(' ', '')}@pastita.local"
+            local_domain = getattr(settings, 'LOCAL_AUTH_EMAIL_DOMAIN', 'app.local')
+            phone_local = phone.replace('+', '').replace('-', '').replace(' ', '')
+            email = f"{phone_local}@{local_domain}"
         
         if not email:
             return Response(

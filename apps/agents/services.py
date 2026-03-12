@@ -261,15 +261,19 @@ class LangchainService:
                 except Exception as e:
                     logger.error(f"[AGENT CONTEXT] Error loading store from accounts: {e}")
             
-            # FALLBACK: If no store found, use 'pastita' store
+            # Fallback: use configured default store slug, then any active store
             if not store:
                 try:
                     from apps.stores.models import Store
-                    store = Store.objects.filter(slug='pastita').first()
+                    default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+                    if default_store_slug:
+                        store = Store.objects.filter(slug=default_store_slug, status='active').first()
+                    if not store:
+                        store = Store.objects.filter(status='active').first()
                     if store:
                         logger.info(f"[AGENT CONTEXT] Using fallback store: {store.name}")
                     else:
-                        logger.warning("[AGENT CONTEXT] Fallback store 'pastita' not found!")
+                        logger.warning("[AGENT CONTEXT] No fallback store available")
                 except Exception as e:
                     logger.error(f"[AGENT CONTEXT] Error loading fallback store: {e}")
             
@@ -642,8 +646,13 @@ class AgentService:
         from apps.users.models import UnifiedUser
         
         try:
-            # Get store (Pastita)
-            store = Store.objects.filter(slug='pastita').first()
+            # Resolve store from configured default slug
+            default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+            store = None
+            if default_store_slug:
+                store = Store.objects.filter(slug=default_store_slug, status='active').first()
+            if not store:
+                store = Store.objects.filter(status='active').first()
             if not store:
                 return {'success': False, 'error': 'Loja não encontrada'}
             

@@ -4,6 +4,7 @@ WhatsApp Authentication API Views
 import logging
 
 from django.contrib.auth import get_user_model
+from django.conf import settings
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
@@ -79,9 +80,10 @@ def _get_or_create_auth_user(whatsapp_user, phone_number):
     if profile:
         user = profile.user
     else:
-        generated_email = f"{phone_digits}@pastita.local" if phone_digits else ''
+        local_domain = getattr(settings, 'LOCAL_AUTH_EMAIL_DOMAIN', 'app.local')
+        generated_email = f"{phone_digits}@{local_domain}" if phone_digits else ''
         local_digits = phone_digits[2:] if phone_digits.startswith('55') and len(phone_digits) > 11 else ''
-        alt_email = f"{local_digits}@pastita.local" if local_digits else ''
+        alt_email = f"{local_digits}@{local_domain}" if local_digits else ''
         email_candidates = [email for email in [generated_email, alt_email] if email]
 
         user = User.objects.filter(email__in=email_candidates).first() if email_candidates else None
@@ -90,7 +92,7 @@ def _get_or_create_auth_user(whatsapp_user, phone_number):
             first_name, last_name = _split_name(wa_name)
 
             username = _generate_unique_username(f"wa_{phone_digits or 'user'}")
-            email = generated_email or f"{username}@pastita.local"
+            email = generated_email or f"{username}@{local_domain}"
 
             user = User.objects.create_user(
                 username=username,

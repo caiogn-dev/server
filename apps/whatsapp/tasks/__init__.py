@@ -314,11 +314,12 @@ def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
         # Build conversation text
         conversation_text = "\n".join([m.text_body or "" for m in reversed(messages)])
         
-        # Get store products
-        store_products = StoreProduct.objects.filter(
-            store__slug='pastita',
-            is_active=True
-        ).values('id', 'name', 'price')
+        # Get store products from configured default store, fallback to active products
+        default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+        products_qs = StoreProduct.objects.filter(is_active=True)
+        if default_store_slug:
+            products_qs = products_qs.filter(store__slug=default_store_slug)
+        store_products = products_qs.values('id', 'name', 'price')
         
         # Simple extraction - look for product names in conversation
         items = []

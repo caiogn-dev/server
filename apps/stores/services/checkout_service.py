@@ -42,7 +42,8 @@ def get_valid_email_for_payment(order: StoreOrder) -> str:
         return order.store.owner.email
     
     # Fallback to a generic email
-    return f"cliente{order.order_number}@pastita.com.br"
+    fallback_domain = getattr(settings, 'PAYMENT_FALLBACK_EMAIL_DOMAIN', 'example.com')
+    return f"cliente{order.order_number}@{fallback_domain}"
 
 
 def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_context: dict = None):
@@ -438,36 +439,237 @@ class CheckoutService:
         return None
     
     @staticmethod
-    def create_payment(order: StoreOrder, payment_method: str = 'pix') -> dict:
+    def normalize_payment_method(payment_method: str, payment_payload: dict = None) -> str:
+        """Normalize frontend payment method names to backend canonical values."""
+        payload = payment_payload or {}
+        raw_method = str(payment_method or '').strip().lower()
+        selected_method = str(
+            payload.get('selected_payment_method')
+            or payload.get('selectedPaymentMethod')
+            or ''
+        ).strip().lower()
+
+        if raw_method in {'pix', 'qr', 'qrcode'}:
+            return 'pix'
+        if raw_method in {'cash', 'dinheiro', 'money'}:
+            return 'cash'
+
+        card_aliases = {
+            'card', 'cartao', 'cartão', 'credito', 'crédito', 'debito', 'débito',
+            'credit_card', 'debit_card', 'credit', 'debit'
+        }
+        if raw_method in card_aliases:
+            if selected_method in {'credit_card', 'debit_card'}:
+                return selected_method
+            return 'card'
+
+        if selected_method in {'credit_card', 'debit_card'}:
+            return selected_method
+
+        if not raw_method:
+            return 'pix'
+
+        return 'unknown'
+
+    @staticmethod
+    def _parse_installments(raw_value, default: int = 1) -> int:
+        """Parse installment count safely."""
+        try:
+            parsed = int(raw_value)
+            return parsed if parsed > 0 else default
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _extract_card_form_data(payment_payload: dict) -> dict:
+        """Extract Mercado Pago CardPayment Brick payload fields."""
+        payload = payment_payload or {}
+        form_data = payload.get('form_data') or payload.get('formData') or {}
+        if not isinstance(form_data, dict):
+            form_data = {}
+
+        payer = payload.get('payer') or {}
+        if not isinstance(payer, dict):
+            payer = {}
+
+        identification = payer.get('identification') or {}
+        if not isinstance(identification, dict):
+            identification = {}
+
+        return {
+            'token': form_data.get('token') or payload.get('token') or '',
+            'payment_method_id': (
+                form_data.get('paymentMethodId')
+                or form_data.get('payment_method_id')
+                or payload.get('payment_method_id')
+                or ''
+            ),
+            'issuer_id': (
+                form_data.get('issuerId')
+                or form_data.get('issuer_id')
+                or payload.get('issuer_id')
+                or ''
+            ),
+            'installments': CheckoutService._parse_installments(
+                form_data.get('installments') or payload.get('installments'),
+                default=1,
+            ),
+            'cardholder_email': (
+                form_data.get('cardholderEmail')
+                or payer.get('email')
+                or payload.get('email')
+                or ''
+            ),
+            'identification_type': (
+                form_data.get('identificationType')
+                or payload.get('identification_type')
+                or identification.get('type')
+                or ''
+            ),
+            'identification_number': (
+                form_data.get('identificationNumber')
+                or payload.get('identification_number')
+                or identification.get('number')
+                or ''
+            ),
+        }
+
+    @staticmethod
+    def _apply_payment_status_to_order(order: StoreOrder, payment_status: str):
+        """Map Mercado Pago status to StoreOrder status fields."""
+        status_map = {
+            'approved': (StoreOrder.OrderStatus.PAID, StoreOrder.PaymentStatus.PAID),
+            'authorized': (StoreOrder.OrderStatus.PAID, StoreOrder.PaymentStatus.PAID),
+            'pending': (StoreOrder.OrderStatus.PROCESSING, StoreOrder.PaymentStatus.PROCESSING),
+            'in_process': (StoreOrder.OrderStatus.PROCESSING, StoreOrder.PaymentStatus.PROCESSING),
+            'rejected': (StoreOrder.OrderStatus.FAILED, StoreOrder.PaymentStatus.FAILED),
+            'cancelled': (StoreOrder.OrderStatus.CANCELLED, StoreOrder.PaymentStatus.FAILED),
+            'refunded': (StoreOrder.OrderStatus.REFUNDED, StoreOrder.PaymentStatus.REFUNDED),
+            'charged_back': (StoreOrder.OrderStatus.FAILED, StoreOrder.PaymentStatus.FAILED),
+        }
+
+        mapped = status_map.get(payment_status)
+        if not mapped:
+            return
+
+        order.status, order.payment_status = mapped
+        if payment_status in {'approved', 'authorized'}:
+            order.paid_at = timezone.now()
+        elif payment_status in {'rejected', 'cancelled', 'refunded', 'charged_back'}:
+            order.cancelled_at = timezone.now()
+
+    @staticmethod
+    def _create_checkout_preference(order: StoreOrder, sdk, payer_email: str, payment_method: str) -> dict:
+        """Create a Mercado Pago checkout preference and return redirect URLs."""
+        success_url = f"{settings.FRONTEND_URL}/sucesso?token={order.access_token}"
+        failure_url = f"{settings.FRONTEND_URL}/erro?token={order.access_token}"
+        pending_url = f"{settings.FRONTEND_URL}/pendente?token={order.access_token}"
+
+        preference_data = {
+            "items": [
+                {
+                    "title": f"Pedido #{order.order_number}",
+                    "quantity": 1,
+                    "unit_price": float(order.total),
+                    "currency_id": "BRL",
+                }
+            ],
+            "payer": {
+                "email": payer_email,
+                "name": order.customer_name,
+                "phone": {"number": order.customer_phone},
+            },
+            "external_reference": str(order.id),
+            "back_urls": {
+                "success": success_url,
+                "failure": failure_url,
+                "pending": pending_url,
+            },
+            "auto_return": "approved",
+            "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
+        }
+
+        # If customer selected card payment, hide PIX/Boleto in MP Checkout Pro.
+        if payment_method in {'card', 'credit_card', 'debit_card'}:
+            preference_data["payment_methods"] = {
+                "excluded_payment_types": [
+                    {"id": "ticket"},
+                    {"id": "bank_transfer"},
+                    {"id": "atm"},
+                ],
+                "installments": 12,
+            }
+
+        result = sdk.preference().create(preference_data)
+
+        if result["status"] == 201:
+            preference = result["response"]
+            order.payment_preference_id = preference["id"]
+            order.payment_method = payment_method
+            order.status = StoreOrder.OrderStatus.PROCESSING
+            order.payment_status = StoreOrder.PaymentStatus.PENDING
+            order.save()
+
+            checkout_url = preference.get("init_point") or preference.get("sandbox_init_point")
+            return {
+                'success': True,
+                'status': 'pending',
+                'payment_method': payment_method,
+                'preference_id': preference["id"],
+                'init_point': preference.get("init_point"),
+                'sandbox_init_point': preference.get("sandbox_init_point"),
+                'requires_redirect': bool(checkout_url),
+                'checkout_url': checkout_url or '',
+            }
+
+        logger.error(f"Preference creation failed: {result}")
+        return {
+            'success': False,
+            'error': result.get("response", {}).get("message", "Erro ao criar preferência"),
+        }
+
+    @staticmethod
+    def create_payment(order: StoreOrder, payment_method: str = 'pix', payment_payload: dict = None) -> dict:
         """Create a payment for an order using Mercado Pago."""
         import mercadopago
-        
+
+        normalized_method = CheckoutService.normalize_payment_method(payment_method, payment_payload)
+
         # Handle cash payment - no Mercado Pago needed
-        if payment_method == 'cash':
+        if normalized_method == 'cash':
             order.payment_method = 'cash'
             order.status = StoreOrder.OrderStatus.PROCESSING
+            order.payment_status = StoreOrder.PaymentStatus.PENDING
             order.save()
-            
+
             return {
                 'success': True,
                 'payment_id': None,
                 'status': 'pending',
+                'status_detail': '',
                 'payment_method': 'cash',
+                'requires_redirect': False,
                 'message': 'Pagamento em dinheiro na entrega/retirada'
             }
-        
+
+        if normalized_method == 'unknown':
+            return {
+                'success': False,
+                'error': f'Método de pagamento não suportado: {payment_method}',
+            }
+
         credentials = CheckoutService.get_payment_credentials(order.store)
         if not credentials:
             raise ValueError("Credenciais de pagamento não configuradas")
-        
+
         sdk = mercadopago.SDK(credentials['access_token'])
-        
+
         # Get valid email for payment
         payer_email = get_valid_email_for_payment(order)
         logger.info(f"Using email for payment: {payer_email} (original: {order.customer_email})")
-        
-        # Build payment data
-        if payment_method == 'pix':
+
+        # PIX payment
+        if normalized_method == 'pix':
             payment_data = {
                 "transaction_amount": float(order.total),
                 "description": f"Pedido #{order.order_number} - {order.store.name}",
@@ -480,93 +682,134 @@ class CheckoutService:
                 "external_reference": str(order.id),
                 "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
             }
-            
+
             result = sdk.payment().create(payment_data)
-            
+
             if result["status"] == 201:
                 payment = result["response"]
-                
+
                 # Update order with payment info
                 order.payment_id = str(payment["id"])
                 order.payment_method = 'pix'
                 order.status = StoreOrder.OrderStatus.PROCESSING
-                
+                order.payment_status = StoreOrder.PaymentStatus.PENDING
+
                 # Get PIX data
                 pix_data = payment.get("point_of_interaction", {}).get("transaction_data", {})
                 order.pix_code = pix_data.get("qr_code", "")
                 order.pix_qr_code = pix_data.get("qr_code_base64", "")
-                
+
                 # Get ticket_url (link to payment page with QR code)
                 ticket_url = pix_data.get("ticket_url", "")
                 order.pix_ticket_url = ticket_url
-                
-                logger.info(f"PIX data for order {order.order_number}: code_len={len(order.pix_code)}, qr_len={len(order.pix_qr_code)}, ticket_url={ticket_url}")
-                
+
+                logger.info(
+                    "PIX data for order %s: code_len=%s, qr_len=%s, ticket_url=%s",
+                    order.order_number,
+                    len(order.pix_code),
+                    len(order.pix_qr_code),
+                    ticket_url,
+                )
+
                 order.save()
-                
+
                 return {
                     'success': True,
                     'payment_id': payment["id"],
                     'status': payment["status"],
+                    'status_detail': payment.get("status_detail", ''),
+                    'payment_method': 'pix',
                     'pix_code': order.pix_code,
                     'pix_qr_code': order.pix_qr_code,
                     'ticket_url': ticket_url,
                     'expiration': pix_data.get("expiration_date"),
+                    'requires_redirect': False,
                 }
-            else:
-                logger.error(f"Payment creation failed: {result}")
-                return {
-                    'success': False,
-                    'error': result.get("response", {}).get("message", "Erro ao criar pagamento"),
-                }
-        
-        else:
-            # Create preference for other payment methods
-            preference_data = {
-                "items": [
-                    {
-                        "title": f"Pedido #{order.order_number}",
-                        "quantity": 1,
-                        "unit_price": float(order.total),
-                        "currency_id": "BRL",
-                    }
-                ],
-                "payer": {
-                    "email": payer_email,
-                    "name": order.customer_name,
-                    "phone": {"number": order.customer_phone},
-                },
-                "external_reference": str(order.id),
-                "back_urls": {
-                    "success": f"{settings.FRONTEND_URL}/sucesso?order={order.id}",
-                    "failure": f"{settings.FRONTEND_URL}/erro?order={order.id}",
-                    "pending": f"{settings.FRONTEND_URL}/pendente?order={order.id}",
-                },
-                "auto_return": "approved",
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
+
+            logger.error(f"Payment creation failed: {result}")
+            return {
+                'success': False,
+                'error': result.get("response", {}).get("message", "Erro ao criar pagamento"),
             }
-            
-            result = sdk.preference().create(preference_data)
-            
-            if result["status"] == 201:
-                preference = result["response"]
-                
-                order.payment_preference_id = preference["id"]
-                order.status = StoreOrder.OrderStatus.PROCESSING
-                order.save()
-                
-                return {
-                    'success': True,
-                    'preference_id': preference["id"],
-                    'init_point': preference["init_point"],
-                    'sandbox_init_point': preference.get("sandbox_init_point"),
+
+        # Card payment (credit/debit) via Card Payment Brick payload.
+        if normalized_method in {'card', 'credit_card', 'debit_card'}:
+            card_data = CheckoutService._extract_card_form_data(payment_payload)
+            card_token = card_data.get('token')
+            mp_payment_method_id = card_data.get('payment_method_id')
+
+            if card_token and mp_payment_method_id:
+                first_name = order.customer_name.split()[0] if order.customer_name else "Cliente"
+                last_name = " ".join(order.customer_name.split()[1:]) if order.customer_name else ""
+                card_email = card_data.get('cardholder_email') or payer_email
+
+                mp_payment_data = {
+                    "transaction_amount": float(order.total),
+                    "token": card_token,
+                    "description": f"Pedido #{order.order_number} - {order.store.name}",
+                    "installments": card_data.get('installments', 1),
+                    "payment_method_id": mp_payment_method_id,
+                    "payer": {
+                        "email": card_email,
+                        "first_name": first_name,
+                        "last_name": last_name,
+                    },
+                    "external_reference": str(order.id),
+                    "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
                 }
-            else:
-                logger.error(f"Preference creation failed: {result}")
+
+                if card_data.get('issuer_id'):
+                    mp_payment_data["issuer_id"] = str(card_data["issuer_id"])
+
+                if card_data.get('identification_type') and card_data.get('identification_number'):
+                    mp_payment_data["payer"]["identification"] = {
+                        "type": str(card_data["identification_type"]),
+                        "number": str(card_data["identification_number"]),
+                    }
+
+                result = sdk.payment().create(mp_payment_data)
+
+                if result["status"] in (200, 201):
+                    payment = result["response"]
+                    payment_status = payment.get("status", "pending")
+                    status_detail = payment.get("status_detail", "")
+                    payment_type = payment.get("payment_type_id") or normalized_method
+
+                    if payment_type not in {'credit_card', 'debit_card'}:
+                        payment_type = 'credit_card' if normalized_method == 'card' else normalized_method
+
+                    order.payment_id = str(payment.get("id", ""))
+                    order.payment_method = payment_type
+                    order.payment_preference_id = ''
+                    order.metadata = order.metadata or {}
+                    order.metadata['mp_payment_method_id'] = payment.get("payment_method_id", "")
+                    order.metadata['mp_payment_type_id'] = payment.get("payment_type_id", "")
+                    CheckoutService._apply_payment_status_to_order(order, payment_status)
+                    order.save()
+
+                    return {
+                        'success': True,
+                        'payment_id': payment.get("id"),
+                        'status': payment_status,
+                        'status_detail': status_detail,
+                        'payment_method': payment_type,
+                        'requires_redirect': False,
+                    }
+
+                logger.error(f"Card payment creation failed: {result}")
                 return {
                     'success': False,
-                    'error': result.get("response", {}).get("message", "Erro ao criar preferência"),
+                    'error': result.get("response", {}).get("message", "Erro ao processar pagamento com cartão"),
                 }
+
+            logger.warning(
+                "Card payload missing token/payment_method_id for order %s. Falling back to checkout preference.",
+                order.order_number,
+            )
+            return CheckoutService._create_checkout_preference(order, sdk, payer_email, normalized_method)
+
+        # Fallback: create a checkout preference for any future payment method.
+        return CheckoutService._create_checkout_preference(order, sdk, payer_email, normalized_method)
     
     @staticmethod
     @transaction.atomic

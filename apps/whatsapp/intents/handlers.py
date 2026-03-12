@@ -7,6 +7,7 @@ Cada handler retorna uma resposta adequada ou None para fallback.
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
+from django.conf import settings
 
 from apps.whatsapp.intents.detector import IntentType, IntentData
 from apps.automation.models import AutoMessage
@@ -613,7 +614,13 @@ class CreateOrderHandler(IntentHandler):
         """Cria pedido real no banco"""
         from apps.whatsapp.services import create_order_from_whatsapp
         
-        store_slug = getattr(self.store, 'slug', 'pastita')
+        fallback_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+        store_slug = getattr(self.store, 'slug', None) or fallback_store_slug
+        if not store_slug:
+            return HandlerResult.text(
+                "Não foi possível identificar a loja para criar o pedido. "
+                "Tente novamente em instantes."
+            )
         logger.info(f"[CreateOrderHandler] Criando pedido para {self.conversation.phone_number}")
         
         result = create_order_from_whatsapp(
@@ -817,7 +824,13 @@ class QuickOrderHandler(IntentHandler):
         # Processa itens e cria pedido
         from apps.whatsapp.services import create_order_from_whatsapp
 
-        store_slug = getattr(self.store, 'slug', 'pastita')
+        fallback_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+        store_slug = getattr(self.store, 'slug', None) or fallback_store_slug
+        if not store_slug:
+            return HandlerResult.text(
+                "Não foi possível identificar a loja para criar o pedido. "
+                "Tente novamente em instantes."
+            )
         logger.info(f"[QuickOrderHandler] Store slug: {store_slug}")
 
         # Extrai itens do texto

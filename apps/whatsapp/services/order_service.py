@@ -11,6 +11,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from django.utils import timezone
 from django.db import transaction
+from django.conf import settings
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 
@@ -97,13 +98,14 @@ class WhatsAppOrderService:
             # 3. Cria o pedido
             order_number = self._generate_order_number()
             logger.info(f"[create_order_from_cart] Criando pedido com número: {order_number}")
+            local_domain = getattr(settings, 'LOCAL_AUTH_EMAIL_DOMAIN', 'app.local')
             
             order = StoreOrder.objects.create(
                 store=self.store,
                 order_number=order_number,
                 access_token=str(uuid.uuid4()),
                 customer_name=self.customer_name,
-                customer_email=f"whatsapp_{self.phone_number}@pastita.local",
+                customer_email=f"whatsapp_{self.phone_number}@{local_domain}",
                 customer_phone=self.phone_number,
                 status=StoreOrder.OrderStatus.PENDING,
                 payment_status=StoreOrder.PaymentStatus.PENDING,

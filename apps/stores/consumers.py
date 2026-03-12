@@ -6,6 +6,7 @@ import logging
 import asyncio
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
+from django.conf import settings
 from django.contrib.auth import get_user_model
 
 logger = logging.getLogger(__name__)
@@ -208,9 +209,11 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
         
         except Store.DoesNotExist:
             logger.error(f"WebSocket access denied - store not found: {self.store_slug}")
-            # Try to create default store if it's 'pastita'
-            if self.store_slug == 'pastita':
-                logger.info("Attempting to create default pastita store...")
+            # Try to create default store if the requested slug matches configured default
+            default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+            if default_store_slug and self.store_slug == default_store_slug:
+                default_store_name = getattr(settings, 'DEFAULT_STORE_NAME', 'Default Store')
+                logger.info("Attempting to create configured default store...")
                 try:
                     from django.contrib.auth import get_user_model
                     User = get_user_model()
@@ -218,12 +221,12 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
                     owner = User.objects.filter(is_superuser=True).first() or User.objects.filter(is_staff=True).first()
                     if owner:
                         Store.objects.create(
-                            name='Pastita',
-                            slug='pastita',
+                            name=default_store_name,
+                            slug=default_store_slug,
                             status='active',
                             owner=owner
                         )
-                        logger.info("Created default pastita store")
+                        logger.info("Created configured default store")
                         return True
                 except Exception as create_error:
                     logger.error(f"Failed to create default store: {create_error}")

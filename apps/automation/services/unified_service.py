@@ -75,9 +75,14 @@ class UnifiedService:
         """Busca Store associada."""
         if self.context.store:
             return self.context.store
-        # Fallback: busca store 'pastita'
+
         from apps.stores.models import Store
-        return Store.objects.filter(slug='pastita').first()
+        default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+        if default_store_slug:
+            store = Store.objects.filter(slug=default_store_slug, status='active').first()
+            if store:
+                return store
+        return Store.objects.filter(status='active').first()
     
     def _map_intent_to_event(self, intent: IntentType) -> str:
         """Mapeia intent para event_type do AutoMessage."""

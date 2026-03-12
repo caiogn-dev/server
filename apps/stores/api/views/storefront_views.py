@@ -257,7 +257,18 @@ class StoreCheckoutView(APIView):
         
         coupon_code = request.data.get('coupon_code', '')
         notes = request.data.get('customer_notes') or request.data.get('notes', '')
-        payment_method = request.data.get('payment_method', 'pix')
+        raw_payment_method = request.data.get('payment_method', 'pix')
+        payment_payload = request.data.get('payment', {}) or {}
+        payment_method = checkout_service.normalize_payment_method(
+            raw_payment_method,
+            payment_payload,
+        )
+
+        if payment_method == 'unknown':
+            return Response(
+                {'error': f'Unsupported payment_method: {raw_payment_method}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         try:
             order = checkout_service.create_order(
@@ -270,9 +281,11 @@ class StoreCheckoutView(APIView):
             
             # Process payment if method specified
             payment_result = None
-            if payment_method and payment_method != 'cash':
+            if payment_method:
                 payment_result = checkout_service.create_payment(
-                    order, payment_method
+                    order,
+                    payment_method,
+                    payment_payload=payment_payload,
                 )
             
             # Clear cart after successful order
@@ -290,15 +303,26 @@ class StoreCheckoutView(APIView):
             # Include payment data if available
             if payment_result:
                 if payment_result.get('success'):
+                    checkout_url = (
+                        payment_result.get('checkout_url')
+                        or payment_result.get('init_point')
+                        or payment_result.get('sandbox_init_point')
+                        or payment_result.get('ticket_url')
+                    )
                     response_data['payment'] = {
                         'status': payment_result.get('status', 'pending'),
                         'payment_id': payment_result.get('payment_id'),
-                        'payment_method': payment_method,
+                        'payment_method': payment_result.get('payment_method', payment_method),
+                        'status_detail': payment_result.get('status_detail', ''),
+                        'requires_redirect': bool(payment_result.get('requires_redirect', False)),
+                        'checkout_url': checkout_url or '',
                     }
                     response_data['pix_code'] = payment_result.get('pix_code', '')
                     response_data['pix_qr_code'] = payment_result.get('pix_qr_code', '')
                     response_data['pix_ticket_url'] = payment_result.get('ticket_url', '')
                     response_data['init_point'] = payment_result.get('init_point', '')
+                    response_data['sandbox_init_point'] = payment_result.get('sandbox_init_point', '')
+                    response_data['payment_link'] = checkout_url or ''
                 else:
                     response_data['payment_error'] = payment_result.get('error', 'Erro no pagamento')
             
