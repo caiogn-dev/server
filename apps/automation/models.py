@@ -391,6 +391,19 @@ class CompanyProfile(BaseModel):
         db_column='business_type'
     )
     _description = models.TextField(blank=True, db_column='description')
+    _legacy_whatsapp_number = models.CharField(
+        max_length=20,
+        blank=True,
+        default='',
+        db_column='whatsapp_number',
+        editable=False,
+    )
+    _legacy_address = models.TextField(
+        blank=True,
+        default='',
+        db_column='address',
+        editable=False,
+    )
     
     # Website and links - can be derived from store or set manually
     website_url = models.URLField(blank=True)
