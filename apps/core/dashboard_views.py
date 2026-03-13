@@ -22,6 +22,99 @@ from apps.core.services.dashboard_stats import DashboardStatsAggregator
 logger = logging.getLogger(__name__)
 
 
+def _accessible_accounts(user):
+    """WhatsApp accounts visible to current user."""
+    queryset = WhatsAppAccount.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return queryset
+
+    return queryset.filter(
+        Q(owner=user) |
+        Q(stores__owner=user) |
+        Q(stores__staff=user) |
+        Q(company_profile__store__owner=user) |
+        Q(company_profile__store__staff=user)
+    ).distinct()
+
+
+def _accessible_stores(user, accounts_qs=None):
+    """Stores visible to current user."""
+    queryset = Store.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return queryset
+
+    filters = Q(owner=user) | Q(staff=user)
+    if accounts_qs is not None:
+        filters |= Q(whatsapp_account_id__in=accounts_qs.values_list('id', flat=True))
+
+    return queryset.filter(filters).distinct()
+
+
+def _filter_store_queryset(queryset, store_param: Optional[str]):
+    if not store_param:
+        return queryset
+
+    try:
+        store_uuid = uuid.UUID(str(store_param))
+        return queryset.filter(id=store_uuid)
+    except (ValueError, TypeError, AttributeError):
+        return queryset.filter(slug=store_param)
+
+
+def _resolve_account_scope(user, account_id: Optional[str]):
+    accounts_qs = _accessible_accounts(user)
+    if not account_id:
+        return accounts_qs, None
+
+    try:
+        account_uuid = uuid.UUID(str(account_id))
+    except (ValueError, TypeError):
+        return accounts_qs.none(), Response(
+            {'detail': 'Invalid account_id.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    scoped = accounts_qs.filter(id=account_uuid)
+    if scoped.exists():
+        return scoped, None
+
+    if WhatsAppAccount.objects.filter(id=account_uuid).exists():
+        return accounts_qs.none(), Response(
+            {'detail': 'Forbidden.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    return accounts_qs.none(), Response(
+        {'detail': 'Account not found.'},
+        status=status.HTTP_404_NOT_FOUND
+    )
+
+
+def _resolve_store_scope(user, store_param: Optional[str], accounts_qs=None):
+    if accounts_qs is None:
+        accounts_qs = _accessible_accounts(user)
+
+    stores_qs = _accessible_stores(user, accounts_qs=accounts_qs)
+    scoped = _filter_store_queryset(stores_qs, store_param)
+
+    if not store_param:
+        return scoped, None
+
+    if scoped.exists():
+        return scoped, None
+
+    if _filter_store_queryset(Store.objects.all(), store_param).exists():
+        return stores_qs.none(), Response(
+            {'detail': 'Forbidden.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    return stores_qs.none(), Response(
+        {'detail': 'Store not found.'},
+        status=status.HTTP_404_NOT_FOUND
+    )
+
+
 class DashboardOverviewView(APIView):
     """Dashboard overview with key metrics."""
     permission_classes = [IsAuthenticated]
@@ -33,30 +126,25 @@ class DashboardOverviewView(APIView):
     )
     def get(self, request):
         account_id = request.query_params.get('account_id')
+        accounts_qs, account_error = _resolve_account_scope(request.user, account_id)
+        if account_error:
+            return account_error
         
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = today_start - timedelta(days=7)
         month_start = today_start - timedelta(days=30)
 
-        # Base querysets
-        accounts_qs = WhatsAppAccount.objects.filter(is_active=True)
-        if account_id:
-            accounts_qs = accounts_qs.filter(id=account_id)
-        
         account_ids = list(accounts_qs.values_list('id', flat=True))
         
         messages_qs = Message.objects.filter(account_id__in=account_ids)
         conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
-        orders_qs = StoreOrder.objects.filter(is_active=True)
         store_param = request.query_params.get('store')
-        if store_param:
-            try:
-                import uuid as uuid_module
-                uuid_module.UUID(store_param)
-                orders_qs = orders_qs.filter(store_id=store_param)
-            except (ValueError, AttributeError):
-                orders_qs = orders_qs.filter(store__slug=store_param)
+        stores_qs, store_error = _resolve_store_scope(request.user, store_param, accounts_qs=accounts_qs)
+        if store_error:
+            return store_error
+
+        orders_qs = StoreOrder.objects.filter(is_active=True, store__in=stores_qs)
         
         # Messages metrics
         messages_today = messages_qs.filter(created_at__gte=today_start).count()
@@ -206,7 +294,11 @@ class DashboardStatsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        store = self._resolve_store(store_param)
+        stores_qs, store_error = _resolve_store_scope(request.user, store_param)
+        if store_error:
+            return store_error
+
+        store = stores_qs.first()
         if not store:
             return Response({'detail': 'Store not found.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -232,23 +324,26 @@ class DashboardActivityView(APIView):
     )
     def get(self, request):
         account_id = request.query_params.get('account_id')
-        limit = int(request.query_params.get('limit', 20))
-        
-        accounts_qs = WhatsAppAccount.objects.filter(is_active=True)
-        if account_id:
-            accounts_qs = accounts_qs.filter(id=account_id)
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 20)), 200))
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'Invalid limit.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        accounts_qs, account_error = _resolve_account_scope(request.user, account_id)
+        if account_error:
+            return account_error
         
         account_ids = list(accounts_qs.values_list('id', flat=True))
 
-        orders_qs = StoreOrder.objects.filter(is_active=True)
         store_param = request.query_params.get('store')
-        if store_param:
-            try:
-                import uuid as uuid_module
-                uuid_module.UUID(store_param)
-                orders_qs = orders_qs.filter(store_id=store_param)
-            except (ValueError, AttributeError):
-                orders_qs = orders_qs.filter(store__slug=store_param)
+        stores_qs, store_error = _resolve_store_scope(request.user, store_param, accounts_qs=accounts_qs)
+        if store_error:
+            return store_error
+
+        orders_qs = StoreOrder.objects.filter(is_active=True, store__in=stores_qs)
 
         # Recent messages
         recent_messages = Message.objects.filter(
@@ -321,22 +416,25 @@ class DashboardChartsView(APIView):
     )
     def get(self, request):
         account_id = request.query_params.get('account_id')
-        days = int(request.query_params.get('days', 7))
-        
-        accounts_qs = WhatsAppAccount.objects.filter(is_active=True)
-        if account_id:
-            accounts_qs = accounts_qs.filter(id=account_id)
+        try:
+            days = max(1, min(int(request.query_params.get('days', 7)), 90))
+        except (TypeError, ValueError):
+            return Response(
+                {'detail': 'Invalid days parameter.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        accounts_qs, account_error = _resolve_account_scope(request.user, account_id)
+        if account_error:
+            return account_error
         
         account_ids = list(accounts_qs.values_list('id', flat=True))
-        orders_qs = StoreOrder.objects.filter(is_active=True)
         store_param = request.query_params.get('store')
-        if store_param:
-            try:
-                import uuid as uuid_module
-                uuid_module.UUID(store_param)
-                orders_qs = orders_qs.filter(store_id=store_param)
-            except (ValueError, AttributeError):
-                orders_qs = orders_qs.filter(store__slug=store_param)
+        stores_qs, store_error = _resolve_store_scope(request.user, store_param, accounts_qs=accounts_qs)
+        if store_error:
+            return store_error
+
+        orders_qs = StoreOrder.objects.filter(is_active=True, store__in=stores_qs)
         
         now = timezone.now()
         start_date = now - timedelta(days=days)

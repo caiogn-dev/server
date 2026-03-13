@@ -417,3 +417,13 @@ def sync_message_statuses():
             message.failed_at = timezone.now()
             message.save()
             logger.warning(f"Message marked as failed due to timeout: {message.id}")
+
+
+# Legacy task-name compatibility (keeps existing Celery beat/task names working)
+from .legacy_tasks import (  # noqa: E402,F401
+    send_message_async,
+    process_pending_webhook_events,
+    retry_failed_webhook_events,
+    send_campaign_message,
+    schedule_campaign_messages,
+)

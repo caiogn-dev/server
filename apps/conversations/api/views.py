@@ -3,6 +3,7 @@ Conversation API views.
 """
 import logging
 from django.utils import timezone
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -26,6 +27,20 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+def _accessible_conversations(user):
+    queryset = Conversation.objects.select_related('account', 'assigned_agent').filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return queryset
+
+    return queryset.filter(
+        Q(account__owner=user) |
+        Q(account__stores__owner=user) |
+        Q(account__stores__staff=user) |
+        Q(account__company_profile__store__owner=user) |
+        Q(account__company_profile__store__staff=user)
+    ).distinct()
+
+
 @extend_schema_view(
     list=extend_schema(summary="List conversations"),
     retrieve=extend_schema(summary="Get conversation details"),
@@ -38,9 +53,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'mode', 'assigned_agent']
 
     def get_queryset(self):
-        return Conversation.objects.select_related(
-            'account', 'assigned_agent'
-        ).filter(is_active=True)
+        return _accessible_conversations(self.request.user)
 
     @extend_schema(
         summary="Switch to human mode",
@@ -50,6 +63,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def switch_to_human(self, request, pk=None):
         """Switch conversation to human mode."""
+        conversation = self.get_object()
         serializer = SwitchModeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -66,7 +80,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
         
-        conversation = service.switch_to_human(str(pk), agent)
+        conversation = service.switch_to_human(str(conversation.id), agent)
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -76,8 +90,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def switch_to_auto(self, request, pk=None):
         """Switch conversation to auto mode."""
+        conversation = self.get_object()
         service = ConversationService()
-        conversation = service.switch_to_auto(str(pk))
+        conversation = service.switch_to_auto(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -88,6 +103,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def assign_agent(self, request, pk=None):
         """Assign an agent to the conversation."""
+        conversation = self.get_object()
         serializer = AssignAgentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
@@ -100,7 +116,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
         
         service = ConversationService()
-        conversation = service.assign_agent(str(pk), agent)
+        conversation = service.assign_agent(str(conversation.id), agent)
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -110,8 +126,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def unassign_agent(self, request, pk=None):
         """Unassign agent from the conversation."""
+        conversation = self.get_object()
         service = ConversationService()
-        conversation = service.unassign_agent(str(pk))
+        conversation = service.unassign_agent(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -121,8 +138,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
         """Close the conversation."""
+        conversation = self.get_object()
         service = ConversationService()
-        conversation = service.close_conversation(str(pk))
+        conversation = service.close_conversation(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -132,8 +150,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def resolve(self, request, pk=None):
         """Mark conversation as resolved."""
+        conversation = self.get_object()
         service = ConversationService()
-        conversation = service.resolve_conversation(str(pk))
+        conversation = service.resolve_conversation(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -143,8 +162,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reopen(self, request, pk=None):
         """Reopen the conversation."""
+        conversation = self.get_object()
         service = ConversationService()
-        conversation = service.reopen_conversation(str(pk))
+        conversation = service.reopen_conversation(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -154,8 +174,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def notes(self, request, pk=None):
         """Get notes for the conversation."""
+        conversation = self.get_object()
         service = ConversationService()
-        notes = service.get_notes(str(pk))
+        notes = service.get_notes(str(conversation.id))
         return Response(ConversationNoteSerializer(notes, many=True).data)
 
     @extend_schema(
@@ -166,12 +187,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def add_note(self, request, pk=None):
         """Add a note to the conversation."""
+        conversation = self.get_object()
         serializer = AddNoteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         service = ConversationService()
         note = service.add_note(
-            str(pk),
+            str(conversation.id),
             serializer.validated_data['content'],
             request.user
         )
@@ -188,12 +210,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def update_context(self, request, pk=None):
         """Update conversation context."""
+        conversation = self.get_object()
         serializer = UpdateContextSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         service = ConversationService()
         conversation = service.update_context(
-            str(pk),
+            str(conversation.id),
             serializer.validated_data['context']
         )
         return Response(ConversationSerializer(conversation).data)
@@ -206,11 +229,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def add_tag(self, request, pk=None):
         """Add a tag to the conversation."""
+        conversation = self.get_object()
         serializer = TagSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         service = ConversationService()
-        conversation = service.add_tag(str(pk), serializer.validated_data['tag'])
+        conversation = service.add_tag(str(conversation.id), serializer.validated_data['tag'])
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -221,11 +245,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def remove_tag(self, request, pk=None):
         """Remove a tag from the conversation."""
+        conversation = self.get_object()
         serializer = TagSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         service = ConversationService()
-        conversation = service.remove_tag(str(pk), serializer.validated_data['tag'])
+        conversation = service.remove_tag(str(conversation.id), serializer.validated_data['tag'])
         return Response(ConversationSerializer(conversation).data)
 
     @extend_schema(
@@ -277,6 +302,31 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Enforce account ownership/access
+        from apps.whatsapp.models import WhatsAppAccount
+        account_exists = WhatsAppAccount.objects.filter(id=account_id).exists()
+        if not account_exists:
+            return Response(
+                {'error': 'account not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not (request.user.is_superuser or request.user.is_staff):
+            has_access = WhatsAppAccount.objects.filter(
+                id=account_id
+            ).filter(
+                Q(owner=request.user) |
+                Q(stores__owner=request.user) |
+                Q(stores__staff=request.user) |
+                Q(company_profile__store__owner=request.user) |
+                Q(company_profile__store__staff=request.user)
+            ).exists()
+            if not has_access:
+                return Response(
+                    {'error': 'forbidden'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         service = ConversationService()
         stats = service.get_conversation_stats(account_id)
         return Response(stats)

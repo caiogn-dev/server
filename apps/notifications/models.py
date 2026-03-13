@@ -66,6 +66,7 @@ class Notification(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
+        db_table = 'notifications'
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['user', 'is_read']),
@@ -112,6 +113,9 @@ class NotificationPreference(models.Model):
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'notification_preferences'
     
     def __str__(self):
         return f"Preferences for {self.user.username}"
@@ -136,6 +140,7 @@ class PushSubscription(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
+        db_table = 'push_subscriptions'
         unique_together = ['user', 'endpoint']
     
     def __str__(self):

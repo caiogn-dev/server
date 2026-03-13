@@ -476,8 +476,6 @@ class MessageContext(models.Model):
     - Thread de conversa
     """
     
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    
     # Mensagem que tem contexto
     message = models.OneToOneField(
         Message,
@@ -499,6 +497,7 @@ class MessageContext(models.Model):
     # Conteúdo da mensagem citada (snapshot)
     quoted_message_content = models.TextField(
         blank=True,
+        null=True,
         verbose_name='Conteúdo da Mensagem Citada'
     )
     
@@ -542,9 +541,9 @@ class MessageContext(models.Model):
         verbose_name = 'Contexto de Mensagem'
         verbose_name_plural = 'Contextos de Mensagens'
         indexes = [
-            models.Index(fields=['quoted_message_id']),
-            models.Index(fields=['is_forwarded']),
-            models.Index(fields=['is_frequently_forwarded']),
+            models.Index(fields=['quoted_message_id'], name='wh_msgctx_quoted_id_idx'),
+            models.Index(fields=['is_forwarded'], name='wh_msgctx_is_forwarded_idx'),
+            models.Index(fields=['is_frequently_forwarded'], name='wh_msgctx_is_freq_fwd_idx'),
         ]
     
     def __str__(self):
@@ -675,9 +674,9 @@ class AdvancedTemplate(models.Model):
         verbose_name_plural = 'Templates Avançados'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['template_type', 'status']),
-            models.Index(fields=['account', 'status']),
-            models.Index(fields=['meta_template_id']),
+            models.Index(fields=['template_type', 'status'], name='wh_advtemp_type_status_idx'),
+            models.Index(fields=['account', 'status'], name='wh_advtemp_account_status_idx'),
+            models.Index(fields=['meta_template_id'], name='wh_advtemp_meta_id_idx'),
         ]
     
     def __str__(self):
@@ -751,9 +750,9 @@ class AdvancedTemplateLog(models.Model):
         verbose_name_plural = 'Logs de Templates Avançados'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['template', 'status']),
-            models.Index(fields=['to_number', 'status']),
-            models.Index(fields=['whatsapp_message_id']),
+            models.Index(fields=['template', 'status'], name='wh_atlog_tpl_status_idx'),
+            models.Index(fields=['to_number', 'status'], name='wh_atlog_to_status_idx'),
+            models.Index(fields=['whatsapp_message_id'], name='wh_atlog_msg_id_idx'),
         ]
     
     def __str__(self):
@@ -831,9 +830,9 @@ class WhatsAppAnalytics(models.Model):
         ordering = ['-date']
         unique_together = ['account', 'date']
         indexes = [
-            models.Index(fields=['account', 'date']),
-            models.Index(fields=['date']),
-            models.Index(fields=['quality_rating']),
+            models.Index(fields=['account', 'date'], name='wh_analytics_account_date_idx'),
+            models.Index(fields=['date'], name='wh_analytics_date_idx'),
+            models.Index(fields=['quality_rating'], name='wh_analytics_quality_idx'),
         ]
     
     def __str__(self):
@@ -924,4 +923,3 @@ class WhatsAppAnalyticsReport(models.Model):
     
     def __str__(self):
         return self.name
-

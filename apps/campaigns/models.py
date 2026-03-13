@@ -92,6 +92,7 @@ class Campaign(models.Model):
     is_active = models.BooleanField(default=True)
     
     class Meta:
+        db_table = 'campaigns'
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['account', 'status']),
@@ -160,6 +161,7 @@ class CampaignRecipient(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
+        db_table = 'campaign_recipients'
         unique_together = ['campaign', 'phone_number']
         indexes = [
             models.Index(fields=['campaign', 'status']),
@@ -207,6 +209,7 @@ class ContactList(models.Model):
     is_active = models.BooleanField(default=True)
     
     class Meta:
+        db_table = 'contact_lists'
         ordering = ['-created_at']
     
     def __str__(self):

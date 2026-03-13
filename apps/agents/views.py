@@ -5,12 +5,15 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
 from django.conf import settings
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from .models import Agent, AgentConversation, AgentMessage
 from .services import LangchainService, AgentService
+from apps.whatsapp.models import WhatsAppAccount
 from .serializers import (
     AgentListSerializer,
     AgentDetailSerializer,
@@ -20,6 +23,33 @@ from .serializers import (
     ProcessMessageResponseSerializer,
     AgentStatsSerializer,
 )
+
+
+def _accessible_whatsapp_accounts(user):
+    queryset = WhatsAppAccount.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return queryset
+
+    return queryset.filter(
+        Q(owner=user) |
+        Q(stores__owner=user) |
+        Q(stores__staff=user) |
+        Q(company_profile__store__owner=user) |
+        Q(company_profile__store__staff=user)
+    ).distinct()
+
+
+def _accessible_agents(user):
+    queryset = Agent.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return queryset
+
+    account_ids = _accessible_whatsapp_accounts(user).values_list('id', flat=True)
+    return queryset.filter(
+        Q(accounts__id__in=account_ids) |
+        Q(whatsapp_accounts__id__in=account_ids) |
+        Q(company_profiles__account__id__in=account_ids)
+    ).distinct()
 
 
 @extend_schema_view(
@@ -36,7 +66,29 @@ class AgentViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'provider']
     
     def get_queryset(self):
-        return Agent.objects.filter(is_active=True)
+        return _accessible_agents(self.request.user)
+
+    def _enforce_account_scope(self, serializer):
+        """Non-admin users can only attach agents to accessible WhatsApp accounts."""
+        if self.request.user.is_superuser or self.request.user.is_staff:
+            return
+
+        accounts = serializer.validated_data.get('accounts')
+        if accounts is None:
+            return
+
+        allowed_ids = set(_accessible_whatsapp_accounts(self.request.user).values_list('id', flat=True))
+        requested_ids = {account.id for account in accounts}
+        if not requested_ids.issubset(allowed_ids):
+            raise PermissionDenied('You do not have access to one or more selected accounts.')
+
+    def perform_create(self, serializer):
+        self._enforce_account_scope(serializer)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._enforce_account_scope(serializer)
+        serializer.save()
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -198,8 +250,10 @@ class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = 'session_id'
     
     def get_queryset(self):
+        agents_qs = _accessible_agents(self.request.user)
         return AgentConversation.objects.filter(
-            agent__is_active=True
+            agent__is_active=True,
+            agent__in=agents_qs,
         ).order_by('-last_message_at')
     
     @extend_schema(summary="Histórico da conversa")

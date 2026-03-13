@@ -57,8 +57,8 @@ class UnifiedService:
         self.account = account
         self.conversation = conversation
         self.debug = debug
-        self.use_llm = use_llm  # Mantido para compatibilidade
-        self.detector = IntentDetector()
+        self.use_llm = use_llm
+        self.detector = IntentDetector(use_llm_fallback=use_llm)
         self.context = AutomationContextService.resolve(
             account=account,
             conversation=conversation,
@@ -75,9 +75,13 @@ class UnifiedService:
         """Busca Store associada."""
         if self.context.store:
             return self.context.store
-        # Fallback: busca store 'pastita'
         from apps.stores.models import Store
-        return Store.objects.filter(slug='pastita').first()
+        default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
+        if default_store_slug:
+            store = Store.objects.filter(slug=default_store_slug, status='active').first()
+            if store:
+                return store
+        return Store.objects.filter(status='active').first()
     
     def _map_intent_to_event(self, intent: IntentType) -> str:
         """Mapeia intent para event_type do AutoMessage."""
@@ -273,9 +277,16 @@ class UnifiedService:
             )
         
         # 3. Se não tem template, chama LLM
+        if not self.use_llm:
+            self.stats['fallback'] += 1
+            return UnifiedResponse(
+                content="Posso continuar com as opcoes do menu ou encaminhar voce para um atendente humano.",
+                source=ResponseSource.FALLBACK
+            )
+
         session_data = self._get_session_data()
         context = self._build_context(intent_data, session_data)
-        
+
         llm_response = self._call_llm(message_text, context)
         
         if llm_response:

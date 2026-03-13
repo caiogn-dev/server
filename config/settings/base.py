@@ -12,6 +12,14 @@ SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'y
 
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """Parse boolean environment variables consistently."""
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return default
+    return raw_value.strip().lower() in {'1', 'true', 'yes', 'on'}
+
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else ['localhost', '127.0.0.1']
@@ -277,6 +285,21 @@ WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', 'your-verify-token')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
+WHATSAPP_ENABLE_LLM_FALLBACK = os.environ.get('WHATSAPP_ENABLE_LLM_FALLBACK', 'false').strip().lower() in {
+    '1', 'true', 'yes', 'on'
+}
+WHATSAPP_FORCE_DISABLE_LLM = os.environ.get('WHATSAPP_FORCE_DISABLE_LLM', 'false').strip().lower() in {
+    '1', 'true', 'yes', 'on'
+}
+DEFAULT_STORE_SLUG = os.environ.get('DEFAULT_STORE_SLUG', '').strip()
+
+_websocket_allowed_origins_env = os.environ.get('WEBSOCKET_ALLOWED_ORIGINS', '')
+WEBSOCKET_ALLOWED_ORIGINS = [
+    origin.strip() for origin in _websocket_allowed_origins_env.split(',') if origin.strip()
+]
+WEBSOCKET_ALLOW_ALL_ORIGINS = os.environ.get('WEBSOCKET_ALLOW_ALL_ORIGINS', 'false').strip().lower() in {
+    '1', 'true', 'yes', 'on'
+}
 
 # Default WhatsApp account configuration (existing account lookup + optional auto-create)
 DEFAULT_WHATSAPP_ACCOUNT_NAME = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_NAME', 'Pastita WhatsApp Business')
@@ -492,9 +515,16 @@ AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
 AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME', '')
 AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'sa-east-1')
 
-USE_S3 = bool(AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and AWS_STORAGE_BUCKET_NAME)
+USE_S3 = _env_bool('USE_S3', False) and bool(
+    AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY and AWS_STORAGE_BUCKET_NAME
+)
+SERVE_MEDIA_FILES = _env_bool('SERVE_MEDIA_FILES', not USE_S3)
 
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = Path(os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media')))
+MEDIA_URL = os.environ.get('MEDIA_URL', '/media/').strip() or '/media/'
+if not MEDIA_URL.endswith('/'):
+    MEDIA_URL = f'{MEDIA_URL}/'
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 if USE_S3:
     AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com'
@@ -512,7 +542,6 @@ if USE_S3:
         },
     }
 else:
-    MEDIA_URL = '/media/'
     STORAGES = {
         "default": {
             "BACKEND": "django.core.files.storage.FileSystemStorage",

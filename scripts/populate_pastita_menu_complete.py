@@ -17,14 +17,32 @@ if __name__ == '__main__':
     django.setup()
 
 from decimal import Decimal
+from pathlib import Path
+from django.conf import settings
 from django.utils.text import slugify
 from apps.stores.models import (
     Store, StoreCategory, StoreProduct, StoreProductType
 )
+from apps.core.utils import build_absolute_media_url
 
 # Configuração
-S3_BASE_URL = "https://pastita-final.s3.sa-east-1.amazonaws.com/products/"
-CATEGORY_IMAGE_URL = "https://pastita-final.s3.sa-east-1.amazonaws.com/categories/"
+def build_seed_media_url(folder: str, filename: str) -> str:
+    """Resolve menu seed images from local media or an explicit base URL."""
+    if not filename:
+        return ''
+
+    explicit_base = os.environ.get('STORE_SEED_MEDIA_BASE_URL', '').strip().rstrip('/')
+    if explicit_base:
+        return f"{explicit_base}/{folder}/{filename}"
+
+    relative_path = Path('seeds') / folder / filename
+    local_file = Path(settings.MEDIA_ROOT) / relative_path
+    if local_file.exists():
+        return build_absolute_media_url(
+            f"{settings.MEDIA_URL.rstrip('/')}/{relative_path.as_posix()}"
+        )
+
+    return ''
 
 # =============================================================================
 # TIPOS DE PRODUTO (Product Types)
@@ -429,7 +447,7 @@ def populate_complete_menu():
     print("\n📁 [2/4] Criando Categorias...")
     categories = {}
     for cat_data in CATEGORIES:
-        image_url = f"{CATEGORY_IMAGE_URL}{cat_data['image']}" if cat_data.get('image') else ""
+        image_url = build_seed_media_url('categories', cat_data.get('image', ''))
         category, created = StoreCategory.objects.update_or_create(
             store=store,
             slug=cat_data["slug"],
@@ -457,7 +475,7 @@ def populate_complete_menu():
         product_type = product_types.get(prod_data["product_type_slug"]) if prod_data.get("product_type_slug") else None
         
         slug = slugify(prod_data["name"])
-        image_url = f"{S3_BASE_URL}{prod_data['image']}"
+        image_url = build_seed_media_url('products', prod_data.get('image', ''))
         
         # Campos do modelo StoreProduct
         defaults = {

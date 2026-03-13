@@ -62,6 +62,9 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
       - AWS_STORAGE_BUCKET_NAME=${AWS_STORAGE_BUCKET_NAME}
       - AWS_S3_REGION_NAME=${AWS_S3_REGION_NAME}
+      - USE_S3=${USE_S3:-false}
+      - SERVE_MEDIA_FILES=${SERVE_MEDIA_FILES:-true}
+      - MEDIA_URL=${MEDIA_URL:-/media/}
       - DEBUG=False
     volumes:
       - static_files:/app/staticfiles
@@ -98,6 +101,8 @@ services:
       - MERCADO_PAGO_WEBHOOK_SECRET=${MERCADO_PAGO_WEBHOOK_SECRET}
       - RESEND_API_KEY=${RESEND_API_KEY}
       - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL}
+      - USE_S3=${USE_S3:-false}
+      - MEDIA_URL=${MEDIA_URL:-/media/}
     depends_on:
       db:
         condition: service_healthy
@@ -122,6 +127,8 @@ services:
       - DATABASE_URL=${DATABASE_URL}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - USE_S3=${USE_S3:-false}
+      - MEDIA_URL=${MEDIA_URL:-/media/}
     depends_on:
       celery:
         condition: service_healthy

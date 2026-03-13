@@ -14,11 +14,11 @@ Webhooks:
 - /webhooks/v1/{provider}/ - Unified webhook endpoints
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.http import HttpResponse
 from django.conf import settings
-from django.conf.urls.static import static
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
+from django.views.static import serve
 
 from apps.core.dashboard_views import DashboardStatsView
 from apps.core.sse_views import (
@@ -101,6 +101,14 @@ urlpatterns = [
     path('webhooks/v1/whatsapp/', include('apps.webhooks.urls')),  # With trailing slash for regular webhooks
 ]
 
-# Serve media files when not using S3
-if not getattr(settings, 'USE_S3', False):
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve media files from local storage when explicitly enabled.
+# In Docker production, nginx serves /media/ directly from the shared volume.
+if getattr(settings, 'SERVE_MEDIA_FILES', False) and not getattr(settings, 'USE_S3', False):
+    media_prefix = settings.MEDIA_URL.lstrip('/').rstrip('/')
+    urlpatterns += [
+        re_path(
+            rf'^{media_prefix}/(?P<path>.*)$',
+            serve,
+            {'document_root': settings.MEDIA_ROOT},
+        ),
+    ]

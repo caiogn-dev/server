@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 
 import time
+from django.conf import settings
 
 from apps.whatsapp.intents.detector import IntentDetector, IntentType, intent_detector
 from apps.whatsapp.intents.handlers import (
@@ -65,7 +66,7 @@ class WhatsAppAutomationService:
         self,
         account,
         conversation,
-        use_llm: bool = False,  # DESATIVADO por padrão
+        use_llm: bool = False,
         enable_interactive: bool = True,
         debug: bool = False
     ):
@@ -73,18 +74,21 @@ class WhatsAppAutomationService:
         Args:
             account: WhatsAppAccount
             conversation: WhatsAppConversation
-            use_llm: DESATIVADO - Não usa LLM para evitar alucinações
+            use_llm: Habilita fallback com LLM quando necessário
             enable_interactive: Se True, usa botões/listas da Meta API
             debug: Se True, loga informações detalhadas
         """
         self.account = account
         self.conversation = conversation
-        self.use_llm = False  # SEMPRE False - não usa LLM
+        force_disable_llm = str(getattr(settings, 'WHATSAPP_FORCE_DISABLE_LLM', 'false')).lower() in {
+            '1', 'true', 'yes', 'on'
+        }
+        self.use_llm = bool(use_llm) and not force_disable_llm
         self.enable_interactive = enable_interactive
         self.debug = debug
         
-        # Detector SEM LLM fallback
-        self.detector = IntentDetector(use_llm_fallback=False)
+        # Detector com fallback configurável
+        self.detector = IntentDetector(use_llm_fallback=self.use_llm)
         self.whatsapp_service = WhatsAppAPIService(account)
         
         # Gerenciador de sessão para manter contexto
@@ -394,7 +398,7 @@ class WhatsAppAutomationService:
         # USA NVIDIA DIRETAMENTE - Não usa o agente configurado
         nvidia_key = getattr(settings, 'NVIDIA_API_KEY', None)
         if nvidia_key:
-            logger.info("[Automation] Using NVIDIA AI directly (not Moonshot!)")
+            logger.info("[Automation] Using NVIDIA AI directly")
             try:
                 # Usa o melhor modelo da NVIDIA
                 model_name = getattr(settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct')
@@ -409,20 +413,24 @@ class WhatsAppAutomationService:
                     max_tokens=150  # Limita respostas longas
                 )
                 
+                company_name = (
+                    getattr(getattr(self.account, 'company_profile', None), 'company_name', None)
+                    or getattr(self.account, 'name', None)
+                    or "nossa loja"
+                )
+
                 # Contexto simples e direto
                 prompt = ChatPromptTemplate.from_messages([
-                    ("system", """Você é um atendente simpático da Pastita - Massas Artesanais.
+                    ("system", f"""Você é um atendente simpático da {company_name}.
 
 REGRAS IMPORTANTES:
 1. Responda de forma CURTA e direta (máximo 2-3 frases)
 2. Seja humano e simpático, não robótico
 3. Se o cliente quiser pedir, pergunte quantos itens
-4. Não invente informações - só fale do cardápio se souber
-5. Não escreva textos longos!
-
-Exemplo de resposta boa: "Oi! 😊 Quer fazer um pedido hoje? Temos rondelli de frango, presunto e 4 queijos. Quantos você gostaria?"
-
-Exemplo de resposta ruim: Textos longos com muitas seções e informações desnecessárias."""),
+4. Não invente informações de cardápio/preço/estoque/prazo
+5. Se não souber, diga que vai verificar com o sistema ou atendente humano
+6. Não escreva textos longos!
+"""),
                     ("human", "{message}")
                 ])
                 

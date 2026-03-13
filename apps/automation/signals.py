@@ -4,10 +4,24 @@ Signals for Automation app.
 Handles automatic creation and linking of CompanyProfile with Store and WhatsAppAccount.
 """
 import logging
+from django.db import connection
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
 logger = logging.getLogger(__name__)
+
+
+def _company_profile_table_ready() -> bool:
+    """
+    Guard post_save hooks during deploys where code is ahead of the database.
+
+    Store creation must not fail just because the automation schema has not been
+    migrated yet.
+    """
+    try:
+        return 'company_profiles' in connection.introspection.table_names()
+    except Exception:
+        return False
 
 
 @receiver(post_save, sender='stores.Store')
@@ -18,7 +32,15 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
     If the store has a whatsapp_account, also link the profile to that account.
     """
     from .models import CompanyProfile
-    
+
+    if not _company_profile_table_ready():
+        logger.warning(
+            "Skipping CompanyProfile sync for Store %s because table %s is not available yet.",
+            instance.pk,
+            CompanyProfile._meta.db_table,
+        )
+        return
+
     try:
         # Check if store already has a profile
         if hasattr(instance, 'automation_profile') and instance.automation_profile:
@@ -75,7 +97,15 @@ def create_or_link_company_profile_for_account(sender, instance, created, **kwar
     If the account is linked to a Store (via stores relationship), use that store's data.
     """
     from .models import CompanyProfile
-    
+
+    if not _company_profile_table_ready():
+        logger.warning(
+            "Skipping CompanyProfile sync for WhatsAppAccount %s because table %s is not available yet.",
+            instance.pk,
+            CompanyProfile._meta.db_table,
+        )
+        return
+
     try:
         # Check if account already has a profile
         if hasattr(instance, 'company_profile') and instance.company_profile:

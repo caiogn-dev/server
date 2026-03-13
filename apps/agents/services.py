@@ -456,6 +456,56 @@ class LangchainService:
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             raise BaseAPIException(f"Erro ao processar mensagem: {str(e)}")
+
+    def get_conversation_history(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Return serialized conversation history from Redis memory.
+        """
+        if not session_id:
+            return []
+
+        memory = self._get_memory(session_id)
+        if not memory:
+            return []
+
+        try:
+            messages = memory.messages[-max(1, int(limit)):]
+            history: List[Dict[str, Any]] = []
+
+            for msg in messages:
+                role = 'assistant'
+                if isinstance(msg, HumanMessage):
+                    role = 'user'
+                elif isinstance(msg, SystemMessage):
+                    role = 'system'
+
+                history.append({
+                    'role': role,
+                    'content': getattr(msg, 'content', '') or '',
+                })
+
+            return history
+        except Exception as e:
+            logger.error(f"Error retrieving conversation history for session {session_id}: {e}")
+            return []
+
+    def clear_memory(self, session_id: str) -> bool:
+        """
+        Clear Redis-backed memory for a specific session.
+        """
+        if not session_id:
+            return False
+
+        memory = self._get_memory(session_id)
+        if not memory:
+            return False
+
+        try:
+            memory.clear()
+            return True
+        except Exception as e:
+            logger.error(f"Error clearing memory for session {session_id}: {e}")
+            return False
     
     def process_message_stream(
         self,

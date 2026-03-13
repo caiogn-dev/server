@@ -403,7 +403,9 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"[post_process] Error updating contact name: {e}")
 
-        # ========== NÍVEL 1: LLM ORCHESTRATOR (LLM SEMPRE ATIVO) ==========
+        llm_enabled = self._is_llm_enabled_for_account(event.account, message.conversation)
+
+        # ========== NÍVEL 1: ORQUESTRADOR UNIFICADO (LLM OPCIONAL) ==========
         llm_response = None
         llm_error = None
         
@@ -417,7 +419,7 @@ class WebhookService:
                     service = LLMOrchestratorService(
                         account=event.account,
                         conversation=message.conversation,
-                        use_llm=True,  # Sempre ativo
+                        use_llm=llm_enabled,
                         debug=False
                     )
                     response = service.process_message(message.text_body or '')
@@ -435,39 +437,45 @@ class WebhookService:
                 logger.warning("[LLMOrchestrator] Timeout")
                 llm_error = TimeoutError("LLM orchestrator timeout")
             
-            # Processa resposta do LLM
+            # Processa resposta do orquestrador
             if llm_response and isinstance(llm_response, UnifiedResponse):
+                source = getattr(getattr(llm_response, 'source', None), 'value', '')
+
+                # Se retornou fallback com LLM desabilitada, tenta níveis determinísticos antes de responder.
+                if source == 'fallback' and not llm_enabled:
+                    logger.info("[LLMOrchestrator] Fallback skipped (LLM disabled), trying deterministic handlers")
+                else:
                 # Se tem botões/interativo, envia mensagem interativa
-                if llm_response.buttons or llm_response.interactive_type:
-                    try:
-                        self._send_unified_interactive(event, message, llm_response)
-                        logger.info("[LLMOrchestrator] Interactive response sent successfully")
-                        return  # Sucesso!
-                    except Exception as e:
-                        logger.error(f"[LLMOrchestrator] Failed to send interactive: {e}")
-                
-                # Se tem conteúdo de texto, envia mensagem
-                if llm_response.content:
-                    try:
-                        from ..tasks import send_agent_response
-                        send_agent_response.delay(
-                            str(event.account.id),
-                            message.from_number,
-                            llm_response.content,
-                            str(message.whatsapp_message_id)
-                        )
-                        logger.info("[LLMOrchestrator] Response queued successfully")
-                        return  # Sucesso!
-                    except Exception as e:
-                        logger.error(f"[LLMOrchestrator] Failed to queue response: {e}")
-                        # Continua para fallback
+                    if llm_response.buttons or getattr(llm_response, 'interactive_type', None):
+                        try:
+                            self._send_unified_interactive(event, message, llm_response)
+                            logger.info("[LLMOrchestrator] Interactive response sent successfully")
+                            return  # Sucesso!
+                        except Exception as e:
+                            logger.error(f"[LLMOrchestrator] Failed to send interactive: {e}")
+
+                    # Se tem conteúdo de texto, envia mensagem
+                    if llm_response.content:
+                        try:
+                            from ..tasks import send_agent_response
+                            send_agent_response.delay(
+                                str(event.account.id),
+                                message.from_number,
+                                llm_response.content,
+                                str(message.whatsapp_message_id)
+                            )
+                            logger.info("[LLMOrchestrator] Response queued successfully")
+                            return  # Sucesso!
+                        except Exception as e:
+                            logger.error(f"[LLMOrchestrator] Failed to queue response: {e}")
+                            # Continua para fallback
                     
         except ImportError as e:
             logger.warning(f"[LLMOrchestrator] Import error (module not ready): {e}")
         except Exception as e:
             logger.warning(f"[LLMOrchestrator] Unexpected error: {e}")
 
-        # ========== NÍVEL 2: WhatsAppAutomationService (sistema anterior) ==========
+        # ========== NÍVEL 2: WhatsAppAutomationService (determinístico) ==========
         intent_response = None
         intent_error = None
         
@@ -481,7 +489,7 @@ class WebhookService:
                     service = WhatsAppAutomationService(
                         account=event.account,
                         conversation=message.conversation,
-                        use_llm=True,
+                        use_llm=llm_enabled,
                         enable_interactive=True,
                         debug=False
                     )
@@ -594,6 +602,29 @@ class WebhookService:
                     logger.debug(f"[AI Agent] No default agent configured for account: {event.account.id}")
             except Exception as e:
                 logger.error(f"[AI Agent] Failed to enqueue task: {e}", exc_info=True)
+
+    def _is_llm_enabled_for_account(self, account: WhatsAppAccount, conversation=None) -> bool:
+        """
+        Decide if LLM fallback should be enabled for the current account/conversation.
+
+        Priority:
+        1. Human mode conversation => disabled
+        2. Global env flag (WHATSAPP_ENABLE_LLM_FALLBACK=true)
+        3. Company profile explicit AI enable + default agent
+        4. Account default agent + auto_response_enabled
+        """
+        if conversation and getattr(conversation, 'mode', None) == 'human':
+            return False
+
+        env_flag = str(getattr(settings, 'WHATSAPP_ENABLE_LLM_FALLBACK', 'false')).strip().lower()
+        if env_flag in {'1', 'true', 'yes', 'on'}:
+            return True
+
+        profile = getattr(account, 'company_profile', None)
+        if profile and getattr(profile, 'use_ai_agent', False) and getattr(profile, 'default_agent_id', None):
+            return True
+
+        return bool(getattr(account, 'auto_response_enabled', False) and getattr(account, 'default_agent_id', None))
 
     def _send_unified_interactive(self, event, message, unified_response) -> None:
         """Envia mensagem interativa a partir da resposta unificada."""

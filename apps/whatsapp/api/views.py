@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from ..models import WhatsAppAccount, Message, MessageTemplate
 from ..services import MessageService, WhatsAppAPIService
@@ -31,6 +32,20 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+def _accessible_accounts(user):
+    queryset = WhatsAppAccount.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return queryset
+
+    return queryset.filter(
+        Q(owner=user) |
+        Q(stores__owner=user) |
+        Q(stores__staff=user) |
+        Q(company_profile__store__owner=user) |
+        Q(company_profile__store__staff=user)
+    ).distinct()
+
+
 @extend_schema_view(
     list=extend_schema(summary="List WhatsApp accounts"),
     retrieve=extend_schema(summary="Get WhatsApp account details"),
@@ -46,7 +61,7 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        return _accessible_accounts(self.request.user)
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -299,7 +314,10 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
-        queryset = Message.objects.select_related('account', 'conversation').all()
+        accessible_ids = _accessible_accounts(self.request.user).values_list('id', flat=True)
+        queryset = Message.objects.select_related('account', 'conversation').filter(
+            account_id__in=accessible_ids
+        )
         
         # Filter by phone_number (from_number OR to_number)
         phone_number = self.request.query_params.get('phone_number')
@@ -501,4 +519,8 @@ class MessageTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'status', 'category']
 
     def get_queryset(self):
-        return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        accessible_ids = _accessible_accounts(self.request.user).values_list('id', flat=True)
+        return MessageTemplate.objects.select_related('account').filter(
+            is_active=True,
+            account_id__in=accessible_ids,
+        )

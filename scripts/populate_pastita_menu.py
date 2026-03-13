@@ -19,12 +19,31 @@ if __name__ == '__main__':
     django.setup()
 
 from decimal import Decimal
+from pathlib import Path
+from django.conf import settings
 from django.utils.text import slugify
 from apps.stores.models import Store, StoreCategory, StoreProduct
+from apps.core.utils import build_absolute_media_url
 
 
 # Configuração
-S3_BASE_URL = "https://pastita-final.s3.sa-east-1.amazonaws.com/products/"
+def build_seed_media_url(folder: str, filename: str) -> str:
+    """Resolve menu seed images from local media or an explicit base URL."""
+    if not filename:
+        return ''
+
+    explicit_base = os.environ.get('STORE_SEED_MEDIA_BASE_URL', '').strip().rstrip('/')
+    if explicit_base:
+        return f"{explicit_base}/{folder}/{filename}"
+
+    relative_path = Path('seeds') / folder / filename
+    local_file = Path(settings.MEDIA_ROOT) / relative_path
+    if local_file.exists():
+        return build_absolute_media_url(
+            f"{settings.MEDIA_URL.rstrip('/')}/{relative_path.as_posix()}"
+        )
+
+    return ''
 
 # Dados do cardápio
 CATEGORIES = [
@@ -151,7 +170,7 @@ def populate_menu():
     for prod_data in PRODUCTS:
         category = categories.get(prod_data["category_slug"])
         slug = slugify(prod_data["name"])
-        image_url = f"{S3_BASE_URL}{prod_data['image']}"
+        image_url = build_seed_media_url('products', prod_data.get('image', ''))
         
         product, created = StoreProduct.objects.update_or_create(
             store=store,
@@ -178,7 +197,8 @@ def populate_menu():
     print(f"\n✅ Cardápio populado com sucesso!")
     print(f"   📁 Categorias: {total_categories}")
     print(f"   🍝 Produtos: {total_products}")
-    print(f"\n📸 Base URL das imagens: {S3_BASE_URL}")
+    seed_base = os.environ.get('STORE_SEED_MEDIA_BASE_URL', '').strip() or f"{settings.BACKEND_URL.rstrip('/')}{settings.MEDIA_URL}seeds"
+    print(f"\n📸 Base URL das imagens: {seed_base}")
 
 
 if __name__ == '__main__':
