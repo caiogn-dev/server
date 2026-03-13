@@ -234,6 +234,7 @@ CORS_ALLOW_HEADERS = [
     'origin',
     'user-agent',
     'x-csrftoken',
+    'x-cart-key',
     'x-requested-with',
     'x-tenant-slug',
     'x-store-slug',

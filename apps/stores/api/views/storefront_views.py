@@ -28,6 +28,36 @@ from ..serializers import (
 logger = logging.getLogger(__name__)
 
 
+def get_request_cart_key(request):
+    """Resolve a stable cart key for anonymous storefront requests."""
+    header_cart_key = (
+        request.headers.get('X-Cart-Key')
+        or request.META.get('HTTP_X_CART_KEY')
+        or ''
+    ).strip()
+    if header_cart_key:
+        return header_cart_key[:255]
+
+    query_cart_key = (request.query_params.get('cart_key') or '').strip()
+    if query_cart_key:
+        return query_cart_key[:255]
+
+    try:
+        payload_cart_key = (request.data.get('cart_key') or '').strip()
+    except Exception:
+        payload_cart_key = ''
+
+    if payload_cart_key:
+        return payload_cart_key[:255]
+
+    session_id = request.session.session_key
+    if not session_id:
+        request.session.create()
+        session_id = request.session.session_key
+
+    return session_id
+
+
 class StorePublicView(APIView):
     """Public store information endpoint."""
     permission_classes = [permissions.AllowAny]
@@ -109,11 +139,7 @@ class StoreCartViewSet(viewsets.ViewSet):
     
     def get_cart(self, request, store):
         """Get or create cart for session/user."""
-        session_id = request.session.session_key
-        if not session_id:
-            request.session.create()
-            session_id = request.session.session_key
-        
+        session_id = get_request_cart_key(request)
         user = request.user if request.user.is_authenticated else None
         return cart_service.get_or_create_cart(store, user, session_id)
     
@@ -225,10 +251,7 @@ class StoreCheckoutView(APIView):
         store = get_object_or_404(Store, slug=store_slug, status='active')
         
         # Get cart
-        session_id = request.session.session_key
-        if not session_id:
-            request.session.create()
-            session_id = request.session.session_key
+        session_id = get_request_cart_key(request)
         user = request.user if request.user.is_authenticated else None
         cart = cart_service.get_or_create_cart(store, user, session_id)
         
@@ -258,6 +281,7 @@ class StoreCheckoutView(APIView):
         coupon_code = request.data.get('coupon_code', '')
         notes = request.data.get('customer_notes') or request.data.get('notes', '')
         payment_method = request.data.get('payment_method', 'pix')
+        payment_payload = request.data.get('payment', {}) or {}
         
         try:
             order = checkout_service.create_order(
@@ -270,9 +294,9 @@ class StoreCheckoutView(APIView):
             
             # Process payment if method specified
             payment_result = None
-            if payment_method and payment_method != 'cash':
+            if payment_method:
                 payment_result = checkout_service.create_payment(
-                    order, payment_method
+                    order, payment_method, payment_payload
                 )
             
             # Clear cart after successful order
@@ -293,12 +317,18 @@ class StoreCheckoutView(APIView):
                     response_data['payment'] = {
                         'status': payment_result.get('status', 'pending'),
                         'payment_id': payment_result.get('payment_id'),
-                        'payment_method': payment_method,
+                        'payment_method': payment_result.get('payment_method', payment_method),
+                        'status_detail': payment_result.get('status_detail', ''),
+                        'requires_redirect': payment_result.get('requires_redirect', False),
+                        'init_point': payment_result.get('init_point', ''),
+                        'sandbox_init_point': payment_result.get('sandbox_init_point', ''),
+                        'checkout_url': payment_result.get('init_point') or payment_result.get('sandbox_init_point') or '',
                     }
                     response_data['pix_code'] = payment_result.get('pix_code', '')
                     response_data['pix_qr_code'] = payment_result.get('pix_qr_code', '')
                     response_data['pix_ticket_url'] = payment_result.get('ticket_url', '')
                     response_data['init_point'] = payment_result.get('init_point', '')
+                    response_data['sandbox_init_point'] = payment_result.get('sandbox_init_point', '')
                 else:
                     response_data['payment_error'] = payment_result.get('error', 'Erro no pagamento')
             
