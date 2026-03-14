@@ -6,6 +6,7 @@ import logging
 import re
 import uuid
 from decimal import Decimal
+from urllib.parse import urlparse
 from django.db import models, transaction
 from django.db.models import F, Q
 from django.utils import timezone
@@ -82,6 +83,68 @@ def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_c
 
 class CheckoutService:
     """Service for processing checkouts."""
+
+    @staticmethod
+    def _normalize_base_url(raw_url: str) -> str:
+        """Return scheme + host only for a public storefront URL."""
+        if not raw_url:
+            return ''
+
+        candidate = str(raw_url).strip()
+        if not candidate:
+            return ''
+
+        if candidate.startswith('//'):
+            candidate = f'https:{candidate}'
+        elif not re.match(r'^https?://', candidate, re.IGNORECASE):
+            candidate = f'https://{candidate}'
+
+        parsed = urlparse(candidate)
+        if not parsed.scheme or not parsed.netloc:
+            return ''
+
+        return f'{parsed.scheme}://{parsed.netloc}'
+
+    @staticmethod
+    def get_storefront_base_url(store: Store, payment_payload: dict = None) -> str:
+        """
+        Resolve the correct storefront base URL for post-payment redirects.
+
+        Priority:
+        1. Explicit redirect URL passed by the current storefront request
+        2. Store metadata URLs
+        3. Linked automation profile URLs
+        4. Global FRONTEND_URL fallback
+        """
+        candidates = []
+        payload = payment_payload or {}
+
+        for key in ('redirect_base_url', '_redirect_base_url', 'frontend_url', 'storefront_url'):
+            value = payload.get(key)
+            if value:
+                candidates.append(value)
+
+        metadata = getattr(store, 'metadata', {}) or {}
+        for key in ('frontend_url', 'website_url', 'storefront_url', 'order_url', 'menu_url'):
+            value = metadata.get(key)
+            if value:
+                candidates.append(value)
+
+        automation_profile = getattr(store, 'automation_profile', None)
+        if automation_profile:
+            for attr_name in ('order_url', 'menu_url', 'website_url'):
+                value = getattr(automation_profile, attr_name, '')
+                if value:
+                    candidates.append(value)
+
+        candidates.append(getattr(settings, 'FRONTEND_URL', ''))
+
+        for candidate in candidates:
+            normalized = CheckoutService._normalize_base_url(candidate)
+            if normalized:
+                return normalized.rstrip('/')
+
+        return 'http://localhost:3000'
     
     @staticmethod
     def calculate_delivery_fee(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
@@ -518,6 +581,12 @@ class CheckoutService:
             payer_data = payment_payload.get('payer', {}) if isinstance(payment_payload.get('payer'), dict) else {}
             identification_type = payer_data.get('identification_type') or payer_data.get('identificationType')
             identification_number = payer_data.get('identification_number') or payer_data.get('identificationNumber')
+            storefront_base_url = CheckoutService.get_storefront_base_url(order.store, payment_payload)
+            allow_redirect = bool(
+                payment_payload.get('allow_redirect')
+                or payment_payload.get('use_hosted_checkout')
+                or payment_payload.get('hosted_checkout')
+            )
 
             if card_token and payment_method_id:
                 installments = payment_payload.get('installments') or 1
@@ -586,6 +655,24 @@ class CheckoutService:
                     'error': result.get('response', {}).get('message', 'Erro ao processar pagamento com cartao'),
                 }
 
+            if not allow_redirect:
+                missing_fields = []
+                if not card_token:
+                    missing_fields.append('token')
+                if not payment_method_id:
+                    missing_fields.append('payment_method_id')
+
+                missing_fields_str = ', '.join(missing_fields) if missing_fields else 'dados do cartão'
+                logger.warning(
+                    "Direct card payment requested without required Mercado Pago data for order %s. Missing: %s",
+                    order.order_number,
+                    missing_fields_str,
+                )
+                return {
+                    'success': False,
+                    'error': f'Dados do cartão incompletos para pagamento direto ({missing_fields_str}).',
+                }
+
             preference_data = {
                 "items": [
                     {
@@ -602,9 +689,9 @@ class CheckoutService:
                 },
                 "external_reference": str(order.id),
                 "back_urls": {
-                    "success": f"{settings.FRONTEND_URL}/sucesso?order={order.id}",
-                    "failure": f"{settings.FRONTEND_URL}/erro?order={order.id}",
-                    "pending": f"{settings.FRONTEND_URL}/pendente?order={order.id}",
+                    "success": f"{storefront_base_url}/sucesso?order={order.id}",
+                    "failure": f"{storefront_base_url}/erro?order={order.id}",
+                    "pending": f"{storefront_base_url}/pendente?order={order.id}",
                 },
                 "auto_return": "approved",
                 "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",

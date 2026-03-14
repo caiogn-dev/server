@@ -6,6 +6,7 @@ for the public-facing storefront.
 """
 import logging
 from decimal import Decimal
+from urllib.parse import urlparse
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -56,6 +57,20 @@ def get_request_cart_key(request):
         session_id = request.session.session_key
 
     return session_id
+
+
+def get_request_origin_base(request):
+    """Resolve the originating storefront base URL from request headers."""
+    for header_name in ('Origin', 'Referer'):
+        raw_value = (request.headers.get(header_name) or '').strip()
+        if not raw_value:
+            continue
+
+        parsed = urlparse(raw_value)
+        if parsed.scheme and parsed.netloc:
+            return f'{parsed.scheme}://{parsed.netloc}'
+
+    return ''
 
 
 class StorePublicView(APIView):
@@ -281,7 +296,10 @@ class StoreCheckoutView(APIView):
         coupon_code = request.data.get('coupon_code', '')
         notes = request.data.get('customer_notes') or request.data.get('notes', '')
         payment_method = request.data.get('payment_method', 'pix')
-        payment_payload = request.data.get('payment', {}) or {}
+        payment_payload = dict(request.data.get('payment', {}) or {})
+        request_origin_base = get_request_origin_base(request)
+        if request_origin_base:
+            payment_payload['redirect_base_url'] = request_origin_base
         
         try:
             order = checkout_service.create_order(
