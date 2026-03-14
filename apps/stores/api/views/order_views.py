@@ -80,6 +80,30 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         order = serializer.save()
         self._notify_order_update(order, 'order.created')
+
+    def update(self, request, *args, **kwargs):
+        return self._update_with_full_response(request, partial=False, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._update_with_full_response(request, partial=True, *args, **kwargs)
+
+    def _update_with_full_response(self, request, partial=False, *args, **kwargs):
+        """Run DRF update validation but always return the full order payload."""
+        instance = self.get_object()
+        previous_status = instance.status
+        previous_payment_status = instance.payment_status
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        instance.refresh_from_db()
+
+        if previous_payment_status != instance.payment_status and instance.payment_status == StoreOrder.PaymentStatus.PAID:
+            self._notify_order_update(instance, 'order.paid')
+        elif previous_status != instance.status or previous_payment_status != instance.payment_status:
+            self._notify_order_update(instance, 'order.updated')
+
+        return Response(StoreOrderSerializer(instance).data)
     
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
