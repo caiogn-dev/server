@@ -3,125 +3,17 @@ WhatsApp Authentication API Views
 """
 import logging
 
-from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
+from apps.core.services.customer_identity import CustomerIdentityService
+
 from .whatsapp_auth import WhatsAppAuthService, WhatsAppAuthError
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_phone(phone_number):
-    """Normalize phone to digits only."""
-    return ''.join(ch for ch in str(phone_number or '') if ch.isdigit())
-
-
-def _phone_candidates(phone_number):
-    """Return candidate phone formats to match existing profiles."""
-    digits = _normalize_phone(phone_number)
-    if not digits:
-        return []
-
-    candidates = {digits, f'+{digits}'}
-
-    # Common local variation: without Brazil country code.
-    if digits.startswith('55') and len(digits) > 11:
-        local_digits = digits[2:]
-        candidates.add(local_digits)
-        candidates.add(f'+{local_digits}')
-
-    return list(candidates)
-
-
-def _split_name(full_name):
-    parts = (full_name or '').strip().split(' ', 1)
-    first_name = parts[0] if parts and parts[0] else ''
-    last_name = parts[1] if len(parts) > 1 else ''
-    return first_name, last_name
-
-
-def _generate_unique_username(base_username):
-    User = get_user_model()
-
-    cleaned = ''.join(
-        ch if ch.isalnum() else '_'
-        for ch in (base_username or 'wa_user')
-    ).strip('_').lower() or 'wa_user'
-    cleaned = cleaned[:24]
-
-    username = cleaned
-    counter = 1
-    while User.objects.filter(username=username).exists():
-        suffix = str(counter)
-        username = f"{cleaned[:max(1, 24 - len(suffix))]}{suffix}"
-        counter += 1
-
-    return username
-
-
-def _get_or_create_auth_user(whatsapp_user, phone_number):
-    """
-    Resolve a Django auth user from WhatsApp login and ensure a UserProfile exists.
-    """
-    from apps.core.models import UserProfile
-
-    User = get_user_model()
-    phone_digits = _normalize_phone(phone_number)
-    phone_formats = _phone_candidates(phone_number)
-
-    profile = UserProfile.objects.select_related('user').filter(phone__in=phone_formats).first()
-    user_created = False
-
-    if profile:
-        user = profile.user
-    else:
-        generated_email = f"{phone_digits}@pastita.local" if phone_digits else ''
-        local_digits = phone_digits[2:] if phone_digits.startswith('55') and len(phone_digits) > 11 else ''
-        alt_email = f"{local_digits}@pastita.local" if local_digits else ''
-        email_candidates = [email for email in [generated_email, alt_email] if email]
-
-        user = User.objects.filter(email__in=email_candidates).first() if email_candidates else None
-        if not user:
-            wa_name = whatsapp_user.get('name', '') if isinstance(whatsapp_user, dict) else ''
-            first_name, last_name = _split_name(wa_name)
-
-            username = _generate_unique_username(f"wa_{phone_digits or 'user'}")
-            email = generated_email or f"{username}@pastita.local"
-
-            user = User.objects.create_user(
-                username=username,
-                email=email,
-                password=User.objects.make_random_password(),
-                first_name=first_name,
-                last_name=last_name,
-            )
-            user_created = True
-
-        profile, _ = UserProfile.objects.get_or_create(user=user)
-
-    if phone_digits and profile.phone != phone_digits:
-        profile.phone = phone_digits
-        profile.save(update_fields=['phone'])
-
-    wa_name = whatsapp_user.get('name', '') if isinstance(whatsapp_user, dict) else ''
-    first_name, last_name = _split_name(wa_name)
-    updated_fields = []
-
-    if first_name and not user.first_name:
-        user.first_name = first_name
-        updated_fields.append('first_name')
-    if last_name and not user.last_name:
-        user.last_name = last_name
-        updated_fields.append('last_name')
-
-    if updated_fields:
-        user.save(update_fields=updated_fields)
-
-    return user, profile, user_created
 
 
 @api_view(['POST'])
@@ -237,9 +129,11 @@ def verify_whatsapp_auth_code(request):
         whatsapp_user = result.get('user') or {}
 
         try:
-            user, profile, user_created = _get_or_create_auth_user(
-                whatsapp_user=whatsapp_user,
-                phone_number=result.get('phone_number') or phone
+            user, profile, user_created = CustomerIdentityService.resolve_user(
+                email='',
+                phone=result.get('phone_number') or phone,
+                full_name=whatsapp_user.get('name', '') if isinstance(whatsapp_user, dict) else '',
+                create=True,
             )
             token, _ = Token.objects.get_or_create(user=user)
         except Exception as exc:

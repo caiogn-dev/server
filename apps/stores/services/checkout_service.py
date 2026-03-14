@@ -14,6 +14,7 @@ from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
+from apps.core.services.customer_identity import CustomerIdentityService
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem,
     StoreProduct, StoreProductVariant, StoreIntegration,
@@ -363,11 +364,24 @@ class CheckoutService:
         
         # Calculate total (no tax - just subtotal + delivery - discount)
         total = subtotal + delivery_fee - discount
-        
+
+        customer_record = CustomerIdentityService.sync_checkout_customer(
+            store=store,
+            customer_name=customer_data.get('name', ''),
+            email=customer_data.get('email', ''),
+            phone=customer_data.get('phone', ''),
+            cpf=customer_data.get('cpf', ''),
+            delivery_method=delivery_data.get('method', '') if delivery_data else '',
+            delivery_address=delivery_data.get('address', {}) if delivery_data else {},
+            user=cart.user,
+        )
+        customer_user = customer_record.get('user')
+        store_customer = customer_record.get('store_customer')
+
         # Create order
         order = StoreOrder.objects.create(
             store=store,
-            customer=cart.user,
+            customer=customer_user or cart.user,
             customer_name=customer_data.get('name', ''),
             customer_email=customer_data.get('email', ''),
             customer_phone=customer_data.get('phone', ''),
@@ -390,18 +404,17 @@ class CheckoutService:
             metadata={
                 'delivery_zone': delivery_info.get('zone_name'),
                 'estimated_minutes': delivery_info.get('estimated_minutes'),
+                'customer': {
+                    'user_id': str(customer_user.id) if customer_user else '',
+                    'store_customer_id': str(store_customer.id) if store_customer else '',
+                    'cpf': customer_data.get('cpf', '') or '',
+                    'auth_channel': 'whatsapp_otp',
+                },
             }
         )
-        
-        # Update user name from checkout data if provided
-        if cart.user and customer_data.get('name'):
-            full_name = customer_data['name'].strip()
-            if full_name and (cart.user.first_name == 'UsuÃ¡rio' or not cart.user.first_name):
-                name_parts = full_name.split(' ', 1)
-                cart.user.first_name = name_parts[0]
-                if len(name_parts) > 1:
-                    cart.user.last_name = name_parts[1]
-                cart.user.save(update_fields=['first_name', 'last_name'])
+        if customer_user and customer_user != cart.user:
+            cart.user = customer_user
+            cart.save(update_fields=['user', 'updated_at'])
         
         # Create order items and decrement stock
         for item in cart.items.select_related('product', 'variant').all():
@@ -458,6 +471,10 @@ class CheckoutService:
         # Mark coupon as used (atomic)
         if coupon:
             coupon.increment_usage()
+
+        if store_customer:
+            store_customer.last_order_at = timezone.now()
+            store_customer.save(update_fields=['last_order_at', 'updated_at'])
         
         # Clear the cart
         cart.clear()
@@ -802,3 +819,4 @@ class CheckoutService:
 
 # Singleton instance
 checkout_service = CheckoutService()
+

@@ -281,6 +281,7 @@ class StoreCheckoutView(APIView):
             'name': request.data.get('customer_name', ''),
             'email': request.data.get('customer_email', ''),
             'phone': request.data.get('customer_phone', ''),
+            'cpf': request.data.get('cpf', ''),
         }
         
         # Extract delivery data
@@ -309,6 +310,11 @@ class StoreCheckoutView(APIView):
                 coupon_code=coupon_code,
                 notes=notes
             )
+
+            request.session['customer_name'] = order.customer_name or ''
+            request.session['customer_email'] = order.customer_email or ''
+            request.session['customer_phone'] = order.customer_phone or ''
+            request.session.modified = True
             
             # Process payment if method specified
             payment_result = None
@@ -327,6 +333,12 @@ class StoreCheckoutView(APIView):
                 'total_amount': float(order.total),
                 'payment_status': order.payment_status,
                 'access_token': order.access_token,
+                'customer': {
+                    'user_id': str(order.customer_id) if order.customer_id else '',
+                    'name': order.customer_name,
+                    'email': order.customer_email,
+                    'phone': order.customer_phone,
+                },
             }
             
             # Include payment data if available
