@@ -59,7 +59,7 @@ urlpatterns = [
     # API v1 - Unified
     path('api/v1/', include([
         # Core (auth, users, csrf)
-        path('', include('apps.core.urls')),
+        path('core/', include('apps.core.urls')),
         path('auth/', include('apps.core.auth.urls')),
 
         # Unified Store API
@@ -82,9 +82,7 @@ urlpatterns = [
         path('marketing/', include('apps.marketing.urls')),
         path('campaigns/', include('apps.campaigns.urls')),
         path('audit/', include('apps.audit.urls')),
-    ])),
 
-    path('api/v1/core/dashboard-stats/', DashboardStatsView.as_view(), name='core-dashboard-stats'),
 
     # SSE (Server-Sent Events) - Fallback for WebSocket
     path('api/sse/', include([
