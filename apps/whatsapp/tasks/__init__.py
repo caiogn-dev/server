@@ -81,7 +81,7 @@ def process_message_with_agent(self, message_id: str):
     from ..models import Message
     from ..repositories import MessageRepository
     from apps.agents.services import AgentService
-    from apps.conversations.services import ConversationService
+    from apps.automation.services.context_service import AutomationContextService
     
     message_repo = MessageRepository()
     
@@ -102,18 +102,28 @@ def process_message_with_agent(self, message_id: str):
             return
         
         account = message.account
-        
-        if not account.default_agent:
-            logger.info(f"No AI Agent configured for account: {account.id}")
+        context = AutomationContextService.resolve(
+            account=account,
+            conversation=message.conversation,
+            create_profile=False,
+        )
+        agent = AutomationContextService.get_default_agent(context=context)
+
+        if not agent:
+            logger.info(f"No canonical AI Agent configured for message: {message_id}")
             return
-        
-        conversation_service = ConversationService()
-        
+
         if message.conversation and message.conversation.mode == 'human':
             logger.info(f"Conversation in human mode, skipping AI Agent: {message_id}")
             return
-        
-        agent = account.default_agent
+
+        if not AutomationContextService.is_ai_enabled(
+            context=context,
+            conversation=message.conversation,
+        ):
+            logger.info(f"AI Agent disabled for message: {message_id}")
+            return
+
         response_text = None
         
         try:

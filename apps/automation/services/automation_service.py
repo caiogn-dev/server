@@ -102,6 +102,8 @@ class AutomationService:
         # Generate API key and webhook secret
         profile.generate_api_key()
         profile.generate_webhook_secret()
+        profile.sync_from_store()
+        profile.sync_ai_settings_to_account()
 
         # Create default auto messages
         self._create_default_auto_messages(profile)
@@ -169,6 +171,8 @@ class AutomationService:
                 setattr(profile, key, value)
 
         profile.save()
+        if 'use_ai_agent' in kwargs or 'default_agent' in kwargs:
+            profile.sync_ai_settings_to_account()
         logger.info(f"Company profile updated: {profile.company_name}")
         return profile
 

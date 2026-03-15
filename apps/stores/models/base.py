@@ -182,33 +182,65 @@ class Store(BaseModel):
         Get or create the automation profile for this store.
         This links Store to CompanyProfile.
         """
-        if hasattr(self, 'automation_profile'):
-            return self.automation_profile
-        
-        # Import here to avoid circular imports
         from apps.automation.models import CompanyProfile
-        
-        # Try to find by whatsapp_account
+
         whatsapp_account = self.get_whatsapp_account()
+
+        if hasattr(self, 'automation_profile'):
+            profile = self.automation_profile
+            update_fields = []
+
+            if whatsapp_account and profile.account_id != whatsapp_account.id:
+                profile.account = whatsapp_account
+                update_fields.append('account')
+
+            if not profile._company_name:
+                profile._company_name = self.name
+                update_fields.append('_company_name')
+
+            if not profile._description and self.description:
+                profile._description = self.description
+                update_fields.append('_description')
+
+            if update_fields:
+                profile.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+
+            profile.sync_from_store(save=True)
+            return profile
+
         if whatsapp_account:
-            # Check if there's a CompanyProfile linked to this account
             try:
                 if hasattr(whatsapp_account, 'company_profile'):
                     profile = whatsapp_account.company_profile
-                    # Link to this store
-                    profile.store = self
-                    profile.save(update_fields=['store'])
+                    update_fields = []
+
+                    if profile.store_id != self.id:
+                        profile.store = self
+                        update_fields.append('store')
+
+                    if not profile._company_name:
+                        profile._company_name = self.name
+                        update_fields.append('_company_name')
+
+                    if not profile._description and self.description:
+                        profile._description = self.description
+                        update_fields.append('_description')
+
+                    if update_fields:
+                        profile.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+
+                    profile.sync_from_store(save=True)
                     return profile
             except CompanyProfile.DoesNotExist:
                 pass
-        
-        # Create new profile
+
         profile = CompanyProfile.objects.create(
             store=self,
             account=whatsapp_account,
             _company_name=self.name,
             _description=self.description
         )
+        profile.sync_from_store(save=True)
         return profile
 
 

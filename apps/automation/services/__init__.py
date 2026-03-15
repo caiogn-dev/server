@@ -6,7 +6,12 @@ from .session_manager import SessionManager, SessionContext, get_session_manager
 from .automation_service import AutomationService
 
 # Unified LLM Orchestrator Service
-from .unified_service import LLMOrchestratorService, ResponseSource
+from .unified_service import (
+    LLMOrchestratorService,
+    ResponseSource,
+    UnifiedResponse,
+    UnifiedService,
+)
 
 # Flow Builder (POC)
 from .flow_executor import FlowExecutor
@@ -23,6 +28,8 @@ __all__ = [
     'AutomationService',
     'LLMOrchestratorService',
     'ResponseSource',
+    'UnifiedResponse',
+    'UnifiedService',
     'FlowExecutor',
     # Unified messaging
     'UnifiedMessagingService',

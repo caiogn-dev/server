@@ -136,7 +136,7 @@ class ReportSchedule(BaseModel):
     """
     
     class Frequency(models.TextChoices):
-        DAILY = 'daily', 'Diário'
+        DAILY = 'daily', 'DiÃ¡rio'
         WEEKLY = 'weekly', 'Semanal'
         MONTHLY = 'monthly', 'Mensal'
     
@@ -144,7 +144,7 @@ class ReportSchedule(BaseModel):
         MESSAGES = 'messages', 'Mensagens'
         ORDERS = 'orders', 'Pedidos'
         CONVERSATIONS = 'conversations', 'Conversas'
-        AUTOMATION = 'automation', 'Automação'
+        AUTOMATION = 'automation', 'AutomaÃ§Ã£o'
         PAYMENTS = 'payments', 'Pagamentos'
         FULL = 'full', 'Completo'
     
@@ -288,7 +288,7 @@ class GeneratedReport(BaseModel):
     
     class Status(models.TextChoices):
         GENERATING = 'generating', 'Gerando'
-        COMPLETED = 'completed', 'Concluído'
+        COMPLETED = 'completed', 'ConcluÃ­do'
         FAILED = 'failed', 'Falhou'
     
     schedule = models.ForeignKey(
@@ -351,20 +351,29 @@ class GeneratedReport(BaseModel):
 
 class CompanyProfile(BaseModel):
     """
-    Company profile linked to a WhatsApp account AND a Store.
-    Contains automation settings only - business data comes from Store.
+    Automation profile for a business.
+
+    Store is the source of truth for business identity.
+    CompanyProfile keeps automation settings and legacy compatibility fields.
     """
-    
+
     class BusinessType(models.TextChoices):
         RESTAURANT = 'restaurant', 'Restaurante'
         ECOMMERCE = 'ecommerce', 'E-commerce'
-        SERVICES = 'services', 'Serviços'
+        SERVICES = 'services', 'Servicos'
         RETAIL = 'retail', 'Varejo'
-        HEALTHCARE = 'healthcare', 'Saúde'
-        EDUCATION = 'education', 'Educação'
+        HEALTHCARE = 'healthcare', 'Saude'
+        EDUCATION = 'education', 'Educacao'
         OTHER = 'other', 'Outro'
 
-    # Link to WhatsApp account
+    STORE_TYPE_TO_BUSINESS_TYPE = {
+        'food': BusinessType.RESTAURANT,
+        'retail': BusinessType.RETAIL,
+        'services': BusinessType.SERVICES,
+        'digital': BusinessType.ECOMMERCE,
+        'other': BusinessType.OTHER,
+    }
+
     account = models.OneToOneField(
         'whatsapp.WhatsAppAccount',
         on_delete=models.CASCADE,
@@ -372,8 +381,6 @@ class CompanyProfile(BaseModel):
         null=True,
         blank=True
     )
-    
-    # Link to Store (source of truth for business data)
     store = models.OneToOneField(
         'stores.Store',
         on_delete=models.CASCADE,
@@ -381,8 +388,7 @@ class CompanyProfile(BaseModel):
         null=True,
         blank=True
     )
-    
-    # Internal fields for company info (used when store is not linked)
+
     _company_name = models.CharField(max_length=255, db_column='company_name', blank=True)
     _business_type = models.CharField(
         max_length=20,
@@ -404,56 +410,48 @@ class CompanyProfile(BaseModel):
         db_column='address',
         editable=False,
     )
-    
-    # Website and links - can be derived from store or set manually
+
     website_url = models.URLField(blank=True)
-    menu_url = models.URLField(blank=True, help_text="URL do cardápio/catálogo")
-    order_url = models.URLField(blank=True, help_text="URL para fazer pedidos")
-    
-    # DEPRECATED: Business hours - now read from Store via property
+    menu_url = models.URLField(blank=True, help_text='URL do cardapio/catalogo')
+    order_url = models.URLField(blank=True, help_text='URL para fazer pedidos')
     _business_hours = models.JSONField(
         default=dict,
         blank=True,
         db_column='business_hours',
-        help_text="DEPRECATED: Use store.operating_hours instead"
+        help_text='DEPRECATED: Use store.operating_hours instead'
     )
-    
-    # Automation settings
+
     auto_reply_enabled = models.BooleanField(default=True)
     welcome_message_enabled = models.BooleanField(default=True)
     menu_auto_send = models.BooleanField(
         default=True,
-        help_text="Enviar cardápio automaticamente na primeira mensagem"
+        help_text='Enviar cardapio automaticamente na primeira mensagem'
     )
-    
-    # Notification settings
+
     abandoned_cart_notification = models.BooleanField(default=True)
     abandoned_cart_delay_minutes = models.PositiveIntegerField(
         default=30,
-        help_text="Minutos para esperar antes de notificar carrinho abandonado"
+        help_text='Minutos para esperar antes de notificar carrinho abandonado'
     )
-    
     pix_notification_enabled = models.BooleanField(default=True)
     payment_confirmation_enabled = models.BooleanField(default=True)
     order_status_notification_enabled = models.BooleanField(default=True)
     delivery_notification_enabled = models.BooleanField(default=True)
-    
-    # Integration settings
+
     external_api_key = models.CharField(
         max_length=255,
         blank=True,
-        help_text="API key para o site externo se conectar"
+        help_text='API key para o site externo se conectar'
     )
     webhook_secret = models.CharField(
         max_length=255,
         blank=True,
-        help_text="Secret para validar webhooks do site"
+        help_text='Secret para validar webhooks do site'
     )
-    
-    # AI Agent (Langchain) integration
+
     use_ai_agent = models.BooleanField(
         default=False,
-        help_text="Usar Agente IA (Langchain) para respostas avançadas"
+        help_text='Usar Agente IA (Langchain) para respostas avancadas'
     )
     default_agent = models.ForeignKey(
         'agents.Agent',
@@ -461,14 +459,13 @@ class CompanyProfile(BaseModel):
         null=True,
         blank=True,
         related_name='company_profiles',
-        help_text="Agente IA padrão para respostas automáticas"
+        help_text='Agente IA padrao para respostas automaticas'
     )
-    
-    # Custom settings
+
     settings = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Configurações personalizadas"
+        help_text='Configuracoes personalizadas'
     )
 
     class Meta:
@@ -476,220 +473,223 @@ class CompanyProfile(BaseModel):
         verbose_name = 'Company Profile'
         verbose_name_plural = 'Company Profiles'
 
-    # Properties to access Store data (unified interface)
+    def get_effective_store(self):
+        if self.store_id:
+            return self.store
+
+        if self.account_id:
+            stores_manager = getattr(self.account, 'stores', None)
+            if stores_manager is not None:
+                return stores_manager.filter(is_active=True).first() or stores_manager.first()
+
+        return None
+
+    def get_effective_account(self):
+        store = self.get_effective_store()
+        if store and getattr(store, 'whatsapp_account_id', None):
+            return store.whatsapp_account
+        return self.account
+
+    def get_default_agent(self):
+        if self.default_agent_id:
+            return self.default_agent
+
+        account = self.get_effective_account()
+        if account and getattr(account, 'default_agent_id', None):
+            return account.default_agent
+
+        return None
+
+    def is_ai_enabled(self) -> bool:
+        return bool(self.use_ai_agent and self.get_default_agent())
+
     @property
     def company_name(self):
-        """Get company name from Store if available, otherwise from profile."""
-        if self.store:
-            return self.store.name
+        store = self.get_effective_store()
+        if store:
+            return store.name
         return self._company_name
-    
+
     @company_name.setter
     def company_name(self, value):
-        """Set company name."""
         self._company_name = value
-    
+
     @property
     def business_type(self):
-        """Get business type from Store if available."""
-        if self.store:
-            # Map store_type to business_type
-            mapping = {
-                'food': 'restaurant',
-                'retail': 'retail',
-                'services': 'services',
-                'digital': 'ecommerce',
-            }
-            return mapping.get(self.store.store_type, 'other')
+        store = self.get_effective_store()
+        if store:
+            return self.STORE_TYPE_TO_BUSINESS_TYPE.get(store.store_type, self.BusinessType.OTHER)
         return self._business_type
-    
+
     @business_type.setter
     def business_type(self, value):
-        """Set business type."""
         self._business_type = value
-    
+
     @property
     def description(self):
-        """Get description from Store if available."""
-        if self.store:
-            return self.store.description or ''
+        store = self.get_effective_store()
+        if store:
+            return store.description or ''
         return self._description
-    
+
     @description.setter
     def description(self, value):
-        """Set description."""
         self._description = value
-    
+
+    @property
+    def business_hours(self):
+        store = self.get_effective_store()
+        if store:
+            return store.operating_hours or {}
+        return self._business_hours or {}
+
+    @business_hours.setter
+    def business_hours(self, value):
+        self._business_hours = value or {}
+
     @property
     def phone_number(self):
-        """Get phone number from Store or WhatsApp account."""
-        if self.store:
-            return self.store.whatsapp_number or self.store.phone
-        return self.account.phone_number
-    
+        store = self.get_effective_store()
+        if store and (store.whatsapp_number or store.phone):
+            return store.whatsapp_number or store.phone
+
+        account = self.get_effective_account()
+        if account:
+            return account.phone_number
+
+        return self._legacy_whatsapp_number
+
     @property
     def email(self):
-        """Get email from Store if available."""
-        if self.store:
-            return self.store.email
-        return ''
-    
+        store = self.get_effective_store()
+        return store.email if store else ''
+
     @property
     def address(self):
-        """Get address from Store if available."""
-        if self.store:
-            return self.store.address
-        return ''
-    
+        store = self.get_effective_store()
+        if store and store.address:
+            return store.address
+        return self._legacy_address
+
     @property
     def city(self):
-        """Get city from Store if available."""
-        if self.store:
-            return self.store.city
-        return ''
-    
+        store = self.get_effective_store()
+        return store.city if store else ''
+
     @property
     def state(self):
-        """Get state from Store if available."""
-        if self.store:
-            return self.store.state
-        return ''
-    
+        store = self.get_effective_store()
+        return store.state if store else ''
+
     @property
     def store_slug(self):
-        """Get store slug for generating URLs."""
-        if self.store:
-            return self.store.slug
-        return None
-    
+        store = self.get_effective_store()
+        return store.slug if store else None
+
     def get_menu_url(self):
-        """Get menu URL (from store or manual)."""
         if self.menu_url:
             return self.menu_url
-        if self.store:
-            return f"https://{self.store.slug}.pastita.com.br"
-        return ''
-    
+
+        store = self.get_effective_store()
+        if store:
+            return f'https://{store.slug}.pastita.com.br'
+
+        return self.website_url or ''
+
     def get_order_url(self):
-        """Get order URL (from store or manual)."""
         if self.order_url:
             return self.order_url
-        if self.store:
-            return f"https://{self.store.slug}.pastita.com.br/cardapio"
-        return ''
-    
-    def sync_from_store(self):
-        """Sync business data from Store to profile."""
-        if not self.store:
-            return
-        
-        # Sync business hours
-        if self.store.operating_hours:
-            day_map = {
-                'monday': 'mon', 'tuesday': 'tue', 'wednesday': 'wed',
-                'thursday': 'thu', 'friday': 'fri', 'saturday': 'sat', 'sunday': 'sun'
-            }
-            business_hours = {}
-            for day, hours in self.store.operating_hours.items():
-                short_day = day_map.get(day.lower(), day.lower()[:3])
-                business_hours[short_day] = {
-                    'open': hours.get('open', '09:00'),
-                    'close': hours.get('close', '18:00'),
-                    'closed': not hours.get('open') or not hours.get('close')
-                }
-            self.business_hours = business_hours
-        
-        # Sync URLs if not manually set
-        if not self.menu_url:
-            self.menu_url = f"https://{self.store.slug}.pastita.com.br"
-        if not self.order_url:
-            self.order_url = f"https://{self.store.slug}.pastita.com.br/cardapio"
-        
-        self.save(update_fields=['business_hours', 'menu_url', 'order_url'])
 
-    def __str__(self):
-        return f"{self.company_name} ({self.phone_number})"
+        store = self.get_effective_store()
+        if store:
+            return f'https://{store.slug}.pastita.com.br/cardapio'
+
+        return self.website_url or ''
+
+    def sync_from_store(self, save: bool = True):
+        store = self.get_effective_store()
+        if not store:
+            return
+
+        update_fields = []
+
+        if not self.store_id:
+            self.store = store
+            update_fields.append('store')
+
+        if not self.account_id and store.whatsapp_account_id:
+            self.account = store.whatsapp_account
+            update_fields.append('account')
+
+        if not self._company_name:
+            self._company_name = store.name
+            update_fields.append('_company_name')
+
+        if not self._description and store.description:
+            self._description = store.description
+            update_fields.append('_description')
+
+        if not self._legacy_whatsapp_number:
+            self._legacy_whatsapp_number = store.whatsapp_number or store.phone or ''
+            update_fields.append('_legacy_whatsapp_number')
+
+        if not self._legacy_address and store.address:
+            self._legacy_address = store.address
+            update_fields.append('_legacy_address')
+
+        if store.operating_hours and self._business_hours != store.operating_hours:
+            self._business_hours = store.operating_hours
+            update_fields.append('_business_hours')
+
+        if not self.menu_url:
+            self.menu_url = f'https://{store.slug}.pastita.com.br'
+            update_fields.append('menu_url')
+
+        if not self.order_url:
+            self.order_url = f'https://{store.slug}.pastita.com.br/cardapio'
+            update_fields.append('order_url')
+
+        if save and update_fields:
+            self.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+
+    def sync_ai_settings_to_account(self, save: bool = True):
+        account = self.get_effective_account()
+        if not account:
+            return
+
+        update_fields = []
+        if account.default_agent_id != self.default_agent_id:
+            account.default_agent_id = self.default_agent_id
+            update_fields.append('default_agent')
+
+        desired_auto_response = bool(self.use_ai_agent)
+        if account.auto_response_enabled != desired_auto_response:
+            account.auto_response_enabled = desired_auto_response
+            update_fields.append('auto_response_enabled')
+
+        if save and update_fields:
+            account.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
 
     def generate_api_key(self):
         """Generate a new API key for external integrations."""
         import secrets
+
         self.external_api_key = secrets.token_urlsafe(32)
-        self.save(update_fields=['external_api_key'])
+        self.save(update_fields=['external_api_key', 'updated_at'])
         return self.external_api_key
 
     def generate_webhook_secret(self):
         """Generate a new webhook secret."""
         import secrets
-        self.webhook_secret = secrets.token_urlsafe(32)
-        self.save(update_fields=['webhook_secret'])
-        return self.webhook_secret
-    
-    # =========================================================================
-    # PROPERTIES: Backward compatibility - read from Store when available
-    # =========================================================================
-    
-    @property
-    def company_name(self):
-        """Return store name if linked, otherwise legacy field."""
-        if self.store_id:
-            return self.store.name
-        return self._company_name
-    
-    @company_name.setter
-    def company_name(self, value):
-        """Set legacy field for backward compatibility."""
-        self._company_name = value
-    
-    @property
-    def description(self):
-        """Return store description if linked, otherwise legacy field."""
-        if self.store_id:
-            return self.store.description
-        return self._description
-    
-    @description.setter
-    def description(self, value):
-        """Set legacy field for backward compatibility."""
-        self._description = value
-    
-    @property
-    def business_hours(self):
-        """Return store operating_hours if linked, otherwise legacy field."""
-        if self.store_id:
-            return self.store.operating_hours
-        return self._business_hours
-    
-    @business_hours.setter
-    def business_hours(self, value):
-        """Set legacy field for backward compatibility."""
-        self._business_hours = value
-    
-    @property
-    def business_type(self):
-        """Return store store_type if linked, otherwise legacy field."""
-        if self.store_id:
-            # Map store types to business types
-            mapping = {
-                'food': 'restaurant',
-                'retail': 'retail',
-                'services': 'services',
-                'digital': 'ecommerce',
-                'other': 'other'
-            }
-            return mapping.get(self.store.store_type, 'other')
-        return self._business_type
-    
-    @business_type.setter
-    def business_type(self, value):
-        """Set legacy field for backward compatibility."""
-        self._business_type = value
-    
-    def __str__(self):
-        """Return string representation."""
-        name = self.company_name if self.company_name else "Unnamed"
-        phone = self.account.phone_number if self.account_id else "No WhatsApp"
-        return f"{name} ({phone})"
 
+        self.webhook_secret = secrets.token_urlsafe(32)
+        self.save(update_fields=['webhook_secret', 'updated_at'])
+        return self.webhook_secret
+
+    def __str__(self):
+        name = self.company_name or 'Unnamed'
+        phone = self.phone_number or 'No WhatsApp'
+        return f'{name} ({phone})'
 
 class AutoMessage(BaseModel):
     """
@@ -700,9 +700,9 @@ class AutoMessage(BaseModel):
     class EventType(models.TextChoices):
         # Welcome and general
         WELCOME = 'welcome', 'Boas-vindas'
-        MENU = 'menu', 'Cardápio/Catálogo'
-        BUSINESS_HOURS = 'business_hours', 'Horário de Funcionamento'
-        OUT_OF_HOURS = 'out_of_hours', 'Fora do Horário'
+        MENU = 'menu', 'CardÃ¡pio/CatÃ¡logo'
+        BUSINESS_HOURS = 'business_hours', 'HorÃ¡rio de Funcionamento'
+        OUT_OF_HOURS = 'out_of_hours', 'Fora do HorÃ¡rio'
         FAQ = 'faq', 'Perguntas Frequentes'
 
         # Cart and checkout
@@ -733,10 +733,10 @@ class AutoMessage(BaseModel):
         ORDER_CANCELLED = 'order_cancelled', 'Pedido Cancelado'
 
         # Feedback and Support
-        FEEDBACK_REQUEST = 'feedback_request', 'Solicitar Avaliação'
-        FEEDBACK_RECEIVED = 'feedback_received', 'Avaliação Recebida'
+        FEEDBACK_REQUEST = 'feedback_request', 'Solicitar AvaliaÃ§Ã£o'
+        FEEDBACK_RECEIVED = 'feedback_received', 'AvaliaÃ§Ã£o Recebida'
         HUMAN_HANDOFF = 'human_handoff', 'Transferido para Humano'
-        HUMAN_ASSIGNED = 'human_assigned', 'Atendente Atribuído'
+        HUMAN_ASSIGNED = 'human_assigned', 'Atendente AtribuÃ­do'
 
         # Custom
         CUSTOM = 'custom', 'Personalizado'
@@ -751,7 +751,7 @@ class AutoMessage(BaseModel):
     name = models.CharField(max_length=255, help_text="Nome interno da mensagem")
     
     # Message content
-    message_text = models.TextField(help_text="Texto da mensagem. Use {variáveis} para personalização")
+    message_text = models.TextField(help_text="Texto da mensagem. Use {variÃ¡veis} para personalizaÃ§Ã£o")
     
     # Optional media
     media_url = models.URLField(blank=True, help_text="URL de imagem/documento para enviar junto")
@@ -761,7 +761,7 @@ class AutoMessage(BaseModel):
         choices=[
             ('image', 'Imagem'),
             ('document', 'Documento'),
-            ('video', 'Vídeo'),
+            ('video', 'VÃ­deo'),
         ]
     )
     
@@ -769,7 +769,7 @@ class AutoMessage(BaseModel):
     buttons = models.JSONField(
         default=list,
         blank=True,
-        help_text="Botões interativos [{'id': 'btn1', 'title': 'Texto'}]"
+        help_text="BotÃµes interativos [{'id': 'btn1', 'title': 'Texto'}]"
     )
     
     # Scheduling
@@ -783,7 +783,7 @@ class AutoMessage(BaseModel):
     conditions = models.JSONField(
         default=dict,
         blank=True,
-        help_text="Condições para enviar a mensagem"
+        help_text="CondiÃ§Ãµes para enviar a mensagem"
     )
     
     # Priority (lower = higher priority)
@@ -821,7 +821,7 @@ class CustomerSession(BaseModel):
         PAYMENT_PENDING = 'payment_pending', 'Aguardando Pagamento'
         PAYMENT_CONFIRMED = 'payment_confirmed', 'Pagamento Confirmado'
         ORDER_PLACED = 'order_placed', 'Pedido Realizado'
-        COMPLETED = 'completed', 'Concluída'
+        COMPLETED = 'completed', 'ConcluÃ­da'
         EXPIRED = 'expired', 'Expirada'
 
     company = models.ForeignKey(
@@ -840,7 +840,7 @@ class CustomerSession(BaseModel):
         max_length=100,
         unique=True,
         db_index=True,
-        help_text="ID da sessão no site externo"
+        help_text="ID da sessÃ£o no site externo"
     )
     external_customer_id = models.CharField(
         max_length=100,
@@ -902,7 +902,7 @@ class CustomerSession(BaseModel):
     notifications_sent = models.JSONField(
         default=list,
         blank=True,
-        help_text="Lista de notificações enviadas"
+        help_text="Lista de notificaÃ§Ãµes enviadas"
     )
     last_notification_at = models.DateTimeField(null=True, blank=True)
     
@@ -948,9 +948,9 @@ class AutomationLog(BaseModel):
         MESSAGE_RECEIVED = 'message_received', 'Mensagem Recebida'
         MESSAGE_SENT = 'message_sent', 'Mensagem Enviada'
         WEBHOOK_RECEIVED = 'webhook_received', 'Webhook Recebido'
-        SESSION_CREATED = 'session_created', 'Sessão Criada'
-        SESSION_UPDATED = 'session_updated', 'Sessão Atualizada'
-        NOTIFICATION_SENT = 'notification_sent', 'Notificação Enviada'
+        SESSION_CREATED = 'session_created', 'SessÃ£o Criada'
+        SESSION_UPDATED = 'session_updated', 'SessÃ£o Atualizada'
+        NOTIFICATION_SENT = 'notification_sent', 'NotificaÃ§Ã£o Enviada'
         ERROR = 'error', 'Erro'
 
     company = models.ForeignKey(
@@ -997,7 +997,7 @@ class AutomationLog(BaseModel):
 
 class IntentLog(BaseModel):
     """
-    Log de detecção de intenções para analytics e debugging.
+    Log de detecÃ§Ã£o de intenÃ§Ãµes para analytics e debugging.
     """
 
     class MethodType(models.TextChoices):
@@ -1007,7 +1007,7 @@ class IntentLog(BaseModel):
 
     class ResponseType(models.TextChoices):
         TEXT = 'text', 'Texto'
-        BUTTONS = 'buttons', 'Botões'
+        BUTTONS = 'buttons', 'BotÃµes'
         LIST = 'list', 'Lista'
         INTERACTIVE = 'interactive', 'Interativo'
 
@@ -1036,7 +1036,7 @@ class IntentLog(BaseModel):
     phone_number = models.CharField(max_length=20, db_index=True)
     message_text = models.TextField()
 
-    # Dados da intenção detectada
+    # Dados da intenÃ§Ã£o detectada
     intent_type = models.CharField(max_length=50, db_index=True)
     method = models.CharField(max_length=10, choices=MethodType.choices, default=MethodType.REGEX)
     confidence = models.FloatField(default=0.0)
@@ -1079,8 +1079,8 @@ class IntentLog(BaseModel):
 
 class AgentFlow(BaseModel):
     """
-    Fluxo de conversação visual (Flow Builder).
-    Versão POC: Salva JSON do React Flow.
+    Fluxo de conversaÃ§Ã£o visual (Flow Builder).
+    VersÃ£o POC: Salva JSON do React Flow.
     """
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -1096,11 +1096,11 @@ class AgentFlow(BaseModel):
     is_active = models.BooleanField(default=True)
     is_default = models.BooleanField(
         default=False,
-        help_text='Se verdadeiro, é o fluxo padrão da loja'
+        help_text='Se verdadeiro, Ã© o fluxo padrÃ£o da loja'
     )
     version = models.CharField(max_length=10, default='1.0')
     
-    # Estatísticas
+    # EstatÃ­sticas
     total_executions = models.PositiveIntegerField(default=0)
     success_rate = models.FloatField(default=0.0)
     
@@ -1114,7 +1114,7 @@ class AgentFlow(BaseModel):
         return f'{self.name} ({self.store.name})'
     
     def set_as_default(self):
-        """Define este fluxo como padrão para a loja."""
+        """Define este fluxo como padrÃ£o para a loja."""
         AgentFlow.objects.filter(
             store=self.store,
             is_default=True
@@ -1126,7 +1126,7 @@ class AgentFlow(BaseModel):
 
 class FlowSession(BaseModel):
     """
-    Estado da sessão de um usuário em um fluxo.
+    Estado da sessÃ£o de um usuÃ¡rio em um fluxo.
     """
     conversation = models.OneToOneField(
         'conversations.Conversation',
@@ -1140,8 +1140,8 @@ class FlowSession(BaseModel):
     )
     
     current_node_id = models.CharField(max_length=100, null=True, blank=True)
-    context = models.JSONField(default=dict, help_text='Variáveis coletadas durante o fluxo')
-    node_history = models.JSONField(default=list, help_text='Lista de nós visitados')
+    context = models.JSONField(default=dict, help_text='VariÃ¡veis coletadas durante o fluxo')
+    node_history = models.JSONField(default=list, help_text='Lista de nÃ³s visitados')
     
     is_waiting_input = models.BooleanField(default=False)
     input_type_expected = models.CharField(max_length=50, blank=True)
@@ -1151,14 +1151,14 @@ class FlowSession(BaseModel):
     
     class Meta:
         db_table = 'flow_sessions'
-        verbose_name = 'Sessão de Fluxo'
-        verbose_name_plural = 'Sessões de Fluxo'
+        verbose_name = 'SessÃ£o de Fluxo'
+        verbose_name_plural = 'SessÃµes de Fluxo'
     
     def __str__(self):
-        return f'Sessão {self.conversation.phone_number} em {self.flow.name}'
+        return f'SessÃ£o {self.conversation.phone_number} em {self.flow.name}'
     
     def reset(self):
-        """Reseta a sessão para o início do fluxo."""
+        """Reseta a sessÃ£o para o inÃ­cio do fluxo."""
         self.current_node_id = None
         self.context = {}
         self.node_history = []
@@ -1169,7 +1169,7 @@ class FlowSession(BaseModel):
 
 class FlowExecutionLog(BaseModel):
     """
-    Log de execução para debug e analytics.
+    Log de execuÃ§Ã£o para debug e analytics.
     """
     session = models.ForeignKey(
         FlowSession,
@@ -1197,9 +1197,9 @@ class FlowExecutionLog(BaseModel):
     class Meta:
         db_table = 'flow_execution_logs'
         ordering = ['-created_at']
-        verbose_name = 'Log de Execução'
-        verbose_name_plural = 'Logs de Execução'
+        verbose_name = 'Log de ExecuÃ§Ã£o'
+        verbose_name_plural = 'Logs de ExecuÃ§Ã£o'
     
     def __str__(self):
-        status = '✅' if self.success else '❌'
+        status = 'âœ…' if self.success else 'âŒ'
         return f'{status} {self.node_type} em {self.flow.name}'

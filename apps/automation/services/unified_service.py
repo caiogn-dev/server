@@ -1,90 +1,71 @@
 """
-Unified Automation Service - Simplificado e Funcional
+Unified automation service.
 
-Fluxo:
-1. Detecta intent (regex rápido)
-2. Busca template apropriado no banco (AutoMessage)
-3. Se encontrar template com botões, usa ele
-4. Se não, chama LLM para gerar resposta
-5. Se LLM falhar, usa fallback
+Flow:
+1. Detect intent
+2. Try deterministic handler
+3. Try database template
+4. Try LLM with the canonical configured agent
+5. Return a small fallback
 """
 import logging
 import time
-import json
-import re
-from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
-from django.conf import settings
-from apps.agents.models import Agent
+from apps.agents.models import AgentConversation
 from apps.agents.services import LangchainService
-from apps.automation.models import CompanyProfile, AutoMessage, CustomerSession, IntentLog
+from apps.automation.models import AutoMessage, CustomerSession
 from apps.automation.services.context_service import AutomationContextService
 from apps.whatsapp.intents.detector import IntentDetector, IntentType
-from apps.whatsapp.intents.handlers import get_handler, HandlerResult
-from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+from apps.whatsapp.intents.handlers import get_handler
 
 logger = logging.getLogger(__name__)
 
 
 class ResponseSource(Enum):
-    """Origem da resposta."""
-    TEMPLATE = "template"      # Usou template do banco
-    LLM = "llm"                # Resposta da LLM
-    HANDLER = "handler"        # Usou handler
-    FALLBACK = "fallback"      # Fallback
+    TEMPLATE = 'template'
+    LLM = 'llm'
+    HANDLER = 'handler'
+    FALLBACK = 'fallback'
 
 
 @dataclass
 class UnifiedResponse:
-    """Resposta padronizada."""
     content: str
     source: ResponseSource
     buttons: Optional[List[Dict[str, str]]] = None
     header: Optional[str] = None
     footer: Optional[str] = None
     metadata: Optional[dict] = None
+    interactive_type: Optional[str] = None
+    interactive_data: Optional[dict] = None
 
 
 class UnifiedService:
-    """
-    Serviço unificado simplificado.
-    Prioriza templates do banco, depois LLM.
-    """
-    
+    """Single entry point for automated WhatsApp replies."""
+
     def __init__(self, account, conversation, debug: bool = False, use_llm: bool = True):
         self.account = account
         self.conversation = conversation
         self.debug = debug
-        self.use_llm = use_llm
-        self.detector = IntentDetector(use_llm_fallback=use_llm)
         self.context = AutomationContextService.resolve(
             account=account,
             conversation=conversation,
             create_profile=False,
         )
         self.company = self.context.profile
+        self.store = self.context.store
+        self.agent = AutomationContextService.get_default_agent(context=self.context)
+        self.use_llm = bool(use_llm) and AutomationContextService.is_ai_enabled(
+            context=self.context,
+            conversation=conversation,
+        )
+        self.detector = IntentDetector(use_llm_fallback=self.use_llm)
         self.stats = {'template': 0, 'llm': 0, 'handler': 0, 'fallback': 0}
-    
-    def _get_company(self) -> Optional[CompanyProfile]:
-        """Busca CompanyProfile da conta."""
-        return self.context.profile
-    
-    def _get_store(self):
-        """Busca Store associada."""
-        if self.context.store:
-            return self.context.store
-        from apps.stores.models import Store
-        default_store_slug = getattr(settings, 'DEFAULT_STORE_SLUG', '').strip()
-        if default_store_slug:
-            store = Store.objects.filter(slug=default_store_slug, status='active').first()
-            if store:
-                return store
-        return Store.objects.filter(status='active').first()
-    
+
     def _map_intent_to_event(self, intent: IntentType) -> str:
-        """Mapeia intent para event_type do AutoMessage."""
         mapping = {
             IntentType.GREETING: 'welcome',
             IntentType.MENU_REQUEST: 'menu',
@@ -102,210 +83,213 @@ class UnifiedService:
             IntentType.UNKNOWN: 'welcome',
         }
         return mapping.get(intent, 'custom')
-    
+
     def _get_template_for_intent(self, intent: IntentType) -> Optional[AutoMessage]:
-        """Busca template no banco baseado na intent."""
         if not self.company:
             return None
-        
-        event_type = self._map_intent_to_event(intent)
-        
-        template = AutoMessage.objects.filter(
+
+        return AutoMessage.objects.filter(
             company=self.company,
-            event_type=event_type,
-            is_active=True
+            event_type=self._map_intent_to_event(intent),
+            is_active=True,
         ).order_by('priority').first()
-        
-        return template
-    
-    def _build_context(self, intent_data: Dict, session_data: Dict) -> str:
-        """Constrói contexto para LLM."""
-        parts = []
-        
-        # Dados da loja
-        store = self._get_store()
-        if store:
-            parts.append(f"Loja: {store.name}")
-            parts.append(f"Telefone: {store.whatsapp_number or 'N/A'}")
-        
-        # Intent
-        intent = intent_data.get('intent')
-        if intent:
-            parts.append(f"Intenção: {intent.value}")
-        
-        # Carrinho/Pedido
-        if session_data.get('has_cart'):
-            parts.append(f"Carrinho: R$ {session_data.get('cart_total', 0):.2f}")
-        if session_data.get('has_order'):
-            parts.append(f"Pedido: {session_data.get('order_id', 'N/A')}")
-        
-        # Produtos disponíveis
-        if store:
-            from apps.stores.models import StoreProduct
-            products = StoreProduct.objects.filter(store=store, is_active=True)[:5]
-            if products:
-                parts.append("\nProdutos disponíveis:")
-                for p in products:
-                    parts.append(f"- {p.name}: R$ {p.price:.2f}")
-        
-        return "\n".join(parts)
-    
-    def _get_session_data(self) -> Dict:
-        """Busca dados da sessão do cliente."""
-        phone = self.conversation.phone_number
-        
-        # Busca CustomerSession
-        session = CustomerSession.objects.filter(
-            phone_number=phone,
+
+    def _get_session_data(self) -> Dict[str, Any]:
+        phone_number = self.conversation.phone_number
+        sessions = CustomerSession.objects.filter(phone_number=phone_number)
+
+        if self.company:
+            sessions = sessions.filter(company=self.company)
+
+        session = sessions.filter(
             status__in=['active', 'cart_created', 'checkout', 'payment_pending']
         ).order_by('-updated_at').first()
-        
-        if session:
-            return {
-                'has_cart': bool(session.cart_data),
-                'cart_total': float(session.cart_total or 0),
-                'cart_items_count': session.cart_items_count,
-                'has_order': bool(session.order_id),
-                'order_id': session.order_id,
-                'pix_pending': bool(session.pix_code and not session.payment_id),
-            }
-        
-        return {'has_cart': False, 'cart_total': 0, 'cart_items_count': 0}
-    
-    def _call_llm(self, message: str, context: str) -> Optional[str]:
-        """Chama LLM para gerar resposta."""
-        try:
-            agent = Agent.objects.filter(status='active').first()
-            if not agent:
-                return None
-            
-            service = LangchainService(agent)
-            
-            # Busca session_id
-            from apps.agents.models import AgentConversation
-            agent_conv = AgentConversation.objects.filter(
-                agent=agent,
-                phone_number=self.conversation.phone_number
-            ).order_by('-last_message_at').first()
-            
-            session_id = str(agent_conv.session_id) if agent_conv else None
-            
-            # Mensagem enriquecida
-            enriched = f"{context}\n\n---\n\nCliente: {message}"
-            
-            result = service.process_message(
-                message=enriched,
-                session_id=session_id,
-                phone_number=self.conversation.phone_number,
-                conversation_id=str(self.conversation.id)
-            )
-            
-            return result.get('response', '')
-        except Exception as e:
-            logger.error(f"[Unified] LLM error: {e}")
-            return None
-    
-    def _render_template(self, template: AutoMessage, session_data: Dict) -> str:
-        """Renderiza template com variáveis."""
-        text = template.message_text
-        
-        # Helper para garantir string
+
+        if not session:
+            return {'has_cart': False, 'cart_total': 0, 'cart_items_count': 0, 'has_order': False}
+
+        return {
+            'has_cart': bool(session.cart_data),
+            'cart_total': float(session.cart_total or 0),
+            'cart_items_count': session.cart_items_count,
+            'has_order': bool(session.order_id),
+            'order_id': session.order_id,
+            'pix_pending': bool(session.pix_code and not session.payment_id),
+        }
+
+    def _build_context(self, intent_data: Dict[str, Any], session_data: Dict[str, Any]) -> str:
+        parts: List[str] = []
+
+        if self.store:
+            parts.append(f'Loja: {self.store.name}')
+            parts.append(f'Tipo: {self.store.store_type}')
+            if self.store.description:
+                parts.append(f'Descricao: {self.store.description}')
+
+        intent = intent_data.get('intent')
+        if intent:
+            parts.append(f'Intencao detectada: {intent.value}')
+
+        if session_data.get('has_cart'):
+            parts.append(f"Carrinho atual: R$ {session_data.get('cart_total', 0):.2f}")
+            parts.append(f"Itens no carrinho: {session_data.get('cart_items_count', 0)}")
+
+        if session_data.get('has_order'):
+            parts.append(f"Pedido relacionado: {session_data.get('order_id')}")
+
+        if self.store:
+            from apps.stores.models import StoreProduct
+
+            products = StoreProduct.objects.filter(store=self.store, is_active=True)[:5]
+            if products:
+                product_lines = [f'- {product.name}: R$ {product.price:.2f}' for product in products]
+                parts.append('Produtos ativos:')
+                parts.extend(product_lines)
+
+        return '\n'.join(parts)
+
+    def _render_template(self, template: AutoMessage, session_data: Dict[str, Any]) -> str:
         def safe_str(value, default=''):
             if value is None:
                 return default
             return str(value)
-        
-        # Variáveis básicas
-        text = text.replace('{customer_name}', safe_str(self.conversation.contact_name, 'Cliente'))
-        text = text.replace('{company_name}', safe_str(self.company.company_name if self.company else None, 'Nossa Loja'))
-        text = text.replace('{phone}', safe_str(self.conversation.phone_number))
-        
-        # Carrinho
-        cart_total = session_data.get('cart_total') or 0
-        text = text.replace('{cart_total}', f"R$ {float(cart_total):.2f}")
-        text = text.replace('{cart_items}', safe_str(session_data.get('cart_items_count'), '0'))
-        
-        # Pedido
-        text = text.replace('{order_id}', safe_str(session_data.get('order_id')))
-        
-        return text
-    
+
+        content = template.message_text
+        content = content.replace('{customer_name}', safe_str(self.conversation.contact_name, 'Cliente'))
+        content = content.replace('{company_name}', safe_str(self.company.company_name if self.company else None, 'Nossa Loja'))
+        content = content.replace('{phone}', safe_str(self.conversation.phone_number))
+        content = content.replace('{cart_total}', f"R$ {float(session_data.get('cart_total') or 0):.2f}")
+        content = content.replace('{cart_items}', safe_str(session_data.get('cart_items_count'), '0'))
+        content = content.replace('{order_id}', safe_str(session_data.get('order_id')))
+        return content
+
+    def _run_handler(self, intent_data: Dict[str, Any]) -> Optional[UnifiedResponse]:
+        intent = intent_data.get('intent', IntentType.UNKNOWN)
+        handler = get_handler(intent, self.account, self.conversation)
+        if not handler:
+            return None
+
+        if self.company:
+            handler.company_profile = self.company
+        if self.store:
+            handler.store = self.store
+
+        result = handler.handle(intent_data)
+        if not result:
+            return None
+
+        if result.requires_llm:
+            return None
+
+        if result.use_interactive:
+            interactive_data = result.interactive_data or {}
+            self.stats['handler'] += 1
+            return UnifiedResponse(
+                content=interactive_data.get('body') or result.response_text or '',
+                source=ResponseSource.HANDLER,
+                buttons=interactive_data.get('buttons'),
+                header=interactive_data.get('header'),
+                footer=interactive_data.get('footer'),
+                metadata={'intent': intent.value, 'handler': handler.__class__.__name__},
+                interactive_type=result.interactive_type,
+                interactive_data=interactive_data,
+            )
+
+        if result.response_text and result.response_text not in {'BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT'}:
+            self.stats['handler'] += 1
+            return UnifiedResponse(
+                content=result.response_text,
+                source=ResponseSource.HANDLER,
+                metadata={'intent': intent.value, 'handler': handler.__class__.__name__},
+            )
+
+        return None
+
+    def _call_llm(self, message: str, context_text: str) -> Optional[str]:
+        if not self.use_llm or not self.agent:
+            return None
+
+        try:
+            service = LangchainService(self.agent)
+            agent_conversation = AgentConversation.objects.filter(
+                agent=self.agent,
+                phone_number=self.conversation.phone_number,
+            ).order_by('-last_message_at').first()
+            session_id = str(agent_conversation.session_id) if agent_conversation else None
+            enriched_message = f'{context_text}\n\n---\n\nCliente: {message}' if context_text else message
+            result = service.process_message(
+                message=enriched_message,
+                session_id=session_id,
+                phone_number=self.conversation.phone_number,
+                conversation_id=str(self.conversation.id),
+            )
+            return result.get('response', '')
+        except Exception as exc:
+            logger.error('[Unified] LLM error: %s', exc)
+            return None
+
     def process_message(self, message_text: str) -> UnifiedResponse:
-        """
-        Processa mensagem do cliente.
-        
-        Fluxo:
-        1. Detecta intent
-        2. Tenta usar template do banco
-        3. Se não tiver template, chama LLM
-        4. Se falhar, usa fallback
-        """
         start_time = time.time()
-        
+
         if not message_text or not message_text.strip():
             return UnifiedResponse(
-                content="Desculpe, não entendi. Pode repetir?",
-                source=ResponseSource.FALLBACK
+                content='Desculpe, nao entendi. Pode repetir?',
+                source=ResponseSource.FALLBACK,
             )
-        
-        # 1. Detecta intent
-        intent_data = self.detector.detect(message_text.strip().lower())
+
+        normalized_message = message_text.strip()
+        intent_data = self.detector.detect(normalized_message.lower())
         intent = intent_data.get('intent', IntentType.UNKNOWN)
-        
+
         if self.debug:
-            logger.info(f"[Unified] Intent: {intent.value}")
-        
-        # 2. Busca template no banco
+            logger.info('[Unified] intent=%s llm=%s store=%s company=%s', intent.value, self.use_llm, getattr(self.store, 'slug', None), getattr(self.company, 'id', None))
+
+        handler_response = self._run_handler(intent_data)
+        if handler_response is not None:
+            return handler_response
+
         template = self._get_template_for_intent(intent)
-        
         if template:
-            # Usa template do banco
             session_data = self._get_session_data()
-            content = self._render_template(template, session_data)
-            
             self.stats['template'] += 1
-            
             return UnifiedResponse(
-                content=content,
+                content=self._render_template(template, session_data),
                 source=ResponseSource.TEMPLATE,
                 buttons=template.buttons if template.buttons else None,
                 metadata={
                     'template_id': str(template.id),
                     'event_type': template.event_type,
                     'intent': intent.value,
-                }
-            )
-        
-        # 3. Se não tem template, chama LLM
-        if not self.use_llm:
-            self.stats['fallback'] += 1
-            return UnifiedResponse(
-                content="Posso continuar com as opcoes do menu ou encaminhar voce para um atendente humano.",
-                source=ResponseSource.FALLBACK
+                    'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+                },
+                interactive_type='buttons' if template.buttons else None,
+                interactive_data={'buttons': template.buttons} if template.buttons else None,
             )
 
         session_data = self._get_session_data()
-        context = self._build_context(intent_data, session_data)
-
-        llm_response = self._call_llm(message_text, context)
-        
+        context_text = self._build_context(intent_data, session_data)
+        llm_response = self._call_llm(normalized_message, context_text)
         if llm_response:
             self.stats['llm'] += 1
-            
             return UnifiedResponse(
                 content=llm_response,
                 source=ResponseSource.LLM,
-                metadata={'intent': intent.value}
+                metadata={
+                    'intent': intent.value,
+                    'agent_id': str(self.agent.id) if self.agent else None,
+                    'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+                },
             )
-        
-        # 4. Fallback
+
         self.stats['fallback'] += 1
-        
         return UnifiedResponse(
-            content="Desculpe, estou com dificuldades no momento. Um atendente humano pode te ajudar?",
-            source=ResponseSource.FALLBACK
+            content='Posso continuar pelo menu, te mostrar o catalogo ou encaminhar voce para um atendente humano.',
+            source=ResponseSource.FALLBACK,
+            metadata={
+                'intent': intent.value,
+                'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+            },
         )
 
 
-# Alias para compatibilidade
 LLMOrchestratorService = UnifiedService

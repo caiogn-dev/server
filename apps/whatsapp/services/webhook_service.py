@@ -358,21 +358,21 @@ class WebhookService:
 
     def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
         """
-        Processa mensagem recebida com múltiplos níveis de fallback.
-        
-        Ordem de prioridade:
-        1. UnifiedAutomationService (SISTEMA UNIFICADO - Templates → Handlers → Agent)
-        2. WhatsAppAutomationService (sistema anterior com Intent Detection)
-        3. AutomationService (sistema antigo como fallback)
-        4. AI Agent (último recurso)
+        Process an inbound message through the canonical automation flow.
+
+        Flow:
+        1. Resolve canonical context (store/profile/account)
+        2. Run UnifiedService once
+        3. Send interactive or text response
+        4. If the orchestrator fails, enqueue the AI agent as last resort
         """
         from apps.conversations.services import ConversationService
+        from apps.automation.services import LLMOrchestratorService, UnifiedResponse
+        from apps.automation.services.context_service import AutomationContextService
 
         payload = event.payload
-        message_data = payload.get('message', {})
         contact_info = payload.get('contact', {})
 
-        # Ensure conversation exists
         if not message.conversation:
             try:
                 conversation_service = ConversationService()
@@ -383,268 +383,163 @@ class WebhookService:
                 )
                 message.conversation = conversation
                 message.save(update_fields=['conversation'])
-            except Exception as e:
-                logger.error(f"[post_process] Failed to create conversation: {e}")
+            except Exception as exc:
+                logger.error(f'[post_process] Failed to create conversation: {exc}')
 
-        # Update contact name if missing
         try:
             contact_name = contact_info.get('profile', {}).get('name', '')
             if message.conversation and contact_name and not message.conversation.contact_name:
                 message.conversation.contact_name = contact_name
                 message.conversation.save(update_fields=['contact_name', 'updated_at'])
 
-            # Extract name from message
             if message.conversation and message.text_body and not message.conversation.contact_name:
                 extracted_name = self._extract_name_from_message(message.text_body)
                 if extracted_name:
                     message.conversation.contact_name = extracted_name
                     message.conversation.save(update_fields=['contact_name', 'updated_at'])
-                    logger.info(f"[post_process] Extracted name: {extracted_name}")
-        except Exception as e:
-            logger.warning(f"[post_process] Error updating contact name: {e}")
+                    logger.info(f'[post_process] Extracted name: {extracted_name}')
+        except Exception as exc:
+            logger.warning(f'[post_process] Error updating contact name: {exc}')
 
-        llm_enabled = self._is_llm_enabled_for_account(event.account, message.conversation)
+        context = AutomationContextService.resolve(
+            account=event.account,
+            conversation=message.conversation,
+            create_profile=False,
+        )
+        llm_enabled = AutomationContextService.is_ai_enabled(
+            context=context,
+            conversation=message.conversation,
+        )
 
-        # ========== NÍVEL 1: ORQUESTRADOR UNIFICADO (LLM OPCIONAL) ==========
-        llm_response = None
-        llm_error = None
-        
+        orchestrator_response = None
+        orchestrator_error = None
+
         try:
             import threading
-            from apps.automation.services import LLMOrchestratorService, UnifiedResponse
-            
-            def run_llm_orchestrator():
-                nonlocal llm_response, llm_error
+
+            def run_orchestrator():
+                nonlocal orchestrator_response, orchestrator_error
                 try:
                     service = LLMOrchestratorService(
                         account=event.account,
                         conversation=message.conversation,
                         use_llm=llm_enabled,
-                        debug=False
+                        debug=False,
                     )
-                    response = service.process_message(message.text_body or '')
-                    llm_response = response
-                    logger.info(f"[LLMOrchestrator] Response from {response.source.value}: {response.content[:50]}...")
-                except Exception as e:
-                    llm_error = e
-                    logger.warning(f"[LLMOrchestrator] Error: {e}")
-            
-            thread = threading.Thread(target=run_llm_orchestrator)
-            thread.start()
-            thread.join(timeout=10)  # Timeout maior para LLM
-            
-            if thread.is_alive():
-                logger.warning("[LLMOrchestrator] Timeout")
-                llm_error = TimeoutError("LLM orchestrator timeout")
-            
-            # Processa resposta do orquestrador
-            if llm_response and isinstance(llm_response, UnifiedResponse):
-                source = getattr(getattr(llm_response, 'source', None), 'value', '')
-
-                # Se retornou fallback com LLM desabilitada, tenta níveis determinísticos antes de responder.
-                if source == 'fallback' and not llm_enabled:
-                    logger.info("[LLMOrchestrator] Fallback skipped (LLM disabled), trying deterministic handlers")
-                else:
-                # Se tem botões/interativo, envia mensagem interativa
-                    if llm_response.buttons or getattr(llm_response, 'interactive_type', None):
-                        try:
-                            self._send_unified_interactive(event, message, llm_response)
-                            logger.info("[LLMOrchestrator] Interactive response sent successfully")
-                            return  # Sucesso!
-                        except Exception as e:
-                            logger.error(f"[LLMOrchestrator] Failed to send interactive: {e}")
-
-                    # Se tem conteúdo de texto, envia mensagem
-                    if llm_response.content:
-                        try:
-                            from ..tasks import send_agent_response
-                            send_agent_response.delay(
-                                str(event.account.id),
-                                message.from_number,
-                                llm_response.content,
-                                str(message.whatsapp_message_id)
-                            )
-                            logger.info("[LLMOrchestrator] Response queued successfully")
-                            return  # Sucesso!
-                        except Exception as e:
-                            logger.error(f"[LLMOrchestrator] Failed to queue response: {e}")
-                            # Continua para fallback
-                    
-        except ImportError as e:
-            logger.warning(f"[LLMOrchestrator] Import error (module not ready): {e}")
-        except Exception as e:
-            logger.warning(f"[LLMOrchestrator] Unexpected error: {e}")
-
-        # ========== NÍVEL 2: WhatsAppAutomationService (determinístico) ==========
-        intent_response = None
-        intent_error = None
-        
-        try:
-            import threading
-            from apps.whatsapp.services import WhatsAppAutomationService
-            
-            def run_intent_automation():
-                nonlocal intent_response, intent_error
-                try:
-                    service = WhatsAppAutomationService(
-                        account=event.account,
-                        conversation=message.conversation,
-                        use_llm=llm_enabled,
-                        enable_interactive=True,
-                        debug=False
+                    orchestrator_response = service.process_message(message.text_body or '')
+                    logger.info(
+                        '[UnifiedService] Response from %s',
+                        getattr(getattr(orchestrator_response, 'source', None), 'value', 'unknown'),
                     )
-                    intent_response = service.process_message(message.text_body or '')
-                    logger.info(f"[IntentAutomation] Response: {intent_response}")
-                except Exception as e:
-                    intent_error = e
-                    logger.warning(f"[IntentAutomation] Error: {e}")
-            
-            thread = threading.Thread(target=run_intent_automation)
-            thread.start()
-            thread.join(timeout=8)
-            
-            if thread.is_alive():
-                logger.warning("[IntentAutomation] Timeout")
-                intent_error = TimeoutError("Intent automation timeout")
-            
-            # Se obteve resposta válida (não None e não comandos internos)
-            if intent_response and intent_response not in ['BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT', None]:
-                logger.info(f"[IntentAutomation] Sending response: {intent_response[:50]}...")
-                try:
-                    from ..tasks import send_agent_response
-                    send_agent_response.delay(
-                        str(event.account.id),
-                        message.from_number,
-                        intent_response,
-                        str(message.whatsapp_message_id)
-                    )
-                    logger.info("[IntentAutomation] Response queued successfully")
-                    return  # Sucesso! Mensagem processada.
-                except Exception as e:
-                    logger.error(f"[IntentAutomation] Failed to queue response: {e}")
-                    # Continua para fallback
-            elif intent_response in ['BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT']:
-                # Mensagem interativa já foi enviada pelo automation service
-                logger.info(f"[IntentAutomation] Interactive message already sent: {intent_response}")
-                return  # Sucesso! Mensagem interativa processada.
-                    
-        except ImportError as e:
-            logger.warning(f"[IntentAutomation] Import error (module not ready): {e}")
-        except Exception as e:
-            logger.warning(f"[IntentAutomation] Unexpected error: {e}")
+                except Exception as exc:
+                    orchestrator_error = exc
+                    logger.warning(f'[UnifiedService] Error: {exc}')
 
-        # ========== NÍVEL 3: AutomationService (sistema antigo como fallback) ==========
-        try:
-            from apps.automation.services import AutomationService
-            
-            automation_response = None
-            automation_error = None
-            
-            def run_automation():
-                nonlocal automation_response, automation_error
-                try:
-                    automation_service = AutomationService()
-                    automation_response = automation_service.handle_incoming_message(
-                        account_id=str(event.account.id),
-                        from_number=message.from_number,
-                        message_text=message.text_body or '',
-                        message_type=message.message_type,
-                        message_data=message_data
-                    )
-                except Exception as e:
-                    automation_error = e
-                    logger.warning(f"[AutomationService] Error: {e}")
-            
-            thread = threading.Thread(target=run_automation)
+            thread = threading.Thread(target=run_orchestrator)
             thread.start()
             thread.join(timeout=10)
-            
-            if thread.is_alive():
-                logger.warning("[AutomationService] Timeout")
-            
-            if automation_response:
-                logger.info(f"[AutomationService] Sending response: {automation_response[:50]}...")
-                try:
-                    from ..tasks import send_agent_response
-                    send_agent_response.delay(
-                        str(event.account.id),
-                        message.from_number,
-                        automation_response,
-                        str(message.whatsapp_message_id)
-                    )
-                    logger.info("[AutomationService] Response queued successfully")
-                    return  # Sucesso!
-                except Exception as e:
-                    logger.error(f"[AutomationService] Failed to queue response: {e}")
-                    # Continua para último fallback
-                    
-            if automation_error:
-                logger.warning(f"[AutomationService] Error occurred: {automation_error}")
-                
-        except Exception as e:
-            logger.warning(f"[AutomationService] Unexpected error: {e}")
 
-        # ========== NÍVEL 4: AI Agent (último recurso) ==========
-        if event.account.auto_response_enabled and not message.processed_by_agent:
-            try:
-                has_agent = hasattr(event.account, 'default_agent') and event.account.default_agent
-                
-                if has_agent:
-                    logger.info(f"[AI Agent] Enqueuing agent processing for message: {message.id}")
+            if thread.is_alive():
+                orchestrator_error = TimeoutError('UnifiedService timeout')
+                logger.warning('[UnifiedService] Timeout')
+
+            if isinstance(orchestrator_response, UnifiedResponse):
+                if orchestrator_response.buttons or orchestrator_response.interactive_type:
+                    try:
+                        self._send_unified_interactive(event, message, orchestrator_response)
+                        logger.info('[UnifiedService] Interactive response sent')
+                        return
+                    except Exception as exc:
+                        orchestrator_error = exc
+                        logger.error(f'[UnifiedService] Failed to send interactive: {exc}')
+
+                if orchestrator_response.content:
+                    try:
+                        from ..tasks import send_agent_response
+
+                        send_agent_response.delay(
+                            str(event.account.id),
+                            message.from_number,
+                            orchestrator_response.content,
+                            str(message.whatsapp_message_id)
+                        )
+                        logger.info('[UnifiedService] Text response queued')
+                        return
+                    except Exception as exc:
+                        orchestrator_error = exc
+                        logger.error(f'[UnifiedService] Failed to queue response: {exc}')
+        except Exception as exc:
+            orchestrator_error = exc
+            logger.warning(f'[UnifiedService] Unexpected error: {exc}')
+
+        if not message.processed_by_agent:
+            agent = AutomationContextService.get_default_agent(context=context)
+            if llm_enabled and agent is not None and orchestrator_error is not None:
+                try:
+                    logger.info(f'[AI Agent] Enqueuing fallback agent processing for message: {message.id}')
                     current_app.send_task(
-                        'apps.whatsapp.tasks.process_message_with_agent', 
+                        'apps.whatsapp.tasks.process_message_with_agent',
                         args=[str(message.id)],
                         queue='default',
-                        countdown=0
+                        countdown=0,
                     )
-                    logger.info("[AI Agent] Task enqueued successfully")
-                else:
-                    logger.debug(f"[AI Agent] No default agent configured for account: {event.account.id}")
-            except Exception as e:
-                logger.error(f"[AI Agent] Failed to enqueue task: {e}", exc_info=True)
+                    logger.info('[AI Agent] Task enqueued successfully')
+                except Exception as exc:
+                    logger.error(f'[AI Agent] Failed to enqueue task: {exc}', exc_info=True)
 
     def _is_llm_enabled_for_account(self, account: WhatsAppAccount, conversation=None) -> bool:
-        """
-        Decide if LLM fallback should be enabled for the current account/conversation.
+        from apps.automation.services.context_service import AutomationContextService
 
-        Priority:
-        1. Human mode conversation => disabled
-        2. Global env flag (WHATSAPP_ENABLE_LLM_FALLBACK=true)
-        3. Company profile explicit AI enable + default agent
-        4. Account default agent + auto_response_enabled
-        """
-        if conversation and getattr(conversation, 'mode', None) == 'human':
-            return False
-
-        env_flag = str(getattr(settings, 'WHATSAPP_ENABLE_LLM_FALLBACK', 'false')).strip().lower()
-        if env_flag in {'1', 'true', 'yes', 'on'}:
-            return True
-
-        profile = getattr(account, 'company_profile', None)
-        if profile and getattr(profile, 'use_ai_agent', False) and getattr(profile, 'default_agent_id', None):
-            return True
-
-        return bool(getattr(account, 'auto_response_enabled', False) and getattr(account, 'default_agent_id', None))
+        context = AutomationContextService.resolve(
+            account=account,
+            conversation=conversation,
+            create_profile=False,
+        )
+        return AutomationContextService.is_ai_enabled(
+            context=context,
+            conversation=conversation,
+        )
 
     def _send_unified_interactive(self, event, message, unified_response) -> None:
-        """Envia mensagem interativa a partir da resposta unificada."""
+        """Send interactive messages produced by the unified service."""
         from ..services import WhatsAppAPIService
-        
+
         service = WhatsAppAPIService(event.account)
-        
+        interactive_data = unified_response.interactive_data or {}
+        header = unified_response.header or interactive_data.get('header')
+        footer = unified_response.footer or interactive_data.get('footer')
+
+        if isinstance(header, str):
+            header = {'type': 'text', 'text': header}
+
+        if unified_response.interactive_type == 'list':
+            service.send_interactive_list(
+                to=message.from_number,
+                body_text=interactive_data.get('body') or unified_response.content,
+                button_text=interactive_data.get('button', 'Ver opcoes'),
+                sections=interactive_data.get('sections', []),
+                header=header.get('text') if isinstance(header, dict) else header,
+                footer=footer,
+                reply_to=str(message.whatsapp_message_id),
+            )
+            return
+
         if unified_response.interactive_type == 'buttons' or unified_response.buttons:
             service.send_interactive_buttons(
                 to=message.from_number,
-                body_text=unified_response.content,
-                buttons=unified_response.buttons
+                body_text=interactive_data.get('body') or unified_response.content,
+                buttons=interactive_data.get('buttons') or unified_response.buttons or [],
+                header=header,
+                footer=footer,
+                reply_to=str(message.whatsapp_message_id),
             )
-        else:
-            # Fallback para mensagem de texto simples
-            service.send_text_message(
-                to=message.from_number,
-                text=unified_response.content
-            )
+            return
 
+        service.send_text_message(
+            to=message.from_number,
+            text=unified_response.content,
+            reply_to=str(message.whatsapp_message_id),
+        )
     def _extract_name_from_message(self, text: str) -> str:
         """Extract name from message patterns like 'my name is John', 'sou o Carlos', etc."""
         import re
@@ -653,10 +548,10 @@ class WebhookService:
         
         # Patterns to match name introductions
         patterns = [
-            r'meu nome [é|e]\s+(.+)',
+            r'meu nome [Ã©|e]\s+(.+)',
             r'meu nome eh\s+(.+)',
             r'sou (?:o|a)\s+(.+)',
-            r'(?:o|a) meu nome [é|e]\s+(.+)',
+            r'(?:o|a) meu nome [Ã©|e]\s+(.+)',
             r'pode me chamar de\s+(.+)',
             r'(?:eu sou|sou)\s+(.+)',
         ]
@@ -717,11 +612,11 @@ class WebhookService:
         elif message_type == 'location':
             location = message_data.get('location', {})
             content = {'location': location}
-            text_body = f"📍 {location.get('name', 'Location')}"
+            text_body = f"ðŸ“ {location.get('name', 'Location')}"
         elif message_type == 'contacts':
             contacts = message_data.get('contacts', [])
             content = {'contacts': contacts}
-            text_body = f"👤 {len(contacts)} contact(s)"
+            text_body = f"ðŸ‘¤ {len(contacts)} contact(s)"
         elif message_type == 'interactive':
             interactive = message_data.get('interactive', {})
             content = {'interactive': interactive}
@@ -737,11 +632,11 @@ class WebhookService:
         elif message_type == 'reaction':
             reaction = message_data.get('reaction', {})
             content = {'reaction': reaction}
-            text_body = reaction.get('emoji', '👍')
+            text_body = reaction.get('emoji', 'ðŸ‘')
         elif message_type == 'order':
             order = message_data.get('order', {})
             content = {'order': order}
-            text_body = f"🛒 Order with {len(order.get('product_items', []))} item(s)"
+            text_body = f"ðŸ›’ Order with {len(order.get('product_items', []))} item(s)"
         else:
             content = message_data
         

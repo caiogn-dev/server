@@ -469,5 +469,7 @@ class AutomationSettingsViewSet(viewsets.ViewSet):
 
         if updated_fields:
             company.save(update_fields=list(set(updated_fields + ['updated_at'])))
+            if 'use_ai_agent' in updated_fields or 'default_agent' in updated_fields:
+                company.sync_ai_settings_to_account()
 
         return Response(self._serialize_settings(company))

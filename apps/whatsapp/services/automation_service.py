@@ -23,6 +23,7 @@ from apps.whatsapp.intents.handlers import (
 from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
 from apps.agents.services import LangchainService
 from apps.automation.models import IntentLog
+from apps.automation.services.context_service import AutomationContextService
 from apps.automation.services import SessionManager, get_session_manager
 
 logger = logging.getLogger(__name__)
@@ -80,10 +81,25 @@ class WhatsAppAutomationService:
         """
         self.account = account
         self.conversation = conversation
+        self.context = AutomationContextService.resolve(
+            account=account,
+            conversation=conversation,
+            create_profile=False,
+        )
+        self.company_profile = self.context.profile
+        self.store = self.context.store
+        self.agent = AutomationContextService.get_default_agent(context=self.context)
         force_disable_llm = str(getattr(settings, 'WHATSAPP_FORCE_DISABLE_LLM', 'false')).lower() in {
             '1', 'true', 'yes', 'on'
         }
-        self.use_llm = bool(use_llm) and not force_disable_llm
+        self.use_llm = (
+            bool(use_llm)
+            and not force_disable_llm
+            and AutomationContextService.is_ai_enabled(
+                context=self.context,
+                conversation=conversation,
+            )
+        )
         self.enable_interactive = enable_interactive
         self.debug = debug
         
@@ -414,7 +430,7 @@ class WhatsAppAutomationService:
                 )
                 
                 company_name = (
-                    getattr(getattr(self.account, 'company_profile', None), 'company_name', None)
+                    getattr(self.company_profile, 'company_name', None)
                     or getattr(self.account, 'name', None)
                     or "nossa loja"
                 )
@@ -446,10 +462,10 @@ REGRAS IMPORTANTES:
                 # Fall through to fallback
         
         # Fallback: tenta usar o agente configurado se NVIDIA falhar
-        if self.account.default_agent:
+        if self.agent:
             try:
                 logger.info("[Automation] Falling back to configured agent")
-                service = LangchainService(self.account.default_agent)
+                service = LangchainService(self.agent)
                 result = service.process_message(
                     message=message_text,
                     session_id=str(self.conversation.id),
