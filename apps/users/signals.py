@@ -18,7 +18,12 @@ def sync_conversation_to_unified_user(sender, instance, created, **kwargs):
     """
     Quando uma conversa é criada/atualizada, sincroniza com UnifiedUser.
     NÃO ALTERA Conversation, apenas lê dados.
+    
+    DISABLED: UnifiedUser table doesn't exist in current migrations
     """
+    # DISABLED - Table unified_users doesn't exist
+    return
+    
     if not instance.phone_number:
         return
     
@@ -55,7 +60,12 @@ def sync_conversation_to_unified_user(sender, instance, created, **kwargs):
 def sync_whatsapp_message_to_activity(sender, instance, created, **kwargs):
     """
     Registra atividade quando mensagem é recebida.
+    
+    DISABLED: UnifiedUser table doesn't exist in current migrations
     """
+    # DISABLED - Table unified_users doesn't exist
+    return
+    
     if not created or not instance.conversation:
         return
     
