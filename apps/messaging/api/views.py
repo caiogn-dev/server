@@ -10,6 +10,7 @@ from ..models import (
     MessengerMessage, MessengerBroadcast, MessengerSponsoredMessage,
     MessengerExtension, MessengerWebhookLog
 )
+from .serializers import MessengerAccountSerializer
 from ..services import MessengerService, MessengerPlatformService, MessengerBroadcastService
 
 
@@ -17,6 +18,7 @@ class MessengerAccountViewSet(viewsets.ModelViewSet):
     """ViewSet para contas do Messenger"""
     queryset = MessengerAccount.objects.all()
     permission_classes = [IsAuthenticated]
+    serializer_class = MessengerAccountSerializer
     
     def get_queryset(self):
         return self.queryset.filter(user=self.request.user)

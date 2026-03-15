@@ -18,6 +18,7 @@ from rest_framework import status
 
 from apps.stores.models import Store, StoreOrder, StoreIntegration
 from apps.stores.services import checkout_service
+from apps.stores.services.realtime_service import broadcast_order_event
 
 logger = logging.getLogger(__name__)
 
@@ -180,25 +181,7 @@ class MercadoPagoWebhookView(APIView):
     
     def _notify_order_update(self, order):
         """Send WebSocket notification for order update."""
-        try:
-            from channels.layers import get_channel_layer
-            from asgiref.sync import async_to_sync
-            
-            channel_layer = get_channel_layer()
-            if channel_layer:
-                async_to_sync(channel_layer.group_send)(
-                    f"store_{order.store.slug}_orders",
-                    {
-                        'type': 'order_update',
-                        'order_id': str(order.id),
-                        'order_number': order.order_number,
-                        'status': order.status,
-                        'payment_status': order.payment_status,
-                        'updated_at': order.updated_at.isoformat(),
-                    }
-                )
-        except Exception as e:
-            logger.warning(f"Failed to send WebSocket notification: {e}")
+        broadcast_order_event(order)
     
     def _send_payment_confirmation_whatsapp(self, order):
         """

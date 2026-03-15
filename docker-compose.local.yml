@@ -63,7 +63,7 @@ services:
              python manage.py collectstatic --noinput &&
              gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/admin/login/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/sse/health/"]
       interval: 30s
       timeout: 10s
       start_period: 60s

@@ -20,6 +20,7 @@ from apps.stores.models import (
     StoreWishlist
 )
 from apps.stores.services import cart_service, checkout_service, here_maps_service
+from apps.stores.services.realtime_service import broadcast_order_event
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
@@ -322,7 +323,9 @@ class StoreCheckoutView(APIView):
                 payment_result = checkout_service.create_payment(
                     order, payment_method, payment_payload
                 )
-            
+
+            broadcast_order_event(order, event_type='order.created')
+             
             # Clear cart after successful order
             cart_service.clear_cart(cart)
             

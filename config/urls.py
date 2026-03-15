@@ -26,6 +26,7 @@ from apps.core.sse_views import (
     WhatsAppSSEView, 
     WebSocketHealthCheckView
 )
+from apps.stores.api.webhooks import MercadoPagoWebhookView
 
 from django.views.decorators.csrf import csrf_exempt
 
@@ -95,6 +96,8 @@ urlpatterns = [
     # Unified Webhooks v1 (centralized handlers)
     # Meta WhatsApp API sends webhooks WITHOUT trailing slash for verification
     path('webhooks/v1/', include('apps.webhooks.urls')),
+    path('webhooks/payments/mercadopago', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_no_slash'),
+    path('webhooks/payments/mercadopago/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook'),
     
     # Direct WhatsApp verification endpoint (no trailing slash required by Meta)
     path('webhooks/v1/whatsapp', whatsapp_verification_view, name='whatsapp_webhook_no_slash'),

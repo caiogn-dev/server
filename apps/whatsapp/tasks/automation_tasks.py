@@ -172,7 +172,24 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
     
     try:
         cart = Cart.objects.get(id=cart_id)
-        
+        cart_metadata = cart.metadata or {}
+        customer_phone = (
+            cart_metadata.get('customer_phone')
+            or cart_metadata.get('phone_number')
+            or getattr(cart.user, 'phone_number', '')
+            or getattr(cart.user, 'phone', '')
+        )
+        customer_name = (
+            cart_metadata.get('customer_name')
+            or getattr(cart.user, 'name', '')
+            or getattr(cart.user, 'first_name', '')
+            or 'Cliente'
+        )
+
+        if not customer_phone:
+            logger.info(f"Cart {cart_id} has no customer phone, skipping reminder")
+            return
+
         # Verifica se ainda tem itens
         if not cart.items.exists():
             logger.info(f"Cart {cart_id} is empty, skipping reminder")
@@ -181,7 +198,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         # Verifica se já foi convertido em pedido
         from apps.stores.models.order import StoreOrder as Order
         recent_order = Order.objects.filter(
-            customer_phone=cart.customer_phone,
+            customer_phone=customer_phone,
             created_at__gte=cart.updated_at
         ).first()
         
@@ -212,7 +229,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
             ])
             
             message = template.render_message({
-                'customer_name': cart.customer_name or 'Cliente',
+                'customer_name': customer_name,
                 'cart_items': items_summary,
                 'cart_total': cart.total,
                 'cart_item_count': cart.items.count(),
@@ -229,7 +246,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                 
                 # Envia mensagem com botões
                 service.send_interactive_buttons(
-                    to=cart.customer_phone,
+                    to=customer_phone,
                     body_text=message,
                     buttons=[
                         {'id': f'checkout_{cart.id}', 'title': '✅ Finalizar Pedido'},
@@ -237,7 +254,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                     ]
                 )
                 
-                logger.info(f"Cart reminder sent to {cart.customer_phone} for cart {cart_id}")
+                logger.info(f"Cart reminder sent to {customer_phone} for cart {cart_id}")
                 
         except AutoMessage.DoesNotExist:
             logger.warning(f"Template {event_type} not found")
@@ -462,3 +479,4 @@ def schedule_feedback_request(order_id: str):
     )
     
     logger.info(f"Scheduled feedback request for order {order_id} in 30 minutes")
+
