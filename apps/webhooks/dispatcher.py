@@ -4,11 +4,13 @@ Webhook Dispatcher - Routes incoming webhooks to appropriate handlers.
 import logging
 import hmac
 import hashlib
+import json
 from typing import Dict, Any, Optional, Type
 from django.http import HttpResponse, JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from django.utils import timezone
 
 from .models import WebhookEvent, WebhookEndpoint
 from .handlers.base import BaseHandler
@@ -54,7 +56,8 @@ class WebhookDispatcherView(View):
         # Parse payload
         try:
             if request.content_type == 'application/json':
-                payload = request.json()
+                # Use json.loads with request.body for synchronous parsing
+                payload = json.loads(request.body.decode('utf-8'))
             else:
                 payload = dict(request.POST)
         except Exception as e:
