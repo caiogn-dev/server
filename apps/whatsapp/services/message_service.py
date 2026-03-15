@@ -34,7 +34,11 @@ class MessageService:
         metadata: Optional[Dict] = None
     ) -> Message:
         """Send a text message."""
+        logger.info(f"[send_text_message] START - account_id={account_id}, to={to}, text_len={len(text)}")
+        
         account = self._get_account(account_id)
+        logger.info(f"[send_text_message] Account retrieved: {account.id}, phone_number_id={account.phone_number_id}")
+        
         api_service = WhatsAppAPIService(account)
         
         message = self._create_outbound_message(
@@ -46,19 +50,23 @@ class MessageService:
             context_message_id=reply_to or '',
             metadata=metadata or {}
         )
+        logger.info(f"[send_text_message] Outbound message created: {message.id}")
         
         try:
+            logger.info(f"[send_text_message] Calling api_service.send_text_message(to={to}, text_len={len(text)})")
             response = api_service.send_text_message(
                 to=to,
                 text=text,
                 preview_url=preview_url,
                 reply_to=reply_to
             )
+            logger.info(f"[send_text_message] API response received: {response}")
             
             self._update_message_sent(message, response)
-            logger.info(f"Text message sent: {message.id}")
+            logger.info(f"[send_text_message] Text message sent successfully: {message.id}")
             
         except Exception as e:
+            logger.error(f"[send_text_message] Failed to send message: {str(e)}", exc_info=True)
             self._update_message_failed(message, str(e))
             raise
         

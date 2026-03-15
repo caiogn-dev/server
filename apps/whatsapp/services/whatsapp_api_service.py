@@ -106,10 +106,20 @@ class WhatsAppAPIService:
         reply_to: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send a text message."""
+        logger.info(f"[send_text_message] START - to={to}, text_len={len(text)}, phone_number_id={self.phone_number_id}")
+        
         if not self.phone_number_id:
+            logger.error(f"[send_text_message] phone_number_id is missing or empty!")
             raise WhatsAppAPIError(
                 message='WhatsApp phone_number_id is not configured',
                 code='missing_phone_number_id'
+            )
+
+        if not self.access_token:
+            logger.error(f"[send_text_message] access_token is missing or empty!")
+            raise WhatsAppAPIError(
+                message='WhatsApp access_token is not configured',
+                code='missing_access_token'
             )
 
         payload = {
@@ -128,11 +138,16 @@ class WhatsAppAPIService:
         if reply_to:
             payload['context'] = {'message_id': reply_to}
 
-        return self._make_request(
+        logger.info(f"[send_text_message] About to call _make_request with payload: {payload}")
+        
+        result = self._make_request(
             'POST',
             f'{self.phone_number_id}/messages',
             data=payload
         )
+        
+        logger.info(f"[send_text_message] API call successful: {result}")
+        return result
 
     def send_template_message(
         self,

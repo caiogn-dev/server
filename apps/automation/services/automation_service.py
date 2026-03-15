@@ -823,6 +823,8 @@ class AutomationService:
         extra_context: Dict = None
     ) -> Optional[str]:
         """Send an auto message for a specific event."""
+        logger.info(f"[_send_auto_message] START - event_type={event_type}, profile={profile.id}, session_phone={session.phone_number}")
+        
         auto_message = AutoMessage.objects.filter(
             company=profile,
             event_type=event_type,
@@ -830,7 +832,10 @@ class AutomationService:
         ).order_by('priority').first()
 
         if not auto_message:
+            logger.warning(f"[_send_auto_message] No active AutoMessage found for event_type={event_type}")
             return None
+
+        logger.info(f"[_send_auto_message] Found AutoMessage: {auto_message.id}, has_buttons={bool(auto_message.buttons)}")
 
         # Build context
         context = {
@@ -843,12 +848,22 @@ class AutomationService:
             **(extra_context or {})
         }
 
+        logger.info(f"[_send_auto_message] Context built: menu_url={context.get('menu_url')}")
+
         # Render message
-        message_text = auto_message.render_message(context)
+        try:
+            message_text = auto_message.render_message(context)
+            logger.info(f"[_send_auto_message] Message rendered: {len(message_text)} chars")
+        except Exception as render_error:
+            logger.error(f"[_send_auto_message] Failed to render message: {render_error}", exc_info=True)
+            return None
 
         # Send via WhatsApp
         try:
+            logger.info(f"[_send_auto_message] About to send message via WhatsApp - account_id={profile.account_id}, to={session.phone_number}, has_buttons={bool(auto_message.buttons)}")
+            
             if auto_message.buttons:
+                logger.info(f"[_send_auto_message] Sending interactive buttons message")
                 self.whatsapp_service.send_interactive_buttons(
                     account_id=str(profile.account_id),
                     to=session.phone_number,
@@ -856,11 +871,14 @@ class AutomationService:
                     buttons=auto_message.buttons
                 )
             else:
+                logger.info(f"[_send_auto_message] Sending simple text message")
                 self.whatsapp_service.send_text_message(
                     account_id=str(profile.account_id),
                     to=session.phone_number,
                     text=message_text
                 )
+
+            logger.info(f"[_send_auto_message] Message sent successfully")
 
             self._log_action(
                 profile,
@@ -875,7 +893,7 @@ class AutomationService:
             return message_text
 
         except Exception as e:
-            logger.error(f"Failed to send auto message: {str(e)}")
+            logger.error(f"[_send_auto_message] Failed to send auto message: {str(e)}", exc_info=True)
             self._log_action(
                 profile,
                 AutomationLog.ActionType.ERROR,
