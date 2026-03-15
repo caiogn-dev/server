@@ -1,15 +1,27 @@
 """
-URLs para autenticação WhatsApp
+Authentication URLs - Login, logout, register, password reset
 """
 from django.urls import path
-from .views import (
-    send_whatsapp_auth_code,
-    verify_whatsapp_auth_code,
-    resend_whatsapp_auth_code,
+from ..auth_views import (
+    LoginView, 
+    LogoutView, 
+    RegisterView,
+    CurrentUserView,
+    ChangePasswordView,
+    RequestPasswordResetView,
+    VerifyPasswordResetView,
 )
 
 urlpatterns = [
-    path('whatsapp/send/', send_whatsapp_auth_code, name='whatsapp-auth-send'),
-    path('whatsapp/verify/', verify_whatsapp_auth_code, name='whatsapp-auth-verify'),
-    path('whatsapp/resend/', resend_whatsapp_auth_code, name='whatsapp-auth-resend'),
+    # Standard auth
+    path('login/', LoginView.as_view(), name='api-login'),
+    path('logout/', LogoutView.as_view(), name='api-logout'),
+    path('register/', RegisterView.as_view(), name='api-register'),
+    path('me/', CurrentUserView.as_view(), name='api-current-user'),
+    path('change-password/', ChangePasswordView.as_view(), name='api-change-password'),
+    
+    # Password reset
+    path('password-reset/request/', RequestPasswordResetView.as_view(), name='api-password-reset-request'),
+    path('password-reset/verify/', VerifyPasswordResetView.as_view(), name='api-password-reset-verify'),
 ]
+
