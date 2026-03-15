@@ -82,7 +82,7 @@ urlpatterns = [
         path('marketing/', include('apps.marketing.urls')),
         path('campaigns/', include('apps.campaigns.urls')),
         path('audit/', include('apps.audit.urls')),
-
+    ])),
 
     # SSE (Server-Sent Events) - Fallback for WebSocket
     path('api/sse/', include([
