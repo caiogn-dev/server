@@ -7,6 +7,7 @@ for the public-facing storefront.
 import logging
 from decimal import Decimal
 from urllib.parse import urlparse
+from django.conf import settings
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -14,9 +15,12 @@ from rest_framework.views import APIView
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch
 
+from apps.core.models import UserProfile
+from apps.core.services.customer_identity import CustomerIdentityService
 from apps.stores.models import (
     Store, StoreProduct, StoreCategory, StoreCart, StoreCartItem,
     StoreCombo, StoreProductType, StoreCoupon, StoreDeliveryZone,
+    StoreCustomer, StorePaymentGateway,
     StoreWishlist
 )
 from apps.stores.services import cart_service, checkout_service, here_maps_service
@@ -72,6 +76,96 @@ def get_request_origin_base(request):
             return f'{parsed.scheme}://{parsed.netloc}'
 
     return ''
+
+
+def build_store_payment_config(store):
+    """Return the safe public payment configuration for the mobile storefront."""
+    mercadopago_gateway = (
+        StorePaymentGateway.objects.filter(
+            store=store,
+            gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO,
+            is_enabled=True,
+        )
+        .order_by('-is_default', 'name')
+        .first()
+    )
+    credentials = checkout_service.get_payment_credentials(store)
+
+    public_key = ''
+    if mercadopago_gateway and mercadopago_gateway.public_key:
+        public_key = mercadopago_gateway.public_key
+    elif isinstance(store.metadata, dict):
+        public_key = str(store.metadata.get('mercadopago_public_key') or '').strip()
+
+    if not public_key and getattr(settings, 'MERCADO_PAGO_PUBLIC_KEY', ''):
+        public_key = getattr(settings, 'MERCADO_PAGO_PUBLIC_KEY', '')
+
+    enabled_methods = []
+    if credentials:
+        enabled_methods.append('pix')
+    if credentials and public_key:
+        enabled_methods.append('credit_card')
+    if (store.metadata or {}).get('cash_enabled', True):
+        enabled_methods.append('cash')
+
+    return {
+        'enabled_methods': enabled_methods,
+        'mercado_pago': {
+            'public_key': public_key,
+            'is_sandbox': bool(
+                (mercadopago_gateway.is_sandbox if mercadopago_gateway else False)
+                or (credentials or {}).get('sandbox', False)
+            ),
+            'native_card_supported': bool(public_key),
+        },
+    }
+
+
+def build_store_customer_profile(store, user):
+    """Build a merged customer profile payload for the storefront app."""
+    profile, _ = UserProfile.objects.get_or_create(user=user)
+    store_customer, _ = StoreCustomer.objects.get_or_create(store=store, user=user)
+
+    addresses = store_customer.addresses if isinstance(store_customer.addresses, list) else []
+    default_index = store_customer.default_address_index or 0
+    default_address = addresses[default_index] if 0 <= default_index < len(addresses) else None
+
+    full_name = f"{user.first_name} {user.last_name}".strip()
+    if not full_name:
+        full_name = user.username or user.email or ''
+
+    return {
+        'user': {
+            'id': user.id,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+        },
+        'contact': {
+            'name': full_name,
+            'email': user.email,
+            'phone': profile.phone,
+            'cpf': profile.cpf,
+        },
+        'profile': {
+            'address': profile.address,
+            'city': profile.city,
+            'state': profile.state,
+            'zip_code': profile.zip_code,
+        },
+        'addresses': addresses,
+        'default_address_index': default_index,
+        'default_address': default_address,
+        'stats': {
+            'total_orders': store_customer.total_orders,
+            'total_spent': float(store_customer.total_spent or 0),
+            'last_order_at': store_customer.last_order_at.isoformat() if store_customer.last_order_at else None,
+        },
+        'preferences': {
+            'accepts_marketing': store_customer.accepts_marketing,
+        },
+    }
 
 
 class StorePublicView(APIView):
@@ -146,6 +240,106 @@ class StoreCatalogView(APIView):
         })
 
 
+class StoreAppConfigView(APIView):
+    """Public bootstrap config for the native storefront app."""
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, store_slug):
+        store = get_object_or_404(Store, slug=store_slug, status='active')
+        whatsapp_account = store.get_whatsapp_account()
+        payment_config = build_store_payment_config(store)
+        metadata = store.metadata or {}
+
+        return Response({
+            'auth': {
+                'whatsapp_otp_enabled': bool(whatsapp_account),
+                'whatsapp_account_id': str(whatsapp_account.id) if whatsapp_account else '',
+            },
+            'payment': payment_config,
+            'delivery': {
+                'city': store.city or '',
+                'state': store.state or '',
+                'delivery_enabled': bool(store.delivery_enabled),
+                'pickup_enabled': bool(store.pickup_enabled),
+                'store_coords': {
+                    'lat': float(store.latitude) if store.latitude is not None else None,
+                    'lng': float(store.longitude) if store.longitude is not None else None,
+                },
+                'default_delivery_fee': float(store.default_delivery_fee or 0),
+                'min_order_value': float(store.min_order_value or 0),
+                'free_delivery_threshold': float(store.free_delivery_threshold or 0) if store.free_delivery_threshold else None,
+                'max_distance_km': float(metadata.get('max_delivery_distance_km', 20)),
+                'max_time_minutes': float(metadata.get('max_delivery_time_minutes', 45)),
+            },
+            'branding': {
+                'primary_color': store.primary_color or '',
+                'secondary_color': store.secondary_color or '',
+                'logo_url': store.get_logo_url(),
+                'banner_url': store.get_banner_url(),
+            },
+        })
+
+
+class StoreCustomerProfileView(APIView):
+    """Customer storefront profile scoped to the selected store."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_store(self, store_slug):
+        return get_object_or_404(Store, slug=store_slug, status='active')
+
+    def get(self, request, store_slug):
+        store = self.get_store(store_slug)
+        return Response(build_store_customer_profile(store, request.user))
+
+    def patch(self, request, store_slug):
+        store = self.get_store(store_slug)
+        data = request.data or {}
+
+        name = str(data.get('customer_name') or data.get('name') or '').strip()
+        email = str(data.get('customer_email') or data.get('email') or request.user.email or '').strip()
+        phone = str(data.get('customer_phone') or data.get('phone') or '').strip()
+        cpf = str(data.get('cpf') or '').strip()
+
+        address = data.get('address')
+        addresses = data.get('addresses')
+        delivery_address = {}
+        if isinstance(address, dict):
+            delivery_address = address
+        elif isinstance(addresses, list) and addresses:
+            first_address = addresses[0]
+            if isinstance(first_address, dict):
+                delivery_address = first_address
+
+        customer_record = CustomerIdentityService.sync_checkout_customer(
+            store=store,
+            customer_name=name,
+            email=email,
+            phone=phone,
+            cpf=cpf,
+            delivery_method='delivery' if delivery_address else '',
+            delivery_address=delivery_address,
+            user=request.user,
+        )
+
+        store_customer = customer_record.get('store_customer')
+        if store_customer:
+            if isinstance(addresses, list):
+                store_customer.addresses = addresses
+            default_index = data.get('default_address_index')
+            if default_index is not None:
+                try:
+                    store_customer.default_address_index = max(0, int(default_index))
+                except (TypeError, ValueError):
+                    pass
+            if 'accepts_marketing' in data:
+                store_customer.accepts_marketing = bool(data.get('accepts_marketing'))
+            store_customer.save()
+
+        return Response(build_store_customer_profile(store, request.user))
+
+
 class StoreCartViewSet(viewsets.ViewSet):
     """ViewSet for managing shopping carts."""
     permission_classes = [permissions.AllowAny]
@@ -204,7 +398,6 @@ class StoreCartViewSet(viewsets.ViewSet):
             if combo_id:
                 # Add combo to cart
                 customizations = request.data.get('customizations', {})
-                from apps.stores.models import StoreCombo
                 combo = StoreCombo.objects.get(id=combo_id, store=store, is_active=True)
                 cart_service.add_combo(cart, combo, quantity, customizations, notes)
             else:

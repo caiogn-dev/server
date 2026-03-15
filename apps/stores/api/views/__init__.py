@@ -52,6 +52,8 @@ from .storefront_views import (
     StoreCouponValidateView,
     StoreCatalogView,
     StorePublicView,
+    StoreAppConfigView,
+    StoreCustomerProfileView,
     StoreWishlistViewSet,
 )
 
@@ -85,5 +87,7 @@ __all__ = [
     'StoreCouponValidateView',
     'StoreCatalogView',
     'StorePublicView',
+    'StoreAppConfigView',
+    'StoreCustomerProfileView',
     'StoreWishlistViewSet',
 ]

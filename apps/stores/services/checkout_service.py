@@ -1,4 +1,4 @@
-"""
+﻿"""
 Checkout Service - Unified checkout for all stores.
 Handles order creation, payment processing, and stock management.
 """
@@ -87,7 +87,7 @@ class CheckoutService:
 
     @staticmethod
     def _normalize_base_url(raw_url: str) -> str:
-        """Return scheme + host only for a public storefront URL."""
+        """Return scheme + host only for a storefront or app deep link base URL."""
         if not raw_url:
             return ''
 
@@ -97,7 +97,7 @@ class CheckoutService:
 
         if candidate.startswith('//'):
             candidate = f'https:{candidate}'
-        elif not re.match(r'^https?://', candidate, re.IGNORECASE):
+        elif not re.match(r'^[a-z][a-z0-9+.-]*://', candidate, re.IGNORECASE):
             candidate = f'https://{candidate}'
 
         parsed = urlparse(candidate)
@@ -213,7 +213,7 @@ class CheckoutService:
         if distance_km is None:
             return {
                 'fee': float(base_fee),
-                'zone_name': 'PadrÃ£o',
+                'zone_name': 'Padrao',
                 'estimated_minutes': 30,
                 'estimated_days': 0,
             }
@@ -223,16 +223,16 @@ class CheckoutService:
         # Calculate fee: base + (distance - threshold) * per_km_rate
         if distance <= free_km_threshold:
             fee = base_fee
-            zone_name = 'PrÃ³ximo'
+            zone_name = 'Proximo'
         else:
             extra_km = distance - free_km_threshold
             fee = base_fee + (extra_km * fee_per_km)
             
             # Determine zone name based on distance
             if distance <= 5:
-                zone_name = 'PrÃ³ximo'
+                zone_name = 'Proximo'
             elif distance <= 10:
-                zone_name = 'PadrÃ£o'
+                zone_name = 'Padrao'
             elif distance <= 15:
                 zone_name = 'Distante'
             else:
@@ -268,7 +268,7 @@ class CheckoutService:
             ).first()
             
             if not coupon:
-                return {'valid': False, 'error': 'Cupom nÃ£o encontrado'}
+                return {'valid': False, 'error': 'Cupom nao encontrado'}
             
             # Use the model's is_valid method which handles all validation
             is_valid, error_message = coupon.is_valid(subtotal=subtotal, user=user)
@@ -327,7 +327,16 @@ class CheckoutService:
         Create an order from a cart with atomic stock decrement.
         """
         store = cart.store
-        
+        delivery_payload = dict(delivery_data or {})
+        delivery_address = dict(delivery_payload.get('address') or {})
+
+        if delivery_payload.get('method') == 'delivery':
+            if store.city and not delivery_address.get('city'):
+                delivery_address['city'] = store.city
+            if store.state and not delivery_address.get('state'):
+                delivery_address['state'] = store.state
+            delivery_payload['address'] = delivery_address
+
         # Validate stock
         stock_errors = cart_service.validate_stock_for_checkout(cart)
         if stock_errors:
@@ -335,9 +344,9 @@ class CheckoutService:
         
         # Calculate delivery fee
         delivery_info = {'fee': Decimal('0'), 'zone_name': 'Retirada'}
-        if delivery_data and delivery_data.get('method') == 'delivery':
-            distance = delivery_data.get('distance_km')
-            zip_code = delivery_data.get('zip_code')
+        if delivery_payload and delivery_payload.get('method') == 'delivery':
+            distance = delivery_payload.get('distance_km')
+            zip_code = delivery_payload.get('zip_code')
             delivery_info = CheckoutService.calculate_delivery_fee(
                 store,
                 distance_km=Decimal(str(distance)) if distance else None,
@@ -371,8 +380,8 @@ class CheckoutService:
             email=customer_data.get('email', ''),
             phone=customer_data.get('phone', ''),
             cpf=customer_data.get('cpf', ''),
-            delivery_method=delivery_data.get('method', '') if delivery_data else '',
-            delivery_address=delivery_data.get('address', {}) if delivery_data else {},
+            delivery_method=delivery_payload.get('method', '') if delivery_payload else '',
+            delivery_address=delivery_payload.get('address', {}) if delivery_payload else {},
             user=cart.user,
         )
         customer_user = customer_record.get('user')
@@ -395,11 +404,11 @@ class CheckoutService:
             total=total,
             delivery_method=(
                 StoreOrder.DeliveryMethod.DELIVERY 
-                if delivery_data and delivery_data.get('method') == 'delivery'
+                if delivery_payload and delivery_payload.get('method') == 'delivery'
                 else StoreOrder.DeliveryMethod.PICKUP
             ),
-            delivery_address=delivery_data.get('address', {}) if delivery_data else {},
-            delivery_notes=delivery_data.get('notes', '') if delivery_data else '',
+            delivery_address=delivery_payload.get('address', {}) if delivery_payload else {},
+            delivery_notes=delivery_payload.get('notes', '') if delivery_payload else '',
             customer_notes=notes,
             metadata={
                 'delivery_zone': delivery_info.get('zone_name'),
@@ -679,7 +688,7 @@ class CheckoutService:
                 if not payment_method_id:
                     missing_fields.append('payment_method_id')
 
-                missing_fields_str = ', '.join(missing_fields) if missing_fields else 'dados do cartão'
+                missing_fields_str = ', '.join(missing_fields) if missing_fields else 'dados do cartao'
                 logger.warning(
                     "Direct card payment requested without required Mercado Pago data for order %s. Missing: %s",
                     order.order_number,
@@ -687,7 +696,7 @@ class CheckoutService:
                 )
                 return {
                     'success': False,
-                    'error': f'Dados do cartão incompletos para pagamento direto ({missing_fields_str}).',
+                    'error': f'Dados do cartao incompletos para pagamento direto ({missing_fields_str}).',
                 }
 
             preference_data = {
@@ -819,4 +828,5 @@ class CheckoutService:
 
 # Singleton instance
 checkout_service = CheckoutService()
+
 

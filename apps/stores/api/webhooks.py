@@ -15,6 +15,7 @@ from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 
 from apps.stores.models import Store, StoreOrder, StoreIntegration
 from apps.stores.services import checkout_service
@@ -440,8 +441,7 @@ class CustomerOrdersView(APIView):
     Get orders for authenticated customer.
     Used by frontend to show order history.
     """
-    authentication_classes = []
-    permission_classes = []
+    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """Get orders for the authenticated user."""

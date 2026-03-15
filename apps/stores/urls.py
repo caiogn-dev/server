@@ -16,6 +16,7 @@ from .api.views import (
     # Unified storefront views
     StoreCartViewSet, StoreCheckoutView, StoreDeliveryFeeView,
     StoreCouponValidateView, StoreCatalogView, StorePublicView,
+    StoreAppConfigView, StoreCustomerProfileView,
     StoreComboViewSet, StoreProductTypeViewSet,
     # Coupon and Delivery Zone views
     StoreCouponViewSet, StoreDeliveryZoneViewSet,
@@ -83,7 +84,9 @@ products_router.register(r'variants', StoreProductVariantViewSet, basename='prod
 
 store_frontend_patterns = [
     path('', StorePublicView.as_view(), name='store-public'),
+    path('app-config/', StoreAppConfigView.as_view(), name='store-app-config'),
     path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
+    path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),
     path('cart/', StoreCartViewSet.as_view({'get': 'get_cart_by_store'}), name='store-cart'),
     path('cart/add/', StoreCartViewSet.as_view({'post': 'add_item'}), name='store-cart-add'),
     path('cart/item/<uuid:item_id>/', StoreCartViewSet.as_view({
@@ -113,18 +116,8 @@ urlpatterns = [
     path('', include(router.urls)),
     path('', include(stores_router.urls)),
     path('', include(products_router.urls)),
-    
+
     # ==========================================================================
-    # PUBLIC STOREFRONT ENDPOINTS (by store slug)
-    # Base: /api/v1/stores/{store_slug}/
-    # ==========================================================================
-    
-    # Legacy alias kept for backwards compatibility with older frontends
-    path('s/<slug:store_slug>/', include(store_frontend_patterns)),
-    # Store-specific storefront endpoints (canonical)
-    path('<slug:store_slug>/', include(store_frontend_patterns)),
-    
-    # ========================================================================== 
     # HERE MAPS ENDPOINTS
     # ==========================================================================
     
@@ -193,4 +186,15 @@ urlpatterns = [
     
     # Payment Webhook Events (read-only)
     path('payments/webhook-events/', include(webhook_event_router.urls)),
+
+    # ==========================================================================
+    # PUBLIC STOREFRONT ENDPOINTS (by store slug)
+    # Base: /api/v1/stores/{store_slug}/
+    # Keep these last so catch-all slug routes do not shadow global endpoints.
+    # ==========================================================================
+
+    # Legacy alias kept for backwards compatibility with older frontends
+    path('s/<slug:store_slug>/', include(store_frontend_patterns)),
+    # Store-specific storefront endpoints (canonical)
+    path('<slug:store_slug>/', include(store_frontend_patterns)),
 ]

@@ -9,7 +9,29 @@ class Migration(migrations.Migration):
 
     operations = [
         migrations.SeparateDatabaseAndState(
-            database_operations=[],
+            database_operations=[
+                migrations.AddField(
+                    model_name='companyprofile',
+                    name='_legacy_whatsapp_number',
+                    field=models.CharField(
+                        blank=True,
+                        db_column='whatsapp_number',
+                        default='',
+                        editable=False,
+                        max_length=20,
+                    ),
+                ),
+                migrations.AddField(
+                    model_name='companyprofile',
+                    name='_legacy_address',
+                    field=models.TextField(
+                        blank=True,
+                        db_column='address',
+                        default='',
+                        editable=False,
+                    ),
+                ),
+            ],
             state_operations=[
                 migrations.AddField(
                     model_name='companyprofile',

@@ -49,6 +49,21 @@ class CustomerIdentityService:
         last_name = parts[1] if len(parts) > 1 else ""
         return first_name, last_name
 
+    @staticmethod
+    def normalize_state(state: str, fallback: str = "") -> str:
+        value = str(state or fallback or "").strip()
+        if not value:
+            return ""
+
+        if len(value) == 2 and value.isalpha():
+            return value.upper()
+
+        letters_only = "".join(ch for ch in value if ch.isalpha())
+        if len(letters_only) >= 2:
+            return letters_only[:2].upper()
+
+        return value.upper()[:2]
+
     @classmethod
     def generate_unique_username(cls, base_username: str) -> str:
         user_model = get_user_model()
@@ -178,15 +193,18 @@ class CustomerIdentityService:
         return resolved_user, profile, user_created
 
     @classmethod
-    def _build_address_record(cls, delivery_address: Optional[dict]) -> Optional[dict]:
+    def _build_address_record(cls, delivery_address: Optional[dict], store: Optional["Store"] = None) -> Optional[dict]:
         address = dict(delivery_address or {})
         normalized = {
             "street": (address.get("street") or address.get("address") or "").strip(),
             "number": str(address.get("number") or "").strip(),
             "complement": str(address.get("complement") or "").strip(),
             "neighborhood": str(address.get("neighborhood") or "").strip(),
-            "city": str(address.get("city") or "").strip(),
-            "state": str(address.get("state") or "").strip().upper(),
+            "city": str(address.get("city") or getattr(store, "city", "") or "").strip(),
+            "state": cls.normalize_state(
+                address.get("state") or "",
+                fallback=getattr(store, "state", ""),
+            ),
             "zip_code": cls.digits_only(address.get("zip_code") or ""),
             "reference": str(address.get("reference") or address.get("landmark") or "").strip(),
         }
@@ -240,7 +258,7 @@ class CustomerIdentityService:
         normalized_phone = normalize_phone_number(phone) if cls.digits_only(phone) else ""
         normalized_cpf = clean_cpf(cpf or "")
         normalized_address = (
-            cls._build_address_record(delivery_address)
+            cls._build_address_record(delivery_address, store=store)
             if delivery_method == "delivery"
             else None
         )
@@ -293,7 +311,7 @@ class CustomerIdentityService:
             existing_index = next(
                 (
                     index for index, current in enumerate(addresses)
-                    if cls._build_address_record(current) == normalized_address
+                    if cls._build_address_record(current, store=store) == normalized_address
                 ),
                 None,
             )

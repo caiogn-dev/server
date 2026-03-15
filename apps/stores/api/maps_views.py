@@ -9,6 +9,7 @@ from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store
+from apps.stores.services.checkout_service import CheckoutService
 from apps.stores.services.here_maps_service import here_maps_service
 
 logger = logging.getLogger(__name__)
@@ -202,7 +203,6 @@ class StoreValidateDeliveryView(APIView):
             
             # Add delivery fee calculation
             if result['is_valid']:
-                from apps.stores.services.checkout_service import CheckoutService
                 fee_info = CheckoutService.calculate_delivery_fee(
                     store,
                     distance_km=Decimal(str(result['distance_km']))
