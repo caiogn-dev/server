@@ -641,11 +641,17 @@ class WebhookService:
             content = message_data
         
         # Get or create conversation
-        conversation = self._get_or_create_conversation(
-            account=event.account,
-            phone_number=from_number,
-            contact_name=contact_data.get('profile', {}).get('name', '')
-        )
+        logger.info(f"[_process_inbound_message] About to create conversation: account={event.account.id}, phone={from_number}, contact_name={contact_data.get('profile', {}).get('name', '')}")
+        try:
+            conversation = self._get_or_create_conversation(
+                account=event.account,
+                phone_number=from_number,
+                contact_name=contact_data.get('profile', {}).get('name', '')
+            )
+            logger.info(f"[_process_inbound_message] Conversation created/retrieved: id={conversation.id}")
+        except Exception as conv_error:
+            logger.error(f"[_process_inbound_message] Failed to create conversation: {conv_error}", exc_info=True)
+            raise
         
         # Create message
         message = Message.objects.create(
@@ -809,7 +815,10 @@ class WebhookService:
         from apps.conversations.models import Conversation
         from django.db import IntegrityError
         
+        logger.info(f"[_get_or_create_conversation] START - account={account.id}, phone={phone_number}, contact_name={contact_name}")
+        
         try:
+            logger.info(f"[_get_or_create_conversation] Calling get_or_create...")
             conversation, created = Conversation.objects.get_or_create(
                 account=account,
                 phone_number=phone_number,
@@ -821,7 +830,7 @@ class WebhookService:
             )
             
             if created:
-                logger.info(f"Created new conversation with {phone_number}")
+                logger.info(f"[_get_or_create_conversation] NEW conversation created: {conversation.id}")
                 # Broadcast new conversation
                 self.broadcast.broadcast_conversation_update(
                     account_id=str(account.id),
@@ -834,27 +843,36 @@ class WebhookService:
                         'created_at': conversation.created_at.isoformat()
                     }
                 )
-            elif contact_name and not conversation.contact_name:
+            else:
+                logger.info(f"[_get_or_create_conversation] EXISTING conversation retrieved: {conversation.id}")
+            
+            if contact_name and not conversation.contact_name:
                 # Update contact name if we didn't have it
+                logger.info(f"[_get_or_create_conversation] Updating contact_name to: {contact_name}")
                 conversation.contact_name = contact_name
                 conversation.save(update_fields=['contact_name', 'updated_at'])
             
+            logger.info(f"[_get_or_create_conversation] SUCCESS - returning conversation: {conversation.id}")
             return conversation
             
-        except IntegrityError:
+        except IntegrityError as ie:
             # Race condition: another request created the conversation first
             # This can happen with unique_together constraint on (account, phone_number)
-            logger.warning(f"IntegrityError on get_or_create for {phone_number}, retrying get...")
+            logger.warning(f"[_get_or_create_conversation] IntegrityError on get_or_create for {phone_number}: {ie}, retrying get...")
             try:
                 conversation = Conversation.objects.get(
                     account=account,
                     phone_number=phone_number
                 )
+                logger.info(f"[_get_or_create_conversation] Retrieved after IntegrityError: {conversation.id}")
                 return conversation
             except Conversation.DoesNotExist:
                 # This shouldn't happen but handle it gracefully
-                logger.error(f"Conversation not found after IntegrityError for {phone_number}")
+                logger.error(f"[_get_or_create_conversation] Conversation not found after IntegrityError for {phone_number}")
                 raise
+        except Exception as e:
+            logger.error(f"[_get_or_create_conversation] Unexpected error: {e}", exc_info=True)
+            raise
 
     def _broadcast_new_message(
         self,
