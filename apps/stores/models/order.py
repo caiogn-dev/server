@@ -246,7 +246,10 @@ class StoreOrder(BaseModel):
 
     def _trigger_status_whatsapp_notification(self, new_status: str):
         """Trigger WhatsApp notification based on status change."""
+        logger.info(f"[WhatsAppNotification] START - Order {self.order_number}, Status: {new_status}")
+        
         if not self.customer_phone:
+            logger.warning(f"[WhatsAppNotification] No customer phone for order {self.order_number}")
             return
 
         status_message_map = {
@@ -265,10 +268,12 @@ class StoreOrder(BaseModel):
 
         message_template = status_message_map.get(new_status)
         if not message_template:
+            logger.warning(f"[WhatsAppNotification] No template for status: {new_status}")
             return
 
         notification_key = f'whatsapp_notification_{new_status}'
         if self.metadata.get(notification_key):
+            logger.warning(f"[WhatsAppNotification] Notification already sent - order {self.order_number}, status {new_status}")
             return
 
         try:
@@ -276,11 +281,14 @@ class StoreOrder(BaseModel):
                 customer_name=self.customer_name or 'Cliente',
                 order_number=self.order_number,
             )
+            logger.info(f"[WhatsAppNotification] Message template formatted for {self.order_number}")
 
             phone = self._normalize_phone_number(self.customer_phone)
+            logger.info(f"[WhatsAppNotification] Phone normalization result: {phone} (original: {self.customer_phone})")
+            
             if not phone:
                 logger.warning(
-                    f"Invalid phone number for WhatsApp notification (order {self.order_number})"
+                    f"[WhatsAppNotification] Invalid phone number for order {self.order_number} (customer_phone={self.customer_phone})"
                 )
                 return
 
@@ -290,20 +298,25 @@ class StoreOrder(BaseModel):
             account = None
             if self.store:
                 account = self.store.get_whatsapp_account()
+                logger.info(f"[WhatsAppNotification] Got account from store: {account}")
             
             # Fallback to default account only if no store-linked account found
             if not account:
                 account = get_default_whatsapp_account(create_if_missing=False)
+                logger.info(f"[WhatsAppNotification] Got default account: {account}")
 
             if not account:
-                logger.warning(f"No WhatsApp account found to notify order {self.order_number}")
+                logger.warning(f"[WhatsAppNotification] No WhatsApp account found to notify order {self.order_number}")
                 return
+                
             if not account.phone_number_id:
                 logger.warning(
-                    f"WhatsApp account {account.id} missing phone_number_id for order {self.order_number}"
+                    f"[WhatsAppNotification] WhatsApp account {account.id} missing phone_number_id for order {self.order_number}"
                 )
                 return
 
+            logger.info(f"[WhatsAppNotification] Sending message via MessageService - account {account.id}, to {phone}")
+            
             message_service = MessageService()
             message_service.send_text_message(
                 account_id=str(account.id),
@@ -315,12 +328,15 @@ class StoreOrder(BaseModel):
                     'customer_name': self.customer_name or ''
                 }
             )
+            
+            logger.info(f"[WhatsAppNotification] Message sent successfully for order {self.order_number}")
 
             self.metadata[notification_key] = timezone.now().isoformat()
             self.save(update_fields=['metadata'])
+            logger.info(f"[WhatsAppNotification] Metadata updated for order {self.order_number}")
 
         except Exception as e:
-            logger.error(f"Failed to send WhatsApp notification for order {self.order_number}: {e}")
+            logger.error(f"[WhatsAppNotification] Failed to send WhatsApp notification for order {self.order_number}: {e}", exc_info=True)
 
     def send_status_webhook(self, old_status: str, new_status: str):
         """Send webhook notification for status change."""
