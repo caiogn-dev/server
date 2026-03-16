@@ -63,6 +63,11 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 Q(customer_phone__icontains=search)
             )
         
+        # Filter by customer phone number (used by dashboard conversations)
+        customer = self.request.query_params.get('customer')
+        if customer:
+            queryset = queryset.filter(customer_phone=customer)
+        
         return queryset.select_related(
             'store', 'customer'
         ).prefetch_related(

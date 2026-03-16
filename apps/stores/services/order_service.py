@@ -166,9 +166,13 @@ class OrderService:
             'customer_phone': order.customer_phone,
         })
         
-        # Note: WhatsApp notification is now handled by AutomationService
-        # to avoid duplicate messages. The automation service checks if notification
-        # was already sent before sending again.
+        # Send WhatsApp notification via AutomationService
+        try:
+            from apps.automation.services import AutomationService
+            automation_service = AutomationService()
+            automation_service.handle_order_status_change(order, old_status, new_status)
+        except Exception as e:
+            logger.error(f"Failed to send order status notification: {e}", exc_info=True)
         
         logger.info(f"Order {order.order_number} status updated: {old_status} -> {new_status}")
         

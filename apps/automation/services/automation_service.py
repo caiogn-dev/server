@@ -794,6 +794,127 @@ class AutomationService:
 
         return True
 
+    def handle_order_status_change(
+        self,
+        order,
+        old_status: str,
+        new_status: str
+    ) -> bool:
+        """
+        Handle order status change from internal StoreOrder.
+        This is called directly by OrderService to send WhatsApp notifications.
+        """
+        from apps.stores.models import Store
+        
+        logger.info(f"[handle_order_status_change] START - Order {order.order_number}, {old_status} -> {new_status}")
+        
+        # Map internal status to event type
+        status_to_event = {
+            'confirmed': 'order_confirmed',
+            'preparing': 'order_preparing',
+            'ready': 'order_ready',
+            'shipped': 'order_shipped',
+            'out_for_delivery': 'order_out_for_delivery',
+            'delivered': 'order_delivered',
+            'cancelled': 'order_cancelled',
+        }
+        
+        event_type = status_to_event.get(new_status)
+        if not event_type:
+            logger.debug(f"[handle_order_status_change] No notification needed for status: {new_status}")
+            return False
+        
+        # Get the store and its automation profile
+        store = order.store
+        if not store:
+            logger.warning(f"[handle_order_status_change] Order {order.order_number} has no store")
+            return False
+        
+        # Get company profile
+        profile = None
+        if hasattr(store, 'automation_profile') and store.automation_profile:
+            profile = store.automation_profile
+            logger.info(f"[handle_order_status_change] Found profile via store.automation_profile: {profile.id}")
+        elif store.whatsapp_account and hasattr(store.whatsapp_account, 'company_profile'):
+            profile = store.whatsapp_account.company_profile
+            logger.info(f"[handle_order_status_change] Found profile via whatsapp_account: {profile.id}")
+        
+        if not profile:
+            logger.warning(f"[handle_order_status_change] No automation profile found for store {store.slug}")
+            return False
+        
+        # Check if notifications are enabled
+        if not profile.order_status_notification_enabled:
+            logger.info(f"[handle_order_status_change] Order status notifications disabled for store {store.slug}")
+            return False
+        
+        # Get or create customer session
+        phone_number = order.customer_phone
+        if not phone_number:
+            logger.warning(f"[handle_order_status_change] Order {order.order_number} has no customer phone")
+            return False
+        
+        # Normalize phone number
+        from apps.core.utils import normalize_phone_number
+        phone_number = normalize_phone_number(phone_number)
+        logger.info(f"[handle_order_status_change] Normalized phone: {phone_number}")
+        
+        # Find or create session
+        session = CustomerSession.objects.filter(
+            company=profile,
+            phone_number=phone_number
+        ).order_by('-updated_at').first()
+        
+        if not session:
+            session = CustomerSession.objects.create(
+                company=profile,
+                phone_number=phone_number,
+                customer_name=order.customer_name or 'Cliente',
+                customer_email=order.customer_email or '',
+            )
+            logger.info(f"[handle_order_status_change] Created new session: {session.id}")
+        else:
+            logger.info(f"[handle_order_status_change] Found existing session: {session.id}")
+        
+        # Map event types to AutoMessage.EventType
+        event_mapping = {
+            'order_confirmed': AutoMessage.EventType.ORDER_CONFIRMED,
+            'order_preparing': AutoMessage.EventType.ORDER_PREPARING,
+            'order_ready': AutoMessage.EventType.ORDER_READY,
+            'order_shipped': AutoMessage.EventType.ORDER_SHIPPED,
+            'order_out_for_delivery': AutoMessage.EventType.ORDER_OUT_FOR_DELIVERY,
+            'order_delivered': AutoMessage.EventType.ORDER_DELIVERED,
+            'order_cancelled': AutoMessage.EventType.ORDER_CANCELLED,
+        }
+        
+        auto_message_event_type = event_mapping.get(event_type)
+        if not auto_message_event_type:
+            logger.warning(f"[handle_order_status_change] No AutoMessage.EventType mapping for: {event_type}")
+            return False
+        
+        logger.info(f"[handle_order_status_change] Sending notification for event: {auto_message_event_type}")
+        
+        # Send notification
+        notification_sent = self._send_notification(
+            profile,
+            session,
+            auto_message_event_type,
+            {
+                'order_number': order.order_number,
+                'customer_name': order.customer_name or 'Cliente',
+                'order_total': f"{order.total:.2f}" if order.total else '0.00',
+                'order_status': new_status,
+                'old_status': old_status,
+            }
+        )
+        
+        if notification_sent:
+            logger.info(f"[handle_order_status_change] ✓ Notification sent for {order.order_number}: {new_status}")
+        else:
+            logger.info(f"[handle_order_status_change] ✗ Notification skipped for {order.order_number}: {new_status}")
+        
+        return notification_sent
+
     # ==================== Notifications ====================
 
     def _send_notification(
