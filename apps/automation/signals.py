@@ -86,6 +86,15 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
             
             profile = CompanyProfile.objects.create(**profile_data)
             logger.info(f"Created CompanyProfile {profile.id} for Store {instance.slug}")
+            
+            # Create default auto messages for the new profile
+            try:
+                from .services import AutomationService
+                service = AutomationService()
+                result = service.ensure_auto_messages(profile)
+                logger.info(f"Created {result.get('created', 0)} default auto messages for Store {instance.slug}")
+            except Exception as msg_error:
+                logger.error(f"Error creating auto messages for Store {instance.slug}: {msg_error}")
         
     except Exception as e:
         logger.error(f"Error creating/linking CompanyProfile for Store {instance.id}: {e}", exc_info=True)

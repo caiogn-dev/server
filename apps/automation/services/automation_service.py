@@ -1022,12 +1022,24 @@ class AutomationService:
 
         # Send via WhatsApp
         try:
-            logger.info(f"[_send_auto_message] About to send message via WhatsApp - account_id={profile.account_id}, to={session.phone_number}, has_buttons={bool(auto_message.buttons)}")
+            # Get account ID - use profile's account or fallback to default
+            account_id = profile.account_id
+            if not account_id:
+                from apps.whatsapp.utils import get_default_whatsapp_account
+                default_account = get_default_whatsapp_account(create_if_missing=False)
+                if default_account:
+                    account_id = default_account.id
+                    logger.info(f"[_send_auto_message] Using default WhatsApp account: {account_id}")
+                else:
+                    logger.error(f"[_send_auto_message] No WhatsApp account available (profile has no account, no default found)")
+                    return None
+            
+            logger.info(f"[_send_auto_message] About to send message via WhatsApp - account_id={account_id}, to={session.phone_number}, has_buttons={bool(auto_message.buttons)}")
             
             if auto_message.buttons:
                 logger.info(f"[_send_auto_message] Sending interactive buttons message")
                 self.whatsapp_service.send_interactive_buttons(
-                    account_id=str(profile.account_id),
+                    account_id=str(account_id),
                     to=session.phone_number,
                     body_text=message_text,
                     buttons=auto_message.buttons
@@ -1035,7 +1047,7 @@ class AutomationService:
             else:
                 logger.info(f"[_send_auto_message] Sending simple text message")
                 self.whatsapp_service.send_text_message(
-                    account_id=str(profile.account_id),
+                    account_id=str(account_id),
                     to=session.phone_number,
                     text=message_text
                 )
