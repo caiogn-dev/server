@@ -109,7 +109,8 @@ class OrderService:
         
         # Valid status transitions
         valid_transitions = {
-            'pending': ['confirmed', 'cancelled'],
+            'pending': ['confirmed', 'processing', 'cancelled'],
+            'processing': ['confirmed', 'preparing', 'cancelled'],
             'confirmed': ['preparing', 'cancelled'],
             'preparing': ['ready', 'out_for_delivery', 'cancelled'],
             'ready': ['out_for_delivery', 'delivered', 'picked_up', 'cancelled'],
@@ -133,7 +134,9 @@ class OrderService:
         order.status = new_status
         
         # Update timestamps
-        if new_status == 'confirmed':
+        if new_status == 'processing':
+            order.processing_at = timezone.now()
+        elif new_status == 'confirmed':
             order.confirmed_at = timezone.now()
         elif new_status == 'preparing':
             order.preparing_at = timezone.now()

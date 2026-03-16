@@ -128,10 +128,16 @@ class StoreOrder(BaseModel):
     customer_notes = models.TextField(blank=True)
     internal_notes = models.TextField(blank=True)
 
-    # Timestamps
+    # Timestamps for status tracking
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    processing_at = models.DateTimeField(null=True, blank=True)
+    preparing_at = models.DateTimeField(null=True, blank=True)
+    ready_at = models.DateTimeField(null=True, blank=True)
     paid_at = models.DateTimeField(null=True, blank=True)
     shipped_at = models.DateTimeField(null=True, blank=True)
+    out_for_delivery_at = models.DateTimeField(null=True, blank=True)
     delivered_at = models.DateTimeField(null=True, blank=True)
+    picked_up_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
 
     # Metadata
@@ -179,13 +185,26 @@ class StoreOrder(BaseModel):
         old_status = self.status
         self.status = new_status
 
-        if new_status == self.OrderStatus.PAID:
+        # Set timestamp for each status
+        if new_status == self.OrderStatus.CONFIRMED:
+            self.confirmed_at = timezone.now()
+        elif new_status == self.OrderStatus.PROCESSING:
+            self.processing_at = timezone.now()
+        elif new_status == self.OrderStatus.PAID:
             self.paid_at = timezone.now()
             self.payment_status = self.PaymentStatus.PAID
+        elif new_status == self.OrderStatus.PREPARING:
+            self.preparing_at = timezone.now()
+        elif new_status == self.OrderStatus.READY:
+            self.ready_at = timezone.now()
         elif new_status == self.OrderStatus.SHIPPED:
             self.shipped_at = timezone.now()
+        elif new_status == self.OrderStatus.OUT_FOR_DELIVERY:
+            self.out_for_delivery_at = timezone.now()
         elif new_status == self.OrderStatus.DELIVERED:
             self.delivered_at = timezone.now()
+        elif new_status == self.OrderStatus.PICKED_UP:
+            self.picked_up_at = timezone.now()
         elif new_status == self.OrderStatus.CANCELLED:
             self.cancelled_at = timezone.now()
 
