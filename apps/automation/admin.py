@@ -14,7 +14,7 @@ class CompanyProfileAdmin(admin.ModelAdmin):
             'fields': ('account', 'store'),
         }),
         ('Business Info (from Store)', {
-            'fields': ('company_name', 'business_type', 'description'),
+            'fields': ('company_name', 'business_type', '_description'),
             'classes': ('collapse',),
         }),
         ('URLs', {
@@ -34,7 +34,7 @@ class CompanyProfileAdmin(admin.ModelAdmin):
             'fields': ('external_api_key', 'webhook_secret', 'use_ai_agent', 'default_agent'),
         }),
         ('Advanced', {
-            'fields': ('business_hours', 'settings'),
+            'fields': ('_business_hours', 'settings'),
             'classes': ('collapse',),
         }),
     )
@@ -59,5 +59,5 @@ class CustomerSessionAdmin(admin.ModelAdmin):
 class AutomationLogAdmin(admin.ModelAdmin):
     list_display = ['company', 'action_type', 'phone_number', 'is_error', 'created_at']
     list_filter = ['action_type', 'is_error', 'company']
-    search_fields = ['description', 'phone_number']
+    search_fields = ['phone_number']
     readonly_fields = ['request_data', 'response_data']
