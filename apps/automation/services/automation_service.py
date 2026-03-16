@@ -840,7 +840,9 @@ class AutomationService:
         # 1. Via store.automation_profile (OneToOne reverse)
         if hasattr(store, 'automation_profile') and store.automation_profile:
             profile = store.automation_profile
-            logger.info(f"[handle_order_status_change] ✓ Found profile via store.automation_profile: {profile.id}")
+            # Refresh from DB to get latest account_id
+            profile.refresh_from_db()
+            logger.info(f"[handle_order_status_change] ✓ Found profile via store.automation_profile: {profile.id}, account_id: {profile.account_id}")
         
         # 2. Via whatsapp_account.company_profile
         if not profile and store.whatsapp_account_id:
@@ -848,7 +850,8 @@ class AutomationService:
                 wa_account = store.whatsapp_account
                 if wa_account and hasattr(wa_account, 'company_profile') and wa_account.company_profile:
                     profile = wa_account.company_profile
-                    logger.info(f"[handle_order_status_change] ✓ Found profile via whatsapp_account: {profile.id}")
+                    profile.refresh_from_db()
+                    logger.info(f"[handle_order_status_change] ✓ Found profile via whatsapp_account: {profile.id}, account_id: {profile.account_id}")
             except Exception as e:
                 logger.error(f"[handle_order_status_change] Error accessing whatsapp_account: {e}")
         
@@ -856,13 +859,13 @@ class AutomationService:
         if not profile:
             profile = CompanyProfile.objects.filter(store=store).first()
             if profile:
-                logger.info(f"[handle_order_status_change] ✓ Found profile via direct store query: {profile.id}")
+                logger.info(f"[handle_order_status_change] ✓ Found profile via direct store query: {profile.id}, account_id: {profile.account_id}")
         
         # 4. Direct query by account
         if not profile and store.whatsapp_account_id:
             profile = CompanyProfile.objects.filter(account_id=store.whatsapp_account_id).first()
             if profile:
-                logger.info(f"[handle_order_status_change] ✓ Found profile via direct account query: {profile.id}")
+                logger.info(f"[handle_order_status_change] ✓ Found profile via direct account query: {profile.id}, account_id: {profile.account_id}")
         
         # 5. Create profile if not found
         if not profile:
@@ -1022,8 +1025,20 @@ class AutomationService:
 
         # Send via WhatsApp
         try:
+            # Refresh profile to get latest account_id
+            profile.refresh_from_db()
+            
             # Get account ID - use profile's account or fallback to default
             account_id = profile.account_id
+            logger.info(f"[_send_auto_message] Profile account_id: {account_id}, store whatsapp_account_id: {profile.store.whatsapp_account_id if profile.store else 'N/A'}")
+            
+            # If profile has no account but store has one, link them
+            if not account_id and profile.store and profile.store.whatsapp_account_id:
+                logger.info(f"[_send_auto_message] Linking profile to store's WhatsApp account: {profile.store.whatsapp_account_id}")
+                profile.account_id = profile.store.whatsapp_account_id
+                profile.save(update_fields=['account_id', 'updated_at'])
+                account_id = profile.account_id
+            
             if not account_id:
                 from apps.whatsapp.utils import get_default_whatsapp_account
                 default_account = get_default_whatsapp_account(create_if_missing=False)
