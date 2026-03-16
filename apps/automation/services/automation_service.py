@@ -1034,10 +1034,25 @@ class AutomationService:
             
             # If profile has no account but store has one, link them
             if not account_id and profile.store and profile.store.whatsapp_account_id:
-                logger.info(f"[_send_auto_message] Linking profile to store's WhatsApp account: {profile.store.whatsapp_account_id}")
-                profile.account_id = profile.store.whatsapp_account_id
-                profile.save(update_fields=['account_id', 'updated_at'])
-                account_id = profile.account_id
+                logger.info(f"[_send_auto_message] Attempting to link profile to store's WhatsApp account: {profile.store.whatsapp_account_id}")
+                try:
+                    # Check if another profile already has this account
+                    from apps.automation.models import CompanyProfile
+                    existing_profile = CompanyProfile.objects.filter(
+                        account_id=profile.store.whatsapp_account_id
+                    ).exclude(id=profile.id).first()
+                    
+                    if existing_profile:
+                        logger.warning(f"[_send_auto_message] Another profile {existing_profile.id} already has account {profile.store.whatsapp_account_id}. Using that account directly.")
+                        account_id = profile.store.whatsapp_account_id
+                    else:
+                        profile.account_id = profile.store.whatsapp_account_id
+                        profile.save(update_fields=['account_id', 'updated_at'])
+                        account_id = profile.account_id
+                except Exception as link_error:
+                    logger.error(f"[_send_auto_message] Failed to link account: {link_error}")
+                    # Just use the account_id from store without saving to profile
+                    account_id = profile.store.whatsapp_account_id
             
             if not account_id:
                 from apps.whatsapp.utils import get_default_whatsapp_account
