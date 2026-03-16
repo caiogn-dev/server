@@ -832,12 +832,53 @@ class AutomationService:
         
         # Get company profile
         profile = None
+        logger.info(f"[handle_order_status_change] Store: {store.slug}, whatsapp_account_id: {store.whatsapp_account_id}")
+        
+        # Try multiple ways to find the profile
+        from apps.automation.models import CompanyProfile
+        
+        # 1. Via store.automation_profile (OneToOne reverse)
         if hasattr(store, 'automation_profile') and store.automation_profile:
             profile = store.automation_profile
-            logger.info(f"[handle_order_status_change] Found profile via store.automation_profile: {profile.id}")
-        elif store.whatsapp_account and hasattr(store.whatsapp_account, 'company_profile'):
-            profile = store.whatsapp_account.company_profile
-            logger.info(f"[handle_order_status_change] Found profile via whatsapp_account: {profile.id}")
+            logger.info(f"[handle_order_status_change] ✓ Found profile via store.automation_profile: {profile.id}")
+        
+        # 2. Via whatsapp_account.company_profile
+        if not profile and store.whatsapp_account_id:
+            try:
+                wa_account = store.whatsapp_account
+                if wa_account and hasattr(wa_account, 'company_profile') and wa_account.company_profile:
+                    profile = wa_account.company_profile
+                    logger.info(f"[handle_order_status_change] ✓ Found profile via whatsapp_account: {profile.id}")
+            except Exception as e:
+                logger.error(f"[handle_order_status_change] Error accessing whatsapp_account: {e}")
+        
+        # 3. Direct query by store
+        if not profile:
+            profile = CompanyProfile.objects.filter(store=store).first()
+            if profile:
+                logger.info(f"[handle_order_status_change] ✓ Found profile via direct store query: {profile.id}")
+        
+        # 4. Direct query by account
+        if not profile and store.whatsapp_account_id:
+            profile = CompanyProfile.objects.filter(account_id=store.whatsapp_account_id).first()
+            if profile:
+                logger.info(f"[handle_order_status_change] ✓ Found profile via direct account query: {profile.id}")
+        
+        # 5. Create profile if not found
+        if not profile:
+            logger.warning(f"[handle_order_status_change] No profile found, attempting to create one...")
+            try:
+                profile = CompanyProfile.objects.create(
+                    store=store,
+                    account_id=store.whatsapp_account_id,
+                    _company_name=store.name,
+                )
+                # Create default auto messages for the new profile
+                self.ensure_auto_messages(profile)
+                logger.info(f"[handle_order_status_change] ✓ Created new profile with default messages: {profile.id}")
+            except Exception as e:
+                logger.error(f"[handle_order_status_change] Failed to create profile: {e}")
+                return False
         
         if not profile:
             logger.warning(f"[handle_order_status_change] No automation profile found for store {store.slug}")
