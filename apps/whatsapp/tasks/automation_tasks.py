@@ -345,12 +345,17 @@ def notify_order_status_change(self, order_id: str, new_status: str):
         
         # Mapeia status para tipo de evento
         status_to_event = {
+            'processing': 'order_processing',
             'confirmed': 'order_confirmed',
+            'paid': 'order_paid',
             'preparing': 'order_preparing',
             'ready': 'order_ready',
+            'shipped': 'order_shipped',
             'out_for_delivery': 'order_out_for_delivery',
             'delivered': 'order_delivered',
+            'completed': 'order_completed',
             'cancelled': 'order_cancelled',
+            'refunded': 'order_refunded',
         }
         
         event_type = status_to_event.get(new_status)
@@ -367,12 +372,17 @@ def notify_order_status_change(self, order_id: str, new_status: str):
             
             # Status display
             status_display = {
+                'processing': '⏳ Em Processamento',
                 'confirmed': '✅ Confirmado',
+                'paid': '💰 Pagamento Confirmado',
                 'preparing': '👨‍🍳 Em preparo',
                 'ready': '✨ Pronto',
+                'shipped': '🚚 Enviado',
                 'out_for_delivery': '🛵 Saiu para entrega',
                 'delivered': '📦 Entregue',
+                'completed': '✨ Finalizado',
                 'cancelled': '❌ Cancelado',
+                'refunded': '💳 Reembolsado',
             }.get(new_status, new_status)
             
             message = template.render_message({

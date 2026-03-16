@@ -250,13 +250,17 @@ class StoreOrder(BaseModel):
             return
 
         status_message_map = {
+            self.OrderStatus.PROCESSING: "⏳ *Pedido em Processamento!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está sendo processado!",
             self.OrderStatus.CONFIRMED: "✅ *Pedido Confirmado!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi confirmado!",
             self.OrderStatus.PAID: "💰 *Pagamento Confirmado!*\n\nOlá {customer_name}!\n\nO pagamento do pedido #{order_number} foi confirmado!",
             self.OrderStatus.PREPARING: "👨‍🍳 *Pedido em Preparo!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está sendo preparado!",
             self.OrderStatus.READY: "📦 *Pedido Pronto!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está pronto!",
             self.OrderStatus.SHIPPED: "🚚 *Pedido Enviado!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi enviado!",
+            self.OrderStatus.OUT_FOR_DELIVERY: "🛵 *Pedido Saiu para Entrega!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} saiu para entrega!",
             self.OrderStatus.DELIVERED: "📦 *Pedido Entregue!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi entregue!",
+            self.OrderStatus.COMPLETED: "✨ *Pedido Finalizado!*\n\nOlá {customer_name}!\n\nObrigado pela sua compra #{order_number}!",
             self.OrderStatus.CANCELLED: "❌ *Pedido Cancelado*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi cancelado.",
+            self.OrderStatus.REFUNDED: "💳 *Pedido Reembolsado!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi reembolsado!",
         }
 
         message_template = status_message_map.get(new_status)
