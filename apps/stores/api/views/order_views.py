@@ -13,6 +13,7 @@ from datetime import timedelta
 
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
 from apps.stores.services.realtime_service import broadcast_order_event
+from apps.stores.services.order_service import OrderService
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
     StoreCustomerSerializer
@@ -123,10 +124,22 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        order.status = new_status
-        order.save(update_fields=['status', 'updated_at'])
+        # Use OrderService for proper status update with notifications
+        order_service = OrderService()
+        result = order_service.update_status(
+            order,
+            new_status,
+            notify_customer=True
+        )
         
-        logger.info(f"Order {order.order_number} status updated to {new_status}")
+        if not result.get('success'):
+            return Response(
+                result,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Refresh order to get all updated fields
+        order.refresh_from_db()
         
         # Notify via WebSocket
         self._notify_order_update(order, 'order.updated')

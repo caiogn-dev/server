@@ -163,9 +163,9 @@ class OrderService:
             'customer_phone': order.customer_phone,
         })
         
-        # Send notification if requested
-        if notify_customer and order.customer_phone:
-            self._send_status_notification(order, old_status, new_status)
+        # Note: WhatsApp notification is now handled by AutomationService
+        # to avoid duplicate messages. The automation service checks if notification
+        # was already sent before sending again.
         
         logger.info(f"Order {order.order_number} status updated: {old_status} -> {new_status}")
         
