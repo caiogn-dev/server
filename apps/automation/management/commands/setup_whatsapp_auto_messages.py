@@ -68,9 +68,15 @@ class Command(BaseCommand):
             result = service.ensure_auto_messages(profile, force=force)
             created_total += result.get('created', 0)
             replaced_total += result.get('replaced', 0)
+            
+            # Get phone number safely
+            phone_number = 'No WhatsApp account'
+            if profile.account:
+                phone_number = profile.account.phone_number or 'No phone number'
+            
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"{profile.company_name} ({profile.account.phone_number}): "
+                    f"{profile.company_name} ({phone_number}): "
                     f"created={result.get('created', 0)} replaced={result.get('replaced', 0)}"
                 )
             )
