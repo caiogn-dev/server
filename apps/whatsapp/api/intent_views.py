@@ -454,7 +454,7 @@ class AutomationSettingsViewSet(viewsets.ViewSet):
             default_agent_id = ai_agent['default_agent_id']
             if default_agent_id:
                 account_id = company.account_id
-                candidate_agents = Agent.objects.filter(is_active=True)
+                candidate_agents = Agent.objects.filter(status='active')
                 if account_id:
                     candidate_agents = candidate_agents.filter(
                         Q(accounts__id=account_id) |

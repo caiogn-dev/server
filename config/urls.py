@@ -78,6 +78,9 @@ urlpatterns = [
         path('users/', include('apps.users.urls')),
         path('agents/', include('apps.agents.urls')),
 
+        # Public API (no auth — storefronts: pastita-3d, ce-saladas)
+        path('public/', include('apps.public_api.urls')),
+
         # Marketing & Audit
         path('marketing/', include('apps.marketing.urls')),
         path('campaigns/', include('apps.campaigns.urls')),

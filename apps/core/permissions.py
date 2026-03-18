@@ -226,6 +226,40 @@ class IsCompanyProfileOwner(permissions.BasePermission):
         return False
 
 
+class StoreQuerysetMixin:
+    """
+    Mixin for ViewSets that automatically filters querysets to stores
+    owned or managed by the authenticated user.
+
+    Usage:
+        class MyViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
+            queryset = MyModel.objects.all()  # base queryset
+            store_field = 'store'             # FK field name pointing to Store (default: 'store')
+
+    The mixin calls get_queryset() filtering by the user's accessible stores.
+    Superusers see all data.
+    """
+
+    store_field: str = 'store'
+
+    def _get_user_store_ids(self):
+        from django.db.models import Q
+        from apps.stores.models import Store
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            return None  # unrestricted
+        return Store.objects.filter(
+            Q(owner=user) | Q(staff=user), is_active=True
+        ).values_list('id', flat=True)
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        store_ids = self._get_user_store_ids()
+        if store_ids is None:
+            return qs
+        return qs.filter(**{f'{self.store_field}__id__in': store_ids})
+
+
 __all__ = [
     'IsStoreOwner',
     'IsStoreStaff',
@@ -235,4 +269,5 @@ __all__ = [
     'ReadOnly',
     'IsWhatsAppAccountOwner',
     'IsCompanyProfileOwner',
+    'StoreQuerysetMixin',
 ]

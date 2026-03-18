@@ -12,12 +12,8 @@ Endpoints:
 from django.db import models
 from django.utils import timezone
 from django.contrib.auth import get_user_model
-from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
-from rest_framework.response import Response
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-import json
 
 User = get_user_model()
 

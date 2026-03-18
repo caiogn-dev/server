@@ -1,5 +1,13 @@
 """
-Messenger models - Facebook Messenger Platform integration.
+DEPRECATED — apps.messenger is dead code. DO NOT activate or migrate.
+
+The canonical Messenger implementation lives in apps.messaging:
+  - models: apps/messaging/models.py (MessengerAccount, MessengerProfile)
+  - services: apps/messaging/services/ (messenger_service, messenger_platform_service, messenger_broadcast_service)
+  - providers: apps/messaging/providers/
+
+This app was an incomplete replacement attempt. It is NOT in INSTALLED_APPS,
+has no migrations, and should be deleted in a future cleanup sprint.
 """
 from django.db import models
 from django.contrib.auth import get_user_model

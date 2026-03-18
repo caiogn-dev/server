@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'apps.webhooks',  # Centralized webhook handling
     'apps.handover',  # Handover Protocol (Bot/Human transfer)
     'apps.users',  # Unified user management (NEW)
+    'apps.public_api',  # Public read-only API for storefronts (no auth required)
 ]
 
 MIDDLEWARE = [

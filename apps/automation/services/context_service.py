@@ -154,11 +154,13 @@ class AutomationContextService:
 
         if context.profile is not None:
             agent = context.profile.get_default_agent()
-            if agent is not None:
+            if agent is not None and agent.status == 'active':
                 return agent
 
         if context.account is not None and getattr(context.account, 'default_agent_id', None):
-            return context.account.default_agent
+            agent = context.account.default_agent
+            if agent is not None and agent.status == 'active':
+                return agent
 
         return None
 
