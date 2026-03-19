@@ -66,14 +66,10 @@ class ConversationSerializer(serializers.ModelSerializer):
         return 0
 
     def _get_handover(self, obj):
+        # Canonical handover lives in apps.handover (related_name='handover', OneToOne).
         try:
             return obj.handover
         except (AttributeError, ObjectDoesNotExist):
-            pass
-
-        try:
-            return obj.handovers.filter(status='active').order_by('-started_at').first()
-        except Exception:
             return None
 
     def get_handover_status(self, obj):

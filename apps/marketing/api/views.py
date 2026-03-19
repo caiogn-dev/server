@@ -4,7 +4,7 @@ Marketing API views.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.shortcuts import get_object_or_404
 
 from apps.marketing.models import (
@@ -23,14 +23,25 @@ from .serializers import (
 )
 
 
+def _accessible_stores_qs(user):
+    """Return stores accessible to the user."""
+    from apps.stores.models import Store
+    from django.db.models import Q
+    if user.is_superuser or user.is_staff:
+        return Store.objects.all()
+    return Store.objects.filter(Q(owner=user) | Q(staff=user))
+
+
 class EmailTemplateViewSet(viewsets.ModelViewSet):
     """ViewSet for email templates."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailTemplateSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        user = self.request.user
+        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
+        queryset = EmailTemplate.objects.filter(store_id__in=accessible)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -89,12 +100,14 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
 
 class EmailCampaignViewSet(viewsets.ModelViewSet):
     """ViewSet for email campaigns."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailCampaignSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        user = self.request.user
+        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
+        queryset = EmailCampaign.objects.filter(store_id__in=accessible)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -203,7 +216,9 @@ class SubscriberViewSet(viewsets.ModelViewSet):
     serializer_class = SubscriberSerializer
     
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        user = self.request.user
+        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
+        queryset = Subscriber.objects.filter(store_id__in=accessible)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -297,9 +312,10 @@ class CustomersViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get store to find associated WhatsApp account
+        # Get store and verify ownership
         try:
-            store = Store.objects.get(id=store_id)
+            accessible = _accessible_stores_qs(request.user)
+            store = accessible.get(id=store_id)
         except Store.DoesNotExist:
             return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
         
@@ -474,9 +490,9 @@ class CustomersViewSet(viewsets.ViewSet):
         # Return the highest count (users are the main source now)
         return Response({'count': max(user_count, subscriber_count, order_emails)})
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
     def debug(self, request):
-        """Debug endpoint to check data sources."""
+        """Debug endpoint to check data sources. Admin only."""
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder
         
@@ -606,12 +622,14 @@ class QuickActionsViewSet(viewsets.ViewSet):
 
 class EmailAutomationViewSet(viewsets.ModelViewSet):
     """ViewSet for email automations."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailAutomationSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        user = self.request.user
+        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
+        queryset = EmailAutomation.objects.filter(store_id__in=accessible)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)

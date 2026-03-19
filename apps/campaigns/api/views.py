@@ -68,23 +68,41 @@ class SystemContactsView(APIView):
         account_id = request.query_params.get('account_id')
         source = request.query_params.get('source', 'all')
         limit = int(request.query_params.get('limit', 100))
-        
+        user = request.user
+
         contacts = {}  # Use dict to deduplicate by phone
-        
+
+        # Resolve accessible account IDs for this user
+        from apps.whatsapp.models import WhatsAppAccount
+        from apps.stores.models import Store
+        if user.is_superuser:
+            accessible_account_ids = None  # unrestricted
+        else:
+            accessible_account_ids = list(
+                WhatsAppAccount.objects.filter(
+                    Q(owner=user) |
+                    Q(stores__owner=user) |
+                    Q(stores__staff=user),
+                    is_active=True,
+                ).distinct().values_list('id', flat=True)
+            )
+
         # Get contacts from conversations
         if source in ['all', 'conversations']:
             try:
                 from apps.conversations.models import Conversation
                 conv_qs = Conversation.objects.all()
+                if accessible_account_ids is not None:
+                    conv_qs = conv_qs.filter(account_id__in=accessible_account_ids)
                 if account_id:
                     conv_qs = conv_qs.filter(account_id=account_id)
-                
+
                 conversations = conv_qs.values(
                     'phone_number', 'contact_name'
                 ).annotate(
                     last_activity=Max('updated_at')
                 ).order_by('-last_activity')[:limit]
-                
+
                 for conv in conversations:
                     phone = conv['phone_number']
                     if phone and phone not in contacts:
@@ -95,22 +113,33 @@ class SystemContactsView(APIView):
                         }
             except Exception as e:
                 logger.warning(f"Error fetching conversations: {e}")
-        
+
         # Get contacts from orders
         if source in ['all', 'orders']:
             try:
                 from apps.stores.models import StoreOrder, StoreIntegration
-                orders_qs = StoreOrder.objects.all()
+                # Restrict orders to stores the user owns/manages
+                if user.is_superuser:
+                    orders_qs = StoreOrder.objects.all()
+                else:
+                    accessible_store_ids = list(
+                        Store.objects.filter(
+                            Q(owner=user) | Q(staff=user), is_active=True
+                        ).values_list('id', flat=True)
+                    )
+                    orders_qs = StoreOrder.objects.filter(store_id__in=accessible_store_ids)
                 if account_id:
-                    from apps.whatsapp.models import WhatsAppAccount
-                    account = WhatsAppAccount.objects.get(id=account_id)
-                    store_ids = StoreIntegration.objects.filter(
-                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
-                    ).filter(
-                        Q(phone_number_id=account.phone_number_id) |
-                        Q(waba_id=account.waba_id)
-                    ).values_list('store_id', flat=True)
-                    orders_qs = orders_qs.filter(store_id__in=list(store_ids))
+                    try:
+                        wa_account = WhatsAppAccount.objects.get(id=account_id)
+                        store_ids = StoreIntegration.objects.filter(
+                            integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                        ).filter(
+                            Q(phone_number_id=wa_account.phone_number_id) |
+                            Q(waba_id=wa_account.waba_id)
+                        ).values_list('store_id', flat=True)
+                        orders_qs = orders_qs.filter(store_id__in=list(store_ids))
+                    except WhatsAppAccount.DoesNotExist:
+                        pass
 
                 orders = orders_qs.values(
                     'customer_phone', 'customer_name'
@@ -133,11 +162,12 @@ class SystemContactsView(APIView):
         if source in ['all', 'subscribers']:
             try:
                 from apps.marketing.models import Subscriber
-                subscribers = Subscriber.objects.filter(
-                    phone__isnull=False
-                ).exclude(
-                    phone=''
-                ).values(
+                sub_qs = Subscriber.objects.filter(phone__isnull=False).exclude(phone='')
+                if not user.is_superuser:
+                    sub_qs = sub_qs.filter(
+                        Q(store__owner=user) | Q(store__staff=user)
+                    )
+                subscribers = sub_qs.values(
                     'phone', 'name', 'email'
                 ).order_by('-created_at')[:limit]
                 
@@ -158,6 +188,12 @@ class SystemContactsView(APIView):
             try:
                 from apps.automation.models import CustomerSession
                 sessions_qs = CustomerSession.objects.all()
+                if not user.is_superuser:
+                    sessions_qs = sessions_qs.filter(
+                        Q(company__store__owner=user) |
+                        Q(company__store__staff=user) |
+                        Q(company__account__owner=user)
+                    )
                 if account_id:
                     sessions_qs = sessions_qs.filter(company__account_id=account_id)
                 
@@ -199,7 +235,15 @@ class CampaignViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'campaign_type']
     
     def get_queryset(self):
-        return Campaign.objects.filter(is_active=True)
+        user = self.request.user
+        qs = Campaign.objects.filter(is_active=True)
+        if user.is_superuser or user.is_staff:
+            return qs
+        return qs.filter(
+            Q(account__owner=user) |
+            Q(account__stores__owner=user) |
+            Q(account__stores__staff=user)
+        ).distinct()
     
     @extend_schema(
         summary="Create campaign",
@@ -410,7 +454,15 @@ class ContactListViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'source']
     
     def get_queryset(self):
-        return ContactList.objects.filter(is_active=True)
+        user = self.request.user
+        qs = ContactList.objects.filter(is_active=True)
+        if user.is_superuser or user.is_staff:
+            return qs
+        return qs.filter(
+            Q(account__owner=user) |
+            Q(account__stores__owner=user) |
+            Q(account__stores__staff=user)
+        ).distinct()
     
     @extend_schema(
         summary="Create contact list",

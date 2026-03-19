@@ -80,13 +80,21 @@ class UnifiedProcessView(APIView):
             )
         
         try:
-            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
+            account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
+            if not request.user.is_superuser:
+                from django.db.models import Q as _Q
+                account_qs = account_qs.filter(
+                    _Q(owner=request.user) |
+                    _Q(stores__owner=request.user) |
+                    _Q(stores__staff=request.user)
+                )
+            account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:
             return Response(
                 {'error': 'Conta WhatsApp não encontrada'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Busca ou cria conversa
         conversation, _ = Conversation.objects.get_or_create(
             account=account,
@@ -149,13 +157,21 @@ class UnifiedStatsView(APIView):
             )
         
         try:
-            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
+            account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
+            if not request.user.is_superuser:
+                from django.db.models import Q as _Q
+                account_qs = account_qs.filter(
+                    _Q(owner=request.user) |
+                    _Q(stores__owner=request.user) |
+                    _Q(stores__staff=request.user)
+                )
+            account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:
             return Response(
                 {'error': 'Conta WhatsApp não encontrada'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         # Retorna estatísticas básicas (em produção, isso viria do cache/banco)
         return Response({
             'templates_used': 0,

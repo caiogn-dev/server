@@ -100,5 +100,5 @@ def public_store_products(request, slug):
 @permission_classes([AllowAny])
 def public_product_detail(request, slug, pk):
     store = _get_active_store(slug)
-    product = get_object_or_404(StoreProduct, pk=pk, store=store, is_active=True)
+    product = get_object_or_404(StoreProduct, pk=pk, store=store, status='active')
     return Response(PublicProductSerializer(product, context={'request': request}).data)

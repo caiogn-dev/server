@@ -104,17 +104,11 @@ class AgentFlowViewSet(viewsets.ModelViewSet):
             node_id = request.data.get('node_id')
             context = request.data.get('context', {})
             
-            # TODO: Implement flow execution via FlowExecutor
-            # from apps.automation.services import FlowExecutor
-            # executor = FlowExecutor(flow)
-            # result = executor.execute_node(node_id, context)
-            
-            return Response({
-                'status': 'Flow execution not yet implemented',
-                'flow_id': str(flow.id),
-                'node_id': node_id,
-                'context': context
-            })
+            # Flow execution is not yet implemented (POC only).
+            return Response(
+                {'detail': 'Flow execution not yet implemented.'},
+                status=status.HTTP_501_NOT_IMPLEMENTED
+            )
         except Exception as e:
             logger.error(f'Error executing flow: {e}')
             return Response(

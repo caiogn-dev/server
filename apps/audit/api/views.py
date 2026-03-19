@@ -104,9 +104,29 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
         export_service = ExportService()
         audit_service = AuditService()
         
+        user = request.user
+        from django.db.models import Q
+
+        def _accessible_accounts():
+            from apps.whatsapp.models import WhatsAppAccount
+            qs = WhatsAppAccount.objects.filter(is_active=True)
+            if user.is_superuser or user.is_staff:
+                return qs
+            return qs.filter(
+                Q(owner=user) | Q(stores__owner=user) | Q(stores__staff=user)
+            ).distinct()
+
+        def _accessible_store_ids():
+            from apps.stores.models import Store
+            qs = Store.objects.filter(is_active=True)
+            if user.is_superuser or user.is_staff:
+                return qs.values_list('id', flat=True)
+            return qs.filter(Q(owner=user) | Q(staff=user)).values_list('id', flat=True)
+
         # Get queryset based on export type
         if export_type == 'messages':
-            queryset = Message.objects.all()
+            accessible_account_ids = list(_accessible_accounts().values_list('id', flat=True))
+            queryset = Message.objects.filter(account_id__in=accessible_account_ids)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
@@ -114,9 +134,10 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('direction'):
                 queryset = queryset.filter(direction=filters['direction'])
             response = export_service.export_messages(queryset, export_format, request.user)
-            
+
         elif export_type == 'orders':
-            queryset = StoreOrder.objects.filter(is_active=True)
+            accessible_store_ids = list(_accessible_store_ids())
+            queryset = StoreOrder.objects.filter(is_active=True, store_id__in=accessible_store_ids)
             store_filter = filters.get('store') or filters.get('store_id')
             if store_filter:
                 try:
@@ -128,9 +149,10 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
             response = export_service.export_orders(queryset, export_format, request.user)
-            
+
         elif export_type == 'conversations':
-            queryset = Conversation.objects.filter(is_active=True)
+            accessible_account_ids = list(_accessible_accounts().values_list('id', flat=True))
+            queryset = Conversation.objects.filter(is_active=True, account_id__in=accessible_account_ids)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
