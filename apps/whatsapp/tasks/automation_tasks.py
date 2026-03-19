@@ -15,11 +15,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _get_store_profile(store):
+    """
+    Return the CompanyProfile for a Store.
+
+    CompanyProfile uses related_name='automation_profile' on its store FK,
+    so store.automation_profile is the correct accessor.
+    """
+    return getattr(store, 'automation_profile', None)
+
+
+def _get_account_for_profile(profile):
+    """Return the first active WhatsAppAccount linked to a CompanyProfile."""
+    if profile is None:
+        return None
+    from apps.whatsapp.models import WhatsAppAccount
+    return WhatsAppAccount.objects.filter(company_profile=profile).first()
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def send_payment_reminder(self, order_id: str, reminder_type: str):
     """
     Envia lembrete de pagamento PIX
-    
+
     Args:
         order_id: ID do pedido
         reminder_type: 'first' (30min), 'second' (2h), 'final' (24h)
@@ -27,39 +45,35 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
-    
+
     try:
-        order = Order.objects.get(id=order_id)
-        
+        order = Order.objects.select_related('store').get(id=order_id)
+
         if order.status != 'pending_payment':
             logger.info(f"Order {order_id} is not pending payment, skipping reminder")
             return
-        
-        # Busca template apropriado
+
+        profile = _get_store_profile(order.store)
+        if not profile:
+            logger.warning(f"No CompanyProfile for store {order.store_id}, skipping payment reminder")
+            return
+
         event_type_map = {
             'first': 'payment_reminder_1',
             'second': 'payment_reminder_2',
             'final': 'payment_expired',
         }
-        
         event_type = event_type_map.get(reminder_type, 'payment_reminder_1')
-        
+
         try:
             template = AutoMessage.objects.get(
-                company=order.store.company_profile,
+                company=profile,
                 event_type=event_type,
                 is_active=True
             )
-            
-            # Calcula tempo restante
-            if reminder_type == 'first':
-                time_remaining = "30 minutos"
-            elif reminder_type == 'second':
-                time_remaining = "2 horas"
-            else:
-                time_remaining = "expirado"
-            
-            # Renderiza mensagem
+
+            time_remaining = {'first': '30 minutos', 'second': '2 horas'}.get(reminder_type, 'expirado')
+
             message = template.render_message({
                 'customer_name': order.customer_name,
                 'order_number': order.order_number,
@@ -67,31 +81,21 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
                 'pix_code': order.pix_code or 'N/A',
                 'time_remaining': time_remaining,
             })
-            
-            # Envia mensagem
-            from apps.whatsapp.models import WhatsAppAccount
-            account = WhatsAppAccount.objects.filter(
-                company_profile=order.store.company_profile
-            ).first()
-            
+
+            account = _get_account_for_profile(profile)
             if account:
                 service = WhatsAppAPIService(account)
-                service.send_text_message(
-                    to=order.customer_phone,
-                    text=message
-                )
-                
+                service.send_text_message(to=order.customer_phone, text=message)
                 logger.info(f"Payment reminder sent to {order.customer_phone} for order {order_id}")
-                
-                # Marca lembrete como enviado
+
                 if not order.metadata:
                     order.metadata = {}
                 order.metadata[f'payment_reminder_{reminder_type}_sent'] = timezone.now().isoformat()
-                order.save()
-            
+                order.save(update_fields=['metadata'])
+
         except AutoMessage.DoesNotExist:
-            logger.warning(f"Template {event_type} not found for company {order.store.company_profile}")
-            
+            logger.warning(f"Template {event_type} not found for store {order.store_id}")
+
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found")
     except Exception as e:
@@ -106,9 +110,9 @@ def check_pending_payments():
     Executado a cada 10 minutos
     """
     from apps.stores.models.order import StoreOrder as Order
-    
+
     now = timezone.now()
-    
+
     # Lembrete 1: PIX gerado há 30 minutos
     pending_30min = Order.objects.filter(
         status='pending_payment',
@@ -118,11 +122,11 @@ def check_pending_payments():
     ).exclude(
         metadata__has_key='payment_reminder_first_sent'
     )
-    
+
     for order in pending_30min:
         send_payment_reminder.delay(str(order.id), 'first')
         logger.info(f"Scheduled first payment reminder for order {order.id}")
-    
+
     # Lembrete 2: PIX gerado há 2 horas
     pending_2h = Order.objects.filter(
         status='pending_payment',
@@ -132,11 +136,11 @@ def check_pending_payments():
     ).exclude(
         metadata__has_key='payment_reminder_second_sent'
     )
-    
+
     for order in pending_2h:
         send_payment_reminder.delay(str(order.id), 'second')
         logger.info(f"Scheduled second payment reminder for order {order.id}")
-    
+
     # Notificação final: PIX expirado (24h)
     expired_pix = Order.objects.filter(
         status='pending_payment',
@@ -145,23 +149,28 @@ def check_pending_payments():
     ).exclude(
         metadata__has_key='payment_expired_notified'
     )
-    
+
     for order in expired_pix:
         send_payment_reminder.delay(str(order.id), 'final')
-        order.status = 'cancelled'
+        if not order.metadata:
+            order.metadata = {}
         order.metadata['cancellation_reason'] = 'pix_expired'
         order.metadata['payment_expired_notified'] = now.isoformat()
-        order.save()
+        order.status = 'cancelled'
+        order.save(update_fields=['status', 'metadata'])
         logger.info(f"Order {order.id} cancelled due to PIX expiration")
-    
-    logger.info(f"Checked pending payments: {pending_30min.count()} first reminders, {pending_2h.count()} second reminders, {expired_pix.count()} expired")
+
+    logger.info(
+        f"Checked pending payments: {pending_30min.count()} first reminders, "
+        f"{pending_2h.count()} second reminders, {expired_pix.count()} expired"
+    )
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
 def send_cart_reminder(self, cart_id: str, reminder_type: str):
     """
     Envia lembrete de carrinho abandonado
-    
+
     Args:
         cart_id: ID do carrinho
         reminder_type: '30min', '2h', '24h'
@@ -169,9 +178,9 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
     from apps.stores.models.cart import StoreCart as Cart
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
-    
+
     try:
-        cart = Cart.objects.get(id=cart_id)
+        cart = Cart.objects.select_related('store').get(id=cart_id)
         cart_metadata = cart.metadata or {}
         customer_phone = (
             cart_metadata.get('customer_phone')
@@ -190,61 +199,54 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
             logger.info(f"Cart {cart_id} has no customer phone, skipping reminder")
             return
 
-        # Verifica se ainda tem itens
         if not cart.items.exists():
             logger.info(f"Cart {cart_id} is empty, skipping reminder")
             return
-        
-        # Verifica se já foi convertido em pedido
+
         from apps.stores.models.order import StoreOrder as Order
         recent_order = Order.objects.filter(
             customer_phone=customer_phone,
             created_at__gte=cart.updated_at
         ).first()
-        
+
         if recent_order:
-            logger.info(f"Customer already placed order, skipping cart reminder")
+            logger.info("Customer already placed order, skipping cart reminder")
             return
-        
-        # Busca template
+
+        profile = _get_store_profile(cart.store)
+        if not profile:
+            logger.warning(f"No CompanyProfile for store {cart.store_id}, skipping cart reminder")
+            return
+
         event_type_map = {
             '30min': 'cart_reminder_30',
             '2h': 'cart_reminder_2h',
             '24h': 'cart_reminder_24h',
         }
-        
         event_type = event_type_map.get(reminder_type, 'cart_reminder')
-        
+
         try:
             template = AutoMessage.objects.get(
-                company=cart.store.company_profile,
+                company=profile,
                 event_type=event_type,
                 is_active=True
             )
-            
-            # Resume itens do carrinho
+
             items_summary = "\n".join([
                 f"• {item.product.name} x{item.quantity} = R$ {item.total}"
                 for item in cart.items.all()[:5]
             ])
-            
+
             message = template.render_message({
                 'customer_name': customer_name,
                 'cart_items': items_summary,
                 'cart_total': cart.total,
                 'cart_item_count': cart.items.count(),
             })
-            
-            # Envia mensagem
-            from apps.whatsapp.models import WhatsAppAccount
-            account = WhatsAppAccount.objects.filter(
-                company_profile=cart.store.company_profile
-            ).first()
-            
+
+            account = _get_account_for_profile(profile)
             if account:
                 service = WhatsAppAPIService(account)
-                
-                # Envia mensagem com botões
                 service.send_interactive_buttons(
                     to=customer_phone,
                     body_text=message,
@@ -253,12 +255,11 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                         {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
                     ]
                 )
-                
                 logger.info(f"Cart reminder sent to {customer_phone} for cart {cart_id}")
-                
+
         except AutoMessage.DoesNotExist:
-            logger.warning(f"Template {event_type} not found")
-            
+            logger.warning(f"Template {event_type} not found for store {cart.store_id}")
+
     except Cart.DoesNotExist:
         logger.error(f"Cart {cart_id} not found")
     except Exception as e:
@@ -273,9 +274,9 @@ def check_abandoned_carts():
     Executado a cada 15 minutos
     """
     from apps.stores.models.cart import StoreCart as Cart
-    
+
     now = timezone.now()
-    
+
     # 30 minutos
     abandoned_30min = Cart.objects.filter(
         updated_at__lte=now - timedelta(minutes=30),
@@ -284,14 +285,14 @@ def check_abandoned_carts():
     ).exclude(
         metadata__has_key='reminder_30min_sent'
     ).distinct()
-    
+
     for cart in abandoned_30min:
         send_cart_reminder.delay(str(cart.id), '30min')
         if not cart.metadata:
             cart.metadata = {}
         cart.metadata['reminder_30min_sent'] = now.isoformat()
-        cart.save()
-    
+        cart.save(update_fields=['metadata'])
+
     # 2 horas
     abandoned_2h = Cart.objects.filter(
         updated_at__lte=now - timedelta(hours=2),
@@ -300,14 +301,14 @@ def check_abandoned_carts():
     ).exclude(
         metadata__has_key='reminder_2h_sent'
     ).distinct()
-    
+
     for cart in abandoned_2h:
         send_cart_reminder.delay(str(cart.id), '2h')
         if not cart.metadata:
             cart.metadata = {}
         cart.metadata['reminder_2h_sent'] = now.isoformat()
-        cart.save()
-    
+        cart.save(update_fields=['metadata'])
+
     # 24 horas
     abandoned_24h = Cart.objects.filter(
         updated_at__lte=now - timedelta(hours=24),
@@ -316,22 +317,25 @@ def check_abandoned_carts():
     ).exclude(
         metadata__has_key='reminder_24h_sent'
     ).distinct()
-    
+
     for cart in abandoned_24h:
         send_cart_reminder.delay(str(cart.id), '24h')
         if not cart.metadata:
             cart.metadata = {}
         cart.metadata['reminder_24h_sent'] = now.isoformat()
-        cart.save()
-    
-    logger.info(f"Checked abandoned carts: {abandoned_30min.count()} (30min), {abandoned_2h.count()} (2h), {abandoned_24h.count()} (24h)")
+        cart.save(update_fields=['metadata'])
+
+    logger.info(
+        f"Checked abandoned carts: {abandoned_30min.count()} (30min), "
+        f"{abandoned_2h.count()} (2h), {abandoned_24h.count()} (24h)"
+    )
 
 
 @shared_task(bind=True, max_retries=2)
 def notify_order_status_change(self, order_id: str, new_status: str):
     """
     Notifica cliente sobre mudança de status do pedido
-    
+
     Args:
         order_id: ID do pedido
         new_status: Novo status
@@ -339,12 +343,12 @@ def notify_order_status_change(self, order_id: str, new_status: str):
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
-    
+
     try:
-        order = Order.objects.get(id=order_id)
-        
-        # Mapeia status para tipo de evento
+        order = Order.objects.select_related('store').get(id=order_id)
+
         status_to_event = {
+            'received': 'order_received',
             'processing': 'order_processing',
             'confirmed': 'order_confirmed',
             'paid': 'order_paid',
@@ -357,21 +361,26 @@ def notify_order_status_change(self, order_id: str, new_status: str):
             'cancelled': 'order_cancelled',
             'refunded': 'order_refunded',
         }
-        
+
         event_type = status_to_event.get(new_status)
         if not event_type:
-            logger.warning(f"No template for status: {new_status}")
+            logger.debug(f"No notification template mapped for status: {new_status}")
             return
-        
+
+        profile = _get_store_profile(order.store)
+        if not profile:
+            logger.warning(f"No CompanyProfile for store {order.store_id}, skipping status notification")
+            return
+
         try:
             template = AutoMessage.objects.get(
-                company=order.store.company_profile,
+                company=profile,
                 event_type=event_type,
                 is_active=True
             )
-            
-            # Status display
+
             status_display = {
+                'received': '📬 Recebido',
                 'processing': '⏳ Em Processamento',
                 'confirmed': '✅ Confirmado',
                 'paid': '💰 Pagamento Confirmado',
@@ -384,32 +393,23 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 'cancelled': '❌ Cancelado',
                 'refunded': '💳 Reembolsado',
             }.get(new_status, new_status)
-            
+
             message = template.render_message({
                 'customer_name': order.customer_name,
                 'order_number': order.order_number,
                 'order_status': status_display,
                 'order_total': order.total,
             })
-            
-            # Envia mensagem
-            from apps.whatsapp.models import WhatsAppAccount
-            account = WhatsAppAccount.objects.filter(
-                company_profile=order.store.company_profile
-            ).first()
-            
+
+            account = _get_account_for_profile(profile)
             if account:
                 service = WhatsAppAPIService(account)
-                service.send_text_message(
-                    to=order.customer_phone,
-                    text=message
-                )
-                
+                service.send_text_message(to=order.customer_phone, text=message)
                 logger.info(f"Status notification sent for order {order_id}: {new_status}")
-                
+
         except AutoMessage.DoesNotExist:
-            logger.warning(f"Template {event_type} not found")
-            
+            logger.debug(f"No active template for event '{event_type}' on store {order.store_id}")
+
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found")
     except Exception as e:
@@ -426,35 +426,34 @@ def request_feedback(order_id: str):
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
-    
+
     try:
-        order = Order.objects.get(id=order_id)
-        
+        order = Order.objects.select_related('store').get(id=order_id)
+
         if order.status != 'delivered':
             logger.info(f"Order {order_id} not delivered, skipping feedback request")
             return
-        
+
+        profile = _get_store_profile(order.store)
+        if not profile:
+            logger.warning(f"No CompanyProfile for store {order.store_id}, skipping feedback request")
+            return
+
         try:
             template = AutoMessage.objects.get(
-                company=order.store.company_profile,
+                company=profile,
                 event_type='feedback_request',
                 is_active=True
             )
-            
+
             message = template.render_message({
                 'customer_name': order.customer_name,
                 'order_number': order.order_number,
             })
-            
-            from apps.whatsapp.models import WhatsAppAccount
-            account = WhatsAppAccount.objects.filter(
-                company_profile=order.store.company_profile
-            ).first()
-            
+
+            account = _get_account_for_profile(profile)
             if account:
                 service = WhatsAppAPIService(account)
-                
-                # Envia com botões de avaliação
                 service.send_interactive_buttons(
                     to=order.customer_phone,
                     body_text=message,
@@ -464,12 +463,11 @@ def request_feedback(order_id: str):
                         {'id': f'rating_1_{order.id}', 'title': '⭐'},
                     ]
                 )
-                
                 logger.info(f"Feedback request sent for order {order_id}")
-                
+
         except AutoMessage.DoesNotExist:
-            logger.warning("Feedback template not found")
-            
+            logger.debug(f"No feedback_request template for store {order.store_id}")
+
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found")
     except Exception as e:
@@ -480,13 +478,11 @@ def request_feedback(order_id: str):
 def schedule_feedback_request(order_id: str):
     """Agenda solicitação de feedback para 30 min depois"""
     from celery import current_app
-    
-    # Agenda para executar em 30 minutos
+
     current_app.send_task(
         'apps.whatsapp.tasks.automation_tasks.request_feedback',
         args=[order_id],
         countdown=30 * 60  # 30 minutos
     )
-    
-    logger.info(f"Scheduled feedback request for order {order_id} in 30 minutes")
 
+    logger.info(f"Scheduled feedback request for order {order_id} in 30 minutes")

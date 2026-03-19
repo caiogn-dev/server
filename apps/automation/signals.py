@@ -167,3 +167,49 @@ def sync_store_whatsapp_account(sender, instance, **kwargs):
             pass
         except Exception as e:
             logger.warning(f"Error syncing Store-WhatsApp relationship: {e}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# StoreOrder → WhatsApp notifications
+# ──────────────────────────────────────────────────────────────────────────────
+
+@receiver(post_save, sender='stores.StoreOrder')
+def trigger_order_status_notification(sender, instance, created, update_fields, **kwargs):
+    """
+    Fire a WhatsApp notification whenever an order is created or its status changes.
+
+    Triggers:
+    - On creation         → notify_order_status_change('received')
+    - On status update    → notify_order_status_change(<new_status>)
+    - On 'delivered'      → schedule_feedback_request (30 min later)
+
+    The notification tasks are safe to call even when no AutoMessage template
+    exists for a given event_type — they log a debug message and exit silently.
+    """
+    from django.db import transaction
+
+    # Avoid circular imports: import tasks lazily
+    def _dispatch_status(status):
+        from apps.whatsapp.tasks.automation_tasks import notify_order_status_change
+        notify_order_status_change.delay(str(instance.id), status)
+
+    def _dispatch_feedback():
+        from apps.whatsapp.tasks.automation_tasks import schedule_feedback_request
+        schedule_feedback_request.delay(str(instance.id))
+
+    try:
+        if created:
+            transaction.on_commit(lambda: _dispatch_status('received'))
+            return
+
+        # Only trigger when 'status' was part of the save
+        if update_fields is not None and 'status' not in update_fields:
+            return
+
+        transaction.on_commit(lambda: _dispatch_status(instance.status))
+
+        if instance.status == 'delivered':
+            transaction.on_commit(_dispatch_feedback)
+
+    except Exception as e:
+        logger.warning(f"Error dispatching order notification for order {instance.pk}: {e}")
