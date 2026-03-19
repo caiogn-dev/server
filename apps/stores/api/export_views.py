@@ -359,8 +359,8 @@ class CustomersReportView(BaseExportView):
         })
 
 
-class DashboardStatsView(BaseExportView):
-    """Dashboard statistics overview."""
+class StoreDashboardStatsView(BaseExportView):
+    """Per-store dashboard statistics (orders, revenue, stock). See core.DashboardStatsView for the global one."""
     
     def get(self, request):
         store = self.get_store(request)

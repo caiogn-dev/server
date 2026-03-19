@@ -28,7 +28,7 @@ from apps.stores.services.realtime_service import broadcast_order_event
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
-    StoreProductTypeSerializer, StoreWishlistSerializer, WishlistAddRemoveSerializer
+    CatalogProductTypeSerializer, StoreWishlistSerializer, WishlistAddRemoveSerializer
 )
 
 logger = logging.getLogger(__name__)
@@ -235,7 +235,7 @@ class StoreCatalogView(APIView):
             'featured_products': StoreProductSerializer(featured_products, many=True).data,
             'combos': StoreComboSerializer(combos, many=True).data,
             'combos_destaque': StoreComboSerializer(combos_destaque, many=True).data,
-            'product_types': StoreProductTypeSerializer(product_types, many=True).data,
+            'product_types': CatalogProductTypeSerializer(product_types, many=True).data,
             'products_by_category': products_by_category,
         })
 

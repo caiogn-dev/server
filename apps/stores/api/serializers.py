@@ -846,9 +846,9 @@ class CheckoutResponseSerializer(serializers.Serializer):
 # CATALOG SERIALIZERS
 # =============================================================================
 
-class StoreProductTypeSerializer(serializers.ModelSerializer):
-    """Serializer for product types."""
-    
+class CatalogProductTypeSerializer(serializers.ModelSerializer):
+    """Lightweight product type serializer for public catalog (no store/products_count)."""
+
     class Meta:
         model = StoreProductType
         fields = [
@@ -905,10 +905,10 @@ class StoreComboSerializer(serializers.ModelSerializer):
 
 class StoreCatalogSerializer(serializers.Serializer):
     """Serializer for store catalog."""
-    
+
     store = StoreSerializer()
     categories = StoreCategorySerializer(many=True)
-    product_types = StoreProductTypeSerializer(many=True)
+    product_types = CatalogProductTypeSerializer(many=True)
     products = StoreProductSerializer(many=True)
     combos = StoreComboSerializer(many=True)
     featured_products = StoreProductSerializer(many=True)
@@ -1209,10 +1209,10 @@ class PublicComboSerializer(serializers.ModelSerializer):
 
 class PublicCatalogSerializer(serializers.Serializer):
     """Public catalog serializer for storefront."""
-    
+
     store = serializers.SerializerMethodField()
     categories = StoreCategorySerializer(many=True)
-    product_types = StoreProductTypeSerializer(many=True)
+    product_types = CatalogProductTypeSerializer(many=True)
     products = PublicProductSerializer(many=True)
     products_by_category = serializers.DictField()
     combos = PublicComboSerializer(many=True)

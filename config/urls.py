@@ -101,8 +101,8 @@ urlpatterns = [
     path('webhooks/payments/mercadopago/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook'),
     
     # Direct WhatsApp verification endpoint (no trailing slash required by Meta)
+    # Regular webhook POSTs with trailing slash are already handled by webhooks/v1/ above.
     path('webhooks/v1/whatsapp', whatsapp_verification_view, name='whatsapp_webhook_no_slash'),
-    path('webhooks/v1/whatsapp/', include('apps.webhooks.urls')),  # With trailing slash for regular webhooks
 ]
 
 # Serve media files from local storage when explicitly enabled.

@@ -35,7 +35,7 @@ from .api.maps_views import (
 )
 from .api.export_views import (
     OrdersExportView, RevenueReportView, ProductsReportView,
-    StockReportView, CustomersReportView, DashboardStatsView
+    StockReportView, CustomersReportView, StoreDashboardStatsView
 )
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
@@ -172,7 +172,7 @@ urlpatterns = [
     path('reports/customers/', CustomersReportView.as_view(), name='customers-report'),
     
     # Dashboard stats overview
-    path('reports/dashboard/', DashboardStatsView.as_view(), name='dashboard-stats'),
+    path('reports/dashboard/', StoreDashboardStatsView.as_view(), name='store-dashboard-stats'),
     
     # ==========================================================================
     # PAYMENT ENDPOINTS (require auth)
