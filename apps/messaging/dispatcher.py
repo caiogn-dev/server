@@ -3,6 +3,26 @@ Message Dispatcher - Central hub for all messaging channels.
 
 This module provides a unified interface for sending messages across
 WhatsApp, Instagram, Email, and other channels.
+
+# TODO (Fase 0.5 - Migration Sprint):
+# This file is BROKEN. It imports Message, MessageRule, MessageLog and
+# MessageTemplate from .models, but those models do NOT exist in
+# apps/messaging/models.py. The current models.py only contains the
+# Messenger-specific models (MessengerAccount, MessengerConversation, etc.).
+#
+# This dispatcher was written for a planned generic messaging layer
+# that was never fully implemented. It is NOT imported by any other module
+# and therefore does not currently cause a runtime crash, but it WILL crash
+# at import time if anyone attempts to use MessageDispatcher.
+#
+# Resolution options (choose one in the migration sprint):
+#   A) Implement the missing models (Message, MessageRule, MessageLog,
+#      MessageTemplate) as a proper generic messaging layer in this app.
+#   B) Delete dispatcher.py entirely if the generic messaging layer is
+#      not needed (the Messenger-specific functionality lives in
+#      services/messenger_service.py and is complete without it).
+#
+# DO NOT import this module until the missing models are created.
 """
 import logging
 from typing import Optional, Dict, Any, List
@@ -10,7 +30,10 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db import transaction
 
-from .models import Message, MessageRule, MessageLog
+# FIXME: Message, MessageRule, MessageLog do not exist in models.py.
+# This import will raise ImportError if this module is ever loaded.
+# See module docstring for resolution plan.
+from .models import Message, MessageRule, MessageLog  # type: ignore[attr-defined]
 from .providers.base import BaseProvider
 from .providers.whatsapp_provider import WhatsAppProvider
 from .providers.email_provider import EmailProvider

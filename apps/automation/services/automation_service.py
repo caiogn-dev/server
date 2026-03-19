@@ -520,11 +520,19 @@ class AutomationService:
         """Process message with AI Agent (Langchain)."""
         try:
             from apps.agents.services import LangchainService
-            
+
             agent = profile.default_agent
             if not agent:
                 return None
-            
+
+            # Do not process with an inactive agent
+            if not agent.is_active or agent.status != 'active':
+                logger.info(
+                    f"Agent {agent.id} is inactive (is_active={agent.is_active}, "
+                    f"status={agent.status}). Skipping AI processing."
+                )
+                return None
+
             service = LangchainService(agent)
             result = service.process_message(
                 message=message_text,

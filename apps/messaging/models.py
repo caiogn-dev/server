@@ -1,3 +1,30 @@
+"""
+apps.messaging — Facebook Messenger Platform integration models.
+
+NAMING NOTE: Despite the app being named 'messaging', it exclusively contains
+Facebook Messenger-specific models. There is NO separate 'apps.messenger' app;
+this IS the Messenger app. The name 'messaging' was chosen because the app
+is listed as 'apps.messaging' in INSTALLED_APPS and URLs.
+
+WHAT THIS APP CONTAINS:
+  - MessengerAccount: Connected Facebook Page (Messenger) account
+  - MessengerProfile: Page-level settings (greeting, menus, ice breakers)
+  - MessengerConversation: Individual Messenger conversations (by PSID)
+  - MessengerMessage: Individual messages within conversations
+  - MessengerBroadcast: Mass broadcast messages (requires special permission)
+  - MessengerSponsoredMessage: Paid sponsored messages via Facebook Ads
+  - MessengerExtension: Messenger Chat Extensions / Webviews
+  - MessengerWebhookLog: Log of incoming Messenger webhook payloads
+
+WHAT THIS APP DOES NOT CONTAIN (see dispatcher.py TODO for details):
+  - Message, MessageRule, MessageLog, MessageTemplate — these were planned for
+    a generic multi-channel dispatcher layer but were NEVER implemented.
+    dispatcher.py references them but they don't exist yet.
+
+DB TABLES: messenger_accounts, messenger_profiles, messenger_conversations,
+           messenger_messages, messenger_broadcasts, messenger_sponsored_messages,
+           messenger_extensions, messenger_webhook_logs
+"""
 from django.db import models
 from django.conf import settings
 import uuid
