@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from apps.messaging.models import Message
     from apps.stores.models import Store
 
 
@@ -28,7 +27,7 @@ class BaseProvider(ABC):
     channel: str = ''
     
     @abstractmethod
-    def send(self, message: 'Message', store: Optional['Store'] = None) -> ProviderResult:
+    def send(self, message: Any, store: Optional['Store'] = None) -> ProviderResult:
         """
         Send a message.
         

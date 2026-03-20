@@ -28,7 +28,11 @@ User = get_user_model()
 
 
 def _accessible_conversations(user):
-    queryset = Conversation.objects.select_related('account', 'assigned_agent')
+    queryset = Conversation.objects.select_related(
+        'account', 'assigned_agent'
+    ).prefetch_related(
+        'account__stores', 'account__company_profile'
+    )
     if user.is_superuser or user.is_staff:
         # Admins see all conversations regardless of is_active status
         return queryset

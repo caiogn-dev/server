@@ -65,12 +65,16 @@ GET  /api/v1/stores/maps/geocode/         → Address geocoding
 ## Public API (AllowAny — storefronts)
 
 ```
-GET /api/v1/public/{slug}/              → Store detail
-GET /api/v1/public/{slug}/catalog/      → Catalog
-GET /api/v1/public/{slug}/categories/   → Categories
-GET /api/v1/public/{slug}/products/     → Products (filter: ?category=, ?search=)
-GET /api/v1/public/{slug}/products/{id}/→ Product detail
+GET /api/v1/public/{slug}/                → Store detail
+GET /api/v1/public/{slug}/catalog/        → Catalog
+GET /api/v1/public/{slug}/categories/     → Categories
+GET /api/v1/public/{slug}/products/       → Products (filter: ?category=, ?search=)
+GET /api/v1/public/{slug}/products/{id}/  → Product detail
+GET /api/v1/public/{slug}/availability/   → { is_open, today, hours, operating_hours }
 ```
+
+Rate limit: `AnonRateThrottle` 60 req/min for all public endpoints.
+Checkout (`POST /checkout/`) has stricter `CheckoutThrottle`: 5 req/min per IP.
 
 ## WebSocket Endpoints
 

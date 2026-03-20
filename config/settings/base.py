@@ -203,6 +203,7 @@ REST_FRAMEWORK = {
         'user': '300/minute',     # Reduzido de 10000 para segurança
         'webhook': '10000/hour',  # Webhooks podem ter volume alto
         'auth': '10/minute',      # Novo: limite para endpoints de auth
+        'checkout': '5/minute',   # Checkout: max 5 pedidos/min por IP (anti-bot)
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }

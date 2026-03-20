@@ -63,7 +63,7 @@ def send_whatsapp_auth_code(request):
             # Em desenvolvimento, retorna o código para facilitar testes
             from django.conf import settings
             if settings.DEBUG:
-                logger.info(f"[WHATSAPP AUTH API] Code sent (DEBUG mode): {result.get('code')}")
+                logger.debug(f"[WHATSAPP AUTH API] Code sent (DEBUG mode): {result.get('code')}")
             else:
                 # Remove código do response em produção
                 result.pop('code', None)

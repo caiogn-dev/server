@@ -315,7 +315,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
     def get_queryset(self):
         accessible_ids = _accessible_accounts(self.request.user).values_list('id', flat=True)
-        queryset = Message.objects.select_related('account', 'conversation').filter(
+        queryset = Message.objects.select_related(
+            'account', 'conversation', 'conversation__assigned_agent'
+        ).filter(
             account_id__in=accessible_ids
         )
         

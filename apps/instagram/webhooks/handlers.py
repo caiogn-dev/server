@@ -172,16 +172,42 @@ class InstagramWebhookHandler:
                 result['success'] = True
                 
             elif 'postback' in messaging:
-                # Postback (button click)
+                # Postback (button click from quick-reply / template)
                 event_type = InstagramWebhookEvent.EventType.MESSAGING_POSTBACKS
-                # TODO: Process postback
+                postback = messaging['postback']
+                sender_id = messaging.get('sender', {}).get('id')
+                logger.info(
+                    f"Instagram postback from {sender_id}: "
+                    f"title={postback.get('title')!r} payload={postback.get('payload')!r}"
+                )
+                # Route the postback text as an incoming message so automation can handle it
+                if sender_id and postback.get('title'):
+                    synthetic = {
+                        'messaging': [{
+                            'sender': messaging.get('sender', {}),
+                            'recipient': messaging.get('recipient', {}),
+                            'timestamp': messaging.get('timestamp'),
+                            'message': {
+                                'mid': f"postback_{messaging.get('timestamp', '')}",
+                                'text': postback.get('title', ''),
+                            },
+                        }]
+                    }
+                    service.process_incoming_message(synthetic)
                 result['success'] = True
-                
+
             elif 'referral' in messaging:
-                # Referral (ad click, etc)
+                # Referral (entry via ad, m.me link, etc)
                 event_type = InstagramWebhookEvent.EventType.MESSAGING_REFERRAL
-                # TODO: Process referral
+                referral = messaging['referral']
+                sender_id = messaging.get('sender', {}).get('id')
+                logger.info(
+                    f"Instagram referral from {sender_id}: "
+                    f"ref={referral.get('ref')!r} source={referral.get('source')!r} "
+                    f"type={referral.get('type')!r}"
+                )
                 result['success'] = True
+                result['ref'] = referral.get('ref')
                 
             else:
                 result['error'] = "Unknown messaging event type"
@@ -213,13 +239,26 @@ class InstagramWebhookHandler:
             if field == 'comments':
                 # New comment on a post
                 event_type = InstagramWebhookEvent.EventType.COMMENTS
-                # TODO: Process comment
+                comment_id = value.get('id')
+                commenter_id = value.get('from', {}).get('id')
+                comment_text = value.get('text', '')
+                media_id = value.get('media', {}).get('id')
+                logger.info(
+                    f"Instagram comment {comment_id} on media {media_id} "
+                    f"from {commenter_id}: {comment_text!r}"
+                )
                 result['success'] = True
-                
+                result['comment_id'] = comment_id
+
             elif field == 'mentions':
                 # Mentioned in a post/story
-                # TODO: Process mention
+                media_id = value.get('media_id')
+                comment_id = value.get('comment_id')
+                logger.info(
+                    f"Instagram mention: media_id={media_id} comment_id={comment_id}"
+                )
                 result['success'] = True
+                result['media_id'] = media_id
                 
             elif field == 'story_insights':
                 # Story insights update

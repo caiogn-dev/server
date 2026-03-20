@@ -8,18 +8,27 @@ Endpoints:
   GET /api/v1/public/{slug}/categories/           -> categories
   GET /api/v1/public/{slug}/products/             -> products (filterable)
   GET /api/v1/public/{slug}/products/{pk}/        -> product detail
+  GET /api/v1/public/{slug}/availability/         -> store open/closed status
 """
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from apps.stores.models import Store, StoreCategory, StoreProduct
 from .serializers import (
     PublicStoreSerializer,
     PublicCategorySerializer,
     PublicProductSerializer,
 )
+
+
+class _PublicProductPagination(PageNumberPagination):
+    page_size = 50
+    page_size_query_param = 'page_size'
+    max_page_size = 200
 
 
 def _get_active_store(slug):
@@ -93,7 +102,10 @@ def public_store_products(request, slug):
     if search:
         products = products.filter(name__icontains=search)
 
-    return Response(PublicProductSerializer(products, many=True, context={'request': request}).data)
+    paginator = _PublicProductPagination()
+    page = paginator.paginate_queryset(products, request)
+    serializer = PublicProductSerializer(page, many=True, context={'request': request})
+    return paginator.get_paginated_response(serializer.data)
 
 
 @api_view(['GET'])
@@ -102,3 +114,19 @@ def public_product_detail(request, slug, pk):
     store = _get_active_store(slug)
     product = get_object_or_404(StoreProduct, pk=pk, store=store, status='active')
     return Response(PublicProductSerializer(product, context={'request': request}).data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_store_availability(request, slug):
+    """Return whether the store is currently open, plus today's hours."""
+    store = _get_active_store(slug)
+    now = timezone.now()
+    day_name = now.strftime('%A').lower()
+    hours = (store.operating_hours or {}).get(day_name)
+    return Response({
+        'is_open': store.is_open(),
+        'today': day_name,
+        'hours': hours,
+        'operating_hours': store.operating_hours or {},
+    })

@@ -6,7 +6,7 @@ import logging
 from decimal import Decimal
 from typing import Dict, Any, Optional, List
 from django.db import transaction
-from django.db.models import Q, Sum, Count, Avg
+from django.db.models import F, Q, Sum, Count, Avg
 from django.utils import timezone
 from datetime import timedelta
 
@@ -277,17 +277,20 @@ class OrderService:
         
         order.save()
         
-        # Restore stock if requested
+        # Restore stock if requested — use F() to avoid read-modify-write race conditions
         if restore_stock:
+            from apps.stores.models import StoreProduct, StoreCombo
             for item in order.items.all():
-                if item.product and item.product.track_stock:
-                    item.product.stock_quantity += item.quantity
-                    item.product.save(update_fields=['stock_quantity'])
-            
+                if item.product_id and item.product.track_stock:
+                    StoreProduct.objects.filter(id=item.product_id).update(
+                        stock_quantity=F('stock_quantity') + item.quantity
+                    )
+
             for combo_item in order.combo_items.all():
-                if combo_item.combo and combo_item.combo.track_stock:
-                    combo_item.combo.stock_quantity += combo_item.quantity
-                    combo_item.combo.save(update_fields=['stock_quantity'])
+                if combo_item.combo_id and combo_item.combo.track_stock:
+                    StoreCombo.objects.filter(id=combo_item.combo_id).update(
+                        stock_quantity=F('stock_quantity') + combo_item.quantity
+                    )
         
         # Handle refund if requested
         refund_result = None

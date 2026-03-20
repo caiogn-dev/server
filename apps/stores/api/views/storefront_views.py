@@ -11,7 +11,13 @@ from django.conf import settings
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
+
+
+class CheckoutThrottle(AnonRateThrottle):
+    """5 checkout attempts per minute per IP — prevents bot ordering."""
+    scope = 'checkout'
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch
 
@@ -476,6 +482,7 @@ class StoreCartViewSet(viewsets.ViewSet):
 class StoreCheckoutView(APIView):
     """Checkout endpoint for creating orders."""
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [CheckoutThrottle]
     
     def post(self, request, store_slug):
         """Process checkout and create order."""

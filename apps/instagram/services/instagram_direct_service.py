@@ -178,9 +178,36 @@ class InstagramDirectService:
             # Atualiza conversa
             conv.last_message_at = datetime.now()
             conv.save()
-            
-            # TODO: Integrar com API real do Instagram para envio
-            
+
+            # Envia via Instagram Messenger Platform API
+            try:
+                payload = {
+                    'recipient': {'id': conv.participant_id},
+                    'messaging_type': 'RESPONSE',
+                }
+                if message_type == 'TEXT':
+                    payload['message'] = {'text': content}
+                elif message_type in ('IMAGE', 'VIDEO', 'AUDIO'):
+                    type_map = {'IMAGE': 'image', 'VIDEO': 'video', 'AUDIO': 'audio'}
+                    payload['message'] = {
+                        'attachment': {
+                            'type': type_map[message_type],
+                            'payload': {'url': media_url, 'is_reusable': True},
+                        }
+                    }
+                else:
+                    payload['message'] = {'text': content or ''}
+
+                page_id = self.api.account.facebook_page_id or self.api.account.instagram_business_id
+                response = self.api.post(f'{page_id}/messages', data=payload)
+                external_id = response.get('message_id') or response.get('mid')
+                if external_id:
+                    message.instagram_message_id = external_id
+                    message.save(update_fields=['instagram_message_id'])
+            except Exception as api_err:
+                logger.error(f"Instagram send API error for conv {conversation_id}: {api_err}")
+                # Message is persisted locally even if API call fails
+
             return message
             
         except InstagramConversation.DoesNotExist:
