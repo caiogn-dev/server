@@ -260,6 +260,30 @@ class StoreQuerysetMixin:
         return qs.filter(**{f'{self.store_field}__id__in': store_ids})
 
 
+class StorePermissionMixin(StoreQuerysetMixin):
+    """
+    All-in-one mixin for ViewSets that need store-scoped access control.
+
+    Combines:
+    - Authentication enforcement (IsAuthenticated)
+    - Store access permission (HasStoreAccess)
+    - Queryset filtering to the user's own stores (StoreQuerysetMixin)
+
+    Usage:
+        class MyViewSet(StorePermissionMixin, viewsets.ModelViewSet):
+            queryset = MyModel.objects.all()
+            store_field = 'store'   # FK path to Store (default: 'store')
+
+    The store_field can use double-underscore traversal for indirect FKs:
+        store_field = 'company__store'  # for CompanyProfile → Store
+
+    Superusers and staff bypass all restrictions (see all data).
+    """
+
+    permission_classes = [permissions.IsAuthenticated, HasStoreAccess]
+    store_field: str = 'store'
+
+
 __all__ = [
     'IsStoreOwner',
     'IsStoreStaff',
@@ -270,4 +294,5 @@ __all__ = [
     'IsWhatsAppAccountOwner',
     'IsCompanyProfileOwner',
     'StoreQuerysetMixin',
+    'StorePermissionMixin',
 ]

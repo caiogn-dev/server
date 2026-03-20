@@ -187,16 +187,17 @@ class UpdateCompanyProfileSerializer(serializers.Serializer):
 class AutoMessageSerializer(serializers.ModelSerializer):
     """Serializer for AutoMessage."""
     event_type_display = serializers.CharField(source='get_event_type_display', read_only=True)
-    
+    store_id = serializers.UUIDField(source='company.store.id', read_only=True)
+
     class Meta:
         model = AutoMessage
         fields = [
-            'id', 'company', 'event_type', 'event_type_display', 'name',
+            'id', 'company', 'store_id', 'event_type', 'event_type_display', 'name',
             'message_text', 'media_url', 'media_type', 'buttons',
             'is_active', 'delay_seconds', 'conditions', 'priority',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'store_id', 'created_at', 'updated_at']
 
 
 class CreateAutoMessageSerializer(serializers.Serializer):
@@ -239,12 +240,13 @@ class UpdateAutoMessageSerializer(serializers.Serializer):
 class CustomerSessionSerializer(serializers.ModelSerializer):
     """Serializer for CustomerSession."""
     company_name = serializers.CharField(source='company.company_name', read_only=True)
+    store_id = serializers.UUIDField(source='company.store.id', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
-    
+
     class Meta:
         model = CustomerSession
         fields = [
-            'id', 'company', 'company_name',
+            'id', 'company', 'company_name', 'store_id',
             'phone_number', 'customer_name', 'customer_email',
             'session_id', 'external_customer_id',
             'status', 'status_display',
@@ -264,11 +266,12 @@ class AutomationLogSerializer(serializers.ModelSerializer):
     """Serializer for AutomationLog."""
     action_type_display = serializers.CharField(source='get_action_type_display', read_only=True)
     company_name = serializers.CharField(source='company.company_name', read_only=True)
-    
+    store_id = serializers.UUIDField(source='company.store.id', read_only=True)
+
     class Meta:
         model = AutomationLog
         fields = [
-            'id', 'company', 'company_name', 'session',
+            'id', 'company', 'company_name', 'store_id', 'session',
             'action_type', 'action_type_display', 'description',
             'phone_number', 'event_type',
             'request_data', 'response_data',

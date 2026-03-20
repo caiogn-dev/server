@@ -20,8 +20,37 @@ def filter_by_store(queryset, store_param):
 
 
 class IsStoreOwnerOrStaff(permissions.BasePermission):
-    """Permission to check if user owns or manages the store."""
-    
+    """Permission to check if user owns or manages the store.
+
+    For nested-router views (store_pk in kwargs) this also enforces
+    request-level access so that users cannot list/create resources
+    inside a store they don't own.
+    """
+
+    def _user_can_access_store(self, user, store):
+        return (
+            store.owner == user or
+            user in store.staff.all() or
+            user.is_staff or
+            user.is_superuser
+        )
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+        # Superusers and Django staff bypass store ownership check
+        if request.user.is_staff or request.user.is_superuser:
+            return True
+        # When accessing via nested router (stores/{store_pk}/...), verify ownership
+        store_pk = view.kwargs.get('store_pk')
+        if store_pk:
+            try:
+                store = Store.objects.get(pk=store_pk)
+            except Store.DoesNotExist:
+                return False
+            return self._user_can_access_store(request.user, store)
+        return True
+
     def has_object_permission(self, request, view, obj):
         if hasattr(obj, 'store'):
             store = obj.store
@@ -29,12 +58,7 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
             store = obj
         else:
             return False
-        
-        return (
-            store.owner == request.user or
-            request.user in store.staff.all() or
-            request.user.is_staff
-        )
+        return self._user_can_access_store(request.user, store)
 
 
 def get_user_stores_queryset(user, queryset_class):

@@ -327,7 +327,7 @@ class CartService:
         # Get product IDs and variant IDs from cart
         product_ids = [item.product_id for item in cart.items.all()]
         variant_ids = [item.variant_id for item in cart.items.all() if item.variant_id]
-        combo_ids = [item.combo_id for item in cart.combo_items.all()]
+        combo_ids = [item.combo_id for item in cart.combo_items.all() if item.combo_id]
         
         # Lock products for update to prevent race conditions
         locked_products = {
@@ -374,6 +374,9 @@ class CartService:
         
         for item in cart.combo_items.select_related('combo').all():
             combo = locked_combos.get(item.combo_id) or item.combo
+            # Skip virtual combos (no real combo FK — no stock to check)
+            if combo is None:
+                continue
             if combo.track_stock and item.quantity > combo.stock_quantity:
                 errors.append({
                     'item_id': str(item.id),

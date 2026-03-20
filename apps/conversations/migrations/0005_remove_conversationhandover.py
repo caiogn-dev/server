@@ -22,7 +22,8 @@ class Migration(migrations.Migration):
             ],
             database_operations=[
                 migrations.RunSQL(
-                    sql="DROP TABLE IF EXISTS conversation_handovers CASCADE;",
+                    # CASCADE is PostgreSQL-only; SQLite ignores it — use a DB-agnostic form
+                    sql="DROP TABLE IF EXISTS conversation_handovers;",
                     reverse_sql=migrations.RunSQL.noop,
                 ),
             ],
