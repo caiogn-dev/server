@@ -387,24 +387,46 @@ class StoreCartViewSet(viewsets.ViewSet):
         quantity = int(request.data.get('quantity', 1))
         notes = request.data.get('notes', '')
         
-        # Validate that at least one of product_id or combo_id is provided
-        if not product_id and not combo_id:
+        combo_name = request.data.get('combo_name', '')
+        unit_price = request.data.get('unit_price')
+        is_virtual_combo = not combo_id and combo_name
+
+        # Validate: need product_id, combo_id, or virtual combo fields
+        if not product_id and not combo_id and not is_virtual_combo:
             return Response(
-                {'error': 'product_id or combo_id is required'},
+                {'error': 'product_id, combo_id, or combo_name+unit_price is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
-            if combo_id:
-                # Add combo to cart
+            if is_virtual_combo:
+                # Virtual combo (e.g. salad builder) — no real StoreCombo FK
+                if unit_price is None:
+                    return Response(
+                        {'error': 'unit_price is required for virtual combos'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                customizations = request.data.get('customizations', {})
+                from decimal import Decimal
+                cart_service.add_combo(
+                    cart,
+                    combo=None,
+                    quantity=quantity,
+                    customizations=customizations,
+                    notes=notes,
+                    combo_name=combo_name,
+                    unit_price=Decimal(str(unit_price)),
+                )
+            elif combo_id:
+                # Real combo
                 customizations = request.data.get('customizations', {})
                 combo = StoreCombo.objects.get(id=combo_id, store=store, is_active=True)
                 cart_service.add_combo(cart, combo, quantity, customizations, notes)
             else:
-                # Add product to cart
+                # Product
                 variant_id = request.data.get('variant_id')
                 cart_service.add_item(cart, product_id, quantity, variant_id, notes)
-            
+
             return Response(StoreCartSerializer(cart).data)
         except StoreCombo.DoesNotExist:
             return Response(

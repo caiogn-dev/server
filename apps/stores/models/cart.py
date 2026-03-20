@@ -136,15 +136,26 @@ class StoreCartItem(models.Model):
 
 
 class StoreCartComboItem(models.Model):
-    """Combo item in a shopping cart."""
+    """Combo item in a shopping cart.
+
+    Supports both real combos (combo FK set) and virtual combos like
+    the salad builder (combo=None, combo_name and unit_price set manually).
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cart = models.ForeignKey(StoreCart, on_delete=models.CASCADE, related_name='combo_items')
     combo = models.ForeignKey(
         'stores.StoreCombo',
-        on_delete=models.CASCADE,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name='cart_items'
     )
+    # Denormalized name — required for virtual combos (combo=None), optional for real combos
+    combo_name = models.CharField(max_length=255, blank=True)
+    # Denormalized price — required for virtual combos, optional for real combos (uses combo.price)
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+
     quantity = models.PositiveIntegerField(default=1)
     customizations = models.JSONField(default=dict, blank=True)
     notes = models.TextField(blank=True)
@@ -157,8 +168,20 @@ class StoreCartComboItem(models.Model):
         verbose_name_plural = 'Cart Combo Items'
 
     def __str__(self):
-        return f"{self.quantity}x {self.combo.name}"
+        name = self.combo_name or (self.combo.name if self.combo else 'Combo')
+        return f"{self.quantity}x {name}"
+
+    @property
+    def effective_name(self):
+        return self.combo_name or (self.combo.name if self.combo else 'Combo')
+
+    @property
+    def effective_price(self):
+        if self.unit_price is not None:
+            return self.unit_price
+        return self.combo.price if self.combo else 0
 
     @property
     def subtotal(self):
-        return self.combo.price * self.quantity
+        from decimal import Decimal
+        return Decimal(str(self.effective_price)) * self.quantity

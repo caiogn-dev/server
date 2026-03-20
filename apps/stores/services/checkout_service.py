@@ -453,25 +453,31 @@ class CheckoutService:
                         sold_count=F('sold_count') + item.quantity
                     )
         
-        # Handle combo items
+        # Handle combo items (real and virtual)
         for combo_item in cart.combo_items.select_related('combo').all():
-            # Create a single order item for the combo
+            is_virtual = combo_item.combo is None
+            display_name = combo_item.effective_name
+            effective_price = combo_item.effective_price
+
+            if not is_virtual:
+                display_name = f"Combo: {display_name}"
+
             StoreOrderItem.objects.create(
                 order=order,
                 product=None,
                 variant=None,
-                product_name=f"Combo: {combo_item.combo.name}",
+                product_name=display_name,
                 variant_name='',
                 sku='',
-                unit_price=combo_item.combo.price,
+                unit_price=effective_price,
                 quantity=combo_item.quantity,
                 subtotal=combo_item.subtotal,
                 options=combo_item.customizations,
                 notes=combo_item.notes,
             )
-            
-            # Decrement combo stock if tracked
-            if combo_item.combo.track_stock:
+
+            # Decrement combo stock if tracked (real combos only)
+            if not is_virtual and combo_item.combo.track_stock:
                 from apps.stores.models import StoreCombo
                 StoreCombo.objects.filter(id=combo_item.combo.id).update(
                     stock_quantity=F('stock_quantity') - combo_item.quantity

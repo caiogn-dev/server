@@ -722,13 +722,13 @@ class StoreCartItemSerializer(serializers.ModelSerializer):
 
 
 class StoreCartComboItemSerializer(serializers.ModelSerializer):
-    """Serializer for cart combo items."""
-    
-    combo_name = serializers.CharField(source='combo.name', read_only=True)
+    """Serializer for cart combo items (real and virtual)."""
+
+    combo_name = serializers.SerializerMethodField()
     combo_image = serializers.SerializerMethodField()
-    unit_price = serializers.DecimalField(source='combo.price', max_digits=10, decimal_places=2, read_only=True)
+    unit_price = serializers.SerializerMethodField()
     subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    
+
     class Meta:
         model = StoreCartComboItem
         fields = [
@@ -738,9 +738,17 @@ class StoreCartComboItemSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-    
+
+    def get_combo_name(self, obj):
+        return obj.effective_name
+
     def get_combo_image(self, obj):
-        return obj.combo.get_image_url()
+        if obj.combo:
+            return obj.combo.get_image_url()
+        return None
+
+    def get_unit_price(self, obj):
+        return str(obj.effective_price)
 
 
 class StoreCartSerializer(serializers.ModelSerializer):

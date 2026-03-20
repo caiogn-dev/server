@@ -119,19 +119,38 @@ class CartService:
     @transaction.atomic
     def add_combo(
         cart: StoreCart,
-        combo: StoreCombo,
+        combo,  # StoreCombo | None — None means virtual combo (e.g. salad builder)
         quantity: int = 1,
         customizations: dict = None,
-        notes: str = ''
+        notes: str = '',
+        combo_name: str = '',
+        unit_price=None,
     ) -> StoreCartComboItem:
-        """Add a combo to the cart."""
-        
-        # Check stock if tracked
-        if combo.track_stock and combo.stock_quantity < quantity:
-            raise ValueError(f"Estoque insuficiente para o combo. Disponível: {combo.stock_quantity}")
-        
-        # Add or update combo item
-        existing = cart.combo_items.filter(combo=combo).first()
+        """Add a combo to the cart.
+
+        Supports real combos (combo FK) and virtual combos (combo=None,
+        combo_name and unit_price required).  Virtual combos are identified
+        by the ``is_virtual`` flag in customizations.
+        """
+
+        if combo is not None:
+            # Real combo — validate stock
+            if combo.track_stock and combo.stock_quantity < quantity:
+                raise ValueError(f"Estoque insuficiente para o combo. Disponível: {combo.stock_quantity}")
+            effective_name = combo_name or combo.name
+            effective_price = unit_price
+        else:
+            # Virtual combo (salad builder, etc.)
+            if not combo_name:
+                raise ValueError("combo_name is required for virtual combos")
+            effective_name = combo_name
+            effective_price = unit_price
+
+        # For real combos try to merge with existing entry; virtual combos always create new
+        existing = None
+        if combo is not None:
+            existing = cart.combo_items.filter(combo=combo).first()
+
         if existing:
             existing.quantity += quantity
             if customizations:
@@ -144,9 +163,11 @@ class CartService:
             return StoreCartComboItem.objects.create(
                 cart=cart,
                 combo=combo,
+                combo_name=effective_name,
+                unit_price=effective_price,
                 quantity=quantity,
                 customizations=customizations or {},
-                notes=notes
+                notes=notes,
             )
     
     @staticmethod
