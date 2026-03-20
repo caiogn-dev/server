@@ -48,15 +48,19 @@ class StoreCart(models.Model):
 
     @property
     def subtotal(self):
-        return sum(item.subtotal for item in self.items.all())
+        product_total = sum(item.subtotal for item in self.items.all())
+        combo_total = sum(item.subtotal for item in self.combo_items.all())
+        return product_total + combo_total
 
     @property
     def item_count(self):
-        return sum(item.quantity for item in self.items.all())
+        product_count = sum(item.quantity for item in self.items.all())
+        combo_count = sum(item.quantity for item in self.combo_items.all())
+        return product_count + combo_count
 
     @property
     def is_empty(self):
-        return self.items.count() == 0
+        return not self.items.exists() and not self.combo_items.exists()
 
     def clear(self):
         self.items.all().delete()

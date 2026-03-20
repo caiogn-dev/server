@@ -143,8 +143,13 @@ class CartService:
             # Virtual combo (salad builder, etc.)
             if not combo_name:
                 raise ValueError("combo_name is required for virtual combos")
+            try:
+                effective_price = Decimal(str(unit_price))
+                if effective_price <= 0:
+                    raise ValueError("unit_price must be positive for virtual combos")
+            except (TypeError, Exception) as e:
+                raise ValueError(f"unit_price must be a valid positive decimal for virtual combos: {e}")
             effective_name = combo_name
-            effective_price = unit_price
 
         # For real combos try to merge with existing entry; virtual combos always create new
         existing = None
@@ -220,7 +225,7 @@ class CartService:
             item.delete()
             return None
         
-        if item.combo.track_stock and quantity > item.combo.stock_quantity:
+        if item.combo and item.combo.track_stock and quantity > item.combo.stock_quantity:
             raise ValueError(f"Estoque insuficiente. Disponível: {item.combo.stock_quantity}")
         
         item.quantity = quantity
@@ -298,14 +303,14 @@ class CartService:
             item_data = {
                 'id': str(item.id),
                 'type': 'combo',
-                'combo_id': str(item.combo.id),
-                'combo_name': item.combo.name,
+                'combo_id': str(item.combo.id) if item.combo else None,
+                'combo_name': item.effective_name,
                 'quantity': item.quantity,
-                'unit_price': float(item.combo.price),
+                'unit_price': float(item.effective_price),
                 'subtotal': float(item.subtotal),
                 'customizations': item.customizations,
                 'notes': item.notes,
-                'image_url': item.combo.get_image_url(),
+                'image_url': item.combo.get_image_url() if item.combo else None,
             }
             items.append(item_data)
             subtotal += item.subtotal
@@ -315,7 +320,7 @@ class CartService:
             'store_id': str(cart.store.id),
             'store_name': cart.store.name,
             'items': items,
-            'item_count': cart.item_count + sum(ci.quantity for ci in cart.combo_items.all()),
+            'item_count': cart.item_count,
             'subtotal': float(subtotal),
             'is_empty': len(items) == 0,
         }
