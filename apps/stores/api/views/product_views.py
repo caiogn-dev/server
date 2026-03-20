@@ -181,9 +181,11 @@ class StoreComboViewSet(viewsets.ModelViewSet):
             except (ValueError, AttributeError):
                 queryset = queryset.filter(store__slug=store_param)
         
-        if self.action == 'list' and not self.request.user.is_staff:
+        # Only hide inactive combos for unauthenticated / non-staff public requests
+        if self.action == 'list' and not (self.request.user.is_authenticated and
+                                          (self.request.user.is_staff or self.request.user.is_superuser)):
             queryset = queryset.filter(is_active=True)
-        
+
         return queryset.select_related('store').prefetch_related('items__product')
 
 

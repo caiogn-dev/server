@@ -888,12 +888,12 @@ class StoreComboItemSerializer(serializers.ModelSerializer):
 
 class StoreComboSerializer(serializers.ModelSerializer):
     """Serializer for combos."""
-    
-    items = StoreComboItemSerializer(many=True, read_only=True)
+
+    items = StoreComboItemSerializer(many=True, required=False)
     image_url = serializers.SerializerMethodField()
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
-    
+
     class Meta:
         model = StoreCombo
         fields = [
@@ -906,9 +906,29 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-    
+
     def get_image_url(self, obj):
         return obj.get_image_url()
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items', [])
+        combo = StoreCombo.objects.create(**validated_data)
+        for item_data in items_data:
+            item_data.pop('product_name', None)
+            item_data.pop('product_image', None)
+            StoreComboItem.objects.create(combo=combo, **item_data)
+        return combo
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items', None)
+        combo = super().update(instance, validated_data)
+        if items_data is not None:
+            combo.items.all().delete()
+            for item_data in items_data:
+                item_data.pop('product_name', None)
+                item_data.pop('product_image', None)
+                StoreComboItem.objects.create(combo=combo, **item_data)
+        return combo
 
 
 class StoreCatalogSerializer(serializers.Serializer):

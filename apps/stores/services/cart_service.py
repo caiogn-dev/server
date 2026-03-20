@@ -230,23 +230,32 @@ class CartService:
     @staticmethod
     def remove_item(cart_or_item, item_id=None):
         """
-        Remove an item from the cart.
-        
+        Remove an item from the cart (product or combo).
+
         Supports two calling conventions:
-        - remove_item(item) - direct item deletion
-        - remove_item(cart, item_id) - lookup item by ID and delete
+        - remove_item(item) - direct item deletion (StoreCartItem or StoreCartComboItem)
+        - remove_item(cart, item_id) - lookup item by ID and delete; tries
+          StoreCartItem first, then StoreCartComboItem as fallback so a single
+          endpoint handles both types.
         """
-        if isinstance(cart_or_item, StoreCartItem):
+        if isinstance(cart_or_item, (StoreCartItem, StoreCartComboItem)):
             # Old style: remove_item(item)
-            item = cart_or_item
-        else:
-            # New style: remove_item(cart, item_id)
-            cart = cart_or_item
-            try:
-                item = StoreCartItem.objects.get(id=item_id, cart=cart)
-            except StoreCartItem.DoesNotExist:
-                return  # Item already removed or doesn't exist
-        item.delete()
+            cart_or_item.delete()
+            return
+
+        # New style: remove_item(cart, item_id)
+        cart = cart_or_item
+        try:
+            StoreCartItem.objects.get(id=item_id, cart=cart).delete()
+            return
+        except StoreCartItem.DoesNotExist:
+            pass
+
+        # Fallback: try combo item
+        try:
+            StoreCartComboItem.objects.get(id=item_id, cart=cart).delete()
+        except StoreCartComboItem.DoesNotExist:
+            pass  # Already removed or invalid id
     
     @staticmethod
     def remove_combo(item: StoreCartComboItem):

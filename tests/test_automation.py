@@ -5,6 +5,7 @@ Tests for the Automation app:
 - CustomerSession lifecycle
 - Automation API endpoints
 """
+import uuid
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -75,8 +76,9 @@ class CompanyProfileModelTestCase(TestCase):
 
     def test_is_ai_enabled_default(self):
         profile = _make_company_profile(self.store)
-        # Default: ai_enabled depends on field default; just assert it's bool
-        self.assertIsInstance(profile.is_ai_enabled, bool)
+        # is_ai_enabled is a regular method, not a property
+        result = profile.is_ai_enabled()
+        self.assertIsInstance(result, bool)
 
     def test_str_representation(self):
         profile = _make_company_profile(self.store)
@@ -90,7 +92,6 @@ class CompanyProfileModelTestCase(TestCase):
         self.store.name = 'Updated Name'
         self.store.save()
         profile = _make_company_profile(self.store)
-        # sync_from_store should not raise
         profile.sync_from_store(save=True)
         profile.refresh_from_db()
         self.assertIsNotNone(profile.pk)
@@ -108,10 +109,11 @@ class AutoMessageModelTestCase(TestCase):
         self.profile = _make_company_profile(self.store)
 
     def test_create_auto_message(self):
+        # Signal creates defaults; use a unique name to avoid unique_together clash
         msg = AutoMessage.objects.create(
             company=self.profile,
             event_type=AutoMessage.EventType.ORDER_CONFIRMED,
-            name='Order Confirmed',
+            name='Custom Test Message',
             message_text='Seu pedido foi confirmado, {customer_name}!',
             is_active=True,
         )
@@ -121,8 +123,8 @@ class AutoMessageModelTestCase(TestCase):
     def test_render_message_interpolates_context(self):
         msg = AutoMessage.objects.create(
             company=self.profile,
-            event_type=AutoMessage.EventType.ORDER_CONFIRMED,
-            name='Welcome',
+            event_type=AutoMessage.EventType.ORDER_READY,
+            name='Welcome Render Test',
             message_text='Olá, {customer_name}! Seu pedido #{order_id} foi recebido.',
             is_active=True,
         )
@@ -134,46 +136,45 @@ class AutoMessageModelTestCase(TestCase):
         """render_message should not crash when context is missing a key."""
         msg = AutoMessage.objects.create(
             company=self.profile,
-            event_type=AutoMessage.EventType.ORDER_CONFIRMED,
-            name='Welcome2',
+            event_type=AutoMessage.EventType.ORDER_READY,
+            name='Missing Key Test',
             message_text='Olá, {customer_name}!',
             is_active=True,
         )
-        # Should not raise — missing keys handled gracefully
         try:
             rendered = msg.render_message({})
             self.assertIsInstance(rendered, str)
         except (KeyError, IndexError):
             self.fail('render_message raised on missing context key')
 
-    def test_inactive_message_is_filtered_out(self):
-        AutoMessage.objects.create(
+    def test_inactive_message_is_excluded_from_filter(self):
+        """Inactive messages must be filterable by is_active=False."""
+        unique_name = f'Inactive-{uuid.uuid4().hex[:8]}'
+        msg = AutoMessage.objects.create(
             company=self.profile,
-            event_type=AutoMessage.EventType.ORDER_CONFIRMED,
-            name='Active Msg',
-            message_text='Active',
-            is_active=True,
-        )
-        AutoMessage.objects.create(
-            company=self.profile,
-            event_type=AutoMessage.EventType.ORDER_CONFIRMED,
-            name='Inactive Msg',
+            event_type=AutoMessage.EventType.ORDER_READY,
+            name=unique_name,
             message_text='Inactive',
             is_active=False,
         )
-        active = AutoMessage.objects.filter(company=self.profile, is_active=True)
-        self.assertEqual(active.count(), 1)
-        self.assertEqual(active.first().name, 'Active Msg')
+        # Filtering by is_active=False should include it
+        inactive = AutoMessage.objects.filter(company=self.profile, is_active=False, name=unique_name)
+        self.assertEqual(inactive.count(), 1)
+        # Filtering by is_active=True should exclude it
+        active = AutoMessage.objects.filter(company=self.profile, is_active=True, name=unique_name)
+        self.assertEqual(active.count(), 0)
 
     def test_str_representation(self):
+        """AutoMessage __str__ returns '{company_name} - {event_type_display}'."""
         msg = AutoMessage.objects.create(
             company=self.profile,
             event_type=AutoMessage.EventType.ORDER_CONFIRMED,
-            name='Test Msg',
+            name='Str Test Msg',
             message_text='Hello',
             is_active=True,
         )
-        self.assertIn('Test Msg', str(msg))
+        # str(msg) = "StoreName - EventTypeDisplay"
+        self.assertIn(self.profile.company_name, str(msg))
 
 
 # ---------------------------------------------------------------------------
@@ -187,10 +188,11 @@ class CustomerSessionModelTestCase(TestCase):
         self.store = _make_store(self.owner, slug='session-store')
         self.profile = _make_company_profile(self.store)
 
-    def _make_session(self, phone='+5511999990001'):
+    def _make_session(self, phone='+5511999990001', session_id=None):
         return CustomerSession.objects.create(
             company=self.profile,
             phone_number=phone,
+            session_id=session_id or str(uuid.uuid4()),
             status=CustomerSession.SessionStatus.ACTIVE,
         )
 
@@ -206,7 +208,6 @@ class CustomerSessionModelTestCase(TestCase):
     def test_session_initial_cart_is_empty(self):
         session = self._make_session()
         cart = session.cart_data
-        # cart_data is a JSONField — should be dict or None
         self.assertIn(cart, [{}, None, []])
 
     def test_add_notification(self):
@@ -218,11 +219,20 @@ class CustomerSessionModelTestCase(TestCase):
         session = self._make_session()
         self.assertFalse(session.was_notification_sent('order_confirmed'))
 
-    def test_unique_session_per_phone(self):
-        """Two sessions for same phone can exist (no unique constraint at model level)."""
-        self._make_session(phone='+5511777770001')
+    def test_two_sessions_same_phone_different_session_ids(self):
+        """The same phone can have multiple sessions with different session_ids."""
+        s1 = self._make_session(phone='+5511777770001')
         s2 = self._make_session(phone='+5511777770001')
+        self.assertNotEqual(s1.session_id, s2.session_id)
         self.assertIsNotNone(s2.pk)
+
+    def test_duplicate_session_id_raises_error(self):
+        """session_id is unique — duplicate raises IntegrityError."""
+        sid = str(uuid.uuid4())
+        self._make_session(session_id=sid)
+        from django.db import IntegrityError
+        with self.assertRaises(IntegrityError):
+            self._make_session(session_id=sid)
 
 
 # ---------------------------------------------------------------------------
@@ -307,15 +317,16 @@ class AutomationAPITestCase(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
     def test_create_auto_message_via_api(self):
+        # The create serializer expects company_id (UUID), not company (FK)
         payload = {
-            'company': str(self.profile.pk),
-            'event_type': AutoMessage.EventType.ORDER_CONFIRMED,
+            'company_id': str(self.profile.pk),
+            'event_type': AutoMessage.EventType.ORDER_READY,
             'name': 'API Created Message',
-            'message_text': 'Your order is confirmed!',
+            'message_text': 'Your order is ready!',
             'is_active': True,
         }
         resp = self.client.post('/api/v1/automation/messages/', payload, format='json')
-        self.assertIn(resp.status_code, [status.HTTP_201_CREATED, status.HTTP_200_OK])
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
 
     def test_list_auto_messages_unauthenticated(self):
         self.client.credentials()
@@ -341,9 +352,12 @@ class AutomationAPITestCase(TestCase):
 
     # --- Unified stats endpoint ---
 
-    def test_unified_stats_endpoint(self):
+    def test_unified_stats_requires_account_id(self):
+        """UnifiedStatsView requires account_id query param — returns 400 without it."""
         resp = self.client.get('/api/v1/automation/unified/stats/')
-        self.assertIn(resp.status_code, [
-            status.HTTP_200_OK,
-            status.HTTP_405_METHOD_NOT_ALLOWED,  # if only POST is allowed
-        ])
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unified_stats_unauthenticated(self):
+        self.client.credentials()
+        resp = self.client.get('/api/v1/automation/unified/stats/')
+        self.assertEqual(resp.status_code, status.HTTP_401_UNAUTHORIZED)

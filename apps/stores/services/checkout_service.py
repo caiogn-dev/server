@@ -16,7 +16,7 @@ from django.core.exceptions import ValidationError
 
 from apps.core.services.customer_identity import CustomerIdentityService
 from apps.stores.models import (
-    Store, StoreCart, StoreOrder, StoreOrderItem,
+    Store, StoreCart, StoreOrder, StoreOrderItem, StoreOrderComboItem,
     StoreProduct, StoreProductVariant, StoreIntegration,
     StoreDeliveryZone, StoreCoupon
 )
