@@ -65,6 +65,7 @@ services:
       - USE_S3=${USE_S3:-false}
       - SERVE_MEDIA_FILES=${SERVE_MEDIA_FILES:-true}
       - MEDIA_URL=${MEDIA_URL:-/media/}
+      - HERE_API_KEY=${HERE_API_KEY}
       - DEBUG=False
     volumes:
       - static_files:/app/staticfiles
@@ -103,6 +104,7 @@ services:
       - DEFAULT_FROM_EMAIL=${DEFAULT_FROM_EMAIL}
       - USE_S3=${USE_S3:-false}
       - MEDIA_URL=${MEDIA_URL:-/media/}
+      - HERE_API_KEY=${HERE_API_KEY}
     depends_on:
       db:
         condition: service_healthy
