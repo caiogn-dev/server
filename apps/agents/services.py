@@ -11,7 +11,8 @@ from typing import List, Dict, Any, Optional
 from django.conf import settings
 from django.core.cache import cache
 from django.db import models
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
+from langchain_core.tools import tool
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from apps.core.exceptions import BaseAPIException
@@ -284,7 +285,29 @@ class LangchainService:
                 context_parts.append(hours_text)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
-        
+
+        # 4. Load pending order / cart state for this customer
+        if phone_number:
+            try:
+                from apps.stores.models import StoreOrder
+                pending = StoreOrder.objects.filter(
+                    customer_phone=phone_number,
+                    payment_status='pending',
+                ).order_by('-created_at').first()
+                if pending:
+                    items_preview = ", ".join(
+                        f"{i.quantity}x {i.product_name}"
+                        for i in pending.items.all()[:4]
+                    )
+                    context_parts.append(
+                        f"\n🛒 PEDIDO PENDENTE DO CLIENTE:\n"
+                        f"Pedido #{pending.order_number} — R$ {pending.total}\n"
+                        f"Itens: {items_preview}\n"
+                        f"Status pagamento: {pending.payment_status}"
+                    )
+            except Exception as e:
+                logger.error(f"[AGENT CONTEXT] Error loading pending order: {e}")
+
         # Combine all context parts
         full_context = "\n\n".join(context_parts)
         
@@ -293,7 +316,133 @@ class LangchainService:
         
         # Remove accents to avoid encoding issues with API
         return remove_accents(full_context)
-    
+
+    def _build_tools(self, phone_number: str = "", store=None):
+        """Build Langchain tools bound to the current customer/store context."""
+
+        @tool
+        def buscar_produto(nome: str) -> str:
+            """Busca um produto no cardápio pelo nome ou parte do nome."""
+            if not store:
+                return "Cardápio indisponível no momento."
+            try:
+                from apps.stores.models import StoreProduct
+                products = StoreProduct.objects.filter(
+                    store=store, is_active=True, name__icontains=nome
+                ).select_related('category')[:6]
+                if not products:
+                    return f"Nenhum produto encontrado para '{nome}'."
+                lines = []
+                for p in products:
+                    cat = p.category.name if p.category else "Geral"
+                    desc = f" — {p.description[:70]}..." if p.description else ""
+                    lines.append(f"[{cat}] {p.name} — R$ {p.price}{desc} (id: {p.id})")
+                return "\n".join(lines)
+            except Exception as exc:
+                return f"Erro ao buscar produto: {exc}"
+
+        @tool
+        def listar_categorias() -> str:
+            """Lista todas as categorias disponíveis no cardápio."""
+            if not store:
+                return "Cardápio indisponível no momento."
+            try:
+                from apps.stores.models import StoreProductCategory
+                cats = StoreProductCategory.objects.filter(store=store, is_active=True).order_by('order')
+                if not cats:
+                    return "Nenhuma categoria encontrada."
+                return "\n".join(f"• {c.name}" for c in cats)
+            except Exception as exc:
+                return f"Erro ao listar categorias: {exc}"
+
+        @tool
+        def verificar_pedido_pendente() -> str:
+            """Verifica se o cliente tem algum pedido pendente de pagamento."""
+            if not phone_number:
+                return "Telefone do cliente não disponível."
+            try:
+                from apps.stores.models import StoreOrder
+                order = StoreOrder.objects.filter(
+                    customer_phone=phone_number,
+                    payment_status='pending',
+                ).order_by('-created_at').first()
+                if not order:
+                    return "Nenhum pedido pendente encontrado."
+                items = ", ".join(
+                    f"{i.quantity}x {i.product_name}" for i in order.items.all()
+                )
+                return (
+                    f"Pedido #{order.order_number}\n"
+                    f"Itens: {items}\n"
+                    f"Total: R$ {order.total}\n"
+                    f"Status: {order.payment_status}"
+                )
+            except Exception as exc:
+                return f"Erro ao verificar pedido: {exc}"
+
+        @tool
+        def consultar_historico_pedidos() -> str:
+            """Retorna os últimos pedidos concluídos do cliente."""
+            if not phone_number:
+                return "Telefone do cliente não disponível."
+            try:
+                from apps.stores.models import StoreOrder
+                orders = StoreOrder.objects.filter(
+                    customer_phone=phone_number,
+                    status__in=['completed', 'delivered'],
+                ).order_by('-created_at')[:5]
+                if not orders:
+                    return "Nenhum pedido anterior encontrado."
+                lines = []
+                for o in orders:
+                    items = ", ".join(f"{i.quantity}x {i.product_name}" for i in o.items.all()[:3])
+                    lines.append(f"• {o.created_at.strftime('%d/%m/%Y')} — {items} — R$ {o.total}")
+                return "\n".join(lines)
+            except Exception as exc:
+                return f"Erro ao consultar histórico: {exc}"
+
+        @tool
+        def informacoes_entrega() -> str:
+            """Retorna a taxa de entrega e condições (frete grátis, prazo, etc)."""
+            if not store:
+                return "Informações de entrega não disponíveis."
+            try:
+                if not store.delivery_enabled:
+                    return "Esta loja não faz entrega no momento. Apenas retirada no local."
+                info = f"Taxa de entrega: R$ {store.default_delivery_fee}"
+                if store.free_delivery_threshold:
+                    info += f"\nEntrega GRÁTIS para pedidos acima de R$ {store.free_delivery_threshold}"
+                if store.min_order_value:
+                    info += f"\nPedido mínimo: R$ {store.min_order_value}"
+                return info
+            except Exception as exc:
+                return f"Erro ao consultar entrega: {exc}"
+
+        return [buscar_produto, listar_categorias, verificar_pedido_pendente,
+                consultar_historico_pedidos, informacoes_entrega]
+
+    def _get_store_for_context(self, conversation_id: Optional[str] = None):
+        """Resolve the store for tool binding (same logic as _build_dynamic_context)."""
+        store = None
+        if conversation_id:
+            try:
+                from apps.conversations.models import Conversation
+                conv = Conversation.objects.select_related('account').get(id=conversation_id)
+                if hasattr(conv.account, 'store'):
+                    store = conv.account.store
+            except Exception:
+                pass
+        if not store:
+            try:
+                first_account = self.agent.accounts.first()
+                if first_account:
+                    store = getattr(first_account, 'store', None) or (
+                        first_account.stores.first() if hasattr(first_account, 'stores') else None
+                    )
+            except Exception:
+                pass
+        return store
+
     def process_message(
         self,
         message: str,
@@ -353,48 +502,65 @@ class LangchainService:
         # Add user message (with accents removed)
         messages.append(HumanMessage(content=remove_accents(message)))
         
+        # Build tools and bind to LLM (tool calling)
+        store = self._get_store_for_context(conversation_id)
+        tools = self._build_tools(phone_number=phone_number or "", store=store)
+        tool_map = {t.name: t for t in tools}
+        llm_with_tools = self.llm.bind_tools(tools)
+
+        def _clean(msg):
+            """Strip accents from message content (needed for Kimi; harmless for others)."""
+            if not hasattr(msg, 'content') or not msg.content:
+                return msg
+            content = msg.content
+            if isinstance(content, bytes):
+                content = content.decode('utf-8')
+            if isinstance(content, str):
+                content = remove_accents(content)
+                if isinstance(msg, SystemMessage):
+                    return SystemMessage(content=content)
+                if isinstance(msg, HumanMessage):
+                    return HumanMessage(content=content)
+                if isinstance(msg, AIMessage):
+                    return AIMessage(content=content, tool_calls=getattr(msg, 'tool_calls', []))
+            return msg
+
         try:
-            # Call LLM - Create new messages with accents removed
-            # This avoids encoding issues with the Kimi API
-            encoded_messages = []
-            for msg in messages:
-                if hasattr(msg, 'content') and msg.content:
-                    content = msg.content
+            current_messages = [_clean(m) for m in messages]
+
+            # Agentic loop: invoke → handle tool calls → repeat (max 5 iterations)
+            response_text = ""
+            for _iteration in range(5):
+                response = llm_with_tools.invoke(current_messages)
+                tool_calls = getattr(response, 'tool_calls', [])
+
+                if not tool_calls:
+                    # Final text response
+                    content = response.content
                     if isinstance(content, bytes):
                         content = content.decode('utf-8')
-                    cleaned_content = remove_accents(content)
-                    
-                    # Create new message object with cleaned content
-                    if isinstance(msg, SystemMessage):
-                        encoded_messages.append(SystemMessage(content=cleaned_content))
-                    elif isinstance(msg, HumanMessage):
-                        encoded_messages.append(HumanMessage(content=cleaned_content))
-                    elif isinstance(msg, AIMessage):
-                        encoded_messages.append(AIMessage(content=cleaned_content))
+                    response_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                    break
+
+                # Execute each tool and feed results back
+                logger.info(f"[AGENT TOOLS] Iteration {_iteration+1}, tool calls: {[tc['name'] for tc in tool_calls]}")
+                current_messages.append(response)  # AIMessage with tool_calls
+                for tc in tool_calls:
+                    fn = tool_map.get(tc['name'])
+                    if fn:
+                        try:
+                            result = fn.invoke(tc['args'])
+                        except Exception as exc:
+                            result = f"Erro ao executar ferramenta {tc['name']}: {exc}"
                     else:
-                        encoded_messages.append(msg)
-                else:
-                    encoded_messages.append(msg)
-            
-            response = self.llm.invoke(encoded_messages)
-            
-            # Extract response text
-            response_text = response.content
-            
-            # DEBUG: Log da resposta
-            logger.info(f"[AGENT RESPONSE] Raw response content: {response_text!r}")
-            logger.info(f"[AGENT RESPONSE] Response type: {type(response_text)}")
-            
-            if isinstance(response_text, bytes):
-                response_text = response_text.decode('utf-8')
-            elif not isinstance(response_text, str):
-                # If response is not a string (e.g., dict, list), convert to JSON string
-                response_text = json.dumps(response_text, ensure_ascii=False)
-            # else: response_text is already a string, keep it as is
-            
-            # DEBUG: Log da resposta processada
-            logger.info(f"[AGENT RESPONSE] Processed response: {response_text!r}")
-            
+                        result = f"Ferramenta '{tc['name']}' não encontrada."
+                    logger.info(f"[AGENT TOOLS] {tc['name']} → {str(result)[:120]}")
+                    current_messages.append(ToolMessage(content=str(result), tool_call_id=tc['id']))
+            else:
+                response_text = "Desculpe, não consegui processar sua solicitação no momento."
+
+            logger.info(f"[AGENT RESPONSE] {response_text[:120]!r}")
+
             # Save to memory if enabled
             if memory:
                 try:
@@ -402,18 +568,16 @@ class LangchainService:
                     memory.add_ai_message(response_text)
                 except Exception as e:
                     logger.warning(f"Error saving to memory: {e}")
-            
-            # Calculate processing time
+
             processing_time = time.time() - start_time
-            
             return {
                 'response': response_text,
                 'session_id': session_id,
                 'processing_time': processing_time,
                 'model': self.agent.model_name,
-                'tokens_used': getattr(response, 'usage', {}).get('total_tokens', 0),
+                'tokens_used': getattr(response, 'usage_metadata', {}).get('total_tokens', 0),
             }
-            
+
         except Exception as e:
             logger.error(f"Error processing message: {e}")
             raise BaseAPIException(f"Erro ao processar mensagem: {str(e)}")

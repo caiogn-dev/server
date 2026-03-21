@@ -89,7 +89,15 @@ class WhatsAppOrderService:
                 }
             
             # 2. Calcula totais
-            delivery_fee = Decimal('0') if delivery_method == 'pickup' else Decimal('5.00')
+            if delivery_method == 'pickup':
+                delivery_fee = Decimal('0')
+            else:
+                store_fee = Decimal(str(self.store.default_delivery_fee or '0'))
+                threshold = self.store.free_delivery_threshold
+                if threshold and subtotal >= Decimal(str(threshold)):
+                    delivery_fee = Decimal('0')
+                else:
+                    delivery_fee = store_fee
             total = subtotal + delivery_fee
             
             logger.info(f"[create_order_from_cart] Subtotal: R$ {subtotal}, Entrega: R$ {delivery_fee}, Total: R$ {total}")
