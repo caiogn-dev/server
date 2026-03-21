@@ -319,6 +319,7 @@ class UnifiedService:
         self,
         message_text: str,
         interactive_reply: Optional[Dict[str, Any]] = None,
+        location_data: Optional[Dict[str, Any]] = None,
     ) -> UnifiedResponse:
         """
         Processa uma mensagem e retorna a melhor resposta disponível.
@@ -385,6 +386,46 @@ class UnifiedService:
                     extra={'unified.source': 'error', 'message_id': message_text[:50]},
                 )
             # Fall through to normal pipeline if handler didn't produce a response
+
+        # ── Caminho rápido: mensagem de localização WhatsApp ──
+        if location_data and location_data.get('lat') and location_data.get('lng'):
+            from apps.whatsapp.intents.handlers import UnknownHandler
+            try:
+                handler = UnknownHandler(self.account, self.conversation, self.company)
+                if self.store:
+                    handler.store = self.store
+                result = handler.handle({
+                    'location': location_data,
+                    'original_message': message_text or '',
+                })
+                if result and not result.requires_llm:
+                    _ms = round((time.monotonic() - _t0) * 1000, 1)
+                    logger.info(
+                        '[unified] location handler (%.0fms)', _ms,
+                        extra={'unified.source': 'handler', 'unified.intent': 'location',
+                               'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+                    )
+                    self.stats['handler'] += 1
+                    if result.use_interactive:
+                        interactive_data = result.interactive_data or {}
+                        return UnifiedResponse(
+                            content=interactive_data.get('body') or result.response_text or '',
+                            source=ResponseSource.HANDLER,
+                            buttons=interactive_data.get('buttons'),
+                            header=interactive_data.get('header'),
+                            footer=interactive_data.get('footer'),
+                            metadata={'intent': 'location'},
+                            interactive_type=result.interactive_type,
+                            interactive_data=interactive_data,
+                        )
+                    if result.response_text not in {None, '', 'BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT'}:
+                        return UnifiedResponse(
+                            content=result.response_text,
+                            source=ResponseSource.HANDLER,
+                            metadata={'intent': 'location'},
+                        )
+            except Exception as exc:
+                logger.error('[unified] location handler failed: %s', exc, exc_info=True)
 
         if not message_text or not message_text.strip():
             return UnifiedResponse(

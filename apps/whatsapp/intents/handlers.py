@@ -219,6 +219,7 @@ class IntentHandler:
         """
         Geocodifica o endereço via HERE, calcula a taxa de entrega e salva na sessão.
         Chamado pelo UnknownHandler quando session.waiting_for_address=True.
+        O geocode já aplica "Palmas, Tocantins" e bbox automaticamente.
         """
         from apps.automation.services import get_session_manager
 
@@ -232,64 +233,114 @@ class IntentHandler:
             from apps.stores.services.here_maps_service import HereMapsService
             here = HereMapsService()
 
-            # Geocodifica o endereço do cliente
-            geo = here.geocode(address_text)
+            # Geocodifica — restrict_to_city=True adiciona "Palmas, Tocantins" e bbox automaticamente
+            geo = here.geocode(address_text, restrict_to_city=True)
             if not geo or not geo.get('lat'):
                 return HandlerResult.text(
-                    "❌ Não consegui localizar esse endereço.\n\n"
+                    "❌ Não consegui localizar esse endereço em Palmas - TO.\n\n"
                     "Por favor, tente novamente com mais detalhes:\n"
-                    "_Ex: Rua das Flores, 123, Centro, São Paulo - SP_"
+                    "_Ex: Quadra 304 Sul, Alameda 2, Lote 5, Palmas_"
                 )
 
-            customer_lat = geo['lat']
-            customer_lng = geo['lng']
-            formatted_address = geo.get('formatted_address', address_text)
-
-            # Calcula taxa e distância via HERE
-            fee_result = here.calculate_delivery_fee(self.store, customer_lat, customer_lng)
-
-            if not fee_result.get('is_within_area', True):
-                return HandlerResult.text(
-                    "😔 Infelizmente seu endereço está fora da nossa área de entrega.\n\n"
-                    "Você pode retirar o pedido em nossa loja! Digite *retirada* para continuar."
-                )
-
-            fee = fee_result['fee']
-            distance_km = fee_result.get('distance_km')
-            duration_minutes = fee_result.get('duration_minutes')
-
-            # Persiste tudo na sessão
-            session_manager.save_delivery_address_info(
-                address=formatted_address,
-                fee=float(fee),
-                distance_km=distance_km,
-                duration_minutes=duration_minutes,
+            return self._process_location_and_ask_payment(
+                session_manager=session_manager,
+                here=here,
+                lat=geo['lat'],
+                lng=geo['lng'],
+                formatted_address=geo.get('formatted_address', address_text),
             )
-
-            # Monta resumo para o cliente
-            dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
-            time_text = f" ~{int(duration_minutes)} min" if duration_minutes else ""
-            fee_text = f"R$ {float(fee):.2f}" if float(fee) > 0 else "Grátis 🎉"
-
-            try:
-                self.whatsapp_service.send_text_message(
-                    to=self.conversation.phone_number,
-                    text=(
-                        f"📍 *Endereço confirmado:*\n{formatted_address}\n\n"
-                        f"🛵 Taxa de entrega{dist_text}: *{fee_text}*{time_text}\n"
-                    ),
-                )
-            except Exception as exc:
-                logger.warning("[_handle_address_input] Erro ao enviar confirmação de endereço: %s", exc)
 
         except Exception as exc:
             logger.error("[_handle_address_input] Erro HERE: %s", exc, exc_info=True)
-            # Fallback: usa taxa padrão da loja sem travar o fluxo
             default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
-            session_manager.save_delivery_address_info(
-                address=address_text,
-                fee=default_fee,
+            session_manager.save_delivery_address_info(address=address_text, fee=default_fee)
+
+        return self._ask_payment_method('delivery')
+
+    def _handle_location_input(self, lat: float, lng: float, address_hint: str = '') -> 'HandlerResult':
+        """
+        Processa mensagem de localização compartilhada via WhatsApp.
+        Já tem lat/lng — pula geocodificação, vai direto para calculate_delivery_fee.
+        """
+        from apps.automation.services import get_session_manager
+
+        session_manager = get_session_manager(self.account, self.conversation.phone_number)
+
+        if not self.store:
+            session_manager.set_waiting_for_address(False)
+            return self._ask_payment_method('delivery')
+
+        try:
+            from apps.stores.services.here_maps_service import HereMapsService
+            here = HereMapsService()
+
+            # Reverse geocode para obter endereço formatado (exibe para o cliente)
+            address_display = address_hint
+            if not address_display:
+                try:
+                    rev = here.reverse_geocode(lat, lng)
+                    if rev:
+                        address_display = rev.get('formatted_address', f"{lat:.6f}, {lng:.6f}")
+                except Exception:
+                    address_display = f"{lat:.6f}, {lng:.6f}"
+
+            return self._process_location_and_ask_payment(
+                session_manager=session_manager,
+                here=here,
+                lat=lat,
+                lng=lng,
+                formatted_address=address_display,
             )
+
+        except Exception as exc:
+            logger.error("[_handle_location_input] Erro: %s", exc, exc_info=True)
+            default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
+            session_manager.save_delivery_address_info(address=address_hint or f"{lat},{lng}", fee=default_fee)
+
+        return self._ask_payment_method('delivery')
+
+    def _process_location_and_ask_payment(
+        self,
+        session_manager,
+        here,
+        lat: float,
+        lng: float,
+        formatted_address: str,
+    ) -> 'HandlerResult':
+        """Calcula taxa, salva na sessão, envia confirmação e pergunta método de pagamento."""
+        fee_result = here.calculate_delivery_fee(self.store, lat, lng)
+
+        if not fee_result.get('is_within_area', True):
+            return HandlerResult.text(
+                "😔 Infelizmente seu endereço está fora da nossa área de entrega.\n\n"
+                "Você pode retirar o pedido em nossa loja! Digite *retirada* para continuar."
+            )
+
+        fee = fee_result['fee']
+        distance_km = fee_result.get('distance_km')
+        duration_minutes = fee_result.get('duration_minutes')
+
+        session_manager.save_delivery_address_info(
+            address=formatted_address,
+            fee=float(fee),
+            distance_km=distance_km,
+            duration_minutes=duration_minutes,
+        )
+
+        dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
+        time_text = f" ~{int(duration_minutes)} min" if duration_minutes else ""
+        fee_text = f"R$ {float(fee):.2f}" if float(fee) > 0 else "Grátis 🎉"
+
+        try:
+            self.whatsapp_service.send_text_message(
+                to=self.conversation.phone_number,
+                text=(
+                    f"📍 *Endereço confirmado:*\n{formatted_address}\n\n"
+                    f"🛵 Taxa de entrega{dist_text}: *{fee_text}*{time_text}\n"
+                ),
+            )
+        except Exception as exc:
+            logger.warning("[_process_location_and_ask_payment] Erro ao enviar confirmação: %s", exc)
 
         return self._ask_payment_method('delivery')
 
@@ -1278,7 +1329,26 @@ class UnknownHandler(IntentHandler):
         original_message = intent_data.get('original_message', '').strip()
         message = original_message.lower()
 
-        # ── Verifica se estamos aguardando endereço de entrega ──────────────
+        # ── Mensagem de localização compartilhada via WhatsApp (tem prioridade) ──
+        location_data = intent_data.get('location')
+        if location_data and location_data.get('lat') and location_data.get('lng'):
+            try:
+                from apps.automation.services import get_session_manager
+                session_manager = get_session_manager(self.account, self.conversation.phone_number)
+                if session_manager.is_waiting_for_address():
+                    logger.info(
+                        "[UnknownHandler] Localização recebida: lat=%s lng=%s",
+                        location_data['lat'], location_data['lng'],
+                    )
+                    return self._handle_location_input(
+                        lat=float(location_data['lat']),
+                        lng=float(location_data['lng']),
+                        address_hint=location_data.get('address') or location_data.get('name') or '',
+                    )
+            except Exception as exc:
+                logger.warning("[UnknownHandler] Erro ao processar localização: %s", exc)
+
+        # ── Verifica se estamos aguardando endereço de entrega (texto) ───────
         try:
             from apps.automation.services import get_session_manager
             session_manager = get_session_manager(self.account, self.conversation.phone_number)
@@ -1458,12 +1528,12 @@ class InteractiveReplyHandler(IntentHandler):
             except Exception as exc:
                 logger.warning('[InteractiveReplyHandler] Erro ao salvar estado de endereço: %s', exc)
             return HandlerResult.text(
-                "🏠 *Qual é o seu endereço de entrega?*\n\n"
-                "Por favor, informe:\n"
-                "• Rua, número\n"
-                "• Bairro\n"
-                "• Cidade\n\n"
-                "_Exemplo: Rua das Flores, 123, Centro, São Paulo_"
+                "📍 *Qual é o seu endereço de entrega?*\n\n"
+                "Você pode:\n\n"
+                "📌 *Compartilhar sua localização* — toque no clipe 📎 e escolha *Localização* (mais rápido e preciso!)\n\n"
+                "✍️ *Ou digitar o endereço*, por exemplo:\n"
+                "_Quadra 304 Sul, Alameda 2, Lote 5_\n"
+                "_ARSE 72, Rua 4, Casa 3_"
             )
 
         # Retirada — vai direto para pagamento

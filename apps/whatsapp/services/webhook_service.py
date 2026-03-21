@@ -438,6 +438,7 @@ class WebhookService:
 
         # Extrair dados de reply interativo (clique em botão / item de lista)
         _interactive_reply = None
+        _location_data = None
         _msg_content = message.content or {}
         _interactive = _msg_content.get('interactive', {})
         if _interactive:
@@ -462,6 +463,24 @@ class WebhookService:
                     extra={'pipeline.interactive_reply': True, 'message_id': str(message.id)},
                 )
 
+        # Extrair localização (mensagem de localização nativa do WhatsApp)
+        _loc = _msg_content.get('location')
+        if _loc:
+            _lat = _loc.get('latitude')
+            _lng = _loc.get('longitude')
+            if _lat is not None and _lng is not None:
+                _location_data = {
+                    'lat': float(_lat),
+                    'lng': float(_lng),
+                    'address': _loc.get('address', ''),
+                    'name': _loc.get('name', ''),
+                }
+                logger.info(
+                    '[pipeline] Location message detected: lat=%.6f lng=%.6f',
+                    _location_data['lat'], _location_data['lng'],
+                    extra={'message_id': str(message.id)},
+                )
+
         def _run_orchestrator():
             nonlocal orchestrator_response, orchestrator_error
             try:
@@ -474,6 +493,7 @@ class WebhookService:
                 orchestrator_response = service.process_message(
                     message.text_body or '',
                     interactive_reply=_interactive_reply,
+                    location_data=_location_data,
                 )
                 _source = getattr(getattr(orchestrator_response, 'source', None), 'value', 'unknown')
                 logger.info(

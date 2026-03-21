@@ -68,39 +68,68 @@ class HereMapsService:
     def __init__(self, api_key: str = None):
         self.api_key = api_key or HERE_API_KEY
     
-    def geocode(self, address: str, country: str = "BRA") -> Optional[Dict]:
+    # Bounding box para Palmas - TO (W,S,E,N em long,lat)
+    PALMAS_BBOX = "bbox:-48.50,-10.45,-48.10,-10.05"
+    # Coordenadas centrais de Palmas para o 'at' parameter
+    PALMAS_CENTER = "-10.1843,-48.3336"
+    # Sufixo de cidade padrão
+    DEFAULT_CITY_SUFFIX = "Palmas, Tocantins, Brasil"
+
+    def geocode(self, address: str, country: str = "BRA", restrict_to_city: bool = True) -> Optional[Dict]:
         """
         Convert address to coordinates.
-        
+
+        Quando restrict_to_city=True (padrão), aplica automaticamente:
+        - Sufixo "Palmas, Tocantins, Brasil" se o endereço não mencionar cidade
+        - Bounding box restrito ao município de Palmas para evitar geocodificação errada
+
         Args:
             address: Full address string
             country: ISO country code (default: BRA)
-        
+            restrict_to_city: Se True, restringe ao município padrão (Palmas)
+
         Returns:
             Dict with lat, lng, formatted_address, or None if not found
         """
-        # Normalize address for better cache hits
-        normalized_address = address.strip().lower()
+        query = address.strip()
+
+        # Adiciona sufixo de cidade se não estiver presente
+        if restrict_to_city:
+            lower_q = query.lower()
+            if 'palmas' not in lower_q and 'tocantins' not in lower_q:
+                query = f"{query}, {self.DEFAULT_CITY_SUFFIX}"
+                logger.debug(f"[geocode] Adicionado sufixo de cidade: {query[:80]}")
+
+        # Normalize para cache
+        normalized_address = query.strip().lower()
         cache_key = _make_cache_key("geocode", normalized_address, country)
-        
+
         cached = cache.get(cache_key)
         if cached:
             logger.debug(f"Geocode cache hit for: {address[:50]}")
             return cached
-        
+
         try:
+            params = {
+                'q': query,
+                'apiKey': self.api_key,
+            }
+
+            if restrict_to_city:
+                # Usa bbox para Palmas — muito mais preciso que só countryCode
+                params['in'] = self.PALMAS_BBOX
+                params['at'] = self.PALMAS_CENTER
+            else:
+                params['in'] = f'countryCode:{country}'
+
             response = requests.get(
                 HERE_GEOCODE_URL,
-                params={
-                    'q': address,
-                    'in': f'countryCode:{country}',
-                    'apiKey': self.api_key,
-                },
+                params=params,
                 timeout=10
             )
             response.raise_for_status()
             data = response.json()
-            
+
             if data.get('items'):
                 item = data['items'][0]
                 position = item.get('position', {})
@@ -113,9 +142,14 @@ class HereMapsService:
                 }
                 cache.set(cache_key, result, CACHE_TTL_GEOCODE)
                 return result
-            
+
+            # Fallback: tenta sem bbox caso não encontre com restrição
+            if restrict_to_city:
+                logger.warning(f"[geocode] Nenhum resultado com bbox Palmas, tentando sem restrição: {address[:60]}")
+                return self.geocode(address, country=country, restrict_to_city=False)
+
             return None
-        
+
         except Exception as e:
             logger.error(f"Geocode error: {e}")
             return None
