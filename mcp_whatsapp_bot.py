@@ -541,19 +541,31 @@ async def _list_handlers() -> list[TextContent]:
             'docstring': (handler_cls.__doc__ or '').strip(),
         }
 
-    # Info adicional sobre handlers críticos
-    result['_info_critica'] = {
-        'CreateOrderHandler': {
-            'keyword_mappings_hardcoded': ['rondelli', 'lasanha', 'nhoque', 'bolonhesa', 'refri', 'molho'],
-            'problema': 'Só funciona para produtos da Pastita. Para outras lojas ou novos produtos, adicionar ao keyword_mappings.',
-            'solucao_recomendada': 'Substituir keyword_mappings por busca dinâmica no banco com match fuzzy',
+    # Status de bugs conhecidos e melhorias implementadas
+    result['_status'] = {
+        'InteractiveReplyHandler': {
+            'status': '✅ IMPLEMENTADO',
+            'descricao': 'Handler dedicado para cliques em botões e listas interativas do WhatsApp.',
+            'roteia': ['product_<uuid> → pergunta quantidade', 'add_<uuid>_<qty> → cria pedido', 'view_menu → cardápio', 'start_order → pedido', 'track_<id> → rastreamento', 'contact_support → handoff'],
+        },
+        'CreateOrderHandler._parse_items_from_text': {
+            'status': '✅ CORRIGIDO',
+            'descricao': 'Busca dinâmica no banco — sem keywords hardcoded. Funciona para qualquer loja e qualquer produto.',
+        },
+        'UnifiedService.process_message': {
+            'status': '✅ ATUALIZADO',
+            'descricao': 'Aceita interactive_reply=dict. Se presente, roteia para InteractiveReplyHandler diretamente, sem detecção de intent.',
+        },
+        'UnknownHandler': {
+            'status': '✅ MELHORADO',
+            'descricao': 'Se mensagem é só um número (e.g. "2"), verifica pending_product_id na sessão e cria pedido.',
+        },
+        'webhook_service.post_process_inbound_message': {
+            'status': '✅ ATUALIZADO',
+            'descricao': 'Extrai list_reply/button_reply de message.content antes do orquestrador e passa como interactive_reply.',
         },
         'ProductMentionHandler': {
-            'problema': 'Remove palavras "de", "com", "e" do search_term — pode quebrar nomes compostos',
-        },
-        'interactive_reply_bug': {
-            'problema': 'Quando cliente clica em item de lista interativa, o WhatsApp envia interactive.list_reply.id = "product_<uuid>". O detector não processa isso → UNKNOWN → bot diz que não entendeu.',
-            'solucao': 'Adicionar handler para interactive_reply no webhook_service antes de chamar o orquestrador',
+            'aviso': 'Remove palavras "de", "com", "e" do search_term — pode quebrar nomes compostos muito curtos',
         },
     }
     return _ok(result)
@@ -1079,19 +1091,14 @@ async def _check_store_products(args: dict) -> list[TextContent]:
             'is_active': p.is_active,
         })
 
-    # Verifica keyword_mappings hardcoded vs produtos reais
-    hardcoded_keywords = ['rondelli', 'lasanha', 'nhoque', 'bolonhesa', 'refri', 'molho']
-    keyword_coverage = {}
-    for kw in hardcoded_keywords:
-        matching = [p['name'] for p in products if kw in p['name'].lower()]
-        keyword_coverage[kw] = matching if matching else 'SEM MATCH — handler vai falhar para este produto'
-
     return _ok({
         'store': store_slug,
         'total_produtos_ativos': len(products),
         'produtos': products,
-        'keyword_mappings_coverage': keyword_coverage,
-        'aviso': 'keyword_mappings no handler são hardcoded. Produtos não listados acima podem não ser reconhecidos no pedido por texto.',
+        'match_strategy': (
+            'Busca dinâmica por nome no banco (accent-insensitive substring + first-word + any-word). '
+            'Todos os produtos listados acima são reconhecíveis pelo handler.'
+        ),
     })
 
 

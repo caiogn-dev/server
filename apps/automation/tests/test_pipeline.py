@@ -266,3 +266,137 @@ class PipelineHealthTestCase(TestCase):
 
         stats = get_pipeline_stats(hours=1)
         self.assertGreaterEqual(stats['total_messages'], 1)
+
+
+# ─── Testes: _parse_items_from_text_dynamic ───────────────────────────────────
+
+class ParseItemsDynamicTestCase(TestCase):
+    """Testa a extração dinâmica de produtos por texto (sem keywords hardcoded)."""
+
+    def _make_store(self):
+        """Cria store e produtos mock para os testes."""
+        from unittest.mock import MagicMock
+        store = MagicMock()
+        store.slug = 'test-store'
+        return store
+
+    def test_no_store_returns_empty(self):
+        from apps.whatsapp.intents.handlers import _parse_items_from_text_dynamic
+        result = _parse_items_from_text_dynamic('2 lasanha', store=None)
+        self.assertEqual(result, [])
+
+    def test_empty_text_returns_empty(self):
+        from apps.whatsapp.intents.handlers import _parse_items_from_text_dynamic
+        store = self._make_store()
+        with patch('apps.stores.models.StoreProduct.objects') as mock_qs:
+            mock_qs.filter.return_value = []
+            result = _parse_items_from_text_dynamic('', store=store)
+        self.assertEqual(result, [])
+
+    def test_quantity_and_name_extracted(self):
+        """'2 lasanha de frango' deve extrair product_id + quantity=2."""
+        from apps.whatsapp.intents.handlers import _parse_items_from_text_dynamic
+        from unittest.mock import MagicMock
+
+        product = MagicMock()
+        product.id = 'uuid-001'
+        product.name = 'Lasanha de Frango'
+
+        store = MagicMock()
+        with patch('apps.whatsapp.intents.handlers.StoreProduct') as mock_model:
+            mock_model.objects.filter.return_value = [product]
+            result = _parse_items_from_text_dynamic('quero 2 lasanha de frango', store=store)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['quantity'], 2)
+        self.assertEqual(result[0]['product_id'], 'uuid-001')
+
+    def test_no_quantity_defaults_to_one(self):
+        """Texto sem número → qty=1."""
+        from apps.whatsapp.intents.handlers import _parse_items_from_text_dynamic
+        from unittest.mock import MagicMock
+
+        product = MagicMock()
+        product.id = 'uuid-002'
+        product.name = 'Nhoque ao Sugo'
+
+        store = MagicMock()
+        with patch('apps.whatsapp.intents.handlers.StoreProduct') as mock_model:
+            mock_model.objects.filter.return_value = [product]
+            result = _parse_items_from_text_dynamic('nhoque', store=store)
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['quantity'], 1)
+
+
+# ─── Testes: InteractiveReplyHandler ─────────────────────────────────────────
+
+class InteractiveReplyHandlerTestCase(TestCase):
+    """Testa o handler de respostas interativas (clique em botão/lista)."""
+
+    def _make_handler(self):
+        from apps.whatsapp.intents.handlers import InteractiveReplyHandler
+        account = MagicMock()
+        conversation = MagicMock()
+        conversation.phone_number = '+5511999999999'
+        conversation.contact_name = 'Teste'
+        return InteractiveReplyHandler(account, conversation)
+
+    def test_unknown_reply_id_returns_fallback(self):
+        handler = self._make_handler()
+        result = handler.handle({'reply_id': 'totally_unknown_id', 'reply_title': 'X'})
+        # Should return buttons (fallback menu)
+        self.assertTrue(result.use_interactive or result.response_text)
+
+    def test_view_menu_delegates_to_menu_handler(self):
+        handler = self._make_handler()
+        store = MagicMock()
+        store.name = 'Loja Teste'
+        handler.store = store
+
+        with patch('apps.whatsapp.intents.handlers.MenuRequestHandler.handle') as mock_menu:
+            mock_menu.return_value = MagicMock(use_interactive=False, response_text='cardápio', requires_llm=False)
+            result = handler.handle({'reply_id': 'view_menu', 'reply_title': 'Ver Cardápio'})
+
+        mock_menu.assert_called_once()
+
+    def test_product_not_found_returns_text(self):
+        handler = self._make_handler()
+        # UUID que não existe
+        result = handler.handle({'reply_id': 'product_00000000-0000-0000-0000-000000000000', 'reply_title': 'X'})
+        self.assertIsNotNone(result.response_text)
+        self.assertIn('não encontrado', result.response_text.lower())
+
+    def test_add_to_cart_invalid_format_returns_error(self):
+        handler = self._make_handler()
+        result = handler.handle({'reply_id': 'add_', 'reply_title': ''})
+        self.assertIn('Erro', result.response_text)
+
+
+# ─── Testes: UnifiedService com interactive_reply ─────────────────────────────
+
+class UnifiedServiceInteractiveReplyTestCase(TestCase):
+    """Testa o caminho rápido do UnifiedService para respostas interativas."""
+
+    def test_interactive_reply_bypasses_intent_detection(self):
+        svc = _make_unified_service()
+
+        mock_ir_result = MagicMock()
+        mock_ir_result.requires_llm = False
+        mock_ir_result.use_interactive = False
+        mock_ir_result.response_text = 'Produto selecionado!'
+
+        with patch('apps.whatsapp.intents.handlers.InteractiveReplyHandler') as MockHandler:
+            instance = MockHandler.return_value
+            instance.handle.return_value = mock_ir_result
+
+            from apps.automation.services.unified_service import ResponseSource
+            resp = svc.process_message(
+                '',
+                interactive_reply={'type': 'list_reply', 'id': 'product_abc', 'title': 'Lasanha'},
+            )
+
+        instance.handle.assert_called_once()
+        call_args = instance.handle.call_args[0][0]
+        self.assertEqual(call_args['reply_id'], 'product_abc')
+        self.assertEqual(call_args['reply_title'], 'Lasanha')
