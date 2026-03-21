@@ -146,10 +146,9 @@ class WhatsAppOrderService:
             else:
                 logger.error(f"[create_order_from_cart] Erro ao gerar PIX: {pix_data.get('error')}")
             
-            # 6. Transmite para dashboard via WebSocket
-            logger.info(f"[create_order_from_cart] Transmitindo para dashboard via WebSocket")
-            self._broadcast_order_created(order)
-            
+            # 6. Transmite para dashboard via WebSocket (após commit — Redis falha não afeta o pedido)
+            transaction.on_commit(lambda: self._broadcast_order_created(order))
+
             # 7. Atualiza sessão do cliente
             self._update_session(order, pix_data)
             
@@ -265,6 +264,9 @@ class WhatsAppOrderService:
     
     def _broadcast_order_created(self, order: StoreOrder):
         """Transmite novo pedido para o dashboard via WebSocket"""
+        if not self.channel_layer:
+            logger.warning("[_broadcast_order_created] channel_layer não disponível (Redis offline?), pulando broadcast")
+            return
         try:
             event_data = {
                 'type': 'order_created',
@@ -279,20 +281,19 @@ class WhatsAppOrderService:
                 'created_at': order.created_at.isoformat(),
                 'source': 'whatsapp'
             }
-            
+
             group_name = f"store_{self.store.slug}_orders"
             logger.info(f"[_broadcast_order_created] Enviando para grupo: {group_name}")
-            logger.info(f"[_broadcast_order_created] Dados: {event_data}")
-            
+
             async_to_sync(self.channel_layer.group_send)(
                 group_name,
                 event_data
             )
-            
+
             logger.info(f"[_broadcast_order_created] Evento enviado com sucesso para {group_name}")
-            
+
         except Exception as e:
-            logger.error(f"[_broadcast_order_created] Erro ao transmitir: {e}", exc_info=True)
+            logger.error(f"[_broadcast_order_created] Erro ao transmitir (Redis offline?): {e}")
     
     def _generate_order_number(self) -> str:
         """Gera número único do pedido"""
