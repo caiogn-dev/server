@@ -929,7 +929,7 @@ class PaymentStatusHandler(IntentHandler):
                         f"Cole este código no seu aplicativo bancário para pagar."
                     ),
                     buttons=[
-                        {'id': 'pix_copy', 'title': '📋 Copiar Código'},
+                        {'id': 'pix_copy', 'title': '📋 Ver código PIX'},
                         {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
                         {'id': 'cancel_order', 'title': '❌ Cancelar'},
                     ]
@@ -958,7 +958,7 @@ class PaymentStatusHandler(IntentHandler):
                     f"Cole este código no seu aplicativo bancário para pagar."
                 ),
                 buttons=[
-                    {'id': f'pix_copy_{pending_order.id}', 'title': '📋 Copiar PIX'},
+                    {'id': f'pix_copy_{pending_order.id}', 'title': '📋 Ver código PIX'},
                     {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
                     {'id': 'cancel_order', 'title': '❌ Cancelar'},
                 ]
@@ -1267,6 +1267,23 @@ class InteractiveReplyHandler(IntentHandler):
 
         if reply_id in ('start_order', 'order_quick'):
             return CreateOrderHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        if reply_id.startswith('pix_copy'):
+            return CopyPixHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        if reply_id == 'send_comprovante':
+            return HandlerResult.text(
+                "📤 Para enviar o comprovante, tire uma foto ou screenshot do pagamento "
+                "e envie aqui na conversa.\n\n"
+                "Vamos verificar e confirmar seu pedido! ✅"
+            )
+
+        if reply_id == 'cancel_order':
+            return CancelOrderHandler(
                 self.account, self.conversation, self.company_profile
             ).handle(intent_data)
 

@@ -103,7 +103,7 @@ class WhatsAppOrderService:
                 order_number=order_number,
                 access_token=str(uuid.uuid4()),
                 customer_name=self.customer_name,
-                customer_email=f"whatsapp_{self.phone_number}@pastita.local",
+                customer_email=f"whatsapp_{self.phone_number}@whatsapp.bot",
                 customer_phone=self.phone_number,
                 status=StoreOrder.OrderStatus.PENDING,
                 payment_status=StoreOrder.PaymentStatus.PENDING,
