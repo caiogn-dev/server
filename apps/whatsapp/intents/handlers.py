@@ -215,6 +215,84 @@ class IntentHandler:
         # Segunda mensagem: somente o código
         return HandlerResult.text(pix_code)
 
+    def _handle_address_input(self, address_text: str) -> 'HandlerResult':
+        """
+        Geocodifica o endereço via HERE, calcula a taxa de entrega e salva na sessão.
+        Chamado pelo UnknownHandler quando session.waiting_for_address=True.
+        """
+        from apps.automation.services import get_session_manager
+
+        session_manager = get_session_manager(self.account, self.conversation.phone_number)
+
+        if not self.store:
+            session_manager.set_waiting_for_address(False)
+            return self._ask_payment_method('delivery')
+
+        try:
+            from apps.stores.services.here_maps_service import HereMapsService
+            here = HereMapsService()
+
+            # Geocodifica o endereço do cliente
+            geo = here.geocode(address_text)
+            if not geo or not geo.get('lat'):
+                return HandlerResult.text(
+                    "❌ Não consegui localizar esse endereço.\n\n"
+                    "Por favor, tente novamente com mais detalhes:\n"
+                    "_Ex: Rua das Flores, 123, Centro, São Paulo - SP_"
+                )
+
+            customer_lat = geo['lat']
+            customer_lng = geo['lng']
+            formatted_address = geo.get('formatted_address', address_text)
+
+            # Calcula taxa e distância via HERE
+            fee_result = here.calculate_delivery_fee(self.store, customer_lat, customer_lng)
+
+            if not fee_result.get('is_within_area', True):
+                return HandlerResult.text(
+                    "😔 Infelizmente seu endereço está fora da nossa área de entrega.\n\n"
+                    "Você pode retirar o pedido em nossa loja! Digite *retirada* para continuar."
+                )
+
+            fee = fee_result['fee']
+            distance_km = fee_result.get('distance_km')
+            duration_minutes = fee_result.get('duration_minutes')
+
+            # Persiste tudo na sessão
+            session_manager.save_delivery_address_info(
+                address=formatted_address,
+                fee=float(fee),
+                distance_km=distance_km,
+                duration_minutes=duration_minutes,
+            )
+
+            # Monta resumo para o cliente
+            dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
+            time_text = f" ~{int(duration_minutes)} min" if duration_minutes else ""
+            fee_text = f"R$ {float(fee):.2f}" if float(fee) > 0 else "Grátis 🎉"
+
+            try:
+                self.whatsapp_service.send_text_message(
+                    to=self.conversation.phone_number,
+                    text=(
+                        f"📍 *Endereço confirmado:*\n{formatted_address}\n\n"
+                        f"🛵 Taxa de entrega{dist_text}: *{fee_text}*{time_text}\n"
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("[_handle_address_input] Erro ao enviar confirmação de endereço: %s", exc)
+
+        except Exception as exc:
+            logger.error("[_handle_address_input] Erro HERE: %s", exc, exc_info=True)
+            # Fallback: usa taxa padrão da loja sem travar o fluxo
+            default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
+            session_manager.save_delivery_address_info(
+                address=address_text,
+                fee=default_fee,
+            )
+
+        return self._ask_payment_method('delivery')
+
     def _ask_delivery_method(self, items: List[Dict[str, Any]]) -> 'HandlerResult':
         """Salva itens na sessão e pergunta entrega ou retirada."""
         try:
@@ -243,14 +321,37 @@ class IntentHandler:
             buttons=buttons,
         )
 
+    def _ask_payment_method(self, delivery_method: str) -> 'HandlerResult':
+        """Salva delivery_method na sessão e pergunta como o cliente quer pagar."""
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager.save_pending_delivery_method(delivery_method)
+        except Exception as exc:
+            logger.warning("[_ask_payment_method] Erro ao salvar delivery_method: %s", exc)
+
+        buttons = [
+            {'id': 'pay_pix', 'title': '💠 PIX'},
+            {'id': 'pay_card', 'title': '💳 Cartão Crédito/Débito'},
+        ]
+        if delivery_method == 'pickup':
+            buttons.append({'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'})
+
+        return HandlerResult.buttons(
+            body="💳 *Como prefere pagar?*",
+            buttons=buttons,
+        )
+
     def _finalize_order(
         self,
         items: List[Dict[str, Any]],
         delivery_method: str,
+        payment_method: str = 'pix',
         delivery_address: str = '',
         customer_notes: str = '',
+        delivery_fee_override: float = None,
     ) -> 'HandlerResult':
-        """Cria o pedido com o método de entrega já definido e retorna confirmação."""
+        """Cria o pedido com delivery e payment method definidos e retorna confirmação."""
         from apps.whatsapp.services import create_order_from_whatsapp
 
         store_slug = getattr(self.store, 'slug', '') if self.store else ''
@@ -265,23 +366,52 @@ class IntentHandler:
             delivery_address=delivery_address,
             customer_notes=customer_notes,
             delivery_method=delivery_method,
+            payment_method=payment_method,
+            delivery_fee_override=delivery_fee_override,
         )
 
-        if result.get('success'):
-            order = result['order']
-            pix_data = result.get('pix_data', {})
-            if pix_data.get('success'):
-                return self._send_pix_confirmation(order, pix_data['pix_code'])
-            error_msg = pix_data.get('error', 'Tente novamente')
+        if not result.get('success'):
+            error = result.get('error', 'Erro desconhecido')
+            return HandlerResult.text(
+                f"❌ Erro ao criar pedido: {error}\n\nTente novamente ou fale com um atendente."
+            )
+
+        order = result['order']
+        payment_data = result.get('payment_data', {})
+        pm = result.get('payment_method', payment_method)
+
+        if pm == 'pix':
+            if payment_data.get('success'):
+                return self._send_pix_confirmation(order, payment_data['pix_code'])
+            error_msg = payment_data.get('error', 'Tente novamente')
             return HandlerResult.text(
                 f"✅ *Pedido #{order.order_number} criado!*\n\n"
                 f"💰 Total: R$ {float(order.total):.2f}\n"
                 f"⚠️ Erro ao gerar PIX: {error_msg}"
             )
 
-        error = result.get('error', 'Erro desconhecido')
+        if pm == 'card':
+            if payment_data.get('success'):
+                checkout_link = payment_data.get('checkout_link', '')
+                return HandlerResult.text(
+                    f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                    f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
+                    f"💳 Clique no link abaixo para pagar com cartão:\n"
+                    f"{checkout_link}\n\n"
+                    f"⏳ O link é seguro e gerado pelo Mercado Pago."
+                )
+            error_msg = payment_data.get('error', 'Tente novamente')
+            return HandlerResult.text(
+                f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                f"💰 Total: R$ {float(order.total):.2f}\n"
+                f"⚠️ Erro ao gerar link de pagamento: {error_msg}"
+            )
+
+        # cash / pay_on_pickup
         return HandlerResult.text(
-            f"❌ Erro ao criar pedido: {error}\n\nTente novamente ou fale com um atendente."
+            f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
+            f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
+            f"💵 Pagamento na retirada — nos vemos em breve! 🏪"
         )
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
@@ -1143,7 +1273,19 @@ class UnknownHandler(IntentHandler):
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         logger.info(f"Unknown intent detected")
 
-        message = intent_data.get('original_message', '').lower().strip()
+        original_message = intent_data.get('original_message', '').strip()
+        message = original_message.lower()
+
+        # ── Verifica se estamos aguardando endereço de entrega ──────────────
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            if session_manager.is_waiting_for_address() and len(original_message) >= 5:
+                logger.info("[UnknownHandler] Interceptando como endereço de entrega: %s", original_message[:60])
+                return self._handle_address_input(original_message)
+        except Exception as exc:
+            logger.warning("[UnknownHandler] Erro ao verificar waiting_for_address: %s", exc)
+        # ────────────────────────────────────────────────────────────────────
 
         # Se a mensagem é só um número, pode ser quantidade após seleção de produto
         if message.isdigit():
@@ -1248,6 +1390,9 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id in ('order_delivery', 'order_pickup'):
             return self._handle_delivery_choice(reply_id)
 
+        if reply_id in ('pay_pix', 'pay_card', 'pay_pickup'):
+            return self._handle_payment_choice(reply_id)
+
         if reply_id.startswith('pix_copy'):
             return CopyPixHandler(
                 self.account, self.conversation, self.company_profile
@@ -1286,30 +1431,85 @@ class InteractiveReplyHandler(IntentHandler):
         )
 
     def _handle_delivery_choice(self, reply_id: str) -> HandlerResult:
-        """Usuário escolheu entrega ou retirada — recupera itens pendentes e cria o pedido."""
+        """Usuário escolheu entrega ou retirada."""
         delivery_method = 'pickup' if reply_id == 'order_pickup' else 'delivery'
 
         try:
             from apps.automation.services import get_session_manager
             session_manager = get_session_manager(self.account, self.conversation.phone_number)
             items = session_manager.get_pending_order_items()
-            session_manager.clear_pending_order_items()
         except Exception as exc:
             logger.error('[InteractiveReplyHandler] Erro ao recuperar itens pendentes: %s', exc)
             items = []
 
         if not items:
-            logger.warning('[InteractiveReplyHandler] Nenhum item pendente para %s', reply_id)
             return HandlerResult.text(
                 "❌ Não encontrei itens no seu pedido.\n\n"
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
             )
 
+        if delivery_method == 'delivery':
+            # Precisa coletar endereço antes de perguntar pagamento
+            try:
+                session_manager.save_pending_delivery_method('delivery')
+                session_manager.set_waiting_for_address(True)
+            except Exception as exc:
+                logger.warning('[InteractiveReplyHandler] Erro ao salvar estado de endereço: %s', exc)
+            return HandlerResult.text(
+                "🏠 *Qual é o seu endereço de entrega?*\n\n"
+                "Por favor, informe:\n"
+                "• Rua, número\n"
+                "• Bairro\n"
+                "• Cidade\n\n"
+                "_Exemplo: Rua das Flores, 123, Centro, São Paulo_"
+            )
+
+        # Retirada — vai direto para pagamento
+        logger.info('[InteractiveReplyHandler] Pickup — perguntando pagamento')
+        return self._ask_payment_method(delivery_method)
+
+    def _handle_payment_choice(self, reply_id: str) -> HandlerResult:
+        """Usuário escolheu o método de pagamento — recupera itens + delivery + endereço e cria o pedido."""
+        payment_map = {
+            'pay_pix': 'pix',
+            'pay_card': 'card',
+            'pay_pickup': 'cash',
+        }
+        payment_method = payment_map.get(reply_id, 'pix')
+
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            items = session_manager.get_pending_order_items()
+            delivery_method = session_manager.get_pending_delivery_method()
+            addr_info = session_manager.get_delivery_address_info()
+            session_manager.clear_pending_order_items()
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Erro ao recuperar dados pendentes: %s', exc)
+            items = []
+            delivery_method = 'delivery'
+            addr_info = {}
+
+        if not items:
+            return HandlerResult.text(
+                "❌ Não encontrei itens no seu pedido.\n\n"
+                "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
+            )
+
+        delivery_address = addr_info.get('address', '')
+        delivery_fee_override = addr_info.get('fee')  # None se pickup ou se não calculou
+
         logger.info(
-            '[InteractiveReplyHandler] Criando pedido: método=%s, itens=%s',
-            delivery_method, items
+            '[InteractiveReplyHandler] Finalizando pedido: delivery=%s payment=%s fee=%s address=%s',
+            delivery_method, payment_method, delivery_fee_override, delivery_address[:40] if delivery_address else '',
         )
-        return self._finalize_order(items, delivery_method=delivery_method)
+        return self._finalize_order(
+            items,
+            delivery_method=delivery_method,
+            payment_method=payment_method,
+            delivery_address=delivery_address,
+            delivery_fee_override=delivery_fee_override,
+        )
 
     def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:
         """User selected a product from the interactive list — ask for quantity."""

@@ -38,59 +38,59 @@ class WhatsAppOrderService:
         items: List[Dict[str, Any]],
         delivery_address: str = '',
         customer_notes: str = '',
-        delivery_method: str = 'delivery'
+        delivery_method: str = 'delivery',
+        payment_method: str = 'pix',
+        delivery_fee_override: float = None,
     ) -> Dict[str, Any]:
-        """Cria pedido a partir dos itens do carrinho."""
-        
-        logger.info(f"[create_order_from_cart] Iniciando criação de pedido para {self.phone_number}")
-        logger.info(f"[create_order_from_cart] Itens recebidos: {items}")
-        
+        """Cria pedido a partir dos itens do carrinho.
+
+        payment_method: 'pix' | 'card' | 'cash'
+        delivery_fee_override: taxa calculada pelo HERE (sobrescreve cálculo padrão)
+        """
+        logger.info(
+            f"[create_order_from_cart] Iniciando para {self.phone_number} "
+            f"delivery={delivery_method} payment={payment_method}"
+        )
+
         try:
-            # 1. Valida itens e calcula total
+            # 1. Valida itens e calcula subtotal
             order_items_data = []
             subtotal = Decimal('0')
-            
+
             for idx, item in enumerate(items):
                 product_id = item.get('product_id')
-                logger.info(f"[create_order_from_cart] Processando item {idx}: product_id={product_id}")
-                
                 try:
                     product = StoreProduct.objects.get(
                         id=product_id,
                         store=self.store,
                         is_active=True
                     )
-                    logger.info(f"[create_order_from_cart] Produto encontrado: {product.name} (R$ {product.price})")
                 except StoreProduct.DoesNotExist:
                     logger.warning(f"[create_order_from_cart] Produto {product_id} não encontrado ou inativo")
                     continue
-                
-                quantity = int(item.get('quantity', 1))
-                if quantity < 1:
-                    quantity = 1
-                
+
+                quantity = max(int(item.get('quantity', 1)), 1)
                 item_total = product.price * quantity
                 subtotal += item_total
-                
                 order_items_data.append({
                     'product': product,
                     'product_name': product.name,
                     'quantity': quantity,
                     'unit_price': product.price,
-                    'total': item_total
+                    'total': item_total,
                 })
-                logger.info(f"[create_order_from_cart] Item adicionado: {product.name} x{quantity} = R$ {item_total}")
-            
+                logger.info(f"[create_order_from_cart] Item: {product.name} x{quantity} = R$ {item_total}")
+
             if not order_items_data:
-                logger.error("[create_order_from_cart] Nenhum item válido no carrinho")
-                return {
-                    'success': False,
-                    'error': 'Nenhum item válido no carrinho'
-                }
-            
-            # 2. Calcula totais
+                return {'success': False, 'error': 'Nenhum item válido no carrinho'}
+
+            # 2. Taxa de entrega
             if delivery_method == 'pickup':
                 delivery_fee = Decimal('0')
+            elif delivery_fee_override is not None:
+                # Taxa calculada pelo HERE Maps — usa diretamente
+                delivery_fee = Decimal(str(delivery_fee_override))
+                logger.info(f"[create_order_from_cart] Taxa HERE override: R$ {delivery_fee}")
             else:
                 store_fee = Decimal(str(self.store.default_delivery_fee or '0'))
                 threshold = self.store.free_delivery_threshold
@@ -99,13 +99,10 @@ class WhatsAppOrderService:
                 else:
                     delivery_fee = store_fee
             total = subtotal + delivery_fee
-            
-            logger.info(f"[create_order_from_cart] Subtotal: R$ {subtotal}, Entrega: R$ {delivery_fee}, Total: R$ {total}")
-            
+            logger.info(f"[create_order_from_cart] Subtotal={subtotal} Entrega={delivery_fee} Total={total}")
+
             # 3. Cria o pedido
             order_number = self._generate_order_number()
-            logger.info(f"[create_order_from_cart] Criando pedido com número: {order_number}")
-            
             order = StoreOrder.objects.create(
                 store=self.store,
                 order_number=order_number,
@@ -125,13 +122,13 @@ class WhatsAppOrderService:
                     'source': 'whatsapp',
                     'created_via': 'whatsapp_automation',
                     'phone_number': self.phone_number,
-                    'created_at_whatsapp': timezone.now().isoformat()
-                }
+                    'created_at_whatsapp': timezone.now().isoformat(),
+                    'payment_method': payment_method,
+                },
             )
-            
-            logger.info(f"[create_order_from_cart] Pedido criado: {order.id} - {order.order_number}")
-            
-            # 4. Cria os itens do pedido
+            logger.info(f"[create_order_from_cart] Pedido criado: {order.order_number}")
+
+            # 4. Cria itens do pedido
             for item_data in order_items_data:
                 StoreOrderItem.objects.create(
                     order=order,
@@ -139,43 +136,42 @@ class WhatsAppOrderService:
                     product_name=item_data['product_name'],
                     quantity=item_data['quantity'],
                     unit_price=item_data['unit_price'],
-                    subtotal=item_data['total']
+                    subtotal=item_data['total'],
                 )
-                logger.info(f"[create_order_from_cart] Item criado: {item_data['product_name']}")
-            
-            logger.info(f"[create_order_from_cart] {len(order_items_data)} itens criados para o pedido {order.order_number}")
-            
-            # 5. Gera PIX
-            logger.info(f"[create_order_from_cart] Gerando PIX para o pedido {order.order_number}")
-            pix_data = self._generate_pix(order)
-            
-            if pix_data.get('success'):
-                logger.info(f"[create_order_from_cart] PIX gerado com sucesso: {pix_data.get('payment_id')}")
+
+            # 5. Processa pagamento conforme método escolhido
+            if payment_method == 'pix':
+                payment_data = self._generate_pix(order)
+            elif payment_method == 'card':
+                payment_data = self._generate_card_checkout_link(order)
+            else:  # cash / pay_on_pickup
+                payment_data = self._register_cash_payment(order)
+
+            if payment_data.get('success'):
+                logger.info(f"[create_order_from_cart] Pagamento processado: {payment_method}")
             else:
-                logger.error(f"[create_order_from_cart] Erro ao gerar PIX: {pix_data.get('error')}")
-            
-            # 6. Transmite para dashboard via WebSocket (após commit — Redis falha não afeta o pedido)
+                logger.error(f"[create_order_from_cart] Erro no pagamento: {payment_data.get('error')}")
+
+            # 6. Broadcast dashboard (fora do atomic)
             transaction.on_commit(lambda: self._broadcast_order_created(order))
 
-            # 7. Atualiza sessão do cliente
-            self._update_session(order, pix_data)
-            
-            logger.info(f"[create_order_from_cart] Pedido completo criado com sucesso: {order.order_number}")
-            
+            # 7. Atualiza sessão
+            self._update_session(order, payment_data)
+
             return {
                 'success': True,
                 'order': order,
                 'order_number': order.order_number,
-                'pix_data': pix_data,
-                'total': float(total)
+                'payment_method': payment_method,
+                'payment_data': payment_data,
+                # Retrocompatibilidade com código que esperava 'pix_data'
+                'pix_data': payment_data if payment_method == 'pix' else {'success': False},
+                'total': float(total),
             }
-            
+
         except Exception as e:
-            logger.error(f"[create_order_from_cart] ERRO ao criar pedido: {e}", exc_info=True)
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            logger.error(f"[create_order_from_cart] ERRO: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
     
     def _generate_pix(self, order: StoreOrder) -> Dict[str, Any]:
         """Gera PIX para o pedido usando Mercado Pago"""
@@ -237,6 +233,43 @@ class WhatsAppOrderService:
                 'error': str(e)
             }
     
+    def _generate_card_checkout_link(self, order: StoreOrder) -> Dict[str, Any]:
+        """Gera link de checkout Mercado Pago para cartão de crédito/débito."""
+        logger.info(f"[_generate_card_checkout_link] Gerando link MP para {order.order_number}")
+        try:
+            result = CheckoutService.create_payment(
+                order=order,
+                payment_method='credit_card',
+                payment_data={'allow_redirect': True},
+            )
+            logger.info(f"[_generate_card_checkout_link] Resultado: {result}")
+            if result.get('success'):
+                return {
+                    'success': True,
+                    'payment_method': 'card',
+                    'checkout_link': result.get('init_point', ''),
+                    'preference_id': result.get('preference_id', ''),
+                }
+            return {'success': False, 'error': result.get('error', 'Erro ao gerar link de pagamento')}
+        except Exception as e:
+            logger.error(f"[_generate_card_checkout_link] Exceção: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+
+    def _register_cash_payment(self, order: StoreOrder) -> Dict[str, Any]:
+        """Registra pedido com pagamento na retirada (cash)."""
+        logger.info(f"[_register_cash_payment] Registrando pagamento na retirada para {order.order_number}")
+        try:
+            result = CheckoutService.create_payment(order=order, payment_method='cash')
+            logger.info(f"[_register_cash_payment] Resultado: {result}")
+            return {
+                'success': True,
+                'payment_method': 'cash',
+                'message': 'Pagamento na retirada',
+            }
+        except Exception as e:
+            logger.error(f"[_register_cash_payment] Exceção: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
+
     def _update_session(self, order: StoreOrder, pix_data: Dict[str, Any]):
         """Atualiza sessão do cliente com dados do pedido"""
         try:
@@ -318,29 +351,32 @@ def create_order_from_whatsapp(
     customer_name: str = '',
     delivery_address: str = '',
     customer_notes: str = '',
-    delivery_method: str = 'delivery'
+    delivery_method: str = 'delivery',
+    payment_method: str = 'pix',
+    delivery_fee_override: float = None,
 ) -> Dict[str, Any]:
-    """
-    Função utilitária para criar pedido via WhatsApp.
-    """
-    logger.info(f"[create_order_from_whatsapp] Chamada para {phone_number} na loja {store_slug}")
-    logger.info(f"[create_order_from_whatsapp] Itens: {items}, método: {delivery_method}")
+    """Função utilitária para criar pedido via WhatsApp."""
+    logger.info(
+        f"[create_order_from_whatsapp] {phone_number} loja={store_slug} "
+        f"delivery={delivery_method} payment={payment_method}"
+    )
 
     try:
         store = Store.objects.get(slug=store_slug, is_active=True)
-        logger.info(f"[create_order_from_whatsapp] Loja encontrada: {store.name}")
 
         service = WhatsAppOrderService(
             store=store,
             phone_number=phone_number,
-            customer_name=customer_name
+            customer_name=customer_name,
         )
 
         result = service.create_order_from_cart(
             items=items,
             delivery_address=delivery_address,
             customer_notes=customer_notes,
-            delivery_method=delivery_method
+            delivery_method=delivery_method,
+            payment_method=payment_method,
+            delivery_fee_override=delivery_fee_override,
         )
         
         logger.info(f"[create_order_from_whatsapp] Resultado: {result.get('success')}")

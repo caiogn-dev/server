@@ -180,7 +180,7 @@ class SessionManager:
         logger.info(f"[SessionManager] Session reset for {self.phone_number}")
     
     def save_pending_order_items(self, items: list) -> None:
-        """Salva itens pendentes na sessão enquanto espera escolha de entrega/retirada."""
+        """Salva itens pendentes na sessão enquanto espera escolha de entrega/pagamento."""
         session = self.get_or_create_session()
         if session:
             data = dict(session.cart_data or {})
@@ -202,8 +202,75 @@ class SessionManager:
         if session:
             data = dict(session.cart_data or {})
             data.pop('pending_items', None)
+            data.pop('pending_delivery_method', None)
             session.cart_data = data
             session.save(update_fields=['cart_data'])
+
+    def save_pending_delivery_method(self, delivery_method: str) -> None:
+        """Salva método de entrega enquanto espera escolha de pagamento."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data['pending_delivery_method'] = delivery_method
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+            logger.info(f"[SessionManager] Pending delivery method saved: {delivery_method}")
+
+    def get_pending_delivery_method(self) -> str:
+        """Recupera método de entrega pendente."""
+        session = self.get_or_create_session()
+        if session:
+            return (session.cart_data or {}).get('pending_delivery_method', 'delivery')
+        return 'delivery'
+
+    def set_waiting_for_address(self, value: bool) -> None:
+        """Marca sessão como aguardando endereço de entrega do cliente."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data['waiting_for_address'] = value
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    def is_waiting_for_address(self) -> bool:
+        """Verifica se a sessão está aguardando endereço do cliente."""
+        session = self.get_or_create_session()
+        if session:
+            return bool((session.cart_data or {}).get('waiting_for_address', False))
+        return False
+
+    def save_delivery_address_info(
+        self,
+        address: str,
+        fee: float,
+        distance_km: float = None,
+        duration_minutes: float = None,
+    ) -> None:
+        """Salva endereço geocodificado e taxa calculada pelo HERE."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data['delivery_address'] = address
+            data['delivery_fee_calculated'] = fee
+            data['delivery_distance_km'] = distance_km
+            data['delivery_duration_minutes'] = duration_minutes
+            data['waiting_for_address'] = False
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+            logger.info(f"[SessionManager] Delivery address saved: {address[:40]} fee=R${fee}")
+
+    def get_delivery_address_info(self) -> dict:
+        """Recupera endereço e taxa de entrega calculados."""
+        session = self.get_or_create_session()
+        if session:
+            d = session.cart_data or {}
+            return {
+                'address': d.get('delivery_address', ''),
+                'fee': d.get('delivery_fee_calculated'),
+                'distance_km': d.get('delivery_distance_km'),
+                'duration_minutes': d.get('delivery_duration_minutes'),
+            }
+        return {'address': '', 'fee': None, 'distance_km': None, 'duration_minutes': None}
 
     def update_cart(self, items: list, total: Decimal):
         """Atualiza dados do carrinho"""
