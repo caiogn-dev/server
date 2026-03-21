@@ -475,33 +475,21 @@ class IntentHandler:
 
 
 class GreetingHandler(IntentHandler):
-    """Handler para saudações usando template refinado"""
-    
+    """Handler para saudações — delega ao LLM para resposta natural e personalizada."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        customer_name = self.get_customer_name()
-        logger.info(f"[GreetingHandler] Saudação para {customer_name}")
-
-        store_name = self.company_profile.company_name if self.company_profile else 'Pastita'
-
-        # Usa template refinado do Jasper Market
-        from apps.whatsapp.services.templates import JasperTemplates
-        template = JasperTemplates.greeting(
-            customer_name=customer_name,
-            store_name=store_name
-        )
-
-        return HandlerResult.buttons(
-            body=template.body,
-            buttons=template.buttons,
-            header=template.header,
-            footer=template.footer
-        )
+        logger.info(f"[GreetingHandler] Saudação — delegando ao LLM")
+        return HandlerResult.needs_llm()
 
 
 class PriceCheckHandler(IntentHandler):
-    """Handler para consulta de preços"""
-    
+    """Handler para consulta de preços — delega ao LLM (tem ferramenta buscar_produto)."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        logger.info("[PriceCheckHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
+
+    def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         entities = intent_data.get('entities', {})
         product_name = entities.get('product_name')
         
@@ -573,12 +561,16 @@ class PriceCheckHandler(IntentHandler):
 
 
 class ProductMentionHandler(IntentHandler):
-    """Handler quando usuário menciona produto sem quantidade - mostra TODOS os tipos"""
-    
+    """Handler quando usuário menciona produto — delega ao LLM (tem ferramenta buscar_produto)."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        logger.info("[ProductMentionHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
+
+    def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         message = intent_data.get('original_message', '').lower().strip()
         logger.info(f"[ProductMentionHandler] Mensagem: {message}")
-        
+
         if not self.store:
             return HandlerResult.text("Cardápio não disponível. 😔")
         
@@ -754,9 +746,13 @@ class MenuRequestHandler(IntentHandler):
 
 
 class BusinessHoursHandler(IntentHandler):
-    """Handler para horário de funcionamento"""
-    
+    """Handler para horário de funcionamento — delega ao LLM."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        logger.info("[BusinessHoursHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
+
+    def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         if not self.store:
             return HandlerResult.text(
                 "🕐 Nosso horário de atendimento:\n"
@@ -812,9 +808,13 @@ class BusinessHoursHandler(IntentHandler):
 
 
 class DeliveryInfoHandler(IntentHandler):
-    """Handler para informações de entrega"""
-    
+    """Handler para informações de entrega — delega ao LLM."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        logger.info("[DeliveryInfoHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
+
+    def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         if not self.store:
             return HandlerResult.text(
                 "🚚 *Informações de Entrega*\n\n"
@@ -1127,39 +1127,19 @@ class PaymentStatusHandler(IntentHandler):
 
 
 class LocationHandler(IntentHandler):
-    """Handler para localização/endereço"""
-    
+    """Handler para localização/endereço — delega ao LLM."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        if self.store and self.store.address:
-            return HandlerResult.text(
-                f"📍 *Endereço*\n\n"
-                f"{self.store.name}\n"
-                f"{self.store.address}\n\n"
-                f"Aguardamos sua visita! 😊"
-            )
-        
-        return HandlerResult.text(
-            "📍 Entregamos em toda a região!\n\n"
-            "Para fazer um pedido com entrega, é só me informar seu endereço completo."
-        )
+        logger.info("[LocationHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
 
 
 class ContactHandler(IntentHandler):
-    """Handler para contato"""
-    
+    """Handler para contato — delega ao LLM."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        if self.store and self.store.phone:
-            return HandlerResult.text(
-                f"📞 *Contato*\n\n"
-                f"WhatsApp: {self.store.phone}\n\n"
-                f"Estamos aqui para ajudar! 😊"
-            )
-        
-        return HandlerResult.text(
-            "📞 *Atendimento*\n\n"
-            "Estou aqui para ajudar!\n"
-            "Se precisar falar com um atendente humano, digite 'atendente'."
-        )
+        logger.info("[ContactHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
 
 
 class CancelOrderHandler(IntentHandler):
@@ -1210,18 +1190,11 @@ class HumanHandoffHandler(IntentHandler):
 
 
 class FAQHandler(IntentHandler):
-    """Handler para perguntas frequentes"""
-    
+    """Handler para perguntas frequentes — delega ao LLM."""
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        # Retorna FAQ com botões
-        return HandlerResult.buttons(
-            body="❓ *Perguntas Frequentes*\n\nO que você quer saber?",
-            buttons=[
-                {'id': 'faq_hours', 'title': '🕐 Horário'},
-                {'id': 'faq_delivery', 'title': '🚚 Entrega'},
-                {'id': 'faq_payment', 'title': '💳 Pagamento'},
-            ]
-        )
+        logger.info("[FAQHandler] Delegando ao LLM")
+        return HandlerResult.needs_llm()
 
 
 class ViewQRCodeHandler(IntentHandler):
@@ -1367,33 +1340,9 @@ class UnknownHandler(IntentHandler):
                 if result:
                     return result
 
-        # Verifica se parece ser um pedido (contém números ou nomes de produtos)
-        has_number = any(char.isdigit() for char in message)
-
-        if has_number:
-            # Parece ser pedido mas não reconheceu o produto
-            return HandlerResult.text(
-                "❌ Não encontrei esse produto.\n\n"
-                "Digite *cardápio* para ver o que temos disponível! 📋"
-            )
-
-        # Saudação simples
-        if any(word in message for word in ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite']):
-            store_name = getattr(self.store, 'name', 'nossa loja') if self.store else 'nossa loja'
-            return HandlerResult.buttons(
-                body=f"Oi! 👋 Bem-vindo à {store_name}!\n\nComo posso ajudar?",
-                buttons=[
-                    {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-                    {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
-                    {'id': 'contact_support', 'title': '📞 Falar com Atendente'},
-                ],
-            )
-
-        # Resposta curta e direta para qualquer coisa não reconhecida
-        return HandlerResult.text(
-            "Oi! Não entendi direito. 😅\n\n"
-            "Quer ver nosso cardápio? Digite *cardápio* ou *menu*"
-        )
+        # Mensagem não reconhecida como estado especial — delega ao LLM
+        logger.info("[UnknownHandler] Mensagem não reconhecida em estado especial — delegando ao LLM")
+        return HandlerResult.needs_llm()
 
     def _try_pending_product_order(self, qty: int) -> Optional[HandlerResult]:
         """Se há produto pendente na sessão, cria pedido com a quantidade digitada."""

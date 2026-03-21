@@ -458,10 +458,34 @@ class UnifiedService:
             self.stats['handler'] += 1
             return handler_response
 
-        # 2. Template do banco de dados
+        # 2. LLM (agente conversacional com contexto completo, memória e ferramentas)
+        session_data = self._get_session_data()
+        context_text = self._build_context(intent_data, session_data)
+        llm_response = self._call_llm(normalized, context_text)
+        if llm_response:
+            _ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.info(
+                '[unified] llm response (%.0fms) intent=%s agent=%s',
+                _ms, intent.value, getattr(self.agent, 'id', None),
+                extra={'unified.source': 'llm', 'unified.intent': intent.value,
+                       'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+            )
+            self.stats['llm'] += 1
+            return UnifiedResponse(
+                content=llm_response,
+                source=ResponseSource.LLM,
+                metadata={
+                    'intent': intent.value,
+                    'agent_id': str(self.agent.id) if self.agent else None,
+                    'unified.duration_ms': _ms,
+                },
+            )
+
+        # 3. Template do banco de dados (fallback quando LLM indisponível)
         template = self._get_template_for_intent(intent)
         if template:
-            session_data = self._get_session_data()
+            if not session_data:
+                session_data = self._get_session_data()
             validated_buttons = _validate_buttons(template.buttons)
             _ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(
@@ -483,29 +507,6 @@ class UnifiedService:
                 },
                 interactive_type='buttons' if validated_buttons else None,
                 interactive_data={'buttons': validated_buttons} if validated_buttons else None,
-            )
-
-        # 3. LLM
-        session_data = self._get_session_data()
-        context_text = self._build_context(intent_data, session_data)
-        llm_response = self._call_llm(normalized, context_text)
-        if llm_response:
-            _ms = round((time.monotonic() - _t0) * 1000, 1)
-            logger.info(
-                '[unified] llm response (%.0fms) intent=%s agent=%s',
-                _ms, intent.value, getattr(self.agent, 'id', None),
-                extra={'unified.source': 'llm', 'unified.intent': intent.value,
-                       'unified.duration_ms': _ms, 'unified.store_id': _store_id},
-            )
-            self.stats['llm'] += 1
-            return UnifiedResponse(
-                content=llm_response,
-                source=ResponseSource.LLM,
-                metadata={
-                    'intent': intent.value,
-                    'agent_id': str(self.agent.id) if self.agent else None,
-                    'unified.duration_ms': _ms,
-                },
             )
 
         # 4. Fallback genérico
