@@ -18,103 +18,100 @@ logger = logging.getLogger(__name__)
 
 @shared_task(bind=True, max_retries=3)
 def send_scheduled_message(self, message_id: str):
-    """Send a scheduled message."""
+    """
+    Envia uma mensagem agendada de forma idempotente.
+
+    Idempotência garantida via select_for_update():
+    - Apenas um worker por vez adquire o lock da linha
+    - Se o status já não for PENDING quando o lock é adquirido, a task encerra
+      sem enviar — proteção contra duplicatas em caso de retry do Celery
+    """
+    from django.db import transaction
     from ..models import ScheduledMessage
     from apps.whatsapp.services import MessageService
-    
+
     try:
-        message = ScheduledMessage.objects.select_related('account').get(
-            id=message_id,
-            is_active=True
-        )
+        with transaction.atomic():
+            # select_for_update garante que só um worker processa este ID ao mesmo tempo
+            message = (
+                ScheduledMessage.objects
+                .select_related('account')
+                .select_for_update(nowait=True)
+                .get(id=message_id, is_active=True)
+            )
+
+            if message.status != ScheduledMessage.Status.PENDING:
+                logger.info(
+                    'Scheduled message %s already processed (status=%s) — skipping',
+                    message_id, message.status,
+                )
+                return
+
+            # Transição atômica PENDING → PROCESSING dentro do mesmo lock
+            message.status = ScheduledMessage.Status.PROCESSING
+            message.save(update_fields=['status'])
         
-        # Check if already processed
-        if message.status != ScheduledMessage.Status.PENDING:
-            logger.info(f"Scheduled message {message_id} already processed: {message.status}")
-            return
-        
-        # Mark as processing
-        message.status = ScheduledMessage.Status.PROCESSING
-        message.save(update_fields=['status'])
-        
-        # Send message
+        # O lock é liberado aqui; o envio ocorre fora da transação
+        # (chamadas de API externa não devem ficar dentro de transactions)
+
         service = MessageService()
         result = None
-        
-        if message.message_type == ScheduledMessage.MessageType.TEXT:
-            result = service.send_text_message(
-                account_id=str(message.account_id),
-                to=message.to_number,
-                text=message.message_text
-            )
-        
-        elif message.message_type == ScheduledMessage.MessageType.TEMPLATE:
+
+        _type = message.message_type
+        _acc = str(message.account_id)
+
+        if _type == ScheduledMessage.MessageType.TEXT:
+            result = service.send_text_message(account_id=_acc, to=message.to_number, text=message.message_text)
+        elif _type == ScheduledMessage.MessageType.TEMPLATE:
             result = service.send_template_message(
-                account_id=str(message.account_id),
-                to=message.to_number,
+                account_id=_acc, to=message.to_number,
                 template_name=message.template_name,
                 language_code=message.template_language,
-                components=message.template_components
+                components=message.template_components,
             )
-        
-        elif message.message_type == ScheduledMessage.MessageType.IMAGE:
-            result = service.send_image(
-                account_id=str(message.account_id),
-                to=message.to_number,
-                image_url=message.media_url,
-                caption=message.message_text
-            )
-        
-        elif message.message_type == ScheduledMessage.MessageType.DOCUMENT:
-            result = service.send_document(
-                account_id=str(message.account_id),
-                to=message.to_number,
-                document_url=message.media_url,
-                caption=message.message_text
-            )
-        
-        elif message.message_type == ScheduledMessage.MessageType.INTERACTIVE:
-            result = service.send_interactive_buttons(
-                account_id=str(message.account_id),
-                to=message.to_number,
-                body_text=message.message_text,
-                buttons=message.buttons
-            )
-        
-        # Update status
-        if result:
-            message.status = ScheduledMessage.Status.SENT
-            message.sent_at = timezone.now()
-            message.whatsapp_message_id = result.get('whatsapp_message_id', '')
-            logger.info(f"Scheduled message {message_id} sent successfully")
-            
-            # Send WebSocket notification
-            from ..consumers import notify_scheduled_message_sent
-            notify_scheduled_message_sent({
-                'id': str(message.id),
-                'to_number': message.to_number,
-                'status': 'sent',
-                'sent_at': message.sent_at.isoformat()
-            }, str(message.account_id))
+        elif _type == ScheduledMessage.MessageType.IMAGE:
+            result = service.send_image(account_id=_acc, to=message.to_number, image_url=message.media_url, caption=message.message_text)
+        elif _type == ScheduledMessage.MessageType.DOCUMENT:
+            result = service.send_document(account_id=_acc, to=message.to_number, document_url=message.media_url, caption=message.message_text)
+        elif _type == ScheduledMessage.MessageType.INTERACTIVE:
+            result = service.send_interactive_buttons(account_id=_acc, to=message.to_number, body_text=message.message_text, buttons=message.buttons)
         else:
-            message.status = ScheduledMessage.Status.FAILED
-            message.error_message = "Failed to send message"
-            logger.error(f"Scheduled message {message_id} failed to send")
-        
-        message.save()
-        
+            logger.warning('send_scheduled_message: tipo desconhecido "%s" para mensagem %s', _type, message_id)
+
+        # Atualiza status final de forma atômica (sem re-leitura do objeto)
+        if result:
+            ScheduledMessage.objects.filter(pk=message.pk).update(
+                status=ScheduledMessage.Status.SENT,
+                sent_at=timezone.now(),
+                whatsapp_message_id=result.get('whatsapp_message_id', ''),
+            )
+            logger.info('Scheduled message %s sent successfully to %s', message_id, message.to_number)
+            # Notificação WebSocket (best-effort)
+            try:
+                from ..consumers import notify_scheduled_message_sent
+                notify_scheduled_message_sent(
+                    {'id': str(message.id), 'to_number': message.to_number,
+                     'status': 'sent', 'sent_at': timezone.now().isoformat()},
+                    _acc,
+                )
+            except Exception as _ws_exc:
+                logger.warning('WebSocket notification failed for message %s: %s', message_id, _ws_exc)
+        else:
+            ScheduledMessage.objects.filter(pk=message.pk).update(
+                status=ScheduledMessage.Status.FAILED,
+                error_message='API returned no result',
+            )
+            logger.error('Scheduled message %s failed — API returned no result', message_id)
+
     except ScheduledMessage.DoesNotExist:
-        logger.warning(f"Scheduled message not found: {message_id}")
-    except Exception as e:
-        logger.error(f"Error sending scheduled message {message_id}: {str(e)}")
-        try:
-            message = ScheduledMessage.objects.get(id=message_id)
-            message.status = ScheduledMessage.Status.FAILED
-            message.error_message = str(e)
-            message.save()
-        except ScheduledMessage.DoesNotExist:
-            logger.warning(f"Could not update failed message status - message {message_id} not found")
-        raise self.retry(exc=e, countdown=60)
+        logger.warning('Scheduled message not found or inactive: %s', message_id)
+    except Exception as exc:
+        logger.error('Error sending scheduled message %s: %s', message_id, exc, exc_info=True)
+        ScheduledMessage.objects.filter(id=message_id).update(
+            status=ScheduledMessage.Status.FAILED,
+            error_message=str(exc)[:500],
+        )
+        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
 
 
 @shared_task
@@ -132,13 +129,48 @@ def process_scheduled_messages():
         status=ScheduledMessage.Status.PENDING,
         scheduled_at__lte=now,
         is_active=True
-    )[:100]  # Process max 100 at a time
+    )[:500]  # Process max 500 at a time
     
     for message in pending_messages:
         send_scheduled_message.delay(str(message.id))
     
     if pending_messages:
         logger.info(f"Queued {len(pending_messages)} scheduled messages for sending")
+
+
+@shared_task
+def cleanup_intent_logs(days_to_keep: int = 30, batch_size: int = 5000):
+    """
+    Arquiva (deleta) IntentLog entries mais antigas que `days_to_keep` dias.
+
+    Roda preferencialmente uma vez por dia (via Celery Beat).
+    Deleta em batches para não travar o banco em tabelas grandes.
+
+    Exemplo de configuração no Celery Beat schedule:
+        'cleanup-intent-logs': {
+            'task': 'apps.automation.tasks.scheduled.cleanup_intent_logs',
+            'schedule': crontab(hour=3, minute=0),  # 3h da manhã
+        }
+    """
+    from ..models import IntentLog
+
+    cutoff = timezone.now() - timedelta(days=days_to_keep)
+    total_deleted = 0
+
+    while True:
+        # Seleciona IDs em batch para não fazer um DELETE gigante
+        ids = list(
+            IntentLog.objects.filter(created_at__lt=cutoff)
+            .values_list('id', flat=True)[:batch_size]
+        )
+        if not ids:
+            break
+        deleted, _ = IntentLog.objects.filter(id__in=ids).delete()
+        total_deleted += deleted
+        logger.info(f"[cleanup_intent_logs] Deletados {deleted} registros (total: {total_deleted})")
+
+    logger.info(f"[cleanup_intent_logs] Concluído. Total removido: {total_deleted} registros com mais de {days_to_keep} dias.")
+    return total_deleted
 
 
 @shared_task(bind=True, max_retries=2)

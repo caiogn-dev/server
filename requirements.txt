@@ -57,3 +57,6 @@ langchain-openai>=0.2.0
 langchain-community>=0.3.0
 langchain-core>=0.3.0
 langchain-anthropic>=0.1.0
+
+# MCP (Model Context Protocol) — bot pipeline inspector
+mcp>=1.0.0

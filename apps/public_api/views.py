@@ -10,11 +10,16 @@ Endpoints:
   GET /api/v1/public/{slug}/products/{pk}/        -> product detail
   GET /api/v1/public/{slug}/availability/         -> store open/closed status
 """
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.throttling import AnonRateThrottle
+
+
+class _PublicReadThrottle(AnonRateThrottle):
+    scope = 'public_read'
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from apps.stores.models import Store, StoreCategory, StoreProduct
@@ -37,6 +42,7 @@ def _get_active_store(slug):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_detail(request, slug):
     store = _get_active_store(slug)
     return Response(PublicStoreSerializer(store, context={'request': request}).data)
@@ -44,6 +50,7 @@ def public_store_detail(request, slug):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_catalog(request, slug):
     """Full catalog: store + categories with their products."""
     store = _get_active_store(slug)
@@ -73,6 +80,7 @@ def public_store_catalog(request, slug):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_categories(request, slug):
     store = _get_active_store(slug)
     categories = (
@@ -85,6 +93,7 @@ def public_store_categories(request, slug):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_products(request, slug):
     store = _get_active_store(slug)
     products = (
@@ -110,6 +119,7 @@ def public_store_products(request, slug):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_product_detail(request, slug, pk):
     store = _get_active_store(slug)
     product = get_object_or_404(StoreProduct, pk=pk, store=store, status='active')
@@ -118,6 +128,7 @@ def public_product_detail(request, slug, pk):
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_availability(request, slug):
     """Return whether the store is currently open, plus today's hours."""
     store = _get_active_store(slug)

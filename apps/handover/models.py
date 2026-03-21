@@ -293,7 +293,7 @@ def notify_handover_update(handover):
     Notifica via WebSocket sobre atualização de handover.
     """
     channel_layer = get_channel_layer()
-    
+
     # Notificar no grupo da conversa
     async_to_sync(channel_layer.group_send)(
         f"conversation_{handover.conversation.id}",
@@ -306,7 +306,7 @@ def notify_handover_update(handover):
             "timestamp": handover.last_transfer_at.isoformat() if handover.last_transfer_at else None,
         }
     )
-    
+
     # Notificar no grupo da loja (para operadores)
     if hasattr(handover.conversation, 'store') and handover.conversation.store:
         async_to_sync(channel_layer.group_send)(
@@ -319,3 +319,48 @@ def notify_handover_update(handover):
                 "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
             }
         )
+
+
+def notify_handover_request(handover_request):
+    """
+    Notifica operadores via WebSocket sobre nova solicitação de handover pendente.
+    Disparado quando um HandoverRequest é criado (bot pedindo transferência para humano).
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    channel_layer = get_channel_layer()
+    if not channel_layer:
+        logger.warning("Channel layer not available — handover request notification skipped")
+        return
+
+    conversation = handover_request.conversation
+    payload = {
+        "type": "handover_request_created",
+        "request_id": str(handover_request.id),
+        "conversation_id": str(conversation.id),
+        "priority": handover_request.priority,
+        "reason": handover_request.reason or '',
+        "requested_by": str(handover_request.requested_by.id) if handover_request.requested_by else None,
+        "timestamp": timezone.now().isoformat(),
+    }
+
+    # Notificar grupo de operadores da loja
+    store = getattr(conversation, 'store', None)
+    if store:
+        try:
+            async_to_sync(channel_layer.group_send)(
+                f"store_{store.id}_operators",
+                payload,
+            )
+        except Exception as exc:
+            logger.error(f"WebSocket error notifying handover request to store operators: {exc}")
+
+    # Notificar grupo global de operadores como fallback
+    try:
+        async_to_sync(channel_layer.group_send)(
+            "operators",
+            payload,
+        )
+    except Exception as exc:
+        logger.error(f"WebSocket error notifying handover request to global operators: {exc}")

@@ -195,8 +195,11 @@ class HandoverViewSet(viewsets.ViewSet):
         )
         
         # Notificar operadores (via WebSocket)
-        from .models import notify_handover_update
-        # TODO: Implementar notificação específica para nova solicitação
+        from .models import notify_handover_request
+        try:
+            notify_handover_request(handover_request)
+        except Exception:
+            pass  # Notificação é best-effort, não deve bloquear a resposta
         
         return Response({
             'success': True,

@@ -199,11 +199,19 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '60/minute',      # Reduzido de 1000 para segurança
-        'user': '300/minute',     # Reduzido de 10000 para segurança
-        'webhook': '10000/hour',  # Webhooks podem ter volume alto
-        'auth': '10/minute',      # Novo: limite para endpoints de auth
-        'checkout': '5/minute',   # Checkout: max 5 pedidos/min por IP (anti-bot)
+        # Endpoints autenticados e misc não classificados
+        'anon': '120/minute',
+        'user': '600/minute',
+        # Catálogo público (read-only) — storefront pode fazer muitos requests ao navegar
+        'public_read': '300/minute',
+        # Carrinho (escrita pública) — mais restritivo que leitura, menos que checkout
+        'public_write': '60/minute',
+        # Checkout: proteção anti-bot real — 20/min por IP (antes era 5, muito restritivo)
+        'checkout': '20/minute',
+        # Auth: OTP brute-force protection — manter restritivo
+        'auth': '10/minute',
+        # Webhooks de integrações externas — volume alto esperado
+        'webhook': '10000/hour',
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }

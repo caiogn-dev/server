@@ -472,6 +472,12 @@ class CompanyProfile(BaseModel):
         db_table = 'company_profiles'
         verbose_name = 'Company Profile'
         verbose_name_plural = 'Company Profiles'
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(store__isnull=False) | models.Q(account__isnull=False),
+                name='company_profile_requires_store_or_account',
+            )
+        ]
 
     def get_effective_store(self):
         if self.store_id:
@@ -1157,6 +1163,14 @@ class FlowSession(BaseModel):
     def __str__(self):
         return f'SessÃ£o {self.conversation.phone_number} em {self.flow.name}'
     
+    def update_context(self, key: str, value) -> None:
+        """Atualiza uma variavel no contexto do fluxo de forma atomica."""
+        self.refresh_from_db(fields=['context'])
+        updated = dict(self.context or {})
+        updated[key] = value
+        FlowSession.objects.filter(pk=self.pk).update(context=updated)
+        self.context = updated
+
     def reset(self):
         """Reseta a sessÃ£o para o inÃ­cio do fluxo."""
         self.current_node_id = None

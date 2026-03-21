@@ -1,16 +1,24 @@
 """
 Unified automation service.
 
-Flow:
-1. Detect intent
-2. Try deterministic handler
-3. Try database template
-4. Try LLM with the canonical configured agent
-5. Return a small fallback
+Pipeline (em ordem de prioridade):
+1. IntentDetector  → regex rápido, sem custo
+2. IntentHandler   → resposta determinística por intenção
+3. AutoMessage DB  → templates configurados pelo operador
+4. LangchainService → agente LLM configurado na conta
+5. Fallback        → texto genérico de direcionamento
+
+Métricas estruturadas emitidas em cada etapa:
+  unified.intent        — intenção detectada
+  unified.source        — onde a resposta foi gerada (handler/template/llm/fallback)
+  unified.duration_ms   — tempo total de processamento
+  unified.llm_used      — se o LLM foi invocado
+  unified.store_id      — loja resolvida (None se não encontrada)
 """
 import logging
+import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +30,34 @@ from apps.whatsapp.intents.detector import IntentDetector, IntentType
 from apps.whatsapp.intents.handlers import get_handler
 
 logger = logging.getLogger(__name__)
+
+# ─── Validação de botões WhatsApp ────────────────────────────────────────────
+_BUTTON_TITLE_MAX = 20
+_BUTTON_ID_MAX = 256
+
+
+def _validate_buttons(buttons: Optional[List[Dict]]) -> Optional[List[Dict]]:
+    """
+    Valida e normaliza a lista de botões para o formato esperado pela API WhatsApp.
+
+    - Remove botões sem 'id' ou sem 'title'
+    - Trunca title em 20 chars e id em 256 chars (limites da API)
+    - Retorna None se a lista ficar vazia após filtragem
+    """
+    if not buttons:
+        return None
+    valid = []
+    for btn in buttons:
+        btn_id = str(btn.get('id', '')).strip()
+        btn_title = str(btn.get('title', '')).strip()
+        if not btn_id or not btn_title:
+            logger.warning('[UnifiedService] Botão inválido ignorado: %s', btn)
+            continue
+        valid.append({
+            'id': btn_id[:_BUTTON_ID_MAX],
+            'title': btn_title[:_BUTTON_TITLE_MAX],
+        })
+    return valid or None
 
 
 class ResponseSource(Enum):
@@ -149,18 +185,48 @@ class UnifiedService:
         return '\n'.join(parts)
 
     def _render_template(self, template: AutoMessage, session_data: Dict[str, Any]) -> str:
-        def safe_str(value, default=''):
-            if value is None:
-                return default
-            return str(value)
+        """
+        Renderiza um template substituindo variáveis por valores reais.
+
+        Variáveis suportadas:
+          {customer_name}  — nome do contato (fallback: 'Cliente')
+          {company_name}   — nome da empresa (fallback: 'Nossa Loja')
+          {phone}          — telefone do contato
+          {cart_total}     — valor total do carrinho (R$ XX.XX)
+          {cart_items}     — quantidade de itens no carrinho
+          {order_id}       — ID do pedido, SOMENTE se disponível na sessão
+
+        Variáveis cujo dado está ausente são substituídas pela string vazia
+        para evitar mensagens com placeholders visíveis ao cliente.
+        """
+        def _safe(value, default: str = '') -> str:
+            return str(value) if value is not None else default
+
+        order_id = session_data.get('order_id')
+        cart_total = float(session_data.get('cart_total') or 0)
+
+        replacements = {
+            '{customer_name}': _safe(self.conversation.contact_name, 'Cliente'),
+            '{company_name}': _safe(self.company.company_name if self.company else None, 'Nossa Loja'),
+            '{phone}': _safe(self.conversation.phone_number),
+            '{cart_total}': f'R$ {cart_total:.2f}',
+            '{cart_items}': _safe(session_data.get('cart_items_count'), '0'),
+            # {order_id} só aparece se há um pedido real — evita "Pedido: None"
+            '{order_id}': _safe(order_id) if order_id else '',
+        }
 
         content = template.message_text
-        content = content.replace('{customer_name}', safe_str(self.conversation.contact_name, 'Cliente'))
-        content = content.replace('{company_name}', safe_str(self.company.company_name if self.company else None, 'Nossa Loja'))
-        content = content.replace('{phone}', safe_str(self.conversation.phone_number))
-        content = content.replace('{cart_total}', f"R$ {float(session_data.get('cart_total') or 0):.2f}")
-        content = content.replace('{cart_items}', safe_str(session_data.get('cart_items_count'), '0'))
-        content = content.replace('{order_id}', safe_str(session_data.get('order_id')))
+        for placeholder, value in replacements.items():
+            content = content.replace(placeholder, value)
+
+        # Detectar placeholders não substituídos e alertar em log
+        remaining = re.findall(r'\{[a-z_]+\}', content)
+        if remaining:
+            logger.warning(
+                '[UnifiedService] Template %s contém placeholders não resolvidos: %s',
+                template.id, remaining,
+            )
+
         return content
 
     def _run_handler(self, intent_data: Dict[str, Any]) -> Optional[UnifiedResponse]:
@@ -206,9 +272,19 @@ class UnifiedService:
         return None
 
     def _call_llm(self, message: str, context_text: str) -> Optional[str]:
+        """
+        Invoca o agente LLM configurado para a conta.
+
+        Retorna a resposta em texto ou None se:
+        - LLM não está habilitado para esta conta
+        - Nenhum agente está configurado
+        - O agente retornou resposta vazia
+        - Ocorreu erro na chamada (logado como ERROR)
+        """
         if not self.use_llm or not self.agent:
             return None
 
+        _t0 = time.monotonic()
         try:
             service = LangchainService(self.agent)
             agent_conversation = AgentConversation.objects.filter(
@@ -223,53 +299,163 @@ class UnifiedService:
                 phone_number=self.conversation.phone_number,
                 conversation_id=str(self.conversation.id),
             )
-            return result.get('response', '')
+            response_text = result.get('response', '').strip()
+            _llm_ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.info(
+                '[unified] LLM response ok (%.0fms) agent=%s',
+                _llm_ms, self.agent.id,
+                extra={'unified.llm_used': True, 'unified.llm_duration_ms': _llm_ms},
+            )
+            return response_text or None
         except Exception as exc:
-            logger.error('[Unified] LLM error: %s', exc)
+            _llm_ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.error(
+                '[unified] LLM error after %.0fms: %s', _llm_ms, exc,
+                extra={'unified.llm_used': True, 'unified.llm_error': str(exc)},
+            )
             return None
 
-    def process_message(self, message_text: str) -> UnifiedResponse:
-        start_time = time.time()
+    def process_message(
+        self,
+        message_text: str,
+        interactive_reply: Optional[Dict[str, Any]] = None,
+    ) -> UnifiedResponse:
+        """
+        Processa uma mensagem e retorna a melhor resposta disponível.
+
+        Args:
+            message_text:       Texto da mensagem do cliente.
+            interactive_reply:  Se presente, indica que o cliente clicou em um
+                                botão/item de lista. Dict com 'type', 'id' e 'title'.
+                                Nesse caso, o pipeline pula a detecção de intenção e
+                                roteia diretamente para InteractiveReplyHandler.
+
+        Emite log estruturado ao final com:
+          unified.intent, unified.source, unified.duration_ms, unified.store_id
+        """
+        _t0 = time.monotonic()
+        _store_id = str(self.store.id) if self.store else None
+
+        # ── Caminho rápido: resposta interativa (clique em botão / lista) ──
+        if interactive_reply:
+            from apps.whatsapp.intents.handlers import InteractiveReplyHandler
+            try:
+                handler = InteractiveReplyHandler(self.account, self.conversation, self.company)
+                if self.store:
+                    handler.store = self.store
+                result = handler.handle({
+                    'reply_id': interactive_reply.get('id', ''),
+                    'reply_title': interactive_reply.get('title', ''),
+                    'original_message': message_text or '',
+                })
+                if result and not result.requires_llm:
+                    _ms = round((time.monotonic() - _t0) * 1000, 1)
+                    logger.info(
+                        '[unified] interactive_reply handler (%.0fms) reply_id=%s',
+                        _ms, interactive_reply.get('id'),
+                        extra={
+                            'unified.source': 'handler',
+                            'unified.intent': 'interactive_reply',
+                            'unified.duration_ms': _ms,
+                            'unified.store_id': _store_id,
+                        },
+                    )
+                    self.stats['handler'] += 1
+                    if result.use_interactive:
+                        interactive_data = result.interactive_data or {}
+                        return UnifiedResponse(
+                            content=interactive_data.get('body') or result.response_text or '',
+                            source=ResponseSource.HANDLER,
+                            buttons=interactive_data.get('buttons'),
+                            header=interactive_data.get('header'),
+                            footer=interactive_data.get('footer'),
+                            metadata={'intent': 'interactive_reply'},
+                            interactive_type=result.interactive_type,
+                            interactive_data=interactive_data,
+                        )
+                    if result.response_text not in {None, '', 'BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT'}:
+                        return UnifiedResponse(
+                            content=result.response_text,
+                            source=ResponseSource.HANDLER,
+                            metadata={'intent': 'interactive_reply'},
+                        )
+            except Exception as exc:
+                logger.error(
+                    '[unified] InteractiveReplyHandler failed: %s', exc,
+                    extra={'unified.source': 'error', 'message_id': message_text[:50]},
+                )
+            # Fall through to normal pipeline if handler didn't produce a response
 
         if not message_text or not message_text.strip():
             return UnifiedResponse(
                 content='Desculpe, nao entendi. Pode repetir?',
                 source=ResponseSource.FALLBACK,
+                metadata={'unified.source': 'fallback_empty'},
             )
 
-        normalized_message = message_text.strip()
-        intent_data = self.detector.detect(normalized_message.lower())
+        normalized = message_text.strip()
+        intent_data = self.detector.detect(normalized.lower())
         intent = intent_data.get('intent', IntentType.UNKNOWN)
 
         if self.debug:
-            logger.info('[Unified] intent=%s llm=%s store=%s company=%s', intent.value, self.use_llm, getattr(self.store, 'slug', None), getattr(self.company, 'id', None))
+            logger.debug(
+                '[unified] intent=%s llm=%s store=%s company=%s',
+                intent.value, self.use_llm,
+                getattr(self.store, 'slug', None),
+                getattr(self.company, 'id', None),
+            )
 
+        # 1. Handler determinístico
         handler_response = self._run_handler(intent_data)
         if handler_response is not None:
+            _ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.info(
+                '[unified] handler response (%.0fms) intent=%s', _ms, intent.value,
+                extra={'unified.source': 'handler', 'unified.intent': intent.value,
+                       'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+            )
+            self.stats['handler'] += 1
             return handler_response
 
+        # 2. Template do banco de dados
         template = self._get_template_for_intent(intent)
         if template:
             session_data = self._get_session_data()
+            validated_buttons = _validate_buttons(template.buttons)
+            _ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.info(
+                '[unified] template response (%.0fms) intent=%s template=%s',
+                _ms, intent.value, template.id,
+                extra={'unified.source': 'template', 'unified.intent': intent.value,
+                       'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+            )
             self.stats['template'] += 1
             return UnifiedResponse(
                 content=self._render_template(template, session_data),
                 source=ResponseSource.TEMPLATE,
-                buttons=template.buttons if template.buttons else None,
+                buttons=validated_buttons,
                 metadata={
                     'template_id': str(template.id),
                     'event_type': template.event_type,
                     'intent': intent.value,
-                    'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+                    'unified.duration_ms': _ms,
                 },
-                interactive_type='buttons' if template.buttons else None,
-                interactive_data={'buttons': template.buttons} if template.buttons else None,
+                interactive_type='buttons' if validated_buttons else None,
+                interactive_data={'buttons': validated_buttons} if validated_buttons else None,
             )
 
+        # 3. LLM
         session_data = self._get_session_data()
         context_text = self._build_context(intent_data, session_data)
-        llm_response = self._call_llm(normalized_message, context_text)
+        llm_response = self._call_llm(normalized, context_text)
         if llm_response:
+            _ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.info(
+                '[unified] llm response (%.0fms) intent=%s agent=%s',
+                _ms, intent.value, getattr(self.agent, 'id', None),
+                extra={'unified.source': 'llm', 'unified.intent': intent.value,
+                       'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+            )
             self.stats['llm'] += 1
             return UnifiedResponse(
                 content=llm_response,
@@ -277,17 +463,25 @@ class UnifiedService:
                 metadata={
                     'intent': intent.value,
                     'agent_id': str(self.agent.id) if self.agent else None,
-                    'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+                    'unified.duration_ms': _ms,
                 },
             )
 
+        # 4. Fallback genérico
+        _ms = round((time.monotonic() - _t0) * 1000, 1)
+        logger.warning(
+            '[unified] fallback response (%.0fms) intent=%s — nenhum provider respondeu',
+            _ms, intent.value,
+            extra={'unified.source': 'fallback', 'unified.intent': intent.value,
+                   'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+        )
         self.stats['fallback'] += 1
         return UnifiedResponse(
             content='Posso continuar pelo menu, te mostrar o catalogo ou encaminhar voce para um atendente humano.',
             source=ResponseSource.FALLBACK,
             metadata={
                 'intent': intent.value,
-                'processing_time_ms': round((time.time() - start_time) * 1000, 2),
+                'unified.duration_ms': _ms,
             },
         )
 

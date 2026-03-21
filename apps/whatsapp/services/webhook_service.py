@@ -358,13 +358,23 @@ class WebhookService:
 
     def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
         """
-        Process an inbound message through the canonical automation flow.
+        Processa mensagem inbound pelo pipeline canônico de automação.
 
-        Flow:
-        1. Resolve canonical context (store/profile/account)
-        2. Run UnifiedService once
-        3. Send interactive or text response
-        4. If the orchestrator fails, enqueue the AI agent as last resort
+        Pipeline:
+        1. Garante que a conversa existe (get_or_create)
+        2. Atualiza nome do contato se disponível
+        3. Resolve contexto (store / profile / account)
+        4. Executa UnifiedService (intents → handlers → templates → LLM)
+        5a. Se UnifiedService retornou resposta interativa → envia imediatamente
+        5b. Se retornou texto → enfileira via Celery para rate-limit seguro
+        6. Se UnifiedService não produziu resposta (timeout / erro / None) → fallback
+           para agente LLM direto, SOMENTE se LLM habilitado e agente configurado
+
+        Métricas registradas via logger estruturado:
+        - pipeline.source: onde a resposta foi gerada (handler/template/llm/fallback/agent)
+        - pipeline.duration_ms: tempo total do step do orquestrador
+        - pipeline.timeout: se o orquestrador excedeu o limite de tempo
+        - pipeline.dropped: se a mensagem não recebeu resposta alguma (alerta crítico)
         """
         from apps.conversations.services import ConversationService
         from apps.automation.services import LLMOrchestratorService, UnifiedResponse
@@ -411,81 +421,150 @@ class WebhookService:
             conversation=message.conversation,
         )
 
+        import threading
+        import time as _time
+
         orchestrator_response = None
         orchestrator_error = None
+        _t0 = _time.monotonic()
 
-        try:
-            import threading
+        # Extrair dados de reply interativo (clique em botão / item de lista)
+        _interactive_reply = None
+        _msg_content = message.content or {}
+        _interactive = _msg_content.get('interactive', {})
+        if _interactive:
+            if 'list_reply' in _interactive:
+                _lr = _interactive['list_reply']
+                _interactive_reply = {
+                    'type': 'list_reply',
+                    'id': _lr.get('id', ''),
+                    'title': _lr.get('title', ''),
+                }
+            elif 'button_reply' in _interactive:
+                _br = _interactive['button_reply']
+                _interactive_reply = {
+                    'type': 'button_reply',
+                    'id': _br.get('id', ''),
+                    'title': _br.get('title', ''),
+                }
+            if _interactive_reply:
+                logger.info(
+                    '[pipeline] Interactive reply detected: type=%s id=%s',
+                    _interactive_reply['type'], _interactive_reply['id'],
+                    extra={'pipeline.interactive_reply': True, 'message_id': str(message.id)},
+                )
 
-            def run_orchestrator():
-                nonlocal orchestrator_response, orchestrator_error
+        def _run_orchestrator():
+            nonlocal orchestrator_response, orchestrator_error
+            try:
+                service = LLMOrchestratorService(
+                    account=event.account,
+                    conversation=message.conversation,
+                    use_llm=llm_enabled,
+                    debug=False,
+                )
+                orchestrator_response = service.process_message(
+                    message.text_body or '',
+                    interactive_reply=_interactive_reply,
+                )
+                _source = getattr(getattr(orchestrator_response, 'source', None), 'value', 'unknown')
+                logger.info(
+                    '[pipeline] UnifiedService responded',
+                    extra={'pipeline.source': _source, 'message_id': str(message.id)},
+                )
+            except Exception as exc:
+                orchestrator_error = exc
+                logger.warning(
+                    '[pipeline] UnifiedService error: %s', exc,
+                    extra={'pipeline.source': 'error', 'message_id': str(message.id)},
+                )
+
+        _thread = threading.Thread(target=_run_orchestrator, daemon=True)
+        _thread.start()
+        _thread.join(timeout=10)
+
+        _orchestrator_ms = round((_time.monotonic() - _t0) * 1000, 1)
+        _timed_out = _thread.is_alive()
+
+        if _timed_out:
+            orchestrator_error = TimeoutError('UnifiedService timeout after 10s')
+            logger.warning(
+                '[pipeline] UnifiedService timeout after 10s',
+                extra={'pipeline.timeout': True, 'message_id': str(message.id)},
+            )
+
+        # -- Tentar enviar resposta do orquestrador ----------------------------
+        _response_sent = False
+
+        if isinstance(orchestrator_response, UnifiedResponse) and not _timed_out:
+            # Caminho A: resposta interativa (botões / lista)
+            if orchestrator_response.buttons or orchestrator_response.interactive_type:
                 try:
-                    service = LLMOrchestratorService(
-                        account=event.account,
-                        conversation=message.conversation,
-                        use_llm=llm_enabled,
-                        debug=False,
-                    )
-                    orchestrator_response = service.process_message(message.text_body or '')
+                    self._send_unified_interactive(event, message, orchestrator_response)
                     logger.info(
-                        '[UnifiedService] Response from %s',
-                        getattr(getattr(orchestrator_response, 'source', None), 'value', 'unknown'),
+                        '[pipeline] Interactive response sent (%.0fms)', _orchestrator_ms,
+                        extra={
+                            'pipeline.source': getattr(getattr(orchestrator_response, 'source', None), 'value', 'handler'),
+                            'pipeline.duration_ms': _orchestrator_ms,
+                            'message_id': str(message.id),
+                        },
                     )
+                    _response_sent = True
                 except Exception as exc:
                     orchestrator_error = exc
-                    logger.warning(f'[UnifiedService] Error: {exc}')
+                    logger.error('[pipeline] Failed to send interactive: %s', exc, extra={'message_id': str(message.id)})
 
-            thread = threading.Thread(target=run_orchestrator)
-            thread.start()
-            thread.join(timeout=10)
-
-            if thread.is_alive():
-                orchestrator_error = TimeoutError('UnifiedService timeout')
-                logger.warning('[UnifiedService] Timeout')
-
-            if isinstance(orchestrator_response, UnifiedResponse):
-                if orchestrator_response.buttons or orchestrator_response.interactive_type:
-                    try:
-                        self._send_unified_interactive(event, message, orchestrator_response)
-                        logger.info('[UnifiedService] Interactive response sent')
-                        return
-                    except Exception as exc:
-                        orchestrator_error = exc
-                        logger.error(f'[UnifiedService] Failed to send interactive: {exc}')
-
-                if orchestrator_response.content:
-                    try:
-                        from ..tasks import send_agent_response
-
-                        send_agent_response.delay(
-                            str(event.account.id),
-                            message.from_number,
-                            orchestrator_response.content,
-                            str(message.whatsapp_message_id)
-                        )
-                        logger.info('[UnifiedService] Text response queued')
-                        return
-                    except Exception as exc:
-                        orchestrator_error = exc
-                        logger.error(f'[UnifiedService] Failed to queue response: {exc}')
-        except Exception as exc:
-            orchestrator_error = exc
-            logger.warning(f'[UnifiedService] Unexpected error: {exc}')
-
-        if not message.processed_by_agent:
-            agent = AutomationContextService.get_default_agent(context=context)
-            if llm_enabled and agent is not None and orchestrator_error is not None:
+            # Caminho B: resposta de texto (enfileirada)
+            if not _response_sent and orchestrator_response.content:
                 try:
-                    logger.info(f'[AI Agent] Enqueuing fallback agent processing for message: {message.id}')
+                    from ..tasks import send_agent_response
+                    send_agent_response.delay(
+                        str(event.account.id),
+                        message.from_number,
+                        orchestrator_response.content,
+                        str(message.whatsapp_message_id),
+                    )
+                    logger.info(
+                        '[pipeline] Text response queued (%.0fms)', _orchestrator_ms,
+                        extra={
+                            'pipeline.source': getattr(getattr(orchestrator_response, 'source', None), 'value', 'handler'),
+                            'pipeline.duration_ms': _orchestrator_ms,
+                            'message_id': str(message.id),
+                        },
+                    )
+                    _response_sent = True
+                except Exception as exc:
+                    orchestrator_error = exc
+                    logger.error('[pipeline] Failed to queue text response: %s', exc, extra={'message_id': str(message.id)})
+
+        # -- Fallback: agente LLM direto ---------------------------------------
+        # Ativa quando: orquestrador não produziu resposta OU falhou / timed out
+        if not _response_sent and not message.processed_by_agent:
+            agent = AutomationContextService.get_default_agent(context=context)
+            if llm_enabled and agent is not None:
+                try:
                     current_app.send_task(
                         'apps.whatsapp.tasks.process_message_with_agent',
                         args=[str(message.id)],
                         queue='default',
                         countdown=0,
                     )
-                    logger.info('[AI Agent] Task enqueued successfully')
+                    logger.info(
+                        '[pipeline] Fallback agent enqueued',
+                        extra={'pipeline.source': 'agent_fallback', 'message_id': str(message.id)},
+                    )
+                    _response_sent = True
                 except Exception as exc:
-                    logger.error(f'[AI Agent] Failed to enqueue task: {exc}', exc_info=True)
+                    logger.error('[pipeline] Failed to enqueue agent fallback: %s', exc, exc_info=True, extra={'message_id': str(message.id)})
+
+        # -- Alerta crítico: mensagem sem resposta ------------------------------
+        if not _response_sent:
+            logger.error(
+                '[pipeline] MESSAGE DROPPED — no response path succeeded. '
+                'message_id=%s account=%s timed_out=%s orchestrator_error=%s',
+                message.id, event.account.id, _timed_out, orchestrator_error,
+                extra={'pipeline.dropped': True, 'message_id': str(message.id)},
+            )
 
     def _is_llm_enabled_for_account(self, account: WhatsAppAccount, conversation=None) -> bool:
         from apps.automation.services.context_service import AutomationContextService

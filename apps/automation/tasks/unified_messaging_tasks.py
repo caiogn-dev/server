@@ -1,42 +1,23 @@
 """
-Unified Celery Tasks for Messaging
+DEPRECATED — unified_messaging_tasks
 
-This module consolidates all messaging-related Celery tasks.
-Replaces separate tasks from campaigns, automation, and whatsapp apps.
+A task canônica de mensagens agendadas agora vive em:
+    apps.automation.tasks.scheduled.process_scheduled_messages
+
+Registrada no Celery Beat como 'process-scheduled-messages'.
+Este arquivo pode ser removido após validar que nenhum worker usa este módulo.
 """
-
 import logging
-from celery import shared_task
-from django.utils import timezone
+import warnings
+
+warnings.warn(
+    "apps.automation.tasks.unified_messaging_tasks is DEPRECATED. "
+    "Use apps.automation.tasks.scheduled.process_scheduled_messages instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = logging.getLogger(__name__)
-
-
-@shared_task(bind=True, max_retries=3)
-def process_scheduled_messages(self, batch_size=100):
-    """
-    Process all due scheduled messages.
-    This is the unified task that replaces:
-    - campaigns.tasks.process_campaign
-    - automation.tasks.process_scheduled_messages
-    - whatsapp.tasks (any scheduled message tasks)
-    
-    Args:
-        batch_size: Maximum number of messages to process per run
-        
-    Returns:
-        Dict with processing results
-    """
-    from apps.automation.services import UnifiedMessagingService
-    
-    try:
-        results = UnifiedMessagingService.process_due_messages(batch_size=batch_size)
-        logger.info(f"Processed scheduled messages: {results}")
-        return results
-    except Exception as exc:
-        logger.error(f"Error processing scheduled messages: {exc}")
-        # Retry with exponential backoff
-        raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
 
 
 @shared_task

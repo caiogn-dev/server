@@ -1,46 +1,46 @@
 """
 Celery tasks for automation.
+
+Canonical task locations:
+- Mensagens agendadas / relatórios: apps.automation.tasks.scheduled
+- Carrinho abandonado / PIX / sessões: este módulo (tasks/__init__.py)
+
+unified_messaging_tasks.py foi DEPRECADO — não importar dali.
 """
 import logging
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
 
-# Unified messaging tasks (consolidates campaigns, automation, scheduled messages)
-from .unified_messaging_tasks import (
-    process_scheduled_messages,
-    process_campaign_batch,
-    schedule_campaign_messages,
-    cleanup_old_scheduled_messages,
-    update_campaign_stats,
-)
-
-# Report tasks
+# Canonical scheduled-message and report tasks
 from .scheduled import (
     send_scheduled_message,
+    process_scheduled_messages,
     generate_report,
     process_scheduled_reports,
-    cleanup_old_reports
+    cleanup_old_reports,
+    cleanup_intent_logs,
 )
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    # Notificações proativas
     'send_abandoned_cart_notification',
     'send_pix_reminder',
+    # Tasks periódicas canônicas
     'check_abandoned_carts',
     'check_pending_pix_payments',
     'cleanup_expired_sessions',
+    # Processamento de mensagem entrante (legado)
     'process_incoming_message',
+    # Mensagens agendadas / relatórios (re-export de scheduled.py)
     'send_scheduled_message',
     'process_scheduled_messages',
     'generate_report',
     'process_scheduled_reports',
     'cleanup_old_reports',
-    'process_campaign_batch',
-    'schedule_campaign_messages',
-    'cleanup_old_scheduled_messages',
-    'update_campaign_stats',
+    'cleanup_intent_logs',
 ]
 
 

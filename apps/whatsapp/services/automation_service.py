@@ -14,6 +14,14 @@ This module is no longer used. The canonical inbound-message automation pipeline
 Do NOT import from this module. It will be deleted in a future cleanup pass.
 """
 import logging
+import warnings
+
+warnings.warn(
+    "apps.whatsapp.services.automation_service is DEPRECATED and will be removed. "
+    "Use apps.automation.services.UnifiedService instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 logger = logging.getLogger(__name__)
 

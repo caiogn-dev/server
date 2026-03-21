@@ -4,6 +4,8 @@ WhatsApp Intent Handlers
 Handlers específicos para cada tipo de intenção detectada.
 Cada handler retorna uma resposta adequada ou None para fallback.
 """
+import re
+import unicodedata
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
@@ -14,6 +16,92 @@ from apps.stores.models import StoreProduct
 from apps.stores.models.order import StoreOrder as Order
 
 logger = logging.getLogger(__name__)
+
+
+# ─── Shared helper: dynamic item extraction ───────────────────────────────────
+
+def _normalize_text(s: str) -> str:
+    """Remove accents and lowercase for fuzzy product matching."""
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s.lower())
+        if unicodedata.category(c) != 'Mn'
+    )
+
+
+def _parse_items_from_text_dynamic(text: str, store) -> List[Dict[str, Any]]:
+    """
+    Extrai pares (product_id, quantity) de um texto livre.
+
+    Estratégia (sem keywords hardcoded):
+    1. Regex extrai pares (quantity, search_term) do texto.
+    2. Para cada par, busca o produto da loja que melhor corresponde ao search_term:
+       a. Correspondência exata (accent-insensitive substring)
+       b. Primeira palavra do nome do produto dentro do search_term
+       c. Qualquer palavra do search_term dentro do nome do produto
+    3. Se nenhum par qty+nome for encontrado, tenta apenas nome → qty=1.
+    """
+    if not store:
+        return []
+
+    text_lower = text.lower().strip()
+    if not text_lower:
+        return []
+
+    products = list(StoreProduct.objects.filter(store=store, is_active=True))
+    if not products:
+        return []
+
+    # Pre-compute normalized names once
+    normalized_products = [
+        (p, _normalize_text(p.name), p.name.lower().split())
+        for p in products
+    ]
+
+    def _match(search_term: str) -> Optional[Any]:
+        norm_search = _normalize_text(search_term)
+        best = None
+        for product, norm_name, words in normalized_products:
+            # Full name substring match (most precise)
+            if norm_search in norm_name or norm_name in norm_search:
+                return product
+            # First word of product in search term
+            if words and len(words[0]) > 2 and words[0] in search_term:
+                best = best or product
+            # Any word of search in product name
+            for word in search_term.split():
+                if len(word) > 3 and word in norm_name:
+                    best = best or product
+        return best
+
+    # Patterns: "2 rondelli de frango", "quero 1 lasanha", "1x nhoque"
+    quantity_patterns = [
+        r'(\d+)\s*x?\s+([\w\s]{3,40}?)(?:\s+(?:e|com|sem|por|para)|$)',
+        r'(\d+)\s+([\w\s]{3,40})',
+    ]
+
+    found_ids: set = set()
+    items: List[Dict[str, Any]] = []
+
+    for pattern in quantity_patterns:
+        for qty_str, search_term in re.findall(pattern, text_lower):
+            search_term = search_term.strip()
+            if not search_term:
+                continue
+            quantity = int(qty_str)
+            product = _match(search_term)
+            if product and str(product.id) not in found_ids:
+                found_ids.add(str(product.id))
+                items.append({'product_id': str(product.id), 'quantity': quantity})
+
+    # Fallback: no quantity mentioned — try just the name, qty=1
+    if not items:
+        product = _match(text_lower)
+        if product:
+            items.append({'product_id': str(product.id), 'quantity': 1})
+
+    logger.info('[_parse_items_from_text_dynamic] store=%s text=%r items=%d',
+                getattr(store, 'slug', store), text[:60], len(items))
+    return items
 
 
 class HandlerResult:
@@ -502,13 +590,19 @@ class DeliveryInfoHandler(IntentHandler):
 
 class TrackOrderHandler(IntentHandler):
     """Handler para rastrear pedido"""
-    
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         entities = intent_data.get('entities', {})
         order_number = entities.get('order_number')
-        
+
         logger.info(f"Track order: number={order_number}")
-        
+
+        if not self.store and not order_number:
+            return HandlerResult.text(
+                "Não encontrei pedidos recentes. 😕\n\n"
+                "Quer fazer um pedido novo?"
+            )
+
         # Se não informou número, busca último pedido
         if not order_number:
             last_order = Order.objects.filter(
@@ -700,99 +794,8 @@ class CreateOrderHandler(IntentHandler):
         )
     
     def _parse_items_from_text(self, text: str) -> List[Dict[str, Any]]:
-        """Extrai itens do texto - mesma lógica do QuickOrderHandler"""
-        import re
-        import unicodedata
-        items = []
-        
-        from apps.stores.models import StoreProduct
-        products = StoreProduct.objects.filter(store=self.store, is_active=True)
-        
-        text_lower = text.lower().strip()
-        if not text_lower:
-            return items
-        
-        # Mapeamento de keywords - SÓ PRODUTOS DA PASTITA
-        keyword_mappings = {
-            'rondelli': ['rondelli', 'rondelis', 'rondel', 'rondelha'],
-            'lasanha': ['lasanha', 'lasanhas'],
-            'nhoque': ['nhoque', 'nhoques'],
-            'massa': ['massa', 'massas'],
-        }
-        
-        # Padrões para extrair quantidade e produto
-        quantity_patterns = [
-            r'(\d+)\s+([\w\s]+?)(?:\s+(?:e|com|sem|por|para|$))',
-            r'(\d+)\s+([\w\s]+)',
-        ]
-        
-        found_products = set()
-        
-        for pattern in quantity_patterns:
-            matches = re.findall(pattern, text_lower)
-            for match in matches:
-                if isinstance(match, tuple):
-                    quantity = int(match[0])
-                    search_term = match[1].strip()
-                else:
-                    continue
-                
-                for product in products:
-                    if str(product.id) in found_products:
-                        continue
-                    
-                    product_name_lower = product.name.lower()
-                    product_words = product_name_lower.split()
-                    first_word = product_words[0] if product_words else ''
-                    
-                    match_found = False
-                    
-                    # Verifica keywords
-                    for keyword, variants in keyword_mappings.items():
-                        if any(variant in search_term for variant in variants):
-                            if keyword in product_name_lower:
-                                match_found = True
-                                break
-                    
-                    # Verifica primeira palavra
-                    if not match_found and first_word and len(first_word) > 3:
-                        if first_word in search_term or search_term in first_word:
-                            match_found = True
-                    
-                    # Verifica similaridade
-                    if not match_found and len(search_term) >= 4:
-                        def normalize(s):
-                            return ''.join(c for c in unicodedata.normalize('NFD', s) 
-                                         if unicodedata.category(c) != 'Mn')
-                        
-                        norm_search = normalize(search_term)
-                        norm_product = normalize(product_name_lower)
-                        
-                        if norm_search in norm_product or norm_product in norm_search:
-                            match_found = True
-                    
-                    if match_found:
-                        found_products.add(str(product.id))
-                        items.append({
-                            'product_id': str(product.id),
-                            'quantity': quantity
-                        })
-                        break
-        
-        # Se não achou com quantidade, procura só o nome do produto (quantidade 1)
-        if not items:
-            for product in products:
-                product_name_lower = product.name.lower()
-                for keyword, variants in keyword_mappings.items():
-                    if any(variant in text_lower for variant in variants):
-                        if keyword in product_name_lower:
-                            items.append({
-                                'product_id': str(product.id),
-                                'quantity': 1
-                            })
-                            return items
-        
-        return items
+        """Extrai itens do texto — busca dinâmica nos produtos da loja (sem keywords hardcoded)."""
+        return _parse_items_from_text_dynamic(text, self.store)
 
 
 class QuickOrderHandler(IntentHandler):
@@ -890,101 +893,8 @@ class QuickOrderHandler(IntentHandler):
             )
 
     def _parse_items_from_text(self, text: str) -> List[Dict[str, Any]]:
-        """Extrai itens do texto do usuário - busca inteligente por palavras-chave"""
-        import re
-        items = []
-
-        # Busca produtos na base
-        from apps.stores.models import StoreProduct
-        products = StoreProduct.objects.filter(
-            store=self.store,
-            is_active=True
-        )
-        
-        logger.info(f"[_parse_items_from_text] Total de produtos na loja: {products.count()}")
-
-        text_lower = text.lower().strip()
-        
-        # Mapeamento de palavras-chave - SÓ PRODUTOS DA PASTITA
-        keyword_mappings = {
-            'rondelli': ['rondelli', 'rondelis', 'rondel', 'rondelha'],
-            'lasanha': ['lasanha', 'lasanhas'],
-            'nhoque': ['nhoque', 'nhoques'],
-            'bolonhesa': ['bolonhesa', 'bolonhesas'],
-            'refri': ['refri', 'refrigerante', 'coca', 'guarana'],
-            'molho': ['molho', 'molhos'],
-        }
-
-        # Padrões: "2 rondelis", "quero 1 lasanha"
-        quantity_patterns = [
-            r'(\d+)\s+([\w\s]+?)(?:\s+(?:e|com|sem|por|para|$))',  # "2 rondelis de frango"
-            r'(\d+)\s+([\w\s]+)',  # "2 rondelis"
-        ]
-        
-        found_products = set()  # Evita duplicatas
-        
-        for pattern in quantity_patterns:
-            matches = re.findall(pattern, text_lower)
-            for match in matches:
-                if isinstance(match, tuple):
-                    quantity = int(match[0])
-                    search_term = match[1].strip()
-                else:
-                    continue
-                    
-                logger.info(f"[_parse_items_from_text] Buscando: qty={quantity}, term='{search_term}'")
-                
-                # Busca produto que corresponda ao termo
-                for product in products:
-                    if str(product.id) in found_products:
-                        continue
-                        
-                    product_name_lower = product.name.lower()
-                    product_words = product_name_lower.split()
-                    first_word = product_words[0] if product_words else ''
-                    
-                    # Verifica se o termo de busca corresponde ao produto
-                    match_found = False
-                    
-                    # 1. Verifica palavras-chave mapeadas
-                    for keyword, variants in keyword_mappings.items():
-                        if any(variant in search_term for variant in variants):
-                            if keyword in product_name_lower:
-                                match_found = True
-                                logger.info(f"[_parse_items_from_text] Match por keyword '{keyword}': {product.name}")
-                                break
-                    
-                    # 2. Verifica se primeira palavra do produto está no termo de busca
-                    if not match_found and first_word and len(first_word) > 3:
-                        if first_word in search_term or search_term in first_word:
-                            match_found = True
-                            logger.info(f"[_parse_items_from_text] Match por primeira palavra '{first_word}': {product.name}")
-                    
-                    # 3. Verifica similaridade (se termo tem mais de 4 caracteres)
-                    if not match_found and len(search_term) >= 4:
-                        # Remove acentos para comparação
-                        import unicodedata
-                        def normalize(s):
-                            return ''.join(c for c in unicodedata.normalize('NFD', s) 
-                                         if unicodedata.category(c) != 'Mn')
-                        
-                        norm_search = normalize(search_term)
-                        norm_product = normalize(product_name_lower)
-                        
-                        if norm_search in norm_product or norm_product in norm_search:
-                            match_found = True
-                            logger.info(f"[_parse_items_from_text] Match por similaridade: {product.name}")
-                    
-                    if match_found:
-                        found_products.add(str(product.id))
-                        items.append({
-                            'product_id': str(product.id),
-                            'quantity': quantity
-                        })
-                        break  # Encontrou produto para este termo
-
-        logger.info(f"[_parse_items_from_text] Total de itens extraídos: {len(items)}")
-        return items
+        """Extrai itens do texto do usuário — busca dinâmica nos produtos da loja."""
+        return _parse_items_from_text_dynamic(text, self.store)
 
     def _format_order_items(self, order) -> str:
         """Formata itens do pedido para exibição"""
@@ -1028,7 +938,7 @@ class PaymentStatusHandler(IntentHandler):
         # Fallback: busca último pedido pendente no banco
         pending_order = Order.objects.filter(
             customer_phone=self.conversation.phone_number,
-            store=self.store,
+            **({"store": self.store} if self.store else {}),
             status='pending_payment'
         ).order_by('-created_at').first()
 
@@ -1227,19 +1137,23 @@ class CopyPixHandler(IntentHandler):
 
 class ProductNotFoundHandler(IntentHandler):
     """Handler quando produto não é encontrado - evita alucinações da IA"""
-    
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        message = intent_data.get('original_message', '')
-        
+        if not self.store:
+            return HandlerResult.text(
+                "❌ Não encontrei esse produto.\n\n"
+                "Digite *cardápio* para ver o que temos disponível! 📋"
+            )
+
         # Busca produtos similares
         from apps.stores.models import StoreProduct
         products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
         )[:5]
-        
+
         product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in products])
-        
+
         return HandlerResult.text(
             f"❌ Não encontrei esse produto.\n\n"
             f"Temos disponíveis:\n{product_list}\n\n"
@@ -1248,36 +1162,249 @@ class ProductNotFoundHandler(IntentHandler):
 
 
 class UnknownHandler(IntentHandler):
-    """Handler para intenções desconhecidas - RESPOSTAS CURTAS E DIRETAS"""
+    """Handler para intenções desconhecidas — tenta resolver número de quantidade
+    (pedido na sequência de seleção de produto) antes de responder com fallback."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         logger.info(f"Unknown intent detected")
-        
-        message = intent_data.get('original_message', '').lower()
-        
+
+        message = intent_data.get('original_message', '').lower().strip()
+
+        # Se a mensagem é só um número, pode ser quantidade após seleção de produto
+        if message.isdigit():
+            qty = int(message)
+            if 1 <= qty <= 20:
+                result = self._try_pending_product_order(qty)
+                if result:
+                    return result
+
         # Verifica se parece ser um pedido (contém números ou nomes de produtos)
         has_number = any(char.isdigit() for char in message)
-        
+
         if has_number:
             # Parece ser pedido mas não reconheceu o produto
             return HandlerResult.text(
                 "❌ Não encontrei esse produto.\n\n"
                 "Digite *cardápio* para ver o que temos disponível! 📋"
             )
-        
+
         # Saudação simples
         if any(word in message for word in ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite']):
-            return HandlerResult.text(
-                f"Oi! 👋\n\n"
-                f"Quer fazer um pedido? Temos rondelli de frango, presunto e 4 queijos.\n\n"
-                f"É só dizer quantos você quer!"
+            store_name = getattr(self.store, 'name', 'nossa loja') if self.store else 'nossa loja'
+            return HandlerResult.buttons(
+                body=f"Oi! 👋 Bem-vindo à {store_name}!\n\nComo posso ajudar?",
+                buttons=[
+                    {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                    {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
+                    {'id': 'contact_support', 'title': '📞 Falar com Atendente'},
+                ],
             )
-        
+
         # Resposta curta e direta para qualquer coisa não reconhecida
         return HandlerResult.text(
             "Oi! Não entendi direito. 😅\n\n"
             "Quer ver nosso cardápio? Digite *cardápio* ou *menu*"
         )
+
+    def _try_pending_product_order(self, qty: int) -> Optional[HandlerResult]:
+        """Se há produto pendente na sessão, cria pedido com a quantidade digitada."""
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session = session_manager.get_or_create_session()
+            context_data = session.context or {}
+            product_id = context_data.get('pending_product_id')
+            if not product_id:
+                return None
+
+            from apps.stores.models import StoreProduct
+            product = StoreProduct.objects.get(id=product_id, is_active=True)
+
+            # Limpa produto pendente da sessão
+            session.update_context('pending_product_id', None)
+            session.update_context('pending_product_name', None)
+            session.update_context('pending_product_price', None)
+
+            return InteractiveReplyHandler(
+                self.account, self.conversation, self.company_profile
+            )._create_order_for_product(product, qty)
+        except Exception as exc:
+            logger.warning('[UnknownHandler] pending product order failed: %s', exc)
+            return None
+
+
+class InteractiveReplyHandler(IntentHandler):
+    """
+    Handles interactive replies from WhatsApp (button clicks / list selections).
+
+    ID routing conventions:
+      product_<uuid>          — user selected a product from a list menu
+      add_<uuid>_<qty>        — user clicked an "add N units" button
+      view_menu | view_catalog | order_catalog
+                              — show the product catalog list
+      start_order | order_quick
+                              — start/fast order flow
+      track_<order_id>        — track an existing order
+      contact_support         — handoff to human agent
+    """
+
+    def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        reply_id = intent_data.get('reply_id', '')
+        reply_title = intent_data.get('reply_title', '')
+
+        logger.info('[InteractiveReplyHandler] reply_id=%s', reply_id)
+
+        if reply_id.startswith('product_'):
+            return self._handle_product_selection(reply_id, reply_title)
+
+        if reply_id.startswith('add_'):
+            return self._handle_add_to_cart(reply_id)
+
+        if reply_id in ('view_menu', 'view_catalog', 'order_catalog'):
+            return MenuRequestHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        if reply_id in ('start_order', 'order_quick'):
+            return CreateOrderHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        if reply_id.startswith('track_'):
+            return TrackOrderHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        if reply_id == 'contact_support':
+            return HumanHandoffHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        # Unknown ID — acknowledge and guide
+        logger.warning('[InteractiveReplyHandler] Unhandled reply_id=%s', reply_id)
+        return HandlerResult.buttons(
+            body=f"Você selecionou: {reply_title or reply_id}\n\nComo posso ajudar?",
+            buttons=[
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
+            ],
+        )
+
+    def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:
+        """User selected a product from the interactive list — ask for quantity."""
+        product_uuid = reply_id[len('product_'):]
+
+        try:
+            product = StoreProduct.objects.get(id=product_uuid, is_active=True)
+        except StoreProduct.DoesNotExist:
+            logger.warning('[InteractiveReplyHandler] product_id not found: %s', product_uuid)
+            return HandlerResult.text(
+                "Produto não encontrado. 😕\n\nQuer ver o cardápio completo? Digite *cardápio*."
+            )
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Error fetching product %s: %s', product_uuid, exc)
+            return HandlerResult.text("Erro ao buscar produto. Tente novamente.")
+
+        # Persist selected product in session so the next free-text reply can resolve it
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session = session_manager.get_or_create_session()
+            session.update_context('pending_product_id', str(product.id))
+            session.update_context('pending_product_name', product.name)
+            session.update_context('pending_product_price', float(product.price))
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] session context save failed: %s', exc)
+
+        return HandlerResult.buttons(
+            body=(
+                f"🍽️ *{product.name}*\n"
+                f"💰 R$ {product.price}\n\n"
+                f"Quantas unidades você quer?"
+            ),
+            buttons=[
+                {'id': f'add_{product.id}_1', 'title': '1 unidade'},
+                {'id': f'add_{product.id}_2', 'title': '2 unidades'},
+                {'id': f'add_{product.id}_3', 'title': '3 unidades'},
+            ],
+            footer="Ou digite a quantidade desejada",
+        )
+
+    def _handle_add_to_cart(self, reply_id: str) -> HandlerResult:
+        """User clicked an 'add N units' button: add_<product_uuid>_<qty>."""
+        # Format: add_<uuid>_<qty>  — qty is the last segment, uuid may contain hyphens
+        parts = reply_id.split('_')
+        if len(parts) < 3:
+            return HandlerResult.text("Erro ao processar pedido. Tente novamente.")
+
+        try:
+            quantity = int(parts[-1])
+            # UUID sits between the first underscore and the last underscore
+            product_id = '_'.join(parts[1:-1])
+        except (ValueError, IndexError):
+            return HandlerResult.text("Erro ao processar pedido. Tente novamente.")
+
+        try:
+            product = StoreProduct.objects.get(id=product_id, is_active=True)
+        except StoreProduct.DoesNotExist:
+            return HandlerResult.text("Produto não encontrado. 😕")
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Error fetching product %s: %s', product_id, exc)
+            return HandlerResult.text("Erro ao buscar produto. Tente novamente.")
+
+        return self._create_order_for_product(product, quantity)
+
+    def _create_order_for_product(self, product, quantity: int) -> HandlerResult:
+        """Create an order for one product + quantity."""
+        if not self.store:
+            return HandlerResult.text("Loja não disponível no momento. 😔")
+
+        from apps.whatsapp.services import create_order_from_whatsapp
+
+        result = create_order_from_whatsapp(
+            store_slug=self.store.slug,
+            phone_number=self.conversation.phone_number,
+            items=[{'product_id': str(product.id), 'quantity': quantity}],
+            customer_name=self.get_customer_name(),
+            delivery_address='',
+            customer_notes='Pedido via WhatsApp (seleção de cardápio)',
+        )
+
+        if result.get('success'):
+            order = result['order']
+            pix_data = result.get('pix_data', {})
+
+            if pix_data.get('success'):
+                pix_code = pix_data.get('pix_code', '')
+                from apps.whatsapp.services.templates import JasperTemplates
+                template = JasperTemplates.order_confirmation(
+                    order_number=order.order_number,
+                    total=float(order.total),
+                    items=[
+                        {'name': item.product_name, 'quantity': item.quantity}
+                        for item in order.items.all()
+                    ],
+                    pix_code=pix_code,
+                    ticket_url=pix_data.get('ticket_url', ''),
+                )
+                return HandlerResult.buttons(
+                    body=template.body,
+                    buttons=template.buttons,
+                    header=template.header,
+                    footer=template.footer,
+                )
+            else:
+                return HandlerResult.text(
+                    f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                    f"💰 Total: R$ {order.total}\n"
+                    f"⚠️ Erro ao gerar PIX: {pix_data.get('error', 'Tente novamente')}\n\n"
+                    f"Você pode pagar na entrega."
+                )
+        else:
+            return HandlerResult.text(
+                f"❌ Erro ao criar pedido: {result.get('error', 'Erro desconhecido')}\n\n"
+                f"Tente novamente ou fale com um atendente."
+            )
 
 
 # ===== MAPEAMENTO DE HANDLERS =====

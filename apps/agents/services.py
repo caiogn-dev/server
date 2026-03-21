@@ -1,22 +1,12 @@
 """
 Langchain Service for Agent management - Fixed for Kimi Coding API
 """
-import sys
 import json
 import time
 import uuid
 import logging
+import unicodedata
 from typing import List, Dict, Any, Optional
-
-# Fix encoding issues with special characters (á, é, í, ó, ú, ç, etc.)
-import os
-os.environ['PYTHONIOENCODING'] = 'utf-8'
-os.environ['LC_ALL'] = 'C.UTF-8'
-os.environ['LANG'] = 'C.UTF-8'
-
-# Set default encoding for Python 3
-if hasattr(sys, 'setdefaultencoding'):
-    sys.setdefaultencoding('utf-8')
 
 from django.conf import settings
 from django.core.cache import cache
@@ -31,32 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 def remove_accents(text):
-    """Remove accents from text to avoid encoding issues."""
+    """Remove combining diacritics from text to avoid encoding issues with some LLM APIs."""
     if not text:
         return text
-    
-    # Mapping of accented characters to their non-accented equivalents
-    accents_map = {
-        'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a', 'å': 'a',
-        'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-        'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-        'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o', 'ø': 'o',
-        'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-        'ç': 'c',
-        'ñ': 'n',
-        'Á': 'A', 'À': 'A', 'Ã': 'A', 'Â': 'A', 'Ä': 'A', 'Å': 'A',
-        'É': 'E', 'È': 'E', 'Ê': 'E', 'Ë': 'E',
-        'Í': 'I', 'Ì': 'I', 'Î': 'I', 'Ï': 'I',
-        'Ó': 'O', 'Ò': 'O', 'Õ': 'O', 'Ô': 'O', 'Ö': 'O', 'Ø': 'O',
-        'Ú': 'U', 'Ù': 'U', 'Û': 'U', 'Ü': 'U',
-        'Ç': 'C',
-        'Ñ': 'N',
-    }
-    
-    result = ''
-    for char in text:
-        result += accents_map.get(char, char)
-    return result
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', text)
+        if unicodedata.category(c) != 'Mn'
+    )
 
 
 class LangchainService:
@@ -135,7 +106,7 @@ class LangchainService:
             return ChatOpenAI(
                 model=model_name,
                 temperature=self.agent.temperature,
-                max_tokens=min(self.agent.max_tokens, 200),  # Limita respostas longas
+                max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
                 api_key=api_key,
                 base_url=base_url or "https://integrate.api.nvidia.com/v1",
@@ -238,40 +209,30 @@ class LangchainService:
                     conv = Conversation.objects.select_related('account').get(id=conversation_id)
                     if hasattr(conv.account, 'store'):
                         store = conv.account.store
-                except:
-                    pass
-            
+                        if store:
+                            logger.info(f"[AGENT CONTEXT] Found store via conversation: {store.name}")
+                except Conversation.DoesNotExist:
+                    logger.warning(f"[AGENT CONTEXT] Conversation {conversation_id} not found")
+                except Exception as e:
+                    logger.error(f"[AGENT CONTEXT] Error loading store from conversation: {e}")
+
             # If not found, try from agent's associated accounts
             if not store:
                 try:
-                    from apps.stores.models import Store
-                    # Get first store from agent's accounts
                     agent_accounts = self.agent.accounts.all()
-                    logger.info(f"[AGENT CONTEXT] Agent accounts count: {agent_accounts.count()}")
-                    if agent_accounts:
-                        first_account = agent_accounts.first()
-                        logger.info(f"[AGENT CONTEXT] First account: {first_account}")
+                    first_account = agent_accounts.first()
+                    if first_account:
                         if hasattr(first_account, 'store') and first_account.store:
                             store = first_account.store
                             logger.info(f"[AGENT CONTEXT] Found store via account.store: {store.name}")
-                        # Try stores many-to-many relation
                         elif hasattr(first_account, 'stores') and first_account.stores.exists():
                             store = first_account.stores.first()
                             logger.info(f"[AGENT CONTEXT] Found store via account.stores: {store.name}")
                 except Exception as e:
                     logger.error(f"[AGENT CONTEXT] Error loading store from accounts: {e}")
-            
-            # FALLBACK: If no store found, use 'pastita' store
+
             if not store:
-                try:
-                    from apps.stores.models import Store
-                    store = Store.objects.filter(slug='pastita').first()
-                    if store:
-                        logger.info(f"[AGENT CONTEXT] Using fallback store: {store.name}")
-                    else:
-                        logger.warning("[AGENT CONTEXT] Fallback store 'pastita' not found!")
-                except Exception as e:
-                    logger.error(f"[AGENT CONTEXT] Error loading fallback store: {e}")
+                logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
             
             # Load products from store
             if store:

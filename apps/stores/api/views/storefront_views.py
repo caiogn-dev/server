@@ -15,8 +15,16 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
 
+class PublicReadThrottle(AnonRateThrottle):
+    """300/min for read-only public catalog — storefront browsing is high-frequency."""
+    scope = 'public_read'
+
+class PublicWriteThrottle(AnonRateThrottle):
+    """60/min for cart mutations — protects against cart-spam, allows normal use."""
+    scope = 'public_write'
+
 class CheckoutThrottle(AnonRateThrottle):
-    """5 checkout attempts per minute per IP — prevents bot ordering."""
+    """20/min per IP — protects against bot ordering while allowing legitimate retries."""
     scope = 'checkout'
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch
@@ -188,6 +196,7 @@ class StorePublicView(APIView):
 class StoreCatalogView(APIView):
     """Public catalog endpoint for a store."""
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PublicReadThrottle]
     
     def get(self, request, store_slug):
         """Get store catalog with categories, products, and combos."""
@@ -349,6 +358,7 @@ class StoreCustomerProfileView(APIView):
 class StoreCartViewSet(viewsets.ViewSet):
     """ViewSet for managing shopping carts."""
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PublicWriteThrottle]
     
     def get_store(self, store_slug):
         return get_object_or_404(Store, slug=store_slug, status='active')

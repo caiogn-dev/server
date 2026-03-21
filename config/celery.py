@@ -40,6 +40,7 @@ app.conf.beat_schedule = {
         'schedule': 300.0,  # Every 5 minutes
     },
     # Automation tasks (WhatsApp sessions)
+    # CANONICAL: use apps.automation.tasks — single source of truth
     'check-abandoned-carts': {
         'task': 'apps.automation.tasks.check_abandoned_carts',
         'schedule': 300.0,  # Every 5 minutes
@@ -48,15 +49,9 @@ app.conf.beat_schedule = {
         'task': 'apps.automation.tasks.check_pending_pix_payments',
         'schedule': 600.0,  # Every 10 minutes
     },
-    # NOVAS: Automações proativas WhatsApp
-    'check-pending-payments-new': {
-        'task': 'apps.whatsapp.tasks.automation_tasks.check_pending_payments',
-        'schedule': 600.0,  # Every 10 minutes
-    },
-    'check-abandoned-carts-new': {
-        'task': 'apps.whatsapp.tasks.automation_tasks.check_abandoned_carts',
-        'schedule': 900.0,  # Every 15 minutes
-    },
+    # REMOVED: check-pending-payments-new + check-abandoned-carts-new were
+    # duplicates of the tasks above with different schedules (race condition).
+    # Kept only the canonical apps.automation.tasks versions.
     'cleanup-expired-sessions': {
         'task': 'apps.automation.tasks.cleanup_expired_sessions',
         'schedule': 86400.0,  # Daily
@@ -89,6 +84,12 @@ app.conf.beat_schedule = {
     'refresh-instagram-tokens': {
         'task': 'apps.instagram.tasks.refresh_access_tokens',
         'schedule': 86400.0,  # Daily
+    },
+    # Cleanup old IntentLog entries (daily at 3 AM)
+    'cleanup-intent-logs': {
+        'task': 'apps.automation.tasks.scheduled.cleanup_intent_logs',
+        'schedule': 86400.0,  # Daily
+        'kwargs': {'days_to_keep': 30},
     },
     # NOTE: process_scheduled_messages is now unified in apps.automation.tasks.scheduled
     # The task 'process-scheduled-messages' above handles all scheduled messages

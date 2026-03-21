@@ -42,26 +42,32 @@ class SessionContext:
         ]
     
     def start_order_flow(self):
-        """Inicia fluxo de pedido"""
+        """Inicia fluxo de pedido (update atômico)."""
         self.current_flow = 'order'
         self.flow_step = 1
         if self.session:
+            CustomerSession.objects.filter(pk=self.session.pk).update(
+                status=CustomerSession.SessionStatus.CART_CREATED,
+            )
             self.session.status = CustomerSession.SessionStatus.CART_CREATED
-            self.session.save()
-    
+
     def start_payment_flow(self):
-        """Inicia fluxo de pagamento"""
+        """Inicia fluxo de pagamento (update atômico)."""
         self.current_flow = 'payment'
         self.flow_step = 1
         if self.session:
+            CustomerSession.objects.filter(pk=self.session.pk).update(
+                status=CustomerSession.SessionStatus.PAYMENT_PENDING,
+            )
             self.session.status = CustomerSession.SessionStatus.PAYMENT_PENDING
-            self.session.save()
-    
+
     def complete_flow(self):
-        """Completa o fluxo atual"""
+        """Completa o fluxo atual (update atômico)."""
         if self.session:
+            CustomerSession.objects.filter(pk=self.session.pk).update(
+                status=CustomerSession.SessionStatus.COMPLETED,
+            )
             self.session.status = CustomerSession.SessionStatus.COMPLETED
-            self.session.save()
         self.current_flow = None
         self.flow_step = 0
         self.temp_data = {}
@@ -153,20 +159,24 @@ class SessionManager:
         return self._context
     
     def reset_session(self):
-        """Reseta a sessão para estado inicial"""
+        """Reseta a sessão para estado inicial de forma atomica."""
         context = self.get_context()
         context.reset()
-        
-        # Limpa dados do carrinho
+
         if self._session:
-            self._session.cart_data = {}
-            self._session.cart_total = 0
-            self._session.cart_items_count = 0
-            self._session.pix_code = ''
-            self._session.pix_qr_code = ''
-            self._session.payment_id = ''
-            self._session.save()
-        
+            # update() é atômico — evita race condition quando dois workers resetam ao mesmo tempo
+            CustomerSession.objects.filter(pk=self._session.pk).update(
+                cart_data={},
+                cart_total=0,
+                cart_items_count=0,
+                pix_code='',
+                pix_qr_code='',
+                payment_id='',
+                status=CustomerSession.SessionStatus.ACTIVE,
+            )
+            # Sincroniza objeto local com os valores gravados
+            self._session.refresh_from_db()
+
         logger.info(f"[SessionManager] Session reset for {self.phone_number}")
     
     def update_cart(self, items: list, total: Decimal):
