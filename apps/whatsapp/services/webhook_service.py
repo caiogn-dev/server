@@ -200,7 +200,7 @@ class WebhookService:
         if self.webhook_repo.exists_by_event_id(event_id):
             logger.info(f"Duplicate message event: {event_id}")
             return None
-        
+
         contact_info = {}
         if contacts:
             contact = contacts[0]
@@ -208,18 +208,22 @@ class WebhookService:
                 'wa_id': contact.get('wa_id'),
                 'profile': contact.get('profile', {})
             }
-        
-        event = self.webhook_repo.create(
-            account=account,
-            event_id=event_id,
-            event_type=WebhookEvent.EventType.MESSAGE,
-            payload={
-                'message': message_data,
-                'contact': contact_info
-            },
-            headers=headers
-        )
-        
+
+        try:
+            event = self.webhook_repo.create(
+                account=account,
+                event_id=event_id,
+                event_type=WebhookEvent.EventType.MESSAGE,
+                payload={
+                    'message': message_data,
+                    'contact': contact_info
+                },
+                headers=headers
+            )
+        except IntegrityError:
+            logger.info(f"Duplicate message event (race condition): {event_id}")
+            return None
+
         logger.info(f"Message event created: {event.id}")
         return event
 
@@ -239,15 +243,19 @@ class WebhookService:
         if self.webhook_repo.exists_by_event_id(event_id):
             logger.info(f"Duplicate status event: {event_id}")
             return None
-        
-        event = self.webhook_repo.create(
-            account=account,
-            event_id=event_id,
-            event_type=WebhookEvent.EventType.STATUS,
-            payload=status_data,
-            headers=headers
-        )
-        
+
+        try:
+            event = self.webhook_repo.create(
+                account=account,
+                event_id=event_id,
+                event_type=WebhookEvent.EventType.STATUS,
+                payload=status_data,
+                headers=headers
+            )
+        except IntegrityError:
+            logger.info(f"Duplicate status event (race condition): {event_id}")
+            return None
+
         logger.info(f"Status event created: {event.id}")
         return event
 

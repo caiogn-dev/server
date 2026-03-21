@@ -478,12 +478,19 @@ class LangchainService:
         messages = []
         
         # Add system prompt with dynamic context
-        system_prompt = self.agent.system_prompt or "Você é um assistente virtual util."
+        system_prompt = self.agent.system_prompt or (
+            "Voce e um atendente virtual de uma loja de delivery, respondendo pelo WhatsApp. "
+            "Responda de forma natural, amigavel e direta — como um atendente humano responderia. "
+            "Nao use listas com bullets ou formatos roboticos. Use emojis com moderacao. "
+            "Voce tem acesso ao cardapio completo e ao historico do cliente. "
+            "Quando o cliente quiser fazer um pedido, pergunte o que ele quer. "
+            "Quando o cliente perguntar sobre produtos, consulte o cardapio disponivel. "
+            "Responda em portugues brasileiro."
+        )
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         else:
-            # Fallback if no context built
-            system_prompt = f"{system_prompt}\n\n⚠️ ERRO: Nao foi possivel carregar o cardapio. Informe ao cliente que voce nao tem acesso aos produtos no momento."
+            system_prompt = f"{system_prompt}\n\nOBS: Cardapio nao carregado. Informe ao cliente que voce nao tem acesso ao cardapio no momento."
         # Remove accents before creating message
         messages.append(SystemMessage(content=remove_accents(system_prompt)))
         
