@@ -106,26 +106,25 @@ class JasperTemplates:
         )
     
     @staticmethod
-    def order_confirmation(order_number: str, total: float, items: List[Dict], 
+    def order_confirmation(order_number: str, total: float, items: List[Dict],
                           pix_code: str, ticket_url: str) -> MessageTemplate:
-        """Confirmação de pedido com PIX - SUPER CURTO E DIRETO"""
+        """Confirmação de pedido com PIX - envia código completo para fácil cópia"""
         items_text = ""
         for item in items:
             items_text += f"• {item.get('quantity', 1)}x {item.get('name')}\n"
-        
+
         return MessageTemplate(
             name="order_confirmation",
-            header=f"✅ Pedido #{order_number}",
+            header=f"✅ Pedido #{order_number} confirmado!",
             body=(
                 f"{items_text}\n"
-                f"💰 Total: R$ {total:.2f}\n\n"
-                f"Código PIX:\n"
-                f"```{pix_code[:60]}...```"
+                f"💰 *Total: R$ {total:.2f}*\n\n"
+                f"💳 *Pague via PIX — copie o código abaixo:*\n\n"
+                f"{pix_code}\n\n"
+                f"Segure o código acima e escolha \"Copiar\" para pagar no seu banco."
             ),
-            buttons=[
-                {"id": "copy_pix", "title": "📋 Copiar PIX"},
-            ],
-            footer="Cole no app do seu banco"
+            buttons=None,
+            footer="Seu pedido será confirmado após o pagamento ✅"
         )
     
     @staticmethod

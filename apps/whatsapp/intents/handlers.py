@@ -746,13 +746,16 @@ class CreateOrderHandler(IntentHandler):
                     pix_code=pix_code,
                     ticket_url=pix_data.get('ticket_url', '')
                 )
-                
-                return HandlerResult.buttons(
-                    body=template.body,
-                    buttons=template.buttons,
-                    header=template.header,
-                    footer=template.footer
-                )
+
+                if template.buttons:
+                    return HandlerResult.buttons(
+                        body=template.body,
+                        buttons=template.buttons,
+                        header=template.header,
+                        footer=template.footer
+                    )
+                parts = [p for p in [template.header, template.body, template.footer] if p]
+                return HandlerResult.text('\n\n'.join(parts))
             else:
                 # Pedido criado mas PIX falhou
                 error_msg = pix_data.get('error', 'Erro ao gerar PIX')
@@ -868,12 +871,15 @@ class QuickOrderHandler(IntentHandler):
                     ticket_url=pix_data.get('ticket_url', '')
                 )
 
-                return HandlerResult.buttons(
-                    body=template.body,
-                    buttons=template.buttons,
-                    header=template.header,
-                    footer=template.footer
-                )
+                if template.buttons:
+                    return HandlerResult.buttons(
+                        body=template.body,
+                        buttons=template.buttons,
+                        header=template.header,
+                        footer=template.footer
+                    )
+                parts = [p for p in [template.header, template.body, template.footer] if p]
+                return HandlerResult.text('\n\n'.join(parts))
             else:
                 error_msg = pix_data.get('error', 'Erro desconhecido')
                 logger.error(f"[QuickOrderHandler] Erro no PIX: {error_msg}")
@@ -1404,12 +1410,15 @@ class InteractiveReplyHandler(IntentHandler):
                     pix_code=pix_code,
                     ticket_url=pix_data.get('ticket_url', ''),
                 )
-                return HandlerResult.buttons(
-                    body=template.body,
-                    buttons=template.buttons,
-                    header=template.header,
-                    footer=template.footer,
-                )
+                if template.buttons:
+                    return HandlerResult.buttons(
+                        body=template.body,
+                        buttons=template.buttons,
+                        header=template.header,
+                        footer=template.footer,
+                    )
+                parts = [p for p in [template.header, template.body, template.footer] if p]
+                return HandlerResult.text('\n\n'.join(parts))
             else:
                 return HandlerResult.text(
                     f"✅ *Pedido #{order.order_number} criado!*\n\n"
