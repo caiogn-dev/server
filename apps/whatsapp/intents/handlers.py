@@ -192,9 +192,11 @@ class IntentHandler:
         1. Resumo do pedido com aviso de que o PIX vem a seguir
         2. Apenas o código PIX (fácil de copiar)
         """
+        from apps.stores.models import StoreOrderItem
+        order_items = StoreOrderItem.objects.filter(order_id=order.id)
         items_text = '\n'.join(
             f"• {item.quantity}x {item.product_name}"
-            for item in order.items.all()
+            for item in order_items
         )
         msg1 = (
             f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
@@ -212,7 +214,76 @@ class IntentHandler:
 
         # Segunda mensagem: somente o código
         return HandlerResult.text(pix_code)
-    
+
+    def _ask_delivery_method(self, items: List[Dict[str, Any]]) -> 'HandlerResult':
+        """Salva itens na sessão e pergunta entrega ou retirada."""
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager.save_pending_order_items(items)
+        except Exception as exc:
+            logger.warning("[_ask_delivery_method] Erro ao salvar itens pendentes: %s", exc)
+
+        store = self.store
+        delivery_enabled = getattr(store, 'delivery_enabled', True) if store else True
+        pickup_enabled = getattr(store, 'pickup_enabled', True) if store else True
+
+        buttons = []
+        if delivery_enabled:
+            buttons.append({'id': 'order_delivery', 'title': '🛵 Entrega'})
+        if pickup_enabled:
+            buttons.append({'id': 'order_pickup', 'title': '🏪 Retirada'})
+
+        if not buttons:
+            # Loja sem método configurado — força entrega
+            buttons = [{'id': 'order_delivery', 'title': '🛵 Entrega'}]
+
+        return HandlerResult.buttons(
+            body="📦 *Como prefere receber seu pedido?*",
+            buttons=buttons,
+        )
+
+    def _finalize_order(
+        self,
+        items: List[Dict[str, Any]],
+        delivery_method: str,
+        delivery_address: str = '',
+        customer_notes: str = '',
+    ) -> 'HandlerResult':
+        """Cria o pedido com o método de entrega já definido e retorna confirmação."""
+        from apps.whatsapp.services import create_order_from_whatsapp
+
+        store_slug = getattr(self.store, 'slug', '') if self.store else ''
+        if not store_slug:
+            return HandlerResult.text("❌ Loja não disponível no momento.")
+
+        result = create_order_from_whatsapp(
+            store_slug=store_slug,
+            phone_number=self.conversation.phone_number,
+            items=items,
+            customer_name=self.get_customer_name(),
+            delivery_address=delivery_address,
+            customer_notes=customer_notes,
+            delivery_method=delivery_method,
+        )
+
+        if result.get('success'):
+            order = result['order']
+            pix_data = result.get('pix_data', {})
+            if pix_data.get('success'):
+                return self._send_pix_confirmation(order, pix_data['pix_code'])
+            error_msg = pix_data.get('error', 'Tente novamente')
+            return HandlerResult.text(
+                f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                f"💰 Total: R$ {float(order.total):.2f}\n"
+                f"⚠️ Erro ao gerar PIX: {error_msg}"
+            )
+
+        error = result.get('error', 'Erro desconhecido')
+        return HandlerResult.text(
+            f"❌ Erro ao criar pedido: {error}\n\nTente novamente ou fale com um atendente."
+        )
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         """Processa a intenção e retorna resultado"""
         raise NotImplementedError
@@ -730,55 +801,9 @@ class CreateOrderHandler(IntentHandler):
         return items
     
     def _create_real_order(self, items: List[Dict], message_text: str) -> HandlerResult:
-        """Cria pedido real no banco"""
-        from apps.whatsapp.services import create_order_from_whatsapp
-        
-        store_slug = getattr(self.store, 'slug', 'pastita')
-        logger.info(f"[CreateOrderHandler] Criando pedido para {self.conversation.phone_number}")
-        
-        result = create_order_from_whatsapp(
-            store_slug=store_slug,
-            phone_number=self.conversation.phone_number,
-            items=items,
-            customer_name=self.get_customer_name(),
-            delivery_address='',
-            customer_notes=f'Pedido via WhatsApp: {message_text}'
-        )
-        
-        logger.info(f"[CreateOrderHandler] Resultado: {result.get('success')}")
-        
-        if result.get('success'):
-            order = result['order']
-            pix_data = result.get('pix_data', {})
-            
-            if pix_data.get('success'):
-                pix_code = pix_data.get('pix_code', '')
-                
-                # Atualiza sessão com dados do pedido
-                from apps.automation.services import get_session_manager
-                session_manager = get_session_manager(self.account, self.conversation.phone_number)
-                session_manager.set_payment_pending(
-                    order_id=str(order.id),
-                    pix_code=pix_code,
-                    cart_total=float(order.total)
-                )
-                
-                return self._send_pix_confirmation(order, pix_code)
-            else:
-                # Pedido criado mas PIX falhou
-                error_msg = pix_data.get('error', 'Erro ao gerar PIX')
-                return HandlerResult.text(
-                    f"✅ *Pedido #{order.order_number} criado!*\n\n"
-                    f"💰 Total: R$ {order.total}\n"
-                    f"⚠️ Erro no PIX: {error_msg}\n\n"
-                    f"Você pode pagar na entrega ou tentar novamente."
-                )
-        else:
-            error = result.get('error', 'Erro desconhecido')
-            return HandlerResult.text(
-                f"❌ *Erro ao criar pedido:*\n{error}\n\n"
-                f"Tente novamente ou fale com um atendente."
-            )
+        """Salva itens e pergunta método de entrega antes de criar o pedido."""
+        logger.info(f"[CreateOrderHandler] Perguntando método de entrega para {self.conversation.phone_number}")
+        return self._ask_delivery_method(items)
     
     def _start_order_flow(self) -> HandlerResult:
         """Inicia fluxo de pedido quando não achou itens"""
@@ -828,12 +853,6 @@ class QuickOrderHandler(IntentHandler):
                 "Ou digite 'cardápio' para ver opções."
             )
 
-        # Processa itens e cria pedido
-        from apps.whatsapp.services import create_order_from_whatsapp
-
-        store_slug = getattr(self.store, 'slug', 'pastita')
-        logger.info(f"[QuickOrderHandler] Store slug: {store_slug}")
-
         # Extrai itens do texto
         items = self._parse_items_from_text(message_text)
         logger.info(f"[QuickOrderHandler] Itens extraídos: {items}")
@@ -845,48 +864,8 @@ class QuickOrderHandler(IntentHandler):
                 "Tente escrever de outra forma ou digite 'cardápio'."
             )
 
-        # Cria o pedido
-        logger.info(f"[QuickOrderHandler] Criando pedido para {self.conversation.phone_number}")
-        result = create_order_from_whatsapp(
-            store_slug=store_slug,
-            phone_number=self.conversation.phone_number,
-            items=items,
-            customer_name=self.get_customer_name(),
-            delivery_address='',
-            customer_notes=f'Pedido rápido via WhatsApp: {message_text}'
-        )
-
-        logger.info(f"[QuickOrderHandler] Resultado da criação: {result.get('success')}")
-
-        if result.get('success'):
-            order = result['order']
-            pix_data = result.get('pix_data', {})
-            
-            logger.info(f"[QuickOrderHandler] Pedido criado: {order.order_number}")
-            logger.info(f"[QuickOrderHandler] PIX data: {pix_data}")
-
-            if pix_data.get('success'):
-                pix_code = pix_data.get('pix_code', '')
-                logger.info(f"[QuickOrderHandler] PIX code: {pix_code[:50]}...")
-                
-                return self._send_pix_confirmation(order, pix_code)
-            else:
-                error_msg = pix_data.get('error', 'Erro desconhecido')
-                logger.error(f"[QuickOrderHandler] Erro no PIX: {error_msg}")
-                return HandlerResult.text(
-                    f"✅ *Pedido #{order.order_number} criado!*\n\n"
-                    f"💰 Total: R$ {order.total}\n"
-                    f"📋 Itens:\n{self._format_order_items(order)}\n\n"
-                    f"⚠️ *Erro ao gerar PIX:* {error_msg}\n"
-                    f"Você pode pagar na entrega ou tentar novamente."
-                )
-        else:
-            error = result.get('error', 'Erro desconhecido')
-            logger.error(f"[QuickOrderHandler] Erro ao criar pedido: {error}")
-            return HandlerResult.text(
-                f"❌ *Erro ao criar pedido:*\n{error}\n\n"
-                f"Se preferir, ligue para nós ou tente pelo site."
-            )
+        logger.info(f"[QuickOrderHandler] {len(items)} itens extraídos, perguntando método de entrega")
+        return self._ask_delivery_method(items)
 
     def _parse_items_from_text(self, text: str) -> List[Dict[str, Any]]:
         """Extrai itens do texto do usuário — busca dinâmica nos produtos da loja."""
@@ -1266,6 +1245,9 @@ class InteractiveReplyHandler(IntentHandler):
                 self.account, self.conversation, self.company_profile
             ).handle(intent_data)
 
+        if reply_id in ('order_delivery', 'order_pickup'):
+            return self._handle_delivery_choice(reply_id)
+
         if reply_id.startswith('pix_copy'):
             return CopyPixHandler(
                 self.account, self.conversation, self.company_profile
@@ -1302,6 +1284,32 @@ class InteractiveReplyHandler(IntentHandler):
                 {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
             ],
         )
+
+    def _handle_delivery_choice(self, reply_id: str) -> HandlerResult:
+        """Usuário escolheu entrega ou retirada — recupera itens pendentes e cria o pedido."""
+        delivery_method = 'pickup' if reply_id == 'order_pickup' else 'delivery'
+
+        try:
+            from apps.automation.services import get_session_manager
+            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            items = session_manager.get_pending_order_items()
+            session_manager.clear_pending_order_items()
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Erro ao recuperar itens pendentes: %s', exc)
+            items = []
+
+        if not items:
+            logger.warning('[InteractiveReplyHandler] Nenhum item pendente para %s', reply_id)
+            return HandlerResult.text(
+                "❌ Não encontrei itens no seu pedido.\n\n"
+                "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
+            )
+
+        logger.info(
+            '[InteractiveReplyHandler] Criando pedido: método=%s, itens=%s',
+            delivery_method, items
+        )
+        return self._finalize_order(items, delivery_method=delivery_method)
 
     def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:
         """User selected a product from the interactive list — ask for quantity."""
@@ -1368,40 +1376,12 @@ class InteractiveReplyHandler(IntentHandler):
         return self._create_order_for_product(product, quantity)
 
     def _create_order_for_product(self, product, quantity: int) -> HandlerResult:
-        """Create an order for one product + quantity."""
+        """Salva item na sessão e pergunta método de entrega."""
         if not self.store:
             return HandlerResult.text("Loja não disponível no momento. 😔")
 
-        from apps.whatsapp.services import create_order_from_whatsapp
-
-        result = create_order_from_whatsapp(
-            store_slug=self.store.slug,
-            phone_number=self.conversation.phone_number,
-            items=[{'product_id': str(product.id), 'quantity': quantity}],
-            customer_name=self.get_customer_name(),
-            delivery_address='',
-            customer_notes='Pedido via WhatsApp (seleção de cardápio)',
-        )
-
-        if result.get('success'):
-            order = result['order']
-            pix_data = result.get('pix_data', {})
-
-            if pix_data.get('success'):
-                pix_code = pix_data.get('pix_code', '')
-                return self._send_pix_confirmation(order, pix_code)
-            else:
-                return HandlerResult.text(
-                    f"✅ *Pedido #{order.order_number} criado!*\n\n"
-                    f"💰 Total: R$ {order.total}\n"
-                    f"⚠️ Erro ao gerar PIX: {pix_data.get('error', 'Tente novamente')}\n\n"
-                    f"Você pode pagar na entrega."
-                )
-        else:
-            return HandlerResult.text(
-                f"❌ Erro ao criar pedido: {result.get('error', 'Erro desconhecido')}\n\n"
-                f"Tente novamente ou fale com um atendente."
-            )
+        items = [{'product_id': str(product.id), 'quantity': quantity}]
+        return self._ask_delivery_method(items)
 
 
 # ===== MAPEAMENTO DE HANDLERS =====

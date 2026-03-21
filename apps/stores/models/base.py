@@ -234,12 +234,19 @@ class Store(BaseModel):
             except CompanyProfile.DoesNotExist:
                 pass
 
-        profile = CompanyProfile.objects.create(
-            store=self,
-            account=whatsapp_account,
-            _company_name=self.name,
-            _description=self.description
+        lookup = {'account': whatsapp_account} if whatsapp_account else {'store': self}
+        profile, created = CompanyProfile.objects.get_or_create(
+            **lookup,
+            defaults={
+                'store': self,
+                'account': whatsapp_account,
+                '_company_name': self.name,
+                '_description': self.description or '',
+            }
         )
+        if not created and profile.store_id != self.id:
+            profile.store = self
+            profile.save(update_fields=['store', 'updated_at'])
         profile.sync_from_store(save=True)
         return profile
 

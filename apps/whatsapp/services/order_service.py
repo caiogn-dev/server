@@ -317,28 +317,30 @@ def create_order_from_whatsapp(
     items: List[Dict[str, Any]],
     customer_name: str = '',
     delivery_address: str = '',
-    customer_notes: str = ''
+    customer_notes: str = '',
+    delivery_method: str = 'delivery'
 ) -> Dict[str, Any]:
     """
     Função utilitária para criar pedido via WhatsApp.
     """
     logger.info(f"[create_order_from_whatsapp] Chamada para {phone_number} na loja {store_slug}")
-    logger.info(f"[create_order_from_whatsapp] Itens: {items}")
-    
+    logger.info(f"[create_order_from_whatsapp] Itens: {items}, método: {delivery_method}")
+
     try:
         store = Store.objects.get(slug=store_slug, is_active=True)
         logger.info(f"[create_order_from_whatsapp] Loja encontrada: {store.name}")
-        
+
         service = WhatsAppOrderService(
             store=store,
             phone_number=phone_number,
             customer_name=customer_name
         )
-        
+
         result = service.create_order_from_cart(
             items=items,
             delivery_address=delivery_address,
-            customer_notes=customer_notes
+            customer_notes=customer_notes,
+            delivery_method=delivery_method
         )
         
         logger.info(f"[create_order_from_whatsapp] Resultado: {result.get('success')}")

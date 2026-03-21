@@ -179,6 +179,32 @@ class SessionManager:
 
         logger.info(f"[SessionManager] Session reset for {self.phone_number}")
     
+    def save_pending_order_items(self, items: list) -> None:
+        """Salva itens pendentes na sessão enquanto espera escolha de entrega/retirada."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data['pending_items'] = items
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+            logger.info(f"[SessionManager] Pending items saved: {len(items)} items")
+
+    def get_pending_order_items(self) -> list:
+        """Recupera itens pendentes da sessão."""
+        session = self.get_or_create_session()
+        if session:
+            return (session.cart_data or {}).get('pending_items', [])
+        return []
+
+    def clear_pending_order_items(self) -> None:
+        """Remove itens pendentes da sessão após criar o pedido."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data.pop('pending_items', None)
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
     def update_cart(self, items: list, total: Decimal):
         """Atualiza dados do carrinho"""
         session = self.get_or_create_session()
