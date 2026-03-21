@@ -1142,13 +1142,15 @@ class HumanHandoffHandler(IntentHandler):
     """Handler para transferência para humano"""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info(f"Human handoff requested by {self.get_customer_name()}")
-        
-        # Marca conversa para atendimento humano
-        self.conversation.metadata['human_handoff'] = True
-        self.conversation.metadata['handoff_requested_at'] = datetime.now().isoformat()
-        self.conversation.save()
-        
+        logger.info(f"[HumanHandoffHandler] Human handoff requested by {self.get_customer_name()}")
+
+        try:
+            from apps.conversations.services.conversation_service import ConversationService
+            ConversationService().switch_to_human(str(self.conversation.id))
+            logger.info(f"[HumanHandoffHandler] Conversation {self.conversation.id} switched to human mode")
+        except Exception as exc:
+            logger.warning(f"[HumanHandoffHandler] switch_to_human failed: {exc}")
+
         return HandlerResult.text(
             f"👨‍💼 *Transferindo para atendimento humano...*\n\n"
             f"Um de nossos atendentes vai te atender em breve.\n"

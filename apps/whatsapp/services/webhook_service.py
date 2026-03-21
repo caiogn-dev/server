@@ -421,6 +421,14 @@ class WebhookService:
             conversation=message.conversation,
         )
 
+        # Skip automation for conversations in human mode
+        if message.conversation and message.conversation.mode == 'human':
+            logger.info(
+                '[pipeline] Conversation in human mode, skipping automation',
+                extra={'message_id': str(message.id)},
+            )
+            return
+
         import threading
         import time as _time
 
