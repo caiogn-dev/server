@@ -186,6 +186,32 @@ class IntentHandler:
         if self.company_profile and hasattr(self.company_profile, 'store'):
             return self.company_profile.store
         return None
+
+    def _send_pix_confirmation(self, order, pix_code: str) -> 'HandlerResult':
+        """Envia confirmação do pedido em duas mensagens:
+        1. Resumo do pedido com aviso de que o PIX vem a seguir
+        2. Apenas o código PIX (fácil de copiar)
+        """
+        items_text = '\n'.join(
+            f"• {item.quantity}x {item.product_name}"
+            for item in order.items.all()
+        )
+        msg1 = (
+            f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
+            f"{items_text}\n\n"
+            f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
+            f"💳 Pague via PIX — o código está na próxima mensagem 👇"
+        )
+        try:
+            self.whatsapp_service.send_text_message(
+                to=self.conversation.phone_number,
+                text=msg1,
+            )
+        except Exception as exc:
+            logger.warning("[_send_pix_confirmation] Erro ao enviar msg1: %s", exc)
+
+        # Segunda mensagem: somente o código
+        return HandlerResult.text(pix_code)
     
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         """Processa a intenção e retorna resultado"""
@@ -737,25 +763,7 @@ class CreateOrderHandler(IntentHandler):
                     cart_total=float(order.total)
                 )
                 
-                # Retorna mensagem com PIX
-                from apps.whatsapp.services.templates import JasperTemplates
-                template = JasperTemplates.order_confirmation(
-                    order_number=order.order_number,
-                    total=float(order.total),
-                    items=[{'name': item.product_name, 'quantity': item.quantity} for item in order.items.all()],
-                    pix_code=pix_code,
-                    ticket_url=pix_data.get('ticket_url', '')
-                )
-
-                if template.buttons:
-                    return HandlerResult.buttons(
-                        body=template.body,
-                        buttons=template.buttons,
-                        header=template.header,
-                        footer=template.footer
-                    )
-                parts = [p for p in [template.header, template.body, template.footer] if p]
-                return HandlerResult.text('\n\n'.join(parts))
+                return self._send_pix_confirmation(order, pix_code)
             else:
                 # Pedido criado mas PIX falhou
                 error_msg = pix_data.get('error', 'Erro ao gerar PIX')
@@ -861,25 +869,7 @@ class QuickOrderHandler(IntentHandler):
                 pix_code = pix_data.get('pix_code', '')
                 logger.info(f"[QuickOrderHandler] PIX code: {pix_code[:50]}...")
                 
-                # Usa template refinado
-                from apps.whatsapp.services.templates import JasperTemplates
-                template = JasperTemplates.order_confirmation(
-                    order_number=order.order_number,
-                    total=float(order.total),
-                    items=[{'name': item.product_name, 'quantity': item.quantity} for item in order.items.all()],
-                    pix_code=pix_code,
-                    ticket_url=pix_data.get('ticket_url', '')
-                )
-
-                if template.buttons:
-                    return HandlerResult.buttons(
-                        body=template.body,
-                        buttons=template.buttons,
-                        header=template.header,
-                        footer=template.footer
-                    )
-                parts = [p for p in [template.header, template.body, template.footer] if p]
-                return HandlerResult.text('\n\n'.join(parts))
+                return self._send_pix_confirmation(order, pix_code)
             else:
                 error_msg = pix_data.get('error', 'Erro desconhecido')
                 logger.error(f"[QuickOrderHandler] Erro no PIX: {error_msg}")
@@ -1399,26 +1389,7 @@ class InteractiveReplyHandler(IntentHandler):
 
             if pix_data.get('success'):
                 pix_code = pix_data.get('pix_code', '')
-                from apps.whatsapp.services.templates import JasperTemplates
-                template = JasperTemplates.order_confirmation(
-                    order_number=order.order_number,
-                    total=float(order.total),
-                    items=[
-                        {'name': item.product_name, 'quantity': item.quantity}
-                        for item in order.items.all()
-                    ],
-                    pix_code=pix_code,
-                    ticket_url=pix_data.get('ticket_url', ''),
-                )
-                if template.buttons:
-                    return HandlerResult.buttons(
-                        body=template.body,
-                        buttons=template.buttons,
-                        header=template.header,
-                        footer=template.footer,
-                    )
-                parts = [p for p in [template.header, template.body, template.footer] if p]
-                return HandlerResult.text('\n\n'.join(parts))
+                return self._send_pix_confirmation(order, pix_code)
             else:
                 return HandlerResult.text(
                     f"✅ *Pedido #{order.order_number} criado!*\n\n"
