@@ -60,8 +60,8 @@ class Command(BaseCommand):
             if canonical and canonical.pk != conv.pk:
                 # There are two conversations for the same number — merge conv into canonical
                 self.stdout.write(
-                    f'  MERGE: {conv.phone_number} (id={conv.id}, msgs={conv.message_count}) '
-                    f'→ {canonical.phone_number} (id={canonical.id}, msgs={canonical.message_count})'
+                    f'  MERGE: {conv.phone_number} (id={conv.id}, msgs={Message.objects.filter(conversation=conv).count()}) '
+                    f'→ {canonical.phone_number} (id={canonical.id}, msgs={Message.objects.filter(conversation=canonical).count()})'
                 )
                 if not dry_run:
                     with transaction.atomic():
