@@ -5,6 +5,7 @@ from typing import Optional, List
 from uuid import UUID
 from django.db.models import QuerySet
 from django.utils import timezone
+from apps.core.utils import normalize_phone_number
 from ..models import Conversation, ConversationNote
 
 
@@ -30,7 +31,7 @@ class ConversationRepository:
         try:
             return Conversation.objects.select_related('account', 'assigned_agent').get(
                 account_id=account_id,
-                phone_number=phone_number,
+                phone_number=normalize_phone_number(phone_number),
                 is_active=True
             )
         except Conversation.DoesNotExist:
@@ -43,12 +44,12 @@ class ConversationRepository:
         contact_name: str = ''
     ) -> tuple[Conversation, bool]:
         """Get or create a conversation.
-        
+
         Uses transaction-safe approach to handle race conditions where multiple
         requests try to create a conversation for the same phone number simultaneously.
         """
         from django.db import IntegrityError
-        
+        phone_number = normalize_phone_number(phone_number)
         try:
             return Conversation.objects.get_or_create(
                 account=account,

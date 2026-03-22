@@ -586,13 +586,14 @@ class MessageService:
     
     def _get_or_create_conversation(self, account: WhatsAppAccount, phone_number: str):
         """Get or create a conversation for a phone number.
-        
+
         Uses transaction-safe approach to handle race conditions where multiple
         requests try to create a conversation for the same phone number simultaneously.
         """
         from apps.conversations.models import Conversation
+        from apps.core.utils import normalize_phone_number
         from django.db import IntegrityError
-        
+        phone_number = normalize_phone_number(phone_number)
         try:
             # First try: standard get_or_create
             conversation, created = Conversation.objects.get_or_create(

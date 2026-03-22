@@ -3,6 +3,7 @@ Conversations models - Conversation management.
 """
 from django.db import models
 from apps.core.models import BaseModel
+from apps.core.utils import normalize_phone_number
 
 
 class Conversation(BaseModel):
@@ -82,6 +83,11 @@ class Conversation(BaseModel):
             models.Index(fields=['account', 'status', '-last_message_at']),
             models.Index(fields=['assigned_agent', 'status']),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.phone_number:
+            self.phone_number = normalize_phone_number(self.phone_number)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Conversation with {self.contact_name or self.phone_number}"

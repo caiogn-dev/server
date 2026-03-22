@@ -929,7 +929,7 @@ class WebhookService:
         """
         from apps.conversations.models import Conversation
         from django.db import IntegrityError
-        
+        phone_number = normalize_phone_number(phone_number)
         logger.info(f"[_get_or_create_conversation] START - account={account.id}, phone={phone_number}, contact_name={contact_name}")
         
         try:
