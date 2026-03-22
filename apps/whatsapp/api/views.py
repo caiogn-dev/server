@@ -33,7 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 def _accessible_accounts(user):
-    queryset = WhatsAppAccount.objects.filter(is_active=True)
+    queryset = WhatsAppAccount.objects.filter(is_active=True).select_related(
+        'owner', 'company_profile__store'
+    ).prefetch_related('stores')
     if user.is_superuser or user.is_staff:
         return queryset
 

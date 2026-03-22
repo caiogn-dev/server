@@ -7,8 +7,25 @@ from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from apps.core.models import BaseModel
 from apps.core.utils import token_encryption, mask_token, build_absolute_media_url
+
+
+def _validate_image_upload(file):
+    """Enforce max size (5 MB) and allowed MIME types for image uploads."""
+    max_size_mb = 5
+    allowed_content_types = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+
+    if hasattr(file, 'size') and file.size > max_size_mb * 1024 * 1024:
+        raise ValidationError(f'Arquivo muito grande. Tamanho máximo: {max_size_mb} MB.')
+
+    content_type = getattr(file, 'content_type', None)
+    if content_type and content_type not in allowed_content_types:
+        raise ValidationError(
+            f'Tipo de arquivo não permitido: {content_type}. '
+            f'Use JPEG, PNG, WebP ou GIF.'
+        )
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -49,9 +66,11 @@ class Store(BaseModel):
     )
 
     # Branding
-    logo = models.ImageField(upload_to='stores/logos/', blank=True, null=True)
+    logo = models.ImageField(upload_to='stores/logos/', blank=True, null=True,
+                             validators=[_validate_image_upload])
     logo_url = models.URLField(blank=True, help_text="External logo URL")
-    banner = models.ImageField(upload_to='stores/banners/', blank=True, null=True)
+    banner = models.ImageField(upload_to='stores/banners/', blank=True, null=True,
+                               validators=[_validate_image_upload])
     banner_url = models.URLField(blank=True, help_text="External banner URL")
     primary_color = models.CharField(max_length=7, default='#000000', help_text="Hex color code")
     secondary_color = models.CharField(max_length=7, default='#ffffff', help_text="Hex color code")

@@ -1,3 +1,4 @@
+import hmac
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -385,6 +386,10 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
         
-        if mode == 'subscribe' and token == settings.INSTAGRAM_VERIFY_TOKEN:
+        verify_token = getattr(settings, 'INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '') or ''
+        tokens_match = bool(verify_token) and hmac.compare_digest(
+            (token or '').encode(), verify_token.encode()
+        )
+        if mode == 'subscribe' and tokens_match:
             return Response(int(challenge))
         return Response('Verification failed', status=403)

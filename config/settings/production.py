@@ -38,11 +38,18 @@ USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
 # Enforce required production settings
-if SECRET_KEY == 'your-secret-key-change-in-production':
-    raise ImproperlyConfigured('SECRET_KEY must be set in production.')
+if not SECRET_KEY:
+    raise ImproperlyConfigured('SECRET_KEY must be set in production (env: SECRET_KEY or DJANGO_SECRET_KEY).')
 
-if not ALLOWED_HOSTS:
-    raise ImproperlyConfigured('ALLOWED_HOSTS must be set in production.')
+if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['localhost', '127.0.0.1']:
+    raise ImproperlyConfigured('DJANGO_ALLOWED_HOSTS must be explicitly set in production.')
+
+if not WHATSAPP_WEBHOOK_VERIFY_TOKEN:
+    raise ImproperlyConfigured('WHATSAPP_WEBHOOK_VERIFY_TOKEN must be set in production.')
+
+if not INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
+    import logging as _logging
+    _logging.getLogger(__name__).warning('INSTAGRAM_WEBHOOK_VERIFY_TOKEN not set — Instagram webhooks will fail verification.')
 
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False

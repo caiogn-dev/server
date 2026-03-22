@@ -1,6 +1,7 @@
 """
 WhatsApp webhook handler.
 """
+import hmac
 import logging
 from typing import Dict, Any, Optional
 from django.http import HttpResponse
@@ -65,9 +66,13 @@ class WhatsAppHandler(BaseHandler):
         
         verify_token = getattr(settings, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
         
-        if mode == 'subscribe' and token == verify_token:
+        tokens_match = bool(verify_token) and hmac.compare_digest(
+            token.encode() if token else b'',
+            verify_token.encode()
+        )
+        if mode == 'subscribe' and tokens_match:
             logger.info("WhatsApp webhook verified successfully")
             return HttpResponse(challenge, status=200)
-        
-        logger.warning(f"WhatsApp webhook verification failed: mode={mode}, token_match={token == verify_token}")
+
+        logger.warning(f"WhatsApp webhook verification failed: mode={mode}")
         return HttpResponse("Verification failed", status=403)

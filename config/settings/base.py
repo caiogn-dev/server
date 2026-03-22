@@ -8,7 +8,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'your-secret-key-change-in-production'))
+SECRET_KEY = os.environ.get('SECRET_KEY') or os.environ.get('DJANGO_SECRET_KEY') or ''
 
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
@@ -137,6 +137,7 @@ if DATABASE_URL:
                 'PASSWORD': unquote(parsed_db.password or ''),
                 'HOST': parsed_db.hostname or 'localhost',
                 'PORT': str(parsed_db.port or 5432),
+                'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '600')),
             }
         }
         db_query = parse_qs(parsed_db.query)
@@ -227,8 +228,6 @@ CORS_ALLOWED_ORIGINS = [
     "https://ce-saladas.vercel.app",
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",
-    "http://localhost:3000",
-    "http://localhost:8000",
 ]
 cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins:
@@ -294,7 +293,7 @@ else:
 # WhatsApp Business API
 WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
-WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', 'your-verify-token')
+WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
 WHATSAPP_ENABLE_LLM_FALLBACK = os.environ.get('WHATSAPP_ENABLE_LLM_FALLBACK', 'false').strip().lower() in {
     '1', 'true', 'yes', 'on'
@@ -340,30 +339,9 @@ DEFAULT_WHATSAPP_STORE_SLUGS = [
 DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
 
 # Instagram API Configuration
-INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
+INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
-INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
-
-# ============================================================================
-# LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
-# ============================================================================
-# Kimi API (Kimi Coding API - Anthropic-style)
-KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
-KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
-
-# OpenAI (opcional)
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
-
-# Anthropic (opcional)
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
-
-# Ollama (local - opcional)
-OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
-OLLAMA_MODEL_NAME = os.environ.get('OLLAMA_MODEL_NAME', 'llama3.2')
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')
 
 # Maps (HERE)
 HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
@@ -376,8 +354,8 @@ DASHBOARD_URL = os.environ.get('DASHBOARD_URL', 'https://painel.pastita.com.br')
 # Mercado Pago Integration
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 MERCADO_PAGO_PUBLIC_KEY = os.environ.get('MERCADO_PAGO_PUBLIC_KEY', '')
-PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '5563992957931')
-PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', 'https://agriao.shop')
+PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '')
+PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', '')
 
 # Meta Pixel (Conversions API)
 META_PIXEL_ID = os.environ.get('META_PIXEL_ID', '').strip()
