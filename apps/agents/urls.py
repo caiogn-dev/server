@@ -6,7 +6,7 @@ from rest_framework.routers import DefaultRouter
 from .views import AgentViewSet, AgentConversationViewSet
 
 router = DefaultRouter()
-router.register(r'agents', AgentViewSet, basename='agent')
+router.register(r'', AgentViewSet, basename='agent')
 router.register(r'conversations', AgentConversationViewSet, basename='agent-conversation')
 
 urlpatterns = [
