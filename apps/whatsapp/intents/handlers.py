@@ -181,6 +181,11 @@ class IntentHandler:
             self._whatsapp_service = WhatsAppAPIService(self.account)
         return self._whatsapp_service
     
+    @property
+    def company(self):
+        """Alias for company_profile — both names are used across the codebase."""
+        return self.company_profile
+
     def _get_store(self):
         """Retorna a loja associada"""
         if self.company_profile and hasattr(self.company_profile, 'store'):

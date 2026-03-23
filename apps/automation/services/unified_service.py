@@ -240,7 +240,16 @@ class UnifiedService:
         if self.store:
             handler.store = self.store
 
-        result = handler.handle(intent_data)
+        try:
+            result = handler.handle(intent_data)
+        except Exception as exc:
+            logger.error(
+                '[unified] Handler %s raised exception for intent=%s: %s',
+                handler.__class__.__name__, intent.value, exc,
+                exc_info=True,
+            )
+            return None
+
         if not result:
             return None
 
