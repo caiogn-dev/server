@@ -168,14 +168,9 @@ class OrderService:
             'customer_phone': order.customer_phone,
         })
         
-        # Send WhatsApp notification via AutomationService
-        try:
-            from apps.automation.services import AutomationService
-            automation_service = AutomationService()
-            automation_service.handle_order_status_change(order, old_status, new_status)
-        except Exception as e:
-            logger.error(f"Failed to send order status notification: {e}", exc_info=True)
-        
+        # NOTE: WhatsApp notification is handled by the post_save signal in
+        # apps.automation.signals (notify_order_status_change Celery task).
+        # Do NOT call automation_service here — that would send the message twice.
         logger.info(f"Order {order.order_number} status updated: {old_status} -> {new_status}")
         
         return {
@@ -209,16 +204,33 @@ class OrderService:
                 logger.warning(f"WhatsApp account {account.id} missing phone_number_id")
                 return
 
-            status_messages = {
-                'confirmed': f"✅ *Pedido Confirmado!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} foi confirmado!",
-                'preparing': f"👨‍🍳 *Pedido em Preparo!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} está sendo preparado!",
-                'ready': f"📦 *Pedido Pronto!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} está pronto para retirada!",
-                'out_for_delivery': f"🚚 *Pedido em Entrega!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} saiu para entrega!",
-                'delivered': f"✅ *Pedido Entregue!*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} foi entregue! Agradecemos a preferência!",
-                'cancelled': f"❌ *Pedido Cancelado*\n\nOlá {order.customer_name or 'Cliente'}!\n\nSeu pedido #{order.order_number} foi cancelado.",
-            }
+            name = order.customer_name or 'Cliente'
+            num = order.order_number
+            is_pickup = order.delivery_method == 'pickup'
 
-            message_text = status_messages.get(new_status)
+            if new_status == 'ready' and is_pickup:
+                message_text = (
+                    f"🎉 *Pedido Pronto para Retirada!*\n\n"
+                    f"Olá {name}!\n\n"
+                    f"Seu pedido *#{num}* está pronto!\n"
+                    f"Pode vir buscar a qualquer momento. 😊"
+                )
+            elif new_status == 'ready':
+                message_text = (
+                    f"✅ *Pedido Pronto!*\n\n"
+                    f"Olá {name}!\n\n"
+                    f"Seu pedido *#{num}* saiu da cozinha e\n"
+                    f"será despachado para entrega em breve! 🛵"
+                )
+            else:
+                status_messages = {
+                    'confirmed': f"✅ *Pedido Confirmado!*\n\nOlá {name}!\n\nSeu pedido #{num} foi confirmado!",
+                    'preparing': f"👨‍🍳 *Pedido em Preparo!*\n\nOlá {name}!\n\nSeu pedido #{num} está sendo preparado!",
+                    'out_for_delivery': f"🚚 *Pedido em Entrega!*\n\nOlá {name}!\n\nSeu pedido #{num} saiu para entrega!",
+                    'delivered': f"✅ *Pedido Entregue!*\n\nOlá {name}!\n\nSeu pedido #{num} foi entregue! Agradecemos a preferência!",
+                    'cancelled': f"❌ *Pedido Cancelado*\n\nOlá {name}!\n\nSeu pedido #{num} foi cancelado.",
+                }
+                message_text = status_messages.get(new_status)
             if not message_text:
                 return
 
