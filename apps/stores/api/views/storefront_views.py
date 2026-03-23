@@ -674,25 +674,19 @@ class StoreCouponValidateView(APIView):
                 is_active=True
             )
             
-            # Check validity
-            if not coupon.is_valid():
+            # Check validity (includes min_purchase check)
+            valid, error_msg = coupon.is_valid(subtotal=subtotal, user=request.user)
+            if not valid:
                 return Response({
                     'valid': False,
-                    'error': 'Coupon is expired or no longer valid'
+                    'error': error_msg
                 })
-            
-            # Check minimum order
-            if coupon.minimum_order and subtotal < coupon.minimum_order:
-                return Response({
-                    'valid': False,
-                    'error': f'Minimum order of {coupon.minimum_order} required'
-                })
-            
+
             # Calculate discount
             if coupon.discount_type == 'percentage':
                 discount = subtotal * (coupon.discount_value / 100)
-                if coupon.maximum_discount:
-                    discount = min(discount, coupon.maximum_discount)
+                if coupon.max_discount:
+                    discount = min(discount, coupon.max_discount)
             else:
                 discount = coupon.discount_value
             
