@@ -389,8 +389,8 @@ class LangchainService:
             if not store:
                 return "Cardápio indisponível no momento."
             try:
-                from apps.stores.models import StoreProductCategory
-                cats = StoreProductCategory.objects.filter(store=store, is_active=True).order_by('order')
+                from apps.stores.models import StoreCategory
+                cats = StoreCategory.objects.filter(store=store, is_active=True).order_by('sort_order')
                 if not cats:
                     return "Nenhuma categoria encontrada."
                 return "\n".join(f"• {c.name}" for c in cats)
@@ -556,11 +556,18 @@ class LangchainService:
         # Add user message
         messages.append(HumanMessage(content=_sanitize(message)))
         
-        # Build tools and bind to LLM (tool calling)
+        # Build tools and bind to LLM (tool calling).
+        # NVIDIA (Llama) and Kimi don't handle tool loops reliably — they tend to
+        # call tools repeatedly even for simple greetings, ignoring the full context
+        # already injected in the system prompt.  OpenAI and Anthropic handle this
+        # correctly.  For other providers, fall back to context-only mode so the
+        # dynamic system prompt drives the conversation.
         store = self._get_store_for_context(conversation_id)
         tools = self._build_tools(phone_number=phone_number or "", store=store)
         tool_map = {t.name: t for t in tools}
-        llm_with_tools = self.llm.bind_tools(tools)
+        _TOOL_CAPABLE_PROVIDERS = {Agent.AgentProvider.OPENAI, Agent.AgentProvider.ANTHROPIC}
+        _use_tools = self.agent.provider in _TOOL_CAPABLE_PROVIDERS
+        llm_with_tools = self.llm.bind_tools(tools) if _use_tools else self.llm
 
         def _clean(msg):
             """Normalize message content. For Kimi: strip accents. For others: decode bytes only."""
@@ -612,7 +619,26 @@ class LangchainService:
                     logger.info(f"[AGENT TOOLS] {tc['name']} → {str(result)[:120]}")
                     current_messages.append(ToolMessage(content=str(result), tool_call_id=tc['id']))
             else:
-                response_text = "Desculpe, não consegui processar sua solicitação no momento."
+                # Loop exhausted without a text response — the model kept calling tools.
+                # Force a final text response by invoking the plain LLM (no tools).
+                logger.warning(
+                    '[AGENT] Tool loop exhausted after 5 iterations — forcing final text call. '
+                    'model=%s provider=%s',
+                    self.agent.model_name, self.agent.provider,
+                )
+                try:
+                    # Append a nudge so the model knows to respond in text now
+                    current_messages.append(
+                        HumanMessage(content="Com base nas informações acima, responda ao cliente agora.")
+                    )
+                    final_response = self.llm.invoke(current_messages)
+                    content = final_response.content
+                    if isinstance(content, bytes):
+                        content = content.decode('utf-8')
+                    response_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                except Exception as final_exc:
+                    logger.error('[AGENT] Final text call also failed: %s', final_exc)
+                    response_text = ""
 
             logger.info(f"[AGENT RESPONSE] {response_text[:120]!r}")
 

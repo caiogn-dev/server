@@ -517,15 +517,15 @@ class WebhookService:
 
         _thread = threading.Thread(target=_run_orchestrator, daemon=True)
         _thread.start()
-        _thread.join(timeout=10)
+        _thread.join(timeout=30)
 
         _orchestrator_ms = round((_time.monotonic() - _t0) * 1000, 1)
         _timed_out = _thread.is_alive()
 
         if _timed_out:
-            orchestrator_error = TimeoutError('UnifiedService timeout after 10s')
+            orchestrator_error = TimeoutError('UnifiedService timeout after 30s')
             logger.warning(
-                '[pipeline] UnifiedService timeout after 10s',
+                '[pipeline] UnifiedService timeout after 30s',
                 extra={'pipeline.timeout': True, 'message_id': str(message.id)},
             )
 

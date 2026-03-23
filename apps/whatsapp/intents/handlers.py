@@ -475,11 +475,30 @@ class IntentHandler:
 
 
 class GreetingHandler(IntentHandler):
-    """Handler para saudações — delega ao LLM para resposta natural e personalizada."""
+    """Handler para saudações — retorna boas-vindas com 3 botões de ação rápida."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info(f"[GreetingHandler] Saudação — delegando ao LLM")
-        return HandlerResult.needs_llm()
+        company_name = (
+            getattr(self.company, 'company_name', None)
+            or (self.store.name if self.store else None)
+            or 'nossa loja'
+        )
+        customer_name = self.get_customer_name()
+        greeting = f"Olá, {customer_name}! 👋" if customer_name != 'Cliente' else "Olá! 👋"
+
+        body = (
+            f"{greeting} Seja bem-vindo(a) à *{company_name}*!\n\n"
+            f"Como posso ajudar você hoje?"
+        )
+        logger.info('[GreetingHandler] Saudação com botões para %s', customer_name)
+        return HandlerResult.buttons(
+            body=body,
+            buttons=[
+                {'id': 'view_menu',       'title': '📋 Cardápio'},
+                {'id': 'start_order',     'title': '🛒 Fazer Pedido'},
+                {'id': 'contact_support', 'title': '👤 Falar Atendente'},
+            ],
+        )
 
 
 class PriceCheckHandler(IntentHandler):
