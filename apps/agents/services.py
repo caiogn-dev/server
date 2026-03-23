@@ -68,6 +68,17 @@ class LangchainService:
             getattr(settings, env_url_name, '') if env_url_name else ''
         ) or default_url
 
+        # Strip trailing endpoint paths that admins sometimes accidentally include.
+        # ChatOpenAI appends /chat/completions automatically — if the stored base_url
+        # already contains it we get a doubled path like /v1/chat/completions/chat/completions.
+        for _suffix in ('/chat/completions', '/completions', '/v1/chat/completions'):
+            if base_url.rstrip('/').endswith(_suffix):
+                base_url = base_url.rstrip('/')[:-(len(_suffix))].rstrip('/')
+                logger.warning(
+                    '[LLM] base_url contained endpoint suffix — stripped to: %s', base_url
+                )
+                break
+
         if not api_key and provider != Agent.AgentProvider.OLLAMA:
             raise BaseAPIException(
                 f"API Key não configurada para o agente (provider={provider}). "
@@ -339,12 +350,14 @@ class LangchainService:
 
         # Combine all context parts
         full_context = "\n\n".join(context_parts)
-        
+
         # DEBUG: Log tamanho do contexto
         logger.info(f"[AGENT CONTEXT] Context built: {len(full_context)} chars, {len(context_parts)} parts")
-        
-        # Remove accents to avoid encoding issues with API
-        return remove_accents(full_context)
+
+        # Only Kimi has encoding issues with accented chars; all other providers handle UTF-8 fine.
+        if self.agent.provider == Agent.AgentProvider.KIMI:
+            return remove_accents(full_context)
+        return full_context
 
     def _build_tools(self, phone_number: str = "", store=None):
         """Build Langchain tools bound to the current customer/store context."""
