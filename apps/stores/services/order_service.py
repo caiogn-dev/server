@@ -107,17 +107,21 @@ class OrderService:
         """
         from apps.stores.models import StoreOrder
         
-        # Valid status transitions
+        # Valid status transitions — full graph for a food-delivery restaurant
         valid_transitions = {
-            'pending': ['confirmed', 'processing', 'cancelled'],
-            'processing': ['confirmed', 'preparing', 'cancelled'],
-            'confirmed': ['preparing', 'cancelled'],
-            'preparing': ['ready', 'out_for_delivery', 'cancelled'],
-            'ready': ['out_for_delivery', 'delivered', 'picked_up', 'cancelled'],
+            'pending':          ['confirmed', 'cancelled'],
+            'processing':       ['confirmed', 'cancelled'],          # payment in progress
+            'confirmed':        ['preparing', 'cancelled'],
+            'paid':             ['preparing', 'confirmed', 'cancelled'],  # payment webhook sets paid → allow forward
+            'preparing':        ['ready', 'out_for_delivery', 'cancelled'],
+            'ready':            ['out_for_delivery', 'delivered', 'cancelled'],
             'out_for_delivery': ['delivered', 'cancelled'],
-            'delivered': [],
-            'picked_up': [],
-            'cancelled': [],
+            'shipped':          ['out_for_delivery', 'delivered', 'cancelled'],  # legacy alias
+            'delivered':        ['completed'],
+            'completed':        [],
+            'cancelled':        ['refunded'],
+            'refunded':         [],
+            'failed':           ['cancelled'],
         }
         
         current_status = order.status
@@ -134,20 +138,18 @@ class OrderService:
         order.status = new_status
         
         # Update timestamps
-        if new_status == 'processing':
+        if new_status in ('processing',):
             order.processing_at = timezone.now()
-        elif new_status == 'confirmed':
+        elif new_status in ('confirmed', 'paid'):
             order.confirmed_at = timezone.now()
         elif new_status == 'preparing':
             order.preparing_at = timezone.now()
         elif new_status == 'ready':
             order.ready_at = timezone.now()
-        elif new_status == 'out_for_delivery':
+        elif new_status in ('out_for_delivery', 'shipped'):
             order.out_for_delivery_at = timezone.now()
-        elif new_status == 'delivered':
+        elif new_status in ('delivered', 'completed'):
             order.delivered_at = timezone.now()
-        elif new_status == 'picked_up':
-            order.picked_up_at = timezone.now()
         elif new_status == 'cancelled':
             order.cancelled_at = timezone.now()
         

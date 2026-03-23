@@ -682,14 +682,17 @@ class MenuRequestHandler(IntentHandler):
             logger.error("[MenuRequestHandler] Sem store!")
             return HandlerResult.text("Cardápio não disponível no momento. 😔")
         
-        # Busca TODOS os produtos ativos primeiro
+        # Busca produtos ativos, excluindo ingredientes do SaladBuilder.
+        # Ingredientes são marcados com tag "ingrediente" e só fazem sentido
+        # no site (modal Monte sua Salada); no WhatsApp mostramos apenas
+        # Saladas e Molhos para não poluir o template.
         all_products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
-        )
-        
+        ).exclude(tags__contains=['ingrediente'])
+
         total_products = all_products.count()
-        logger.info(f"[MenuRequestHandler] Total produtos ativos: {total_products}")
+        logger.info(f"[MenuRequestHandler] Total produtos ativos (excluindo ingredientes): {total_products}")
         
         if total_products == 0:
             logger.error("[MenuRequestHandler] Nenhum produto ativo encontrado!")
