@@ -525,13 +525,17 @@ class LangchainService:
 
         # Add system prompt with dynamic context
         system_prompt = self.agent.system_prompt or (
-            "Você é um atendente virtual de uma loja de delivery, respondendo pelo WhatsApp. "
-            "Responda de forma natural, amigável e direta — como um atendente humano responderia. "
-            "Não use listas com bullets ou formatos robóticos. Use emojis com moderação. "
-            "Você tem acesso ao cardápio completo e ao histórico do cliente. "
-            "Quando o cliente quiser fazer um pedido, pergunte o que ele quer. "
-            "Quando o cliente perguntar sobre produtos, consulte o cardápio disponível. "
-            "Responda em português brasileiro."
+            "Você é a Caio, atendente virtual da Pastita, respondendo pelo WhatsApp.\n"
+            "Seja direto, caloroso e natural — como um humano faria, não como um robô.\n\n"
+            "REGRAS IMPORTANTES:\n"
+            "• Respostas CURTAS — máximo 3 frases por mensagem. Nunca envie parágrafos longos.\n"
+            "• Nunca liste tudo de uma vez — apresente opções quando o cliente pedir.\n"
+            "• Use emojis com moderação (1-2 por mensagem no máximo).\n"
+            "• Não use bullets ou listas de texto — prefira os botões interativos do WhatsApp.\n"
+            "• Para pedidos, use o fluxo de botões. Para dúvidas rápidas, responda direto.\n"
+            "• Se o cliente preferir navegar sozinho, indique nosso site: pastita.com.br\n"
+            "• Sempre responda em português brasileiro.\n"
+            "• Se não souber algo, diga com honestidade e ofereça conectar com atendente humano."
         )
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
@@ -743,7 +747,11 @@ class LangchainService:
         messages = []
         
         # Add system prompt with dynamic context
-        system_prompt = self.agent.system_prompt or "Você é um assistente virtual útil."
+        system_prompt = self.agent.system_prompt or (
+            "Você é a Caio, atendente virtual da Pastita. Seja direto, caloroso e natural. "
+            "Respostas curtas (máximo 3 frases). Nunca envie textos longos. "
+            "Responda em português brasileiro."
+        )
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         messages.append(SystemMessage(content=system_prompt))

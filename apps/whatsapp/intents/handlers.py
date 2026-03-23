@@ -475,7 +475,7 @@ class IntentHandler:
 
 
 class GreetingHandler(IntentHandler):
-    """Handler para saudações — retorna boas-vindas com 3 botões de ação rápida."""
+    """Handler para saudações — retorna boas-vindas com 1 botão 'Ver Opções'."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         company_name = (
@@ -487,16 +487,14 @@ class GreetingHandler(IntentHandler):
         greeting = f"Olá, {customer_name}! 👋" if customer_name != 'Cliente' else "Olá! 👋"
 
         body = (
-            f"{greeting} Seja bem-vindo(a) à *{company_name}*!\n\n"
-            f"Como posso ajudar você hoje?"
+            f"{greeting} Bem-vindo(a) à *{company_name}*! 🌿\n\n"
+            f"Toque no botão abaixo para ver o que temos para você."
         )
-        logger.info('[GreetingHandler] Saudação com botões para %s', customer_name)
+        logger.info('[GreetingHandler] Saudação com botão Ver Opções para %s', customer_name)
         return HandlerResult.buttons(
             body=body,
             buttons=[
-                {'id': 'view_menu',       'title': '📋 Cardápio'},
-                {'id': 'start_order',     'title': '🛒 Fazer Pedido'},
-                {'id': 'contact_support', 'title': '👤 Falar Atendente'},
+                {'id': 'show_options', 'title': '📋 Ver Opções'},
             ],
         )
 
@@ -1452,6 +1450,25 @@ class InteractiveReplyHandler(IntentHandler):
 
         if reply_id.startswith('track_'):
             return TrackOrderHandler(
+                self.account, self.conversation, self.company_profile
+            ).handle(intent_data)
+
+        if reply_id == 'show_options':
+            return HandlerResult.list_message(
+                body="O que você gostaria de fazer? 😊",
+                button="Ver Opções",
+                sections=[{
+                    'title': 'Escolha uma opção',
+                    'rows': [
+                        {'id': 'view_menu',      'title': '📋 Ver Cardápio',         'description': 'Veja nossos pratos e preços'},
+                        {'id': 'montar_salada',  'title': '🥗 Montar Salada',        'description': 'Monte sua salada personalizada'},
+                        {'id': 'contact_support','title': '👤 Falar com Atendente',  'description': 'Prefere falar com um humano?'},
+                    ],
+                }],
+            )
+
+        if reply_id == 'montar_salada':
+            return MenuRequestHandler(
                 self.account, self.conversation, self.company_profile
             ).handle(intent_data)
 
