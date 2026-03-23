@@ -40,18 +40,50 @@ class LangchainService:
     
     def _create_llm(self):
         """Create Langchain LLM instance based on provider."""
-        api_key = self.agent.api_key or getattr(settings, 'KIMI_API_KEY', '')
-        base_url = self.agent.base_url or getattr(settings, 'KIMI_BASE_URL', 'https://api.kimi.com/coding/')
-        
-        if not api_key:
-            raise BaseAPIException("API Key não configurada para o agente")
-        
+        provider = self.agent.provider
+
+        # ── Resolve API key: agent DB > provider-specific env var ─────────────
+        _ENV_API_KEY = {
+            Agent.AgentProvider.KIMI:     'KIMI_API_KEY',
+            Agent.AgentProvider.OPENAI:   'OPENAI_API_KEY',
+            Agent.AgentProvider.ANTHROPIC: 'ANTHROPIC_API_KEY',
+            Agent.AgentProvider.NVIDIA:   'NVIDIA_API_KEY',
+            Agent.AgentProvider.OLLAMA:   None,
+        }
+        env_key_name = _ENV_API_KEY.get(provider)
+        api_key = self.agent.api_key or (
+            getattr(settings, env_key_name, '') if env_key_name else ''
+        ) or 'ollama'  # Ollama não requer key real
+
+        # ── Resolve base URL: agent DB > provider-specific env var > hardcoded ─
+        _ENV_BASE_URL = {
+            Agent.AgentProvider.KIMI:     ('KIMI_BASE_URL',     'https://api.moonshot.cn/v1'),
+            Agent.AgentProvider.OPENAI:   ('OPENAI_BASE_URL',   'https://api.openai.com/v1'),
+            Agent.AgentProvider.ANTHROPIC: ('ANTHROPIC_BASE_URL', 'https://api.anthropic.com'),
+            Agent.AgentProvider.NVIDIA:   ('NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1'),
+            Agent.AgentProvider.OLLAMA:   ('OLLAMA_BASE_URL',   'http://localhost:11434/v1'),
+        }
+        env_url_name, default_url = _ENV_BASE_URL.get(provider, (None, ''))
+        base_url = self.agent.base_url or (
+            getattr(settings, env_url_name, '') if env_url_name else ''
+        ) or default_url
+
+        if not api_key and provider != Agent.AgentProvider.OLLAMA:
+            raise BaseAPIException(
+                f"API Key não configurada para o agente (provider={provider}). "
+                "Configure no Django Admin ou via variável de ambiente."
+            )
+
+        logger.debug(
+            '[LLM] Creating %s | model=%s | base_url=%s | key_set=%s',
+            provider, self.agent.model_name, base_url, bool(api_key),
+        )
+
         # Use ChatOpenAI for Kimi (OpenAI-compatible API)
-        if self.agent.provider == Agent.AgentProvider.KIMI:
+        if provider == Agent.AgentProvider.KIMI:
             from langchain_openai import ChatOpenAI
-            # Force UTF-8 encoding via default_headers
             return ChatOpenAI(
-                model=self.agent.model_name,  # "kimi-for-coding" or "kimi-k2"
+                model=self.agent.model_name,
                 temperature=self.agent.temperature,
                 max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
@@ -63,7 +95,7 @@ class LangchainService:
                 },
             )
         # Use ChatAnthropic for Anthropic API
-        elif self.agent.provider == Agent.AgentProvider.ANTHROPIC:
+        elif provider == Agent.AgentProvider.ANTHROPIC:
             from langchain_anthropic import ChatAnthropic
             return ChatAnthropic(
                 model=self.agent.model_name,
@@ -74,7 +106,7 @@ class LangchainService:
                 anthropic_api_url=base_url,
             )
         # Use ChatOpenAI for OpenAI
-        elif self.agent.provider == Agent.AgentProvider.OPENAI:
+        elif provider == Agent.AgentProvider.OPENAI:
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(
                 model=self.agent.model_name,
@@ -82,38 +114,35 @@ class LangchainService:
                 max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
                 api_key=api_key,
-                base_url=base_url if base_url else None,
+                base_url=base_url or None,
             )
         # Use ChatOpenAI for Ollama (OpenAI-compatible API)
-        elif self.agent.provider == Agent.AgentProvider.OLLAMA:
+        elif provider == Agent.AgentProvider.OLLAMA:
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(
                 model=self.agent.model_name,
                 temperature=self.agent.temperature,
                 max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
-                api_key=api_key or "ollama",
+                api_key=api_key,
                 base_url=base_url,
             )
-        # Use ChatOpenAI for NVIDIA (OpenAI-compatible API)
-        elif self.agent.provider == Agent.AgentProvider.NVIDIA:
+        # Use ChatOpenAI for NVIDIA (OpenAI-compatible NIM API)
+        elif provider == Agent.AgentProvider.NVIDIA:
             from langchain_openai import ChatOpenAI
-            # Usa modelo melhor da NVIDIA (Llama 3.1 70B)
-            model_name = self.agent.model_name
-            if '8b' in model_name.lower() or not model_name:
-                model_name = "meta/llama-3.1-70b-instruct"
-                logger.info(f"[NVIDIA] Upgrading to better model: {model_name}")
-            
+            model_name = self.agent.model_name or getattr(
+                settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct'
+            )
             return ChatOpenAI(
                 model=model_name,
                 temperature=self.agent.temperature,
                 max_tokens=self.agent.max_tokens,
                 timeout=self.agent.timeout,
                 api_key=api_key,
-                base_url=base_url or "https://integrate.api.nvidia.com/v1",
+                base_url=base_url,
             )
         else:
-            raise BaseAPIException(f"Provedor não suportado: {self.agent.provider}")
+            raise BaseAPIException(f"Provedor não suportado: {provider}")
     
     def _get_memory(self, session_id: str) -> Optional[RedisChatMessageHistory]:
         """Get conversation memory from Redis."""
@@ -473,41 +502,46 @@ class LangchainService:
         
         # Build dynamic context - ALWAYS build to ensure store data is loaded
         dynamic_context = self._build_dynamic_context(phone_number or "", conversation_id)
-        
+
+        # Kimi API has encoding issues with accented chars; all other providers are fine.
+        _kimi = (self.agent.provider == Agent.AgentProvider.KIMI)
+        _sanitize = remove_accents if _kimi else (lambda x: x)
+
         # Prepare messages
         messages = []
-        
+
         # Add system prompt with dynamic context
         system_prompt = self.agent.system_prompt or (
-            "Voce e um atendente virtual de uma loja de delivery, respondendo pelo WhatsApp. "
-            "Responda de forma natural, amigavel e direta — como um atendente humano responderia. "
-            "Nao use listas com bullets ou formatos roboticos. Use emojis com moderacao. "
-            "Voce tem acesso ao cardapio completo e ao historico do cliente. "
+            "Você é um atendente virtual de uma loja de delivery, respondendo pelo WhatsApp. "
+            "Responda de forma natural, amigável e direta — como um atendente humano responderia. "
+            "Não use listas com bullets ou formatos robóticos. Use emojis com moderação. "
+            "Você tem acesso ao cardápio completo e ao histórico do cliente. "
             "Quando o cliente quiser fazer um pedido, pergunte o que ele quer. "
-            "Quando o cliente perguntar sobre produtos, consulte o cardapio disponivel. "
-            "Responda em portugues brasileiro."
+            "Quando o cliente perguntar sobre produtos, consulte o cardápio disponível. "
+            "Responda em português brasileiro."
         )
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         else:
-            system_prompt = f"{system_prompt}\n\nOBS: Cardapio nao carregado. Informe ao cliente que voce nao tem acesso ao cardapio no momento."
-        # Remove accents before creating message
-        messages.append(SystemMessage(content=remove_accents(system_prompt)))
-        
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                "OBS: Cardápio não carregado no momento. Informe ao cliente que verificará as opções."
+            )
+        messages.append(SystemMessage(content=_sanitize(system_prompt)))
+
         # Add memory/context if available
         if memory:
             try:
                 history = memory.messages
-                # Add memory messages with accents removed
                 for hist_msg in history[-self.agent.max_context_messages:]:
-                    if hasattr(hist_msg, 'content') and hist_msg.content:
+                    if _kimi and hasattr(hist_msg, 'content') and hist_msg.content:
                         hist_msg.content = remove_accents(hist_msg.content)
                     messages.append(hist_msg)
             except Exception as e:
                 logger.warning(f"Error loading memory: {e}")
-        
-        # Add user message (with accents removed)
-        messages.append(HumanMessage(content=remove_accents(message)))
+
+        # Add user message
+        messages.append(HumanMessage(content=_sanitize(message)))
         
         # Build tools and bind to LLM (tool calling)
         store = self._get_store_for_context(conversation_id)
@@ -516,14 +550,15 @@ class LangchainService:
         llm_with_tools = self.llm.bind_tools(tools)
 
         def _clean(msg):
-            """Strip accents from message content (needed for Kimi; harmless for others)."""
+            """Normalize message content. For Kimi: strip accents. For others: decode bytes only."""
             if not hasattr(msg, 'content') or not msg.content:
                 return msg
             content = msg.content
             if isinstance(content, bytes):
                 content = content.decode('utf-8')
             if isinstance(content, str):
-                content = remove_accents(content)
+                if _kimi:
+                    content = remove_accents(content)
                 if isinstance(msg, SystemMessage):
                     return SystemMessage(content=content)
                 if isinstance(msg, HumanMessage):

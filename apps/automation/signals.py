@@ -170,6 +170,29 @@ def sync_store_whatsapp_account(sender, instance, **kwargs):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# CompanyProfile → sync AI settings to WhatsApp account
+# ──────────────────────────────────────────────────────────────────────────────
+
+@receiver(post_save, sender='automation.CompanyProfile')
+def sync_company_profile_ai_to_account(sender, instance, **kwargs):
+    """
+    Quando CompanyProfile é salvo (inclusive via Django Admin), propaga
+    as configurações de IA (default_agent, auto_response_enabled) para a
+    conta WhatsApp vinculada.
+
+    Isso garante que WhatsAppAccount.default_agent e auto_response_enabled
+    fiquem sempre sincronizados, independente de como o perfil foi editado.
+    """
+    try:
+        instance.sync_ai_settings_to_account(save=True)
+    except Exception as exc:
+        logger.warning(
+            'sync_company_profile_ai_to_account: failed for profile %s — %s',
+            instance.pk, exc,
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # StoreOrder → WhatsApp notifications
 # ──────────────────────────────────────────────────────────────────────────────
 

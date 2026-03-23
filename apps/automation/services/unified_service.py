@@ -280,6 +280,10 @@ class UnifiedService:
         - Nenhum agente está configurado
         - O agente retornou resposta vazia
         - Ocorreu erro na chamada (logado como ERROR)
+
+        IMPORTANTE: persiste AgentConversation no DB após cada chamada bem-sucedida
+        para garantir que o session_id do Redis seja reutilizado nas próximas mensagens.
+        Sem isso, cada mensagem geraria um novo session_id e a memória seria perdida.
         """
         if not self.use_llm or not self.agent:
             return None
@@ -287,30 +291,57 @@ class UnifiedService:
         _t0 = time.monotonic()
         try:
             service = LangchainService(self.agent)
+
+            # Busca conversa existente para reutilizar o session_id do Redis
             agent_conversation = AgentConversation.objects.filter(
                 agent=self.agent,
                 phone_number=self.conversation.phone_number,
             ).order_by('-last_message_at').first()
             session_id = str(agent_conversation.session_id) if agent_conversation else None
-            enriched_message = f'{context_text}\n\n---\n\nCliente: {message}' if context_text else message
+
+            # Passa a mensagem diretamente — LangchainService já constrói o contexto
+            # completo (cardápio, pedidos, horários) via _build_dynamic_context().
+            # Não enriquecer aqui evita duplicação de contexto no prompt.
             result = service.process_message(
-                message=enriched_message,
+                message=message,
                 session_id=session_id,
                 phone_number=self.conversation.phone_number,
                 conversation_id=str(self.conversation.id),
             )
             response_text = result.get('response', '').strip()
+            used_session_id = result.get('session_id', session_id)
+
+            # Persiste/atualiza AgentConversation no DB para que o próximo turno
+            # encontre o mesmo session_id e reutilize a memória Redis.
+            if used_session_id:
+                from django.db.models import F
+                AgentConversation.objects.update_or_create(
+                    agent=self.agent,
+                    phone_number=self.conversation.phone_number,
+                    defaults={
+                        'session_id': used_session_id,
+                        'whatsapp_conversation': self.conversation,
+                        'metadata': {'last_response_ms': round((time.monotonic() - _t0) * 1000, 1)},
+                    },
+                )
+
             _llm_ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(
-                '[unified] LLM response ok (%.0fms) agent=%s',
-                _llm_ms, self.agent.id,
+                '[unified] LLM response ok (%.0fms) agent=%s session=%s tokens=%s',
+                _llm_ms, self.agent.id, used_session_id,
+                result.get('tokens_used', '?'),
                 extra={'unified.llm_used': True, 'unified.llm_duration_ms': _llm_ms},
             )
             return response_text or None
         except Exception as exc:
             _llm_ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.error(
-                '[unified] LLM error after %.0fms: %s', _llm_ms, exc,
+                '[unified] LLM error after %.0fms: %s — agent=%s provider=%s model=%s',
+                _llm_ms, exc,
+                getattr(self.agent, 'id', '?'),
+                getattr(self.agent, 'provider', '?'),
+                getattr(self.agent, 'model_name', '?'),
+                exc_info=True,
                 extra={'unified.llm_used': True, 'unified.llm_error': str(exc)},
             )
             return None

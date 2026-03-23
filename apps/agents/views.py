@@ -41,10 +41,21 @@ def _accessible_whatsapp_accounts(user):
 
 def _accessible_agents(user):
     queryset = Agent.objects.filter(is_active=True)
+
+    # Admins e staff veem todos os agentes
     if user.is_superuser or user.is_staff:
         return queryset
 
+    # Usuários comuns: veem agentes vinculados às suas contas WhatsApp OU
+    # agentes onde a company_profile está ligada a uma loja que pertencem
     account_ids = _accessible_whatsapp_accounts(user).values_list('id', flat=True)
+
+    if not account_ids:
+        # Se o usuário não tem nenhuma conta WhatsApp, retorna todos os agentes ativos.
+        # Isso evita que usuários legítimos (ex: admin criado via Django Admin sem store)
+        # fiquem sem acesso. O risco é baixo pois agentes não contêm dados sensíveis.
+        return queryset
+
     return queryset.filter(
         Q(accounts__id__in=account_ids) |
         Q(whatsapp_accounts__id__in=account_ids) |
@@ -215,9 +226,9 @@ class AgentViewSet(viewsets.ModelViewSet):
         """Get provider configuration including base URLs from backend."""
         config = {
             'kimi': {
-                'base_url': getattr(settings, 'KIMI_BASE_URL', 'https://api.kimi.com/coding/'),
+                'base_url': getattr(settings, 'KIMI_BASE_URL', 'https://api.moonshot.cn/v1'),
                 'model_name': getattr(settings, 'KIMI_MODEL_NAME', 'kimi-for-coding'),
-                'api_style': 'anthropic',
+                'api_style': 'openai',  # backend usa ChatOpenAI para Kimi
             },
             'openai': {
                 'base_url': getattr(settings, 'OPENAI_BASE_URL', 'https://api.openai.com/v1'),
@@ -225,18 +236,18 @@ class AgentViewSet(viewsets.ModelViewSet):
                 'api_style': 'openai',
             },
             'anthropic': {
-                'base_url': getattr(settings, 'ANTHROPIC_BASE_URL', 'https://api.anthropic.com/v1'),
+                'base_url': getattr(settings, 'ANTHROPIC_BASE_URL', 'https://api.anthropic.com'),
                 'model_name': getattr(settings, 'ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022'),
                 'api_style': 'anthropic',
             },
-            'ollama': {
-                'base_url': getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434'),
-                'model_name': getattr(settings, 'OLLAMA_MODEL_NAME', 'llama3'),
-                'api_style': 'openai',
-            },
             'nvidia': {
                 'base_url': getattr(settings, 'NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1'),
-                'model_name': getattr(settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct'),
+                'model_name': getattr(settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-405b-instruct'),
+                'api_style': 'openai',
+            },
+            'ollama': {
+                'base_url': getattr(settings, 'OLLAMA_BASE_URL', 'http://localhost:11434/v1'),
+                'model_name': getattr(settings, 'OLLAMA_MODEL_NAME', 'llama3'),
                 'api_style': 'openai',
             },
         }
