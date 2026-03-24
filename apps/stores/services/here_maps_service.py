@@ -658,15 +658,23 @@ class HereMapsService:
                     'message': f'Endereço fora da área de entrega (máx: {max_delivery_distance}km)',
                 }
             
-            # Calculate fee based on distance if per_km_fee is set
-            per_km_fee = getattr(store, 'delivery_fee_per_km', None)
-            base_fee = store.default_delivery_fee or Decimal('0.00')
-            
-            if per_km_fee:
-                fee = float(base_fee) + (distance_km * float(per_km_fee))
+            # Calculate fee using the store metadata formula:
+            # base_fee covers the first free_km_threshold km,
+            # then +fee_per_km for each additional km, capped at max_fee.
+            metadata = getattr(store, 'metadata', None) or {}
+            base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or 9.0)))
+            fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', 1.0)))
+            free_km = Decimal(str(metadata.get('delivery_free_km', 3.0)))
+            max_fee = Decimal(str(metadata.get('delivery_max_fee', 25.0)))
+
+            dist = Decimal(str(distance_km))
+            if dist <= free_km:
+                fee = base_fee
             else:
-                fee = float(base_fee)
-            
+                fee = base_fee + (dist - free_km) * fee_per_km
+
+            fee = float(min(fee, max_fee))
+
             return {
                 'fee': fee,
                 'distance_km': distance_km,
@@ -674,7 +682,7 @@ class HereMapsService:
                 'is_within_area': True,
                 'zone': None,
                 'polyline': route.get('polyline'),
-                'message': 'Taxa de entrega calculada por distância',
+                'message': f'Taxa calculada: R${fee:.2f} ({distance_km:.1f}km)',
             }
 
 

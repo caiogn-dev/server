@@ -330,6 +330,8 @@ class IntentHandler:
             fee=float(fee),
             distance_km=distance_km,
             duration_minutes=duration_minutes,
+            lat=lat,
+            lng=lng,
         )
 
         dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
@@ -406,6 +408,7 @@ class IntentHandler:
         delivery_address: str = '',
         customer_notes: str = '',
         delivery_fee_override: float = None,
+        addr_info: dict = None,
     ) -> 'HandlerResult':
         """Cria o pedido com delivery e payment method definidos e retorna confirmação."""
         from apps.whatsapp.services import create_order_from_whatsapp
@@ -424,6 +427,7 @@ class IntentHandler:
             delivery_method=delivery_method,
             payment_method=payment_method,
             delivery_fee_override=delivery_fee_override,
+            addr_info=addr_info,
         )
 
         if not result.get('success'):
@@ -1565,8 +1569,10 @@ class InteractiveReplyHandler(IntentHandler):
         delivery_fee_override = addr_info.get('fee')  # None se pickup ou se não calculou
 
         logger.info(
-            '[InteractiveReplyHandler] Finalizando pedido: delivery=%s payment=%s fee=%s address=%s',
-            delivery_method, payment_method, delivery_fee_override, delivery_address[:40] if delivery_address else '',
+            '[InteractiveReplyHandler] Finalizando pedido: delivery=%s payment=%s fee=%s address=%s lat=%s lng=%s',
+            delivery_method, payment_method, delivery_fee_override,
+            delivery_address[:40] if delivery_address else '',
+            addr_info.get('lat'), addr_info.get('lng'),
         )
         return self._finalize_order(
             items,
@@ -1574,6 +1580,7 @@ class InteractiveReplyHandler(IntentHandler):
             payment_method=payment_method,
             delivery_address=delivery_address,
             delivery_fee_override=delivery_fee_override,
+            addr_info=addr_info,
         )
 
     def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:

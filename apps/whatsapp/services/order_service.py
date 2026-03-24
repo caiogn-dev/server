@@ -41,11 +41,13 @@ class WhatsAppOrderService:
         delivery_method: str = 'delivery',
         payment_method: str = 'pix',
         delivery_fee_override: float = None,
+        addr_info: dict = None,
     ) -> Dict[str, Any]:
         """Cria pedido a partir dos itens do carrinho.
 
         payment_method: 'pix' | 'card' | 'cash'
         delivery_fee_override: taxa calculada pelo HERE (sobrescreve cálculo padrão)
+        addr_info: dict com lat, lng, distance_km, duration_minutes do geocoding
         """
         logger.info(
             f"[create_order_from_cart] Iniciando para {self.phone_number} "
@@ -116,7 +118,7 @@ class WhatsAppOrderService:
                 delivery_fee=delivery_fee,
                 total=total,
                 delivery_method=delivery_method,
-                delivery_address={'raw_address': delivery_address} if delivery_address else {},
+                delivery_address=self._build_delivery_address(delivery_address, addr_info),
                 customer_notes=customer_notes,
                 metadata={
                     'source': 'whatsapp',
@@ -173,6 +175,22 @@ class WhatsAppOrderService:
             logger.error(f"[create_order_from_cart] ERRO: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
     
+    def _build_delivery_address(self, raw_address: str, addr_info: dict = None) -> dict:
+        """Builds a rich delivery_address JSON from the geocoded address info."""
+        if not raw_address and not addr_info:
+            return {}
+        data: Dict[str, Any] = {'raw_address': raw_address or ''}
+        if addr_info:
+            if addr_info.get('lat') is not None:
+                data['lat'] = addr_info['lat']
+            if addr_info.get('lng') is not None:
+                data['lng'] = addr_info['lng']
+            if addr_info.get('distance_km') is not None:
+                data['distance_km'] = addr_info['distance_km']
+            if addr_info.get('duration_minutes') is not None:
+                data['duration_minutes'] = addr_info['duration_minutes']
+        return data
+
     def _generate_pix(self, order: StoreOrder) -> Dict[str, Any]:
         """Gera PIX para o pedido usando Mercado Pago"""
         logger.info(f"[_generate_pix] Iniciando geração de PIX para pedido {order.order_number}")
@@ -354,6 +372,7 @@ def create_order_from_whatsapp(
     delivery_method: str = 'delivery',
     payment_method: str = 'pix',
     delivery_fee_override: float = None,
+    addr_info: dict = None,
 ) -> Dict[str, Any]:
     """Função utilitária para criar pedido via WhatsApp."""
     logger.info(
@@ -377,6 +396,7 @@ def create_order_from_whatsapp(
             delivery_method=delivery_method,
             payment_method=payment_method,
             delivery_fee_override=delivery_fee_override,
+            addr_info=addr_info,
         )
         
         logger.info(f"[create_order_from_whatsapp] Resultado: {result.get('success')}")

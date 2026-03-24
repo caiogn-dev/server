@@ -245,6 +245,8 @@ class SessionManager:
         fee: float,
         distance_km: float = None,
         duration_minutes: float = None,
+        lat: float = None,
+        lng: float = None,
     ) -> None:
         """Salva endereço geocodificado e taxa calculada pelo HERE."""
         session = self.get_or_create_session()
@@ -254,10 +256,12 @@ class SessionManager:
             data['delivery_fee_calculated'] = fee
             data['delivery_distance_km'] = distance_km
             data['delivery_duration_minutes'] = duration_minutes
+            data['delivery_lat'] = lat
+            data['delivery_lng'] = lng
             data['waiting_for_address'] = False
             session.cart_data = data
             session.save(update_fields=['cart_data'])
-            logger.info(f"[SessionManager] Delivery address saved: {address[:40]} fee=R${fee}")
+            logger.info(f"[SessionManager] Delivery address saved: {address[:40]} fee=R${fee} lat={lat} lng={lng}")
 
     def get_delivery_address_info(self) -> dict:
         """Recupera endereço e taxa de entrega calculados."""
@@ -269,8 +273,10 @@ class SessionManager:
                 'fee': d.get('delivery_fee_calculated'),
                 'distance_km': d.get('delivery_distance_km'),
                 'duration_minutes': d.get('delivery_duration_minutes'),
+                'lat': d.get('delivery_lat'),
+                'lng': d.get('delivery_lng'),
             }
-        return {'address': '', 'fee': None, 'distance_km': None, 'duration_minutes': None}
+        return {'address': '', 'fee': None, 'distance_km': None, 'duration_minutes': None, 'lat': None, 'lng': None}
 
     def update_cart(self, items: list, total: Decimal):
         """Atualiza dados do carrinho"""

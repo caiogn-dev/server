@@ -326,13 +326,17 @@ class LangchainService:
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
 
-        # 4. Load pending order / cart state for this customer
+        # 4. Load pending order / cart state for this customer (only recent ones)
         if phone_number:
             try:
                 from apps.stores.models import StoreOrder
+                from datetime import timedelta
+                from django.utils import timezone as tz
+                cutoff = tz.now() - timedelta(hours=4)
                 pending = StoreOrder.objects.filter(
                     customer_phone=phone_number,
                     payment_status='pending',
+                    created_at__gte=cutoff,
                 ).order_by('-created_at').first()
                 if pending:
                     items_preview = ", ".join(
@@ -523,27 +527,11 @@ class LangchainService:
         # Prepare messages
         messages = []
 
-        # Add system prompt with dynamic context
-        system_prompt = self.agent.system_prompt or (
-            "Você é a Caio, atendente virtual da Pastita, respondendo pelo WhatsApp.\n"
-            "Seja direto, caloroso e natural — como um humano faria, não como um robô.\n\n"
-            "REGRAS IMPORTANTES:\n"
-            "• Respostas CURTAS — máximo 3 frases por mensagem. Nunca envie parágrafos longos.\n"
-            "• Nunca liste tudo de uma vez — apresente opções quando o cliente pedir.\n"
-            "• Use emojis com moderação (1-2 por mensagem no máximo).\n"
-            "• Não use bullets ou listas de texto — prefira os botões interativos do WhatsApp.\n"
-            "• Para pedidos, use o fluxo de botões. Para dúvidas rápidas, responda direto.\n"
-            "• Se o cliente preferir navegar sozinho, indique nosso site: pastita.com.br\n"
-            "• Sempre responda em português brasileiro.\n"
-            "• Se não souber algo, diga com honestidade e ofereça conectar com atendente humano."
-        )
+        # Add system prompt with dynamic context — use ONLY the agent's own system_prompt
+        # from the database. Never inject hardcoded behavioral rules here.
+        system_prompt = self.agent.system_prompt or "Você é um assistente virtual. Responda em português."
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
-        else:
-            system_prompt = (
-                f"{system_prompt}\n\n"
-                "OBS: Cardápio não carregado no momento. Informe ao cliente que verificará as opções."
-            )
         messages.append(SystemMessage(content=_sanitize(system_prompt)))
 
         # Add memory/context if available
@@ -747,11 +735,7 @@ class LangchainService:
         messages = []
         
         # Add system prompt with dynamic context
-        system_prompt = self.agent.system_prompt or (
-            "Você é a Caio, atendente virtual da Pastita. Seja direto, caloroso e natural. "
-            "Respostas curtas (máximo 3 frases). Nunca envie textos longos. "
-            "Responda em português brasileiro."
-        )
+        system_prompt = self.agent.system_prompt or "Você é um assistente virtual. Responda em português."
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         messages.append(SystemMessage(content=system_prompt))
