@@ -221,10 +221,8 @@ class WhatsAppConsumer(ThrottledWebSocketConsumer):
             # Check if user is owner or has permission
             if account.owner_id == self.user.id:
                 return True
-            # Staff users have access to all accounts
-            if self.user.is_staff:
+            if self.user.is_staff or self.user.is_superuser:
                 return True
-            # TODO: Add more granular permission checks if needed
             return False
         except WhatsAppAccount.DoesNotExist:
             return False

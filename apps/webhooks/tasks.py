@@ -308,8 +308,10 @@ def process_dead_letter(max_entries: int = 50, auto_reprocess: bool = False):
     ).count()
     
     if critical_count > 100:
-        logger.error(f"CRITICAL: {critical_count} webhook failures in the last hour!")
-        # TODO: Send alert to monitoring system
+        msg = f"{critical_count} webhook failures in the last hour"
+        logger.error("CRITICAL: %s", msg)
+        from apps.webhooks.signals import _send_monitoring_alert
+        _send_monitoring_alert("critical", msg)
     
     return results
 

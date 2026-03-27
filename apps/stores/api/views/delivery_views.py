@@ -6,38 +6,33 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from django.db.models import Q, Avg
+from django.db.models import Avg
 
-from apps.stores.models import Store, StoreDeliveryZone
+from apps.stores.models import StoreDeliveryZone
+from apps.core.permissions import StoreQuerysetMixin
 from ..serializers import StoreDeliveryZoneSerializer, StoreDeliveryZoneCreateSerializer
 from .base import IsStoreOwnerOrStaff
 
 
-class StoreDeliveryZoneViewSet(viewsets.ModelViewSet):
+class StoreDeliveryZoneViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store delivery zones."""
-    
+
+    queryset = StoreDeliveryZone.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
-    
+    store_field = 'store'
+
     def get_queryset(self):
-        user = self.request.user
-        store_param = self.request.query_params.get('store')
-        
-        if user.is_staff:
-            queryset = StoreDeliveryZone.objects.all()
-        else:
-            user_stores = Store.objects.filter(
-                Q(owner=user) | Q(staff=user)
-            ).values_list('id', flat=True)
-            queryset = StoreDeliveryZone.objects.filter(store_id__in=user_stores)
-        
+        qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+
         if store_param:
             try:
                 uuid_module.UUID(store_param)
-                queryset = queryset.filter(store_id=store_param)
+                qs = qs.filter(store_id=store_param)
             except (ValueError, AttributeError):
-                queryset = queryset.filter(store__slug=store_param)
-        
-        return queryset.select_related('store').order_by('sort_order', 'distance_band', 'min_km')
+                qs = qs.filter(store__slug=store_param)
+
+        return qs.select_related('store').order_by('sort_order', 'distance_band', 'min_km')
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:

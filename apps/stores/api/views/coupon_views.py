@@ -5,39 +5,34 @@ import uuid as uuid_module
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.db.models import Q, Sum
+from django.db.models import Sum
 from django.utils import timezone
 
-from apps.stores.models import Store, StoreCoupon
+from apps.stores.models import StoreCoupon
+from apps.core.permissions import StoreQuerysetMixin
 from ..serializers import StoreCouponSerializer, StoreCouponCreateSerializer
 from .base import IsStoreOwnerOrStaff
 
 
-class StoreCouponViewSet(viewsets.ModelViewSet):
+class StoreCouponViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store coupons."""
-    
+
+    queryset = StoreCoupon.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
-    
+    store_field = 'store'
+
     def get_queryset(self):
-        user = self.request.user
-        store_param = self.request.query_params.get('store')
-        
-        if user.is_staff:
-            queryset = StoreCoupon.objects.all()
-        else:
-            user_stores = Store.objects.filter(
-                Q(owner=user) | Q(staff=user)
-            ).values_list('id', flat=True)
-            queryset = StoreCoupon.objects.filter(store_id__in=user_stores)
-        
+        qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+
         if store_param:
             try:
                 uuid_module.UUID(store_param)
-                queryset = queryset.filter(store_id=store_param)
+                qs = qs.filter(store_id=store_param)
             except (ValueError, AttributeError):
-                queryset = queryset.filter(store__slug=store_param)
-        
-        return queryset.select_related('store').order_by('-created_at')
+                qs = qs.filter(store__slug=store_param)
+
+        return qs.select_related('store').order_by('-created_at')
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:

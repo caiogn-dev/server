@@ -249,10 +249,54 @@ class NotificationService:
             logger.error(f"Error sending push notification: {e}")
     
     def _send_web_push(self, subscription: PushSubscription, notification: Notification):
-        """Send web push notification."""
-        # Implementation would use pywebpush library
-        # For now, just log the attempt
-        logger.info(f"Would send push to {subscription.endpoint}: {notification.title}")
+        """Send web push notification via pywebpush (VAPID)."""
+        import json
+        from django.conf import settings
+
+        private_key = getattr(settings, 'VAPID_PRIVATE_KEY', '')
+        claims_email = getattr(settings, 'VAPID_CLAIMS_EMAIL', 'admin@example.com')
+
+        if not private_key:
+            logger.warning("VAPID_PRIVATE_KEY not configured — push skipped")
+            return
+
+        try:
+            from pywebpush import webpush, WebPushException
+
+            payload = json.dumps({
+                'title': notification.title,
+                'body': notification.message,
+                'data': notification.data,
+                'tag': str(notification.id),
+                'icon': '/icons/icon-192x192.png',
+            })
+
+            webpush(
+                subscription_info={
+                    'endpoint': subscription.endpoint,
+                    'keys': {
+                        'p256dh': subscription.p256dh_key,
+                        'auth': subscription.auth_key,
+                    },
+                },
+                data=payload,
+                vapid_private_key=private_key,
+                vapid_claims={'sub': f'mailto:{claims_email}'},
+            )
+            logger.info(f"Push sent to {subscription.endpoint[:60]}…")
+        except WebPushException as e:
+            status_code = e.response.status_code if e.response is not None else None
+            if status_code in (404, 410):
+                # Subscription expired — deactivate it
+                subscription.is_active = False
+                subscription.save(update_fields=['is_active'])
+                logger.info(f"Push subscription deactivated (gone): {subscription.endpoint[:60]}…")
+            else:
+                logger.error(f"WebPushException ({status_code}): {e}")
+        except ImportError:
+            logger.warning("pywebpush not installed — push skipped")
+        except Exception as e:
+            logger.error(f"Unexpected push error: {e}")
     
     # Convenience methods for specific notification types
     def notify_new_message(

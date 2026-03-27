@@ -554,16 +554,22 @@ class WebhookService:
             if not _response_sent and orchestrator_response.content:
                 try:
                     from ..tasks import send_agent_response
+                    response_source = getattr(
+                        getattr(orchestrator_response, 'source', None),
+                        'value',
+                        'handler',
+                    )
                     send_agent_response.delay(
                         str(event.account.id),
                         message.from_number,
                         orchestrator_response.content,
                         str(message.whatsapp_message_id),
+                        f'unified_{response_source}',
                     )
                     logger.info(
                         '[pipeline] Text response queued (%.0fms)', _orchestrator_ms,
                         extra={
-                            'pipeline.source': getattr(getattr(orchestrator_response, 'source', None), 'value', 'handler'),
+                            'pipeline.source': response_source,
                             'pipeline.duration_ms': _orchestrator_ms,
                             'message_id': str(message.id),
                         },
@@ -754,6 +760,19 @@ class WebhookService:
             text_body = f"ðŸ›’ Order with {len(order.get('product_items', []))} item(s)"
         else:
             content = message_data
+
+        logger.info(
+            "[_process_inbound_message] Parsed inbound payload: type=%s text_len=%s context_id=%s",
+            message_type,
+            len(text_body or ''),
+            message_data.get('context', {}).get('id', ''),
+        )
+        if message_type in {'text', 'interactive', 'button'} and not (text_body or '').strip():
+            logger.warning(
+                "[_process_inbound_message] Inbound message has empty text_body: type=%s message_id=%s",
+                message_type,
+                whatsapp_message_id,
+            )
         
         # Get or create conversation
         logger.info(f"[_process_inbound_message] About to create conversation: account={event.account.id}, phone={from_number}, contact_name={contact_data.get('profile', {}).get('name', '')}")

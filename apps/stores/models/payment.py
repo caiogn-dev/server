@@ -12,6 +12,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from django.contrib.auth import get_user_model
 from apps.core.models import BaseModel
+from apps.core.fields import EncryptedCharField
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -51,12 +52,13 @@ class StorePaymentGateway(BaseModel):
     is_sandbox = models.BooleanField(default=True, help_text='Use sandbox/test mode')
     is_default = models.BooleanField(default=False, help_text='Use as default gateway for this store')
 
-    # Credentials (encrypted at application level if needed)
-    api_key = models.CharField(max_length=500, blank=True, help_text='API Key')
-    api_secret = models.CharField(max_length=500, blank=True, help_text='API Secret')
-    access_token = models.CharField(max_length=500, blank=True, help_text='Access Token (for MP)')
-    webhook_secret = models.CharField(max_length=500, blank=True, help_text='Webhook Secret')
-    public_key = models.CharField(max_length=500, blank=True, help_text='Public Key (for MP)')
+    # Credentials — stored encrypted at rest via EncryptedCharField (Fernet/AES).
+    # Existing plaintext rows are returned as-is and re-encrypted on next save.
+    api_key = EncryptedCharField(max_length=1000, blank=True, help_text='API Key (encrypted)')
+    api_secret = EncryptedCharField(max_length=1000, blank=True, help_text='API Secret (encrypted)')
+    access_token = EncryptedCharField(max_length=1000, blank=True, help_text='Access Token (encrypted)')
+    webhook_secret = EncryptedCharField(max_length=1000, blank=True, help_text='Webhook Secret (encrypted)')
+    public_key = EncryptedCharField(max_length=1000, blank=True, help_text='Public Key (encrypted)')
 
     # URLs
     endpoint_url = models.URLField(blank=True, help_text='Gateway API endpoint')

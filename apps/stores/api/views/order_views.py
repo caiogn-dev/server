@@ -14,6 +14,7 @@ from datetime import timedelta
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.stores.services.order_service import OrderService
+from apps.core.permissions import StoreQuerysetMixin
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
     StoreCustomerSerializer
@@ -23,52 +24,47 @@ from .base import IsStoreOwnerOrStaff, filter_by_store
 logger = logging.getLogger(__name__)
 
 
-class StoreOrderViewSet(viewsets.ModelViewSet):
+class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store orders."""
-    
+
+    queryset = StoreOrder.objects.all()
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
-    
+    store_field = 'store'
+
     def get_queryset(self):
+        qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreOrder.objects.all()
-        
+
         if store_param:
             try:
                 uuid_module.UUID(store_param)
-                queryset = queryset.filter(store_id=store_param)
+                qs = qs.filter(store_id=store_param)
             except (ValueError, AttributeError):
-                queryset = queryset.filter(store__slug=store_param)
-        else:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
-        
+                qs = qs.filter(store__slug=store_param)
+
         # Filters
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        
+            qs = qs.filter(status=status_filter)
+
         payment_status = self.request.query_params.get('payment_status')
         if payment_status:
-            queryset = queryset.filter(payment_status=payment_status)
-        
+            qs = qs.filter(payment_status=payment_status)
+
         search = self.request.query_params.get('search')
         if search:
-            queryset = queryset.filter(
+            qs = qs.filter(
                 Q(order_number__icontains=search) |
                 Q(customer_name__icontains=search) |
                 Q(customer_email__icontains=search) |
                 Q(customer_phone__icontains=search)
             )
-        
-        # Filter by customer phone number (used by dashboard conversations)
+
         customer = self.request.query_params.get('customer')
         if customer:
-            queryset = queryset.filter(customer_phone=customer)
-        
-        return queryset.select_related(
+            qs = qs.filter(customer_phone=customer)
+
+        return qs.select_related(
             'store', 'customer'
         ).prefetch_related(
             'items__product',
@@ -373,33 +369,27 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(queryset[:20], many=True).data)
 
 
-class StoreCustomerViewSet(viewsets.ModelViewSet):
+class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store customers."""
-    
+
+    queryset = StoreCustomer.objects.all()
     serializer_class = StoreCustomerSerializer
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
-    
+    store_field = 'store'
+
     def get_queryset(self):
+        qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreCustomer.objects.all()
-        
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if not filtered:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
-        
+        if store_param:
+            qs, _ = filter_by_store(qs, store_param)
         search = self.request.query_params.get('search')
         if search:
-            queryset = queryset.filter(
+            qs = qs.filter(
                 Q(user__email__icontains=search) |
                 Q(phone__icontains=search) |
                 Q(whatsapp__icontains=search)
             )
-        
-        return queryset.select_related('user', 'store')
+        return qs.select_related('user', 'store')
     
     @action(detail=True, methods=['post'])
     def update_stats(self, request, pk=None):

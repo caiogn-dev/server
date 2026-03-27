@@ -222,10 +222,16 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
+    # Pastita dashboard
     "https://painel.pastita.com.br",
+    # Pastita main site / pastita-3d storefront (custom domains)
     "https://pastita.com.br",
     "https://www.pastita.com.br",
+    # pastita-3d storefront — Vercel deployment
+    "https://pastita-3d.vercel.app",
+    # ce-saladas storefront — Vercel deployment
     "https://ce-saladas.vercel.app",
+    # Backend / API self-origin (health checks, swagger)
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",
 ]
@@ -260,6 +266,15 @@ CORS_EXPOSE_HEADERS = [
     'content-type',
     'x-csrftoken',
 ]
+
+# Monitoring — set to a Slack/Discord incoming-webhook URL to receive DLQ alerts.
+# Leave blank to only log (no HTTP request will be made).
+MONITORING_WEBHOOK_URL = os.environ.get('MONITORING_WEBHOOK_URL', '')
+
+# Web Push (VAPID) — generate keys with: python manage.py generate_vapid_keys
+VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+VAPID_PUBLIC_KEY = os.environ.get('VAPID_PUBLIC_KEY', '')
+VAPID_CLAIMS_EMAIL = os.environ.get('VAPID_CLAIMS_EMAIL', 'admin@pastita.com.br')
 
 # Celery
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', REDIS_URL or 'redis://localhost:6379/0')

@@ -65,6 +65,9 @@ class UserProfileSerializer(serializers.Serializer):
     phone = serializers.CharField(allow_blank=True)
     cpf = serializers.CharField(allow_blank=True)
     address = serializers.CharField(allow_blank=True)
+    number = serializers.CharField(allow_blank=True)
+    complement = serializers.CharField(allow_blank=True)
+    neighborhood = serializers.CharField(allow_blank=True)
     city = serializers.CharField(allow_blank=True)
     state = serializers.CharField(allow_blank=True)
     zip_code = serializers.CharField(allow_blank=True)
@@ -78,6 +81,9 @@ class UpdateProfileSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     cpf = serializers.CharField(max_length=14, required=False, allow_blank=True)
     address = serializers.CharField(required=False, allow_blank=True)
+    number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    complement = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    neighborhood = serializers.CharField(max_length=100, required=False, allow_blank=True)
     city = serializers.CharField(max_length=100, required=False, allow_blank=True)
     state = serializers.CharField(max_length=2, required=False, allow_blank=True)
     zip_code = serializers.CharField(max_length=10, required=False, allow_blank=True)
@@ -403,6 +409,9 @@ class ProfileView(APIView):
             'phone': profile.phone,
             'cpf': profile.cpf,
             'address': profile.address,
+            'number': profile.number,
+            'complement': profile.complement,
+            'neighborhood': profile.neighborhood,
             'city': profile.city,
             'state': profile.state,
             'zip_code': profile.zip_code,
@@ -444,6 +453,12 @@ class ProfileView(APIView):
             profile.cpf = data['cpf']
         if 'address' in data:
             profile.address = data['address']
+        if 'number' in data:
+            profile.number = data['number']
+        if 'complement' in data:
+            profile.complement = data['complement']
+        if 'neighborhood' in data:
+            profile.neighborhood = data['neighborhood']
         if 'city' in data:
             profile.city = data['city']
         if 'state' in data:
@@ -451,7 +466,7 @@ class ProfileView(APIView):
         if 'zip_code' in data:
             profile.zip_code = data['zip_code']
         profile.save()
-        
+
         return Response({
             'id': user.id,
             'username': user.username,
@@ -461,6 +476,9 @@ class ProfileView(APIView):
             'phone': profile.phone,
             'cpf': profile.cpf,
             'address': profile.address,
+            'number': profile.number,
+            'complement': profile.complement,
+            'neighborhood': profile.neighborhood,
             'city': profile.city,
             'state': profile.state,
             'zip_code': profile.zip_code,

@@ -7,4 +7,4 @@ class StoresConfig(AppConfig):
     verbose_name = 'Stores'
 
     def ready(self):
-        pass
+        import apps.stores.signals  # noqa: F401

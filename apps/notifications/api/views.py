@@ -2,10 +2,11 @@
 Notification API views.
 """
 import logging
+from django.conf import settings
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
@@ -174,3 +175,14 @@ class PushSubscriptionViewSet(viewsets.GenericViewSet):
             {'error': 'Subscription not found'},
             status=status.HTTP_404_NOT_FOUND
         )
+
+
+@extend_schema(summary="Get VAPID public key for push subscription")
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def vapid_public_key(request):
+    """Return the VAPID public key (URL-safe base64) for the browser to use."""
+    key = getattr(settings, 'VAPID_PUBLIC_KEY', '')
+    if not key:
+        return Response({'error': 'VAPID not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return Response({'publicKey': key})

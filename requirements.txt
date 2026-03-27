@@ -38,6 +38,12 @@ python-dotenv>=1.0.0
 openpyxl>=3.1.2
 xlsxwriter>=3.1.9
 
+# PDF receipt generation (pure-Python, no system libs needed)
+reportlab>=4.0.0
+
+# Web Push notifications (VAPID)
+pywebpush>=2.0.0
+
 # Payments
 mercadopago>=2.3.0
 

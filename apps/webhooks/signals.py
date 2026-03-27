@@ -6,6 +6,7 @@ Signals for webhook processing.
 - Send alerts on critical failure patterns
 """
 import logging
+import threading
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
@@ -15,6 +16,37 @@ from .models import WebhookEvent, WebhookDeadLetter, WebhookOutbox
 from .tasks import reprocess_dead_letter_entry
 
 logger = logging.getLogger(__name__)
+
+
+def _send_monitoring_alert(level: str, message: str) -> None:
+    """
+    Fire an alert to the configured monitoring webhook (Slack/Discord/PagerDuty).
+
+    Set MONITORING_WEBHOOK_URL in Django settings or the environment.
+    If not configured, the alert is only logged (no-op at the network level).
+
+    Executes in a daemon thread so it never blocks signal processing.
+
+    level: "warning" | "critical" | "emergency"
+    """
+    from django.conf import settings
+    url = getattr(settings, 'MONITORING_WEBHOOK_URL', None)
+    if not url:
+        return
+
+    def _post():
+        try:
+            import urllib.request
+            import json
+            emoji = {"warning": ":warning:", "critical": ":rotating_light:", "emergency": ":skull:"}.get(level, ":bell:")
+            payload = json.dumps({"text": f"{emoji} *[{level.upper()}]* {message}"}).encode()
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=5)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Monitoring webhook delivery failed: %s", exc)
+
+    t = threading.Thread(target=_post, daemon=True)
+    t.start()
 
 
 @receiver(post_save, sender=WebhookEvent)
@@ -103,11 +135,12 @@ def handle_failed_outbox_entry(sender, instance, created, **kwargs):
         
         # Alert on high failure rate
         if recent_failures >= 10:
-            logger.error(
-                f"ALERT: High webhook failure rate for {instance.endpoint_url}: "
+            msg = (
+                f"High webhook failure rate for `{instance.endpoint_url}`: "
                 f"{recent_failures} failures in the last hour"
             )
-            # TODO: Send alert to monitoring system (PagerDuty, Slack, etc.)
+            logger.error("ALERT: %s", msg)
+            _send_monitoring_alert("warning", msg)
         
         # Log for debugging
         logger.warning(
@@ -131,15 +164,18 @@ def check_critical_failure_pattern(sender, instance, **kwargs):
     ).count()
     
     # Alert thresholds
-    if recent_failures == 50:  # First threshold
-        logger.error(f"WARNING: {recent_failures} webhook failures in the last hour")
-    elif recent_failures == 100:  # Critical threshold
-        logger.error(f"CRITICAL: {recent_failures} webhook failures in the last hour!")
-        # TODO: Send critical alert
-    elif recent_failures == 500:  # Emergency threshold
-        logger.error(f"EMERGENCY: {recent_failures} webhook failures in the last hour! "
-                    f"Consider disabling webhooks temporarily.")
-        # TODO: Send emergency alert, possibly auto-disable
+    if recent_failures == 50:
+        msg = f"{recent_failures} webhook failures in the last hour"
+        logger.error("WARNING: %s", msg)
+        _send_monitoring_alert("warning", msg)
+    elif recent_failures == 100:
+        msg = f"{recent_failures} webhook failures in the last hour"
+        logger.error("CRITICAL: %s", msg)
+        _send_monitoring_alert("critical", msg)
+    elif recent_failures == 500:
+        msg = f"{recent_failures} webhook failures in the last hour — consider disabling webhooks temporarily"
+        logger.error("EMERGENCY: %s", msg)
+        _send_monitoring_alert("emergency", msg)
 
 
 def _classify_failure(error_message: str) -> str:

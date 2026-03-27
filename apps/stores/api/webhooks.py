@@ -619,9 +619,73 @@ Olá! Gostaria de confirmar meu pedido."""
                 'phone_number': clean_number,
                 'message': message,
             })
-        
+
         except StoreOrder.DoesNotExist:
             return Response(
                 {'error': 'Pedido não encontrado'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class OrderReceiptView(APIView):
+    """
+    Generate and return a PDF receipt for an order.
+
+    Access control (any of):
+    - Authenticated store owner / staff
+    - Valid ?token=<access_token> query param (for customer self-service)
+
+    GET /api/v1/stores/orders/<uuid>/receipt/
+    GET /api/v1/stores/orders/<uuid>/receipt/?token=<access_token>
+    """
+
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request, order_id):
+        token = request.query_params.get("token")
+
+        try:
+            order = (
+                StoreOrder.objects
+                .select_related("store")
+                .prefetch_related("items__product", "combo_items")
+                .get(id=order_id)
+            )
+        except StoreOrder.DoesNotExist:
+            return Response({"error": "Pedido não encontrado"}, status=status.HTTP_404_NOT_FOUND)
+
+        # Authorization: token OR authenticated owner/staff
+        user = request.user if request.user and request.user.is_authenticated else None
+        if token:
+            if order.access_token != token:
+                return Response({"error": "Token inválido"}, status=status.HTTP_403_FORBIDDEN)
+        elif user:
+            store = order.store
+            is_owner = getattr(store, "owner_id", None) == user.id
+            is_staff = user.is_staff or user.is_superuser
+            is_store_staff = store.staff.filter(id=user.id).exists() if not is_staff else False
+            if not (is_owner or is_staff or is_store_staff):
+                return Response({"error": "Sem permissão"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response(
+                {"error": "Autenticação necessária ou token de pedido obrigatório"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        try:
+            from apps.stores.services.receipt_service import generate_order_receipt_pdf
+            pdf_bytes = generate_order_receipt_pdf(order)
+        except ImportError:
+            return Response(
+                {"error": "reportlab não instalado — execute pip install reportlab"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except Exception as exc:
+            logger.exception("Failed to generate receipt for order %s: %s", order_id, exc)
+            return Response({"error": "Erro ao gerar PDF"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        filename = f"recibo-{order.order_number}.pdf"
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'inline; filename="{filename}"'
+        return response

@@ -58,18 +58,20 @@ class ThrottledWebSocketConsumer(AsyncJsonWebsocketConsumer):
     def verify_account_access(self, account_id: str) -> bool:
         """
         Verify if user has access to the specified account.
-        Override this method in subclasses to implement specific access logic.
+
+        Default policy:
+        - Unauthenticated / missing account_id → deny.
+        - Django staff / superusers → allow (admin access).
+        - Regular users → deny unless a subclass overrides this method
+          with platform-specific ownership checks.
+
+        Subclasses (WhatsAppConsumer, InstagramConsumer, etc.) are expected
+        to override this and check account.owner_id == self.user.id or
+        equivalent store-staff membership.
         """
         if not self.user or not account_id:
             return False
-        
-        # Default: staff users have access to all accounts
-        if self.user.is_staff:
-            return True
-        
-        # TODO: Implement specific account access verification
-        # This should check if user owns or has permission to access the account
-        return True
+        return self.user.is_staff or self.user.is_superuser
     
     async def get_conversation_cached(self, conversation_id: str):
         """Get conversation with caching."""

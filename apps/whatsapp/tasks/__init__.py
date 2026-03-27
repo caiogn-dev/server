@@ -181,7 +181,8 @@ def process_message_with_agent(self, message_id: str):
                     str(account.id),
                     message.from_number,
                     response_text,
-                    str(message.whatsapp_message_id)
+                    str(message.whatsapp_message_id),
+                    'ai_agent',
                 )
                 logger.info(f"Response queued for sending: {message_id}")
             except Exception as send_error:
@@ -192,7 +193,8 @@ def process_message_with_agent(self, message_id: str):
                         str(account.id),
                         message.from_number,
                         "Obrigado pela mensagem! Em breve retornaremos.",
-                        None
+                        None,
+                        'ai_agent_error_fallback',
                     )
                 except:
                     pass
@@ -210,8 +212,15 @@ def process_message_with_agent(self, message_id: str):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
-def send_agent_response(self, account_id: str, to: str, response_text: str, reply_to: str = None):
-    """Send AI Agent response as WhatsApp message."""
+def send_agent_response(
+    self,
+    account_id: str,
+    to: str,
+    response_text: str,
+    reply_to: str = None,
+    response_source: str = 'ai_agent',
+):
+    """Send an automated WhatsApp response and persist its origin metadata."""
     from ..services import MessageService
     
     try:
@@ -224,12 +233,12 @@ def send_agent_response(self, account_id: str, to: str, response_text: str, repl
             to=formatted_to,
             text=response_text,
             reply_to=reply_to,
-            metadata={'source': 'ai_agent'}
+            metadata={'source': response_source}
         )
-        logger.info(f"AI Agent response sent to {to}")
+        logger.info("Automated response sent to %s via %s", to, response_source)
         
     except Exception as e:
-        logger.error(f"Error sending AI Agent response: {str(e)}")
+        logger.error("Error sending automated response via %s: %s", response_source, str(e))
         raise self.retry(exc=e)
 
 

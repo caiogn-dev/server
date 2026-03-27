@@ -27,7 +27,8 @@ from .api.views import (
 )
 from .api.webhooks import (
     MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
-    CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView
+    CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView,
+    OrderReceiptView,
 )
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
@@ -151,6 +152,7 @@ urlpatterns = [
     
     # WhatsApp confirmation link
     path('orders/<uuid:order_id>/whatsapp/', OrderWhatsAppView.as_view(), name='order-whatsapp'),
+    path('orders/<uuid:order_id>/receipt/', OrderReceiptView.as_view(), name='order-receipt'),
     
     # ==========================================================================
     # REPORTS & EXPORT ENDPOINTS (require auth)
