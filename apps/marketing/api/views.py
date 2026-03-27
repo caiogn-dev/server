@@ -27,7 +27,7 @@ from .serializers import (
 class EmailTemplateViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for email templates."""
 
-    queryset = EmailTemplate.objects.all()
+    queryset = EmailTemplate.objects.select_related('store', 'created_by')
     permission_classes = [IsAuthenticated]
     serializer_class = EmailTemplateSerializer
     store_field = 'store'
@@ -93,7 +93,7 @@ class EmailTemplateViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 class EmailCampaignViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for email campaigns."""
 
-    queryset = EmailCampaign.objects.all()
+    queryset = EmailCampaign.objects.select_related('store', 'template', 'created_by')
     permission_classes = [IsAuthenticated]
     serializer_class = EmailCampaignSerializer
     store_field = 'store'
@@ -204,7 +204,7 @@ class EmailCampaignViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 class SubscriberViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for subscribers."""
 
-    queryset = Subscriber.objects.all()
+    queryset = Subscriber.objects.select_related('store')
     permission_classes = [IsAuthenticated]
     serializer_class = SubscriberSerializer
     store_field = 'store'
@@ -602,7 +602,7 @@ class QuickActionsViewSet(viewsets.ViewSet):
 class EmailAutomationViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for email automations."""
 
-    queryset = EmailAutomation.objects.all()
+    queryset = EmailAutomation.objects.select_related('store', 'template')
     permission_classes = [IsAuthenticated]
     serializer_class = EmailAutomationSerializer
     store_field = 'store'

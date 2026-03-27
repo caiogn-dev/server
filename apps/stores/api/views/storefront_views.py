@@ -47,6 +47,29 @@ from ..serializers import (
 
 logger = logging.getLogger(__name__)
 
+_STORE_CACHE_TTL = 60  # seconds — store config changes are rare
+
+
+def get_active_store(slug: str):
+    """
+    Return the active Store for *slug*, with a 60-second cache per slug.
+
+    Uses Django's cache framework (Redis in production, LocMem in dev).
+    Cache is invalidated automatically by TTL; explicit invalidation happens
+    in store save signals if implemented.
+    """
+    from django.core.cache import cache
+    from django.http import Http404
+
+    cache_key = f'store:slug:{slug}'
+    store = cache.get(cache_key)
+    if store is None:
+        store = Store.objects.filter(slug=slug, status='active').select_related('owner').first()
+        if store is None:
+            raise Http404(f"Store '{slug}' not found or not active")
+        cache.set(cache_key, store, _STORE_CACHE_TTL)
+    return store
+
 
 def get_request_cart_key(request):
     """Resolve a stable cart key for anonymous storefront requests."""
@@ -185,10 +208,11 @@ def build_store_customer_profile(store, user):
 class StorePublicView(APIView):
     """Public store information endpoint."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [PublicReadThrottle]
+
     def get(self, request, store_slug):
         """Get public store information."""
-        store = get_object_or_404(Store, slug=store_slug, status='active')
+        store = get_active_store(store_slug)
         serializer = StoreSerializer(store)
         return Response(serializer.data)
 
@@ -200,7 +224,7 @@ class StoreCatalogView(APIView):
     
     def get(self, request, store_slug):
         """Get store catalog with categories, products, and combos."""
-        store = get_object_or_404(Store, slug=store_slug, status='active')
+        store = get_active_store(store_slug)
         
         # Get all active products for the store
         products = StoreProduct.objects.filter(
@@ -259,9 +283,10 @@ class StoreAppConfigView(APIView):
     """Public bootstrap config for the native storefront app."""
 
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PublicReadThrottle]
 
     def get(self, request, store_slug):
-        store = get_object_or_404(Store, slug=store_slug, status='active')
+        store = get_active_store(store_slug)
         whatsapp_account = store.get_whatsapp_account()
         payment_config = build_store_payment_config(store)
         metadata = store.metadata or {}
@@ -300,9 +325,10 @@ class StoreCustomerProfileView(APIView):
     """Customer storefront profile scoped to the selected store."""
 
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [PublicReadThrottle]
 
     def get_store(self, store_slug):
-        return get_object_or_404(Store, slug=store_slug, status='active')
+        return get_active_store(store_slug)
 
     def get(self, request, store_slug):
         store = self.get_store(store_slug)
@@ -361,7 +387,7 @@ class StoreCartViewSet(viewsets.ViewSet):
     throttle_classes = [PublicWriteThrottle]
     
     def get_store(self, store_slug):
-        return get_object_or_404(Store, slug=store_slug, status='active')
+        return get_active_store(store_slug)
     
     def get_cart(self, request, store):
         """Get or create cart for session/user."""
@@ -496,7 +522,7 @@ class StoreCheckoutView(APIView):
     
     def post(self, request, store_slug):
         """Process checkout and create order."""
-        store = get_object_or_404(Store, slug=store_slug, status='active')
+        store = get_active_store(store_slug)
         
         # Get cart
         session_id = get_request_cart_key(request)
@@ -609,10 +635,11 @@ class StoreCheckoutView(APIView):
 class StoreDeliveryFeeView(APIView):
     """Calculate delivery fee endpoint."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [PublicWriteThrottle]
+
     def post(self, request, store_slug):
         """Calculate delivery fee for an address."""
-        store = get_object_or_404(Store, slug=store_slug, status='active')
+        store = get_active_store(store_slug)
         
         lat = request.data.get('lat')
         lng = request.data.get('lng')
@@ -653,10 +680,11 @@ class StoreDeliveryFeeView(APIView):
 class StoreCouponValidateView(APIView):
     """Validate coupon code endpoint."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [PublicWriteThrottle]
+
     def post(self, request, store_slug):
         """Validate a coupon code."""
-        store = get_object_or_404(Store, slug=store_slug, status='active')
+        store = get_active_store(store_slug)
         
         code = request.data.get('code')
         subtotal = Decimal(str(request.data.get('subtotal', 0)))
@@ -709,9 +737,10 @@ class StoreCouponValidateView(APIView):
 class StoreWishlistViewSet(viewsets.ViewSet):
     """ViewSet for managing user wishlists per store."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [PublicWriteThrottle]
+
     def get_store(self, store_slug):
-        return get_object_or_404(Store, slug=store_slug, status='active')
+        return get_active_store(store_slug)
     
     def _get_customer_id(self, request):
         """Get customer identifier from request."""

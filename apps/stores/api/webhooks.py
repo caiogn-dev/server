@@ -44,10 +44,11 @@ class MercadoPagoWebhookView(APIView):
             logger.debug(f"Webhook headers: {dict(request.headers)}")
             
             # Validate webhook signature if secret is configured
-            if not self._validate_signature(request, store_slug):
-                logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+            sig_result = self._validate_signature(request, store_slug)
+            if sig_result is False:
+                # Secret IS configured but signature didn't match — reject
+                logger.warning("Webhook signature validation failed for store: %s", store_slug)
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -68,52 +69,62 @@ class MercadoPagoWebhookView(APIView):
     def _validate_signature(self, request, store_slug):
         """
         Validate Mercado Pago webhook signature.
-        Uses the webhook_secret from StoreIntegration.
+
+        Returns:
+            True  — no secret configured (validation skipped, allow)
+            True  — secret configured and signature matches
+            False — secret configured but signature is missing or wrong
         """
-        try:
-            # Get signature from headers
-            signature = request.headers.get('X-Signature') or request.headers.get('X-Hub-Signature')
-            
-            if not signature and store_slug:
-                # Try to get secret from store integration
-                integration = StoreIntegration.objects.filter(
-                    store__slug=store_slug,
-                    integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
-                    status=StoreIntegration.IntegrationStatus.ACTIVE
-                ).first()
-                
-                if integration and integration.webhook_secret:
-                    # For Mercado Pago, the signature is in the query string
-                    # Format: signature=timestamp,token
-                    query_sig = request.query_params.get('signature')
-                    if query_sig:
-                        # Validate using the secret
-                        import hmac
-                        import hashlib
-                        
-                        # Get the request body
-                        body = request.body.decode('utf-8')
-                        
-                        # Calculate expected signature
-                        expected_sig = hmac.new(
-                            integration.webhook_secret.encode('utf-8'),
-                            body.encode('utf-8'),
-                            hashlib.sha256
-                        ).hexdigest()
-                        
-                        # Compare signatures
-                        if hmac.compare_digest(query_sig, expected_sig):
-                            return True
-                        else:
-                            logger.warning(f"Invalid signature for store {store_slug}")
-                            return False
-            
-            # If no signature validation needed, allow the request
+        import hmac as hmac_mod
+        import hashlib
+
+        if not store_slug:
             return True
-            
+
+        try:
+            integration = StoreIntegration.objects.filter(
+                store__slug=store_slug,
+                integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+                status=StoreIntegration.IntegrationStatus.ACTIVE,
+            ).only('webhook_secret').first()
         except Exception as e:
-            logger.error(f"Signature validation error: {e}")
-            return True  # Allow request on validation error (fail open for now)
+            logger.error("Error fetching MP integration for signature check: %s", e)
+            return True  # DB error — can't validate; allow and log
+
+        if not integration or not integration.webhook_secret:
+            # No secret configured — skip validation (True = allow)
+            return True
+
+        # Secret IS configured — enforce validation
+        # Mercado Pago sends signature in query string: ?signature=<hex>
+        provided_sig = (
+            request.query_params.get('signature')
+            or request.headers.get('X-Signature')
+            or request.headers.get('X-Hub-Signature')
+            or ''
+        )
+        if not provided_sig:
+            logger.warning("MP webhook missing signature for store %s", store_slug)
+            return False
+
+        # Strip algorithm prefix if present (e.g. "sha256=abc...")
+        if '=' in provided_sig and not provided_sig.startswith('0') and len(provided_sig) < 20:
+            provided_sig = provided_sig.split('=', 1)[-1]
+
+        try:
+            body = request.body.decode('utf-8')
+            expected = hmac_mod.new(
+                integration.webhook_secret.encode('utf-8'),
+                body.encode('utf-8'),
+                hashlib.sha256,
+            ).hexdigest()
+            if hmac_mod.compare_digest(provided_sig, expected):
+                return True
+            logger.warning("MP webhook signature mismatch for store %s", store_slug)
+            return False
+        except Exception as e:
+            logger.error("MP webhook signature computation error: %s", e)
+            return False  # Fail closed when secret is configured
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""
@@ -464,8 +475,13 @@ class CustomerOrdersView(APIView):
         if store_slug:
             orders = orders.filter(store__slug=store_slug)
         
-        orders = orders.order_by('-created_at')[:50]
-        
+        from django.db.models import Count
+        orders = (
+            orders
+            .annotate(items_count=Count('items'))
+            .order_by('-created_at')[:50]
+        )
+
         results = []
         for order in orders:
             results.append({
@@ -477,7 +493,7 @@ class CustomerOrdersView(APIView):
                 'payment_status': order.payment_status,
                 'total': float(order.total),
                 'delivery_method': order.delivery_method,
-                'items_count': order.items.count(),
+                'items_count': order.items_count,
                 'created_at': order.created_at.isoformat(),
             })
         
@@ -487,32 +503,30 @@ class CustomerOrdersView(APIView):
 class CustomerOrderDetailView(APIView):
     """
     Get single order details for customer.
-    Only allows access if:
-    - User is authenticated and owns the order
-    - Order was created in the last 24 hours (for payment status page)
+    Access requires one of:
+    - Authenticated user who owns the order, or is staff/superuser
+    - Valid ?token=<access_token> query param (customer self-service post-checkout)
     """
-    
+
     authentication_classes = []
     permission_classes = []
-    
+
     def get(self, request, order_id):
         """Get order details."""
         try:
             order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
-            
-            # Security check: verify access permission
+
+            token = request.query_params.get('token', '')
             user = request.user
-            is_owner = user.is_authenticated and order.customer == user
-            
-            # Allow access to recent orders (within 24h) for payment status page
-            # This is needed because user might not be logged in during checkout
-            from django.utils import timezone
-            from datetime import timedelta
-            is_recent = order.created_at > timezone.now() - timedelta(hours=24)
-            
-            if not is_owner and not is_recent:
+            is_owner = (
+                user.is_authenticated
+                and (order.customer_id == user.id or user.is_staff or user.is_superuser)
+            )
+            has_valid_token = bool(token and order.access_token and token == order.access_token)
+
+            if not is_owner and not has_valid_token:
                 return Response(
-                    {'error': 'Acesso negado. Faça login para ver seus pedidos.'},
+                    {'error': 'Acesso negado. Token inválido ou autenticação necessária.'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
