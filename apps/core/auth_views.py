@@ -13,10 +13,16 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema
 from .models import UserProfile
 from apps.notifications.services import email_service
+
+
+class AuthRateThrottle(AnonRateThrottle):
+    """10 requests/minute per IP for auth endpoints (login, register)."""
+    scope = 'auth'
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +100,7 @@ class LoginView(APIView):
     """Login endpoint to obtain authentication token."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthRateThrottle]
 
     @extend_schema(
         summary="Login",
@@ -229,6 +236,7 @@ class RegisterView(APIView):
     """Register a new user."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [AuthRateThrottle]
 
     def _trigger_new_user_automation(self, user, store_slug=None):
         """Trigger email automation for new user registration."""
@@ -374,9 +382,28 @@ class RegisterView(APIView):
             """
             email_service.send_email(user.email, subject, html)
         
+        # Create StoreCustomer for the store if store_slug provided
+        store_slug = data.get('store_slug', '').strip()
+        if store_slug:
+            try:
+                from apps.stores.models import Store, StoreCustomer
+                store = Store.objects.filter(slug=store_slug, is_active=True).first()
+                if store:
+                    StoreCustomer.objects.get_or_create(
+                        store=store,
+                        user=user,
+                        defaults={
+                            'phone': phone,
+                            'whatsapp': phone,
+                        }
+                    )
+                    logger.info(f"[Register] StoreCustomer created for {email} at store '{store_slug}'")
+            except Exception as e:
+                logger.error(f"[Register] Failed to create StoreCustomer for {email}: {e}")
+
         # Trigger new user email automation for all stores (or default store)
-        self._trigger_new_user_automation(user, data.get('store_slug'))
-        
+        self._trigger_new_user_automation(user, store_slug or None)
+
         return Response({
             'token': token.key,
             'user_id': user.id,

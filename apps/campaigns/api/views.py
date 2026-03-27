@@ -17,6 +17,7 @@ from django.db.models import Max, Q
 from django.utils import timezone
 
 from ..models import Campaign, CampaignRecipient, ContactList
+from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
 from ..services import CampaignService
 from .serializers import (
     CampaignSerializer,
@@ -73,19 +74,10 @@ class SystemContactsView(APIView):
         contacts = {}  # Use dict to deduplicate by phone
 
         # Resolve accessible account IDs for this user
-        from apps.whatsapp.models import WhatsAppAccount
         from apps.stores.models import Store
-        if user.is_superuser:
-            accessible_account_ids = None  # unrestricted
-        else:
-            accessible_account_ids = list(
-                WhatsAppAccount.objects.filter(
-                    Q(owner=user) |
-                    Q(stores__owner=user) |
-                    Q(stores__staff=user),
-                    is_active=True,
-                ).distinct().values_list('id', flat=True)
-            )
+        accessible_account_ids = None if user.is_superuser else list(
+            accessible_whatsapp_account_ids(user)
+        )
 
         # Get contacts from conversations
         if source in ['all', 'conversations']:
@@ -122,12 +114,9 @@ class SystemContactsView(APIView):
                 if user.is_superuser:
                     orders_qs = StoreOrder.objects.all()
                 else:
-                    accessible_store_ids = list(
-                        Store.objects.filter(
-                            Q(owner=user) | Q(staff=user), is_active=True
-                        ).values_list('id', flat=True)
+                    orders_qs = StoreOrder.objects.filter(
+                        store_id__in=accessible_store_ids(user)
                     )
-                    orders_qs = StoreOrder.objects.filter(store_id__in=accessible_store_ids)
                 if account_id:
                     try:
                         wa_account = WhatsAppAccount.objects.get(id=account_id)
@@ -164,9 +153,7 @@ class SystemContactsView(APIView):
                 from apps.marketing.models import Subscriber
                 sub_qs = Subscriber.objects.filter(phone__isnull=False).exclude(phone='')
                 if not user.is_superuser:
-                    sub_qs = sub_qs.filter(
-                        Q(store__owner=user) | Q(store__staff=user)
-                    )
+                    sub_qs = sub_qs.filter(store_id__in=accessible_store_ids(user))
                 subscribers = sub_qs.values(
                     'phone', 'name', 'email'
                 ).order_by('-created_at')[:limit]
@@ -189,11 +176,8 @@ class SystemContactsView(APIView):
                 from apps.automation.models import CustomerSession
                 sessions_qs = CustomerSession.objects.all()
                 if not user.is_superuser:
-                    sessions_qs = sessions_qs.filter(
-                        Q(company__store__owner=user) |
-                        Q(company__store__staff=user) |
-                        Q(company__account__owner=user)
-                    )
+                    account_ids = accessible_whatsapp_account_ids(user)
+                    sessions_qs = sessions_qs.filter(company__account_id__in=account_ids)
                 if account_id:
                     sessions_qs = sessions_qs.filter(company__account_id=account_id)
                 
@@ -239,11 +223,8 @@ class CampaignViewSet(viewsets.ModelViewSet):
         qs = Campaign.objects.filter(is_active=True)
         if user.is_superuser or user.is_staff:
             return qs
-        return qs.filter(
-            Q(account__owner=user) |
-            Q(account__stores__owner=user) |
-            Q(account__stores__staff=user)
-        ).distinct()
+        account_ids = accessible_whatsapp_account_ids(user)
+        return qs.filter(account_id__in=account_ids).distinct()
     
     @extend_schema(
         summary="Create campaign",
@@ -458,11 +439,8 @@ class ContactListViewSet(viewsets.ModelViewSet):
         qs = ContactList.objects.filter(is_active=True)
         if user.is_superuser or user.is_staff:
             return qs
-        return qs.filter(
-            Q(account__owner=user) |
-            Q(account__stores__owner=user) |
-            Q(account__stores__staff=user)
-        ).distinct()
+        account_ids = accessible_whatsapp_account_ids(user)
+        return qs.filter(account_id__in=account_ids).distinct()
     
     @extend_schema(
         summary="Create contact list",

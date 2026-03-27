@@ -557,7 +557,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             product = StoreProduct.objects.filter(
                 id=item['product_id'],
                 store=store,
-                is_active=True
+                status=StoreProduct.ProductStatus.ACTIVE,
             ).first()
             if not product:
                 raise serializers.ValidationError({

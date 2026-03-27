@@ -10,6 +10,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from ..models import WhatsAppAccount, Message, MessageTemplate
+from apps.core.permissions import accessible_whatsapp_account_ids
 from ..services import MessageService, WhatsAppAPIService
 
 from .serializers import (
@@ -33,19 +34,10 @@ logger = logging.getLogger(__name__)
 
 
 def _accessible_accounts(user):
-    queryset = WhatsAppAccount.objects.filter(is_active=True).select_related(
-        'owner', 'company_profile__store'
-    ).prefetch_related('stores')
-    if user.is_superuser or user.is_staff:
-        return queryset
-
-    return queryset.filter(
-        Q(owner=user) |
-        Q(stores__owner=user) |
-        Q(stores__staff=user) |
-        Q(company_profile__store__owner=user) |
-        Q(company_profile__store__staff=user)
-    ).distinct()
+    account_ids = accessible_whatsapp_account_ids(user)
+    return WhatsAppAccount.objects.filter(
+        id__in=account_ids
+    ).select_related('owner', 'company_profile__store').prefetch_related('stores')
 
 
 @extend_schema_view(

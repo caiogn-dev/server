@@ -19,6 +19,7 @@ from rest_framework.response import Response
 
 from apps.agents.models import Agent
 from apps.automation.models import CompanyProfile, IntentLog, AutomationLog, CustomerSession
+from apps.core.permissions import accessible_whatsapp_account_ids
 from apps.whatsapp.intents.detector import IntentType
 
 logger = logging.getLogger(__name__)
@@ -44,17 +45,12 @@ def _parse_date_range(request, default_days: int = 7) -> Tuple[datetime, datetim
 
 
 def _accessible_companies(user):
-    """
-    Return company profiles accessible by current user.
-    """
+    """Return company profiles accessible by current user."""
     if user.is_superuser or user.is_staff:
         return CompanyProfile.objects.all()
 
-    return CompanyProfile.objects.filter(
-        Q(store__owner=user) |
-        Q(store__staff=user) |
-        Q(account__owner=user)
-    ).distinct()
+    account_ids = accessible_whatsapp_account_ids(user)
+    return CompanyProfile.objects.filter(account_id__in=account_ids).distinct()
 
 
 def _serialize_intent_log(log: IntentLog) -> Dict[str, Any]:

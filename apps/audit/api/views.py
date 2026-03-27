@@ -12,6 +12,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from apps.whatsapp.models import Message
 from apps.stores.models import StoreOrder
 from apps.conversations.models import Conversation
+from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
 
 from ..models import AuditLog, DataExportLog
 from ..services import AuditService, ExportService
@@ -105,27 +106,10 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
         audit_service = AuditService()
         
         user = request.user
-        from django.db.models import Q
-
-        def _accessible_accounts():
-            from apps.whatsapp.models import WhatsAppAccount
-            qs = WhatsAppAccount.objects.filter(is_active=True)
-            if user.is_superuser or user.is_staff:
-                return qs
-            return qs.filter(
-                Q(owner=user) | Q(stores__owner=user) | Q(stores__staff=user)
-            ).distinct()
-
-        def _accessible_store_ids():
-            from apps.stores.models import Store
-            qs = Store.objects.filter(is_active=True)
-            if user.is_superuser or user.is_staff:
-                return qs.values_list('id', flat=True)
-            return qs.filter(Q(owner=user) | Q(staff=user)).values_list('id', flat=True)
 
         # Get queryset based on export type
         if export_type == 'messages':
-            accessible_account_ids = list(_accessible_accounts().values_list('id', flat=True))
+            accessible_account_ids = list(accessible_whatsapp_account_ids(user))
             queryset = Message.objects.filter(account_id__in=accessible_account_ids)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
@@ -136,8 +120,8 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             response = export_service.export_messages(queryset, export_format, request.user)
 
         elif export_type == 'orders':
-            accessible_store_ids = list(_accessible_store_ids())
-            queryset = StoreOrder.objects.filter(is_active=True, store_id__in=accessible_store_ids)
+            accessible_store_ids_list = list(accessible_store_ids(user))
+            queryset = StoreOrder.objects.filter(is_active=True, store_id__in=accessible_store_ids_list)
             store_filter = filters.get('store') or filters.get('store_id')
             if store_filter:
                 try:

@@ -14,6 +14,7 @@ from drf_spectacular.utils import extend_schema, extend_schema_view
 from .models import Agent, AgentConversation, AgentMessage
 from .services import LangchainService, AgentService
 from apps.whatsapp.models import WhatsAppAccount
+from apps.core.permissions import accessible_whatsapp_account_ids
 from .serializers import (
     AgentListSerializer,
     AgentDetailSerializer,
@@ -25,35 +26,17 @@ from .serializers import (
 )
 
 
-def _accessible_whatsapp_accounts(user):
-    queryset = WhatsAppAccount.objects.filter(is_active=True)
-    if user.is_superuser or user.is_staff:
-        return queryset
-
-    return queryset.filter(
-        Q(owner=user) |
-        Q(stores__owner=user) |
-        Q(stores__staff=user) |
-        Q(company_profile__store__owner=user) |
-        Q(company_profile__store__staff=user)
-    ).distinct()
-
-
 def _accessible_agents(user):
     queryset = Agent.objects.filter(is_active=True)
 
-    # Admins e staff veem todos os agentes
     if user.is_superuser or user.is_staff:
         return queryset
 
-    # Usuários comuns: veem agentes vinculados às suas contas WhatsApp OU
-    # agentes onde a company_profile está ligada a uma loja que pertencem
-    account_ids = _accessible_whatsapp_accounts(user).values_list('id', flat=True)
+    account_ids = list(accessible_whatsapp_account_ids(user))
 
     if not account_ids:
-        # Se o usuário não tem nenhuma conta WhatsApp, retorna todos os agentes ativos.
-        # Isso evita que usuários legítimos (ex: admin criado via Django Admin sem store)
-        # fiquem sem acesso. O risco é baixo pois agentes não contêm dados sensíveis.
+        # User has no WhatsApp accounts — fall back to all active agents
+        # (agents don't contain sensitive data; access is read-only for this path)
         return queryset
 
     return queryset.filter(

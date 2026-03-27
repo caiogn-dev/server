@@ -284,6 +284,39 @@ class StorePermissionMixin(StoreQuerysetMixin):
     store_field: str = 'store'
 
 
+def accessible_store_ids(user):
+    """
+    Return a QuerySet of store IDs the user can access.
+    Staff/superusers get all stores. Regular users get stores they own or staff.
+    """
+    from django.db.models import Q
+    from apps.stores.models import Store
+    qs = Store.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return qs.values_list('id', flat=True)
+    return qs.filter(Q(owner=user) | Q(staff=user)).values_list('id', flat=True)
+
+
+def accessible_whatsapp_account_ids(user):
+    """
+    Return a QuerySet of WhatsApp account IDs the user can access.
+    Staff/superusers get all active accounts.
+    Regular users get accounts they own directly or via their stores.
+    """
+    from django.db.models import Q
+    from apps.whatsapp.models import WhatsAppAccount
+    qs = WhatsAppAccount.objects.filter(is_active=True)
+    if user.is_superuser or user.is_staff:
+        return qs.values_list('id', flat=True)
+    return qs.filter(
+        Q(owner=user) |
+        Q(stores__owner=user) |
+        Q(stores__staff=user) |
+        Q(company_profile__store__owner=user) |
+        Q(company_profile__store__staff=user)
+    ).distinct().values_list('id', flat=True)
+
+
 __all__ = [
     'IsStoreOwner',
     'IsStoreStaff',
@@ -295,4 +328,6 @@ __all__ = [
     'IsCompanyProfileOwner',
     'StoreQuerysetMixin',
     'StorePermissionMixin',
+    'accessible_store_ids',
+    'accessible_whatsapp_account_ids',
 ]

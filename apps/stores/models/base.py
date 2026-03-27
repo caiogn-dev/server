@@ -127,7 +127,12 @@ class Store(BaseModel):
         blank=True,
         help_text="Primary WhatsApp account for this store"
     )
-    
+
+    # URLs
+    website_url = models.URLField(blank=True, help_text="Store website")
+    menu_url = models.URLField(blank=True, help_text="Online menu URL")
+    order_url = models.URLField(blank=True, help_text="Direct order link")
+
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)
 

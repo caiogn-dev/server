@@ -3,7 +3,6 @@ Conversation API views.
 """
 import logging
 from django.utils import timezone
-from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -11,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from apps.core.permissions import accessible_whatsapp_account_ids
 from ..models import Conversation, ConversationNote
 from ..services import ConversationService
 from .serializers import (
@@ -34,19 +34,10 @@ def _accessible_conversations(user):
         'account__stores', 'account__company_profile'
     )
     if user.is_superuser or user.is_staff:
-        # Admins see all conversations regardless of is_active status
         return queryset
 
-    # Regular users only see conversations they can access
-    return queryset.filter(
-        is_active=True
-    ).filter(
-        Q(account__owner=user) |
-        Q(account__stores__owner=user) |
-        Q(account__stores__staff=user) |
-        Q(account__company_profile__store__owner=user) |
-        Q(account__company_profile__store__staff=user)
-    ).distinct()
+    account_ids = accessible_whatsapp_account_ids(user)
+    return queryset.filter(is_active=True, account_id__in=account_ids).distinct()
 
 
 @extend_schema_view(
@@ -320,16 +311,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
             )
 
         if not (request.user.is_superuser or request.user.is_staff):
-            has_access = WhatsAppAccount.objects.filter(
-                id=account_id
-            ).filter(
-                Q(owner=request.user) |
-                Q(stores__owner=request.user) |
-                Q(stores__staff=request.user) |
-                Q(company_profile__store__owner=request.user) |
-                Q(company_profile__store__staff=request.user)
-            ).exists()
-            if not has_access:
+            allowed_ids = accessible_whatsapp_account_ids(request.user)
+            if not WhatsAppAccount.objects.filter(id=account_id, id__in=allowed_ids).exists():
                 return Response(
                     {'error': 'forbidden'},
                     status=status.HTTP_403_FORBIDDEN

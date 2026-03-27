@@ -6,7 +6,6 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Q
 
 from apps.automation.models import AgentFlow, FlowSession, FlowExecutionLog
 from apps.automation.api.serializers import (
@@ -16,6 +15,7 @@ from apps.automation.api.serializers import (
     FlowSessionSerializer,
     FlowExecutionLogSerializer,
 )
+from apps.core.permissions import accessible_store_ids
 from .base import StandardResultsSetPagination
 
 logger = logging.getLogger(__name__)
@@ -33,12 +33,9 @@ class AgentFlowViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's stores
         if not user.is_superuser:
-            queryset = queryset.filter(
-                Q(store__owner=user) | 
-                Q(store__staff=user)
-            ).distinct()
+            store_ids = accessible_store_ids(user)
+            queryset = queryset.filter(store_id__in=store_ids).distinct()
         
         # Filter by store
         store_id = self.request.query_params.get('store_id')

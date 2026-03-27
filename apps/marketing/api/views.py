@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.shortcuts import get_object_or_404
+from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 
 from apps.marketing.models import (
     EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
@@ -23,29 +24,20 @@ from .serializers import (
 )
 
 
-def _accessible_stores_qs(user):
-    """Return stores accessible to the user."""
-    from apps.stores.models import Store
-    from django.db.models import Q
-    if user.is_superuser or user.is_staff:
-        return Store.objects.all()
-    return Store.objects.filter(Q(owner=user) | Q(staff=user))
-
-
-class EmailTemplateViewSet(viewsets.ModelViewSet):
+class EmailTemplateViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for email templates."""
 
+    queryset = EmailTemplate.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = EmailTemplateSerializer
+    store_field = 'store'
 
     def get_queryset(self):
-        user = self.request.user
-        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
-        queryset = EmailTemplate.objects.filter(store_id__in=accessible)
+        qs = super().get_queryset()
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
-        return queryset
+            qs = qs.filter(store_id=store_id)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -98,23 +90,23 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
         return Response(presets)
 
 
-class EmailCampaignViewSet(viewsets.ModelViewSet):
+class EmailCampaignViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for email campaigns."""
 
+    queryset = EmailCampaign.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = EmailCampaignSerializer
+    store_field = 'store'
 
     def get_queryset(self):
-        user = self.request.user
-        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
-        queryset = EmailCampaign.objects.filter(store_id__in=accessible)
+        qs = super().get_queryset()
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            qs = qs.filter(store_id=store_id)
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        return queryset
+            qs = qs.filter(status=status_filter)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -209,23 +201,23 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class SubscriberViewSet(viewsets.ModelViewSet):
+class SubscriberViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for subscribers."""
-    
+
+    queryset = Subscriber.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = SubscriberSerializer
-    
+    store_field = 'store'
+
     def get_queryset(self):
-        user = self.request.user
-        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
-        queryset = Subscriber.objects.filter(store_id__in=accessible)
+        qs = super().get_queryset()
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            qs = qs.filter(store_id=store_id)
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        return queryset
+            qs = qs.filter(status=status_filter)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -314,33 +306,29 @@ class CustomersViewSet(viewsets.ViewSet):
         
         # Get store and verify ownership
         try:
-            accessible = _accessible_stores_qs(request.user)
-            store = accessible.get(id=store_id)
-        except Store.DoesNotExist:
+            store_ids = accessible_store_ids(request.user)
+            store = Store.objects.filter(id__in=store_ids).get(id=store_id)
+        except (Store.DoesNotExist, ValueError):
             return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
         
         # Dictionary to aggregate customers by email
         customers_dict = {}
-        
-        # 1. Get ALL registered users (they are potential customers)
-        # Include all non-staff users who registered via the site
-        users = User.objects.filter(
-            is_active=True
+
+        # 1. Get users who have a StoreCustomer record for THIS store only
+        # (avoids leaking users from other stores into this store's customer list)
+        from apps.stores.models import StoreCustomer
+        store_customer_users = User.objects.filter(
+            store_profiles__store_id=store_id,
+            is_active=True,
         ).exclude(
-            is_staff=True
+            is_staff=True,
         ).exclude(
-            is_superuser=True
+            is_superuser=True,
         ).prefetch_related('profile')
-        
-        # Debug: log user count
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"CustomersViewSet: Found {users.count()} registered users")
-        
-        for user in users:
+
+        for user in store_customer_users:
             email = (user.email or '').lower().strip()
             if email and '@' in email:
-                # Get phone from profile if exists
                 phone = ''
                 try:
                     profile = getattr(user, 'profile', None)
@@ -348,9 +336,9 @@ class CustomersViewSet(viewsets.ViewSet):
                         phone = profile.phone or ''
                 except Exception:
                     pass
-                
+
                 name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.username or email.split('@')[0]
-                
+
                 customers_dict[email] = {
                     'id': str(user.id),
                     'email': email,
@@ -467,82 +455,73 @@ class CustomersViewSet(viewsets.ViewSet):
         if not store_id:
             return Response({'count': 0})
         
-        # Count registered users (non-staff)
+        # Count users with a StoreCustomer record for this store only
+        from apps.stores.models import StoreCustomer
         user_count = User.objects.filter(
+            store_profiles__store_id=store_id,
             is_active=True,
             is_staff=False,
-            is_superuser=False
-        ).count()
-        
-        # Count subscribers
+            is_superuser=False,
+        ).distinct().count()
+
+        # Count subscribers for this store
         subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
-        
-        # Count unique order emails
+
+        # Count unique order emails for this store
         try:
             Store.objects.get(id=store_id)
             order_emails = StoreOrder.objects.filter(
                 store_id=store_id,
-                customer_email__isnull=False
+                customer_email__isnull=False,
             ).exclude(customer_email='').values('customer_email').distinct().count()
         except Store.DoesNotExist:
             order_emails = 0
-        
-        # Return the highest count (users are the main source now)
+
         return Response({'count': max(user_count, subscriber_count, order_emails)})
     
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
     def debug(self, request):
-        """Debug endpoint to check data sources. Admin only."""
+        """Debug endpoint to check data sources for a store. Admin only."""
         from django.contrib.auth import get_user_model
-        from apps.stores.models import Store, StoreOrder
-        
+        from apps.stores.models import Store, StoreOrder, StoreCustomer
+
         User = get_user_model()
-        
         store_id = request.query_params.get('store')
-        
-        # Count all users
-        all_users = User.objects.count()
-        active_users = User.objects.filter(is_active=True).count()
-        staff_users = User.objects.filter(is_staff=True).count()
-        superusers = User.objects.filter(is_superuser=True).count()
-        customer_users = User.objects.filter(
-            is_active=True
-        ).exclude(is_staff=True).exclude(is_superuser=True).count()
-        
-        # Sample users (first 5 non-staff)
-        sample_users = list(User.objects.filter(
-            is_active=True
-        ).exclude(is_staff=True).exclude(is_superuser=True).values(
-            'id', 'email', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined'
-        )[:5])
-        
-        # Subscribers count
-        subscriber_count = Subscriber.objects.filter(store_id=store_id).count() if store_id else 0
-        
-        # Orders count
+
+        if not store_id:
+            return Response({'error': 'store parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # All scoped to this store only
+        store_customer_users = User.objects.filter(
+            store_profiles__store_id=store_id,
+            is_active=True,
+            is_staff=False,
+            is_superuser=False,
+        ).distinct()
+
+        subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
+
         order_count = 0
-        if store_id:
-            try:
-                Store.objects.get(id=store_id)
-                order_count = StoreOrder.objects.filter(
-                    store_id=store_id,
-                    customer_email__isnull=False
-                ).exclude(customer_email='').count()
-            except Store.DoesNotExist:
-                pass
-        
+        try:
+            store = Store.objects.get(id=store_id)
+            order_count = StoreOrder.objects.filter(
+                store_id=store_id,
+                customer_email__isnull=False,
+            ).exclude(customer_email='').count()
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
         return Response({
+            'store_id': store_id,
+            'store_name': store.name,
             'users': {
-                'total': all_users,
-                'active': active_users,
-                'staff': staff_users,
-                'superusers': superusers,
-                'customers': customer_users,
-                'sample': sample_users,
+                'customers': store_customer_users.count(),
+                'sample': list(store_customer_users.values(
+                    'id', 'email', 'first_name', 'last_name', 'date_joined'
+                )[:5]),
             },
             'subscribers': subscriber_count,
             'orders_with_email': order_count,
-            'store_id': store_id,
         })
 
 
@@ -620,23 +599,23 @@ class QuickActionsViewSet(viewsets.ViewSet):
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
 
-class EmailAutomationViewSet(viewsets.ModelViewSet):
+class EmailAutomationViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for email automations."""
 
+    queryset = EmailAutomation.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = EmailAutomationSerializer
+    store_field = 'store'
 
     def get_queryset(self):
-        user = self.request.user
-        accessible = _accessible_stores_qs(user).values_list('id', flat=True)
-        queryset = EmailAutomation.objects.filter(store_id__in=accessible)
+        qs = super().get_queryset()
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            qs = qs.filter(store_id=store_id)
         trigger_type = self.request.query_params.get('trigger_type')
         if trigger_type:
-            queryset = queryset.filter(trigger_type=trigger_type)
-        return queryset.select_related('template', 'store')
+            qs = qs.filter(trigger_type=trigger_type)
+        return qs.select_related('template', 'store')
     
     def get_serializer_class(self):
         if self.action == 'list':

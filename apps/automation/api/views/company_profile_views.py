@@ -6,7 +6,6 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Q
 from django.utils import timezone
 from datetime import timedelta
 
@@ -19,6 +18,7 @@ from apps.automation.api.serializers import (
     CreateCompanyProfileSerializer,
     UpdateCompanyProfileSerializer,
 )
+from apps.core.permissions import accessible_whatsapp_account_ids
 from .base import StandardResultsSetPagination
 
 logger = logging.getLogger(__name__)
@@ -36,14 +36,9 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's stores or accounts
-        # Users should only see profiles for stores they own/manage or accounts they own
         if not user.is_superuser:
-            queryset = queryset.filter(
-                Q(store__owner=user) | 
-                Q(store__staff=user) | 
-                Q(account__owner=user)
-            ).distinct()
+            account_ids = accessible_whatsapp_account_ids(user)
+            queryset = queryset.filter(account_id__in=account_ids).distinct()
         
         # Filter by account if provided
         account_id = self.request.query_params.get('account_id')

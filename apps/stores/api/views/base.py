@@ -3,8 +3,8 @@ Base utilities and permissions for store API views.
 """
 import uuid as uuid_module
 from rest_framework import permissions
-from django.db.models import Q
 from apps.stores.models import Store
+from apps.core.permissions import accessible_store_ids
 
 
 def filter_by_store(queryset, store_param):
@@ -65,6 +65,5 @@ def get_user_stores_queryset(user, queryset_class):
     """Get queryset filtered by user's accessible stores."""
     if user.is_staff:
         return queryset_class.objects.all()
-    return queryset_class.objects.filter(
-        Q(owner=user) | Q(staff=user)
-    ).distinct()
+    store_ids = accessible_store_ids(user)
+    return queryset_class.objects.filter(id__in=store_ids)

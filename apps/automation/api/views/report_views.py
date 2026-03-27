@@ -18,6 +18,7 @@ from apps.automation.api.serializers import (
     GeneratedReportSerializer,
     GenerateReportSerializer,
 )
+from apps.core.permissions import accessible_whatsapp_account_ids
 from .base import StandardResultsSetPagination
 
 logger = logging.getLogger(__name__)
@@ -35,13 +36,10 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's accounts/stores or created by user
         if not user.is_superuser:
+            account_ids = accessible_whatsapp_account_ids(user)
             queryset = queryset.filter(
-                Q(account__owner=user) |
-                Q(company__store__owner=user) |
-                Q(company__store__staff=user) |
-                Q(created_by=user)
+                Q(account_id__in=account_ids) | Q(created_by=user)
             ).distinct()
         
         # Filter by status
@@ -170,13 +168,10 @@ class GeneratedReportViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's accounts/stores or created by user
         if not user.is_superuser:
+            account_ids = accessible_whatsapp_account_ids(user)
             queryset = queryset.filter(
-                Q(schedule__account__owner=user) |
-                Q(schedule__company__store__owner=user) |
-                Q(schedule__company__store__staff=user) |
-                Q(created_by=user)
+                Q(schedule__account_id__in=account_ids) | Q(created_by=user)
             ).distinct()
         
         # Filter by schedule

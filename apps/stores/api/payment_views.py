@@ -17,6 +17,7 @@ from apps.stores.models import (
     StorePaymentWebhookEvent,
 )
 from apps.stores.services import PaymentService, get_payment_service
+from apps.core.permissions import StoreQuerysetMixin
 from .payment_serializers import (
     StorePaymentSerializer,
     StorePaymentListSerializer,
@@ -41,30 +42,21 @@ logger = logging.getLogger(__name__)
     partial_update=extend_schema(summary="Partial update payment gateway"),
     destroy=extend_schema(summary="Delete payment gateway"),
 )
-class StorePaymentGatewayViewSet(viewsets.ModelViewSet):
+class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing payment gateways."""
-    
+
+    queryset = StorePaymentGateway.objects.all()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['store', 'gateway_type', 'is_enabled', 'is_default']
-    
+    store_field = 'store'
+
     def get_queryset(self):
-        user = self.request.user
-        queryset = StorePaymentGateway.objects.select_related('store')
-        
-        if not user.is_staff:
-            queryset = queryset.filter(
-                store__owner=user
-            ) | queryset.filter(
-                store__staff=user
-            )
-        
-        # Filter by store if provided
+        qs = super().get_queryset().select_related('store')
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
-        
-        return queryset.distinct()
+            qs = qs.filter(store_id=store_id)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -92,38 +84,25 @@ class StorePaymentGatewayViewSet(viewsets.ModelViewSet):
     retrieve=extend_schema(summary="Get payment details"),
     create=extend_schema(summary="Create payment", request=CreatePaymentSerializer),
 )
-class StorePaymentViewSet(viewsets.ModelViewSet):
+class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing payments."""
-    
+
+    queryset = StorePayment.objects.all()
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['order', 'status', 'payment_method', 'gateway']
     lookup_field = 'pk'
-    
+    store_field = 'order__store'
+
     def get_queryset(self):
-        user = self.request.user
-        queryset = StorePayment.objects.select_related(
-            'order', 'order__store', 'gateway'
-        )
-        
-        if not user.is_staff:
-            queryset = queryset.filter(
-                order__store__owner=user
-            ) | queryset.filter(
-                order__store__staff=user
-            )
-        
-        # Filter by store if provided
+        qs = super().get_queryset().select_related('order', 'order__store', 'gateway')
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(order__store_id=store_id)
-        
-        # Filter by order_number if provided
+            qs = qs.filter(order__store_id=store_id)
         order_number = self.request.query_params.get('order_number')
         if order_number:
-            queryset = queryset.filter(order__order_number__icontains=order_number)
-        
-        return queryset.distinct().order_by('-created_at')
+            qs = qs.filter(order__order_number__icontains=order_number)
+        return qs.order_by('-created_at')
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -352,25 +331,17 @@ class StorePaymentViewSet(viewsets.ModelViewSet):
         })
 
 
-class StorePaymentWebhookEventViewSet(viewsets.ReadOnlyModelViewSet):
+class StorePaymentWebhookEventViewSet(StoreQuerysetMixin, viewsets.ReadOnlyModelViewSet):
     """ViewSet for viewing payment webhook events (read-only)."""
-    
+
+    queryset = StorePaymentWebhookEvent.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = StorePaymentWebhookEventSerializer
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['gateway', 'payment', 'event_type', 'processing_status']
-    
+    store_field = 'gateway__store'
+
     def get_queryset(self):
-        user = self.request.user
-        queryset = StorePaymentWebhookEvent.objects.select_related(
+        return super().get_queryset().select_related(
             'gateway', 'payment', 'order'
-        )
-        
-        if not user.is_staff:
-            queryset = queryset.filter(
-                gateway__store__owner=user
-            ) | queryset.filter(
-                gateway__store__staff=user
-            )
-        
-        return queryset.distinct().order_by('-created_at')
+        ).order_by('-created_at')

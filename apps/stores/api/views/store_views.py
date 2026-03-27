@@ -7,10 +7,10 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
 
 from apps.stores.models import Store, StoreIntegration, StoreWebhook
 from apps.stores.services import store_service, webhook_service
+from apps.core.permissions import accessible_store_ids
 from ..serializers import (
     StoreSerializer, StoreCreateSerializer,
     StoreIntegrationSerializer, StoreIntegrationCreateSerializer,
@@ -32,9 +32,8 @@ class StoreViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_staff:
             return Store.objects.all()
-        return Store.objects.filter(
-            Q(owner=user) | Q(staff=user)
-        ).distinct()
+        store_ids = accessible_store_ids(user)
+        return Store.objects.filter(id__in=store_ids)
     
     def get_object(self):
         """Override to support both UUID and slug lookups."""
@@ -122,9 +121,8 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_staff:
             return StoreIntegration.objects.all()
-        return StoreIntegration.objects.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+        store_ids = accessible_store_ids(user)
+        return StoreIntegration.objects.filter(store_id__in=store_ids)
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -161,9 +159,8 @@ class StoreWebhookViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if user.is_staff:
             return StoreWebhook.objects.all()
-        return StoreWebhook.objects.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+        store_ids = accessible_store_ids(user)
+        return StoreWebhook.objects.filter(store_id__in=store_ids)
     
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):

@@ -17,8 +17,8 @@ Estrutura:
 - api/: Views e serializers REST
 - tasks.py: Tarefas Celery
 - admin.py: Configuração do Django Admin
-- dispatcher.py: INCOMPLETO — camada genérica multi-canal nunca finalizada
-                 (ver TODOs em dispatcher.py e models.py)
+- dispatcher.py: MessageDispatcher — camada unificada multi-canal (WhatsApp, Email, Instagram)
+                 Uso: from apps.messaging.dispatcher import dispatcher
 """
 
 default_app_config = 'apps.messaging.apps.MessagingConfig'
