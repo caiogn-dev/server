@@ -60,6 +60,10 @@ class StoreCustomer(BaseModel):
         verbose_name_plural = 'Store Customers'
         unique_together = ['store', 'user']
         ordering = ['-created_at']
+        indexes = [
+            # Phone lookup in checkout identity and signals
+            models.Index(fields=['phone'], name='customer_phone_idx'),
+        ]
 
     def __str__(self):
         return f"{self.store.name} - {self.user.email}"

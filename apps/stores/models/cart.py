@@ -39,6 +39,8 @@ class StoreCart(models.Model):
         indexes = [
             models.Index(fields=['store', 'user']),
             models.Index(fields=['store', 'session_key']),
+            # Includes is_active for the common "get active cart" query
+            models.Index(fields=['user', 'store', 'is_active'], name='cart_user_store_active_idx'),
         ]
 
     def __str__(self):

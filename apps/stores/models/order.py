@@ -153,6 +153,10 @@ class StoreOrder(BaseModel):
             models.Index(fields=['store', 'payment_status']),
             models.Index(fields=['customer_phone']),
             models.Index(fields=['customer_email']),
+            # Customer order history page
+            models.Index(fields=['customer', 'store'], name='order_customer_store_idx'),
+            # Dashboard listing sorted by date
+            models.Index(fields=['store', 'created_at'], name='order_store_created_idx'),
         ]
 
     def __str__(self):

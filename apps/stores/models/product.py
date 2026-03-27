@@ -156,6 +156,8 @@ class StoreProduct(BaseModel):
             models.Index(fields=['store', 'status']),
             models.Index(fields=['store', 'category']),
             models.Index(fields=['store', 'sku']),
+            # Compound index for category-filtered status queries (storefront browse)
+            models.Index(fields=['store', 'category', 'status'], name='product_store_cat_status_idx'),
         ]
 
     def __str__(self):

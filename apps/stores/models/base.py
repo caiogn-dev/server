@@ -141,6 +141,10 @@ class Store(BaseModel):
         verbose_name = 'Store'
         verbose_name_plural = 'Stores'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['owner', 'status'], name='store_owner_status_idx'),
+            models.Index(fields=['status', 'is_active'], name='store_status_active_idx'),
+        ]
 
     def __str__(self):
         return self.name
