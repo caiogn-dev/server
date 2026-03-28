@@ -6,6 +6,8 @@ from unittest.mock import patch, MagicMock
 
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
+from datetime import timedelta
 
 from apps.stores.models import (
     Store, StoreCart, StoreCartItem, StoreOrder,
@@ -125,6 +127,8 @@ class CheckoutCouponValidationTest(TestCase):
             discount_type=StoreCoupon.DiscountType.PERCENTAGE,
             discount_value=Decimal('10'),
             is_active=True,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=365),
         )
         result = CheckoutService.validate_coupon(self.store, 'DESCONTO10', subtotal=Decimal('100'))
         self.assertTrue(result['valid'])
@@ -146,6 +150,8 @@ class CheckoutCouponValidationTest(TestCase):
             discount_type=StoreCoupon.DiscountType.PERCENTAGE,
             discount_value=Decimal('10'),
             is_active=True,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=365),
         )
         result = CheckoutService.validate_coupon(self.store, 'OUTRO10', subtotal=Decimal('100'))
         self.assertFalse(result['valid'])
@@ -157,6 +163,8 @@ class CheckoutCouponValidationTest(TestCase):
             discount_type=StoreCoupon.DiscountType.PERCENTAGE,
             discount_value=Decimal('10'),
             is_active=False,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=365),
         )
         result = CheckoutService.validate_coupon(self.store, 'INATIVO', subtotal=Decimal('100'))
         self.assertFalse(result['valid'])
@@ -181,7 +189,6 @@ class CheckoutCreateOrderTest(TestCase):
             cart=cart,
             product=self.product,
             quantity=2,
-            unit_price=self.product.price,
         )
         return cart
 
@@ -235,6 +242,8 @@ class CheckoutCreateOrderTest(TestCase):
             discount_type=StoreCoupon.DiscountType.FIXED,
             discount_value=Decimal('5.00'),
             is_active=True,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=365),
         )
         cart = self._make_cart_with_item()
         customer_data = {'name': 'Bia', 'email': 'bia@test.com', 'phone': '+5511666665555'}

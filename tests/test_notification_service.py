@@ -70,8 +70,8 @@ class PushSubscriptionTest(TestCase):
         sub = PushSubscription.objects.create(
             user=self.user,
             endpoint='https://fcm.googleapis.com/push/abc',
-            p256dh='key123',
-            auth='auth456',
+            p256dh_key='key123',
+            auth_key='auth456',
         )
         self.assertEqual(PushSubscription.objects.filter(user=self.user).count(), 1)
         self.assertEqual(sub.endpoint, 'https://fcm.googleapis.com/push/abc')
@@ -80,12 +80,12 @@ class PushSubscriptionTest(TestCase):
         PushSubscription.objects.create(
             user=self.user,
             endpoint='https://fcm.googleapis.com/push/abc',
-            p256dh='key1',
-            auth='auth1',
+            p256dh_key='key1',
+            auth_key='auth1',
         )
         PushSubscription.objects.update_or_create(
             user=self.user,
             endpoint='https://fcm.googleapis.com/push/abc',
-            defaults={'p256dh': 'key2', 'auth': 'auth2'},
+            defaults={'p256dh_key': 'key2', 'auth_key': 'auth2'},
         )
         self.assertEqual(PushSubscription.objects.filter(user=self.user).count(), 1)

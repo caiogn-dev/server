@@ -437,8 +437,10 @@ def get_ai_config():
         }
     return None
 
-# Rate Limiting
-RATE_LIMIT_ENABLED = os.environ.get('RATE_LIMIT_ENABLED', 'True').lower() == 'true'
+# Rate Limiting — disabled automatically during test runs to avoid 429s from shared loopback IP
+import sys as _sys
+_TESTING = len(_sys.argv) > 1 and _sys.argv[1] == 'test'
+RATE_LIMIT_ENABLED = False if _TESTING else os.environ.get('RATE_LIMIT_ENABLED', 'True').lower() == 'true'
 RATE_LIMIT_REQUESTS = int(os.environ.get('RATE_LIMIT_REQUESTS', '100'))
 RATE_LIMIT_WINDOW = int(os.environ.get('RATE_LIMIT_WINDOW', '60'))
 _RATE_LIMIT_WHITELIST = os.environ.get('RATE_LIMIT_WHITELIST_PATHS', '/api/v1/stores/orders/by-token/,/api/v1/stores/stores/,/api/v1/notifications/,/api/v1/automation/')
