@@ -37,6 +37,14 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
+# Production domains always allowed (supplement ENV-configured hosts)
+ALLOWED_HOSTS += [
+    'backend.pastita.com.br',
+    'painel.pastita.com.br',
+    'pastita.com.br',
+    'dev.painel.pastita.com.br',
+]
+
 # Enforce required production settings
 if not SECRET_KEY:
     raise ImproperlyConfigured('SECRET_KEY must be set in production (env: SECRET_KEY or DJANGO_SECRET_KEY).')

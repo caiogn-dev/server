@@ -71,7 +71,7 @@ class AgentViewSet(viewsets.ModelViewSet):
         if accounts is None:
             return
 
-        allowed_ids = set(_accessible_whatsapp_accounts(self.request.user).values_list('id', flat=True))
+        allowed_ids = set(accessible_whatsapp_account_ids(self.request.user))
         requested_ids = {account.id for account in accounts}
         if not requested_ids.issubset(allowed_ids):
             raise PermissionDenied('You do not have access to one or more selected accounts.')

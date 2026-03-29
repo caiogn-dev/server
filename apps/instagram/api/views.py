@@ -1,3 +1,4 @@
+import logging
 import hmac
 from datetime import timedelta
 
@@ -37,6 +38,8 @@ from .serializers import (
     InstagramProductSerializer,
     InstagramScheduledPostSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InstagramAccountViewSet(viewsets.ModelViewSet):
@@ -316,6 +319,14 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         service = InstagramDirectService(api)
 
         try:
+            logger.info(
+                "Instagram send request received: account=%s conversation=%s participant=%s message_type=%s user=%s",
+                conversation.account_id,
+                conversation.id,
+                conversation.participant_id,
+                str(message_type).upper(),
+                request.user.id,
+            )
             message = service.send_message(
                 str(conversation.id),
                 str(message_type).upper(),
@@ -326,6 +337,13 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
             serializer = InstagramMessageSerializer(message)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception as exc:
+            logger.warning(
+                "Instagram send request failed: account=%s conversation=%s participant=%s error=%s",
+                conversation.account_id,
+                conversation.id,
+                conversation.participant_id,
+                exc,
+            )
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"], url_path="mark_as_read")

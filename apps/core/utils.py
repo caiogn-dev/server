@@ -34,8 +34,9 @@ class TokenEncryption:
     """Encrypt and decrypt sensitive tokens."""
 
     def __init__(self):
-        key = settings.SECRET_KEY[:32].encode()
-        key = base64.urlsafe_b64encode(key.ljust(32)[:32])
+        # Prefer dedicated ENCRYPTION_KEY; fall back to SECRET_KEY for backwards compatibility.
+        raw = getattr(settings, 'ENCRYPTION_KEY', '') or settings.SECRET_KEY
+        key = base64.urlsafe_b64encode(raw[:32].encode().ljust(32)[:32])
         self.cipher = Fernet(key)
 
     def encrypt(self, token: str) -> str:

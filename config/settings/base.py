@@ -8,7 +8,15 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY') or os.environ.get('DJANGO_SECRET_KEY') or ''
+SECRET_KEY = os.environ.get('SECRET_KEY') or os.environ.get('DJANGO_SECRET_KEY')
+if not SECRET_KEY:
+    import secrets as _secrets
+    SECRET_KEY = _secrets.token_urlsafe(50)
+
+# Dedicated encryption key for Fernet (token storage).
+# If not set, falls back to SECRET_KEY so existing encrypted tokens remain readable.
+# Rotate this key (not SECRET_KEY) to re-encrypt tokens without breaking Django sessions.
+ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', '')
 
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
@@ -23,15 +31,6 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else ['localhost', '127.0.0.1']
-# Add tunnel domains
-ALLOWED_HOSTS.extend([
-    'backend.pastita.com.br',
-    'painel.pastita.com.br',
-    'pastita.com.br',
-    'dev.painel.pastita.com.br',
-    'localhost:3010',
-    '127.0.0.1:3010',
-])
 
 INSTALLED_APPS = [
     'daphne',
@@ -288,6 +287,7 @@ CELERY_TASK_TIME_LIMIT = 30 * 60
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_RESULT_EXPIRES = int(os.environ.get('CELERY_RESULT_EXPIRES', '3600'))  # 1 hora
 
 # Cache configuration - use Redis if available, otherwise use local memory
 if REDIS_URL:

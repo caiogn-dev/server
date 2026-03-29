@@ -41,34 +41,35 @@ class PaymentService:
         """Create a new payment for an order."""
         from apps.stores.models import StoreOrder
 
-        order = StoreOrder.objects.get(id=order_id)
-        
-        # Use order total if amount not provided
-        if amount is None:
-            amount = order.total
+        with transaction.atomic():
+            order = StoreOrder.objects.select_for_update().get(id=order_id)
 
-        # Get default gateway if not specified
-        gateway = None
-        if gateway_id:
-            gateway = StorePaymentGateway.objects.filter(id=gateway_id).first()
-        else:
-            gateway = StorePaymentGateway.objects.filter(
-                store=order.store,
-                is_enabled=True,
-                is_default=True
-            ).first()
+            # Use order total if amount not provided
+            if amount is None:
+                amount = order.total
 
-        payment = StorePayment.objects.create(
-            order=order,
-            gateway=gateway,
-            amount=amount,
-            payment_method=payment_method,
-            payer_email=payer_email or order.customer_email,
-            payer_name=payer_name or order.customer_name,
-            payer_document=payer_document,
-            metadata=metadata or {},
-            external_reference=order.order_number,
-        )
+            # Get default gateway if not specified
+            gateway = None
+            if gateway_id:
+                gateway = StorePaymentGateway.objects.filter(id=gateway_id).first()
+            else:
+                gateway = StorePaymentGateway.objects.filter(
+                    store=order.store,
+                    is_enabled=True,
+                    is_default=True
+                ).first()
+
+            payment = StorePayment.objects.create(
+                order=order,
+                gateway=gateway,
+                amount=amount,
+                payment_method=payment_method,
+                payer_email=payer_email or order.customer_email,
+                payer_name=payer_name or order.customer_name,
+                payer_document=payer_document,
+                metadata=metadata or {},
+                external_reference=order.order_number,
+            )
 
         self.logger.info(f"Created payment {payment.payment_id} for order {order.order_number}")
         return payment
