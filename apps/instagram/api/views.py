@@ -4,8 +4,10 @@ import requests
 from datetime import timedelta
 
 from django.conf import settings
+from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -58,17 +60,18 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="connect", permission_classes=[IsAuthenticated])
     def connect(self, request):
-        """Recebe o short-lived access_token do FB SDK e cria/atualiza a conta Instagram.
+        """Recebe o authorization code do Instagram Business Login e cria/atualiza a conta.
 
-        Payload: { access_token: str }
-        O FB SDK já faz o login e devolve o token — o servidor troca por long-lived e
-        busca as informações da página e conta Instagram.
+        Payload: { code: str }
+        O frontend abre o popup OAuth do Instagram, que redireciona para /ig/callback,
+        que por sua vez redireciona para o frontend com o code na URL.
+        O frontend autenticado então chama este endpoint com o code.
         """
-        short_token = request.data.get("access_token")
+        code = request.data.get("code")
 
-        if not short_token:
+        if not code:
             return Response(
-                {"error": "access_token é obrigatório"},
+                {"error": "code é obrigatório"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -80,105 +83,86 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # 1. Troca por long-lived user token (60 dias)
+        # O redirect_uri deve ser exatamente o registrado no app Meta
+        redirect_uri = getattr(
+            settings,
+            "INSTAGRAM_OAUTH_REDIRECT_URI",
+            "https://backend.pastita.com.br/ig/callback",
+        )
+
+        # 1. Troca o code por short-lived token via Instagram Business Login
         try:
-            ll_resp = requests.get(
-                "https://graph.facebook.com/v22.0/oauth/access_token",
-                params={
-                    "grant_type": "fb_exchange_token",
+            token_resp = requests.post(
+                "https://api.instagram.com/oauth/access_token",
+                data={
                     "client_id": app_id,
                     "client_secret": app_secret,
-                    "fb_exchange_token": short_token,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": redirect_uri,
+                    "code": code,
+                },
+                timeout=30,
+            )
+            token_resp.raise_for_status()
+            short_token = token_resp.json().get("access_token")
+        except Exception as exc:
+            logger.error("Instagram code exchange failed: %s", exc)
+            raw = getattr(exc, "response", None)
+            detail = raw.text if raw is not None else str(exc)
+            return Response(
+                {"error": f"Falha ao trocar code por token: {detail}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2. Troca por long-lived token (~60 dias)
+        try:
+            ll_resp = requests.get(
+                "https://graph.instagram.com/access_token",
+                params={
+                    "grant_type": "ig_exchange_token",
+                    "client_id": app_id,
+                    "client_secret": app_secret,
+                    "access_token": short_token,
                 },
                 timeout=30,
             )
             ll_resp.raise_for_status()
-            ll_data = ll_resp.json()
+            long_token = ll_resp.json().get("access_token", short_token)
         except Exception as exc:
-            logger.error("Instagram long-lived token exchange failed: %s", exc)
-            return Response({"error": f"Falha ao obter long-lived token: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+            logger.warning("Instagram long-lived token exchange failed, using short token: %s", exc)
+            long_token = short_token
 
-        long_token = ll_data.get("access_token", short_token)
-
-        # 3. Busca páginas + instagram_business_account em uma só chamada
+        # 3. Busca informações da conta Instagram
         try:
-            pages_resp = requests.get(
-                "https://graph.facebook.com/v22.0/me/accounts",
+            me_resp = requests.get(
+                "https://graph.instagram.com/v22.0/me",
                 params={
-                    "access_token": long_token,
-                    "fields": "id,name,access_token,instagram_business_account",
-                },
-                timeout=30,
-            )
-            pages_resp.raise_for_status()
-            pages_data = pages_resp.json().get("data", [])
-        except Exception as exc:
-            logger.error("Instagram pages fetch failed: %s", exc)
-            return Response({"error": f"Falha ao buscar páginas: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not pages_data:
-            return Response(
-                {"error": "Nenhuma página do Facebook encontrada para este usuário"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # Tenta todas as páginas até encontrar uma com Instagram Business vinculado
-        ig_biz_id = None
-        page_id = None
-        page_token = None
-        pages_debug = []
-
-        for page in pages_data:
-            pid = page["id"]
-            ptoken = page.get("access_token", "")
-            pname = page.get("name", pid)
-            biz_id = (page.get("instagram_business_account") or {}).get("id")
-            pages_debug.append(f"{pname} ({pid}): {'✓ ' + biz_id if biz_id else '✗ sem Instagram Business'}")
-            if biz_id:
-                ig_biz_id = biz_id
-                page_id = pid
-                page_token = ptoken
-                break
-
-        if not ig_biz_id:
-            pages_info = " | ".join(pages_debug)
-            return Response(
-                {
-                    "error": (
-                        "Nenhuma conta Instagram Business vinculada às suas páginas do Facebook. "
-                        "Acesse Meta Business Suite → sua Página → Configurações → Instagram → Conectar conta. "
-                        f"Páginas verificadas: {pages_info}"
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # 5. Busca informações da conta Instagram
-        try:
-            info_resp = requests.get(
-                f"https://graph.facebook.com/v22.0/{ig_biz_id}",
-                params={
-                    "fields": "id,username,name,biography,website,followers_count,follows_count,media_count,profile_picture_url",
+                    "fields": "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website",
                     "access_token": long_token,
                 },
                 timeout=30,
             )
-            info_resp.raise_for_status()
-            info = info_resp.json()
+            me_resp.raise_for_status()
+            info = me_resp.json()
         except Exception as exc:
-            logger.error("Instagram account info fetch failed: %s", exc)
+            logger.error("Instagram /me fetch failed: %s", exc)
             info = {}
 
-        # 6. Cria ou atualiza a InstagramAccount
+        ig_id = info.get("id")
+        if not ig_id:
+            return Response(
+                {"error": "Não foi possível obter ID da conta Instagram. Verifique as permissões do app."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 4. Cria ou atualiza a InstagramAccount
         account, created = InstagramAccount.objects.update_or_create(
             user=request.user,
-            instagram_business_id=ig_biz_id,
+            instagram_business_id=ig_id,
             defaults={
-                "username": info.get("username", ig_biz_id),
+                "username": info.get("username", ig_id),
                 "platform": "instagram",
-                "facebook_page_id": page_id,
                 "access_token": long_token,
-                "page_access_token": page_token,
                 "biography": info.get("biography", ""),
                 "website": info.get("website", ""),
                 "followers_count": info.get("followers_count", 0),
@@ -570,3 +554,22 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
         if mode == "subscribe" and tokens_match:
             return Response(int(challenge))
         return Response("Verification failed", status=403)
+
+
+@csrf_exempt
+def ig_oauth_callback(request):
+    """Instagram Business Login OAuth callback.
+
+    Instagram redirects here after the user authorizes the app.
+    We relay the code (or error) to the frontend so the authenticated
+    SPA can call POST /instagram/accounts/connect/ with the code.
+    """
+    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    code = request.GET.get("code")
+    error = request.GET.get("error_description") or request.GET.get("error")
+
+    if code:
+        return HttpResponseRedirect(f"{frontend_url}/instagram/callback?code={code}")
+    return HttpResponseRedirect(
+        f"{frontend_url}/instagram/callback?error={error or 'authorization_failed'}"
+    )

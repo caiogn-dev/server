@@ -27,6 +27,7 @@ from apps.core.sse_views import (
     WebSocketHealthCheckView
 )
 from apps.stores.api.webhooks import MercadoPagoWebhookView
+from apps.instagram.api.views import ig_oauth_callback
 
 from django.views.decorators.csrf import csrf_exempt
 
@@ -103,6 +104,9 @@ urlpatterns = [
     # Direct WhatsApp verification endpoint (no trailing slash required by Meta)
     # Regular webhook POSTs with trailing slash are already handled by webhooks/v1/ above.
     path('webhooks/v1/whatsapp', whatsapp_verification_view, name='whatsapp_webhook_no_slash'),
+
+    # Instagram Business Login OAuth callback (registered redirect URI in Meta app)
+    path('ig/callback', ig_oauth_callback, name='ig_oauth_callback'),
 ]
 
 # Serve media files from local storage when explicitly enabled.
