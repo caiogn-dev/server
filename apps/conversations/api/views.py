@@ -16,6 +16,7 @@ from ..services import ConversationService
 from .serializers import (
     ConversationSerializer,
     ConversationNoteSerializer,
+    UniversalConversationSerializer,
     SwitchModeSerializer,
     AddNoteSerializer,
     UpdateContextSerializer,
@@ -53,6 +54,26 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return _accessible_conversations(self.request.user)
+
+    @extend_schema(
+        summary="List multichannel conversations",
+        responses={200: UniversalConversationSerializer(many=True)},
+    )
+    @action(detail=False, methods=['get'])
+    def universal(self, request):
+        """Return a normalized conversations list across WhatsApp, Instagram and Messenger."""
+        from apps.conversations.services import UniversalConversationService
+
+        service = UniversalConversationService()
+        rows = service.list_conversations(request.user)
+
+        page = self.paginate_queryset(rows)
+        if page is not None:
+            serializer = UniversalConversationSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = UniversalConversationSerializer(rows, many=True)
+        return Response(serializer.data)
 
     @extend_schema(
         summary="Switch to human mode",

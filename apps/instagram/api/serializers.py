@@ -93,29 +93,46 @@ class InstagramLiveSerializer(serializers.ModelSerializer):
 
 class InstagramMessageSerializer(serializers.ModelSerializer):
     reply_to = serializers.PrimaryKeyRelatedField(read_only=True)
+    conversation = serializers.PrimaryKeyRelatedField(read_only=True)
+    direction = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
     
     class Meta:
         model = InstagramMessage
         fields = [
-            'id', 'instagram_message_id', 'message_type',
+            'id', 'conversation', 'instagram_message_id', 'message_type',
             'content', 'media_url', 'reaction_type',
             'reply_to', 'is_unsent', 'is_from_business',
-            'is_read', 'read_at', 'sent_at', 'created_at'
+            'is_read', 'read_at', 'sent_at', 'created_at',
+            'direction', 'status',
         ]
         read_only_fields = ['id', 'created_at']
+
+    def get_direction(self, obj):
+        return 'outbound' if obj.is_from_business else 'inbound'
+
+    def get_status(self, obj):
+        if obj.is_read:
+            return 'read'
+        if obj.is_from_business:
+            return 'sent'
+        return 'received'
 
 
 class InstagramConversationSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
+    status = serializers.SerializerMethodField()
+    last_message_preview = serializers.SerializerMethodField()
     
     class Meta:
         model = InstagramConversation
         fields = [
-            'id', 'instagram_conversation_id',
+            'id', 'account', 'instagram_conversation_id',
             'participant_id', 'participant_username',
             'participant_name', 'participant_profile_pic',
             'is_active', 'unread_count', 'last_message_at',
-            'last_message', 'created_at', 'updated_at'
+            'last_message', 'last_message_preview',
+            'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -128,6 +145,17 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
                 'created_at': last_msg.created_at.isoformat()
             }
         return None
+
+    def get_status(self, obj):
+        return 'active' if obj.is_active else 'closed'
+
+    def get_last_message_preview(self, obj):
+        last_msg = obj.messages.filter(is_unsent=False).order_by('-created_at').first()
+        if not last_msg:
+            return ''
+        if last_msg.content:
+            return last_msg.content[:120]
+        return last_msg.message_type.replace('_', ' ').title()
 
 
 class InstagramScheduledPostSerializer(serializers.ModelSerializer):

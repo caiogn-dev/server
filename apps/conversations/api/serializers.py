@@ -127,3 +127,22 @@ class TagSerializer(serializers.Serializer):
 class AssignAgentSerializer(serializers.Serializer):
     """Serializer for assigning agent."""
     agent_id = serializers.IntegerField()
+
+
+class UniversalConversationSerializer(serializers.Serializer):
+    """Normalized read-only serializer for the multichannel conversations hub."""
+
+    id = serializers.CharField()
+    platform = serializers.CharField()
+    platform_icon_key = serializers.CharField()
+    source_conversation_id = serializers.CharField()
+    account_id = serializers.CharField(allow_null=True)
+    display_name = serializers.CharField()
+    secondary_identifier = serializers.CharField(allow_blank=True, allow_null=True)
+    last_message_preview = serializers.CharField(allow_blank=True, allow_null=True)
+    last_message_at = serializers.DateTimeField(allow_null=True)
+    unread_count = serializers.IntegerField()
+    status = serializers.CharField(allow_blank=True, allow_null=True)
+    route = serializers.CharField()
+    route_params = serializers.JSONField()
+    is_actionable = serializers.BooleanField()
