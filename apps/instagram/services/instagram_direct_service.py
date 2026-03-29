@@ -1,6 +1,10 @@
 import logging
-from typing import Optional, Dict, List, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from django.db import models
+from django.utils import timezone
+
 from .instagram_api import InstagramAPI, InstagramAPIException
 from ..models import InstagramConversation, InstagramMessage
 
@@ -109,7 +113,8 @@ class InstagramDirectService:
             
             # Marca mensagens como lidas
             conv.messages.filter(is_from_business=False, is_read=False).update(
-                is_read=True, read_at=datetime.now()
+                is_read=True,
+                read_at=timezone.now(),
             )
             
             return True
@@ -164,49 +169,88 @@ class InstagramDirectService:
                     id=reply_to_id
                 )
             
+            payload = {
+                'recipient': {'id': conv.participant_id},
+                'messaging_type': 'RESPONSE',
+            }
+            if message_type == 'TEXT':
+                payload['message'] = {'text': content}
+            elif message_type in ('IMAGE', 'VIDEO', 'AUDIO'):
+                type_map = {'IMAGE': 'image', 'VIDEO': 'video', 'AUDIO': 'audio'}
+                if not media_url:
+                    raise InstagramAPIException(
+                        f"media_url is required for {message_type} messages"
+                    )
+                payload['message'] = {
+                    'attachment': {
+                        'type': type_map[message_type],
+                        'payload': {'url': media_url, 'is_reusable': True},
+                    }
+                }
+            else:
+                payload['message'] = {'text': content or ''}
+
+            page_id = (self.api.account.facebook_page_id or '').strip()
+            if not page_id:
+                raise InstagramAPIException(
+                    "facebook_page_id not configured for this Instagram account. "
+                    "Instagram DM sends require the connected Facebook Page ID "
+                    "and a Page access token."
+                )
+
+            try:
+                response = self.api.post(f'{page_id}/messages', data=payload)
+            except Exception as api_err:
+                logger.error(
+                    "Instagram send API error: account=%s page_id=%s participant=%s conversation=%s error=%s",
+                    self.api.account.id,
+                    page_id,
+                    conv.participant_id,
+                    conversation_id,
+                    api_err,
+                )
+                raise
+
+            external_id = response.get('message_id') or response.get('mid')
+            if not external_id:
+                logger.error(
+                    "Instagram send response missing message id: account=%s page_id=%s participant=%s conversation=%s response=%s",
+                    self.api.account.id,
+                    page_id,
+                    conv.participant_id,
+                    conversation_id,
+                    response,
+                )
+                raise InstagramAPIException(
+                    "Meta did not confirm message delivery. "
+                    "Check if the account is using a Page access token with "
+                    "Instagram messaging permissions."
+                )
+
+            now = timezone.now()
             message = InstagramMessage.objects.create(
                 conversation=conv,
+                instagram_message_id=external_id,
                 message_type=message_type,
                 content=content or "",
                 media_url=media_url,
                 reply_to_message=reply_to,
                 is_from_business=True,
-                is_read=True,
-                sent_at=datetime.now()
+                is_read=False,
+                sent_at=now,
             )
-            
-            # Atualiza conversa
-            conv.last_message_at = datetime.now()
-            conv.save()
 
-            # Envia via Instagram Messenger Platform API
-            try:
-                payload = {
-                    'recipient': {'id': conv.participant_id},
-                    'messaging_type': 'RESPONSE',
-                }
-                if message_type == 'TEXT':
-                    payload['message'] = {'text': content}
-                elif message_type in ('IMAGE', 'VIDEO', 'AUDIO'):
-                    type_map = {'IMAGE': 'image', 'VIDEO': 'video', 'AUDIO': 'audio'}
-                    payload['message'] = {
-                        'attachment': {
-                            'type': type_map[message_type],
-                            'payload': {'url': media_url, 'is_reusable': True},
-                        }
-                    }
-                else:
-                    payload['message'] = {'text': content or ''}
+            conv.last_message_at = now
+            conv.save(update_fields=['last_message_at', 'updated_at'])
 
-                page_id = self.api.account.facebook_page_id or self.api.account.instagram_business_id
-                response = self.api.post(f'{page_id}/messages', data=payload)
-                external_id = response.get('message_id') or response.get('mid')
-                if external_id:
-                    message.instagram_message_id = external_id
-                    message.save(update_fields=['instagram_message_id'])
-            except Exception as api_err:
-                logger.error(f"Instagram send API error for conv {conversation_id}: {api_err}")
-                # Message is persisted locally even if API call fails
+            logger.info(
+                "Instagram outbound message sent: account=%s page_id=%s participant=%s conversation=%s message_id=%s",
+                self.api.account.id,
+                page_id,
+                conv.participant_id,
+                conversation_id,
+                external_id,
+            )
 
             return message
             
@@ -246,13 +290,13 @@ class InstagramDirectService:
             media_url=media_url,
             is_from_business=False,
             is_read=False,
-            sent_at=sent_at or datetime.now()
+            sent_at=sent_at or timezone.now()
         )
         
         # Atualiza conversa
-        conversation.last_message_at = datetime.now()
+        conversation.last_message_at = timezone.now()
         conversation.unread_count += 1
-        conversation.save()
+        conversation.save(update_fields=['last_message_at', 'unread_count', 'updated_at'])
         
         return message
     
@@ -307,7 +351,7 @@ class InstagramDirectService:
                 is_from_business=True  # Só pode remover mensagens enviadas
             )
             message.is_unsent = True
-            message.unsent_at = datetime.now()
+            message.unsent_at = timezone.now()
             message.save()
             return True
         except InstagramMessage.DoesNotExist:
@@ -369,6 +413,3 @@ class InstagramDirectService:
             for msg in messages
         ]
 
-
-# Import para busca
-from django.db import models

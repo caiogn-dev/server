@@ -112,6 +112,8 @@ class InstagramMessageSerializer(serializers.ModelSerializer):
         return 'outbound' if obj.is_from_business else 'inbound'
 
     def get_status(self, obj):
+        if obj.is_from_business and not obj.instagram_message_id:
+            return 'pending'
         if obj.is_read:
             return 'read'
         if obj.is_from_business:
