@@ -63,10 +63,11 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="connect-url", permission_classes=[IsAuthenticated])
     def connect_url(self, request):
-        """Gera a URL do Instagram Business Login OAuth com state assinado.
+        """Gera a URL do Facebook Business Login OAuth com state assinado.
 
+        Usa facebook.com/dialog/oauth (Messenger API for Instagram).
         O state contém o user_id assinado com TimestampSigner (expira em 10 min).
-        O código é trocado server-side em /ig/callback — o frontend não toca no code.
+        O código é trocado server-side em /ig/callback.
         """
         app_id = getattr(settings, "INSTAGRAM_APP_ID", "")
         if not app_id:
@@ -83,15 +84,20 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         signer = TimestampSigner()
         state = signer.sign(str(request.user.id))
 
-        # Só solicitar scopes que estão configurados no app Meta.
-        # Adicione os demais depois que a revisão for aprovada.
+        # Scopes do Facebook Business Login (Messenger API for Instagram)
         scope = ",".join([
+            "public_profile",
+            "pages_show_list",
+            "pages_read_engagement",
+            "pages_manage_metadata",
+            "pages_messaging",
             "instagram_business_basic",
             "instagram_business_manage_messages",
+            "business_management",
         ])
 
         auth_url = (
-            "https://www.instagram.com/oauth/authorize"
+            "https://www.facebook.com/dialog/oauth"
             f"?client_id={app_id}"
             f"&redirect_uri={urlquote(redirect_uri, safe='')}"
             f"&response_type=code"
@@ -99,6 +105,7 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             f"&state={urlquote(state, safe='')}"
         )
 
+        logger.info("Facebook OAuth URL gerada: app_id=%s redirect_uri=%s", app_id, redirect_uri)
         return Response({"url": auth_url})
 
     @action(detail=False, methods=["post"], url_path="connect", permission_classes=[IsAuthenticated])
@@ -601,14 +608,18 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
 
 @csrf_exempt
 def ig_oauth_callback(request):
-    """Instagram Business Login OAuth callback — troca o code server-side.
+    """Facebook Business Login OAuth callback — Messenger API for Instagram.
 
     Fluxo:
-      1. Frontend abre popup para instagram.com/oauth/authorize com state assinado
-      2. Instagram redireciona aqui com code + state
-      3. Validamos o state → identificamos o user
-      4. Trocamos o code por token, buscamos dados, criamos InstagramAccount
-      5. Redirecionamos o popup para o frontend com ?ig_connected=1 ou ?ig_error=...
+      1. Frontend abre popup para facebook.com/dialog/oauth com state assinado
+      2. Facebook redireciona aqui com code + state
+      3. Valida state → identifica o user
+      4. Troca code por user token (graph.facebook.com)
+      5. Troca por long-lived token (60 dias)
+      6. GET /me/accounts → encontra página com instagram_business_account
+      7. Busca info da conta Instagram
+      8. Cria/atualiza InstagramAccount com page_access_token
+      9. Redireciona popup para frontend com ?ig_connected=1
     """
     frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
     callback_base = f"{frontend_url}/instagram/callback"
@@ -641,14 +652,13 @@ def ig_oauth_callback(request):
         f"{getattr(settings, 'BASE_URL', 'https://backend.pastita.com.br')}/ig/callback",
     )
 
-    # 2. Troca code → short-lived token
+    # 2. Troca code → short-lived user token (Facebook Graph API)
     try:
-        token_resp = requests.post(
-            "https://api.instagram.com/oauth/access_token",
-            data={
+        token_resp = requests.get(
+            "https://graph.facebook.com/v22.0/oauth/access_token",
+            params={
                 "client_id": app_id,
                 "client_secret": app_secret,
-                "grant_type": "authorization_code",
                 "redirect_uri": redirect_uri,
                 "code": code,
             },
@@ -657,20 +667,20 @@ def ig_oauth_callback(request):
         token_resp.raise_for_status()
         short_token = token_resp.json().get("access_token")
         if not short_token:
-            raise ValueError(f"Sem access_token na resposta: {token_resp.text}")
+            raise ValueError(f"Sem access_token: {token_resp.text}")
     except Exception as exc:
-        logger.error("Instagram code exchange failed: %s", exc)
+        logger.error("Facebook code exchange failed: %s", exc)
         return HttpResponseRedirect(f"{callback_base}?ig_error=token_exchange_failed")
 
-    # 3. Short → long-lived token (~60 dias)
+    # 3. Troca por long-lived user token (~60 dias)
     try:
         ll_resp = requests.get(
-            "https://graph.instagram.com/access_token",
+            "https://graph.facebook.com/v22.0/oauth/access_token",
             params={
-                "grant_type": "ig_exchange_token",
+                "grant_type": "fb_exchange_token",
                 "client_id": app_id,
                 "client_secret": app_secret,
-                "access_token": short_token,
+                "fb_exchange_token": short_token,
             },
             timeout=30,
         )
@@ -679,34 +689,84 @@ def ig_oauth_callback(request):
     except Exception:
         long_token = short_token
 
-    # 4. Busca dados da conta Instagram
+    # 4. Busca páginas com instagram_business_account inline
     try:
-        me_resp = requests.get(
-            "https://graph.instagram.com/v22.0/me",
+        pages_resp = requests.get(
+            "https://graph.facebook.com/v22.0/me/accounts",
             params={
-                "fields": "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website",
                 "access_token": long_token,
+                "fields": "id,name,access_token,instagram_business_account",
             },
             timeout=30,
         )
-        me_resp.raise_for_status()
-        info = me_resp.json()
+        pages_resp.raise_for_status()
+        pages = pages_resp.json().get("data", [])
     except Exception as exc:
-        logger.error("Instagram /me failed: %s", exc)
-        info = {}
+        logger.error("Facebook /me/accounts failed: %s", exc)
+        return HttpResponseRedirect(f"{callback_base}?ig_error=pages_fetch_failed")
 
-    ig_id = info.get("id")
-    if not ig_id:
-        return HttpResponseRedirect(f"{callback_base}?ig_error=no_instagram_id")
+    # 5. Encontra a primeira página com Instagram Business conectado
+    ig_biz_id = None
+    page_id = None
+    page_token = None
+    for page in pages:
+        biz = (page.get("instagram_business_account") or {}).get("id")
+        if biz:
+            ig_biz_id = biz
+            page_id = page["id"]
+            page_token = page.get("access_token", "")
+            break
 
-    # 5. Cria ou atualiza InstagramAccount
+    if not ig_biz_id:
+        pages_info = ", ".join(p.get("name", p["id"]) for p in pages) or "nenhuma"
+        logger.warning("Nenhum instagram_business_account nas páginas: %s", pages_info)
+        # Tenta buscar via /me?fields=instagram_business_account (conta pessoal)
+        try:
+            me_resp = requests.get(
+                "https://graph.facebook.com/v22.0/me",
+                params={"access_token": long_token, "fields": "id,instagram_business_account"},
+                timeout=30,
+            )
+            me_data = me_resp.json()
+            ig_biz_id = (me_data.get("instagram_business_account") or {}).get("id")
+        except Exception:
+            pass
+
+    if not ig_biz_id:
+        msg = urlquote(
+            f"Instagram Business não encontrado nas suas páginas ({pages_info}). "
+            "Vá em Meta Business Suite → sua Página → Configurações → Instagram e conecte diretamente à Página.",
+            safe="",
+        )
+        return HttpResponseRedirect(f"{callback_base}?ig_error={msg}")
+
+    # 6. Busca informações da conta Instagram via Graph API
+    token_for_info = page_token or long_token
+    try:
+        info_resp = requests.get(
+            f"https://graph.facebook.com/v22.0/{ig_biz_id}",
+            params={
+                "fields": "id,username,name,biography,website,followers_count,follows_count,media_count,profile_picture_url",
+                "access_token": token_for_info,
+            },
+            timeout=30,
+        )
+        info_resp.raise_for_status()
+        info = info_resp.json()
+    except Exception as exc:
+        logger.warning("Instagram info fetch failed (non-fatal): %s", exc)
+        info = {"id": ig_biz_id}
+
+    # 7. Cria ou atualiza InstagramAccount
     InstagramAccount.objects.update_or_create(
         user=user,
-        instagram_business_id=ig_id,
+        instagram_business_id=ig_biz_id,
         defaults={
-            "username": info.get("username", ig_id),
+            "username": info.get("username", ig_biz_id),
             "platform": "instagram",
+            "facebook_page_id": page_id,
             "access_token": long_token,
+            "page_access_token": page_token or "",
             "biography": info.get("biography", ""),
             "website": info.get("website", ""),
             "followers_count": info.get("followers_count", 0),
