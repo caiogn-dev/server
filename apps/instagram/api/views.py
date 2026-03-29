@@ -100,11 +100,14 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
 
         long_token = ll_data.get("access_token", short_token)
 
-        # 3. Busca as páginas do Facebook do usuário para obter o page_id e page_token
+        # 3. Busca páginas + instagram_business_account em uma só chamada
         try:
             pages_resp = requests.get(
                 "https://graph.facebook.com/v22.0/me/accounts",
-                params={"access_token": long_token, "fields": "id,name,access_token"},
+                params={
+                    "access_token": long_token,
+                    "fields": "id,name,access_token,instagram_business_account",
+                },
                 timeout=30,
             )
             pages_resp.raise_for_status()
@@ -129,27 +132,13 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             pid = page["id"]
             ptoken = page.get("access_token", "")
             pname = page.get("name", pid)
-            try:
-                ig_resp = requests.get(
-                    f"https://graph.facebook.com/v22.0/{pid}",
-                    params={
-                        "fields": "instagram_business_account",
-                        "access_token": ptoken or long_token,
-                    },
-                    timeout=30,
-                )
-                ig_resp.raise_for_status()
-                ig_data = ig_resp.json()
-                biz_id = ig_data.get("instagram_business_account", {}).get("id")
-                pages_debug.append(f"{pname} ({pid}): {'✓ ' + biz_id if biz_id else '✗ sem Instagram Business'}")
-                if biz_id:
-                    ig_biz_id = biz_id
-                    page_id = pid
-                    page_token = ptoken
-                    break
-            except Exception as exc:
-                pages_debug.append(f"{pname} ({pid}): erro - {exc}")
-                logger.error("Instagram business account fetch failed for page %s: %s", pid, exc)
+            biz_id = (page.get("instagram_business_account") or {}).get("id")
+            pages_debug.append(f"{pname} ({pid}): {'✓ ' + biz_id if biz_id else '✗ sem Instagram Business'}")
+            if biz_id:
+                ig_biz_id = biz_id
+                page_id = pid
+                page_token = ptoken
+                break
 
         if not ig_biz_id:
             pages_info = " | ".join(pages_debug)
