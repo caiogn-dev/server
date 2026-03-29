@@ -1,4 +1,5 @@
 import hmac
+from django.conf import settings
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -73,7 +74,8 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
     """ViewSet para gerenciamento de mídias (Posts, Stories, Reels)"""
     queryset = InstagramMedia.objects.all()
     permission_classes = [IsAuthenticated]
-    
+    serializer_class = InstagramMediaSerializer
+
     def get_queryset(self):
         return self.queryset.filter(account__user=self.request.user)
     
