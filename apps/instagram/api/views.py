@@ -83,12 +83,11 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         signer = TimestampSigner()
         state = signer.sign(str(request.user.id))
 
+        # Só solicitar scopes que estão configurados no app Meta.
+        # Adicione os demais depois que a revisão for aprovada.
         scope = ",".join([
             "instagram_business_basic",
             "instagram_business_manage_messages",
-            "instagram_business_manage_comments",
-            "instagram_business_content_publish",
-            "instagram_business_manage_insights",
         ])
 
         auth_url = (
