@@ -8,13 +8,20 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 
 from ..models import (
-    InstagramAccount, InstagramMedia, InstagramConversation, 
-    InstagramMessage, InstagramLive, InstagramCatalog, 
+    InstagramAccount, InstagramMedia, InstagramConversation,
+    InstagramMessage, InstagramLive, InstagramCatalog,
     InstagramProduct, InstagramScheduledPost, InstagramInsight
 )
 from ..services import (
     InstagramAPI, InstagramGraphService, InstagramShoppingService,
     InstagramLiveService, InstagramDirectService
+)
+from .serializers import (
+    InstagramAccountSerializer, InstagramMediaSerializer,
+    InstagramConversationSerializer, InstagramMessageSerializer,
+    InstagramLiveSerializer, InstagramCatalogSerializer,
+    InstagramProductSerializer, InstagramScheduledPostSerializer,
+    InstagramInsightSerializer,
 )
 
 
@@ -22,6 +29,7 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
     """ViewSet para gerenciamento de contas Instagram"""
     queryset = InstagramAccount.objects.all()
     permission_classes = [IsAuthenticated]
+    serializer_class = InstagramAccountSerializer
     
     def get_queryset(self):
         return self.queryset.filter(user=self.request.user)

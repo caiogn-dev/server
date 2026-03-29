@@ -163,10 +163,44 @@ class WebhookDispatcherView(View):
             except (KeyError, IndexError):
                 pass
         
+        elif provider == 'instagram':
+            try:
+                entry = payload.get('entry', [{}])[0]
+                if entry.get('messaging'):
+                    messaging = entry['messaging'][0]
+                    if 'message' in messaging:
+                        return 'message'
+                    if 'read' in messaging:
+                        return 'messaging_seen'
+                    if 'reaction' in messaging:
+                        return 'reaction'
+                if entry.get('changes'):
+                    return entry['changes'][0].get('field', 'change')
+            except (KeyError, IndexError):
+                pass
+
+        elif provider == 'messenger':
+            try:
+                entry = payload.get('entry', [{}])[0]
+                messaging = entry.get('messaging', [{}])[0]
+                if 'message' in messaging:
+                    return 'message'
+                if 'postback' in messaging:
+                    return 'postback'
+                if 'delivery' in messaging:
+                    return 'delivery'
+                if 'read' in messaging:
+                    return 'read'
+                if 'optin' in messaging:
+                    return 'optin'
+                if 'referral' in messaging:
+                    return 'referral'
+            except (KeyError, IndexError):
+                pass
+
         elif provider == 'mercadopago':
-            # Mercado Pago sends type in query params or payload
             return payload.get('type', 'unknown')
-        
+
         return 'unknown'
     
     def _extract_event_id(self, provider: str, payload: dict, headers: dict) -> Optional[str]:
@@ -232,10 +266,13 @@ def register_default_handlers():
     """Register default handlers."""
     from .handlers.whatsapp_handler import WhatsAppHandler
     from .handlers.mercadopago_handler import MercadoPagoHandler
-    
+    from .handlers.instagram_handler import InstagramHandler
+    from .handlers.messenger_handler import MessengerHandler
+
     WebhookDispatcherView.register_handler('whatsapp', WhatsAppHandler)
     WebhookDispatcherView.register_handler('mercadopago', MercadoPagoHandler)
-    # Add more handlers as needed
+    WebhookDispatcherView.register_handler('instagram', InstagramHandler)
+    WebhookDispatcherView.register_handler('messenger', MessengerHandler)
 
 
 # Auto-register on module load
