@@ -705,10 +705,14 @@ def ig_oauth_callback(request):
         logger.error("Facebook /me/accounts failed: %s", exc)
         return HttpResponseRedirect(f"{callback_base}?ig_error=pages_fetch_failed")
 
-    # 5. Encontra a primeira página com Instagram Business conectado
+    # 5. Encontra Instagram Business — tenta 3 caminhos em sequência
+
     ig_biz_id = None
     page_id = None
     page_token = None
+    pages_info = ", ".join(p.get("name", p["id"]) for p in pages) or "nenhuma"
+
+    # Caminho A: instagram_business_account inline nas páginas (conexão direta via Page Settings)
     for page in pages:
         biz = (page.get("instagram_business_account") or {}).get("id")
         if biz:
@@ -717,25 +721,54 @@ def ig_oauth_callback(request):
             page_token = page.get("access_token", "")
             break
 
+    # Caminho B: cada página com seu próprio Page Access Token (às vezes o user token não retorna o campo)
     if not ig_biz_id:
-        pages_info = ", ".join(p.get("name", p["id"]) for p in pages) or "nenhuma"
-        logger.warning("Nenhum instagram_business_account nas páginas: %s", pages_info)
-        # Tenta buscar via /me?fields=instagram_business_account (conta pessoal)
+        for page in pages:
+            p_token = page.get("access_token", "")
+            if not p_token:
+                continue
+            try:
+                p_resp = requests.get(
+                    f"https://graph.facebook.com/v22.0/{page['id']}",
+                    params={"fields": "instagram_business_account", "access_token": p_token},
+                    timeout=15,
+                )
+                biz = (p_resp.json().get("instagram_business_account") or {}).get("id")
+                if biz:
+                    ig_biz_id = biz
+                    page_id = page["id"]
+                    page_token = p_token
+                    break
+            except Exception:
+                continue
+
+    # Caminho C: Business Manager → instagram_accounts (Meta Business Suite asset association)
+    if not ig_biz_id:
         try:
-            me_resp = requests.get(
-                "https://graph.facebook.com/v22.0/me",
-                params={"access_token": long_token, "fields": "id,instagram_business_account"},
-                timeout=30,
+            biz_resp = requests.get(
+                "https://graph.facebook.com/v22.0/me/businesses",
+                params={"access_token": long_token, "fields": "id,name"},
+                timeout=15,
             )
-            me_data = me_resp.json()
-            ig_biz_id = (me_data.get("instagram_business_account") or {}).get("id")
-        except Exception:
-            pass
+            businesses = biz_resp.json().get("data", [])
+            for biz in businesses:
+                ig_resp = requests.get(
+                    f"https://graph.facebook.com/v22.0/{biz['id']}/instagram_accounts",
+                    params={"access_token": long_token, "fields": "id,username"},
+                    timeout=15,
+                )
+                ig_accounts = ig_resp.json().get("data", [])
+                if ig_accounts:
+                    ig_biz_id = ig_accounts[0]["id"]
+                    logger.info("Instagram encontrado via Business Manager: %s", ig_biz_id)
+                    break
+        except Exception as exc:
+            logger.warning("Business Manager path failed: %s", exc)
 
     if not ig_biz_id:
         msg = urlquote(
-            f"Instagram Business não encontrado nas suas páginas ({pages_info}). "
-            "Vá em Meta Business Suite → sua Página → Configurações → Instagram e conecte diretamente à Página.",
+            f"Instagram Business não encontrado. Páginas verificadas: {pages_info}. "
+            "Acesse sua Página do Facebook → Configurações → Instagram → Conectar Conta (não o Business Suite).",
             safe="",
         )
         return HttpResponseRedirect(f"{callback_base}?ig_error={msg}")
