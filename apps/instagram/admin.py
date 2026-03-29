@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.contrib import messages
 from .models import (
     InstagramAccount, InstagramMedia, InstagramMediaItem,
     InstagramProductTag, InstagramCatalog, InstagramProduct,
@@ -6,6 +7,8 @@ from .models import (
     InstagramMessage, InstagramScheduledPost, InstagramInsight,
     InstagramWebhookLog
 )
+from .services import InstagramAPI
+from .services.instagram_api import InstagramAPIException
 
 
 @admin.register(InstagramAccount)
@@ -14,6 +17,7 @@ class InstagramAccountAdmin(admin.ModelAdmin):
     list_filter = ['is_active', 'is_verified', 'created_at']
     search_fields = ['username', 'user__email', 'facebook_page_id']
     readonly_fields = ['created_at', 'updated_at', 'last_sync_at']
+    actions = ['action_refresh_page_token', 'action_sync_account']
     fieldsets = (
         ('Identificadores', {
             'fields': ('user', 'platform', 'username', 'instagram_business_id', 'facebook_page_id'),
@@ -24,7 +28,7 @@ class InstagramAccountAdmin(admin.ModelAdmin):
                 '<strong>access_token</strong>: User/Instagram token (leitura de mídia e insights).<br>'
                 '<strong>page_access_token</strong>: Page Access Token da Página Facebook — '
                 '<em>obrigatório para enviar mensagens via Instagram Direct</em>. '
-                'Obtenha em: Graph API Explorer → Me/accounts → token da página.'
+                'Se estiver expirado use a action "Renovar Page Access Token" na lista.'
             ),
         }),
         ('Metadados', {
@@ -39,6 +43,32 @@ class InstagramAccountAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, description='Page Token?')
     def has_page_token(self, obj):
         return bool(obj.page_access_token)
+
+    @admin.action(description='🔑 Renovar Page Access Token (a partir do User Token)')
+    def action_refresh_page_token(self, request, queryset):
+        ok, fail = 0, 0
+        for account in queryset:
+            try:
+                InstagramAPI(account).refresh_page_token()
+                ok += 1
+            except InstagramAPIException as exc:
+                self.message_user(
+                    request,
+                    f"@{account.username}: {exc}",
+                    level=messages.ERROR,
+                )
+                fail += 1
+        if ok:
+            self.message_user(
+                request,
+                f"Page Access Token renovado com sucesso para {ok} conta(s).",
+                level=messages.SUCCESS,
+            )
+
+    @admin.action(description='🔄 Sincronizar informações da conta')
+    def action_sync_account(self, request, queryset):
+        ok = sum(1 for account in queryset if InstagramAPI(account).sync_account_info())
+        self.message_user(request, f"{ok} conta(s) sincronizada(s).", level=messages.SUCCESS)
 
 
 @admin.register(InstagramMedia)

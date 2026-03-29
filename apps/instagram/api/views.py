@@ -1,5 +1,6 @@
 import logging
 import hmac
+import requests
 from datetime import timedelta
 
 from django.conf import settings
@@ -55,6 +56,157 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.filter(user=self.request.user)
 
+    @action(detail=False, methods=["post"], url_path="connect", permission_classes=[IsAuthenticated])
+    def connect(self, request):
+        """Troca o código OAuth do Facebook por tokens e cria/atualiza a conta Instagram.
+
+        Payload: { code: str, redirect_uri: str }
+        """
+        code = request.data.get("code")
+        redirect_uri = request.data.get("redirect_uri")
+
+        if not code or not redirect_uri:
+            return Response(
+                {"error": "code e redirect_uri são obrigatórios"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        app_id = getattr(settings, "INSTAGRAM_APP_ID", "")
+        app_secret = getattr(settings, "INSTAGRAM_APP_SECRET", "")
+        if not app_id or not app_secret:
+            return Response(
+                {"error": "INSTAGRAM_APP_ID/INSTAGRAM_APP_SECRET não configurados no servidor"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # 1. Troca o code por short-lived user token
+        try:
+            token_resp = requests.get(
+                f"https://graph.facebook.com/v22.0/oauth/access_token",
+                params={
+                    "client_id": app_id,
+                    "client_secret": app_secret,
+                    "redirect_uri": redirect_uri,
+                    "code": code,
+                },
+                timeout=30,
+            )
+            token_resp.raise_for_status()
+            token_data = token_resp.json()
+        except Exception as exc:
+            logger.error("Instagram OAuth code exchange failed: %s", exc)
+            return Response({"error": f"Falha ao trocar código: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        short_token = token_data.get("access_token")
+        if not short_token:
+            return Response({"error": "Token não retornado pelo Facebook"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Troca por long-lived user token (60 dias)
+        try:
+            ll_resp = requests.get(
+                "https://graph.facebook.com/v22.0/oauth/access_token",
+                params={
+                    "grant_type": "fb_exchange_token",
+                    "client_id": app_id,
+                    "client_secret": app_secret,
+                    "fb_exchange_token": short_token,
+                },
+                timeout=30,
+            )
+            ll_resp.raise_for_status()
+            ll_data = ll_resp.json()
+        except Exception as exc:
+            logger.error("Instagram long-lived token exchange failed: %s", exc)
+            return Response({"error": f"Falha ao obter long-lived token: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        long_token = ll_data.get("access_token", short_token)
+
+        # 3. Busca as páginas do Facebook do usuário para obter o page_id e page_token
+        try:
+            pages_resp = requests.get(
+                "https://graph.facebook.com/v22.0/me/accounts",
+                params={"access_token": long_token, "fields": "id,name,access_token"},
+                timeout=30,
+            )
+            pages_resp.raise_for_status()
+            pages_data = pages_resp.json().get("data", [])
+        except Exception as exc:
+            logger.error("Instagram pages fetch failed: %s", exc)
+            return Response({"error": f"Falha ao buscar páginas: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not pages_data:
+            return Response(
+                {"error": "Nenhuma página do Facebook encontrada para este usuário"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        page = pages_data[0]
+        page_id = page["id"]
+        page_token = page.get("access_token", "")
+
+        # 4. Busca o Instagram Business Account vinculado à página
+        try:
+            ig_resp = requests.get(
+                f"https://graph.facebook.com/v22.0/{page_id}",
+                params={
+                    "fields": "instagram_business_account",
+                    "access_token": page_token or long_token,
+                },
+                timeout=30,
+            )
+            ig_resp.raise_for_status()
+            ig_data = ig_resp.json()
+        except Exception as exc:
+            logger.error("Instagram business account fetch failed: %s", exc)
+            return Response({"error": f"Falha ao buscar conta Instagram: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        ig_biz = ig_data.get("instagram_business_account", {})
+        ig_biz_id = ig_biz.get("id")
+        if not ig_biz_id:
+            return Response(
+                {"error": "Nenhuma conta Instagram Business vinculada a essa página do Facebook"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 5. Busca informações da conta Instagram
+        try:
+            info_resp = requests.get(
+                f"https://graph.facebook.com/v22.0/{ig_biz_id}",
+                params={
+                    "fields": "id,username,name,biography,website,followers_count,follows_count,media_count,profile_picture_url",
+                    "access_token": long_token,
+                },
+                timeout=30,
+            )
+            info_resp.raise_for_status()
+            info = info_resp.json()
+        except Exception as exc:
+            logger.error("Instagram account info fetch failed: %s", exc)
+            info = {}
+
+        # 6. Cria ou atualiza a InstagramAccount
+        account, created = InstagramAccount.objects.update_or_create(
+            user=request.user,
+            instagram_business_id=ig_biz_id,
+            defaults={
+                "username": info.get("username", ig_biz_id),
+                "platform": "instagram",
+                "facebook_page_id": page_id,
+                "access_token": long_token,
+                "page_access_token": page_token,
+                "biography": info.get("biography", ""),
+                "website": info.get("website", ""),
+                "followers_count": info.get("followers_count", 0),
+                "follows_count": info.get("follows_count", 0),
+                "media_count": info.get("media_count", 0),
+                "profile_picture_url": info.get("profile_picture_url", ""),
+                "is_active": True,
+            },
+        )
+
+        serializer = self.get_serializer(account)
+        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
     @action(detail=True, methods=["post"])
     def sync(self, request, pk=None):
         account = self.get_object()
@@ -67,6 +219,21 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             {"status": "error", "message": "Falha na sincronizacao"},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    @action(detail=True, methods=["post"], url_path="refresh-page-token")
+    def refresh_page_token(self, request, pk=None):
+        """Renova o Page Access Token a partir do User Access Token já salvo.
+
+        Chame este endpoint sempre que receber o erro
+        'Page Access Token inválido ou expirado'.
+        """
+        account = self.get_object()
+        api = InstagramAPI(account)
+        try:
+            api.refresh_page_token()
+            return Response({"status": "success", "message": "Page Access Token renovado com sucesso."})
+        except Exception as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["get"])
     def insights(self, request, pk=None):

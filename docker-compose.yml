@@ -10,6 +10,9 @@ x-django-env: &django-env
   DEBUG: "False"
   # Database / Cache
   DATABASE_URL: ${DATABASE_URL}
+  # CONN_MAX_AGE=0 é obrigatório com ASGI (Uvicorn): conexões persistentes
+  # não funcionam corretamente em contexto async e esgotam o pool do Postgres.
+  DB_CONN_MAX_AGE: "0"
   REDIS_URL: ${REDIS_URL}
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -73,6 +76,8 @@ services:
       POSTGRES_DB: pastita
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
+    # max_connections=200 evita "too many clients" com múltiplos workers ASGI + Celery
+    command: postgres -c max_connections=200 -c shared_buffers=256MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:

@@ -306,7 +306,7 @@ else:
     }
 
 # WhatsApp Business API
-WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
+WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v22.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
@@ -354,6 +354,12 @@ DEFAULT_WHATSAPP_STORE_SLUGS = [
 DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
 
 # Instagram API Configuration
+# Approach: Messenger API for Instagram (Facebook Login)
+# Docs: https://developers.facebook.com/docs/instagram-platform/
+# Required Facebook App permissions:
+#   instagram_basic, instagram_manage_messages,
+#   pages_manage_metadata, pages_showlist, business_management
+# Token needed for /{page_id}/messages: Page Access Token (stored in InstagramAccount.page_access_token)
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')

@@ -63,8 +63,11 @@ class InstagramGraphService:
             container_params['video_url'] = media_url
             container_params['share_to_feed'] = True
         elif media_type.upper() == 'STORY':
-            container_params['image_url'] = media_url if media_type == 'IMAGE' else None
-            container_params['video_url'] = media_url if media_type == 'VIDEO' else None
+            # Determina se é story de imagem ou vídeo pela extensão da URL
+            if isinstance(media_url, str) and media_url.lower().endswith(('.mp4', '.mov')):
+                container_params['video_url'] = media_url
+            else:
+                container_params['image_url'] = media_url
         else:
             if media_url.startswith('http'):
                 container_params['image_url'] = media_url
@@ -193,17 +196,30 @@ class InstagramGraphService:
     # ========== Insights / Analytics ==========
     
     def get_account_insights(self, since: datetime, until: datetime, metrics: List[str] = None) -> Dict:
-        """Obtém insights da conta"""
+        """Obtém insights da conta.
+
+        Métricas suportadas na Graph API v17+:
+          - follower_count   → REMOVIDA (v17) — use account info .followers_count
+          - profile_views    → REMOVIDA (v18) — substituída por accounts_engaged
+          - website_clicks   → REMOVIDA (v18) — substituída por profile_links_taps
+        """
         if not metrics:
-            metrics = ['impressions', 'reach', 'profile_views', 'follower_count', 'website_clicks']
-        
+            metrics = [
+                'impressions',
+                'reach',
+                'accounts_engaged',       # substitui profile_views (v18+)
+                'profile_links_taps',     # substitui website_clicks (v18+)
+                'follows_and_unfollows',  # ganhos/perdas de seguidores por período
+            ]
+
         params = {
             'metric': ','.join(metrics),
             'period': 'day',
             'since': since.strftime('%Y-%m-%d'),
-            'until': until.strftime('%Y-%m-%d')
+            'until': until.strftime('%Y-%m-%d'),
+            'metric_type': 'total_value',  # necessário para métricas v18+
         }
-        
+
         return self.api.get(f"{self.api.account.instagram_business_id}/insights", params)
     
     def get_media_insights(self, media_id: str, metrics: List[str] = None) -> Dict:
