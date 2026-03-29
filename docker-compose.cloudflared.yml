@@ -49,6 +49,10 @@ services:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL}
       - DJANGO_CSRF_TRUSTED_ORIGINS=${DJANGO_CSRF_TRUSTED_ORIGINS}
       - DEBUG=False
+      - INSTAGRAM_APP_ID=${INSTAGRAM_APP_ID}
+      - INSTAGRAM_APP_SECRET=${INSTAGRAM_APP_SECRET}
+      - INSTAGRAM_WEBHOOK_VERIFY_TOKEN=${INSTAGRAM_WEBHOOK_VERIFY_TOKEN}
+      - DB_CONN_MAX_AGE=0
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media

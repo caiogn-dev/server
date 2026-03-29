@@ -119,31 +119,48 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        page = pages_data[0]
-        page_id = page["id"]
-        page_token = page.get("access_token", "")
+        # Tenta todas as páginas até encontrar uma com Instagram Business vinculado
+        ig_biz_id = None
+        page_id = None
+        page_token = None
+        pages_debug = []
 
-        # 4. Busca o Instagram Business Account vinculado à página
-        try:
-            ig_resp = requests.get(
-                f"https://graph.facebook.com/v22.0/{page_id}",
-                params={
-                    "fields": "instagram_business_account",
-                    "access_token": page_token or long_token,
-                },
-                timeout=30,
-            )
-            ig_resp.raise_for_status()
-            ig_data = ig_resp.json()
-        except Exception as exc:
-            logger.error("Instagram business account fetch failed: %s", exc)
-            return Response({"error": f"Falha ao buscar conta Instagram: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
+        for page in pages_data:
+            pid = page["id"]
+            ptoken = page.get("access_token", "")
+            pname = page.get("name", pid)
+            try:
+                ig_resp = requests.get(
+                    f"https://graph.facebook.com/v22.0/{pid}",
+                    params={
+                        "fields": "instagram_business_account",
+                        "access_token": ptoken or long_token,
+                    },
+                    timeout=30,
+                )
+                ig_resp.raise_for_status()
+                ig_data = ig_resp.json()
+                biz_id = ig_data.get("instagram_business_account", {}).get("id")
+                pages_debug.append(f"{pname} ({pid}): {'✓ ' + biz_id if biz_id else '✗ sem Instagram Business'}")
+                if biz_id:
+                    ig_biz_id = biz_id
+                    page_id = pid
+                    page_token = ptoken
+                    break
+            except Exception as exc:
+                pages_debug.append(f"{pname} ({pid}): erro - {exc}")
+                logger.error("Instagram business account fetch failed for page %s: %s", pid, exc)
 
-        ig_biz = ig_data.get("instagram_business_account", {})
-        ig_biz_id = ig_biz.get("id")
         if not ig_biz_id:
+            pages_info = " | ".join(pages_debug)
             return Response(
-                {"error": "Nenhuma conta Instagram Business vinculada a essa página do Facebook"},
+                {
+                    "error": (
+                        "Nenhuma conta Instagram Business vinculada às suas páginas do Facebook. "
+                        "Acesse Meta Business Suite → sua Página → Configurações → Instagram → Conectar conta. "
+                        f"Páginas verificadas: {pages_info}"
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -190,14 +207,25 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
     def sync(self, request, pk=None):
         account = self.get_object()
         api = InstagramAPI(account)
-
-        if api.sync_account_info():
+        try:
+            info = api.get_account_info()
+            account.username = info.get("username", account.username)
+            account.biography = info.get("biography", "")
+            account.website = info.get("website", "")
+            account.followers_count = info.get("followers_count", 0)
+            account.follows_count = info.get("follows_count", 0)
+            account.media_count = info.get("media_count", 0)
+            account.profile_picture_url = info.get("profile_picture_url", "")
+            account.is_verified = info.get("verified", False)
+            from django.utils import timezone
+            account.last_sync_at = timezone.now()
+            account.save()
             return Response({"status": "success", "message": "Conta sincronizada"})
-
-        return Response(
-            {"status": "error", "message": "Falha na sincronizacao"},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
+        except Exception as exc:
+            return Response(
+                {"status": "error", "message": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"], url_path="refresh-page-token")
     def refresh_page_token(self, request, pk=None):
