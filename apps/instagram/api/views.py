@@ -84,15 +84,15 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         signer = TimestampSigner()
         state = signer.sign(str(request.user.id))
 
-        # Scopes do Facebook Business Login (Messenger API for Instagram)
+        # Scopes do Facebook Login (Messenger API for Instagram)
+        # Nota: instagram_business_* são exclusivos do Instagram OAuth, NÃO do Facebook OAuth
         scope = ",".join([
-            "public_profile",
             "pages_show_list",
             "pages_read_engagement",
             "pages_manage_metadata",
             "pages_messaging",
-            "instagram_business_basic",
-            "instagram_business_manage_messages",
+            "instagram_basic",
+            "instagram_manage_messages",
             "business_management",
         ])
 
