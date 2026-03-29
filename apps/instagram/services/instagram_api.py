@@ -11,19 +11,36 @@ logger = logging.getLogger(__name__)
 class InstagramAPI:
     """Cliente base para Instagram Graph API"""
     
-    BASE_URL = "https://graph.facebook.com/v18.0"
+    BASE_URL = "https://graph.facebook.com/v22.0"
     
     def __init__(self, account: InstagramAccount):
         self.account = account
         self.access_token = account.access_token
         self.session = requests.Session()
-    
+
+    def _resolve_token(self, endpoint: str) -> str:
+        """
+        Retorna o token correto para o endpoint.
+        Endpoints de mensagens (/{page_id}/messages) exigem o Page Access Token.
+        Demais endpoints usam o User/Instagram Access Token.
+        """
+        page_id = (self.account.facebook_page_id or '').strip()
+        if page_id and endpoint.startswith(f'{page_id}/'):
+            page_token = (self.account.page_access_token or '').strip()
+            if not page_token:
+                raise InstagramAPIException(
+                    f"page_access_token não configurado para a conta @{self.account.username}. "
+                    "Acesse o admin e preencha o campo 'Page Access Token'."
+                )
+            return page_token
+        return self.access_token
+
     def _make_request(self, method: str, endpoint: str, params: Dict = None, data: Dict = None, files: Dict = None) -> Dict:
         """Faz requisição para a Graph API"""
         url = f"{self.BASE_URL}/{endpoint}"
-        
+
         params = params or {}
-        params['access_token'] = self.access_token
+        params['access_token'] = self._resolve_token(endpoint)
         
         try:
             if files:
@@ -39,7 +56,20 @@ class InstagramAPI:
         except requests.exceptions.HTTPError as e:
             error_data = response.json() if response.content else {}
             logger.error(f"Instagram API error: {error_data}")
-            raise InstagramAPIException(error_data.get('error', {}).get('message', str(e)))
+            api_error = error_data.get('error', {})
+            code = api_error.get('code')
+            subcode = api_error.get('error_subcode')
+            message = api_error.get('message', str(e))
+            # Erros conhecidos da Messenger API for Instagram
+            if code == 10 or subcode == 2018108:
+                raise InstagramAPIException(
+                    'Janela de mensagens fechada: o usuário não enviou nenhuma mensagem nas últimas 24 horas.'
+                )
+            if code == 190:
+                raise InstagramAPIException(
+                    'Page Access Token inválido ou expirado. Atualize o token no admin.'
+                )
+            raise InstagramAPIException(message)
         except Exception as e:
             logger.error(f"Request error: {str(e)}")
             raise InstagramAPIException(str(e))

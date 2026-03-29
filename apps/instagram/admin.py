@@ -10,10 +10,35 @@ from .models import (
 
 @admin.register(InstagramAccount)
 class InstagramAccountAdmin(admin.ModelAdmin):
-    list_display = ['username', 'user', 'followers_count', 'is_active', 'created_at']
+    list_display = ['username', 'user', 'facebook_page_id', 'has_page_token', 'followers_count', 'is_active', 'created_at']
     list_filter = ['is_active', 'is_verified', 'created_at']
-    search_fields = ['username', 'user__email']
+    search_fields = ['username', 'user__email', 'facebook_page_id']
     readonly_fields = ['created_at', 'updated_at', 'last_sync_at']
+    fieldsets = (
+        ('Identificadores', {
+            'fields': ('user', 'platform', 'username', 'instagram_business_id', 'facebook_page_id'),
+        }),
+        ('Tokens de Acesso', {
+            'fields': ('access_token', 'token_expires_at', 'page_access_token', 'page_token_expires_at'),
+            'description': (
+                '<strong>access_token</strong>: User/Instagram token (leitura de mídia e insights).<br>'
+                '<strong>page_access_token</strong>: Page Access Token da Página Facebook — '
+                '<em>obrigatório para enviar mensagens via Instagram Direct</em>. '
+                'Obtenha em: Graph API Explorer → Me/accounts → token da página.'
+            ),
+        }),
+        ('Metadados', {
+            'fields': ('followers_count', 'follows_count', 'media_count', 'profile_picture_url', 'biography', 'website'),
+            'classes': ('collapse',),
+        }),
+        ('Status', {
+            'fields': ('is_active', 'is_verified', 'created_at', 'updated_at', 'last_sync_at'),
+        }),
+    )
+
+    @admin.display(boolean=True, description='Page Token?')
+    def has_page_token(self, obj):
+        return bool(obj.page_access_token)
 
 
 @admin.register(InstagramMedia)

@@ -20,8 +20,21 @@ class InstagramAccount(models.Model):
     username = models.CharField(max_length=255)
     
     # Tokens de acesso
-    access_token = models.TextField()
+    access_token = models.TextField(
+        help_text='User Access Token ou Instagram Business Token (leitura de mídia, insights).'
+    )
     token_expires_at = models.DateTimeField(null=True, blank=True)
+    # Page Access Token — obrigatório para enviar mensagens via /{page_id}/messages
+    page_access_token = models.TextField(
+        blank=True,
+        default='',
+        help_text='Page Access Token da Página Facebook conectada. Necessário para enviar DMs via Instagram.'
+    )
+    page_token_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text='Expiração do Page Access Token (tokens de página normalmente não expiram).'
+    )
     
     # Metadados
     followers_count = models.IntegerField(default=0)
