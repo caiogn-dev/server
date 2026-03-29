@@ -2,8 +2,11 @@ import logging
 import hmac
 import requests
 from datetime import timedelta
+from urllib.parse import quote as urlquote
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
 from django.http import HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -57,6 +60,47 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         if self.request.user.is_superuser or self.request.user.is_staff:
             return queryset
         return queryset.filter(user=self.request.user)
+
+    @action(detail=False, methods=["get"], url_path="connect-url", permission_classes=[IsAuthenticated])
+    def connect_url(self, request):
+        """Gera a URL do Instagram Business Login OAuth com state assinado.
+
+        O state contém o user_id assinado com TimestampSigner (expira em 10 min).
+        O código é trocado server-side em /ig/callback — o frontend não toca no code.
+        """
+        app_id = getattr(settings, "INSTAGRAM_APP_ID", "")
+        if not app_id:
+            return Response(
+                {"error": "INSTAGRAM_APP_ID não configurado no servidor"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        redirect_uri = getattr(
+            settings, "INSTAGRAM_OAUTH_REDIRECT_URI",
+            f"{getattr(settings, 'BASE_URL', 'https://backend.pastita.com.br')}/ig/callback",
+        )
+
+        signer = TimestampSigner()
+        state = signer.sign(str(request.user.id))
+
+        scope = ",".join([
+            "instagram_business_basic",
+            "instagram_business_manage_messages",
+            "instagram_business_manage_comments",
+            "instagram_business_content_publish",
+            "instagram_business_manage_insights",
+        ])
+
+        auth_url = (
+            "https://www.instagram.com/oauth/authorize"
+            f"?client_id={app_id}"
+            f"&redirect_uri={urlquote(redirect_uri, safe='')}"
+            f"&response_type=code"
+            f"&scope={urlquote(scope, safe='')}"
+            f"&state={urlquote(state, safe='')}"
+        )
+
+        return Response({"url": auth_url})
 
     @action(detail=False, methods=["post"], url_path="connect", permission_classes=[IsAuthenticated])
     def connect(self, request):
@@ -558,18 +602,120 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
 
 @csrf_exempt
 def ig_oauth_callback(request):
-    """Instagram Business Login OAuth callback.
+    """Instagram Business Login OAuth callback — troca o code server-side.
 
-    Instagram redirects here after the user authorizes the app.
-    We relay the code (or error) to the frontend so the authenticated
-    SPA can call POST /instagram/accounts/connect/ with the code.
+    Fluxo:
+      1. Frontend abre popup para instagram.com/oauth/authorize com state assinado
+      2. Instagram redireciona aqui com code + state
+      3. Validamos o state → identificamos o user
+      4. Trocamos o code por token, buscamos dados, criamos InstagramAccount
+      5. Redirecionamos o popup para o frontend com ?ig_connected=1 ou ?ig_error=...
     """
     frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+    callback_base = f"{frontend_url}/instagram/callback"
+
     code = request.GET.get("code")
+    state = request.GET.get("state", "")
     error = request.GET.get("error_description") or request.GET.get("error")
 
-    if code:
-        return HttpResponseRedirect(f"{frontend_url}/instagram/callback?code={code}")
-    return HttpResponseRedirect(
-        f"{frontend_url}/instagram/callback?error={error or 'authorization_failed'}"
+    if error or not code:
+        msg = urlquote(error or "authorization_failed", safe="")
+        return HttpResponseRedirect(f"{callback_base}?ig_error={msg}")
+
+    # 1. Valida o state → identifica o usuário (expira em 10 min)
+    try:
+        signer = TimestampSigner()
+        user_id = signer.unsign(state, max_age=600)
+    except (BadSignature, SignatureExpired):
+        return HttpResponseRedirect(f"{callback_base}?ig_error=invalid_state")
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return HttpResponseRedirect(f"{callback_base}?ig_error=user_not_found")
+
+    app_id = getattr(settings, "INSTAGRAM_APP_ID", "")
+    app_secret = getattr(settings, "INSTAGRAM_APP_SECRET", "")
+    redirect_uri = getattr(
+        settings, "INSTAGRAM_OAUTH_REDIRECT_URI",
+        f"{getattr(settings, 'BASE_URL', 'https://backend.pastita.com.br')}/ig/callback",
     )
+
+    # 2. Troca code → short-lived token
+    try:
+        token_resp = requests.post(
+            "https://api.instagram.com/oauth/access_token",
+            data={
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "grant_type": "authorization_code",
+                "redirect_uri": redirect_uri,
+                "code": code,
+            },
+            timeout=30,
+        )
+        token_resp.raise_for_status()
+        short_token = token_resp.json().get("access_token")
+        if not short_token:
+            raise ValueError(f"Sem access_token na resposta: {token_resp.text}")
+    except Exception as exc:
+        logger.error("Instagram code exchange failed: %s", exc)
+        return HttpResponseRedirect(f"{callback_base}?ig_error=token_exchange_failed")
+
+    # 3. Short → long-lived token (~60 dias)
+    try:
+        ll_resp = requests.get(
+            "https://graph.instagram.com/access_token",
+            params={
+                "grant_type": "ig_exchange_token",
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "access_token": short_token,
+            },
+            timeout=30,
+        )
+        ll_resp.raise_for_status()
+        long_token = ll_resp.json().get("access_token", short_token)
+    except Exception:
+        long_token = short_token
+
+    # 4. Busca dados da conta Instagram
+    try:
+        me_resp = requests.get(
+            "https://graph.instagram.com/v22.0/me",
+            params={
+                "fields": "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website",
+                "access_token": long_token,
+            },
+            timeout=30,
+        )
+        me_resp.raise_for_status()
+        info = me_resp.json()
+    except Exception as exc:
+        logger.error("Instagram /me failed: %s", exc)
+        info = {}
+
+    ig_id = info.get("id")
+    if not ig_id:
+        return HttpResponseRedirect(f"{callback_base}?ig_error=no_instagram_id")
+
+    # 5. Cria ou atualiza InstagramAccount
+    InstagramAccount.objects.update_or_create(
+        user=user,
+        instagram_business_id=ig_id,
+        defaults={
+            "username": info.get("username", ig_id),
+            "platform": "instagram",
+            "access_token": long_token,
+            "biography": info.get("biography", ""),
+            "website": info.get("website", ""),
+            "followers_count": info.get("followers_count", 0),
+            "follows_count": info.get("follows_count", 0),
+            "media_count": info.get("media_count", 0),
+            "profile_picture_url": info.get("profile_picture_url", ""),
+            "is_active": True,
+        },
+    )
+
+    return HttpResponseRedirect(f"{callback_base}?ig_connected=1")
