@@ -58,16 +58,17 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["post"], url_path="connect", permission_classes=[IsAuthenticated])
     def connect(self, request):
-        """Troca o código OAuth do Facebook por tokens e cria/atualiza a conta Instagram.
+        """Recebe o short-lived access_token do FB SDK e cria/atualiza a conta Instagram.
 
-        Payload: { code: str, redirect_uri: str }
+        Payload: { access_token: str }
+        O FB SDK já faz o login e devolve o token — o servidor troca por long-lived e
+        busca as informações da página e conta Instagram.
         """
-        code = request.data.get("code")
-        redirect_uri = request.data.get("redirect_uri")
+        short_token = request.data.get("access_token")
 
-        if not code or not redirect_uri:
+        if not short_token:
             return Response(
-                {"error": "code e redirect_uri são obrigatórios"},
+                {"error": "access_token é obrigatório"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -79,29 +80,7 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-        # 1. Troca o code por short-lived user token
-        try:
-            token_resp = requests.get(
-                f"https://graph.facebook.com/v22.0/oauth/access_token",
-                params={
-                    "client_id": app_id,
-                    "client_secret": app_secret,
-                    "redirect_uri": redirect_uri,
-                    "code": code,
-                },
-                timeout=30,
-            )
-            token_resp.raise_for_status()
-            token_data = token_resp.json()
-        except Exception as exc:
-            logger.error("Instagram OAuth code exchange failed: %s", exc)
-            return Response({"error": f"Falha ao trocar código: {exc}"}, status=status.HTTP_400_BAD_REQUEST)
-
-        short_token = token_data.get("access_token")
-        if not short_token:
-            return Response({"error": "Token não retornado pelo Facebook"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 2. Troca por long-lived user token (60 dias)
+        # 1. Troca por long-lived user token (60 dias)
         try:
             ll_resp = requests.get(
                 "https://graph.facebook.com/v22.0/oauth/access_token",
