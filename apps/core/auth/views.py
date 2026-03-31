@@ -5,9 +5,15 @@ import logging
 
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
+
+
+class WhatsAppAuthThrottle(AnonRateThrottle):
+    """10 requests/minute per IP — same scope as other auth endpoints."""
+    scope = 'auth'
 
 from apps.core.services.customer_identity import CustomerIdentityService
 
@@ -18,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([WhatsAppAuthThrottle])
 def send_whatsapp_auth_code(request):
     """
     Envia código de autenticação para número de WhatsApp.
@@ -60,14 +67,11 @@ def send_whatsapp_auth_code(request):
         result = WhatsAppAuthService.send_auth_code(phone, account_id)
         
         if result.get('success'):
-            # Em desenvolvimento, retorna o código para facilitar testes
             from django.conf import settings
             if settings.DEBUG:
-                logger.debug(f"[WHATSAPP AUTH API] Code sent (DEBUG mode): {result.get('code')}")
-            else:
-                # Remove código do response em produção
-                result.pop('code', None)
-            
+                logger.debug(f"[WHATSAPP AUTH API] Code sent: {result.get('code')}")
+            # Never expose the OTP code in the API response
+            result.pop('code', None)
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -82,6 +86,7 @@ def send_whatsapp_auth_code(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([WhatsAppAuthThrottle])
 def verify_whatsapp_auth_code(request):
     """
     Verifica código de autenticação e autentica usuário.
@@ -173,6 +178,7 @@ def verify_whatsapp_auth_code(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([WhatsAppAuthThrottle])
 def resend_whatsapp_auth_code(request):
     """
     Reenvia código de autenticação (após expiração).

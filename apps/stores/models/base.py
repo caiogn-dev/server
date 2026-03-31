@@ -13,13 +13,48 @@ from apps.core.utils import token_encryption, mask_token, build_absolute_media_u
 
 
 def _validate_image_upload(file):
-    """Enforce max size (5 MB) and allowed MIME types for image uploads."""
+    """Enforce max size (5 MB) and allowed image types via magic bytes."""
     max_size_mb = 5
-    allowed_content_types = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+
+    # Magic byte signatures for allowed image types
+    MAGIC_BYTES = {
+        b'\xff\xd8\xff': 'image/jpeg',
+        b'\x89PNG\r\n\x1a\n': 'image/png',
+        b'RIFF': 'image/webp',   # checked further below
+        b'GIF87a': 'image/gif',
+        b'GIF89a': 'image/gif',
+    }
 
     if hasattr(file, 'size') and file.size > max_size_mb * 1024 * 1024:
         raise ValidationError(f'Arquivo muito grande. Tamanho máximo: {max_size_mb} MB.')
 
+    # Read first 12 bytes to check magic signature
+    header = b''
+    if hasattr(file, 'read'):
+        header = file.read(12)
+        file.seek(0)
+    elif hasattr(file, 'file'):
+        header = file.file.read(12)
+        file.file.seek(0)
+
+    if header:
+        detected = None
+        if header[:3] == b'\xff\xd8\xff':
+            detected = 'image/jpeg'
+        elif header[:8] == b'\x89PNG\r\n\x1a\n':
+            detected = 'image/png'
+        elif header[:4] == b'RIFF' and header[8:12] == b'WEBP':
+            detected = 'image/webp'
+        elif header[:6] in (b'GIF87a', b'GIF89a'):
+            detected = 'image/gif'
+
+        if detected is None:
+            raise ValidationError(
+                'Tipo de arquivo não permitido. Use JPEG, PNG, WebP ou GIF.'
+            )
+
+    # Also validate the declared content_type as a secondary check
+    allowed_content_types = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
     content_type = getattr(file, 'content_type', None)
     if content_type and content_type not in allowed_content_types:
         raise ValidationError(

@@ -39,37 +39,40 @@ def get_user_from_token(token_key):
 class TokenAuthMiddleware(BaseMiddleware):
     """
     Custom middleware that authenticates WebSocket connections using token.
-    
-    Token can be passed as:
-    - Query parameter: ?token=xxx
-    - Header: Authorization: Token xxx
+
+    Token must be passed via Authorization header only:
+    - Authorization: Token xxx
+    - Authorization: Bearer xxx
+
+    Query parameter tokens are intentionally rejected: they appear in server
+    logs, browser history, and proxy access logs.
     """
-    
+
     async def __call__(self, scope, receive, send):
         # Log connection details for debugging
         path = scope.get('path', 'unknown')
         logger.info(f"WebSocket middleware processing: path={path}")
-        
-        # Try to get token from query string
+
         query_string = scope.get('query_string', b'').decode()
         query_params = parse_qs(query_string)
         token_key = None
-        
-        # Check query parameter
+
+        # Reject query param tokens — they leak into logs and browser history
         if 'token' in query_params:
-            token_key = query_params['token'][0]
-            logger.debug(f"WebSocket token found in query params")
-        
-        # Check headers if no query param
-        if not token_key:
-            headers = dict(scope.get('headers', []))
-            auth_header = headers.get(b'authorization', b'').decode()
-            if auth_header.startswith('Token '):
-                token_key = auth_header[6:]
-                logger.debug(f"WebSocket token found in Authorization header")
-            elif auth_header.startswith('Bearer '):
-                token_key = auth_header[7:]
-                logger.debug(f"WebSocket token found in Bearer header")
+            logger.warning(
+                f"WebSocket connection rejected: token passed via query param is not allowed. "
+                f"Use the Authorization header instead. path={path}"
+            )
+
+        # Accept tokens only from Authorization header
+        headers = dict(scope.get('headers', []))
+        auth_header = headers.get(b'authorization', b'').decode()
+        if auth_header.startswith('Token '):
+            token_key = auth_header[6:]
+            logger.debug(f"WebSocket token found in Authorization header")
+        elif auth_header.startswith('Bearer '):
+            token_key = auth_header[7:]
+            logger.debug(f"WebSocket token found in Bearer header")
         
         # Authenticate user
         if token_key:
