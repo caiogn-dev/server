@@ -3,31 +3,39 @@
 Use messaging_v2 para a versão unificada (WhatsApp, Messenger, etc).
 """
 from django.contrib import admin
-from .models import MessengerAccount, MessengerConversation, MessengerMessage
+from .models import PlatformAccount, UnifiedConversation, UnifiedMessage, UnifiedTemplate
 
 
-@admin.register(MessengerAccount)
-class MessengerAccountAdmin(admin.ModelAdmin):
-    list_display = ['page_name', 'user', 'is_active']
-    list_filter = ['is_active', 'created_at']
-    search_fields = ['page_name']
+@admin.register(PlatformAccount)
+class PlatformAccountAdmin(admin.ModelAdmin):
+    list_display = ['name', 'platform', 'is_active', 'created_at']
+    list_filter = ['platform', 'is_active', 'created_at']
+    search_fields = ['name']
 
     def get_model_perms(self, request):
-        """Não mostrar no índice do admin."""
+        """Não mostrar no índice do admin - usar messaging_v2."""
         return {}
 
 
-@admin.register(MessengerConversation)
-class MessengerConversationAdmin(admin.ModelAdmin):
-    list_display = ['participant_name', 'account', 'is_active']
+@admin.register(UnifiedConversation)
+class UnifiedConversationAdmin(admin.ModelAdmin):
+    list_display = ['customer_name', 'platform_account', 'status']
 
     def get_model_perms(self, request):
         return {}
 
 
-@admin.register(MessengerMessage)
-class MessengerMessageAdmin(admin.ModelAdmin):
-    list_display = ['conversation', 'message_type', 'created_at']
+@admin.register(UnifiedMessage)
+class UnifiedMessageAdmin(admin.ModelAdmin):
+    list_display = ['conversation', 'direction', 'created_at']
+
+    def get_model_perms(self, request):
+        return {}
+
+
+@admin.register(UnifiedTemplate)
+class UnifiedTemplateAdmin(admin.ModelAdmin):
+    list_display = ['name', 'status', 'created_at']
 
     def get_model_perms(self, request):
         return {}

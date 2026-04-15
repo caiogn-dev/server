@@ -1,27 +1,20 @@
+"""Messaging API - LEGACY exports."""
 from .views import (
     MessengerAccountViewSet,
-    MessengerProfileViewSet,
     MessengerConversationViewSet,
-    MessengerBroadcastViewSet,
-    MessengerSponsoredViewSet,
-    MessengerWebhookViewSet
+    MessengerMessageViewSet,
 )
 from .serializers import (
-    MessengerAccountSerializer,
-    MessengerProfileSerializer,
-    MessengerConversationSerializer,
-    MessengerMessageSerializer
+    PlatformAccountSerializer as MessengerAccountSerializer,
+    UnifiedConversationSerializer as MessengerConversationSerializer,
+    UnifiedMessageSerializer as MessengerMessageSerializer,
 )
 
 __all__ = [
     'MessengerAccountViewSet',
-    'MessengerProfileViewSet',
     'MessengerConversationViewSet',
-    'MessengerBroadcastViewSet',
-    'MessengerSponsoredViewSet',
-    'MessengerWebhookViewSet',
+    'MessengerMessageViewSet',
     'MessengerAccountSerializer',
-    'MessengerProfileSerializer',
     'MessengerConversationSerializer',
-    'MessengerMessageSerializer'
+    'MessengerMessageSerializer',
 ]

@@ -17,19 +17,39 @@ from .tasks import send_whatsapp_message, sync_whatsapp_templates
 
 
 class PlatformAccountViewSet(viewsets.ModelViewSet):
-    """Gerenciar contas de plataforma (WhatsApp, Instagram, etc)."""
-    queryset = PlatformAccount.objects.all()
+    """Gerenciar contas de plataforma (WhatsApp, Instagram, Messenger)."""
+    
     serializer_class = PlatformAccountSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['platform', 'is_active', 'is_verified']
+    filterset_fields = ['platform', 'is_active', 'is_verified', 'status']
+    
+    def get_queryset(self):
+        """Retornar apenas contas do usuário logado."""
+        return PlatformAccount.objects.filter(created_by=self.request.user)
+    
+    @action(detail=False, methods=['get'])
+    def by_platform(self, request):
+        """Listar contas agrupadas por plataforma."""
+        platforms = {}
+        for platform_code, platform_name in PlatformAccount.Platform.choices:
+            accounts = self.get_queryset().filter(platform=platform_code)
+            platforms[platform_code] = {
+                'name': platform_name,
+                'count': accounts.count(),
+                'accounts': PlatformAccountSerializer(
+                    accounts, many=True, context={'request': request}
+                ).data
+            }
+        return Response(platforms)
     
     @action(detail=True, methods=['post'])
     def activate(self, request, pk=None):
         """Ativar conta."""
         account = self.get_object()
         account.is_active = True
-        account.save(update_fields=['is_active'])
+        account.status = PlatformAccount.Status.ACTIVE
+        account.save(update_fields=['is_active', 'status'])
         return Response({'status': 'activated'})
     
     @action(detail=True, methods=['post'])
@@ -37,8 +57,20 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
         """Desativar conta."""
         account = self.get_object()
         account.is_active = False
-        account.save(update_fields=['is_active'])
+        account.status = PlatformAccount.Status.INACTIVE
+        account.save(update_fields=['is_active', 'status'])
         return Response({'status': 'deactivated'})
+    
+    @action(detail=True, methods=['post'])
+    def sync(self, request, pk=None):
+        """Sincronizar informações da conta com a plataforma."""
+        account = self.get_object()
+        # TODO: Implementar sincronização específica por plataforma
+        return Response({
+            'status': 'synced',
+            'platform': account.platform,
+            'account_id': str(account.id)
+        })
     
     @action(detail=True, methods=['post'])
     def sync_templates(self, request, pk=None):
@@ -46,7 +78,7 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
         account = self.get_object()
         if account.platform != 'whatsapp':
             return Response(
-                {'error': 'Only WhatsApp accounts support template sync'},
+                {'error': 'Apenas contas WhatsApp suportam sincronização de templates'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -55,26 +87,30 @@ class PlatformAccountViewSet(viewsets.ModelViewSet):
 
 
 class ConversationViewSet(viewsets.ModelViewSet):
-    """Gerenciar conversas."""
-    queryset = Conversation.objects.all()
+    """Gerenciar conversas unificadas."""
+    
     serializer_class = ConversationSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['store', 'platform', 'is_open']
+    filterset_fields = ['platform', 'is_open', 'platform_account']
     
     def get_queryset(self):
-        queryset = super().get_queryset()
+        """Retornar conversas das contas do usuário."""
+        queryset = Conversation.objects.filter(
+            platform_account__user=self.request.user
+        )
         
         # Filtro por busca
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
                 Q(customer_name__icontains=search) |
-                Q(customer_phone__icontains=search)
+                Q(customer_phone__icontains=search) |
+                Q(customer_id__icontains=search)
             )
         
-        return queryset.select_related('store').annotate(
-            unread_count=Count('messages', filter=Q(messages__status='delivered'))
+        return queryset.select_related('platform_account').annotate(
+            message_count=Count('messages')
         )
     
     @action(detail=True, methods=['post'])
@@ -94,54 +130,70 @@ class ConversationViewSet(viewsets.ModelViewSet):
         return Response({'status': 'reopened'})
     
     @action(detail=True, methods=['post'])
+    def mark_read(self, request, pk=None):
+        """Marcar conversa como lida."""
+        conversation = self.get_object()
+        conversation.unread_count = 0
+        conversation.save(update_fields=['unread_count'])
+        return Response({'status': 'marked_read'})
+    
+    @action(detail=True, methods=['post'])
     def send_message(self, request, pk=None):
         """Enviar mensagem na conversa."""
         conversation = self.get_object()
         text = request.data.get('text')
+        message_type = request.data.get('message_type', 'text')
         
         if not text:
             return Response(
-                {'error': 'Text is required'},
+                {'error': 'Texto da mensagem é obrigatório'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         # Criar mensagem
         message = UnifiedMessage.objects.create(
             conversation=conversation,
-            direction=UnifiedMessage.Direction.OUTBOUND,
-            text=text
+            direction='outbound',
+            message_type=message_type,
+            text=text,
+            status='pending'
         )
         
-        # Enviar via Celery
-        task = send_whatsapp_message.delay(str(message.id))
+        # Enviar para a plataforma
+        if conversation.platform == 'whatsapp':
+            send_whatsapp_message.delay(str(message.id))
         
         return Response({
-            'message_id': str(message.id),
-            'task_id': task.id,
-            'status': 'sending'
+            'status': 'sent',
+            'message_id': str(message.id)
         })
 
 
 class UnifiedMessageViewSet(viewsets.ModelViewSet):
     """Gerenciar mensagens."""
-    queryset = UnifiedMessage.objects.all()
+    
     serializer_class = UnifiedMessageSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['conversation', 'direction', 'status']
+    filterset_fields = ['conversation', 'direction', 'status', 'message_type']
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        conversation_id = self.request.query_params.get('conversation')
-        if conversation_id:
-            queryset = queryset.filter(conversation_id=conversation_id)
-        return queryset.select_related('conversation')
+        """Retornar mensagens das conversas do usuário."""
+        return UnifiedMessage.objects.filter(
+            conversation__platform_account__user=self.request.user
+        ).select_related('conversation')
 
 
 class MessageTemplateViewSet(viewsets.ModelViewSet):
     """Gerenciar templates de mensagem."""
-    queryset = MessageTemplate.objects.all()
+    
     serializer_class = MessageTemplateSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['status', 'category', 'language']
+    filterset_fields = ['platform_account', 'status', 'category', 'language']
+    
+    def get_queryset(self):
+        """Retornar templates das contas do usuário."""
+        return MessageTemplate.objects.filter(
+            platform_account__user=self.request.user
+        ).select_related('platform_account')
