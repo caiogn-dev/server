@@ -45,6 +45,10 @@ def get_valid_email_for_payment(order: StoreOrder) -> str:
     return f"cliente{order.order_number}@pastita.com.br"
 
 
+def _strip_trailing_slash(url: str) -> str:
+    return (url or '').rstrip('/')
+
+
 def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_context: dict = None):
     """Trigger email automation for order events."""
     try:
@@ -413,29 +417,73 @@ class CheckoutService:
     @staticmethod
     def get_payment_credentials(store: Store) -> dict:
         """Get payment credentials for a store."""
-        integration = StoreIntegration.objects.filter(
-            store=store,
-            integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
-            status=StoreIntegration.IntegrationStatus.ACTIVE
-        ).first()
+        integration = CheckoutService.get_mercadopago_integration(store)
         
         if integration and integration.access_token:
             return {
                 'provider': 'mercadopago',
                 'access_token': integration.access_token,
+                'public_key': integration.settings.get('public_key') or integration.api_key,
                 'sandbox': integration.settings.get('sandbox', False),
+                'source': 'store_integration',
             }
         
-        # Fallback to global credentials
+        # Fallback to global credentials can be disabled in production once every
+        # store has its own Mercado Pago integration configured.
+        if not getattr(settings, 'MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED', True):
+            return None
+        
         access_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', None)
         if access_token:
             return {
                 'provider': 'mercadopago',
                 'access_token': access_token,
+                'public_key': getattr(settings, 'MERCADO_PAGO_PUBLIC_KEY', ''),
                 'sandbox': getattr(settings, 'MERCADO_PAGO_SANDBOX', False),
+                'source': 'global_settings',
             }
         
         return None
+
+    @staticmethod
+    def get_mercadopago_integration(store: Store):
+        """Return the active Mercado Pago integration for the given store."""
+        return StoreIntegration.objects.filter(
+            store=store,
+            integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+            status=StoreIntegration.IntegrationStatus.ACTIVE
+        ).first()
+
+    @staticmethod
+    def get_store_frontend_url(store: Store) -> str:
+        """Resolve the public storefront URL for redirects for a given store."""
+        metadata = store.metadata or {}
+        frontend_url = (
+            metadata.get('frontend_url')
+            or metadata.get('site_url')
+            or metadata.get('website_url')
+            or getattr(settings, 'FRONTEND_URL', '')
+        )
+        return _strip_trailing_slash(frontend_url)
+
+    @staticmethod
+    def get_payment_notification_url(store: Store) -> str:
+        """Resolve the Mercado Pago webhook callback URL for a given store."""
+        base_url = _strip_trailing_slash(getattr(settings, 'BASE_URL', ''))
+        integration = CheckoutService.get_mercadopago_integration(store)
+
+        if integration:
+            configured_url = (
+                integration.webhook_url
+                or integration.settings.get('notification_url')
+                or integration.settings.get('webhook_url')
+            )
+            if configured_url and '/webhooks/payments/mercadopago/' not in configured_url:
+                if configured_url.startswith('http://') or configured_url.startswith('https://'):
+                    return _strip_trailing_slash(configured_url)
+                return f"{base_url}/{configured_url.lstrip('/')}"
+
+        return f"{base_url}/api/v1/stores/{store.slug}/webhooks/mercadopago/"
     
     @staticmethod
     def create_payment(order: StoreOrder, payment_method: str = 'pix') -> dict:
@@ -478,7 +526,7 @@ class CheckoutService:
                     "last_name": " ".join(order.customer_name.split()[1:]) if order.customer_name else "",
                 },
                 "external_reference": str(order.id),
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
+                "notification_url": CheckoutService.get_payment_notification_url(order.store),
             }
             
             result = sdk.payment().create(payment_data)
@@ -522,6 +570,7 @@ class CheckoutService:
         
         else:
             # Create preference for other payment methods
+            storefront_url = CheckoutService.get_store_frontend_url(order.store)
             preference_data = {
                 "items": [
                     {
@@ -538,12 +587,12 @@ class CheckoutService:
                 },
                 "external_reference": str(order.id),
                 "back_urls": {
-                    "success": f"{settings.FRONTEND_URL}/sucesso?order={order.id}",
-                    "failure": f"{settings.FRONTEND_URL}/erro?order={order.id}",
-                    "pending": f"{settings.FRONTEND_URL}/pendente?order={order.id}",
+                    "success": f"{storefront_url}/sucesso?order={order.id}",
+                    "failure": f"{storefront_url}/erro?order={order.id}",
+                    "pending": f"{storefront_url}/pendente?order={order.id}",
                 },
                 "auto_return": "approved",
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
+                "notification_url": CheckoutService.get_payment_notification_url(order.store),
             }
             
             result = sdk.preference().create(preference_data)

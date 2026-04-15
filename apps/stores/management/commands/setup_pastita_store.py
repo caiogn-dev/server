@@ -227,10 +227,11 @@ class Command(BaseCommand):
             integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
             name='Mercado Pago - Pastita',
             status=StoreIntegration.IntegrationStatus.ACTIVE,
+            webhook_url=f'/api/v1/stores/{store.slug}/webhooks/mercadopago/',
             settings={
                 'sandbox': False,
                 'payment_methods': ['pix', 'credit_card', 'debit_card'],
-                'notification_url': '/webhooks/payments/mercadopago/',
+                'notification_url': f'/api/v1/stores/{store.slug}/webhooks/mercadopago/',
             },
             metadata={
                 'note': 'Access token should be set via admin or API'

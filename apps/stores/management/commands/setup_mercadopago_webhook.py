@@ -67,10 +67,12 @@ class Command(BaseCommand):
                 'access_token': api_key,  # Mercado Pago Access Token
                 'api_key': public_key,     # Public Key (if needed)
                 'webhook_secret': webhook_secret,
+                'webhook_url': f'/api/v1/stores/{store_slug}/webhooks/mercadopago/',
                 'settings': {
                     'public_key': public_key,
-                    'webhook_url': f'/webhooks/payments/mercadopago/',
-                    'ipn_url': f'/webhooks/payments/mercadopago/',
+                    'webhook_url': f'/api/v1/stores/{store_slug}/webhooks/mercadopago/',
+                    'notification_url': f'/api/v1/stores/{store_slug}/webhooks/mercadopago/',
+                    'ipn_url': f'/api/v1/stores/{store_slug}/webhooks/mercadopago/',
                 }
             }
         )
@@ -81,11 +83,11 @@ class Command(BaseCommand):
                 f'{action} Mercado Pago integration for {store.name}\n'
                 f'  - API Key: {api_key[:10]}...{api_key[-4:]}\n'
                 f'  - Webhook Secret: {webhook_secret[:10]}...{webhook_secret[-4:]}\n'
-                f'  - Webhook URL: /webhooks/payments/mercadopago/{store_slug}/\n'
+                f'  - Webhook URL: /api/v1/stores/{store_slug}/webhooks/mercadopago/\n'
                 f'\nConfigure no Mercado Pago:\n'
                 f'  1. Acesse: https://www.mercadopago.com.br/developers/panel/app\n'
                 f'  2. Webhooks > Configurar webhook\n'
-                f'  3. URL: https://seu-dominio.com/webhooks/payments/mercadopago/{store_slug}/\n'
+                f'  3. URL: https://seu-dominio.com/api/v1/stores/{store_slug}/webhooks/mercadopago/\n'
                 f'  4. Events: payment, merchant_order\n'
                 f'  5. Secret: {webhook_secret}'
             )

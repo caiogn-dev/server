@@ -342,6 +342,10 @@ DASHBOARD_URL = os.environ.get('DASHBOARD_URL', 'https://painel.pastita.com.br')
 # Mercado Pago Integration
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 MERCADO_PAGO_PUBLIC_KEY = os.environ.get('MERCADO_PAGO_PUBLIC_KEY', '')
+MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED = os.environ.get(
+    'MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED',
+    'True',
+).strip().lower() == 'true'
 PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '5563992957931')
 PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', 'https://agriao.shop')
 
