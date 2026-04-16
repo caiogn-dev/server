@@ -8,6 +8,8 @@ import logging
 from decimal import Decimal
 from urllib.parse import urlparse
 from django.conf import settings
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -381,6 +383,7 @@ class StoreCustomerProfileView(APIView):
         return Response(build_store_customer_profile(store, request.user))
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class StoreCartViewSet(viewsets.ViewSet):
     """ViewSet for managing shopping carts."""
     permission_classes = [permissions.AllowAny]
@@ -515,6 +518,7 @@ class StoreCartViewSet(viewsets.ViewSet):
         return Response(StoreCartSerializer(cart).data)
 
 
+@method_decorator(csrf_exempt, name='dispatch')
 class StoreCheckoutView(APIView):
     """Checkout endpoint for creating orders."""
     permission_classes = [permissions.AllowAny]
