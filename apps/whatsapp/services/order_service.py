@@ -1,5 +1,5 @@
 """
-WhatsApp Order Service - CORRIGIDO
+WhatsApp Order Service
 
 Cria pedidos a partir de conversas do WhatsApp,
 gera PIX real e transmite para o dashboard.
@@ -8,14 +8,13 @@ import logging
 import uuid
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
-from datetime import datetime
+from django.db.models import F
 from django.utils import timezone
 from django.db import transaction
-from channels.layers import get_channel_layer
-from asgiref.sync import async_to_sync
 
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreProduct
 from apps.stores.services.checkout_service import CheckoutService
+from apps.stores.services.realtime_service import broadcast_order_event
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,6 @@ class WhatsAppOrderService:
         self.store = store
         self.phone_number = phone_number
         self.customer_name = customer_name or 'Cliente WhatsApp'
-        self.channel_layer = get_channel_layer()
         logger.info(f"[WhatsAppOrderService] Inicializado para {phone_number} na loja {store.slug}")
     
     @transaction.atomic
@@ -130,7 +128,7 @@ class WhatsAppOrderService:
             )
             logger.info(f"[create_order_from_cart] Pedido criado: {order.order_number}")
 
-            # 4. Cria itens do pedido
+            # 4. Cria itens do pedido e decrementa estoque atomicamente
             for item_data in order_items_data:
                 StoreOrderItem.objects.create(
                     order=order,
@@ -140,6 +138,12 @@ class WhatsAppOrderService:
                     unit_price=item_data['unit_price'],
                     subtotal=item_data['total'],
                 )
+                product = item_data['product']
+                if product.track_stock:
+                    StoreProduct.objects.filter(id=product.id).update(
+                        stock_quantity=F('stock_quantity') - item_data['quantity'],
+                        sold_count=F('sold_count') + item_data['quantity'],
+                    )
 
             # 5. Processa pagamento conforme método escolhido
             if payment_method == 'pix':
@@ -154,8 +158,8 @@ class WhatsAppOrderService:
             else:
                 logger.error(f"[create_order_from_cart] Erro no pagamento: {payment_data.get('error')}")
 
-            # 6. Broadcast dashboard (fora do atomic)
-            transaction.on_commit(lambda: self._broadcast_order_created(order))
+            # 6. Broadcast dashboard via shared realtime helper (fora do atomic)
+            transaction.on_commit(lambda: broadcast_order_event(order, event_type='order.created'))
 
             # 7. Atualiza sessão
             self._update_session(order, payment_data)
@@ -176,10 +180,17 @@ class WhatsAppOrderService:
             return {'success': False, 'error': str(e)}
     
     def _build_delivery_address(self, raw_address: str, addr_info: dict = None) -> dict:
-        """Builds a rich delivery_address JSON from the geocoded address info."""
+        """Build delivery_address JSON with structured fields the frontend can render.
+
+        Merges HERE Maps address components (from geocode or reverse_geocode) into the
+        standard frontend-expected shape: street, number, neighborhood, city, state, zip_code.
+        raw_address is always preserved as a display fallback.
+        """
         if not raw_address and not addr_info:
             return {}
+
         data: Dict[str, Any] = {'raw_address': raw_address or ''}
+
         if addr_info:
             if addr_info.get('lat') is not None:
                 data['lat'] = addr_info['lat']
@@ -189,6 +200,38 @@ class WhatsAppOrderService:
                 data['distance_km'] = addr_info['distance_km']
             if addr_info.get('duration_minutes') is not None:
                 data['duration_minutes'] = addr_info['duration_minutes']
+
+            # Map HERE geocode/reverse_geocode components to standard frontend keys.
+            # geocode() uses HERE API keys: houseNumber, district, stateCode, postalCode
+            # reverse_geocode() uses normalized keys: house_number, neighborhood, state_code, zip_code
+            components = addr_info.get('address_components') or {}
+            if components:
+                number = (
+                    components.get('houseNumber')
+                    or components.get('house_number')
+                    or components.get('number', '')
+                )
+                neighborhood = components.get('district') or components.get('neighborhood', '')
+                state = (
+                    components.get('stateCode')
+                    or components.get('state_code')
+                    or components.get('state', '')
+                )
+                zip_code = components.get('postalCode') or components.get('zip_code', '')
+
+                if components.get('street'):
+                    data['street'] = components['street']
+                if number:
+                    data['number'] = number
+                if neighborhood:
+                    data['neighborhood'] = neighborhood
+                if components.get('city'):
+                    data['city'] = components['city']
+                if state:
+                    data['state'] = state
+                if zip_code:
+                    data['zip_code'] = zip_code
+
         return data
 
     def _generate_pix(self, order: StoreOrder) -> Dict[str, Any]:
@@ -321,42 +364,9 @@ class WhatsAppOrderService:
         except Exception as e:
             logger.error(f"[_update_session] Erro ao atualizar sessão: {e}")
     
-    def _broadcast_order_created(self, order: StoreOrder):
-        """Transmite novo pedido para o dashboard via WebSocket"""
-        if not self.channel_layer:
-            logger.warning("[_broadcast_order_created] channel_layer não disponível (Redis offline?), pulando broadcast")
-            return
-        try:
-            event_data = {
-                'type': 'order_created',
-                'order_id': str(order.id),
-                'order_number': order.order_number,
-                'customer_name': order.customer_name,
-                'customer_phone': order.customer_phone,
-                'total': float(order.total),
-                'status': order.status,
-                'payment_status': order.payment_status,
-                'delivery_method': order.delivery_method,
-                'created_at': order.created_at.isoformat(),
-                'source': 'whatsapp'
-            }
-
-            group_name = f"store_{self.store.slug}_orders"
-            logger.info(f"[_broadcast_order_created] Enviando para grupo: {group_name}")
-
-            async_to_sync(self.channel_layer.group_send)(
-                group_name,
-                event_data
-            )
-
-            logger.info(f"[_broadcast_order_created] Evento enviado com sucesso para {group_name}")
-
-        except Exception as e:
-            logger.error(f"[_broadcast_order_created] Erro ao transmitir (Redis offline?): {e}")
-    
     def _generate_order_number(self) -> str:
         """Gera número único do pedido"""
-        prefix = self.store.slug.upper()[:3]
+        prefix = ''.join(ch for ch in (self.store.slug or '').upper() if ch.isalnum())[:3] or 'ORD'
         timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
         random_suffix = str(uuid.uuid4())[:4].upper()
         return f"{prefix}-{timestamp}-{random_suffix}"

@@ -24,6 +24,8 @@ from .serializers import (
     SendInteractiveListSerializer,
     SendImageSerializer,
     SendDocumentSerializer,
+    SendAudioSerializer,
+    SendVideoSerializer,
     MessageTemplateSerializer,
     MarkAsReadSerializer,
     ConversationHistorySerializer,
@@ -442,6 +444,101 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
         )
+
+    @extend_schema(
+        summary="Upload and send a media file (image/audio/video/document)",
+        responses={201: MessageSerializer}
+    )
+    @action(detail=False, methods=['post'], url_path='send_file', parser_classes=None)
+    def send_file(self, request):
+        """Upload a file and send it as a WhatsApp message.
+
+        Accepts multipart/form-data with fields:
+        - account_id (UUID)
+        - to (phone number)
+        - file (the media file)
+        - caption (optional text)
+        - reply_to (optional message ID)
+        """
+        import os
+        import uuid as uuid_mod
+        from django.core.files.storage import default_storage
+        from django.conf import settings
+
+        account_id = request.data.get('account_id')
+        to = request.data.get('to')
+        file_obj = request.FILES.get('file')
+        caption = request.data.get('caption', '')
+        reply_to = request.data.get('reply_to', '') or None
+
+        if not account_id or not to or not file_obj:
+            return Response({'error': 'account_id, to, and file are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Determine message type from MIME
+        mime = file_obj.content_type or ''
+        if mime.startswith('image/'):
+            msg_type = 'image'
+        elif mime.startswith('audio/'):
+            msg_type = 'audio'
+        elif mime.startswith('video/'):
+            msg_type = 'video'
+        else:
+            msg_type = 'document'
+
+        # Save file to storage
+        ext = os.path.splitext(file_obj.name)[1] or ''
+        save_name = f'whatsapp/uploads/{uuid_mod.uuid4().hex}{ext}'
+        saved_path = default_storage.save(save_name, file_obj)
+        backend_url = getattr(settings, 'BASE_URL', 'https://backend.pastita.com.br').rstrip('/')
+        media_url = f"{backend_url}{settings.MEDIA_URL}{saved_path}"
+
+        service = MessageService()
+        try:
+            if msg_type == 'image':
+                message = service.send_image(account_id=account_id, to=to, image_url=media_url, caption=caption or None, reply_to=reply_to)
+            elif msg_type == 'audio':
+                message = service.send_audio(account_id=account_id, to=to, audio_url=media_url, reply_to=reply_to)
+            elif msg_type == 'video':
+                message = service.send_video(account_id=account_id, to=to, video_url=media_url, caption=caption or None, reply_to=reply_to)
+            else:
+                message = service.send_document(account_id=account_id, to=to, document_url=media_url, filename=file_obj.name, caption=caption or None, reply_to=reply_to)
+        except Exception as e:
+            default_storage.delete(saved_path)
+            raise
+
+        return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Send audio message",
+        request=SendAudioSerializer,
+        responses={201: MessageSerializer}
+    )
+    @action(detail=False, methods=['post'])
+    def send_audio(self, request):
+        """Send an audio message."""
+        serializer = SendAudioSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        service = MessageService()
+        message = service.send_audio(**serializer.validated_data)
+
+        return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Send video message",
+        request=SendVideoSerializer,
+        responses={201: MessageSerializer}
+    )
+    @action(detail=False, methods=['post'])
+    def send_video(self, request):
+        """Send a video message."""
+        serializer = SendVideoSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        service = MessageService()
+        message = service.send_video(**serializer.validated_data)
+
+        return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         summary="Mark message as read",

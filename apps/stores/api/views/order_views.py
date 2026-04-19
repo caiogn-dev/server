@@ -299,8 +299,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             )
         
         order.status = 'cancelled'
-        order.notes = f"{order.notes}\n\nCancellation reason: {reason}".strip()
-        order.save(update_fields=['status', 'notes', 'updated_at'])
+        if reason:
+            order.internal_notes = f"{order.internal_notes}\n\nMotivo do cancelamento: {reason}".strip()
+        order.save(update_fields=['status', 'internal_notes', 'updated_at'])
         
         # Restore stock if needed
         if order.items.exists():

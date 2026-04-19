@@ -28,6 +28,7 @@ class IntentType(Enum):
     DELIVERY_INFO = "delivery_info"          # "Frete", "Entrega"
     MENU_REQUEST = "menu_request"            # "Cardápio", "Menu", "Produtos"
     TRACK_ORDER = "track_order"              # "Rastrear", "Status do pedido"
+    ORDER_STATUS = "track_order"             # Alias legado para status do pedido
     PAYMENT_STATUS = "payment_status"        # "Pagamento", "PIX"
     LOCATION = "location"                    # "Onde fica", "Endereço"
     CONTACT = "contact"                      # "Telefone", "Falar com"
@@ -43,6 +44,7 @@ class IntentType(Enum):
     COPY_PIX = "copy_pix"                    # "Copiar PIX"
     ADD_TO_CART = "add_to_cart"              # "Quero X", "Adicionar Y"
     PRODUCT_MENTION = "product_mention"      # "Rondelli", "Pizza" (só o nome)
+    INTERACTIVE_REPLY = "interactive_reply"  # Alias legado para respostas de botões/listas
     
     # ===== NÍVEL 3: LLM Necessário =====
     PRODUCT_INQUIRY = "product_inquiry"      # "Qual a diferença..."
@@ -110,7 +112,7 @@ class IntentDetector:
             r'(como funciona|como [ée]|qual [ée] a|o que [ée]|me explica|explica como)',
         ],
         IntentType.CREATE_ORDER: [
-            r'(quero (fazer )?pedido|quero pedir|fazer pedido|vou querer|queria (comprar|pedir)|quero comprar)',
+            r'(quero (fazer( um)? )?pedido|quero pedir|fazer pedido|vou querer|queria (comprar|pedir)|quero comprar)',
             r'(come[çc]ar pedido|novo pedido|quero encomendar|quero solicitar)',
             r'(pode fazer pedido|aceita pedido|tem como pedir|pedido rápido)',
             r'(confirmar pedido|finalizar pedido|fechar pedido|concluir pedido|criar pedido)',

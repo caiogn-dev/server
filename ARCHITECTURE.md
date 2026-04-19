@@ -177,6 +177,67 @@ Registered via `config/celery.py`. Beat schedule handles:
 
 ---
 
+## WhatsApp Order Creation Flow
+
+When a customer completes checkout via WhatsApp:
+
+```
+UnifiedService.process_message()
+  → deterministic intent handler (_handle_payment_confirmation, etc.)
+  → WhatsAppOrderService.create_order_from_cart()
+      ├── Validates items, resolves StoreProduct
+      ├── Creates StoreOrder + StoreOrderItem records
+      ├── Decrements stock via F() expression (atomic, only when track_stock=True)
+      ├── Calls CheckoutService.create_payment() for PIX/card flows
+      ├── Builds structured delivery_address via _build_delivery_address()
+      │     maps HERE Maps keys (houseNumber, district, stateCode, postalCode)
+      │     to frontend-standard keys (number, neighborhood, state, zip_code)
+      └── Dispatches broadcast_order_event() via transaction.on_commit
+```
+
+`CustomerSession.cart_data` holds all conversational state including `delivery_address_components`
+(populated by `SessionManager.save_delivery_address_info()`), which flows into the order's
+`delivery_address` JSON field.
+
+---
+
+## WhatsApp Notification Dispatch (Order Status)
+
+Single notification path — no duplicate sends:
+
+```
+StoreOrder.update_status(new_status, notify=True)
+  └── saves model, calls send_status_webhook + _trigger_status_email_automation
+      (does NOT call _trigger_status_whatsapp_notification directly)
+
+post_save signal (apps/automation/signals.py)
+  └── transaction.on_commit → notify_order_status_change.delay(order_id, status)
+
+notify_order_status_change (Celery task)
+  ├── tries AutoMessage.objects.get(event_type=event, is_active=True)
+  │     → renders template → WhatsAppAPIService.send_text_message()
+  └── except AutoMessage.DoesNotExist:
+        → order._trigger_status_whatsapp_notification(new_status)  [fallback]
+```
+
+**Why**: before this design, `update_status()` called both the direct method AND the
+signal-triggered task, causing duplicate messages for stores with AutoMessage templates.
+
+---
+
+## Delivery Fee Calculation
+
+Single source of truth: `CheckoutService._calculate_dynamic_fee(store, distance_km)`.
+
+Formula: `fee = max(base_fee, base_fee + (distance - free_km) * per_km_rate)`, capped at `max_fee`.
+All values configurable via `Store.metadata` keys (`delivery_base_fee`, `delivery_fee_per_km`,
+`delivery_free_km`, `delivery_max_fee`). Falls back to `store.default_delivery_fee`.
+
+`HereMapsService.calculate_delivery_fee()` delegates to this method rather than maintaining
+its own formula, preventing divergence between delivery-zone validation and actual charge.
+
+---
+
 ## Key Design Decisions
 
 1. **Store as single source of truth** — `Store` model is the central tenant entity. `CompanyProfile` (automation) is 1:1 with `Store`.
@@ -184,6 +245,51 @@ Registered via `config/celery.py`. Beat schedule handles:
 3. **Guest cart via `X-Cart-Key`** — Unauthenticated users have their cart session identified by a `guest_cart_key` stored in localStorage. The header `X-Cart-Key` is attached to every cart request.
 4. **Handover protocol** — `apps.handover` manages Bot/Human mode transitions. `ConversationHandover` model tracks state; WebSocket events notify the dashboard.
 5. **Webhook security** — All inbound webhook payloads are validated with HMAC-SHA256 (`apps.core.utils.verify_webhook_signature`).
+6. **Single broadcast path** — `broadcast_order_event()` in `apps.stores.services.realtime_service` is the only place that sends WebSocket events for orders. Never use `channel_layer` directly from order-creation code.
+7. **Stock decrement via F()** — `StoreProduct.stock_quantity` is always decremented with `F('stock_quantity') - qty` inside `update()` to avoid read-modify-write races on concurrent orders.
+8. **Provider-agnostic geo layer** — `GeoService` (Google Maps primary, haversine fallback) is the single geo interface. The legacy `HereMapsService` is now a thin subclass that delegates to `GeoService` for backward compat. All new code imports `geo_service` from `apps.stores.services.geo`.
+9. **External delivery provider abstraction** — `DeliveryProvider` ABC in `apps/stores/services/delivery_provider/` decouples order dispatch from the provider. Current: `TocaDeliveryProvider` (live) + `InternalDeliveryProvider` (no-op). New providers: add a class, register in `get_delivery_provider()`.
+
+---
+
+## Geo Service Layer (Google Maps)
+
+Provider-agnostic geo service. Google Maps is the primary backend; haversine is the fallback for routes when the API fails.
+
+```
+apps/stores/services/geo/
+    contract.py          — TypedDict contracts (GeocodeResult, RouteResult)
+    google_provider.py   — Low-level Google Maps HTTP client
+    service.py           — GeoService: geocode, reverse_geocode, route, autosuggest,
+                           validate_delivery_address, calculate_delivery_fee
+    __init__.py          — exports geo_service singleton
+
+apps/stores/services/here_maps_service.py
+    HereMapsService(GeoService)  — backward-compat subclass (do not use in new code)
+```
+
+**Caching**: MD5-keyed Redis cache. Routes and geocodes: 24h TTL. Isolines: 6h TTL.
+
+**Delivery fee resolution order**:
+1. Fixed-price zone match (keyword-based in `store.metadata['fixed_price_zones']`)
+2. `StoreDeliveryZone` DB records (ordered by `min_km`)
+3. `CheckoutService._calculate_dynamic_fee()` (dynamic formula)
+4. `store.default_delivery_fee` (fallback when no coordinates)
+
+---
+
+## External Delivery Provider (Toca Delivery)
+
+See full spec in `docs/TOCA_DELIVERY_INTEGRATION.md`.
+
+**Flow**:
+1. `StoreOrder.status → 'confirmed'` triggers signal `on_order_confirmed_dispatch_toca`
+2. Signal enqueues Celery task `dispatch_order_to_toca_delivery`
+3. Task calls `TocaDeliveryProvider.create(store, order)` → `POST /corridas`
+4. `StoreOrder.external_delivery_*` fields updated with corrida ID/code/URL
+5. Celery Beat task `sync_toca_delivery_statuses` (60s) polls active corridas
+6. Status mapped: `em_rota → out_for_delivery`, `entregue → delivered`
+7. Webhook receiver at `/webhooks/v1/toca-delivery/` handles push updates (future)
 
 ---
 

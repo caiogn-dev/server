@@ -318,6 +318,77 @@ class MessageService:
         
         return message
 
+    def send_audio(
+        self,
+        account_id: str,
+        to: str,
+        audio_url: Optional[str] = None,
+        audio_id: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Message:
+        """Send an audio message."""
+        account = self._get_account(account_id)
+        api_service = WhatsAppAPIService(account)
+
+        message = self._create_outbound_message(
+            account=account,
+            to=to,
+            message_type=Message.MessageType.AUDIO,
+            content={'audio_url': audio_url, 'audio_id': audio_id},
+            text_body='',
+            media_url=audio_url or '',
+            media_id=audio_id or '',
+            context_message_id=reply_to or '',
+            metadata=metadata or {}
+        )
+
+        try:
+            response = api_service.send_audio(to=to, audio_url=audio_url, audio_id=audio_id, reply_to=reply_to)
+            self._update_message_sent(message, response)
+            logger.info(f"Audio message sent: {message.id}")
+        except Exception as e:
+            self._update_message_failed(message, str(e))
+            raise
+
+        return message
+
+    def send_video(
+        self,
+        account_id: str,
+        to: str,
+        video_url: Optional[str] = None,
+        video_id: Optional[str] = None,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Message:
+        """Send a video message."""
+        account = self._get_account(account_id)
+        api_service = WhatsAppAPIService(account)
+
+        message = self._create_outbound_message(
+            account=account,
+            to=to,
+            message_type=Message.MessageType.VIDEO,
+            content={'video_url': video_url, 'video_id': video_id, 'caption': caption},
+            text_body=caption or '',
+            media_url=video_url or '',
+            media_id=video_id or '',
+            context_message_id=reply_to or '',
+            metadata=metadata or {}
+        )
+
+        try:
+            response = api_service.send_video(to=to, video_url=video_url, video_id=video_id, caption=caption, reply_to=reply_to)
+            self._update_message_sent(message, response)
+            logger.info(f"Video message sent: {message.id}")
+        except Exception as e:
+            self._update_message_failed(message, str(e))
+            raise
+
+        return message
+
     def mark_as_read(self, account_id: str, message_id: str) -> bool:
         """Mark a message as read."""
         account = self._get_account(account_id)

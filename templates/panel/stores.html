@@ -1,0 +1,110 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Selecionar Loja — Pastita Panel</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: { brand: { 500: '#722F37', 600: '#5c262d', 700: '#4d1f25' } } } }
+    }
+  </script>
+</head>
+<body class="dark min-h-screen bg-zinc-950 flex flex-col items-center justify-start py-12 px-4">
+
+<div class="w-full max-w-xl">
+  <!-- Header -->
+  <div class="text-center mb-8">
+    <div class="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-500 mb-4">
+      <span class="text-xl font-bold text-white">P</span>
+    </div>
+    <h1 class="text-2xl font-bold text-white">Selecionar Loja</h1>
+    <p class="text-sm text-zinc-400 mt-1">Escolha a loja que deseja gerenciar</p>
+  </div>
+
+  <!-- Store list -->
+  {% if stores %}
+  <form method="post">
+    {% csrf_token %}
+    <div class="space-y-3">
+      {% for store in stores %}
+      <button
+        type="submit"
+        name="store_id"
+        value="{{ store.id }}"
+        class="w-full text-left rounded-xl border p-4 transition-all duration-150
+               {% if current_store and current_store.id == store.id %}
+                 border-brand-500 bg-brand-600/10
+               {% else %}
+                 border-zinc-800 bg-zinc-900 hover:border-zinc-600 hover:bg-zinc-800
+               {% endif %}"
+      >
+        <div class="flex items-start gap-4">
+          <!-- Logo -->
+          <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-800 overflow-hidden">
+            {% if store.logo_url %}
+              <img src="{{ store.logo_url }}" alt="{{ store.name }}" class="h-full w-full object-cover" />
+            {% else %}
+              <svg class="h-5 w-5 text-zinc-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
+              </svg>
+            {% endif %}
+          </div>
+
+          <!-- Info -->
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-white text-sm">{{ store.name }}</span>
+              <span class="h-1.5 w-1.5 rounded-full
+                {% if store.status == 'active' %}bg-green-400
+                {% elif store.status == 'inactive' %}bg-zinc-500
+                {% elif store.status == 'suspended' %}bg-red-500
+                {% else %}bg-yellow-400{% endif %}"></span>
+              <span class="text-xs text-zinc-500">{{ store.get_status_display }}</span>
+              {% if current_store and current_store.id == store.id %}
+                <svg class="ml-auto h-4 w-4 text-brand-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              {% endif %}
+            </div>
+            <p class="text-xs text-zinc-500 mt-0.5">/{{ store.slug }}</p>
+            <div class="flex items-center gap-4 mt-2">
+              <span class="text-xs text-zinc-500">{{ store.orders_count|default:0 }} pedidos</span>
+              <span class="text-xs text-zinc-500">{{ store.products_count|default:0 }} produtos</span>
+              <span class="text-xs text-zinc-500 capitalize">{{ store.get_store_type_display }}</span>
+            </div>
+          </div>
+        </div>
+      </button>
+      {% endfor %}
+    </div>
+  </form>
+  {% else %}
+  <div class="text-center py-16 bg-zinc-900 rounded-xl border border-zinc-800">
+    <svg class="mx-auto h-10 w-10 text-zinc-700 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
+    </svg>
+    <p class="text-zinc-400 font-medium">Nenhuma loja encontrada</p>
+    <p class="text-zinc-600 text-sm mt-1">Você ainda não tem lojas cadastradas</p>
+  </div>
+  {% endif %}
+
+  <!-- Footer -->
+  <div class="flex items-center justify-between mt-8 pt-6 border-t border-zinc-800">
+    <a href="{% url 'panel:logout' %}" class="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
+      Sair da conta
+    </a>
+    <a href="/admin/stores/store/add/" class="flex items-center gap-1.5 text-xs text-brand-400 hover:text-brand-300 font-medium transition-colors">
+      <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+      </svg>
+      Nova loja
+    </a>
+  </div>
+</div>
+
+</body>
+</html>

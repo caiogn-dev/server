@@ -93,6 +93,12 @@ app.conf.beat_schedule = {
     },
     # NOTE: process_scheduled_messages is now unified in apps.automation.tasks.scheduled
     # The task 'process-scheduled-messages' above handles all scheduled messages
+
+    # Toca Delivery — poll active corridas for status updates every 60s
+    'sync-toca-delivery-statuses': {
+        'task': 'apps.stores.tasks.sync_toca_delivery_statuses',
+        'schedule': 60.0,
+    },
 }
 
 

@@ -220,7 +220,7 @@ class AutomationService:
 
     def _get_default_auto_messages(self, profile: CompanyProfile) -> List[Dict[str, Any]]:
         """Return the default auto message templates."""
-        menu_link = profile.menu_url or profile.website_url or 'https://pastita.com.br/cardapio'
+        menu_link = profile.get_menu_url() or profile.website_url or ''
         company_name = profile.company_name or 'nosso time'
         cart_delay = max(60, profile.abandoned_cart_delay_minutes * 60)
 

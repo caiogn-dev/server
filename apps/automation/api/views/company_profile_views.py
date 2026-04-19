@@ -131,8 +131,8 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
                 'business_type': business_type_map.get(store.store_type, 'other'),
                 'description': store.description or '',
                 'website_url': '',  # Can be filled from integrations
-                'menu_url': f"https://{store.slug}.pastita.com.br" if hasattr(store, 'slug') else '',
-                'order_url': f"https://{store.slug}.pastita.com.br/cardapio" if hasattr(store, 'slug') else '',
+                'menu_url': store.website_url.rstrip('/') if getattr(store, 'website_url', '') else '',
+                'order_url': store.website_url.rstrip('/') if getattr(store, 'website_url', '') else '',
                 'business_hours': business_hours,
                 'phone_number': store.whatsapp_number or store.phone or '',
                 'email': store.email or '',
@@ -175,10 +175,10 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
                     data['company_name'] = store.name
                 if not data.get('description'):
                     data['description'] = store.description or ''
-                if not data.get('menu_url'):
-                    data['menu_url'] = f"https://{store.slug}.pastita.com.br"
-                if not data.get('order_url'):
-                    data['order_url'] = f"https://{store.slug}.pastita.com.br/cardapio"
+                if not data.get('menu_url') and getattr(store, 'website_url', ''):
+                    data['menu_url'] = store.website_url.rstrip('/')
+                if not data.get('order_url') and getattr(store, 'website_url', ''):
+                    data['order_url'] = store.website_url.rstrip('/')
                 
                 # Map store_type to business_type
                 if not data.get('business_type'):

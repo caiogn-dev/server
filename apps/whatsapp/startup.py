@@ -19,16 +19,18 @@ def ensure_default_whatsapp_account(sender, **kwargs):
     if sender.name != 'apps.whatsapp':
         return
 
-    if not getattr(settings, 'DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE', True):
-        return
-
     if not get_default_whatsapp_account_data():
         logger.debug('Default WhatsApp account setup skipped because configuration is incomplete.')
         return
 
+    allow_creation = getattr(settings, 'DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE', False)
+
     try:
         with transaction.atomic():
-            get_default_whatsapp_account(create_if_missing=True)
+            # Always sync an existing account with the configured env values.
+            # The auto-create flag should only control whether a missing account
+            # is created, not whether an existing account gets refreshed.
+            get_default_whatsapp_account(create_if_missing=allow_creation)
     except OperationalError as exc:
         logger.warning('Default WhatsApp account setup delayed because the database is not ready: %s', exc)
 

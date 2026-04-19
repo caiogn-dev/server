@@ -29,6 +29,13 @@ class AutomationContextService:
     """Resolves the canonical automation context for messaging flows."""
 
     @staticmethod
+    def _agent_is_runtime_available(agent) -> bool:
+        """Return True when an agent can actually serve production traffic."""
+        if agent is None:
+            return False
+        return bool(getattr(agent, 'is_active', False) and getattr(agent, 'status', None) == 'active')
+
+    @staticmethod
     def _safe_related(obj, attr: str):
         try:
             return getattr(obj, attr)
@@ -154,12 +161,12 @@ class AutomationContextService:
 
         if context.profile is not None:
             agent = context.profile.get_default_agent()
-            if agent is not None and agent.status == 'active':
+            if cls._agent_is_runtime_available(agent):
                 return agent
 
         if context.account is not None and getattr(context.account, 'default_agent_id', None):
             agent = context.account.default_agent
-            if agent is not None and agent.status == 'active':
+            if cls._agent_is_runtime_available(agent):
                 return agent
 
         return None

@@ -3,6 +3,7 @@ WhatsApp Authentication API Views
 """
 import logging
 
+from django.conf import settings
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
@@ -20,6 +21,29 @@ from apps.core.services.customer_identity import CustomerIdentityService
 from .whatsapp_auth import WhatsAppAuthService, WhatsAppAuthError
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_whatsapp_account_id(account_id: str | None = None) -> str:
+    """
+    Resolve the WhatsApp account to use for OTP flows.
+
+    Compatibility:
+    - Keeps supporting explicit `whatsapp_account_id` from the client.
+    - Falls back to `DEFAULT_WHATSAPP_ACCOUNT_ID` when configured.
+    - Falls back to a single active WhatsApp account when only one exists.
+    """
+    candidate = str(account_id or '').strip()
+    if candidate:
+        return candidate
+
+    default_account_id = str(getattr(settings, 'DEFAULT_WHATSAPP_ACCOUNT_ID', '') or '').strip()
+    if default_account_id:
+        return default_account_id
+
+    from apps.whatsapp.models import WhatsAppAccount
+
+    account = WhatsAppAccount.objects.filter(is_active=True).order_by('created_at').first()
+    return str(account.id) if account else ''
 
 
 @api_view(['POST'])
@@ -47,7 +71,7 @@ def send_whatsapp_auth_code(request):
     }
     """
     phone = request.data.get('phone_number')
-    account_id = request.data.get('whatsapp_account_id')
+    account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
     
     logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
     
@@ -59,7 +83,7 @@ def send_whatsapp_auth_code(request):
     
     if not account_id:
         return Response(
-            {'error': 'whatsapp_account_id é obrigatório'},
+            {'error': 'Nenhuma conta WhatsApp disponível para autenticação'},
             status=status.HTTP_400_BAD_REQUEST
         )
     
@@ -190,11 +214,11 @@ def resend_whatsapp_auth_code(request):
     }
     """
     phone = request.data.get('phone_number')
-    account_id = request.data.get('whatsapp_account_id')
-    
+    account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
+
     if not phone or not account_id:
         return Response(
-            {'error': 'phone_number e whatsapp_account_id são obrigatórios'},
+            {'error': 'phone_number é obrigatório e nenhuma conta WhatsApp está disponível'},
             status=status.HTTP_400_BAD_REQUEST
         )
     

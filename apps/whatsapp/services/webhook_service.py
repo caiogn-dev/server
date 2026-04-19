@@ -515,17 +515,20 @@ class WebhookService:
                     extra={'pipeline.source': 'error', 'message_id': str(message.id)},
                 )
 
+        _orchestrator_timeout_s = max(30, int(getattr(settings, 'WHATSAPP_ORCHESTRATOR_TIMEOUT', 90)))
+
         _thread = threading.Thread(target=_run_orchestrator, daemon=True)
         _thread.start()
-        _thread.join(timeout=30)
+        _thread.join(timeout=_orchestrator_timeout_s)
 
         _orchestrator_ms = round((_time.monotonic() - _t0) * 1000, 1)
         _timed_out = _thread.is_alive()
 
         if _timed_out:
-            orchestrator_error = TimeoutError('UnifiedService timeout after 30s')
+            orchestrator_error = TimeoutError(f'UnifiedService timeout after {_orchestrator_timeout_s}s')
             logger.warning(
-                '[pipeline] UnifiedService timeout after 30s',
+                '[pipeline] UnifiedService timeout after %ss',
+                _orchestrator_timeout_s,
                 extra={'pipeline.timeout': True, 'message_id': str(message.id)},
             )
 

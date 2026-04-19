@@ -42,6 +42,9 @@ x-django-env: &django-env
   KIMI_API_KEY: ${KIMI_API_KEY}
   KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/}
   KIMI_MODEL_NAME: ${KIMI_MODEL_NAME:-kimi-coder}
+  NVIDIA_API_KEY: ${NVIDIA_API_KEY}
+  NVIDIA_API_BASE_URL: ${NVIDIA_API_BASE_URL:-https://integrate.api.nvidia.com/v1}
+  NVIDIA_MODEL_NAME: ${NVIDIA_MODEL_NAME:-meta/llama-3.1-70b-instruct}
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
   LITELLM_PROXY_URL: ${LITELLM_PROXY_URL:-http://litellm-proxy:4000}

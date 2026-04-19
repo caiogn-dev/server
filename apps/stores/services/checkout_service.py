@@ -43,8 +43,14 @@ def get_valid_email_for_payment(order: StoreOrder) -> str:
     if order.store and order.store.owner and order.store.owner.email:
         return order.store.owner.email
     
-    # Fallback to a generic email
-    return f"cliente{order.order_number}@pastita.com.br"
+    # Fallback to a noreply address using the store's domain if available
+    store_domain = 'noreply.com'
+    if order.store and getattr(order.store, 'website_url', ''):
+        from urllib.parse import urlparse
+        parsed = urlparse(order.store.website_url)
+        if parsed.netloc:
+            store_domain = parsed.netloc
+    return f"cliente@{store_domain}"
 
 
 def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_context: dict = None):
@@ -539,8 +545,8 @@ class CheckoutService:
 
         if payment_method == 'cash':
             order.payment_method = 'cash'
-            order.status = StoreOrder.OrderStatus.PROCESSING
-            order.save()
+            order.payment_status = StoreOrder.PaymentStatus.PENDING
+            order.save(update_fields=['payment_method', 'payment_status', 'updated_at'])
 
             return {
                 'success': True,
@@ -580,14 +586,22 @@ class CheckoutService:
                 payment = result["response"]
                 order.payment_id = str(payment["id"])
                 order.payment_method = 'pix'
-                order.status = StoreOrder.OrderStatus.PROCESSING
+                order.payment_status = StoreOrder.PaymentStatus.PENDING
 
                 pix_data = payment.get("point_of_interaction", {}).get("transaction_data", {})
                 order.pix_code = pix_data.get("qr_code", "")
                 order.pix_qr_code = pix_data.get("qr_code_base64", "")
                 ticket_url = pix_data.get("ticket_url", "")
                 order.pix_ticket_url = ticket_url
-                order.save()
+                order.save(update_fields=[
+                    'payment_id',
+                    'payment_method',
+                    'payment_status',
+                    'pix_code',
+                    'pix_qr_code',
+                    'pix_ticket_url',
+                    'updated_at',
+                ])
 
                 return {
                     'success': True,
@@ -660,12 +674,17 @@ class CheckoutService:
                     order.payment_method = payment_method
 
                     if payment_status == 'approved':
-                        order.status = StoreOrder.OrderStatus.PAID
+                        order.status = StoreOrder.OrderStatus.CONFIRMED
                         order.payment_status = StoreOrder.PaymentStatus.PAID
                         order.paid_at = timezone.now()
+                        if not order.confirmed_at:
+                            order.confirmed_at = timezone.now()
                     elif payment_status in {'in_process', 'pending'}:
-                        order.status = StoreOrder.OrderStatus.PROCESSING
-                        order.payment_status = StoreOrder.PaymentStatus.PROCESSING
+                        order.payment_status = (
+                            StoreOrder.PaymentStatus.PROCESSING
+                            if payment_status == 'in_process'
+                            else StoreOrder.PaymentStatus.PENDING
+                        )
                     else:
                         order.status = StoreOrder.OrderStatus.FAILED
                         order.payment_status = StoreOrder.PaymentStatus.FAILED
@@ -735,8 +754,13 @@ class CheckoutService:
                 preference = result["response"]
                 order.payment_preference_id = preference['id']
                 order.payment_method = payment_method
-                order.status = StoreOrder.OrderStatus.PROCESSING
-                order.save()
+                order.payment_status = StoreOrder.PaymentStatus.PENDING
+                order.save(update_fields=[
+                    'payment_preference_id',
+                    'payment_method',
+                    'payment_status',
+                    'updated_at',
+                ])
 
                 return {
                     'success': True,
@@ -770,48 +794,59 @@ class CheckoutService:
         
         old_status = order.status
         
-        status_map = {
-            'approved': (StoreOrder.OrderStatus.PAID, StoreOrder.PaymentStatus.PAID),
-            'pending': (StoreOrder.OrderStatus.PROCESSING, StoreOrder.PaymentStatus.PROCESSING),
-            'in_process': (StoreOrder.OrderStatus.PROCESSING, StoreOrder.PaymentStatus.PROCESSING),
-            'rejected': (StoreOrder.OrderStatus.FAILED, StoreOrder.PaymentStatus.FAILED),
-            'cancelled': (StoreOrder.OrderStatus.CANCELLED, StoreOrder.PaymentStatus.FAILED),
-            'refunded': (StoreOrder.OrderStatus.REFUNDED, StoreOrder.PaymentStatus.REFUNDED),
-        }
-        
-        if status in status_map:
-            order_status, payment_status = status_map[status]
-            order.status = order_status
-            order.payment_status = payment_status
-            
-            if status == 'approved':
-                order.paid_at = timezone.now()
-                # Trigger payment confirmed email automation
-                trigger_order_email_automation(order, 'payment_confirmed')
-            elif status in ['cancelled', 'rejected', 'refunded']:
-                order.cancelled_at = timezone.now()
-                # Restore stock
-                CheckoutService._restore_stock(order)
-                # Trigger order cancelled email automation
-                if status in ['cancelled', 'rejected']:
-                    trigger_order_email_automation(order, 'order_cancelled')
-            
-            order.save()
+        update_fields = ['updated_at']
 
-            if status == 'approved':
-                try:
-                    from apps.stores.services.meta_pixel_service import send_purchase_event
-                    send_purchase_event(order)
-                except Exception as exc:
-                    logger.warning(f"Meta Pixel CAPI failed for {order.order_number}: {exc}")
+        if status == 'approved':
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.paid_at = timezone.now()
+            if order.status in {
+                StoreOrder.OrderStatus.PENDING,
+                StoreOrder.OrderStatus.PROCESSING,
+                StoreOrder.OrderStatus.PAID,
+            }:
+                order.status = StoreOrder.OrderStatus.CONFIRMED
+                if not order.confirmed_at:
+                    order.confirmed_at = timezone.now()
+                update_fields.extend(['status', 'confirmed_at'])
+            update_fields.extend(['payment_status', 'paid_at'])
+            trigger_order_email_automation(order, 'payment_confirmed')
 
-            # Trigger WhatsApp notification for status changes
+        elif status == 'pending':
+            order.payment_status = StoreOrder.PaymentStatus.PENDING
+            update_fields.append('payment_status')
+
+        elif status == 'in_process':
+            order.payment_status = StoreOrder.PaymentStatus.PROCESSING
+            update_fields.append('payment_status')
+
+        elif status in {'rejected', 'cancelled'}:
+            order.status = StoreOrder.OrderStatus.CANCELLED
+            order.payment_status = StoreOrder.PaymentStatus.FAILED
+            order.cancelled_at = timezone.now()
+            update_fields.extend(['status', 'payment_status', 'cancelled_at'])
+            CheckoutService._restore_stock(order)
+            trigger_order_email_automation(order, 'order_cancelled')
+
+        elif status == 'refunded':
+            order.status = StoreOrder.OrderStatus.REFUNDED
+            order.payment_status = StoreOrder.PaymentStatus.REFUNDED
+            order.cancelled_at = timezone.now()
+            update_fields.extend(['status', 'payment_status', 'cancelled_at'])
+            CheckoutService._restore_stock(order)
+
+        else:
+            return order
+
+        order.save(update_fields=list(dict.fromkeys(update_fields)))
+
+        if status == 'approved':
             try:
-                order._trigger_status_whatsapp_notification(order.status)
+                from apps.stores.services.meta_pixel_service import send_purchase_event
+                send_purchase_event(order)
             except Exception as exc:
-                logger.warning(f"WhatsApp notification failed for {order.order_number}: {exc}")
-            
-            logger.info(f"Order {order.order_number} status updated: {old_status} -> {order_status}")
+                logger.warning(f"Meta Pixel CAPI failed for {order.order_number}: {exc}")
+
+        logger.info(f"Order {order.order_number} status updated: {old_status} -> {order.status} | payment={order.payment_status}")
         
         return order
     
@@ -834,5 +869,4 @@ class CheckoutService:
 
 # Singleton instance
 checkout_service = CheckoutService()
-
 

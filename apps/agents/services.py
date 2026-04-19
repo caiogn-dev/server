@@ -178,7 +178,7 @@ class LangchainService:
     
     def _build_dynamic_context(self, phone_number: str, conversation_id: Optional[str] = None) -> str:
         """
-        Build dynamic context with menu, customer info, order history, etc.
+        Build dynamic context with store data for the current conversation.
         This provides the agent with real-time business data.
         """
         # DEBUG: Log início da construção do contexto
@@ -190,50 +190,21 @@ class LangchainService:
         if self.agent.context_prompt:
             context_parts.append(self.agent.context_prompt)
         
-        # 1. Load customer info and order history
+        # 1. Load customer name only.
+        # Do not inject order history or favorites into the system prompt:
+        # that was causing the model to revive old purchases as if they were
+        # part of the current order flow.
         try:
             from apps.conversations.models import Conversation
-            from apps.stores.models import StoreOrder
             
             # Get customer name from conversation
-            customer_name = ""
             if conversation_id:
                 try:
                     conv = Conversation.objects.get(id=conversation_id)
                     if conv.contact_name:
-                        customer_name = conv.contact_name
-                        context_parts.append(f"Nome do cliente: {customer_name}")
+                        context_parts.append(f"Nome do cliente: {conv.contact_name}")
                 except Conversation.DoesNotExist:
                     pass
-            
-            # Get recent orders from this customer
-            if phone_number:
-                recent_orders = StoreOrder.objects.filter(
-                    customer_phone=phone_number,
-                    status__in=['completed', 'delivered', 'paid']
-                ).select_related('store').prefetch_related('items')[:3]
-                
-                if recent_orders:
-                    orders_text = "📦 HISTÓRICO DE PEDIDOS RECENTES:\n"
-                    for order in recent_orders:
-                        items = order.items.all()[:3]
-                        items_text = ", ".join([f"{item.quantity}x {item.product_name}" for item in items])
-                        if len(order.items.all()) > 3:
-                            items_text += " e mais..."
-                        orders_text += f"- {order.created_at.strftime('%d/%m/%Y')}: {items_text} - Total: R$ {order.total}\n"
-                    context_parts.append(orders_text)
-                    
-                    # Add favorite products based on order history
-                    from collections import Counter
-                    all_items = []
-                    for order in recent_orders:
-                        for item in order.items.all():
-                            all_items.append(item.product_name)
-                    
-                    if all_items:
-                        favorites = Counter(all_items).most_common(3)
-                        fav_text = "❤️ PRODUTOS FAVORITOS DO CLIENTE: " + ", ".join([f[0] for f in favorites])
-                        context_parts.append(fav_text)
                         
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading customer/order data: {e}")
@@ -275,41 +246,51 @@ class LangchainService:
             if not store:
                 logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
             
-            # Load products from store
+            # Load products from store — all active, grouped by category, with stock status
             if store:
                 try:
                     from apps.stores.models import StoreProduct
                     products = StoreProduct.objects.filter(
                         store=store,
-                        is_active=True
-                    ).select_related('category')[:20]
-                    
+                        is_active=True,
+                    ).select_related('category').order_by(
+                        'category__sort_order', 'category__name', 'name'
+                    ).exclude(tags__contains=['ingrediente'])
+
                     if products:
                         menu_text = f"\n📋 CARDÁPIO - {store.name}:\n"
                         current_category = None
-                        
+
                         for product in products:
-                            if product.category and product.category.name != current_category:
-                                current_category = product.category.name
+                            cat_name = product.category.name if product.category else 'Outros'
+                            if cat_name != current_category:
+                                current_category = cat_name
                                 menu_text += f"\n【{current_category}】\n"
-                            
-                            price = product.price
-                            menu_text += f"• {product.name} - R$ {price}"
+
+                            stock_note = ''
+                            if product.track_stock:
+                                if product.stock_quantity <= 0:
+                                    stock_note = ' [ESGOTADO]'
+                                elif product.stock_quantity <= 3:
+                                    stock_note = f' [últimas {product.stock_quantity} unidades]'
+
+                            desc = ''
                             if product.description:
-                                desc = product.description[:60] + "..." if len(product.description) > 60 else product.description
-                                menu_text += f" ({desc})"
-                            menu_text += "\n"
-                        
+                                raw = product.description.strip()
+                                desc = f" — {raw[:80]}{'...' if len(raw) > 80 else ''}"
+
+                            menu_text += f"• {product.name} - R$ {product.price}{stock_note}{desc}\n"
+
                         context_parts.append(menu_text)
-                        
-                        # Add delivery info
+
+                        # Delivery info
                         if store.delivery_enabled:
-                            delivery_text = f"\n🚚 ENTREGA:\n"
-                            delivery_text += f"• Taxa de entrega: R$ {store.default_delivery_fee}\n"
+                            delivery_text = "\n🚚 ENTREGA:\n"
+                            delivery_text += f"• Taxa base: R$ {store.default_delivery_fee}\n"
                             if store.free_delivery_threshold:
                                 delivery_text += f"• Grátis acima de: R$ {store.free_delivery_threshold}\n"
                             context_parts.append(delivery_text)
-                            
+
                 except Exception as e:
                     logger.error(f"[AGENT CONTEXT] Error loading store products: {e}")
             
@@ -326,31 +307,63 @@ class LangchainService:
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
 
-        # 4. Load pending order / cart state for this customer (only recent ones)
+        # 4. Active session state — lets the agent answer "what's in my order?" accurately
         if phone_number:
             try:
-                from apps.stores.models import StoreOrder
-                from datetime import timedelta
-                from django.utils import timezone as tz
-                cutoff = tz.now() - timedelta(hours=4)
-                pending = StoreOrder.objects.filter(
-                    customer_phone=phone_number,
-                    payment_status='pending',
-                    created_at__gte=cutoff,
-                ).order_by('-created_at').first()
-                if pending:
-                    items_preview = ", ".join(
-                        f"{i.quantity}x {i.product_name}"
-                        for i in pending.items.all()[:4]
-                    )
-                    context_parts.append(
-                        f"\n🛒 PEDIDO PENDENTE DO CLIENTE:\n"
-                        f"Pedido #{pending.order_number} — R$ {pending.total}\n"
-                        f"Itens: {items_preview}\n"
-                        f"Status pagamento: {pending.payment_status}"
-                    )
+                from apps.automation.models import CustomerSession
+                from apps.stores.models import StoreProduct as _SP
+
+                session_qs = CustomerSession.objects.filter(
+                    phone_number=phone_number,
+                    status__in=['active', 'cart_created', 'checkout', 'payment_pending'],
+                )
+                if store:
+                    from apps.automation.models import CompanyProfile as _CP
+                    try:
+                        profile_ids = _CP.objects.filter(store=store).values_list('id', flat=True)
+                        session_qs = session_qs.filter(company_id__in=profile_ids)
+                    except Exception:
+                        pass
+
+                session = session_qs.order_by('-updated_at').first()
+                if session and session.cart_data:
+                    cart_data = session.cart_data
+                    session_parts = []
+
+                    pending_items = cart_data.get('pending_items') or []
+                    if pending_items:
+                        item_lines = []
+                        for it in pending_items:
+                            try:
+                                prod = _SP.objects.get(id=it['product_id'])
+                                item_lines.append(f"  - {it['quantity']}x {prod.name} (R$ {prod.price})")
+                            except Exception:
+                                item_lines.append(f"  - {it['quantity']}x produto #{it.get('product_id','?')}")
+                        session_parts.append("Itens no carrinho atual:\n" + "\n".join(item_lines))
+
+                    delivery_method = cart_data.get('pending_delivery_method')
+                    if delivery_method:
+                        session_parts.append(f"Método de entrega escolhido: {delivery_method}")
+
+                    delivery_address = cart_data.get('delivery_address')
+                    if delivery_address:
+                        session_parts.append(f"Endereço de entrega: {delivery_address}")
+
+                    delivery_fee = cart_data.get('delivery_fee_calculated')
+                    if delivery_fee is not None:
+                        session_parts.append(f"Taxa de entrega calculada: R$ {delivery_fee:.2f}")
+
+                    if cart_data.get('waiting_for_address'):
+                        session_parts.append("Status: aguardando endereço de entrega do cliente.")
+
+                    if session.pix_code:
+                        session_parts.append("Status: pagamento PIX gerado, aguardando confirmação.")
+
+                    if session_parts:
+                        context_parts.append("\n🛒 ESTADO DO PEDIDO ATUAL:\n" + "\n".join(session_parts))
+
             except Exception as e:
-                logger.error(f"[AGENT CONTEXT] Error loading pending order: {e}")
+                logger.error(f"[AGENT CONTEXT] Error loading session state: {e}")
 
         # Combine all context parts
         full_context = "\n\n".join(context_parts)
@@ -365,6 +378,7 @@ class LangchainService:
 
     def _build_tools(self, phone_number: str = "", store=None):
         """Build Langchain tools bound to the current customer/store context."""
+        self._last_created_order = None
 
         @tool
         def buscar_produto(nome: str) -> str:
@@ -455,7 +469,17 @@ class LangchainService:
             try:
                 if not store.delivery_enabled:
                     return "Esta loja não faz entrega no momento. Apenas retirada no local."
-                info = f"Taxa de entrega: R$ {store.default_delivery_fee}"
+                metadata = getattr(store, 'metadata', None) or {}
+                base_fee = metadata.get('delivery_base_fee', store.default_delivery_fee)
+                info = f"Taxa base de entrega: R$ {base_fee}"
+                if metadata.get('delivery_fee_per_km'):
+                    info += "\nA taxa final varia conforme a distância e a rota."
+                fixed_zones = metadata.get('fixed_price_zones') or []
+                if fixed_zones:
+                    zone_names = ", ".join(zone.get('name') for zone in fixed_zones if zone.get('name'))
+                    if zone_names:
+                        info += f"\nAlgumas regiões usam taxa fixa: {zone_names}."
+                info += "\nPara informar a taxa exata de um bairro ou endereço, confirme a localização do cliente."
                 if store.free_delivery_threshold:
                     info += f"\nEntrega GRÁTIS para pedidos acima de R$ {store.free_delivery_threshold}"
                 if store.min_order_value:
@@ -549,15 +573,12 @@ class LangchainService:
         messages.append(HumanMessage(content=_sanitize(message)))
         
         # Build tools and bind to LLM (tool calling).
-        # NVIDIA (Llama) and Kimi don't handle tool loops reliably — they tend to
-        # call tools repeatedly even for simple greetings, ignoring the full context
-        # already injected in the system prompt.  OpenAI and Anthropic handle this
-        # correctly.  For other providers, fall back to context-only mode so the
-        # dynamic system prompt drives the conversation.
+        # Kimi doesn't handle tool loops reliably.  NVIDIA (Llama 70b+), OpenAI,
+        # and Anthropic support function calling correctly.
         store = self._get_store_for_context(conversation_id)
         tools = self._build_tools(phone_number=phone_number or "", store=store)
         tool_map = {t.name: t for t in tools}
-        _TOOL_CAPABLE_PROVIDERS = {Agent.AgentProvider.OPENAI, Agent.AgentProvider.ANTHROPIC}
+        _TOOL_CAPABLE_PROVIDERS = {Agent.AgentProvider.OPENAI, Agent.AgentProvider.ANTHROPIC, Agent.AgentProvider.NVIDIA}
         _use_tools = self.agent.provider in _TOOL_CAPABLE_PROVIDERS
         llm_with_tools = self.llm.bind_tools(tools) if _use_tools else self.llm
 
@@ -634,6 +655,17 @@ class LangchainService:
 
             logger.info(f"[AGENT RESPONSE] {response_text[:120]!r}")
 
+            created_order = getattr(self, '_last_created_order', None)
+            if created_order:
+                order_number = created_order.get('order_number')
+                if order_number and order_number not in response_text:
+                    response_text = (
+                        f"{response_text.strip()}\n\n"
+                        f"Pedido #{order_number} criado no sistema.\n"
+                        f"Total: R$ {created_order.get('total', 0):.2f}.\n"
+                        f"Status: {created_order.get('status')} / pagamento {created_order.get('payment_status')}."
+                    ).strip()
+
             # Save to memory if enabled
             if memory:
                 try:
@@ -649,6 +681,7 @@ class LangchainService:
                 'processing_time': processing_time,
                 'model': self.agent.model_name,
                 'tokens_used': getattr(response, 'usage_metadata', {}).get('total_tokens', 0),
+                'order_created': created_order,
             }
 
         except Exception as e:
@@ -809,7 +842,7 @@ class AgentService:
         This is the main entry point for agent interactions.
         """
         try:
-            agent = Agent.objects.get(id=agent_id, is_active=True)
+            agent = Agent.objects.get(id=agent_id, is_active=True, status=Agent.AgentStatus.ACTIVE)
         except Agent.DoesNotExist:
             raise BaseAPIException("Agente não encontrado ou inativo")
         
@@ -868,7 +901,10 @@ class AgentService:
         customer_name: str = '',
         delivery_address: str = '',
         payment_method: str = 'dinheiro',
-        notes: str = ''
+        notes: str = '',
+        store=None,
+        store_slug: str = '',
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create an order from WhatsApp conversation.
@@ -884,26 +920,41 @@ class AgentService:
         Returns:
             Dict with order details or error
         """
-        from apps.stores.models import Store, StoreProduct, StoreCart, StoreOrder
+        from apps.stores.models import Store, StoreProduct, StoreCart
         from apps.stores.services.cart_service import cart_service
         from apps.stores.services.checkout_service import CheckoutService
         from apps.users.models import UnifiedUser
         
         try:
-            # Get store (Pastita)
-            store = Store.objects.filter(slug='pastita').first()
+            # Resolve store from explicit arg > slug > conversation > legacy fallback.
+            if store is None and store_slug:
+                store = Store.objects.filter(slug=store_slug).first()
+            if store is None and conversation_id:
+                try:
+                    from apps.conversations.models import Conversation
+                    from apps.automation.services.context_service import AutomationContextService
+                    conversation = Conversation.objects.select_related('account').get(id=conversation_id)
+                    store = AutomationContextService.resolve(conversation=conversation).store
+                except Exception:
+                    store = None
+            if store is None:
+                store = Store.objects.filter(slug='pastita').first()
             if not store:
                 return {'success': False, 'error': 'Loja não encontrada'}
             
-            # Get or create user
-            user = UnifiedUser.objects.filter(phone=phone_number).first()
+            # UnifiedUser is useful for identity metadata, but StoreCart.user expects
+            # the Django auth user model, not UnifiedUser.
+            unified_user = UnifiedUser.objects.filter(phone_number=phone_number).first()
             
             # Create cart
             cart = StoreCart.objects.create(
                 store=store,
-                user=user,
-                phone=phone_number,
-                session_id=str(uuid.uuid4())
+                user=None,
+                session_key=str(uuid.uuid4()),
+                metadata={
+                    'source': 'whatsapp_agent',
+                    'phone_number': phone_number,
+                },
             )
             
             # Add items to cart
@@ -930,9 +981,9 @@ class AgentService:
             
             # Prepare customer data
             customer_data = {
-                'name': customer_name or 'Cliente WhatsApp',
+                'name': customer_name or (unified_user.name if unified_user else 'Cliente WhatsApp'),
                 'phone': phone_number,
-                'email': user.email if user and user.email else f"cliente@{store.slug}.com.br"
+                'email': unified_user.email if unified_user and unified_user.email else f"cliente@{store.slug}.com.br"
             }
             
             # Prepare delivery data

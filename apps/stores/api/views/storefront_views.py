@@ -39,7 +39,8 @@ from apps.stores.models import (
     StoreCustomer, StorePaymentGateway,
     StoreWishlist
 )
-from apps.stores.services import cart_service, checkout_service, here_maps_service
+from apps.stores.services import cart_service, checkout_service
+from apps.stores.services.geo import geo_service as here_maps_service
 from apps.stores.services.realtime_service import broadcast_order_event
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
@@ -641,24 +642,42 @@ class StoreDeliveryFeeView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_classes = [PublicWriteThrottle]
 
-    def post(self, request, store_slug):
-        """Calculate delivery fee for an address."""
+    def _calculate(self, request, store_slug):
+        """Calculate delivery fee from either query params or JSON payload."""
         store = get_active_store(store_slug)
-        
-        lat = request.data.get('lat')
-        lng = request.data.get('lng')
-        address = request.data.get('address')
-        
-        if not (lat and lng) and not address:
+
+        lat = request.data.get('lat') or request.query_params.get('lat')
+        lng = request.data.get('lng') or request.query_params.get('lng')
+        address = request.data.get('address') or request.query_params.get('address')
+        zip_code = request.data.get('zip_code') or request.query_params.get('zip_code')
+        distance_km = request.data.get('distance_km') or request.query_params.get('distance_km')
+
+        if distance_km is not None:
+            try:
+                delivery_info = checkout_service.calculate_delivery_fee(
+                    store,
+                    distance_km=Decimal(str(distance_km)),
+                    zip_code=zip_code,
+                )
+                return Response(delivery_info)
+            except Exception as e:
+                logger.error(f"Delivery fee calculation error: {e}")
+                return Response(
+                    {'error': str(e)},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+        if not (lat and lng) and not address and not zip_code:
             return Response(
-                {'error': 'Either lat/lng or address is required'},
+                {'error': 'Either lat/lng, address, or zip_code is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
-            # If only address provided, geocode it
-            if not (lat and lng) and address:
-                geocode_result = here_maps_service.geocode(address)
+            # If only address or zip code provided, geocode it first
+            if not (lat and lng):
+                geocode_target = address or zip_code
+                geocode_result = here_maps_service.geocode(geocode_target)
                 if geocode_result:
                     lat = geocode_result.get('lat')
                     lng = geocode_result.get('lng')
@@ -667,8 +686,7 @@ class StoreDeliveryFeeView(APIView):
                         {'error': 'Could not geocode address'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
-            # Calculate delivery fee
+
             delivery_info = here_maps_service.calculate_delivery_fee(
                 store, float(lat), float(lng)
             )
@@ -679,6 +697,14 @@ class StoreDeliveryFeeView(APIView):
                 {'error': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+    def get(self, request, store_slug):
+        """Backward-compatible GET handler used by legacy storefronts."""
+        return self._calculate(request, store_slug)
+
+    def post(self, request, store_slug):
+        """Calculate delivery fee for an address."""
+        return self._calculate(request, store_slug)
 
 
 class StoreCouponValidateView(APIView):

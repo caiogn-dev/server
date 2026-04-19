@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 from decimal import Decimal
 import logging
+import re
 
 from django.utils import timezone
 
@@ -95,6 +96,11 @@ class SessionManager:
     
     def __init__(self, account: WhatsAppAccount | CompanyProfile | Store, phone_number: str):
         self.phone_number = phone_number
+        digits_only = re.sub(r'\D', '', phone_number or '')
+        phone_candidates = [phone_number]
+        if digits_only:
+            phone_candidates.extend([digits_only, f'+{digits_only}'])
+        self.phone_number_variants = [value for value in dict.fromkeys(phone_candidates) if value]
         context_kwargs: Dict[str, Any] = {}
         if isinstance(account, WhatsAppAccount):
             context_kwargs['account'] = account
@@ -118,19 +124,40 @@ class SessionManager:
         if not self.company:
             logger.error("[SessionManager] No company profile found")
             return None
-        
-        # Busca sessão ativa existente
+
+        active_statuses = [
+            CustomerSession.SessionStatus.ACTIVE,
+            CustomerSession.SessionStatus.CART_CREATED,
+            CustomerSession.SessionStatus.CHECKOUT,
+            CustomerSession.SessionStatus.PAYMENT_PENDING,
+        ]
+
+        # Busca sessão ativa existente no perfil resolvido.
         session = CustomerSession.objects.filter(
             company=self.company,
-            phone_number=self.phone_number,
-            status__in=[
-                CustomerSession.SessionStatus.ACTIVE,
-                CustomerSession.SessionStatus.CART_CREATED,
-                CustomerSession.SessionStatus.CHECKOUT,
-                CustomerSession.SessionStatus.PAYMENT_PENDING,
-            ]
+            phone_number__in=self.phone_number_variants,
+            status__in=active_statuses,
         ).first()
-        
+
+        # Compatibilidade: se houver mais de um CompanyProfile para a mesma Store
+        # (ex.: perfil criado pelo signal da conta e perfil raiz da loja), a
+        # sessão ainda precisa continuar única no boundary da Store.
+        if not session and self.store:
+            session = CustomerSession.objects.filter(
+                company__store=self.store,
+                phone_number__in=self.phone_number_variants,
+                status__in=active_statuses,
+            ).order_by('-last_activity_at', '-created_at').first()
+
+            if session:
+                self.company = session.company
+                logger.info(
+                    "[SessionManager] Reusing session %s from sibling profile %s for store %s",
+                    session.id,
+                    session.company_id,
+                    self.store.id,
+                )
+
         if session:
             # Atualiza última atividade
             session.last_activity_at = timezone.now()
@@ -247,6 +274,7 @@ class SessionManager:
         duration_minutes: float = None,
         lat: float = None,
         lng: float = None,
+        address_components: dict = None,
     ) -> None:
         """Salva endereço geocodificado e taxa calculada pelo HERE."""
         session = self.get_or_create_session()
@@ -259,6 +287,8 @@ class SessionManager:
             data['delivery_lat'] = lat
             data['delivery_lng'] = lng
             data['waiting_for_address'] = False
+            if address_components:
+                data['delivery_address_components'] = address_components
             session.cart_data = data
             session.save(update_fields=['cart_data'])
             logger.info(f"[SessionManager] Delivery address saved: {address[:40]} fee=R${fee} lat={lat} lng={lng}")
@@ -275,8 +305,12 @@ class SessionManager:
                 'duration_minutes': d.get('delivery_duration_minutes'),
                 'lat': d.get('delivery_lat'),
                 'lng': d.get('delivery_lng'),
+                'address_components': d.get('delivery_address_components', {}),
             }
-        return {'address': '', 'fee': None, 'distance_km': None, 'duration_minutes': None, 'lat': None, 'lng': None}
+        return {
+            'address': '', 'fee': None, 'distance_km': None,
+            'duration_minutes': None, 'lat': None, 'lng': None, 'address_components': {},
+        }
 
     def update_cart(self, items: list, total: Decimal):
         """Atualiza dados do carrinho"""

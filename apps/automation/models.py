@@ -597,8 +597,8 @@ class CompanyProfile(BaseModel):
             return self.menu_url
 
         store = self.get_effective_store()
-        if store:
-            return f'https://{store.slug}.pastita.com.br'
+        if store and getattr(store, 'website_url', ''):
+            return store.website_url.rstrip('/')
 
         return self.website_url or ''
 
@@ -607,8 +607,8 @@ class CompanyProfile(BaseModel):
             return self.order_url
 
         store = self.get_effective_store()
-        if store:
-            return f'https://{store.slug}.pastita.com.br/cardapio'
+        if store and getattr(store, 'website_url', ''):
+            return store.website_url.rstrip('/')
 
         return self.website_url or ''
 
@@ -647,12 +647,12 @@ class CompanyProfile(BaseModel):
             self._business_hours = store.operating_hours
             update_fields.append('_business_hours')
 
-        if not self.menu_url:
-            self.menu_url = f'https://{store.slug}.pastita.com.br'
+        if not self.menu_url and getattr(store, 'website_url', ''):
+            self.menu_url = store.website_url.rstrip('/')
             update_fields.append('menu_url')
 
-        if not self.order_url:
-            self.order_url = f'https://{store.slug}.pastita.com.br/cardapio'
+        if not self.order_url and getattr(store, 'website_url', ''):
+            self.order_url = store.website_url.rstrip('/')
             update_fields.append('order_url')
 
         if save and update_fields:

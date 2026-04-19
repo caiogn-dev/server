@@ -1,0 +1,245 @@
+{% extends "panel/base.html" %}
+{% block title %}Pedido #{{ order.order_number }}{% endblock %}
+{% block page_title %}Pedido #{{ order.order_number }}{% endblock %}
+
+{% block content %}
+<div class="space-y-5 max-w-4xl">
+
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-2 text-xs text-zinc-500">
+    <a href="{% url 'panel:orders' %}" class="hover:text-white transition-colors">Pedidos</a>
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+    </svg>
+    <span class="text-white">#{{ order.order_number }}</span>
+    <span class="ml-1">{% include "panel/includes/order_status_badge.html" with status=order.status %}</span>
+  </div>
+
+  <!-- ──── Status pipeline ──── -->
+  {% with s=order.status %}
+  <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+    <p class="text-xs font-medium text-zinc-500 mb-4 uppercase tracking-wider">Avançar status</p>
+
+    <!-- Visual stepper -->
+    <div class="flex items-center gap-0 mb-5 overflow-x-auto pb-1">
+      {% for step_val, step_label, step_icon in pipeline_steps %}
+      <div class="flex items-center gap-0 shrink-0">
+        <div class="flex flex-col items-center gap-1">
+          <div class="flex h-8 w-8 items-center justify-center rounded-full text-sm
+                      {% if s == step_val %}bg-brand-500 text-white ring-2 ring-brand-400/40
+                      {% elif step_val in completed_steps %}bg-green-600/20 text-green-400 border border-green-600/30
+                      {% else %}bg-zinc-800 text-zinc-500 border border-zinc-700{% endif %}">
+            {% if step_val in completed_steps and s != step_val %}
+            <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/>
+            </svg>
+            {% else %}
+            <span class="text-xs font-semibold">{{ step_icon }}</span>
+            {% endif %}
+          </div>
+          <span class="text-[10px] {% if s == step_val %}text-brand-300 font-medium{% elif step_val in completed_steps %}text-green-500{% else %}text-zinc-600{% endif %} whitespace-nowrap">
+            {{ step_label }}
+          </span>
+        </div>
+        {% if not forloop.last %}
+        <div class="h-px w-8 sm:w-12 mx-1 mb-4 {% if step_val in completed_steps %}bg-green-600/40{% else %}bg-zinc-700{% endif %}"></div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Action buttons: only show meaningful next steps -->
+    <form method="post" class="flex flex-wrap gap-2">
+      {% csrf_token %}
+
+      {% if s == 'pending' %}
+        <button name="status" value="confirmed"
+                class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors flex items-center gap-2">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+          Confirmar pedido
+        </button>
+        <button name="status" value="cancelled"
+                class="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-red-900/40 border border-zinc-700 hover:border-red-700/50 text-zinc-400 hover:text-red-400 text-sm font-medium transition-colors">
+          Cancelar
+        </button>
+
+      {% elif s == 'confirmed' %}
+        <button name="status" value="preparing"
+                class="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-sm font-medium transition-colors flex items-center gap-2">
+          🍳 Iniciar preparo
+        </button>
+        <button name="status" value="cancelled"
+                class="px-4 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-400 hover:text-red-400 text-sm font-medium transition-colors">
+          Cancelar
+        </button>
+
+      {% elif s == 'preparing' %}
+        <button name="status" value="out_for_delivery"
+                class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors flex items-center gap-2">
+          🛵 Saiu para entrega
+        </button>
+        <button name="status" value="ready"
+                class="px-4 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-sm font-medium transition-colors">
+          Pronto p/ retirada
+        </button>
+
+      {% elif s == 'ready' %}
+        <button name="status" value="out_for_delivery"
+                class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium transition-colors flex items-center gap-2">
+          🛵 Saiu para entrega
+        </button>
+        <button name="status" value="delivered"
+                class="px-4 py-2 rounded-lg bg-green-700 hover:bg-green-800 text-white text-sm font-medium transition-colors flex items-center gap-2">
+          ✅ Entregue / Retirado
+        </button>
+
+      {% elif s == 'out_for_delivery' %}
+        <button name="status" value="delivered"
+                class="px-4 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium transition-colors flex items-center gap-2">
+          <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+          Marcar como entregue
+        </button>
+
+      {% elif s not in 'delivered,completed,cancelled,failed,refunded' %}
+      <!-- Fallback: generic dropdown for other statuses -->
+      <select name="status"
+              class="bg-zinc-800 border border-zinc-700 text-white rounded-lg px-3 py-2 text-sm outline-none focus:border-brand-500">
+        {% for value, label in order_statuses %}
+        <option value="{{ value }}" {% if value == s %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit"
+              class="px-4 py-2 rounded-lg bg-brand-600 hover:bg-brand-700 text-white text-sm font-medium transition-colors">
+        Atualizar
+      </button>
+      {% endif %}
+
+      <!-- Always allow manual override -->
+      {% if s not in 'cancelled,failed,refunded' %}
+      <details class="relative" x-data="{ open: false }">
+        <summary @click.prevent="open = !open"
+                 class="cursor-pointer list-none px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-500 hover:text-zinc-300 text-xs transition-colors">
+          Mais opções ▾
+        </summary>
+        <div x-show="open" x-cloak @click.outside="open = false"
+             class="absolute left-0 bottom-full mb-2 w-48 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl z-10 py-1">
+          {% for value, label in order_statuses %}
+          {% if value != s %}
+          <button type="submit" name="status" value="{{ value }}"
+                  class="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-700 hover:text-white transition-colors">
+            {{ label }}
+          </button>
+          {% endif %}
+          {% endfor %}
+        </div>
+      </details>
+      {% endif %}
+    </form>
+  </div>
+  {% endwith %}
+
+  <!-- Info cards -->
+  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+      <p class="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Cliente</p>
+      <p class="text-sm font-semibold text-white">{{ order.customer_name|default:"—" }}</p>
+      {% if order.customer_email %}<p class="text-xs text-zinc-400 mt-1">{{ order.customer_email }}</p>{% endif %}
+      {% if order.customer_phone %}
+      <a href="https://wa.me/{{ order.customer_phone|cut:'+' }}" target="_blank"
+         class="inline-flex items-center gap-1 text-xs text-green-400 hover:text-green-300 mt-1 transition-colors">
+        <svg class="h-3 w-3" fill="currentColor" viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
+        {{ order.customer_phone }}
+      </a>
+      {% endif %}
+      <p class="text-xs text-zinc-600 mt-2">{{ order.created_at|date:"d/m/Y H:i" }}</p>
+    </div>
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+      <p class="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Entrega</p>
+      <p class="text-sm text-zinc-200">{{ order.delivery_address|default:"Retirada no local" }}</p>
+      <p class="text-xs text-zinc-500 mt-1">{{ order.get_delivery_type_display|default:"—" }}</p>
+      {% if order.delivery_fee %}
+      <p class="text-xs text-zinc-400 mt-2">Taxa: R$ {{ order.delivery_fee|floatformat:2 }}</p>
+      {% endif %}
+    </div>
+
+    <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+      <p class="text-xs font-medium text-zinc-500 uppercase tracking-wider mb-3">Pagamento</p>
+      <p class="text-sm font-semibold
+                {% if order.payment_status == 'paid' %}text-green-400
+                {% elif order.payment_status == 'failed' %}text-red-400
+                {% else %}text-zinc-300{% endif %}">
+        {{ order.payment_status|default:"—"|title }}
+      </p>
+      <p class="text-xs text-zinc-500 mt-1">{{ order.payment_method|default:"—" }}</p>
+    </div>
+
+  </div>
+
+  <!-- Items -->
+  {% if items %}
+  <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+    <div class="px-5 py-3.5 border-b border-zinc-800">
+      <p class="text-sm font-semibold text-white">Itens do pedido</p>
+    </div>
+    <table class="w-full">
+      <thead>
+        <tr class="bg-zinc-800/20 border-b border-zinc-800">
+          <th class="text-left text-xs font-medium text-zinc-500 px-5 py-2.5">Produto</th>
+          <th class="text-center text-xs font-medium text-zinc-500 px-3 py-2.5">Qtd</th>
+          <th class="text-right text-xs font-medium text-zinc-500 px-3 py-2.5 hidden sm:table-cell">Unit.</th>
+          <th class="text-right text-xs font-medium text-zinc-500 px-5 py-2.5">Subtotal</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-zinc-800/40">
+        {% for item in items %}
+        <tr>
+          <td class="px-5 py-3">
+            <p class="text-sm text-white font-medium">{{ item.product_name|default:item.product }}</p>
+            {% if item.notes %}<p class="text-xs text-zinc-500 mt-0.5">{{ item.notes }}</p>{% endif %}
+          </td>
+          <td class="px-3 py-3 text-center">
+            <span class="text-sm text-zinc-300">{{ item.quantity }}</span>
+          </td>
+          <td class="px-3 py-3 text-right hidden sm:table-cell">
+            <span class="text-xs text-zinc-500">R$ {{ item.unit_price|floatformat:2 }}</span>
+          </td>
+          <td class="px-5 py-3 text-right">
+            <span class="text-sm font-semibold text-white">R$ {{ item.subtotal|floatformat:2 }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Totals -->
+  <div class="bg-zinc-900 border border-zinc-800 rounded-xl p-4 max-w-xs ml-auto">
+    <div class="space-y-2 text-sm">
+      <div class="flex justify-between">
+        <span class="text-zinc-400">Subtotal</span>
+        <span class="text-white">R$ {{ order.subtotal|floatformat:2 }}</span>
+      </div>
+      {% if order.discount and order.discount > 0 %}
+      <div class="flex justify-between">
+        <span class="text-zinc-400">Desconto</span>
+        <span class="text-green-400">− R$ {{ order.discount|floatformat:2 }}</span>
+      </div>
+      {% endif %}
+      {% if order.delivery_fee %}
+      <div class="flex justify-between">
+        <span class="text-zinc-400">Entrega</span>
+        <span class="text-white">R$ {{ order.delivery_fee|floatformat:2 }}</span>
+      </div>
+      {% endif %}
+      <div class="flex justify-between font-bold pt-2 border-t border-zinc-800">
+        <span class="text-white">Total</span>
+        <span class="text-white text-base">R$ {{ order.total|floatformat:2 }}</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

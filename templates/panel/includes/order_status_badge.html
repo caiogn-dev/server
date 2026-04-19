@@ -1,0 +1,46 @@
+{% comment %}
+  Renders a colored status badge.
+  Usage: {% include "panel/includes/order_status_badge.html" with status=order.status %}
+{% endcomment %}
+{% if status == "pending" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-yellow-400 bg-yellow-900/30">
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Pendente
+  </span>
+{% elif status == "confirmed" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-blue-400 bg-blue-900/30">
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Confirmado
+  </span>
+{% elif status == "paid" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-green-400 bg-green-900/30">
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Pago
+  </span>
+{% elif status == "preparing" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-orange-400 bg-orange-900/30">
+    Preparando
+  </span>
+{% elif status == "ready" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-teal-400 bg-teal-900/30">
+    Pronto
+  </span>
+{% elif status == "out_for_delivery" or status == "shipped" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-indigo-400 bg-indigo-900/30">
+    A caminho
+  </span>
+{% elif status == "delivered" or status == "completed" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-green-400 bg-green-900/30">
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Entregue
+  </span>
+{% elif status == "cancelled" or status == "failed" %}
+  <span class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium text-red-400 bg-red-900/30">
+    <svg class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    Cancelado
+  </span>
+{% else %}
+  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium text-zinc-400 bg-zinc-800">
+    {{ status }}
+  </span>
+{% endif %}

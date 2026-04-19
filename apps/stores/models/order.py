@@ -124,6 +124,13 @@ class StoreOrder(BaseModel):
     tracking_url = models.URLField(blank=True)
     carrier = models.CharField(max_length=100, blank=True)
 
+    # External delivery provider (e.g. toca-delivery SaaS)
+    external_delivery_provider = models.CharField(max_length=50, blank=True, default='')
+    external_delivery_id = models.CharField(max_length=100, blank=True, default='', db_index=True)
+    external_delivery_code = models.CharField(max_length=30, blank=True, default='')
+    external_delivery_status = models.CharField(max_length=30, blank=True, default='')
+    external_delivery_url = models.URLField(max_length=500, blank=True, default='')
+
     # Notes
     customer_notes = models.TextField(blank=True)
     internal_notes = models.TextField(blank=True)
@@ -217,7 +224,10 @@ class StoreOrder(BaseModel):
         if notify:
             self.send_status_webhook(old_status, new_status)
             self._trigger_status_email_automation(new_status)
-            self._trigger_status_whatsapp_notification(new_status)
+            # WhatsApp notification is dispatched via post_save signal → Celery task
+            # (notify_order_status_change) to avoid duplicate sends. Do NOT call
+            # _trigger_status_whatsapp_notification() here — it would fire twice
+            # for stores that have AutoMessage templates configured.
 
         return self
 
@@ -256,19 +266,35 @@ class StoreOrder(BaseModel):
             logger.warning(f"[WhatsAppNotification] RETURN: No customer phone for order {self.order_number}")
             return
 
-        status_message_map = {
+        default_message_map = {
             self.OrderStatus.PROCESSING: "⏳ *Pedido em Processamento!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está sendo processado!",
-            self.OrderStatus.CONFIRMED: "✅ *Pedido Confirmado!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi confirmado!",
+            self.OrderStatus.CONFIRMED: "✅ *Pedido Confirmado!*\n\nOlá {customer_name}! Seu pedido #{order_number} foi confirmado e logo começaremos a preparar. 🙌",
             self.OrderStatus.PAID: "💰 *Pagamento Confirmado!*\n\nOlá {customer_name}!\n\nO pagamento do pedido #{order_number} foi confirmado!",
-            self.OrderStatus.PREPARING: "👨‍🍳 *Pedido em Preparo!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está sendo preparado!",
+            self.OrderStatus.PREPARING: "👨‍🍳 *Seu pedido está sendo preparado!*\n\nOlá {customer_name}! O pedido #{order_number} está na cozinha. Em breve estará pronto!",
             self.OrderStatus.READY: "📦 *Pedido Pronto!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está pronto!",
             self.OrderStatus.SHIPPED: "🚚 *Pedido Enviado!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi enviado!",
-            self.OrderStatus.OUT_FOR_DELIVERY: "🛵 *Pedido Saiu para Entrega!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} saiu para entrega!",
-            self.OrderStatus.DELIVERED: "📦 *Pedido Entregue!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi entregue!",
+            self.OrderStatus.OUT_FOR_DELIVERY: "🛵 *Pedido saiu para entrega!*\n\nOlá {customer_name}! Seu pedido #{order_number} saiu para entrega. Fique de olho! 👀",
+            self.OrderStatus.DELIVERED: "📦 *Pedido entregue!*\n\nOlá {customer_name}! Seu pedido #{order_number} foi entregue. Não se esqueça de nos avaliar! Sua opinião é muito importante para nós. 🌟",
             self.OrderStatus.COMPLETED: "✨ *Pedido Finalizado!*\n\nOlá {customer_name}!\n\nObrigado pela sua compra #{order_number}!",
             self.OrderStatus.CANCELLED: "❌ *Pedido Cancelado*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi cancelado.",
             self.OrderStatus.REFUNDED: "💳 *Pedido Reembolsado!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} foi reembolsado!",
         }
+
+        # Allow store to override the 4 main delivery status messages
+        custom_templates = {}
+        if self.store and isinstance(self.store.metadata, dict):
+            custom_templates = self.store.metadata.get('whatsapp_messages', {})
+
+        status_message_map = {**default_message_map}
+        template_key_map = {
+            self.OrderStatus.CONFIRMED: 'confirmed',
+            self.OrderStatus.PREPARING: 'preparing',
+            self.OrderStatus.OUT_FOR_DELIVERY: 'out_for_delivery',
+            self.OrderStatus.DELIVERED: 'delivered',
+        }
+        for status_val, tpl_key in template_key_map.items():
+            if custom_templates.get(tpl_key, '').strip():
+                status_message_map[status_val] = custom_templates[tpl_key].strip()
 
         message_template = status_message_map.get(new_status)
         if not message_template:

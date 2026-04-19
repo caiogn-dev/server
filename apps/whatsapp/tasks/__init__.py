@@ -138,41 +138,20 @@ def process_message_with_agent(self, message_id: str):
             )
             
             response_text = result.get('response', '')
+            order_created = result.get('order_created')
             logger.info(f"Agent returned response of length {len(response_text) if response_text else 0} for message: {message_id}")
             
         except Exception as agent_error:
             logger.error(f"AgentService error for message {message_id}: {str(agent_error)}", exc_info=True)
             # Send fallback message on agent error
             response_text = "Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente?"
+            order_created = None
         
         # Always mark as processed, even if there was an error
         try:
             message_repo.mark_as_processed_by_agent(message)
         except Exception as mark_error:
             logger.warning(f"Failed to mark message as processed: {str(mark_error)}")
-        
-        # Try to create order if conversation indicates a purchase intent
-        if response_text and message.conversation:
-            try:
-                confirmation_words = [
-                    'pedido confirmado', 'pedido registrado', 'pedido realizado',
-                    'pedido foi confirmado', 'pedido foi registrado',
-                    'resumo do pedido', 'total do pedido'
-                ]
-                response_lower = response_text.lower()
-                if any(word in response_lower for word in confirmation_words):
-                    logger.info(f"Attempting to create order from conversation: {message.conversation.id}")
-                    order_result = try_create_order_from_conversation(
-                        message.conversation,
-                        message.from_number
-                    )
-                    if order_result and order_result.get('success'):
-                        logger.info(f"Order created successfully: {order_result.get('order_number')}")
-                        response_text += f"\n\n📋 *Pedido #{order_result.get('order_number')}* criado no sistema!"
-                    else:
-                        logger.warning(f"Could not create order: {order_result}")
-            except Exception as order_error:
-                logger.warning(f"Order creation error: {str(order_error)}")
         
         # Send response if we have one
         if response_text:
@@ -320,6 +299,7 @@ def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
     """
     from apps.agents.services import AgentService
     from apps.stores.models import StoreProduct
+    from apps.automation.services.context_service import AutomationContextService
     
     try:
         # Get last messages from conversation
@@ -333,9 +313,14 @@ def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
         # Build conversation text
         conversation_text = "\n".join([m.text_body or "" for m in reversed(messages)])
         
-        # Get store products
+        context = AutomationContextService.resolve(conversation=conversation)
+        store = context.store
+        if not store:
+            return {}
+
+        # Get store products for the current WhatsApp/store context
         store_products = StoreProduct.objects.filter(
-            store__slug='pastita',
+            store=store,
             is_active=True
         ).values('id', 'name', 'price')
         
@@ -399,7 +384,9 @@ def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
             items=items,
             customer_name=customer_name,
             delivery_address=delivery_address,
-            notes=f"Pedido via WhatsApp - Cliente: {customer_name or 'Não informado'}"
+            notes=f"Pedido via WhatsApp - Cliente: {customer_name or 'Não informado'}",
+            store=store,
+            conversation_id=str(conversation.id),
         )
         
         return result

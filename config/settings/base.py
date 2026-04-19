@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'apps.handover',  # Handover Protocol (Bot/Human transfer)
     'apps.users',  # Unified user management (NEW)
     'apps.public_api',  # Public read-only API for storefronts (no auth required)
+    'apps.panel',  # Pastita Panel — Django-rendered admin UI at /panel/
 ]
 
 MIDDLEWARE = [
@@ -88,7 +89,7 @@ ROOT_URLCONF = 'config.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -316,6 +317,7 @@ WHATSAPP_ENABLE_LLM_FALLBACK = os.environ.get('WHATSAPP_ENABLE_LLM_FALLBACK', 'f
 WHATSAPP_FORCE_DISABLE_LLM = os.environ.get('WHATSAPP_FORCE_DISABLE_LLM', 'false').strip().lower() in {
     '1', 'true', 'yes', 'on'
 }
+WHATSAPP_ORCHESTRATOR_TIMEOUT = int(os.environ.get('WHATSAPP_ORCHESTRATOR_TIMEOUT', '90'))
 DEFAULT_STORE_SLUG = os.environ.get('DEFAULT_STORE_SLUG', '').strip()
 
 _websocket_allowed_origins_env = os.environ.get('WEBSOCKET_ALLOWED_ORIGINS', '')
@@ -364,8 +366,19 @@ INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')
 
-# Maps (HERE)
+# Maps
+GEO_PROVIDER = os.environ.get('GEO_PROVIDER', 'google').strip().lower()
+GOOGLE_MAPS_KEY = os.environ.get('GOOGLE_MAPS_KEY', '').strip()
 HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
+
+# Toca Delivery SaaS integration
+TOCA_DELIVERY_API_URL = os.environ.get('TOCA_DELIVERY_API_URL', 'https://api.tocadelivery.com.br').strip()
+TOCA_DELIVERY_EMAIL = os.environ.get('TOCA_DELIVERY_EMAIL', '').strip()
+TOCA_DELIVERY_PASSWORD = os.environ.get('TOCA_DELIVERY_PASSWORD', '').strip()
+# Set to 'true' to enable automatic dispatch for all stores
+TOCA_DELIVERY_ENABLED = os.environ.get('TOCA_DELIVERY_ENABLED', 'false').strip().lower() == 'true'
+# Webhook secret shared with Toca Delivery for validating status callbacks
+TOCA_DELIVERY_WEBHOOK_SECRET = os.environ.get('TOCA_DELIVERY_WEBHOOK_SECRET', '').strip()
 
 # Base URL for webhooks and callbacks
 BASE_URL = os.environ.get('BASE_URL', 'https://backend.pastita.com.br')
@@ -405,7 +418,13 @@ OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
 
 # Anthropic (optional fallback)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_BASE_URL = os.environ.get('ANTHROPIC_BASE_URL', 'https://api.anthropic.com')
 ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
+
+# NVIDIA NIM (optional fallback)
+NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
+NVIDIA_API_BASE_URL = os.environ.get('NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1')
+NVIDIA_MODEL_NAME = os.environ.get('NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct')
 
 # Unified AI Configuration Helper
 def get_ai_config():
@@ -437,9 +456,16 @@ def get_ai_config():
     elif ANTHROPIC_API_KEY:
         return {
             'mode': 'direct',
-            'base_url': 'https://api.anthropic.com',
+            'base_url': ANTHROPIC_BASE_URL,
             'api_key': ANTHROPIC_API_KEY,
             'model': ANTHROPIC_MODEL_NAME,
+        }
+    elif NVIDIA_API_KEY:
+        return {
+            'mode': 'direct',
+            'base_url': NVIDIA_API_BASE_URL,
+            'api_key': NVIDIA_API_KEY,
+            'model': NVIDIA_MODEL_NAME,
         }
     return None
 
@@ -566,9 +592,6 @@ else:
 
 # ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
 WHITENOISE_MANIFEST_STRICT = False
-
-
-
 
 
 

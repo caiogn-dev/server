@@ -107,16 +107,18 @@ class OrderService:
         """
         from apps.stores.models import StoreOrder
         
-        # Valid status transitions — full graph for a food-delivery restaurant
+        # Operational flow for restaurant delivery:
+        # pending -> confirmed -> preparing -> out_for_delivery -> delivered
+        # Legacy statuses remain readable for backwards compatibility.
         valid_transitions = {
             'pending':          ['confirmed', 'cancelled'],
-            'processing':       ['confirmed', 'cancelled'],          # payment in progress
-            'confirmed':        ['preparing', 'cancelled'],
-            'paid':             ['preparing', 'confirmed', 'cancelled'],  # payment webhook sets paid → allow forward
-            'preparing':        ['ready', 'out_for_delivery', 'cancelled'],
+            'processing':       ['confirmed', 'cancelled'],
+            'paid':             ['confirmed', 'preparing', 'cancelled'],
+            'confirmed':        ['preparing', 'out_for_delivery', 'delivered', 'cancelled'],
+            'preparing':        ['ready', 'out_for_delivery', 'delivered', 'cancelled'],
             'ready':            ['out_for_delivery', 'delivered', 'cancelled'],
             'out_for_delivery': ['delivered', 'cancelled'],
-            'shipped':          ['out_for_delivery', 'delivered', 'cancelled'],  # legacy alias
+            'shipped':          ['out_for_delivery', 'delivered', 'cancelled'],
             'delivered':        ['completed'],
             'completed':        [],
             'cancelled':        ['refunded'],

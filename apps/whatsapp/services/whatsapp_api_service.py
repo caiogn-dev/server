@@ -336,6 +336,63 @@ class WhatsAppAPIService:
             data=payload
         )
 
+    def send_audio(
+        self,
+        to: str,
+        audio_url: Optional[str] = None,
+        audio_id: Optional[str] = None,
+        reply_to: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send an audio message."""
+        audio_data = {}
+        if audio_url:
+            audio_data['link'] = audio_url
+        elif audio_id:
+            audio_data['id'] = audio_id
+
+        payload = {
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': to,
+            'type': 'audio',
+            'audio': audio_data
+        }
+
+        if reply_to:
+            payload['context'] = {'message_id': reply_to}
+
+        return self._make_request('POST', f'{self.phone_number_id}/messages', data=payload)
+
+    def send_video(
+        self,
+        to: str,
+        video_url: Optional[str] = None,
+        video_id: Optional[str] = None,
+        caption: Optional[str] = None,
+        reply_to: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send a video message."""
+        video_data = {}
+        if video_url:
+            video_data['link'] = video_url
+        elif video_id:
+            video_data['id'] = video_id
+        if caption:
+            video_data['caption'] = caption
+
+        payload = {
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': to,
+            'type': 'video',
+            'video': video_data
+        }
+
+        if reply_to:
+            payload['context'] = {'message_id': reply_to}
+
+        return self._make_request('POST', f'{self.phone_number_id}/messages', data=payload)
+
     def send_location(
         self,
         to: str,
@@ -460,6 +517,17 @@ class WhatsAppAPIService:
             )
             response.raise_for_status()
             return response.json()
+        except requests.exceptions.HTTPError as e:
+            body = ''
+            try:
+                body = e.response.text
+            except Exception:
+                pass
+            logger.error(f"Failed to upload media: {str(e)} | response: {body}")
+            raise WhatsAppAPIError(
+                message=f"Failed to upload media: {str(e)} | {body}",
+                code='media_upload_failed'
+            )
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to upload media: {str(e)}")
             raise WhatsAppAPIError(

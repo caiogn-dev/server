@@ -268,11 +268,13 @@ def register_default_handlers():
     from .handlers.mercadopago_handler import MercadoPagoHandler
     from .handlers.instagram_handler import InstagramHandler
     from .handlers.messenger_handler import MessengerHandler
+    from .handlers.toca_delivery_handler import TocaDeliveryHandler
 
     WebhookDispatcherView.register_handler('whatsapp', WhatsAppHandler)
     WebhookDispatcherView.register_handler('mercadopago', MercadoPagoHandler)
     WebhookDispatcherView.register_handler('instagram', InstagramHandler)
     WebhookDispatcherView.register_handler('messenger', MessengerHandler)
+    WebhookDispatcherView.register_handler('toca-delivery', TocaDeliveryHandler)
 
 
 # Auto-register on module load

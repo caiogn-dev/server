@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store
 from apps.stores.services.checkout_service import CheckoutService
-from apps.stores.services.here_maps_service import here_maps_service
+from apps.stores.services.geo import geo_service as here_maps_service
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,11 @@ class StoreRouteView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if not store.latitude or not store.longitude:
+        metadata = store.metadata or {}
+        store_lat = store.latitude or metadata.get('store_latitude')
+        store_lng = store.longitude or metadata.get('store_longitude')
+
+        if not store_lat or not store_lng:
             return Response(
                 {'error': 'Store location not configured'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -187,11 +191,15 @@ class StoreValidateDeliveryView(APIView):
         try:
             store_location = (float(store.latitude), float(store.longitude))
             delivery_location = (float(lat), float(lng))
-            
+
             logger.info(f"Validating delivery: store={store_location}, delivery={delivery_location}")
-            
+
             # Get max distance from store settings or use default
-            max_distance = float(store.metadata.get('max_delivery_distance_km', 20))
+            max_distance = float(
+                store.metadata.get('max_delivery_distance_km')
+                or store.metadata.get('delivery_max_distance')
+                or 20
+            )
             max_time = float(store.metadata.get('max_delivery_time_minutes', 45))
             
             result = here_maps_service.validate_delivery_address(

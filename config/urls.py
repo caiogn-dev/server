@@ -26,6 +26,7 @@ from apps.core.sse_views import (
     WhatsAppSSEView, 
     WebSocketHealthCheckView
 )
+from apps.core.auth_views import CSRFTokenView, ProfileView
 from apps.stores.api.webhooks import MercadoPagoWebhookView
 from apps.instagram.api.views import ig_oauth_callback
 
@@ -52,6 +53,9 @@ def whatsapp_verification_view(request):
 urlpatterns = [
     path('admin/', admin.site.urls),
 
+    # Pastita Panel — custom Django-rendered admin UI (multi-tenant)
+    path('panel/', include('apps.panel.urls')),
+
     # API Documentation
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
@@ -59,6 +63,10 @@ urlpatterns = [
 
     # API v1 - Unified
     path('api/v1/', include([
+        # Compatibility aliases used by storefronts still calling legacy flat paths
+        path('csrf/', CSRFTokenView.as_view(), name='csrf-token-compat'),
+        path('users/profile/', ProfileView.as_view(), name='user-profile-compat'),
+
         # Core (auth, users, csrf)
         path('core/', include('apps.core.urls')),
         path('auth/', include('apps.core.auth.urls')),

@@ -11,6 +11,7 @@ from datetime import datetime
 import logging
 
 from apps.whatsapp.intents.detector import IntentType, IntentData
+from apps.whatsapp.services import create_order_from_whatsapp
 from apps.automation.models import AutoMessage
 from apps.stores.models import StoreProduct
 from apps.stores.models.order import StoreOrder as Order
@@ -186,11 +187,146 @@ class IntentHandler:
         """Alias for company_profile — both names are used across the codebase."""
         return self.company_profile
 
+    def _get_session_manager(self):
+        """
+        Resolve customer sessions from the canonical tenant context.
+
+        A bare WhatsApp account can point to an account-only CompanyProfile
+        created by signals. For order flows we must prefer the handler's
+        store/company profile so cart and checkout state stay in the same
+        session.
+        """
+        from apps.automation.services import get_session_manager
+
+        context_owner = self.company_profile or self.store or self.account
+        return get_session_manager(context_owner, self.conversation.phone_number)
+
     def _get_store(self):
         """Retorna a loja associada"""
         if self.company_profile and hasattr(self.company_profile, 'store'):
             return self.company_profile.store
         return None
+
+    def _normalize_lookup_text(self, value: str) -> str:
+        """Normalize free text for neighborhood / product matching."""
+        if not value:
+            return ""
+        normalized = unicodedata.normalize('NFD', str(value).lower())
+        return ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+
+    def _match_fixed_delivery_zone_from_text(self, message: str) -> Optional[Dict[str, Any]]:
+        """Resolve a fixed delivery zone by neighborhood keywords mentioned in text."""
+        if not self.store:
+            return None
+
+        metadata = getattr(self.store, 'metadata', None) or {}
+        zones = metadata.get('fixed_price_zones') or []
+        if not zones:
+            return None
+
+        normalized_message = self._normalize_lookup_text(message)
+        if not normalized_message:
+            return None
+
+        for zone in zones:
+            keywords = list(zone.get('keywords') or [])
+            if zone.get('name'):
+                keywords.append(zone['name'])
+            for keyword in keywords:
+                normalized_keyword = self._normalize_lookup_text(keyword)
+                if normalized_keyword and normalized_keyword in normalized_message:
+                    return zone
+        return None
+
+    def _build_delivery_info_text(self, message: str = "") -> str:
+        """Return deterministic delivery information for fee / region questions."""
+        if not self.store:
+            return (
+                "🚚 *Informações de entrega*\n\n"
+                "Não consegui carregar os dados da loja agora. Tente novamente em instantes."
+            )
+
+        if not getattr(self.store, 'delivery_enabled', True):
+            return "🚫 No momento trabalhamos apenas com retirada."
+
+        metadata = getattr(self.store, 'metadata', None) or {}
+        normalized_message = self._normalize_lookup_text(message)
+        fixed_zone = self._match_fixed_delivery_zone_from_text(message)
+
+        if fixed_zone:
+            zone_name = fixed_zone.get('name', 'essa região')
+            zone_fee = float(fixed_zone.get('fee', self.store.default_delivery_fee or 0))
+            return (
+                f"🛵 Para *{zone_name}* a taxa de entrega é *R$ {zone_fee:.2f}*.\n\n"
+                "Se quiser, já posso seguir com o pedido."
+            )
+
+        base_fee = float(metadata.get('delivery_base_fee', self.store.default_delivery_fee or 0))
+        free_km = metadata.get('delivery_free_km')
+        fee_per_km = metadata.get('delivery_fee_per_km')
+        max_fee = metadata.get('delivery_max_fee')
+        fixed_zones = metadata.get('fixed_price_zones') or []
+
+        lines = [
+            "🚚 *Informações de entrega*",
+            "",
+            f"• Taxa base: *R$ {base_fee:.2f}*",
+        ]
+        if free_km is not None and fee_per_km is not None:
+            lines.append(f"• Cálculo padrão: taxa base até {free_km} km e depois +R$ {float(fee_per_km):.2f}/km")
+        if max_fee is not None:
+            lines.append(f"• Teto da taxa dinâmica: *R$ {float(max_fee):.2f}*")
+        if self.store.min_order_value:
+            lines.append(f"• Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*")
+
+        if fixed_zones:
+            special_names = ", ".join(zone.get('name') for zone in fixed_zones if zone.get('name'))
+            if special_names:
+                lines.append(f"• Regiões com taxa fixa: {special_names}")
+
+        if normalized_message and any(
+            token in normalized_message
+            for token in ('taquaralto', 'aureny', 'bertaville', 'taquari', 'taquarucu')
+        ):
+            lines.append("")
+            lines.append("Me diga o bairro exato ou compartilhe a localização para eu calcular certinho.")
+
+        return "\n".join(lines)
+
+    def _build_location_text(self) -> str:
+        """Return deterministic store address information."""
+        if not self.store:
+            return "📍 Não consegui localizar o endereço da loja agora."
+
+        lines = [f"📍 *{self.store.name}*"]
+        address_parts = [
+            getattr(self.store, 'address', ''),
+            getattr(self.store, 'city', ''),
+            getattr(self.store, 'state', ''),
+            getattr(self.store, 'zip_code', ''),
+        ]
+        formatted = ", ".join(part for part in address_parts if part)
+        if formatted:
+            lines.extend(["", formatted])
+
+        whatsapp_number = getattr(self.store, 'whatsapp_number', '') or getattr(self.account, 'phone_number', '')
+        if whatsapp_number:
+            lines.extend(["", f"WhatsApp: {whatsapp_number}"])
+        return "\n".join(lines)
+
+    def _build_contact_text(self) -> str:
+        """Return deterministic contact information."""
+        if not self.store:
+            return "📞 Não consegui carregar o contato da loja agora."
+
+        lines = [f"📞 *Contato - {self.store.name}*"]
+        if getattr(self.store, 'phone', ''):
+            lines.append(f"• Telefone: {self.store.phone}")
+        if getattr(self.store, 'whatsapp_number', ''):
+            lines.append(f"• WhatsApp: {self.store.whatsapp_number}")
+        if getattr(self.store, 'email', ''):
+            lines.append(f"• E-mail: {self.store.email}")
+        return "\n".join(lines)
 
     def _send_pix_confirmation(self, order, pix_code: str) -> 'HandlerResult':
         """Envia confirmação do pedido em duas mensagens:
@@ -226,20 +362,16 @@ class IntentHandler:
         Chamado pelo UnknownHandler quando session.waiting_for_address=True.
         O geocode já aplica "Palmas, Tocantins" e bbox automaticamente.
         """
-        from apps.automation.services import get_session_manager
-
-        session_manager = get_session_manager(self.account, self.conversation.phone_number)
+        session_manager = self._get_session_manager()
 
         if not self.store:
             session_manager.set_waiting_for_address(False)
             return self._ask_payment_method('delivery')
 
         try:
-            from apps.stores.services.here_maps_service import HereMapsService
-            here = HereMapsService()
+            from apps.stores.services.geo import geo_service
 
-            # Geocodifica — restrict_to_city=True adiciona "Palmas, Tocantins" e bbox automaticamente
-            geo = here.geocode(address_text, restrict_to_city=True)
+            geo = geo_service.geocode(address_text, restrict_to_city=True)
             if not geo or not geo.get('lat'):
                 return HandlerResult.text(
                     "❌ Não consegui localizar esse endereço em Palmas - TO.\n\n"
@@ -249,14 +381,15 @@ class IntentHandler:
 
             return self._process_location_and_ask_payment(
                 session_manager=session_manager,
-                here=here,
+                geo_svc=geo_service,
                 lat=geo['lat'],
                 lng=geo['lng'],
                 formatted_address=geo.get('formatted_address', address_text),
+                address_components=geo.get('address', {}),
             )
 
         except Exception as exc:
-            logger.error("[_handle_address_input] Erro HERE: %s", exc, exc_info=True)
+            logger.error("[_handle_address_input] Erro geocode: %s", exc, exc_info=True)
             default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
             session_manager.save_delivery_address_info(address=address_text, fee=default_fee)
 
@@ -267,34 +400,37 @@ class IntentHandler:
         Processa mensagem de localização compartilhada via WhatsApp.
         Já tem lat/lng — pula geocodificação, vai direto para calculate_delivery_fee.
         """
-        from apps.automation.services import get_session_manager
-
-        session_manager = get_session_manager(self.account, self.conversation.phone_number)
+        session_manager = self._get_session_manager()
 
         if not self.store:
             session_manager.set_waiting_for_address(False)
             return self._ask_payment_method('delivery')
 
         try:
-            from apps.stores.services.here_maps_service import HereMapsService
-            here = HereMapsService()
+            from apps.stores.services.geo import geo_service
 
-            # Reverse geocode para obter endereço formatado (exibe para o cliente)
             address_display = address_hint
+            rev_components: dict = {}
             if not address_display:
                 try:
-                    rev = here.reverse_geocode(lat, lng)
+                    rev = geo_service.reverse_geocode(lat, lng)
                     if rev:
                         address_display = rev.get('formatted_address', f"{lat:.6f}, {lng:.6f}")
+                        rev_components = {
+                            k: v for k, v in rev.items()
+                            if k in ('street', 'house_number', 'neighborhood', 'city', 'state', 'state_code', 'zip_code')
+                            and v
+                        }
                 except Exception:
                     address_display = f"{lat:.6f}, {lng:.6f}"
 
             return self._process_location_and_ask_payment(
                 session_manager=session_manager,
-                here=here,
+                geo_svc=geo_service,
                 lat=lat,
                 lng=lng,
                 formatted_address=address_display,
+                address_components=rev_components,
             )
 
         except Exception as exc:
@@ -307,13 +443,30 @@ class IntentHandler:
     def _process_location_and_ask_payment(
         self,
         session_manager,
-        here,
+        geo_svc,
         lat: float,
         lng: float,
         formatted_address: str,
+        address_components: dict = None,
     ) -> 'HandlerResult':
         """Calcula taxa, salva na sessão, envia confirmação e pergunta método de pagamento."""
-        fee_result = here.calculate_delivery_fee(self.store, lat, lng)
+        fee_result = geo_svc.calculate_delivery_fee(self.store, lat, lng)
+
+        fixed_zone_from_text = self._match_fixed_delivery_zone_from_text(formatted_address)
+        if fixed_zone_from_text:
+            fixed_fee = float(fixed_zone_from_text.get('fee', self.store.default_delivery_fee or 0))
+            fee_result = {
+                **fee_result,
+                'fee': fixed_fee,
+                'is_within_area': True,
+                'zone': {
+                    'id': None,
+                    'name': fixed_zone_from_text.get('name') or 'Taxa fixa',
+                    'min_distance': None,
+                    'max_distance': None,
+                },
+                'message': f"Entrega com taxa fixa para a região: {fixed_zone_from_text.get('name', 'especial')}",
+            }
 
         if not fee_result.get('is_within_area', True):
             return HandlerResult.text(
@@ -332,6 +485,7 @@ class IntentHandler:
             duration_minutes=duration_minutes,
             lat=lat,
             lng=lng,
+            address_components=address_components or {},
         )
 
         dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
@@ -354,8 +508,7 @@ class IntentHandler:
     def _ask_delivery_method(self, items: List[Dict[str, Any]]) -> 'HandlerResult':
         """Salva itens na sessão e pergunta entrega ou retirada."""
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             session_manager.save_pending_order_items(items)
         except Exception as exc:
             logger.warning("[_ask_delivery_method] Erro ao salvar itens pendentes: %s", exc)
@@ -382,8 +535,7 @@ class IntentHandler:
     def _ask_payment_method(self, delivery_method: str) -> 'HandlerResult':
         """Salva delivery_method na sessão e pergunta como o cliente quer pagar."""
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             session_manager.save_pending_delivery_method(delivery_method)
         except Exception as exc:
             logger.warning("[_ask_payment_method] Erro ao salvar delivery_method: %s", exc)
@@ -411,8 +563,6 @@ class IntentHandler:
         addr_info: dict = None,
     ) -> 'HandlerResult':
         """Cria o pedido com delivery e payment method definidos e retorna confirmação."""
-        from apps.whatsapp.services import create_order_from_whatsapp
-
         store_slug = getattr(self.store, 'slug', '') if self.store else ''
         if not store_slug:
             return HandlerResult.text("❌ Loja não disponível no momento.")
@@ -512,8 +662,14 @@ class PriceCheckHandler(IntentHandler):
     """Handler para consulta de preços — delega ao LLM (tem ferramenta buscar_produto)."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info("[PriceCheckHandler] Delegando ao LLM")
-        return HandlerResult.needs_llm()
+        message = intent_data.get('original_message', '')
+        normalized_message = self._normalize_lookup_text(message)
+        if any(term in normalized_message for term in ('taxa', 'frete', 'entrega', 'delivery')):
+            logger.info("[PriceCheckHandler] Respondendo taxa de entrega de forma determinística")
+            return HandlerResult.text(self._build_delivery_info_text(message))
+
+        logger.info("[PriceCheckHandler] Respondendo preço de produto de forma determinística")
+        return self._legacy_handle(intent_data)
 
     def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         entities = intent_data.get('entities', {})
@@ -590,8 +746,8 @@ class ProductMentionHandler(IntentHandler):
     """Handler quando usuário menciona produto — delega ao LLM (tem ferramenta buscar_produto)."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info("[ProductMentionHandler] Delegando ao LLM")
-        return HandlerResult.needs_llm()
+        logger.info("[ProductMentionHandler] Respondendo via busca determinística")
+        return self._legacy_handle(intent_data)
 
     def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         message = intent_data.get('original_message', '').lower().strip()
@@ -693,7 +849,9 @@ class MenuRequestHandler(IntentHandler):
         all_products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
-        ).exclude(tags__contains=['ingrediente'])
+        ).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
+            'category__sort_order', 'category__name', 'name'
+        )
 
         total_products = all_products.count()
         logger.info(f"[MenuRequestHandler] Total produtos ativos (excluindo ingredientes): {total_products}")
@@ -716,7 +874,9 @@ class MenuRequestHandler(IntentHandler):
         
         logger.info(f"[MenuRequestHandler] Categorias: {list(products_by_category.keys())}")
         
-        # Cria seções - máximo 10 linhas no total
+        # Cria seções - máximo 10 linhas no total no WhatsApp list message.
+        # Não limita mais 3 por categoria; usa o limite global para não esconder
+        # produtos válidos de uma categoria pequena como Saladas.
         sections = []
         total_rows = 0
         max_rows = 10
@@ -725,8 +885,8 @@ class MenuRequestHandler(IntentHandler):
             if total_rows >= max_rows:
                 break
             
-            # Max 3 produtos por categoria
-            products_to_show = products[:3]
+            remaining_rows = max_rows - total_rows
+            products_to_show = products[:remaining_rows]
             
             rows = [
                 {
@@ -778,8 +938,8 @@ class BusinessHoursHandler(IntentHandler):
     """Handler para horário de funcionamento — delega ao LLM."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info("[BusinessHoursHandler] Delegando ao LLM")
-        return HandlerResult.needs_llm()
+        logger.info("[BusinessHoursHandler] Respondendo horário de forma determinística")
+        return self._legacy_handle(intent_data)
 
     def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         if not self.store:
@@ -840,8 +1000,8 @@ class DeliveryInfoHandler(IntentHandler):
     """Handler para informações de entrega — delega ao LLM."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info("[DeliveryInfoHandler] Delegando ao LLM")
-        return HandlerResult.needs_llm()
+        logger.info("[DeliveryInfoHandler] Respondendo entrega de forma determinística")
+        return HandlerResult.text(self._build_delivery_info_text(intent_data.get('original_message', '')))
 
     def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         if not self.store:
@@ -1017,11 +1177,7 @@ class CreateOrderHandler(IntentHandler):
     
     def _start_order_flow(self) -> HandlerResult:
         """Inicia fluxo de pedido quando não achou itens"""
-        from apps.automation.services import get_session_manager
-        session_manager = get_session_manager(
-            self.account,
-            self.conversation.phone_number
-        )
+        session_manager = self._get_session_manager()
         
         session_manager.get_or_create_session()
         context = session_manager.get_context()
@@ -1094,11 +1250,7 @@ class PaymentStatusHandler(IntentHandler):
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         # Busca sessão ativa primeiro
-        from apps.automation.services import get_session_manager
-        session_manager = get_session_manager(
-            self.account,
-            self.conversation.phone_number
-        )
+        session_manager = self._get_session_manager()
 
         # Verifica se há sessão com pagamento pendente
         if session_manager.is_payment_pending():
@@ -1159,16 +1311,16 @@ class LocationHandler(IntentHandler):
     """Handler para localização/endereço — delega ao LLM."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info("[LocationHandler] Delegando ao LLM")
-        return HandlerResult.needs_llm()
+        logger.info("[LocationHandler] Respondendo localização de forma determinística")
+        return HandlerResult.text(self._build_location_text())
 
 
 class ContactHandler(IntentHandler):
     """Handler para contato — delega ao LLM."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info("[ContactHandler] Delegando ao LLM")
-        return HandlerResult.needs_llm()
+        logger.info("[ContactHandler] Respondendo contato de forma determinística")
+        return HandlerResult.text(self._build_contact_text())
 
 
 class CancelOrderHandler(IntentHandler):
@@ -1177,11 +1329,7 @@ class CancelOrderHandler(IntentHandler):
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         logger.info(f"Cancel order intent")
 
-        from apps.automation.services import get_session_manager
-        session_manager = get_session_manager(
-            self.account,
-            self.conversation.phone_number
-        )
+        session_manager = self._get_session_manager()
 
         # Verifica se há pedido para cancelar
         if session_manager.is_order_in_progress():
@@ -1230,9 +1378,7 @@ class ViewQRCodeHandler(IntentHandler):
     """Handler para mostrar QR Code do PIX"""
     
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        from apps.automation.services import get_session_manager
-        
-        session_manager = get_session_manager(self.account, self.conversation.phone_number)
+        session_manager = self._get_session_manager()
         session_data = session_manager.get_session_data()
         
         pix_code = session_data.get('pix_code', '')
@@ -1272,9 +1418,7 @@ class CopyPixHandler(IntentHandler):
     """Handler para copiar código PIX"""
     
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        from apps.automation.services import get_session_manager
-        
-        session_manager = get_session_manager(self.account, self.conversation.phone_number)
+        session_manager = self._get_session_manager()
         session_data = session_manager.get_session_data()
         
         pix_code = session_data.get('pix_code', '')
@@ -1335,8 +1479,7 @@ class UnknownHandler(IntentHandler):
         location_data = intent_data.get('location')
         if location_data and location_data.get('lat') and location_data.get('lng'):
             try:
-                from apps.automation.services import get_session_manager
-                session_manager = get_session_manager(self.account, self.conversation.phone_number)
+                session_manager = self._get_session_manager()
                 if session_manager.is_waiting_for_address():
                     logger.info(
                         "[UnknownHandler] Localização recebida: lat=%s lng=%s",
@@ -1352,8 +1495,7 @@ class UnknownHandler(IntentHandler):
 
         # ── Verifica se estamos aguardando endereço de entrega (texto) ───────
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             if session_manager.is_waiting_for_address() and len(original_message) >= 5:
                 logger.info("[UnknownHandler] Interceptando como endereço de entrega: %s", original_message[:60])
                 return self._handle_address_input(original_message)
@@ -1376,8 +1518,7 @@ class UnknownHandler(IntentHandler):
     def _try_pending_product_order(self, qty: int) -> Optional[HandlerResult]:
         """Se há produto pendente na sessão, cria pedido com a quantidade digitada."""
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             session = session_manager.get_or_create_session()
             context_data = session.context or {}
             product_id = context_data.get('pending_product_id')
@@ -1504,8 +1645,7 @@ class InteractiveReplyHandler(IntentHandler):
         delivery_method = 'pickup' if reply_id == 'order_pickup' else 'delivery'
 
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             items = session_manager.get_pending_order_items()
         except Exception as exc:
             logger.error('[InteractiveReplyHandler] Erro ao recuperar itens pendentes: %s', exc)
@@ -1547,8 +1687,7 @@ class InteractiveReplyHandler(IntentHandler):
         payment_method = payment_map.get(reply_id, 'pix')
 
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             items = session_manager.get_pending_order_items()
             delivery_method = session_manager.get_pending_delivery_method()
             addr_info = session_manager.get_delivery_address_info()
@@ -1600,8 +1739,7 @@ class InteractiveReplyHandler(IntentHandler):
 
         # Persist selected product in session so the next free-text reply can resolve it
         try:
-            from apps.automation.services import get_session_manager
-            session_manager = get_session_manager(self.account, self.conversation.phone_number)
+            session_manager = self._get_session_manager()
             session = session_manager.get_or_create_session()
             session.update_context('pending_product_id', str(product.id))
             session.update_context('pending_product_name', product.name)

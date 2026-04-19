@@ -408,7 +408,11 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 logger.info(f"Status notification sent for order {order_id}: {new_status}")
 
         except AutoMessage.DoesNotExist:
-            logger.debug(f"No active template for event '{event_type}' on store {order.store_id}")
+            # No AutoMessage template configured — fall back to the model's built-in
+            # notification (hardcoded defaults + optional store.metadata overrides).
+            # This preserves backward compatibility for stores that haven't set up templates.
+            logger.debug(f"No active template for event '{event_type}' on store {order.store_id}, using direct fallback")
+            order._trigger_status_whatsapp_notification(new_status)
 
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found")

@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}Pastita Panel{% endblock %}</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50:  '#fdf2f3',
+              100: '#fce4e6',
+              200: '#f8c8cc',
+              300: '#f39aa2',
+              400: '#d9606d',
+              500: '#722F37',
+              600: '#5c262d',
+              700: '#4d1f25',
+              800: '#411b20',
+              900: '#391a1e',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    }
+  </script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    [x-cloak] { display: none !important; }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #52525b; }
+  </style>
+
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="dark h-full bg-zinc-950 text-white font-sans antialiased">
+
+{% block full_page %}
+<div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: false }">
+
+  <!-- Mobile overlay -->
+  <div x-show="sidebarOpen" x-cloak @click="sidebarOpen = false"
+       class="fixed inset-0 z-20 bg-black/70 lg:hidden"></div>
+
+  <!-- ══════════════════════ SIDEBAR ══════════════════════ -->
+  <aside :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full'"
+         class="fixed inset-y-0 left-0 z-30 w-56 flex flex-col
+                bg-zinc-900 border-r border-zinc-800/80
+                transform transition-transform duration-200 ease-in-out
+                lg:relative lg:translate-x-0 lg:shrink-0">
+
+    <!-- Brand -->
+    <div class="flex items-center gap-3 px-4 py-4 border-b border-zinc-800/80">
+      <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-500">
+        <span class="text-sm font-bold text-white">P</span>
+      </div>
+      <div class="min-w-0 flex-1">
+        <p class="text-[10px] text-zinc-500 uppercase tracking-widest leading-none mb-0.5">Panel</p>
+        {% if current_store %}
+          <p class="text-sm font-semibold text-white truncate leading-tight">{{ current_store.name }}</p>
+        {% else %}
+          <p class="text-sm text-zinc-500">Nenhuma loja</p>
+        {% endif %}
+      </div>
+      <button @click="sidebarOpen = false" class="lg:hidden text-zinc-500 hover:text-white p-1">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
+      {% url 'panel:dashboard'     as url_dash %}
+      {% url 'panel:orders'        as url_orders %}
+      {% url 'panel:conversations' as url_convs %}
+      {% url 'panel:products'      as url_prods %}
+      {% url 'panel:customers'     as url_custs %}
+      {% url 'panel:settings'      as url_settings %}
+      {% url 'panel:stores'        as url_stores %}
+      {% with p=request.path %}
+
+      <a href="{{ url_dash }}"
+         class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+                {% if p == url_dash %}bg-brand-600/20 text-brand-300{% else %}text-zinc-400 hover:text-white hover:bg-zinc-800{% endif %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+        </svg>
+        Início
+      </a>
+
+      <a href="{{ url_orders }}"
+         class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+                {% if '/panel/o' in p %}bg-brand-600/20 text-brand-300{% else %}text-zinc-400 hover:text-white hover:bg-zinc-800{% endif %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+        </svg>
+        Pedidos
+        {% if pending_orders_count %}
+        <span class="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-brand-500 px-1 text-[10px] font-bold text-white">{{ pending_orders_count }}</span>
+        {% endif %}
+      </a>
+
+      <a href="{{ url_convs }}"
+         class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+                {% if 'conversations' in p %}bg-brand-600/20 text-brand-300{% else %}text-zinc-400 hover:text-white hover:bg-zinc-800{% endif %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+        </svg>
+        Conversas
+      </a>
+
+      <a href="{{ url_prods }}"
+         class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+                {% if 'products' in p %}bg-brand-600/20 text-brand-300{% else %}text-zinc-400 hover:text-white hover:bg-zinc-800{% endif %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+        </svg>
+        Produtos
+      </a>
+
+      <a href="{{ url_custs }}"
+         class="group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
+                {% if 'customers' in p %}bg-brand-600/20 text-brand-300{% else %}text-zinc-400 hover:text-white hover:bg-zinc-800{% endif %}">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        Clientes
+      </a>
+
+      {% endwith %}
+    </nav>
+
+    <!-- Bottom -->
+    <div class="px-3 pb-3 pt-2 border-t border-zinc-800/80 space-y-0.5">
+      <a href="{{ url_settings }}"
+         class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        Configurações
+      </a>
+      <a href="{{ url_stores }}"
+         class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors">
+        <svg class="h-4 w-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+        </svg>
+        Trocar loja
+      </a>
+      <!-- User row -->
+      <div class="flex items-center gap-2.5 px-3 py-2 mt-1">
+        <div class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-600 text-[10px] font-bold">
+          {{ user.first_name|first|upper|default:user.email|first|upper }}
+        </div>
+        <span class="text-xs text-zinc-400 truncate flex-1">{{ user.get_full_name|default:user.email }}</span>
+        <a href="{% url 'panel:logout' %}" title="Sair"
+           class="text-zinc-600 hover:text-red-400 transition-colors">
+          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ══════════════════════ MAIN ══════════════════════ -->
+  <div class="flex flex-1 flex-col min-w-0 overflow-hidden">
+
+    <!-- Top bar -->
+    <header class="flex h-12 shrink-0 items-center gap-3 border-b border-zinc-800/80 bg-zinc-900 px-4">
+      <button @click="sidebarOpen = true"
+              class="lg:hidden p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors">
+        <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+        </svg>
+      </button>
+      <h1 class="text-sm font-semibold text-white">{% block page_title %}Panel{% endblock %}</h1>
+      {% if current_store %}
+      <div class="ml-auto flex items-center gap-1.5">
+        <span class="h-1.5 w-1.5 rounded-full {% if current_store.status == 'active' %}bg-green-400{% else %}bg-zinc-500{% endif %}"></span>
+        <span class="text-xs text-zinc-400">{{ current_store.name }}</span>
+      </div>
+      {% endif %}
+    </header>
+
+    <main class="flex-1 overflow-y-auto p-4 md:p-6">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+</div>
+{% endblock %}
+{% block extra_scripts %}{% endblock %}
+</body>
+</html>

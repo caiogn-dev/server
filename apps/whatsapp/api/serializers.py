@@ -217,6 +217,37 @@ class SendDocumentSerializer(serializers.Serializer):
         return data
 
 
+class SendAudioSerializer(serializers.Serializer):
+    """Serializer for sending audio message."""
+    account_id = serializers.UUIDField()
+    to = serializers.CharField(max_length=20)
+    audio_url = serializers.URLField(required=False, allow_blank=True)
+    audio_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    reply_to = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    metadata = serializers.JSONField(required=False, default=dict)
+
+    def validate(self, data):
+        if not data.get('audio_url') and not data.get('audio_id'):
+            raise serializers.ValidationError("Either audio_url or audio_id must be provided")
+        return data
+
+
+class SendVideoSerializer(serializers.Serializer):
+    """Serializer for sending video message."""
+    account_id = serializers.UUIDField()
+    to = serializers.CharField(max_length=20)
+    video_url = serializers.URLField(required=False, allow_blank=True)
+    video_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    caption = serializers.CharField(max_length=1024, required=False, allow_blank=True)
+    reply_to = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    metadata = serializers.JSONField(required=False, default=dict)
+
+    def validate(self, data):
+        if not data.get('video_url') and not data.get('video_id'):
+            raise serializers.ValidationError("Either video_url or video_id must be provided")
+        return data
+
+
 class MessageTemplateSerializer(serializers.ModelSerializer):
     """Serializer for Message Template."""
     
