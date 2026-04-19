@@ -297,15 +297,38 @@ class LangchainService:
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading store menu: {e}")
         
-        # 3. Load business hours
+        # 3. Load business hours + pickup address
+        _DAY_PT = {
+            'monday': 'Segunda', 'tuesday': 'Terça', 'wednesday': 'Quarta',
+            'thursday': 'Quinta', 'friday': 'Sexta', 'saturday': 'Sábado', 'sunday': 'Domingo',
+        }
         try:
             if store and store.operating_hours:
                 hours_text = "\n⏰ HORÁRIO DE FUNCIONAMENTO:\n"
                 for day, hours in store.operating_hours.items():
-                    hours_text += f"• {day}: {hours.get('open', '--:--')} - {hours.get('close', '--:--')}\n"
+                    day_pt = _DAY_PT.get(day.lower(), day.capitalize())
+                    hours_text += f"• {day_pt}: {hours.get('open', '--:--')} às {hours.get('close', '--:--')}\n"
                 context_parts.append(hours_text)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
+
+        try:
+            if store:
+                location_parts = []
+                if getattr(store, 'pickup_enabled', False):
+                    address = getattr(store, 'address', '') or ''
+                    city = getattr(store, 'city', '') or ''
+                    full_address = ', '.join(p for p in [address, city] if p)
+                    if full_address:
+                        location_parts.append(f"• Endereço para retirada: {full_address}")
+                if getattr(store, 'delivery_enabled', False) and not getattr(store, 'pickup_enabled', False):
+                    location_parts.append("• Apenas entrega (sem retirada no local)")
+                if not getattr(store, 'delivery_enabled', False) and getattr(store, 'pickup_enabled', False):
+                    location_parts.append("• Apenas retirada no local (sem entrega)")
+                if location_parts:
+                    context_parts.append("\n📍 LOCALIZAÇÃO:\n" + "\n".join(location_parts))
+        except Exception as e:
+            logger.error(f"[AGENT CONTEXT] Error loading location: {e}")
 
         # 4. Active session state — lets the agent answer "what's in my order?" accurately
         if phone_number:
@@ -357,7 +380,12 @@ class LangchainService:
                         session_parts.append("Status: aguardando endereço de entrega do cliente.")
 
                     if session.pix_code:
-                        session_parts.append("Status: pagamento PIX gerado, aguardando confirmação.")
+                        session_parts.append(
+                            f"Status: pagamento PIX gerado, aguardando confirmação.\n"
+                            f"Código PIX (copia e cola): {session.pix_code}"
+                        )
+                        if session.pix_qr_code:
+                            session_parts.append(f"QR Code PIX (base64): {session.pix_qr_code[:50]}... [truncado]")
 
                     if session_parts:
                         context_parts.append("\n🛒 ESTADO DO PEDIDO ATUAL:\n" + "\n".join(session_parts))
@@ -403,12 +431,16 @@ class LangchainService:
 
         @tool
         def listar_categorias() -> str:
-            """Lista todas as categorias disponíveis no cardápio."""
+            """Lista as categorias de produtos disponíveis para venda (saladas, molhos, combos, etc)."""
             if not store:
                 return "Cardápio indisponível no momento."
             try:
                 from apps.stores.models import StoreCategory
-                cats = StoreCategory.objects.filter(store=store, is_active=True).order_by('sort_order')
+                cats = StoreCategory.objects.filter(
+                    store=store, is_active=True
+                ).exclude(
+                    name__istartswith='Ingrediente'
+                ).order_by('sort_order')
                 if not cats:
                     return "Nenhuma categoria encontrada."
                 return "\n".join(f"• {c.name}" for c in cats)
@@ -488,8 +520,54 @@ class LangchainService:
             except Exception as exc:
                 return f"Erro ao consultar entrega: {exc}"
 
+        @tool
+        def consultar_pagamento() -> str:
+            """Consulta o status de pagamento e retorna o código PIX do pedido pendente do cliente."""
+            if not phone_number:
+                return "Telefone do cliente não disponível."
+            try:
+                from apps.stores.models import StoreOrder
+                from apps.automation.models import CustomerSession
+
+                # First try CustomerSession (most recent)
+                session_qs = CustomerSession.objects.filter(phone_number=phone_number)
+                if store:
+                    from apps.automation.models import CompanyProfile as _CP
+                    profile_ids = _CP.objects.filter(store=store).values_list('id', flat=True)
+                    session_qs = session_qs.filter(company_id__in=profile_ids)
+                session = session_qs.order_by('-updated_at').first()
+                if session and session.pix_code:
+                    expires = ""
+                    if session.pix_expires_at:
+                        from django.utils import timezone
+                        if session.pix_expires_at > timezone.now():
+                            expires = f"\nExpira em: {session.pix_expires_at.strftime('%d/%m/%Y %H:%M')}"
+                        else:
+                            return "O PIX gerado expirou. Um novo pagamento precisa ser gerado."
+                    return (
+                        f"✅ PIX gerado!\n"
+                        f"Código copia e cola:\n{session.pix_code}"
+                        f"{expires}"
+                    )
+
+                # Fallback: try StoreOrder directly
+                order = StoreOrder.objects.filter(
+                    customer_phone__in=[phone_number, phone_number.lstrip('+'), f"+{phone_number.lstrip('+')}"],
+                    payment_status='pending',
+                ).exclude(pix_code='').order_by('-created_at').first()
+                if order and order.pix_code:
+                    return (
+                        f"✅ PIX gerado para pedido #{order.order_number}!\n"
+                        f"Total: R$ {order.total}\n"
+                        f"Código copia e cola:\n{order.pix_code}"
+                    )
+
+                return "Nenhum PIX pendente encontrado. O pagamento ainda não foi gerado."
+            except Exception as exc:
+                return f"Erro ao consultar pagamento: {exc}"
+
         return [buscar_produto, listar_categorias, verificar_pedido_pendente,
-                consultar_historico_pedidos, informacoes_entrega]
+                consultar_historico_pedidos, informacoes_entrega, consultar_pagamento]
 
     def _get_store_for_context(self, conversation_id: Optional[str] = None):
         """Resolve the store for tool binding (same logic as _build_dynamic_context)."""

@@ -533,7 +533,20 @@ class UnifiedService:
         session_data = self._get_session_data()
 
         # 2. Template do banco de dados (determinístico, antes do LLM)
-        template = self._get_template_for_intent(intent)
+        # Pular template para intents consultivas quando há agente LLM ativo —
+        # o agente responde de forma mais rica e contextualizada.
+        _agent_intents = {
+            IntentType.PRODUCT_INQUIRY, IntentType.MENU_REQUEST,
+            IntentType.PRODUCT_MENTION, IntentType.FAQ,
+            IntentType.BUSINESS_HOURS, IntentType.LOCATION,
+        }
+        _skip_template = (
+            intent in _agent_intents
+            and self.company
+            and getattr(self.company, 'use_ai_agent', False)
+            and getattr(self.company, 'default_agent', None)
+        )
+        template = None if _skip_template else self._get_template_for_intent(intent)
         if template:
             validated_buttons = _validate_buttons(template.buttons)
             _ms = round((time.monotonic() - _t0) * 1000, 1)

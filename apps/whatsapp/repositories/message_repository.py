@@ -52,10 +52,14 @@ class MessageRepository:
         limit: int = 50
     ) -> QuerySet[Message]:
         """Get messages for a specific conversation."""
+        # Normalise: check both +55... and 55... variants so outbound messages
+        # (stored with +) are found when query arrives without + (and vice-versa).
+        digits = ''.join(c for c in phone_number if c.isdigit())
+        candidates = {phone_number, digits, f'+{digits}'}
         return Message.objects.filter(
             account=account
         ).filter(
-            Q(from_number=phone_number) | Q(to_number=phone_number)
+            Q(from_number__in=candidates) | Q(to_number__in=candidates)
         ).select_related('conversation').order_by('-created_at')[:limit]
 
     def create(self, **kwargs) -> Message:
