@@ -1087,16 +1087,16 @@ class WebhookService:
 
             media_bytes = api_service.download_media(url)
             sha256 = hashlib.sha256(media_bytes).hexdigest()
-            extension = mimetypes.guess_extension(mime_type or '') or ''
+            # Strip codec params (e.g. "audio/ogg; codecs=opus") before guessing extension
+            mime_base = (mime_type or '').split(';')[0].strip()
+            extension = mimetypes.guess_extension(mime_base) or ''
             filename = f"whatsapp/{account.id}/{media_id}{extension}"
 
             if default_storage.exists(filename):
-                # Use default_storage.url() to get correct URL (works with S3 and local)
-                return default_storage.url(filename), sha256
+                return build_absolute_media_url(default_storage.url(filename)), sha256
 
             saved_path = default_storage.save(filename, ContentFile(media_bytes))
-            # Use default_storage.url() to get correct URL (works with S3 and local)
-            return default_storage.url(saved_path), sha256
+            return build_absolute_media_url(default_storage.url(saved_path)), sha256
 
         except Exception as exc:
             logger.warning(f"Failed to persist media {media_id}: {exc}")

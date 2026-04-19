@@ -385,7 +385,7 @@ class UnifiedService:
         message_text: str,
         interactive_reply: Optional[Dict[str, Any]] = None,
         location_data: Optional[Dict[str, Any]] = None,
-    ) -> UnifiedResponse:
+    ) -> Optional['UnifiedResponse']:
         """
         Processa uma mensagem e retorna a melhor resposta disponível.
 
@@ -399,6 +399,13 @@ class UnifiedService:
         Emite log estruturado ao final com:
           unified.intent, unified.source, unified.duration_ms, unified.store_id
         """
+        if self.conversation and getattr(self.conversation, 'mode', None) == 'human':
+            logger.info(
+                '[unified] Conversation in human mode — skipping automation',
+                extra={'conversation_id': str(self.conversation.pk)},
+            )
+            return None
+
         _t0 = time.monotonic()
         _store_id = str(self.store.id) if self.store else None
 

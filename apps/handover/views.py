@@ -13,8 +13,10 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q
 from apps.conversations.models import Conversation
+from apps.conversations.repositories.conversation_repository import ConversationRepository
 from .models import (
     ConversationHandover,
     HandoverRequest,
@@ -78,15 +80,18 @@ class HandoverViewSet(viewsets.ViewSet):
         serializer = TransferToBotSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
-        # Realizar transferência
-        handover.transfer_to_bot(
-            user=request.user,
-            reason=serializer.validated_data.get('reason', '')
-        )
-        
+        # Realizar transferência — atômica: handover + conversation.mode juntos
+        with transaction.atomic():
+            handover.transfer_to_bot(
+                user=request.user,
+                reason=serializer.validated_data.get('reason', '')
+            )
+            ConversationRepository().switch_to_auto(conversation)
+
         return Response({
             'success': True,
             'handover_status': handover.status,
+            'conversation_mode': conversation.mode,
             'status_display': handover.get_status_display(),
             'message': 'Conversa transferida para o bot'
         })
@@ -116,16 +121,21 @@ class HandoverViewSet(viewsets.ViewSet):
             except User.DoesNotExist:
                 pass
         
-        # Realizar transferência
-        handover.transfer_to_human(
-            user=request.user,
-            assigned_to=assigned_to or request.user,
-            reason=serializer.validated_data.get('reason', '')
-        )
-        
+        effective_agent = assigned_to or request.user
+
+        # Realizar transferência — atômica: handover + conversation.mode juntos
+        with transaction.atomic():
+            handover.transfer_to_human(
+                user=request.user,
+                assigned_to=effective_agent,
+                reason=serializer.validated_data.get('reason', '')
+            )
+            ConversationRepository().switch_to_human(conversation, agent=effective_agent)
+
         return Response({
             'success': True,
             'handover_status': handover.status,
+            'conversation_mode': conversation.mode,
             'status_display': handover.get_status_display(),
             'assigned_to': str(handover.assigned_to.id) if handover.assigned_to else None,
             'assigned_to_name': handover.assigned_to.get_full_name() if handover.assigned_to else None,
