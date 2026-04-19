@@ -48,6 +48,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/1}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - DEBUG=False
+      - GOOGLE_MAPS_KEY=${GOOGLE_MAPS_KEY}
+      - HERE_API_KEY=${HERE_API_KEY}
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media
@@ -78,6 +80,8 @@ services:
       - DJANGO_SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-min-50-chars-long-12345}
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres123@db:5432/pastita}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - GOOGLE_MAPS_KEY=${GOOGLE_MAPS_KEY}
+      - HERE_API_KEY=${HERE_API_KEY}
     depends_on:
       - db
       - redis
@@ -93,6 +97,8 @@ services:
       - DJANGO_SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production-min-50-chars-long-12345}
       - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres123@db:5432/pastita}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - GOOGLE_MAPS_KEY=${GOOGLE_MAPS_KEY}
+      - HERE_API_KEY=${HERE_API_KEY}
     depends_on:
       - db
       - redis

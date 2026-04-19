@@ -57,7 +57,13 @@ x-django-env: &django-env
   RESEND_API_KEY: ${RESEND_API_KEY}
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL}
   # Maps
+  GOOGLE_MAPS_KEY: ${GOOGLE_MAPS_KEY}
   HERE_API_KEY: ${HERE_API_KEY}
+  # Toca Delivery
+  TOCA_DELIVERY_API_URL: ${TOCA_DELIVERY_API_URL:-https://api.tocadelivery.com.br}
+  TOCA_DELIVERY_EMAIL: ${TOCA_DELIVERY_EMAIL}
+  TOCA_DELIVERY_PASSWORD: ${TOCA_DELIVERY_PASSWORD}
+  TOCA_DELIVERY_ENABLED: ${TOCA_DELIVERY_ENABLED:-false}
   # Meta / Pixel
   META_PIXEL_ID: ${META_PIXEL_ID}
   META_CAPI_ACCESS_TOKEN: ${META_CAPI_ACCESS_TOKEN}
@@ -162,9 +168,9 @@ services:
     depends_on:
       celery:
         condition: service_healthy
-    command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: celery -A config.celery beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler --pidfile /tmp/celerybeat.pid
     healthcheck:
-      test: ["CMD-SHELL", "ps aux | grep -v grep | grep -q 'celery beat' || exit 1"]
+      test: ["CMD-SHELL", "test -f /tmp/celerybeat.pid && kill -0 $(cat /tmp/celerybeat.pid) 2>/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
