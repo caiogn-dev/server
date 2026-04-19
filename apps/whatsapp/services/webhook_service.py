@@ -18,7 +18,8 @@ from apps.core.utils import (
     verify_webhook_signature,
     generate_idempotency_key,
     normalize_phone_number,
-    build_absolute_media_url
+    build_absolute_media_url,
+    mime_to_extension,
 )
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
@@ -1087,9 +1088,7 @@ class WebhookService:
 
             media_bytes = api_service.download_media(url)
             sha256 = hashlib.sha256(media_bytes).hexdigest()
-            # Strip codec params (e.g. "audio/ogg; codecs=opus") before guessing extension
-            mime_base = (mime_type or '').split(';')[0].strip()
-            extension = mimetypes.guess_extension(mime_base) or ''
+            extension = mime_to_extension(mime_type)
             filename = f"whatsapp/{account.id}/{media_id}{extension}"
 
             if default_storage.exists(filename):

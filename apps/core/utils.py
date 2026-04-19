@@ -58,6 +58,37 @@ def mask_token(token: str, visible_chars: int = 4) -> str:
     return f"{token[:visible_chars]}{'*' * (len(token) - visible_chars * 2)}{token[-visible_chars:]}"
 
 
+_MIME_EXTENSIONS = {
+    'audio/ogg': '.ogg',
+    'audio/mpeg': '.mp3',
+    'audio/mp4': '.m4a',
+    'audio/aac': '.aac',
+    'audio/webm': '.weba',
+    'audio/wav': '.wav',
+    'image/jpeg': '.jpg',
+    'image/png': '.png',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'video/mp4': '.mp4',
+    'video/webm': '.webm',
+    'video/3gpp': '.3gp',
+    'application/pdf': '.pdf',
+    'application/msword': '.doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+}
+
+
+def mime_to_extension(mime_type: str) -> str:
+    """Return file extension for a MIME type, stripping codec parameters.
+    Falls back to mimetypes module if not in the hardcoded map.
+    """
+    import mimetypes
+    base = (mime_type or '').split(';')[0].strip().lower()
+    if base in _MIME_EXTENSIONS:
+        return _MIME_EXTENSIONS[base]
+    return mimetypes.guess_extension(base) or ''
+
+
 def build_absolute_media_url(url: str) -> str:
     """Ensure media URL is absolute using BACKEND_URL when needed."""
     if not url:
