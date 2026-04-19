@@ -50,16 +50,26 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         mock_maps_service.geocode.return_value = {
             'lat': -10.185,
             'lng': -48.303,
+            'latitude': -10.185,
+            'longitude': -48.303,
+            'display_name': 'Palmas, TO',
             'formatted_address': 'Palmas, TO'
         }
 
         response = self.client.get('/api/v1/stores/maps/geocode/', {'address': 'Palmas, TO'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['formatted_address'], 'Palmas, TO')
+        self.assertEqual(response.data['latitude'], -10.185)
+        self.assertEqual(response.data['display_name'], 'Palmas, TO')
 
     @patch('apps.stores.api.maps_views.here_maps_service')
     def test_maps_reverse_geocode_endpoint(self, mock_maps_service):
         mock_maps_service.reverse_geocode.return_value = {
+            'lat': -10.185,
+            'lng': -48.303,
+            'latitude': -10.185,
+            'longitude': -48.303,
+            'display_name': 'Palmas, TO',
             'formatted_address': 'Palmas, TO',
             'city': 'Palmas',
             'state': 'TO',
@@ -68,16 +78,25 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         response = self.client.get('/api/v1/stores/maps/reverse-geocode/', {'lat': '-10.185', 'lng': '-48.303'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['city'], 'Palmas')
+        self.assertEqual(response.data['latitude'], -10.185)
 
     @patch('apps.stores.api.maps_views.here_maps_service')
     def test_maps_autosuggest_endpoint(self, mock_maps_service):
         mock_maps_service.autosuggest.return_value = [
-            {'title': 'Palmas, TO', 'lat': -10.185, 'lng': -48.303}
+            {
+                'title': 'Palmas, TO',
+                'display_name': 'Palmas, TO',
+                'lat': -10.185,
+                'lng': -48.303,
+                'latitude': -10.185,
+                'longitude': -48.303,
+            }
         ]
 
         response = self.client.get('/api/v1/stores/maps/autosuggest/', {'q': 'Palmas'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['suggestions'])
+        self.assertEqual(response.data['suggestions'][0]['display_name'], 'Palmas, TO')
 
     @patch('apps.stores.api.maps_views.here_maps_service')
     def test_store_delivery_zones_endpoint(self, mock_maps_service):

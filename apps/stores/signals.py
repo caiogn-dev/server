@@ -3,6 +3,7 @@ Django signals for the stores app.
 """
 import logging
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
@@ -24,8 +25,20 @@ def invalidate_store_slug_cache(sender, instance, **kwargs):
 @receiver(pre_save, sender='stores.StoreOrder')
 def capture_order_previous_status(sender, instance, **kwargs):
     """Capture previous status before save for transition detection."""
-    if instance.pk:
-        _ORDER_PREV_STATUS[instance.pk] = getattr(instance, '_pre_save_status', instance.status)
+    if not instance.pk:
+        return
+
+    if hasattr(instance, '_pre_save_status'):
+        _ORDER_PREV_STATUS[instance.pk] = instance._pre_save_status
+        return
+
+    previous_status = (
+        sender.objects
+        .filter(pk=instance.pk)
+        .values_list('status', flat=True)
+        .first()
+    )
+    _ORDER_PREV_STATUS[instance.pk] = previous_status
 
 
 @receiver(post_save, sender='stores.StoreOrder')
@@ -35,7 +48,8 @@ def on_order_created(sender, instance, created, **kwargs):
         return
     try:
         from apps.stores.tasks import notify_new_order_push
-        notify_new_order_push.delay(str(instance.id))
+        order_id = str(instance.id)
+        transaction.on_commit(lambda: notify_new_order_push.delay(order_id))
     except Exception as e:
         logger.error(f"on_order_created signal error: {e}")
 
@@ -68,6 +82,7 @@ def on_order_confirmed_dispatch_toca(sender, instance, created, **kwargs):
 
     try:
         from apps.stores.tasks import dispatch_order_to_toca_delivery
-        dispatch_order_to_toca_delivery.delay(str(instance.id))
+        order_id = str(instance.id)
+        transaction.on_commit(lambda: dispatch_order_to_toca_delivery.delay(order_id))
     except Exception as exc:
         logger.error('on_order_confirmed_dispatch_toca: failed to enqueue task: %s', exc)

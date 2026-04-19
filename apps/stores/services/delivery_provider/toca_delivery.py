@@ -124,8 +124,15 @@ class TocaDeliveryProvider(DeliveryProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _to_float(value) -> Optional[float]:
+        """Convert Decimal/str/int to float, or None if falsy."""
+        return float(value) if value is not None and value != '' else None
+
+    @staticmethod
     def _build_address(addr: dict, store=None) -> dict:
         """Convert a delivery_address dict (server2 format) to Toca EnderecoSchema."""
+        lat_raw = addr.get('lat') or addr.get('latitude')
+        lng_raw = addr.get('lng') or addr.get('longitude')
         return {
             'logradouro': addr.get('street') or addr.get('logradouro') or '',
             'numero': addr.get('number') or addr.get('numero') or 'S/N',
@@ -134,8 +141,8 @@ class TocaDeliveryProvider(DeliveryProvider):
             'cidade': addr.get('city') or addr.get('cidade') or 'Palmas',
             'estado': addr.get('state') or addr.get('estado') or 'TO',
             'cep': addr.get('zip_code') or addr.get('cep') or None,
-            'lat': addr.get('lat') or None,
-            'lng': addr.get('lng') or None,
+            'lat': float(lat_raw) if lat_raw else None,
+            'lng': float(lng_raw) if lng_raw else None,
         }
 
     @staticmethod
@@ -143,6 +150,8 @@ class TocaDeliveryProvider(DeliveryProvider):
         """Build the pickup (store) address from the Store model."""
         meta = getattr(store, 'metadata', {}) or {}
         addr_data = getattr(store, 'address_data', {}) or {}
+        lat_raw = getattr(store, 'latitude', None) or addr_data.get('lat')
+        lng_raw = getattr(store, 'longitude', None) or addr_data.get('lng')
         return {
             'logradouro': getattr(store, 'address', '') or meta.get('address', ''),
             'numero': getattr(store, 'number', '') or meta.get('number', 'S/N') or 'S/N',
@@ -151,8 +160,8 @@ class TocaDeliveryProvider(DeliveryProvider):
             'cidade': getattr(store, 'city', 'Palmas') or 'Palmas',
             'estado': getattr(store, 'state', 'TO') or 'TO',
             'cep': getattr(store, 'zip_code', None) or meta.get('zip_code'),
-            'lat': getattr(store, 'latitude', None) or addr_data.get('lat'),
-            'lng': getattr(store, 'longitude', None) or addr_data.get('lng'),
+            'lat': float(lat_raw) if lat_raw else None,
+            'lng': float(lng_raw) if lng_raw else None,
         }
 
     # ------------------------------------------------------------------
