@@ -23,9 +23,10 @@ def _google_geocode_ok(lat=-10.184, lng=-48.334, formatted="Rua das Flores, 10, 
     return {
         'status': 'OK',
         'results': [{
-            'geometry': {'location': {'lat': lat, 'lng': lng}},
+            'geometry': {'location': {'lat': lat, 'lng': lng}, 'location_type': 'ROOFTOP'},
             'formatted_address': formatted,
             'place_id': 'ChIJfake123',
+            'types': ['street_address'],
             'address_components': [
                 {'long_name': 'Rua das Flores', 'short_name': 'R. das Flores', 'types': ['route']},
                 {'long_name': '10', 'short_name': '10', 'types': ['street_number']},
@@ -131,6 +132,17 @@ class ParseAddressComponentsTest(TestCase):
         comps = self.provider._parse_address_components({'address_components': []})
         self.assertEqual(comps, {})
 
+    def test_premise_falls_back_to_street_when_route_missing(self):
+        result = {
+            'address_components': [
+                {'long_name': 'Edifício Central', 'short_name': 'Ed. Central', 'types': ['premise']},
+                {'long_name': '101', 'short_name': '101', 'types': ['street_number']},
+            ]
+        }
+        comps = self.provider._parse_address_components(result)
+        self.assertEqual(comps['street'], 'Edifício Central')
+        self.assertEqual(comps['premise'], 'Edifício Central')
+
 
 # ---------------------------------------------------------------------------
 # GoogleMapsProvider — geocode
@@ -205,6 +217,53 @@ class GoogleProviderReverseGeocodeTest(TestCase):
         provider = GoogleMapsProvider(api_key='')
         self.assertIsNone(provider.reverse_geocode(-10.184, -48.334))
 
+    @patch('apps.stores.services.geo.google_provider.requests.get')
+    def test_reverse_geocode_retries_without_result_type_when_filtered_request_returns_zero(self, mock_get):
+        mock_get.side_effect = [
+            _mock_response(_google_geocode_zero()),
+            _mock_response(_google_geocode_ok()),
+        ]
+
+        result = self.provider.reverse_geocode(-10.184, -48.334)
+
+        self.assertIsNotNone(result)
+        self.assertEqual(mock_get.call_count, 2)
+        first_params = mock_get.call_args_list[0][1]['params']
+        second_params = mock_get.call_args_list[1][1]['params']
+        self.assertIn('result_type', first_params)
+        self.assertNotIn('result_type', second_params)
+
+    @patch('apps.stores.services.geo.google_provider.requests.get')
+    def test_reverse_geocode_strips_street_and_number_for_low_confidence_results(self, mock_get):
+        low_confidence_payload = {
+            'status': 'OK',
+            'results': [{
+                'geometry': {
+                    'location': {'lat': -10.172271, 'lng': -48.316088},
+                    'location_type': 'APPROXIMATE',
+                },
+                'formatted_address': 'Av. Lo Doze, 211 - Arne, Palmas - TO, 77006-460, Brasil',
+                'place_id': 'place_low_confidence',
+                'types': ['route'],
+                'address_components': [
+                    {'long_name': 'Avenida Lo Doze', 'short_name': 'Av. LO 12', 'types': ['route']},
+                    {'long_name': '211', 'short_name': '211', 'types': ['street_number']},
+                    {'long_name': 'Arne', 'short_name': 'Arne', 'types': ['neighborhood']},
+                    {'long_name': 'Palmas', 'short_name': 'Palmas', 'types': ['locality']},
+                    {'long_name': 'Tocantins', 'short_name': 'TO', 'types': ['administrative_area_level_1']},
+                    {'long_name': 'Brasil', 'short_name': 'BR', 'types': ['country']},
+                ],
+            }],
+        }
+        mock_get.return_value = _mock_response(low_confidence_payload)
+
+        result = self.provider.reverse_geocode(-10.172271, -48.316088)
+
+        self.assertEqual(result['address_confidence'], 'low')
+        self.assertEqual(result['address_components'].get('street', ''), '')
+        self.assertEqual(result['address_components'].get('number', ''), '')
+        self.assertEqual(result['formatted_address'], 'Arne, Palmas, TO, Brasil')
+
 
 # ---------------------------------------------------------------------------
 # GoogleMapsProvider — route
@@ -265,6 +324,7 @@ class GoogleProviderAutosuggestTest(TestCase):
         results = self.provider.autosuggest('Quadra 304')
         self.assertEqual(len(results), 1)
         self.assertIn('title', results[0])
+        self.assertIn('display_name', results[0])
         self.assertEqual(results[0]['place_id'], 'place_001')
         self.assertIsNone(results[0]['lat'])  # autocomplete does not return coords
 
@@ -273,6 +333,27 @@ class GoogleProviderAutosuggestTest(TestCase):
         mock_get.return_value = _mock_response({'status': 'ZERO_RESULTS', 'predictions': []})
         results = self.provider.autosuggest('xyzxyzxyz')
         self.assertEqual(results, [])
+
+    @patch('apps.stores.services.geo.google_provider.requests.get')
+    def test_autosuggest_request_denied_falls_back_to_geocode(self, mock_get):
+        mock_get.return_value = _mock_response({'status': 'REQUEST_DENIED', 'predictions': []})
+
+        with patch.object(self.provider, 'geocode', return_value={
+            'lat': -10.184,
+            'lng': -48.334,
+            'formatted_address': 'Quadra 304 Norte, Palmas - TO, Brasil',
+            'place_id': 'fallback_place',
+            'address_components': {
+                'street': 'Quadra 304 Norte',
+                'city': 'Palmas',
+                'state_code': 'TO',
+            },
+        }):
+            results = self.provider.autosuggest('Quadra 304 Norte')
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['display_name'], 'Quadra 304 Norte, Palmas - TO, Brasil')
+        self.assertEqual(results[0]['latitude'], -10.184)
 
     def test_autosuggest_no_api_key_returns_empty(self):
         provider = GoogleMapsProvider(api_key='')
@@ -340,7 +421,10 @@ class GeoServiceGeocodeTest(TestCase):
         result = self.service.geocode('Rua das Flores, 10')
         self.assertIsNotNone(result)
         self.assertEqual(result['lat'], -10.184)
+        self.assertEqual(result['latitude'], -10.184)
+        self.assertEqual(result['display_name'], 'Rua das Flores, 10, Palmas')
         self.assertEqual(result['street'], 'Rua das Flores')
+        self.assertEqual(result['number'], '10')
         self.assertEqual(result['provider'], 'google')
 
     @patch('apps.stores.services.geo.service.cache')
@@ -408,6 +492,7 @@ class GeoServiceReverseGeocodeTest(TestCase):
             'lng': -48.334,
             'formatted_address': 'Rua das Flores, Palmas',
             'place_id': None,
+            'address_confidence': 'low',
             'address_components': {
                 'street': 'Rua das Flores',
                 'city': 'Palmas',
@@ -421,6 +506,7 @@ class GeoServiceReverseGeocodeTest(TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result['city'], 'Palmas')
         self.assertEqual(result['lat'], -10.184)
+        self.assertEqual(result['address_confidence'], 'low')
 
     @patch('apps.stores.services.geo.service.cache')
     def test_reverse_geocode_uses_rounded_coords_for_cache(self, mock_cache):

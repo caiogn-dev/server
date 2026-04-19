@@ -76,15 +76,23 @@ class GeoService:
     def _normalize_geo_result(self, result: Dict) -> Dict:
         components = result.get('address_components') or {}
         legacy = self._legacy_address_components(components)
+        lat = result.get('lat')
+        lng = result.get('lng')
+        formatted_address = result.get('formatted_address', '')
         normalized = {
-            'lat': result.get('lat'),
-            'lng': result.get('lng'),
-            'formatted_address': result.get('formatted_address', ''),
+            'lat': lat,
+            'lng': lng,
+            'latitude': lat,
+            'longitude': lng,
+            'formatted_address': formatted_address,
+            'display_name': formatted_address,
             'place_id': result.get('place_id'),
+            'address_confidence': result.get('address_confidence', 'high'),
             'address_components': components,
             'address': legacy,
             'provider': self.provider_name,
             'street': components.get('street', ''),
+            'number': components.get('number', ''),
             'house_number': components.get('number', ''),
             'neighborhood': components.get('neighborhood', ''),
             'city': components.get('city', ''),
