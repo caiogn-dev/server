@@ -627,9 +627,10 @@ class WebhookService:
 
     def _send_unified_interactive(self, event, message, unified_response) -> None:
         """Send interactive messages produced by the unified service."""
-        from ..services import WhatsAppAPIService
+        from .message_service import MessageService
 
-        service = WhatsAppAPIService(event.account)
+        svc = MessageService()
+        account_id = str(event.account.id)
         interactive_data = unified_response.interactive_data or {}
         header = unified_response.header or interactive_data.get('header')
         footer = unified_response.footer or interactive_data.get('footer')
@@ -638,7 +639,8 @@ class WebhookService:
             header = {'type': 'text', 'text': header}
 
         if unified_response.interactive_type == 'list':
-            service.send_interactive_list(
+            svc.send_interactive_list(
+                account_id=account_id,
                 to=message.from_number,
                 body_text=interactive_data.get('body') or unified_response.content,
                 button_text=interactive_data.get('button', 'Ver opcoes'),
@@ -650,7 +652,8 @@ class WebhookService:
             return
 
         if unified_response.interactive_type == 'buttons' or unified_response.buttons:
-            service.send_interactive_buttons(
+            svc.send_interactive_buttons(
+                account_id=account_id,
                 to=message.from_number,
                 body_text=interactive_data.get('body') or unified_response.content,
                 buttons=interactive_data.get('buttons') or unified_response.buttons or [],
@@ -660,7 +663,8 @@ class WebhookService:
             )
             return
 
-        service.send_text_message(
+        svc.send_text_message(
+            account_id=account_id,
             to=message.from_number,
             text=unified_response.content,
             reply_to=str(message.whatsapp_message_id),
@@ -737,11 +741,11 @@ class WebhookService:
         elif message_type == 'location':
             location = message_data.get('location', {})
             content = {'location': location}
-            text_body = f"ðŸ“ {location.get('name', 'Location')}"
+            text_body = f"\U0001f4cd {location.get('name', location.get('address', 'Localiza\u00e7\u00e3o'))}"
         elif message_type == 'contacts':
             contacts = message_data.get('contacts', [])
             content = {'contacts': contacts}
-            text_body = f"ðŸ‘¤ {len(contacts)} contact(s)"
+            text_body = f"\U0001f464 {len(contacts)} contato(s)"
         elif message_type == 'interactive':
             interactive = message_data.get('interactive', {})
             content = {'interactive': interactive}

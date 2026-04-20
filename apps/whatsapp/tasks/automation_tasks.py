@@ -403,8 +403,12 @@ def notify_order_status_change(self, order_id: str, new_status: str):
 
             account = _get_account_for_profile(profile)
             if account:
-                service = WhatsAppAPIService(account)
-                service.send_text_message(to=order.customer_phone, text=message)
+                from apps.whatsapp.services.message_service import MessageService
+                MessageService().send_text_message(
+                    account_id=str(account.id),
+                    to=order.customer_phone,
+                    text=message,
+                )
                 logger.info(f"Status notification sent for order {order_id}: {new_status}")
 
         except AutoMessage.DoesNotExist:

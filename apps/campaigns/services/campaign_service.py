@@ -323,7 +323,11 @@ class CampaignService:
                 else:
                     text = self._personalize_message(
                         campaign.message_content.get('text', ''),
-                        recipient.variables
+                        {
+                            'nome': recipient.contact_name,
+                            'name': recipient.contact_name,
+                            **recipient.variables,
+                        }
                     )
                     message = message_service.send_text_message(
                         account_id=str(campaign.account.id),
