@@ -106,7 +106,8 @@ class CheckoutDeliveryFeeTest(TestCase):
         self.assertEqual(result['zone_id'], str(zone.id))
 
     def test_fee_capped_at_max(self):
-        # Very far distance, should cap at max_fee (default 25.00)
+        self.store.metadata = {'delivery_max_fee': '25.00'}
+        self.store.save(update_fields=['metadata'])
         result = CheckoutService.calculate_delivery_fee(self.store, distance_km=Decimal('50.0'))
         self.assertLessEqual(result['fee'], 25.0)
 
@@ -279,7 +280,7 @@ class CheckoutProcessWebhookTest(TestCase):
         order = self._make_order('pay_approved')
         result = CheckoutService.process_payment_webhook('pay_approved', 'approved')
         result.refresh_from_db()
-        self.assertEqual(result.status, StoreOrder.OrderStatus.PAID)
+        self.assertEqual(result.status, StoreOrder.OrderStatus.CONFIRMED)
         self.assertEqual(result.payment_status, StoreOrder.PaymentStatus.PAID)
         self.assertIsNotNone(result.paid_at)
 
@@ -288,7 +289,8 @@ class CheckoutProcessWebhookTest(TestCase):
         order = self._make_order('pay_rejected')
         result = CheckoutService.process_payment_webhook('pay_rejected', 'rejected')
         result.refresh_from_db()
-        self.assertEqual(result.status, StoreOrder.OrderStatus.FAILED)
+        self.assertEqual(result.status, StoreOrder.OrderStatus.CANCELLED)
+        self.assertEqual(result.payment_status, StoreOrder.PaymentStatus.FAILED)
 
     def test_unknown_payment_id_returns_none(self):
         result = CheckoutService.process_payment_webhook('nonexistent_pay', 'approved')

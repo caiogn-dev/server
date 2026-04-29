@@ -46,6 +46,7 @@ def _make_product(store, name='Produto', price=Decimal('20.00'),
     return StoreProduct.objects.create(
         store=store,
         name=name,
+        slug=f"{name.lower().replace(' ', '-')}-{StoreProduct.objects.count()}",
         price=price,
         status=StoreProduct.ProductStatus.ACTIVE,
         track_stock=track_stock,

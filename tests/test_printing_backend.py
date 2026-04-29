@@ -75,7 +75,8 @@ class PrintJobServiceTest(TestCase):
         } if delivery_method == 'delivery' else {'method': 'pickup'}
 
         with patch('apps.stores.services.checkout_service.trigger_order_email_automation'), \
-             patch('apps.stores.tasks.notify_new_order_push.delay'):
+             patch('apps.stores.tasks.notify_new_order_push.delay'), \
+             self.captureOnCommitCallbacks(execute=True):
             return CheckoutService.create_order(cart, customer_data, delivery_data=delivery_data)
 
     def test_order_creation_enqueues_print_job_once(self):
