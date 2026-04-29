@@ -5,6 +5,7 @@ import json
 import time
 import uuid
 import logging
+import re
 import unicodedata
 from typing import List, Dict, Any, Optional
 
@@ -175,6 +176,238 @@ class LangchainService:
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
         return str(uuid.uuid4())
+
+    def _normalize_runtime_text(self, value: str) -> str:
+        if not value:
+            return ''
+        normalized = unicodedata.normalize('NFD', value.lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return re.sub(r'[^a-z0-9\s]', ' ', normalized).strip()
+
+    def _message_mentions_product(self, message: str, store=None) -> bool:
+        if not store or not message:
+            return False
+        normalized_message = self._normalize_runtime_text(message)
+        if len(normalized_message) < 3:
+            return False
+        try:
+            from apps.stores.models import StoreProduct
+
+            products = StoreProduct.objects.filter(
+                store=store,
+                is_active=True,
+            ).exclude(tags__contains=['ingrediente']).only('name')
+
+            for product in products:
+                normalized_name = self._normalize_runtime_text(product.name)
+                if not normalized_name:
+                    continue
+                if normalized_name in normalized_message or normalized_message in normalized_name:
+                    return True
+        except Exception as exc:
+            logger.warning('[AGENT] Product match lookup failed: %s', exc)
+        return False
+
+    def _match_fixed_delivery_zone_from_text(self, message: str, store=None) -> Optional[Dict[str, Any]]:
+        """Match store metadata fixed delivery zones from customer text."""
+        if not store or not message:
+            return None
+
+        metadata = getattr(store, 'metadata', None) or {}
+        zones = metadata.get('fixed_price_zones') or []
+        normalized_message = self._normalize_runtime_text(message)
+        for zone in zones:
+            keywords = list(zone.get('keywords') or [])
+            if zone.get('name'):
+                keywords.append(zone['name'])
+            for keyword in keywords:
+                normalized_keyword = self._normalize_runtime_text(keyword)
+                if normalized_keyword and normalized_keyword in normalized_message:
+                    return zone
+        return None
+
+    def _looks_like_delivery_address(self, message: str) -> bool:
+        """Detect address-like text before the LLM has a chance to invent a fee."""
+        normalized = self._normalize_runtime_text(message)
+        if not normalized:
+            return False
+
+        address_terms = (
+            'quadra', ' alameda ', ' rua ', ' avenida ', ' av ', ' lote ',
+            ' q ', ' qi ', ' sul', ' norte', ' cep ', ' palmas',
+        )
+        has_number = bool(re.search(r'\b\d{1,5}\b', normalized))
+        has_address_term = any(term in f' {normalized} ' for term in address_terms)
+        has_palmas_zip = bool(re.search(r'\b77\d{3}\s?\d{3}\b', normalized))
+        has_plano_diretor_quadra = bool(re.search(r'\b\d{3}\s*(sul|norte)\b', normalized))
+        return (has_number and has_address_term) or has_palmas_zip or has_plano_diretor_quadra
+
+    def _format_brl(self, value: float) -> str:
+        return f"R$ {float(value):.2f}".replace('.', ',')
+
+    def _get_delivery_fee_runtime_reply(self, message: str, store=None) -> Optional[str]:
+        """Resolve delivery fee questions deterministically, never by LLM prose."""
+        if not store:
+            return None
+
+        normalized = self._normalize_runtime_text(message)
+        if not normalized:
+            return None
+
+        mentions_delivery = any(
+            term in normalized
+            for term in ('taxa', 'frete', 'entrega', 'delivery', 'rota')
+        )
+        fixed_zone = self._match_fixed_delivery_zone_from_text(message, store=store)
+        if fixed_zone and mentions_delivery:
+            fee = float(fixed_zone.get('fee', getattr(store, 'default_delivery_fee', 0) or 0))
+            zone_name = fixed_zone.get('name') or 'região informada'
+            return f"Para {zone_name}, a taxa de entrega é fixa: {self._format_brl(fee)}."
+
+        if self._looks_like_delivery_address(message):
+            try:
+                from apps.stores.services.geo import geo_service
+
+                geo = geo_service.geocode(message, restrict_to_city=True)
+                if not geo or not geo.get('lat') or not geo.get('lng'):
+                    return (
+                        "Não consegui localizar esse endereço em Palmas.\n"
+                        "Me envie a localização pelo alfinete do WhatsApp para calcular certinho."
+                    )
+
+                fee_info = geo_service.calculate_delivery_fee(
+                    store,
+                    customer_lat=geo['lat'],
+                    customer_lng=geo['lng'],
+                    customer_address_text=message,
+                )
+                if not fee_info.get('is_within_area', True) or fee_info.get('fee') is None:
+                    return (
+                        fee_info.get('message')
+                        or "Esse endereço fica fora da nossa área de entrega dinâmica."
+                    )
+
+                fee = float(fee_info['fee'])
+                distance_km = fee_info.get('distance_km')
+                formatted_address = geo.get('formatted_address') or message
+                dist_text = f" ({float(distance_km):.1f} km)" if distance_km else ""
+                return f"Para {formatted_address}, a taxa de entrega{dist_text} é {self._format_brl(fee)}."
+            except Exception as exc:
+                logger.error('[AGENT] Deterministic delivery fee failed: %s', exc, exc_info=True)
+                return (
+                    "Não consegui calcular a taxa agora.\n"
+                    "Me envie a localização pelo alfinete do WhatsApp para calcular certinho."
+                )
+
+        if mentions_delivery:
+            return (
+                "A taxa varia conforme a localização.\n"
+                "Me envie o endereço completo ou a localização pelo alfinete do WhatsApp para calcular certinho."
+            )
+
+        return None
+
+    def _get_direct_runtime_reply(self, message: str, store=None) -> Optional[str]:
+        """Short-circuit obvious ambiguous ordering before any tool loop starts."""
+        normalized = self._normalize_runtime_text(message)
+        if not normalized:
+            return None
+
+        delivery_reply = self._get_delivery_fee_runtime_reply(message, store=store)
+        if delivery_reply:
+            return delivery_reply
+
+        generic_item_terms = (
+            ' salada ', ' saladas ', ' item ', ' itens ', ' produto ', ' produtos ',
+            ' pedido ', ' pedidos ', ' combo ', ' combos ',
+        )
+        has_quantity = bool(re.search(r'\b\d+\b', normalized))
+        mentions_generic_items = any(term in f' {normalized} ' for term in generic_item_terms)
+        mentions_payment = any(term in normalized for term in ('pix', 'pagar', 'pagamento'))
+
+        if has_quantity and mentions_generic_items and not self._message_mentions_product(message, store=store):
+            if mentions_payment:
+                return (
+                    "Claro. Primeiro me diga quais itens você quer pedir.\n"
+                    "Depois eu sigo com a forma de pagamento, inclusive PIX."
+                )
+            return (
+                "Claro. Quais itens você quer pedir?\n"
+                "Se quiser, eu posso te mostrar algumas opções do cardápio."
+            )
+
+        return None
+
+    def _resolve_allowed_tools(self, message: str) -> Optional[set]:
+        """Restrict tool access for narrow consultative intents to avoid loops."""
+        normalized = self._normalize_runtime_text(message)
+        if not normalized:
+            return None
+
+        if any(term in normalized for term in ('taxa de entrega', 'frete', 'entrega', 'delivery')):
+            return {'informacoes_entrega'}
+        if any(term in normalized for term in ('pix', 'pagamento', 'codigo pix', 'copiar pix', 'qr code')):
+            return {'consultar_pagamento'}
+        if any(term in normalized for term in ('cardapio', 'menu', 'catalogo', 'produtos', 'opcoes')):
+            return {'listar_categorias'}
+        if any(term in normalized for term in ('recomenda', 'indica', 'sugere')):
+            return {'buscar_produto'}
+        return None
+
+    def _get_pending_pix_payment(self, phone_number: str, store=None) -> Dict[str, Any]:
+        """Return the latest pending PIX data for this customer, without LLM prose."""
+        if not phone_number:
+            return {'found': False, 'message': 'Telefone do cliente não disponível.'}
+
+        try:
+            from django.utils import timezone
+            from apps.stores.models import StoreOrder
+            from apps.automation.models import CustomerSession
+
+            session_qs = CustomerSession.objects.filter(phone_number=phone_number)
+            if store:
+                from apps.automation.models import CompanyProfile as _CP
+                profile_ids = _CP.objects.filter(store=store).values_list('id', flat=True)
+                session_qs = session_qs.filter(company_id__in=profile_ids)
+
+            session = session_qs.order_by('-updated_at').first()
+            if session and session.pix_code:
+                if session.pix_expires_at and session.pix_expires_at <= timezone.now():
+                    return {
+                        'found': False,
+                        'expired': True,
+                        'message': 'O PIX gerado expirou. Um novo pagamento precisa ser gerado.',
+                    }
+                return {
+                    'found': True,
+                    'pix_code': session.pix_code,
+                    'expires_at': session.pix_expires_at,
+                    'source': 'customer_session',
+                }
+
+            order = StoreOrder.objects.filter(
+                customer_phone__in=[
+                    phone_number,
+                    phone_number.lstrip('+'),
+                    f"+{phone_number.lstrip('+')}",
+                ],
+                payment_status='pending',
+            ).exclude(pix_code='').order_by('-created_at').first()
+            if order and order.pix_code:
+                return {
+                    'found': True,
+                    'pix_code': order.pix_code,
+                    'order_number': order.order_number,
+                    'total': order.total,
+                    'source': 'store_order',
+                }
+
+            return {
+                'found': False,
+                'message': 'Nenhum PIX pendente encontrado. O pagamento ainda não foi gerado.',
+            }
+        except Exception as exc:
+            return {'found': False, 'message': f'Erro ao consultar pagamento: {exc}'}
     
     def _build_dynamic_context(self, phone_number: str, conversation_id: Optional[str] = None) -> str:
         """
@@ -246,6 +479,23 @@ class LangchainService:
             if not store:
                 logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
             
+            # Add operational guidance scoped to the current store context.
+            if store:
+                context_parts.append(
+                    "\n🎯 CONDUTA DE ATENDIMENTO:\n"
+                    "• Responda de forma curta, humana e objetiva.\n"
+                    "• Na maioria dos casos, fique em até 4 linhas.\n"
+                    "• Se perguntarem a taxa de entrega, diga apenas que varia conforme a localização.\n"
+                    "• Para taxa de entrega, peça o endereço ou a localização pelo alfinete do WhatsApp.\n"
+                    "• Nunca explique bairros, zonas, km, tabelas, regras internas ou faixas de preço.\n"
+                    "• Se pedirem o cardápio, mostre no máximo 5 opções com nome e preço.\n"
+                    "• Não despeje o cardápio inteiro, a menos que o cliente insista.\n"
+                    "• Se o pedido estiver ambíguo, peça o nome exato dos itens antes de seguir.\n"
+                    "• Nunca transforme recomendação em pedido sem confirmação explícita.\n"
+                    "• Só diga que PIX foi gerado se existir um código PIX real disponível.\n"
+                    "• Nunca diga que criou pedido, calculou entrega ou gerou pagamento se isso ainda não aconteceu.\n"
+                )
+
             # Load products from store — all active, grouped by category, with stock status
             if store:
                 try:
@@ -258,7 +508,10 @@ class LangchainService:
                     ).exclude(tags__contains=['ingrediente'])
 
                     if products:
-                        menu_text = f"\n📋 CARDÁPIO - {store.name}:\n"
+                        menu_text = (
+                            f"\n📋 CARDÁPIO INTERNO - {store.name} "
+                            "(use para consultar e resumir, sem colar tudo ao cliente):\n"
+                        )
                         current_category = None
 
                         for product in products:
@@ -274,19 +527,18 @@ class LangchainService:
                                 elif product.stock_quantity <= 3:
                                     stock_note = f' [últimas {product.stock_quantity} unidades]'
 
-                            desc = ''
-                            if product.description:
-                                raw = product.description.strip()
-                                desc = f" — {raw[:80]}{'...' if len(raw) > 80 else ''}"
-
-                            menu_text += f"• {product.name} - R$ {product.price}{stock_note}{desc}\n"
+                            menu_text += f"• {product.name} - R$ {product.price}{stock_note}\n"
 
                         context_parts.append(menu_text)
 
                         # Delivery info
                         if store.delivery_enabled:
                             delivery_text = "\n🚚 ENTREGA:\n"
-                            delivery_text += f"• Taxa base: R$ {store.default_delivery_fee}\n"
+                            delivery_text += (
+                                "• Nunca explique regras internas de taxa, zonas ou tabelas.\n"
+                                "• Informe que a taxa varia conforme a localização.\n"
+                                "• Para calcular a taxa exata, peça o endereço ou a localização pelo alfinete do WhatsApp.\n"
+                            )
                             if store.free_delivery_threshold:
                                 delivery_text += f"• Grátis acima de: R$ {store.free_delivery_threshold}\n"
                             context_parts.append(delivery_text)
@@ -392,6 +644,38 @@ class LangchainService:
 
             except Exception as e:
                 logger.error(f"[AGENT CONTEXT] Error loading session state: {e}")
+
+            try:
+                from apps.core.utils import normalize_phone_number
+                from apps.stores.models import StoreOrder
+
+                normalized_phone = normalize_phone_number(phone_number)
+                phone_candidates = {
+                    phone_number,
+                    normalized_phone,
+                    f"+{normalized_phone}" if normalized_phone else '',
+                    ''.join(filter(str.isdigit, phone_number or '')),
+                }
+                phone_candidates = [value for value in dict.fromkeys(v for v in phone_candidates if v)]
+
+                recent_order_qs = StoreOrder.objects.filter(
+                    customer_phone__in=phone_candidates,
+                )
+                if store:
+                    recent_order_qs = recent_order_qs.filter(store=store)
+
+                recent_order = recent_order_qs.order_by('-created_at').first()
+                if recent_order:
+                    order_summary = [
+                        f"Pedido mais recente: #{recent_order.order_number}",
+                        f"Status: {recent_order.status}",
+                        f"Pagamento: {recent_order.payment_status}",
+                        f"Total: R$ {recent_order.total}",
+                        f"Entrega: {recent_order.get_delivery_method_display()}",
+                    ]
+                    context_parts.append("\n🧾 ÚLTIMO PEDIDO DO CLIENTE:\n" + "\n".join(order_summary))
+            except Exception as e:
+                logger.error(f"[AGENT CONTEXT] Error loading recent order summary: {e}")
 
         # Combine all context parts
         full_context = "\n\n".join(context_parts)
@@ -501,17 +785,10 @@ class LangchainService:
             try:
                 if not store.delivery_enabled:
                     return "Esta loja não faz entrega no momento. Apenas retirada no local."
-                metadata = getattr(store, 'metadata', None) or {}
-                base_fee = metadata.get('delivery_base_fee', store.default_delivery_fee)
-                info = f"Taxa base de entrega: R$ {base_fee}"
-                if metadata.get('delivery_fee_per_km'):
-                    info += "\nA taxa final varia conforme a distância e a rota."
-                fixed_zones = metadata.get('fixed_price_zones') or []
-                if fixed_zones:
-                    zone_names = ", ".join(zone.get('name') for zone in fixed_zones if zone.get('name'))
-                    if zone_names:
-                        info += f"\nAlgumas regiões usam taxa fixa: {zone_names}."
-                info += "\nPara informar a taxa exata de um bairro ou endereço, confirme a localização do cliente."
+                info = (
+                    "A taxa de entrega varia conforme a localização do cliente."
+                    "\nPeça o endereço ou a localização pelo alfinete do WhatsApp para calcular certinho."
+                )
                 if store.free_delivery_threshold:
                     info += f"\nEntrega GRÁTIS para pedidos acima de R$ {store.free_delivery_threshold}"
                 if store.min_order_value:
@@ -523,48 +800,10 @@ class LangchainService:
         @tool
         def consultar_pagamento() -> str:
             """Consulta o status de pagamento e retorna o código PIX do pedido pendente do cliente."""
-            if not phone_number:
-                return "Telefone do cliente não disponível."
-            try:
-                from apps.stores.models import StoreOrder
-                from apps.automation.models import CustomerSession
-
-                # First try CustomerSession (most recent)
-                session_qs = CustomerSession.objects.filter(phone_number=phone_number)
-                if store:
-                    from apps.automation.models import CompanyProfile as _CP
-                    profile_ids = _CP.objects.filter(store=store).values_list('id', flat=True)
-                    session_qs = session_qs.filter(company_id__in=profile_ids)
-                session = session_qs.order_by('-updated_at').first()
-                if session and session.pix_code:
-                    expires = ""
-                    if session.pix_expires_at:
-                        from django.utils import timezone
-                        if session.pix_expires_at > timezone.now():
-                            expires = f"\nExpira em: {session.pix_expires_at.strftime('%d/%m/%Y %H:%M')}"
-                        else:
-                            return "O PIX gerado expirou. Um novo pagamento precisa ser gerado."
-                    return (
-                        f"✅ PIX gerado!\n"
-                        f"Código copia e cola:\n{session.pix_code}"
-                        f"{expires}"
-                    )
-
-                # Fallback: try StoreOrder directly
-                order = StoreOrder.objects.filter(
-                    customer_phone__in=[phone_number, phone_number.lstrip('+'), f"+{phone_number.lstrip('+')}"],
-                    payment_status='pending',
-                ).exclude(pix_code='').order_by('-created_at').first()
-                if order and order.pix_code:
-                    return (
-                        f"✅ PIX gerado para pedido #{order.order_number}!\n"
-                        f"Total: R$ {order.total}\n"
-                        f"Código copia e cola:\n{order.pix_code}"
-                    )
-
-                return "Nenhum PIX pendente encontrado. O pagamento ainda não foi gerado."
-            except Exception as exc:
-                return f"Erro ao consultar pagamento: {exc}"
+            pix_data = self._get_pending_pix_payment(phone_number=phone_number, store=store)
+            if pix_data.get('found'):
+                return pix_data['pix_code']
+            return pix_data.get('message') or 'Nenhum PIX pendente encontrado.'
 
         return [buscar_produto, listar_categorias, verificar_pedido_pendente,
                 consultar_historico_pedidos, informacoes_entrega, consultar_pagamento]
@@ -654,10 +893,79 @@ class LangchainService:
         # Kimi doesn't handle tool loops reliably.  NVIDIA (Llama 70b+), OpenAI,
         # and Anthropic support function calling correctly.
         store = self._get_store_for_context(conversation_id)
+        direct_reply = self._get_direct_runtime_reply(message, store=store)
+        if direct_reply:
+            processing_time = time.time() - start_time
+            if memory:
+                try:
+                    memory.add_user_message(message)
+                    memory.add_ai_message(direct_reply)
+                except Exception as e:
+                    logger.warning(f"Error saving memory for direct runtime reply: {e}")
+            return {
+                'response': direct_reply,
+                'session_id': session_id,
+                'processing_time': processing_time,
+                'model': self.agent.model_name,
+                'tokens_used': 0,
+                'order_created': None,
+            }
+
         tools = self._build_tools(phone_number=phone_number or "", store=store)
+        allowed_tools = self._resolve_allowed_tools(message)
+        if allowed_tools == {'consultar_pagamento'}:
+            pix_data = self._get_pending_pix_payment(phone_number=phone_number or "", store=store)
+            processing_time = time.time() - start_time
+            if pix_data.get('found'):
+                pix_code = pix_data['pix_code']
+                if memory:
+                    try:
+                        memory.add_user_message(message)
+                        memory.add_ai_message(pix_code)
+                    except Exception as e:
+                        logger.warning(f"Error saving memory for PIX response: {e}")
+                return {
+                    'response': pix_code,
+                    'session_id': session_id,
+                    'processing_time': processing_time,
+                    'model': self.agent.model_name,
+                    'tokens_used': 0,
+                    'order_created': None,
+                    'whatsapp_response': {
+                        'type': 'template',
+                        'template_name': 'codigo_verificacao',
+                        'language_code': 'pt_BR',
+                        'components': [
+                            {
+                                'type': 'body',
+                                'parameters': [
+                                    {'type': 'text', 'text': pix_code},
+                                ],
+                            },
+                        ],
+                    },
+                }
+
+            response_text = pix_data.get('message') or 'Nenhum PIX pendente encontrado.'
+            if memory:
+                try:
+                    memory.add_user_message(message)
+                    memory.add_ai_message(response_text)
+                except Exception as e:
+                    logger.warning(f"Error saving memory for PIX fallback: {e}")
+            return {
+                'response': response_text,
+                'session_id': session_id,
+                'processing_time': processing_time,
+                'model': self.agent.model_name,
+                'tokens_used': 0,
+                'order_created': None,
+            }
+        if allowed_tools:
+            tools = [tool for tool in tools if tool.name in allowed_tools]
         tool_map = {t.name: t for t in tools}
         _TOOL_CAPABLE_PROVIDERS = {Agent.AgentProvider.OPENAI, Agent.AgentProvider.ANTHROPIC, Agent.AgentProvider.NVIDIA}
-        _use_tools = self.agent.provider in _TOOL_CAPABLE_PROVIDERS
+        _use_tools = self.agent.provider in _TOOL_CAPABLE_PROVIDERS and bool(tools)
         llm_with_tools = self.llm.bind_tools(tools) if _use_tools else self.llm
 
         def _clean(msg):
@@ -683,7 +991,8 @@ class LangchainService:
 
             # Agentic loop: invoke → handle tool calls → repeat (max 5 iterations)
             response_text = ""
-            for _iteration in range(5):
+            max_iterations = 2 if allowed_tools else 5
+            for _iteration in range(max_iterations):
                 response = llm_with_tools.invoke(current_messages)
                 tool_calls = getattr(response, 'tool_calls', [])
 

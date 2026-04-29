@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import math
+import re
 import unicodedata
 from decimal import Decimal
 from typing import Optional, Dict, List, Tuple
@@ -143,7 +144,22 @@ class GeoService:
             'provider': self.provider_name,
         }
 
-    def _match_fixed_price_zone(self, store, customer_lat: float, customer_lng: float) -> Optional[Dict]:
+    def _match_fixed_price_zone(
+        self,
+        store,
+        customer_lat: float,
+        customer_lng: float,
+        address_text: str = "",
+    ) -> Optional[Dict]:
+        """Retorna a zona fixa correspondente ao endereço do cliente, ou None.
+
+        Campos suportados em cada zona (store.metadata['fixed_price_zones']):
+          name        (str)   — nome da zona
+          fee         (float) — taxa fixa; ignorado se surcharge_on_km=True
+          keywords    (list)  — termos buscados no endereço reverso
+          surcharge_on_km (bool)  — se True, soma 'surcharge' à taxa por km em vez de substituir
+          surcharge   (float) — valor extra adicionado à taxa por km (ex.: R$5 para condos fechados)
+        """
         metadata = getattr(store, 'metadata', None) or {}
         fixed_price_zones = metadata.get('fixed_price_zones') or []
         if not fixed_price_zones:
@@ -151,9 +167,11 @@ class GeoService:
 
         reverse = self.reverse_geocode(customer_lat, customer_lng) or {}
         searchable_parts = [
+            address_text,
             reverse.get('formatted_address', ''),
             reverse.get('street', ''),
             reverse.get('neighborhood', ''),
+            reverse.get('sublocality', ''),
             reverse.get('city', ''),
             reverse.get('state', ''),
         ]
@@ -166,11 +184,61 @@ class GeoService:
             if zone.get('name'):
                 keywords.append(zone['name'])
 
-            normalized_keywords = [self._normalize_text(keyword) for keyword in keywords if keyword]
-            if any(keyword and keyword in searchable_text for keyword in normalized_keywords):
+            normalized_keywords = [self._normalize_text(kw) for kw in keywords if kw]
+            if any(kw and kw in searchable_text for kw in normalized_keywords):
                 return zone
 
         return None
+
+    def _matches_dynamic_delivery_area(
+        self,
+        store,
+        customer_lat: float | None = None,
+        customer_lng: float | None = None,
+        address_text: str = "",
+    ) -> bool:
+        """Return True when a store-specific dynamic delivery area allows km pricing.
+
+        If ``metadata.dynamic_delivery_area_keywords`` is absent, legacy stores keep
+        the old behavior and dynamic pricing remains unrestricted.
+        """
+        metadata = getattr(store, 'metadata', None) or {}
+        keywords = metadata.get('dynamic_delivery_area_keywords') or []
+        if not keywords:
+            return True
+
+        def _matches(text: str) -> bool:
+            normalized_text = self._normalize_text(text)
+            if not normalized_text:
+                return False
+
+            # Palmas' Plano Diretor addresses are often written as "404 Sul" or
+            # "103 Norte", while reverse geocoding may return ARSE/ARNO aliases.
+            if re.search(r'\b\d{3}\s*(sul|norte)\b', normalized_text):
+                return True
+
+            normalized_keywords = [self._normalize_text(kw) for kw in keywords if kw]
+            return any(kw and kw in normalized_text for kw in normalized_keywords)
+
+        if address_text:
+            return _matches(address_text)
+
+        searchable_parts = []
+        if customer_lat is not None and customer_lng is not None:
+            reverse = self.reverse_geocode(customer_lat, customer_lng) or {}
+            searchable_parts.extend([
+                reverse.get('formatted_address', ''),
+                reverse.get('street', ''),
+                reverse.get('neighborhood', ''),
+                reverse.get('sublocality', ''),
+                reverse.get('city', ''),
+            ])
+
+        searchable_text = self._normalize_text(" | ".join(part for part in searchable_parts if part))
+        if not searchable_text:
+            return False
+
+        return _matches(searchable_text)
 
     def _build_circle_polygon(self, center: Tuple[float, float], radius_km: float, points: int = 24) -> List[Dict[str, float]]:
         lat, lng = center
@@ -418,8 +486,24 @@ class GeoService:
         customer_lat: float | None = None,
         customer_lng: float | None = None,
         destination_address: str | None = None,
+        rain_surcharge: bool = False,
+        customer_address_text: str | None = None,
     ) -> Dict:
+        """Calcula a taxa de entrega aplicando, em ordem de prioridade:
+
+        1. Zona fixa por bairro/região (ex.: Taquaralto R$40, Aeroporto R$45)
+        2. Zona de condomínio plana (ex.: Caribe/Polinésia R$25)
+        3. Zona de condomínio fechado com sobretaxa (ex.: Alphaville = km_fee + R$5)
+        4. StoreDeliveryZone configuradas no banco
+        5. Cálculo dinâmico: R$9 plano até 4 km, +R$1,10/km após isso
+        6. Acima de 16 km → fee=None (a combinar)
+
+        Parâmetro extra:
+          rain_surcharge (bool) — adiciona R$2,00 quando está chovendo
+        """
         from apps.stores.models import StoreDeliveryZone
+
+        RAIN_EXTRA = Decimal('2.00')
 
         metadata = getattr(store, 'metadata', None) or {}
         address_data = getattr(store, 'address_data', None) or {}
@@ -436,8 +520,9 @@ class GeoService:
         )
 
         if not store_lat or not store_lng:
+            base = float(store.default_delivery_fee or Decimal('0.00'))
             return {
-                'fee': float(store.default_delivery_fee or Decimal('0.00')),
+                'fee': base + float(RAIN_EXTRA) if rain_surcharge else base,
                 'distance_km': None,
                 'duration_minutes': None,
                 'is_within_area': True,
@@ -445,11 +530,18 @@ class GeoService:
                 'message': 'Taxa de entrega padrão aplicada',
             }
 
+        address_text = customer_address_text or destination_address or ""
         customer_location_known = customer_lat is not None and customer_lng is not None
         if customer_location_known:
-            route = self._get_route((float(store_lat), float(store_lng)), (float(customer_lat), float(customer_lng)))
+            route = self._get_route(
+                (float(store_lat), float(store_lng)),
+                (float(customer_lat), float(customer_lng)),
+            )
         elif destination_address:
-            route = self._get_route((float(store_lat), float(store_lng)), destination_address)
+            route = self._get_route(
+                (float(store_lat), float(store_lng)),
+                destination_address,
+            )
         else:
             route = None
 
@@ -465,30 +557,79 @@ class GeoService:
 
         distance_km = route['distance_km']
         duration_minutes = route['duration_minutes']
+        polyline = route.get('polyline')
 
+        def _apply_rain(fee_val):
+            if fee_val is None:
+                return None
+            return float(Decimal(str(fee_val)) + RAIN_EXTRA) if rain_surcharge else float(fee_val)
+
+        # ── 1-3. Zonas fixas / condomínios (metadado fixed_price_zones) ──────
         fixed_zone = None
         if customer_location_known:
-            fixed_zone = self._match_fixed_price_zone(store, float(customer_lat), float(customer_lng))
+            fixed_zone = self._match_fixed_price_zone(
+                store, float(customer_lat), float(customer_lng), address_text=address_text
+            )
+
         if fixed_zone:
-            fee = Decimal(str(fixed_zone.get('fee', store.default_delivery_fee or 0)))
+            zone_name = fixed_zone.get('name') or 'Zona especial'
+            is_additive = fixed_zone.get('surcharge_on_km', False)
+
+            if is_additive:
+                # Condomínio fechado: taxa por km + sobretaxa fixa
+                surcharge_val = Decimal(str(fixed_zone.get('surcharge', '5.00')))
+                checkout_service_cls = self._get_checkout_service_cls()
+                km_fee_info = checkout_service_cls._calculate_dynamic_fee(
+                    store, Decimal(str(distance_km))
+                )
+                km_fee = km_fee_info.get('fee')
+                if km_fee is None:
+                    fee_val = None
+                else:
+                    fee_val = float(Decimal(str(km_fee)) + surcharge_val)
+                message = (
+                    f"Condomínio fechado: taxa por km + R$ {surcharge_val:.2f} de acesso"
+                )
+            else:
+                fee_val = float(Decimal(str(fixed_zone.get('fee', store.default_delivery_fee or 0))))
+                message = f"Entrega com taxa fixa para a região: {zone_name}"
+
             return {
-                'fee': fee,
+                'fee': _apply_rain(fee_val),
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
-                'is_within_area': True,
-                'zone': {
-                    'id': None,
-                    'name': fixed_zone.get('name') or 'Taxa fixa',
-                    'min_distance': None,
-                    'max_distance': None,
-                },
-                'polyline': route.get('polyline'),
-                'message': f"Entrega com taxa fixa para a região: {fixed_zone.get('name', 'especial')}",
+                'is_within_area': fee_val is not None,
+                'zone': {'id': None, 'name': zone_name, 'min_distance': None, 'max_distance': None},
+                'polyline': polyline,
+                'rain_surcharge_applied': rain_surcharge,
+                'message': message,
             }
 
+        if not self._matches_dynamic_delivery_area(
+            store,
+            float(customer_lat) if customer_location_known else None,
+            float(customer_lng) if customer_location_known else None,
+            address_text=address_text,
+        ):
+            area_label = metadata.get(
+                'dynamic_delivery_area_label',
+                'Plano Diretor Norte/Sul',
+            )
+            return {
+                'fee': None,
+                'distance_km': distance_km,
+                'duration_minutes': duration_minutes,
+                'is_within_area': False,
+                'zone': None,
+                'polyline': polyline,
+                'rain_surcharge_applied': False,
+                'reason': 'outside_dynamic_delivery_area',
+                'message': f'Entrega dinâmica disponível apenas para {area_label}.',
+            }
+
+        # ── 4. StoreDeliveryZone configuradas no banco ────────────────────────
         delivery_zones = StoreDeliveryZone.objects.filter(
-            store=store,
-            is_active=True,
+            store=store, is_active=True,
         ).order_by('min_km')
 
         if delivery_zones.exists():
@@ -496,7 +637,7 @@ class GeoService:
                 if zone.matches_distance(distance_km):
                     fee = zone.calculate_fee(distance_km)
                     return {
-                        'fee': float(fee),
+                        'fee': _apply_rain(float(fee)),
                         'distance_km': distance_km,
                         'duration_minutes': duration_minutes,
                         'is_within_area': True,
@@ -506,38 +647,41 @@ class GeoService:
                             'min_distance': zone.min_km,
                             'max_distance': zone.max_km,
                         },
-                        'polyline': route.get('polyline'),
+                        'polyline': polyline,
+                        'rain_surcharge_applied': rain_surcharge,
                         'message': f'Entrega na zona: {zone.name}',
                     }
 
-        max_delivery_distance = (
-            getattr(store, 'max_delivery_distance_km', None)
-            or metadata.get('delivery_max_distance')
-            or 20.0
-        )
+        # ── 5-6. Cálculo dinâmico (base R$9, +R$1,00/km após 4 km, >16 km=None) ──
+        checkout_service_cls = self._get_checkout_service_cls()
+        fee_info = checkout_service_cls._calculate_dynamic_fee(store, Decimal(str(distance_km)))
+        raw_fee = fee_info.get('fee')
 
-        if distance_km > max_delivery_distance:
+        if raw_fee is None:
             return {
                 'fee': None,
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
                 'is_within_area': False,
                 'zone': None,
-                'polyline': route.get('polyline'),
-                'message': f'Endereço fora da área de entrega (máx: {max_delivery_distance}km)',
+                'polyline': polyline,
+                'rain_surcharge_applied': False,
+                'message': fee_info.get('message', 'Distância acima do limite — entrar em contato'),
             }
 
-        checkout_service_cls = self._get_checkout_service_cls()
-        fee_info = checkout_service_cls._calculate_dynamic_fee(store, Decimal(str(distance_km)))
-
+        final_fee = _apply_rain(raw_fee)
         return {
-            'fee': fee_info['fee'],
+            'fee': final_fee,
             'distance_km': distance_km,
             'duration_minutes': duration_minutes,
             'is_within_area': True,
             'zone': None,
-            'polyline': route.get('polyline'),
-            'message': f"Taxa calculada: R${Decimal(str(fee_info['fee'])):.2f} ({distance_km:.1f}km)",
+            'polyline': polyline,
+            'rain_surcharge_applied': rain_surcharge,
+            'message': (
+                f"Taxa: R$ {final_fee:.2f} ({distance_km:.1f} km)"
+                + (" + R$2,00 chuva" if rain_surcharge else "")
+            ),
         }
 
 

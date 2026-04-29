@@ -4,7 +4,7 @@ Message Service - Business logic for message operations.
 import logging
 import uuid
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db import transaction
 from apps.core.exceptions import ValidationError, NotFoundError
@@ -38,6 +38,21 @@ class MessageService:
         
         account = self._get_account(account_id)
         logger.info(f"[send_text_message] Account retrieved: {account.id}, phone_number_id={account.phone_number_id}")
+
+        duplicate = self.message_repo.find_recent_outbound_text_duplicate(
+            account=account,
+            to_number=to,
+            text_body=text,
+            context_message_id=reply_to or '',
+            since=timezone.now() - timedelta(seconds=5),
+        )
+        if duplicate:
+            logger.warning(
+                "[send_text_message] Duplicate send suppressed - reusing message_id=%s to=%s",
+                duplicate.id,
+                to,
+            )
+            return duplicate
         
         api_service = WhatsAppAPIService(account)
         
@@ -217,6 +232,59 @@ class MessageService:
             self._update_message_failed(message, str(e))
             raise
         
+        return message
+
+    def send_product_list(
+        self,
+        account_id: str,
+        to: str,
+        sections: List[Dict],
+        body_text: str,
+        catalog_id: Optional[str] = None,
+        header_text: Optional[str] = None,
+        footer: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Message:
+        """Send a native WhatsApp product-list message from the connected catalog."""
+        account = self._get_account(account_id)
+        api_service = WhatsAppAPIService(account)
+
+        message = self._create_outbound_message(
+            account=account,
+            to=to,
+            message_type=Message.MessageType.INTERACTIVE,
+            content={
+                'type': 'product_list',
+                'body_text': body_text,
+                'catalog_id': catalog_id,
+                'sections': sections,
+                'header_text': header_text,
+                'footer': footer,
+            },
+            text_body=body_text,
+            context_message_id=reply_to or '',
+            metadata=metadata or {}
+        )
+
+        try:
+            response = api_service.send_product_list(
+                to=to,
+                sections=sections,
+                body_text=body_text,
+                catalog_id=catalog_id,
+                header_text=header_text,
+                footer=footer,
+                reply_to=reply_to,
+            )
+
+            self._update_message_sent(message, response)
+            logger.info(f"Product list message sent: {message.id}")
+
+        except Exception as e:
+            self._update_message_failed(message, str(e))
+            raise
+
         return message
 
     def send_image(

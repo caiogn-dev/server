@@ -327,11 +327,21 @@ class PaymentStatusView(APIView):
             for item in order.items.all():
                 items.append({
                     'id': str(item.id),
+                    'product': str(item.product_id) if item.product_id else '',
                     'product_name': item.product_name,
                     'variant_name': item.variant_name,
                     'quantity': item.quantity,
                     'unit_price': float(item.unit_price),
                     'subtotal': float(item.subtotal),
+                    'notes': item.notes,
+                    'customizations': item.options,
+                    'is_custom_salad': bool(
+                        isinstance(item.options, dict)
+                        and (
+                            item.options.get('is_salad_builder')
+                            or item.options.get('type') == 'custom_salad'
+                        )
+                    ),
                 })
             
             # Build response with all payment info
@@ -428,9 +438,20 @@ class OrderByTokenView(APIView):
                 'tax': float(order.tax) if order.tax else 0,
                 'total': float(order.total),
                 'delivery_method': order.delivery_method,
+                'delivery_address': order.delivery_address,
+                'delivery_notes': order.delivery_notes,
+                'customer_notes': order.customer_notes,
+                'tracking_code': order.tracking_code,
+                'tracking_url': order.tracking_url or order.external_delivery_url,
+                'carrier': order.carrier or order.external_delivery_provider,
+                'delivery_quote': (order.metadata or {}).get('delivery_quote', {}),
+                'loyalty_reward': (order.metadata or {}).get('loyalty_reward', {}),
                 'items': items,
                 'created_at': order.created_at.isoformat(),
+                'updated_at': order.updated_at.isoformat(),
                 'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+                'shipped_at': order.shipped_at.isoformat() if order.shipped_at else None,
+                'delivered_at': order.delivered_at.isoformat() if order.delivered_at else None,
             }
             
             # Include PIX data if available
@@ -470,7 +491,7 @@ class CustomerOrdersView(APIView):
         # Get orders where customer email or phone matches user
         orders = StoreOrder.objects.filter(
             customer=user
-        ).select_related('store').prefetch_related('items')
+        ).select_related('store').prefetch_related('items__product', 'combo_items')
         
         if store_slug:
             orders = orders.filter(store__slug=store_slug)
@@ -482,18 +503,56 @@ class CustomerOrdersView(APIView):
             .order_by('-created_at')[:50]
         )
 
+        def image_url(product):
+            if not product:
+                return ''
+            image = getattr(product, 'main_image', None) or getattr(product, 'image', None)
+            if not image:
+                return ''
+            try:
+                return request.build_absolute_uri(image.url)
+            except Exception:
+                return ''
+
         results = []
         for order in orders:
+            items = []
+            for item in order.items.all()[:3]:
+                items.append({
+                    'id': str(item.id),
+                    'product': str(item.product_id) if item.product_id else '',
+                    'product_name': item.product_name,
+                    'variant_name': item.variant_name,
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                    'image_url': image_url(getattr(item, 'product', None)),
+                })
+            for item in order.combo_items.all()[: max(0, 3 - len(items))]:
+                items.append({
+                    'id': str(item.id),
+                    'product': '',
+                    'product_name': item.combo_name,
+                    'variant_name': '',
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                    'image_url': '',
+                    'notes': item.notes,
+                })
+            total_items = order.items.count() + order.combo_items.count()
             results.append({
                 'id': str(order.id),
                 'order_number': order.order_number,
+                'access_token': order.access_token,
                 'store_name': order.store.name,
                 'store_slug': order.store.slug,
                 'status': order.status,
                 'payment_status': order.payment_status,
                 'total': float(order.total),
                 'delivery_method': order.delivery_method,
-                'items_count': order.items_count,
+                'items_count': total_items,
+                'items': items,
                 'created_at': order.created_at.isoformat(),
             })
         
@@ -507,14 +566,13 @@ class CustomerOrderDetailView(APIView):
     - Authenticated user who owns the order, or is staff/superuser
     - Valid ?token=<access_token> query param (customer self-service post-checkout)
     """
-
     authentication_classes = []
     permission_classes = []
 
     def get(self, request, order_id):
         """Get order details."""
         try:
-            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
+            order = StoreOrder.objects.select_related('store').prefetch_related('items__product', 'combo_items').get(id=order_id)
 
             token = request.query_params.get('token', '')
             user = request.user
@@ -530,16 +588,57 @@ class CustomerOrderDetailView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
+            def image_url(product):
+                if not product:
+                    return ''
+                image = getattr(product, 'main_image', None) or getattr(product, 'image', None)
+                if not image:
+                    return ''
+                try:
+                    return request.build_absolute_uri(image.url)
+                except Exception:
+                    return ''
+
             items = []
             for item in order.items.all():
                 items.append({
                     'id': str(item.id),
+                    'product': str(item.product_id) if item.product_id else '',
                     'product_name': item.product_name,
                     'variant_name': item.variant_name,
                     'quantity': item.quantity,
                     'unit_price': float(item.unit_price),
                     'subtotal': float(item.subtotal),
                     'notes': item.notes,
+                    'customizations': item.options,
+                    'is_custom_salad': bool(
+                        isinstance(item.options, dict)
+                        and (
+                            item.options.get('is_salad_builder')
+                            or item.options.get('type') == 'custom_salad'
+                        )
+                    ),
+                    'image_url': image_url(getattr(item, 'product', None)),
+                })
+            for item in order.combo_items.all():
+                items.append({
+                    'id': str(item.id),
+                    'product': '',
+                    'product_name': item.combo_name,
+                    'variant_name': '',
+                    'quantity': item.quantity,
+                    'unit_price': float(item.unit_price),
+                    'subtotal': float(item.subtotal),
+                    'notes': item.notes,
+                    'customizations': item.customizations,
+                    'is_custom_salad': bool(
+                        isinstance(item.customizations, dict)
+                        and (
+                            item.customizations.get('is_salad_builder')
+                            or item.customizations.get('type') == 'custom_salad'
+                        )
+                    ),
+                    'image_url': '',
                 })
             
             return Response({
@@ -620,7 +719,7 @@ class OrderWhatsAppView(APIView):
 💰 *Total:* R$ {order.total:.2f}
 📦 *Entrega:* {order.get_delivery_method_display()}
 
-Olá! Gostaria de confirmar meu pedido."""
+Olá! Gostaria de confirmar meu pedido #{order.order_number}."""
             
             # URL encode message
             from urllib.parse import quote

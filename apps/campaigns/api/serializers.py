@@ -67,6 +67,8 @@ class CampaignCreateSerializer(serializers.Serializer):
         default=list
     )
     scheduled_at = serializers.DateTimeField(required=False, allow_null=True)
+    messages_per_minute = serializers.IntegerField(required=False, default=60, min_value=1, max_value=1000)
+    delay_between_messages = serializers.IntegerField(required=False, default=1, min_value=0, max_value=3600)
 
 
 class AddRecipientsSerializer(serializers.Serializer):

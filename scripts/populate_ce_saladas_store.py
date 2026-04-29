@@ -86,12 +86,67 @@ def build_store_defaults(reference_store, owner):
         "pickup_enabled": True,
         "min_order_value": Decimal("0.00"),
         "free_delivery_threshold": Decimal("100.00"),
-        "default_delivery_fee": Decimal("8.00"),
+        "default_delivery_fee": Decimal("9.00"),
         "operating_hours": copy.deepcopy(DEFAULT_OPERATING_HOURS),
         "owner": owner,
         "metadata": {
             "seed_source": "scripts/populate_ce_saladas_store.py",
             "location_source": REFERENCE_STORE_SLUG if reference_store else "default",
+            # ── Cálculo dinâmico de frete ──────────────────────────────────
+            # R$9,00 plano até 4 km → +R$1,00/km após isso → >16 km = a combinar
+            "delivery_base_fee": "9.00",
+            "delivery_fee_per_km": "1.00",
+            "delivery_flat_km": "4.0",
+            "delivery_max_km": "16.0",
+            # ── Zonas fixas por bairro / região ───────────────────────────
+            # Verificadas via reverse-geocode antes do cálculo por km.
+            # surcharge_on_km=True → soma 'surcharge' à taxa por km (condos fechados).
+            "fixed_price_zones": [
+                # Regiões com taxa fixa
+                {
+                    "name": "Aurenys / Bertaville",
+                    "fee": 40.00,
+                    "keywords": ["Aurenys", "Bertaville"],
+                },
+                {
+                    "name": "Taquaralto",
+                    "fee": 40.00,
+                    "keywords": ["Taquaralto"],
+                },
+                {
+                    "name": "Aeroporto",
+                    "fee": 45.00,
+                    "keywords": ["Aeroporto", "Jardim Aeroporto", "Setor Aeroporto"],
+                },
+                {
+                    "name": "Luzimangues",
+                    "fee": 45.00,
+                    "keywords": ["Luzimangues"],
+                },
+                {
+                    "name": "Taquari",
+                    "fee": 50.00,
+                    "keywords": ["Taquari"],
+                },
+                # Condomínios com taxa fixa
+                {
+                    "name": "Caribe / Polinésia",
+                    "fee": 25.00,
+                    "keywords": ["Caribe", "Polinesia", "Polinésia"],
+                },
+                {
+                    "name": "Mirante do Lago",
+                    "fee": 25.00,
+                    "keywords": ["Mirante do Lago", "Mirante Lago"],
+                },
+                # Condomínios fechados: taxa por km + R$5,00
+                {
+                    "name": "Alphaville / Privillege / Aldeia do Sol",
+                    "surcharge_on_km": True,
+                    "surcharge": 5.00,
+                    "keywords": ["Alphaville", "Privillege", "Privilege", "Aldeia do Sol"],
+                },
+            ],
         },
     }
 

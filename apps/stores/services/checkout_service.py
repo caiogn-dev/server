@@ -25,6 +25,81 @@ from .cart_service import cart_service
 logger = logging.getLogger(__name__)
 
 
+def _normalize_address_text(value: str) -> str:
+    if not value:
+        return ''
+    import unicodedata
+    normalized = unicodedata.normalize('NFD', str(value).lower())
+    normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+    return re.sub(r'[^a-z0-9\s]', ' ', normalized)
+
+
+def _extract_quadra_numbers(value: str) -> set[str]:
+    text = _normalize_address_text(value)
+    numbers = set()
+    patterns = [
+        r'\bq(?:uadra)?\s*\.?\s*(\d{2,4})\s*(?:sul|norte)?\b',
+        r'\b(\d{2,4})\s*(?:sul|norte)\b',
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, text):
+            quadra = str(match).lstrip('0')
+            if quadra:
+                numbers.add(quadra)
+    return numbers
+
+
+def _sanitize_delivery_address_coordinates(delivery_address: dict) -> dict:
+    """
+    Drop stale coordinates/raw geocode data when the typed address conflicts
+    with the reverse-geocoded label. Prevents "203 Sul" orders carrying a
+    persisted Maps pin/raw address for "912 Sul".
+    """
+    if not isinstance(delivery_address, dict):
+        return delivery_address
+
+    raw_address = (
+        delivery_address.get('raw_address')
+        or delivery_address.get('formatted_address')
+        or delivery_address.get('display_name')
+    )
+    if not raw_address:
+        return delivery_address
+
+    typed_address = ' '.join(
+        str(delivery_address.get(key) or '')
+        for key in ('street', 'number', 'complement', 'neighborhood', 'city', 'state', 'zip_code')
+    )
+    typed_quadra = _extract_quadra_numbers(typed_address)
+    raw_quadra = _extract_quadra_numbers(raw_address)
+
+    if not typed_quadra or not raw_quadra or typed_quadra & raw_quadra:
+        return delivery_address
+
+    sanitized = dict(delivery_address)
+    for key in ('lat', 'lng', 'latitude', 'longitude', 'formatted_address', 'display_name'):
+        sanitized.pop(key, None)
+    sanitized['raw_address'] = ', '.join(
+        part for part in [
+            sanitized.get('street'),
+            sanitized.get('number'),
+            sanitized.get('complement'),
+            sanitized.get('neighborhood'),
+            sanitized.get('city'),
+            sanitized.get('state'),
+            sanitized.get('zip_code'),
+        ]
+        if part
+    )
+    logger.warning(
+        "Sanitized conflicting delivery geocode: typed_quadra=%s raw_quadra=%s raw_address=%s",
+        sorted(typed_quadra),
+        sorted(raw_quadra),
+        raw_address,
+    )
+    return sanitized
+
+
 def get_valid_email_for_payment(order: StoreOrder) -> str:
     """
     Get a valid email for payment processing.
@@ -160,9 +235,6 @@ class CheckoutService:
         Uses dynamic distance-based calculation for consistent pricing.
         Configured zones are only used if they have proper min_km/max_km ranges.
         """
-        import logging
-        logger = logging.getLogger(__name__)
-        
         if distance_km is not None:
             logger.info(f"Calculating delivery fee for distance: {distance_km} km")
             
@@ -184,6 +256,9 @@ class CheckoutService:
                     logger.info(f"Using configured zone '{zone.name}': R${fee}")
                     return {
                         'fee': float(fee),
+                        'delivery_fee': float(fee),
+                        'is_valid': True,
+                        'available': True,
                         'zone_id': str(zone.id),
                         'zone_name': zone.name,
                         'estimated_minutes': zone.estimated_minutes,
@@ -201,66 +276,270 @@ class CheckoutService:
     @staticmethod
     def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
         """Calculate delivery fee dynamically based on distance.
-        
-        Uses store metadata for configuration or sensible defaults.
-        Fee structure:
-        - Base fee (minimum)
-        - Per-km rate after a threshold
-        - Estimated time based on distance
+
+        Default pricing (Ce Saladas):
+          - R$ 9,00 flat até 4 km
+          - R$ 9,00 + (dist - 4) × R$ 1,00 acima de 4 km
+          - Acima de 16 km: fee=None (a combinar)
+
+        Overridable via store.metadata keys:
+          delivery_base_fee      (default 9.00)
+          delivery_fee_per_km    (default 1.00)
+          delivery_flat_km       (default 4.0 — distância onde a taxa é plana)
+          delivery_free_km       (legacy alias for delivery_flat_km)
+          delivery_max_km        (default 16.0 — acima disso retorna fee=None)
+          delivery_max_fee       (optional legacy cap; when present, caps fee instead of out-of-range)
         """
-        # Get configuration from store metadata or use defaults
         metadata = store.metadata or {}
-        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or 8.0)))
-        fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', 1.0)))
-        free_km_threshold = Decimal(str(metadata.get('delivery_free_km', 3.0)))
-        max_fee = Decimal(str(metadata.get('delivery_max_fee', 25.0)))
-        
-        # If no distance provided, return base fee
+        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or '9.00')))
+        fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', '1.00')))
+        flat_km = Decimal(str(metadata.get('delivery_flat_km') or metadata.get('delivery_free_km') or '4.0'))
+        max_km_raw = metadata.get('delivery_max_km') or metadata.get('max_delivery_distance_km')
+        max_km = Decimal(str(max_km_raw)) if max_km_raw is not None else Decimal('16.0')
+        max_fee_raw = metadata.get('delivery_max_fee')
+        max_fee = Decimal(str(max_fee_raw)) if max_fee_raw not in (None, '') else None
+
         if distance_km is None:
             return {
                 'fee': float(base_fee),
-                'zone_name': 'Padrao',
+                'delivery_fee': float(base_fee),
+                'is_valid': True,
+                'available': True,
+                'zone_name': 'Padrão',
                 'estimated_minutes': 30,
                 'estimated_days': 0,
+                'distance_km': None,
+                'calculation': 'dynamic',
             }
-        
+
         distance = Decimal(str(distance_km))
-        
-        # Calculate fee: base + (distance - threshold) * per_km_rate
-        if distance <= free_km_threshold:
+
+        # Acima do limite máximo → a combinar
+        if max_fee is None and distance > max_km:
+            return {
+                'fee': None,
+                'delivery_fee': None,
+                'is_valid': False,
+                'available': False,
+                'zone_name': 'Fora da área',
+                'estimated_minutes': None,
+                'estimated_days': 0,
+                'distance_km': float(distance),
+                'calculation': 'out_of_range',
+                'reason': 'out_of_range',
+                'message': 'Distância acima de 16 km — entrar em contato para combinar frete',
+            }
+
+        if distance <= flat_km:
             fee = base_fee
-            zone_name = 'Proximo'
+            zone_name = 'Próximo'
         else:
-            extra_km = distance - free_km_threshold
+            extra_km = distance - flat_km
             fee = base_fee + (extra_km * fee_per_km)
-            
-            # Determine zone name based on distance
-            if distance <= 5:
-                zone_name = 'Proximo'
-            elif distance <= 10:
-                zone_name = 'Padrao'
-            elif distance <= 15:
+            if distance <= 8:
+                zone_name = 'Padrão'
+            elif distance <= 12:
                 zone_name = 'Distante'
             else:
-                zone_name = 'Muito Distante'
-        
-        # Cap at max fee
-        fee = min(fee, max_fee)
-        
-        # Round to 2 decimal places
+                zone_name = 'Remoto'
+
+        if max_fee is not None:
+            fee = min(fee, max_fee)
+
         fee = fee.quantize(Decimal('0.01'))
-        
-        # Estimate delivery time: ~3 min per km + 15 min preparation
         estimated_minutes = int(15 + (float(distance) * 3))
-        
+
         return {
             'fee': float(fee),
+            'delivery_fee': float(fee),
+            'is_valid': True,
+            'available': True,
             'zone_name': zone_name,
             'estimated_minutes': estimated_minutes,
             'estimated_days': 0,
             'distance_km': float(distance),
             'calculation': 'dynamic',
         }
+
+    @staticmethod
+    def normalize_delivery_quote(info: dict, route: dict = None) -> dict:
+        """Return a stable delivery quote while preserving legacy response keys."""
+        payload = dict(info or {})
+        route_payload = dict(route or {})
+
+        fee = payload.get('fee', payload.get('delivery_fee'))
+        is_valid = payload.get('is_valid')
+        if is_valid is None:
+            is_valid = payload.get('available')
+        if is_valid is None:
+            is_valid = payload.get('is_within_area')
+        if is_valid is None:
+            is_valid = fee is not None
+
+        zone = payload.get('zone') if isinstance(payload.get('zone'), dict) else {}
+        zone_name = (
+            payload.get('zone_name')
+            or payload.get('delivery_zone')
+            or zone.get('name')
+        )
+        distance_km = payload.get('distance_km', route_payload.get('distance_km'))
+        duration_minutes = payload.get('duration_minutes', route_payload.get('duration_minutes'))
+        estimated_minutes = payload.get('estimated_minutes') or duration_minutes
+        reason = payload.get('reason') or (None if is_valid else payload.get('calculation') or 'unavailable')
+
+        stable = {
+            'is_valid': bool(is_valid),
+            'valid': bool(is_valid),
+            'available': bool(is_valid),
+            'fee': fee,
+            'delivery_fee': fee,
+            'distance_km': distance_km,
+            'duration_minutes': duration_minutes,
+            'estimated_minutes': estimated_minutes,
+            'zone_name': zone_name,
+            'delivery_zone': zone_name,
+            'zone': zone or ({'name': zone_name} if zone_name else None),
+            'message': payload.get('message') or ('Entrega disponível' if is_valid else 'Entrega indisponível'),
+            'reason': reason,
+            'calculation': payload.get('calculation'),
+            'polyline': payload.get('polyline') or route_payload.get('polyline'),
+            'provider': payload.get('provider') or route_payload.get('provider'),
+            'rain_surcharge_applied': bool(payload.get('rain_surcharge_applied', False)),
+        }
+        payload.update({k: v for k, v in stable.items() if v is not None})
+        return payload
+
+    @staticmethod
+    def normalize_custom_salad_payload(customizations: dict, combo_name: str, unit_price=None) -> dict:
+        """Validate and normalize mobile salad-builder customizations."""
+        data = dict(customizations or {})
+        ingredients_raw = data.get('ingredients') or []
+        if isinstance(ingredients_raw, str):
+            ingredients = [part.strip() for part in ingredients_raw.split('·') if part.strip()]
+        elif isinstance(ingredients_raw, list):
+            ingredients = [str(part).strip() for part in ingredients_raw if str(part).strip()]
+        else:
+            ingredients = []
+
+        custom_name = str(data.get('custom_name') or combo_name or 'Monte sua Salada').strip()
+        if not ingredients:
+            raise ValueError('Salada personalizada precisa informar ingredientes')
+
+        normalized = {
+            **data,
+            'type': 'custom_salad',
+            'is_salad_builder': True,
+            'custom_name': custom_name,
+            'ingredients': ingredients,
+        }
+        if unit_price is not None:
+            normalized['unit_price'] = str(unit_price)
+        if 'total_price' not in normalized and unit_price is not None:
+            normalized['total_price'] = str(unit_price)
+        return normalized
+
+    @staticmethod
+    def _is_salad_order_item(item: StoreOrderItem) -> bool:
+        text_parts = [item.product_name or '', item.variant_name or '']
+        if item.product:
+            text_parts.extend([
+                getattr(item.product.category, 'name', '') if item.product.category else '',
+                getattr(item.product.category, 'slug', '') if item.product.category else '',
+                getattr(item.product.product_type, 'name', '') if item.product.product_type else '',
+                getattr(item.product.product_type, 'slug', '') if item.product.product_type else '',
+            ])
+        options = item.options if isinstance(item.options, dict) else {}
+        if options.get('is_salad_builder') or options.get('type') == 'custom_salad':
+            return True
+        blob = ' '.join(text_parts).lower()
+        return 'salada' in blob or 'salad' in blob
+
+    @staticmethod
+    def _is_salad_cart_item(item) -> bool:
+        product = getattr(item, 'product', None)
+        if product:
+            blob = ' '.join([
+                getattr(product, 'name', '') or '',
+                getattr(getattr(product, 'category', None), 'name', '') or '',
+                getattr(getattr(product, 'category', None), 'slug', '') or '',
+                getattr(getattr(product, 'product_type', None), 'name', '') or '',
+                getattr(getattr(product, 'product_type', None), 'slug', '') or '',
+            ]).lower()
+            return 'salada' in blob or 'salad' in blob
+        customizations = getattr(item, 'customizations', {}) or {}
+        return bool(customizations.get('is_salad_builder') or customizations.get('type') == 'custom_salad')
+
+    @staticmethod
+    def get_loyalty_status(store: Store, user=None) -> dict:
+        threshold = int((store.metadata or {}).get('loyalty_salads_required', 10) or 10)
+        threshold = max(1, threshold)
+        enabled = bool((store.metadata or {}).get('loyalty_enabled', True))
+
+        if not user or not getattr(user, 'is_authenticated', False):
+            return {
+                'enabled': enabled,
+                'threshold': threshold,
+                'qualified_salads': 0,
+                'rewards_earned': 0,
+                'rewards_redeemed': 0,
+                'available_rewards': 0,
+                'progress': 0,
+                'remaining': threshold,
+                'can_redeem': False,
+            }
+
+        orders = (
+            StoreOrder.objects
+            .filter(store=store, customer=user)
+            .exclude(status__in=[
+                StoreOrder.OrderStatus.CANCELLED,
+                StoreOrder.OrderStatus.FAILED,
+                StoreOrder.OrderStatus.REFUNDED,
+            ])
+            .filter(Q(payment_status=StoreOrder.PaymentStatus.PAID) | Q(status__in=[
+                StoreOrder.OrderStatus.PAID,
+                StoreOrder.OrderStatus.DELIVERED,
+                StoreOrder.OrderStatus.COMPLETED,
+            ]))
+            .prefetch_related('items__product__category', 'items__product__product_type')
+        )
+
+        qualified = 0
+        redeemed = 0
+        for order in orders:
+            loyalty_meta = (order.metadata or {}).get('loyalty_reward') or {}
+            if loyalty_meta.get('applied'):
+                redeemed += int(loyalty_meta.get('count') or 1)
+            for item in order.items.all():
+                if CheckoutService._is_salad_order_item(item):
+                    qualified += int(item.quantity or 0)
+
+        earned = qualified // threshold
+        available = max(0, earned - redeemed)
+        progress = qualified % threshold
+        return {
+            'enabled': enabled,
+            'threshold': threshold,
+            'qualified_salads': qualified,
+            'rewards_earned': earned,
+            'rewards_redeemed': redeemed,
+            'available_rewards': available,
+            'progress': progress,
+            'remaining': 0 if available else max(0, threshold - progress),
+            'can_redeem': enabled and available > 0,
+            'label': f'A cada {threshold} saladas, 1 grátis',
+        }
+
+    @staticmethod
+    def _cart_salad_discount(cart: StoreCart) -> Decimal:
+        prices = []
+        for item in cart.items.select_related('product__category', 'product__product_type', 'variant').all():
+            if CheckoutService._is_salad_cart_item(item):
+                prices.extend([Decimal(str(item.unit_price))] * int(item.quantity or 0))
+        for item in cart.combo_items.all():
+            if CheckoutService._is_salad_cart_item(item):
+                prices.extend([Decimal(str(item.effective_price))] * int(item.quantity or 0))
+        return min(prices) if prices else Decimal('0')
     
     @staticmethod
     def validate_coupon(store: Store, code: str, subtotal: Decimal, user=None) -> dict:
@@ -327,7 +606,8 @@ class CheckoutService:
         customer_data: dict,
         delivery_data: dict = None,
         coupon_code: str = None,
-        notes: str = ''
+        notes: str = '',
+        use_loyalty_reward: bool = False,
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -335,6 +615,8 @@ class CheckoutService:
         store = cart.store
         delivery_payload = dict(delivery_data or {})
         delivery_address = dict(delivery_payload.get('address') or {})
+        delivery_address = _sanitize_delivery_address_coordinates(delivery_address)
+        delivery_payload['address'] = delivery_address
 
         if delivery_payload.get('method') == 'delivery':
             if store.city and not delivery_address.get('city'):
@@ -349,7 +631,13 @@ class CheckoutService:
             raise ValueError(f"Erros de estoque: {stock_errors}")
         
         # Calculate delivery fee
-        delivery_info = {'fee': Decimal('0'), 'zone_name': 'Retirada'}
+        delivery_info = CheckoutService.normalize_delivery_quote({
+            'fee': 0.0,
+            'delivery_fee': 0.0,
+            'zone_name': 'Retirada',
+            'is_valid': True,
+            'available': True,
+        })
         if delivery_payload and delivery_payload.get('method') == 'delivery':
             distance = delivery_payload.get('distance_km')
             zip_code = delivery_payload.get('zip_code')
@@ -358,7 +646,11 @@ class CheckoutService:
                 distance_km=Decimal(str(distance)) if distance else None,
                 zip_code=zip_code
             )
+            delivery_info = CheckoutService.normalize_delivery_quote(delivery_info)
         
+        if delivery_info.get('fee') is None:
+            raise ValueError(delivery_info.get('message') or 'Endereço fora da área de entrega')
+
         delivery_fee = Decimal(str(delivery_info['fee']))
         
         # Calculate subtotal
@@ -367,18 +659,6 @@ class CheckoutService:
             subtotal += item.subtotal
         for combo_item in cart.combo_items.all():
             subtotal += combo_item.subtotal
-        
-        # Validate and apply coupon using unified StoreCoupon model
-        discount = Decimal('0')
-        coupon = None
-        if coupon_code:
-            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal, user=cart.user)
-            if coupon_result['valid']:
-                discount = Decimal(str(coupon_result['discount']))
-                coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
-        
-        # Calculate total (no tax - just subtotal + delivery - discount)
-        total = subtotal + delivery_fee - discount
 
         customer_record = CustomerIdentityService.sync_checkout_customer(
             store=store,
@@ -392,6 +672,39 @@ class CheckoutService:
         )
         customer_user = customer_record.get('user')
         store_customer = customer_record.get('store_customer')
+        
+        # Validate and apply coupon using unified StoreCoupon model
+        discount = Decimal('0')
+        coupon = None
+        if coupon_code:
+            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal, user=cart.user)
+            if coupon_result['valid']:
+                discount = Decimal(str(coupon_result['discount']))
+                coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
+
+        loyalty_reward = {
+            'applied': False,
+            'count': 0,
+            'discount': 0.0,
+        }
+        if use_loyalty_reward:
+            loyalty_user = customer_user or cart.user
+            loyalty_status = CheckoutService.get_loyalty_status(store, loyalty_user)
+            loyalty_discount = CheckoutService._cart_salad_discount(cart)
+            if not loyalty_status.get('can_redeem'):
+                raise ValueError('Clube Verde ainda não possui salada grátis disponível')
+            if loyalty_discount <= 0:
+                raise ValueError('Adicione uma salada para usar a salada grátis')
+            discount += loyalty_discount
+            loyalty_reward = {
+                'applied': True,
+                'count': 1,
+                'discount': float(loyalty_discount),
+                'threshold': loyalty_status.get('threshold', 10),
+            }
+        
+        # Calculate total (no tax - just subtotal + delivery - discount)
+        total = subtotal + delivery_fee - discount
 
         # Create order
         order = StoreOrder.objects.create(
@@ -418,7 +731,9 @@ class CheckoutService:
             customer_notes=notes,
             metadata={
                 'delivery_zone': delivery_info.get('zone_name'),
+                'delivery_quote': delivery_info,
                 'estimated_minutes': delivery_info.get('estimated_minutes'),
+                'loyalty_reward': loyalty_reward,
                 'customer': {
                     'user_id': str(customer_user.id) if customer_user else '',
                     'store_customer_id': str(store_customer.id) if store_customer else '',
@@ -869,4 +1184,3 @@ class CheckoutService:
 
 # Singleton instance
 checkout_service = CheckoutService()
-

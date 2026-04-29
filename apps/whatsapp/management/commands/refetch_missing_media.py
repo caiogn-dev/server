@@ -2,9 +2,12 @@
 Re-downloads media files whose file is missing from storage but media_id is known.
 Safe to re-run: skips files that already exist.
 """
+from urllib.parse import urlparse
+
 from django.core.management.base import BaseCommand
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.conf import settings
 from apps.core.utils import build_absolute_media_url, mime_to_extension
 from apps.whatsapp.models import Message
 from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
@@ -19,6 +22,9 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options['dry_run']
+        media_prefix = settings.MEDIA_URL.rstrip('/')
+        backend_host = urlparse(settings.BACKEND_URL).netloc
+        media_host_prefix = f"{settings.BACKEND_URL.rstrip('/')}{settings.MEDIA_URL}"
 
         qs = Message.objects.filter(
             message_type__in=['audio', 'image', 'video', 'document', 'sticker'],
@@ -27,9 +33,15 @@ class Command(BaseCommand):
         if options['message_id']:
             qs = qs.filter(id=options['message_id'])
         else:
-            # Only messages where file is missing: url empty OR url is relative (starts with /media/)
+            # Only messages where file is likely missing on local storage:
+            # empty URL, relative /media URL, or absolute backend media URL.
             from django.db.models import Q
-            qs = qs.filter(Q(media_url='') | Q(media_url__startswith='/media/'))
+            qs = qs.filter(
+                Q(media_url='') |
+                Q(media_url__startswith=f'{media_prefix}/') |
+                Q(media_url__startswith=media_host_prefix) |
+                Q(media_url__contains=backend_host)
+            )
 
         total = qs.count()
         self.stdout.write(f"Found {total} messages with missing/relative media")

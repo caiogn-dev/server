@@ -80,7 +80,7 @@ class WhatsAppAuthService:
     # Cada entrada tem: (nome, idioma, tem_parametro)
     # IMPORTANTE: Use apenas templates que existem e estão aprovados no Meta Business Manager
     TEMPLATE_ATTEMPTS = [
-        ('codigo_verificacao', 'pt_BR', True),    # Template com {{1}} para código
+        ('codigo_verificacao', 'pt_BR', True),    # Template AUTH com {{1}}; o botão COPY_CODE vem do template aprovado
     ]
     
     @classmethod
@@ -98,7 +98,8 @@ class WhatsAppAuthService:
         
         for template_name, language, has_param in cls.TEMPLATE_ATTEMPTS:
             if has_param:
-                # Template com variável {{1}}
+                # Template OTP/copy-code: o código vai no body; o botão COPY_CODE
+                # já faz parte do template aprovado e não deve ser montado no payload.
                 configs.append({
                     'name': template_name,
                     'language': {'code': language},
@@ -108,7 +109,7 @@ class WhatsAppAuthService:
                             'parameters': [
                                 {'type': 'text', 'text': code},
                             ]
-                        }
+                        },
                     ]
                 })
             else:
@@ -151,14 +152,6 @@ class WhatsAppAuthService:
                     'type': 'body',
                     'parameters': [
                         {'type': 'text', 'text': code},
-                    ]
-                },
-                {
-                    'type': 'button',
-                    'sub_type': 'url',
-                    'index': 0,
-                    'parameters': [
-                        {'type': 'text', 'text': code}
                     ]
                 }
             ]
@@ -354,7 +347,7 @@ class WhatsAppAuthService:
         if cls.USE_TEXT_FALLBACK:
             logger.info(f"[WHATSAPP AUTH] Trying text message fallback...")
             try:
-                text_message = f"🔐 Seu código de verificação Pastita é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
+                text_message = f"🥗 Seu código de verificação Cê Saladas é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
                 result = message_service.send_text_message(
                     account_id=whatsapp_account_id,
                     to=clean_phone,

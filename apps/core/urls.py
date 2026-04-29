@@ -5,6 +5,7 @@ from django.urls import path
 from .api import HealthCheckView, SystemInfoView
 from .dashboard_views import (
     DashboardOverviewView,
+    DashboardProjectHealthView,
     DashboardActivityView,
     DashboardChartsView,
     DashboardStatsView,
@@ -38,6 +39,7 @@ urlpatterns = [
     
     # Dashboard
     path('dashboard/overview/', DashboardOverviewView.as_view(), name='dashboard-overview'),
+    path('dashboard/project-health/', DashboardProjectHealthView.as_view(), name='dashboard-project-health'),
     path('dashboard/activity/', DashboardActivityView.as_view(), name='dashboard-activity'),
     path('dashboard/charts/', DashboardChartsView.as_view(), name='dashboard-charts'),
     path('dashboard-stats/', DashboardStatsView.as_view(), name='dashboard-stats'),

@@ -165,6 +165,7 @@ class RateLimitMiddleware:
         self.enabled = getattr(settings, 'RATE_LIMIT_ENABLED', True)
         self.max_requests = getattr(settings, 'RATE_LIMIT_REQUESTS', 100)
         self.window = getattr(settings, 'RATE_LIMIT_WINDOW', 60)
+        self.scoped_limits = getattr(settings, 'RATE_LIMIT_SCOPED_PATHS', [])
 
     def __call__(self, request):
         if not self.enabled:
@@ -180,6 +181,11 @@ class RateLimitMiddleware:
         whitelist = getattr(settings, 'RATE_LIMIT_WHITELIST_PATHS', [])
         if any(request.path.startswith(path) for path in whitelist):
             return self.get_response(request)
+
+        scoped_response = self._handle_scoped_limit(request, client_ip)
+        if scoped_response is not None:
+            return scoped_response
+
         cache_key = f"rate_limit:{client_ip}"
 
         request_count = cache.get(cache_key, 0)
@@ -210,6 +216,68 @@ class RateLimitMiddleware:
         response['X-RateLimit-Reset'] = str(self.window)
 
         return response
+
+    def _handle_scoped_limit(self, request, client_ip):
+        for rule in self.scoped_limits:
+            prefix = rule.get('prefix')
+            if not prefix or not request.path.startswith(prefix):
+                continue
+
+            max_requests = int(rule.get('requests') or self.max_requests)
+            window = int(rule.get('window') or self.window)
+            identity = self._rate_limit_identity(request, client_ip, rule.get('key_by', 'ip'))
+            cache_key = f"rate_limit:scoped:{prefix}:{identity}"
+            request_count = cache.get(cache_key, 0)
+
+            if request_count >= max_requests:
+                logger.warning(
+                    "Scoped rate limit exceeded for %s identity=%s",
+                    prefix,
+                    identity,
+                    extra={
+                        'ip': client_ip,
+                        'path': request.path,
+                        'scope': prefix,
+                        'count': request_count,
+                    },
+                )
+                return JsonResponse(
+                    {
+                        'error': {
+                            'code': 'rate_limit_exceeded',
+                            'message': 'Too many requests. Please try again later.',
+                            'details': {
+                                'retry_after': window,
+                                'scope': prefix,
+                            }
+                        }
+                    },
+                    status=429
+                )
+
+            cache.set(cache_key, request_count + 1, window)
+            response = self.get_response(request)
+            response['X-RateLimit-Limit'] = str(max_requests)
+            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count - 1))
+            response['X-RateLimit-Reset'] = str(window)
+            response['X-RateLimit-Scope'] = prefix
+            return response
+
+        return None
+
+    def _rate_limit_identity(self, request, client_ip, key_by):
+        if key_by == 'print_agent_or_ip':
+            raw_key = request.headers.get('X-Print-Agent-Key') or request.META.get('HTTP_X_PRINT_AGENT_KEY', '')
+            if raw_key:
+                prefix = raw_key.split('.', 1)[0]
+                return 'print:' + hashlib.sha256(prefix.encode()).hexdigest()[:16]
+
+        if key_by in {'auth_or_ip', 'print_agent_or_ip'}:
+            auth_header = request.META.get('HTTP_AUTHORIZATION') or ''
+            if auth_header:
+                return 'auth:' + hashlib.sha256(auth_header.encode()).hexdigest()[:16]
+
+        return 'ip:' + client_ip
 
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')

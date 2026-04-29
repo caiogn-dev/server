@@ -43,7 +43,14 @@ def process_webhook_event(self, event_id: str):
     from ..repositories import WebhookEventRepository
     
     webhook_repo = WebhookEventRepository()
+    lock_name = f"process_webhook_event:{event_id}"
+
+    if not acquire_lock(lock_name, timeout=180):
+        logger.info(f"Webhook event {event_id} is already being processed by another worker")
+        return
     
+    event = None
+
     try:
         event = webhook_repo.get_by_id(event_id)
         if not event:
@@ -68,11 +75,14 @@ def process_webhook_event(self, event_id: str):
         
     except Exception as e:
         logger.error(f"Error processing webhook event {event_id}: {str(e)}")
-        try:
-            webhook_repo.mark_as_failed(event, str(e))
-        except Exception:
-            logger.error("Failed to mark webhook event as failed", exc_info=True)
+        if event is not None:
+            try:
+                webhook_repo.mark_as_failed(event, str(e))
+            except Exception:
+                logger.error("Failed to mark webhook event as failed", exc_info=True)
         raise self.retry(exc=e)
+    finally:
+        release_lock(lock_name)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
@@ -139,6 +149,7 @@ def process_message_with_agent(self, message_id: str):
             
             response_text = result.get('response', '')
             order_created = result.get('order_created')
+            whatsapp_response = result.get('whatsapp_response') or {}
             logger.info(f"Agent returned response of length {len(response_text) if response_text else 0} for message: {message_id}")
             
         except Exception as agent_error:
@@ -146,6 +157,7 @@ def process_message_with_agent(self, message_id: str):
             # Send fallback message on agent error
             response_text = "Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente?"
             order_created = None
+            whatsapp_response = {}
         
         # Always mark as processed, even if there was an error
         try:
@@ -162,6 +174,7 @@ def process_message_with_agent(self, message_id: str):
                     response_text,
                     str(message.whatsapp_message_id),
                     'ai_agent',
+                    whatsapp_response,
                 )
                 logger.info(f"Response queued for sending: {message_id}")
             except Exception as send_error:
@@ -174,6 +187,7 @@ def process_message_with_agent(self, message_id: str):
                         "Obrigado pela mensagem! Em breve retornaremos.",
                         None,
                         'ai_agent_error_fallback',
+                        {},
                     )
                 except:
                     pass
@@ -198,6 +212,7 @@ def send_agent_response(
     response_text: str,
     reply_to: str = None,
     response_source: str = 'ai_agent',
+    whatsapp_response: dict = None,
 ):
     """Send an automated WhatsApp response and persist its origin metadata."""
     from ..services import MessageService
@@ -206,14 +221,40 @@ def send_agent_response(
         message_service = MessageService()
         # Ensure phone number has + prefix for E.164 format
         formatted_to = to if to.startswith('+') else '+' + to
-        
-        message_service.send_text_message(
-            account_id=account_id,
-            to=formatted_to,
-            text=response_text,
-            reply_to=reply_to,
-            metadata={'source': response_source}
-        )
+
+        whatsapp_response = whatsapp_response or {}
+        response_type = whatsapp_response.get('type')
+        if response_type in {'template', 'authentication_template'}:
+            message_service.send_template_message(
+                account_id=account_id,
+                to=formatted_to,
+                template_name=whatsapp_response.get('template_name', 'codigo_verificacao'),
+                language_code=whatsapp_response.get('language_code', 'pt_BR'),
+                components=whatsapp_response.get('components') or [
+                    {
+                        'type': 'body',
+                        'parameters': [{'type': 'text', 'text': response_text}],
+                    }
+                ],
+                metadata={'source': response_source},
+            )
+        elif response_type == 'interactive_buttons':
+            message_service.send_interactive_buttons(
+                account_id=account_id,
+                to=formatted_to,
+                body_text=whatsapp_response.get('body') or response_text,
+                buttons=whatsapp_response.get('buttons') or [],
+                reply_to=reply_to,
+                metadata={'source': response_source},
+            )
+        else:
+            message_service.send_text_message(
+                account_id=account_id,
+                to=formatted_to,
+                text=response_text,
+                reply_to=reply_to,
+                metadata={'source': response_source}
+            )
         logger.info("Automated response sent to %s via %s", to, response_source)
         
     except Exception as e:

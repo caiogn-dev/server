@@ -4,6 +4,7 @@ WhatsApp API views.
 import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
@@ -11,6 +12,7 @@ from django.db.models import Q
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from ..models import WhatsAppAccount, Message, MessageTemplate
 from apps.core.permissions import accessible_whatsapp_account_ids
+from apps.core.utils import build_absolute_media_url
 from ..services import MessageService, WhatsAppAPIService
 
 from .serializers import (
@@ -449,7 +451,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         summary="Upload and send a media file (image/audio/video/document)",
         responses={201: MessageSerializer}
     )
-    @action(detail=False, methods=['post'], url_path='send_file', parser_classes=None)
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='send_file',
+        parser_classes=[MultiPartParser, FormParser],
+    )
     def send_file(self, request):
         """Upload a file and send it as a WhatsApp message.
 
@@ -462,8 +469,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """
         import os
         import uuid as uuid_mod
+        from django.core.files.base import ContentFile
         from django.core.files.storage import default_storage
-        from django.conf import settings
 
         account_id = request.data.get('account_id')
         to = request.data.get('to')
@@ -485,24 +492,67 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         else:
             msg_type = 'document'
 
-        # Save file to storage
-        ext = os.path.splitext(file_obj.name)[1] or ''
+        file_bytes = file_obj.read()
+        if msg_type == 'image' and mime not in {'image/jpeg', 'image/png'}:
+            from io import BytesIO
+            from PIL import Image
+
+            image = Image.open(BytesIO(file_bytes))
+            if getattr(image, 'is_animated', False):
+                image.seek(0)
+            if image.mode not in {'RGB', 'RGBA'}:
+                image = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
+            if image.mode == 'RGBA':
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.getchannel('A'))
+                image = background
+            else:
+                image = image.convert('RGB')
+
+            output = BytesIO()
+            image.save(output, format='JPEG', quality=90, optimize=True)
+            file_bytes = output.getvalue()
+            mime = 'image/jpeg'
+
+        # Save file to storage for dashboard preview/history.
+        ext = '.jpg' if mime == 'image/jpeg' else (os.path.splitext(file_obj.name)[1] or '')
         save_name = f'whatsapp/uploads/{uuid_mod.uuid4().hex}{ext}'
-        saved_path = default_storage.save(save_name, file_obj)
-        backend_url = getattr(settings, 'BASE_URL', 'https://backend.pastita.com.br').rstrip('/')
-        media_url = f"{backend_url}{settings.MEDIA_URL}{saved_path}"
+        saved_path = default_storage.save(save_name, ContentFile(file_bytes))
+        media_url = build_absolute_media_url(default_storage.url(saved_path))
 
         service = MessageService()
         try:
+            account = service._get_account(account_id)
+            api_service = WhatsAppAPIService(account)
+            upload_result = api_service.upload_media(
+                file_data=file_bytes,
+                mime_type=mime or 'application/octet-stream',
+                filename=file_obj.name,
+            )
+            media_id = upload_result.get('id', '')
+            if not media_id:
+                raise ValueError('WhatsApp media upload did not return a media id')
+
             if msg_type == 'image':
-                message = service.send_image(account_id=account_id, to=to, image_url=media_url, caption=caption or None, reply_to=reply_to)
+                message = service.send_image(account_id=account_id, to=to, image_id=media_id, caption=caption or None, reply_to=reply_to)
             elif msg_type == 'audio':
-                message = service.send_audio(account_id=account_id, to=to, audio_url=media_url, reply_to=reply_to)
+                message = service.send_audio(account_id=account_id, to=to, audio_id=media_id, reply_to=reply_to)
             elif msg_type == 'video':
-                message = service.send_video(account_id=account_id, to=to, video_url=media_url, caption=caption or None, reply_to=reply_to)
+                message = service.send_video(account_id=account_id, to=to, video_id=media_id, caption=caption or None, reply_to=reply_to)
             else:
-                message = service.send_document(account_id=account_id, to=to, document_url=media_url, filename=file_obj.name, caption=caption or None, reply_to=reply_to)
-        except Exception as e:
+                message = service.send_document(account_id=account_id, to=to, document_id=media_id, filename=file_obj.name, caption=caption or None, reply_to=reply_to)
+
+            content = dict(message.content or {})
+            content.update({
+                'media_url': media_url,
+                'filename': file_obj.name,
+                'mime_type': mime,
+            })
+            message.content = content
+            message.media_url = media_url
+            message.media_mime_type = mime
+            message.save(update_fields=['content', 'media_url', 'media_mime_type', 'updated_at'])
+        except Exception:
             default_storage.delete(saved_path)
             raise
 

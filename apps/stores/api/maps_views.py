@@ -1,15 +1,14 @@
 """
-HERE Maps API Views - Location services for stores.
+Geo API Views - location services for stores.
 """
 import logging
-from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store
-from apps.stores.services.checkout_service import CheckoutService
+from apps.stores.services import checkout_service
 from apps.stores.services.geo import geo_service as here_maps_service
 
 logger = logging.getLogger(__name__)
@@ -105,23 +104,34 @@ class StoreRouteView(APIView):
             )
         
         try:
-            origin = (float(store.latitude), float(store.longitude))
+            origin = (float(store_lat), float(store_lng))
             destination = (float(dest_lat), float(dest_lng))
             
             logger.info(f"Route request: store={store.slug}, origin={origin}, destination={destination}")
             
             result = here_maps_service.calculate_route(origin, destination)
             if result:
+                delivery_info = here_maps_service.calculate_delivery_fee(
+                    store=store,
+                    customer_lat=float(dest_lat),
+                    customer_lng=float(dest_lng),
+                )
+                delivery_quote = checkout_service.normalize_delivery_quote(delivery_info, route=result)
                 return Response({
                     'store': {
                         'name': store.name,
-                        'lat': float(store.latitude),
-                        'lng': float(store.longitude),
+                        'lat': float(store_lat),
+                        'lng': float(store_lng),
                     },
                     'destination': {
                         'lat': float(dest_lat),
                         'lng': float(dest_lng),
                     },
+                    'delivery_quote': delivery_quote,
+                    'fee': delivery_quote.get('fee'),
+                    'delivery_fee': delivery_quote.get('delivery_fee'),
+                    'is_valid': delivery_quote.get('is_valid'),
+                    'zone_name': delivery_quote.get('zone_name'),
                     **result
                 })
             
@@ -209,15 +219,29 @@ class StoreValidateDeliveryView(APIView):
                 max_time_minutes=max_time
             )
             
-            # Add delivery fee calculation
+            # Use the unified geo pricing flow so fixed-price neighborhoods and
+            # delivery zones behave exactly like WhatsApp and the delivery-fee API.
             if result['is_valid']:
-                fee_info = CheckoutService.calculate_delivery_fee(
-                    store,
-                    distance_km=Decimal(str(result['distance_km']))
+                fee_info = here_maps_service.calculate_delivery_fee(
+                    store=store,
+                    customer_lat=float(lat),
+                    customer_lng=float(lng),
                 )
                 result['delivery_fee'] = fee_info['fee']
-                result['delivery_zone'] = fee_info.get('zone_name')
-                result['estimated_minutes'] = fee_info.get('estimated_minutes')
+                zone = fee_info.get('zone') or {}
+                result['delivery_zone'] = zone.get('name')
+                result['estimated_minutes'] = (
+                    fee_info.get('estimated_minutes')
+                    or fee_info.get('duration_minutes')
+                    or result.get('duration_minutes')
+                )
+                logger.info(
+                    "Delivery fee resolved for store=%s zone=%s fee=%s distance_km=%s",
+                    store.slug,
+                    result['delivery_zone'],
+                    result['delivery_fee'],
+                    fee_info.get('distance_km'),
+                )
             
             return Response(result)
         

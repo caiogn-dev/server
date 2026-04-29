@@ -199,7 +199,7 @@ class Store(BaseModel):
         if not self.operating_hours:
             return True
 
-        now = timezone.now()
+        now = timezone.localtime()
         day_name = now.strftime('%A').lower()
         hours = self.operating_hours.get(day_name)
 
@@ -207,7 +207,11 @@ class Store(BaseModel):
             return False
 
         current_time = now.strftime('%H:%M')
-        return hours.get('open', '00:00') <= current_time <= hours.get('close', '23:59')
+        open_time = hours.get('open') or hours.get('start') or '00:00'
+        close_time = hours.get('close') or hours.get('end') or '23:59'
+        if not open_time or not close_time:
+            return False
+        return open_time <= current_time <= close_time
     
     def get_whatsapp_account(self):
         """

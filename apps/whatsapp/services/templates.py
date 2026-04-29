@@ -148,6 +148,23 @@ class JasperTemplates:
         )
 
     @staticmethod
+    def out_of_hours(store_name: str, today_hours: str = '') -> MessageTemplate:
+        """Mensagem curta para contatos recebidos fora do horário."""
+        body = f"*{store_name}* está fora do horário no momento."
+        if today_hours:
+            body += f"\n\nHoje atendemos de *{today_hours}*."
+        body += "\n\nMe envie sua mensagem que seguimos assim que a loja abrir."
+        return MessageTemplate(
+            name="out_of_hours",
+            body=body,
+            buttons=[
+                {"id": "view_menu", "title": "📋 Cardápio"},
+                {"id": "contact_support", "title": "💬 Atendimento"},
+            ],
+            footer="Você pode deixar sua mensagem agora",
+        )
+
+    @staticmethod
     def need_help(customer_name: str = '') -> MessageTemplate:
         """Oferecer ajuda."""
         greeting = f"{customer_name}, " if customer_name else ""

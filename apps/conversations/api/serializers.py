@@ -9,6 +9,7 @@ from ..models import Conversation, ConversationNote
 class ConversationSerializer(serializers.ModelSerializer):
     """Serializer for Conversation."""
     account_name = serializers.CharField(source='account.name', read_only=True)
+    profile_picture = serializers.SerializerMethodField()
     assigned_agent_name = serializers.CharField(
         source='assigned_agent.username',
         read_only=True,
@@ -30,6 +31,8 @@ class ConversationSerializer(serializers.ModelSerializer):
         model = Conversation
         fields = [
             'id', 'account', 'account_name', 'phone_number', 'contact_name',
+            'wa_id', 'profile_picture_url', 'profile_picture_file', 'profile_picture',
+            'profile_name_last_seen_at',
             'mode', 'status', 'assigned_agent', 'assigned_agent_name',
             'ai_agent', 'ai_agent_name', 'agent_session_id', 'context', 'tags',
             'last_message_at', 'last_message_preview', 'unread_count',
@@ -43,6 +46,13 @@ class ConversationSerializer(serializers.ModelSerializer):
             'last_agent_message_at', 'closed_at', 'resolved_at',
             'created_at', 'updated_at'
         ]
+
+    def get_profile_picture(self, obj):
+        if obj.profile_picture_file:
+            request = self.context.get('request')
+            url = obj.profile_picture_file.url
+            return request.build_absolute_uri(url) if request else url
+        return obj.profile_picture_url or ''
 
     def get_message_count(self, obj):
         return obj.messages.count() if hasattr(obj, 'messages') else 0

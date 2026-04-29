@@ -152,6 +152,31 @@ class HandlerResult:
             interactive_type='list',
             interactive_data={'body': body, 'button': button, 'sections': sections}
         )
+
+    @classmethod
+    def product_list(
+        cls,
+        body: str,
+        sections: list,
+        header: Optional[str] = None,
+        footer: Optional[str] = None,
+        catalog_id: Optional[str] = None,
+        fallback_sections: Optional[list] = None,
+    ) -> 'HandlerResult':
+        """Cria resultado com catálogo nativo do WhatsApp."""
+        return cls(
+            response_text="PRODUCT_LIST_SENT",
+            use_interactive=True,
+            interactive_type='product_list',
+            interactive_data={
+                'body': body,
+                'sections': sections,
+                'header': header,
+                'footer': footer,
+                'catalog_id': catalog_id,
+                'fallback_sections': fallback_sections or [],
+            }
+        )
     
     @classmethod
     def needs_llm(cls) -> 'HandlerResult':
@@ -249,48 +274,14 @@ class IntentHandler:
         if not getattr(self.store, 'delivery_enabled', True):
             return "🚫 No momento trabalhamos apenas com retirada."
 
-        metadata = getattr(self.store, 'metadata', None) or {}
-        normalized_message = self._normalize_lookup_text(message)
-        fixed_zone = self._match_fixed_delivery_zone_from_text(message)
-
-        if fixed_zone:
-            zone_name = fixed_zone.get('name', 'essa região')
-            zone_fee = float(fixed_zone.get('fee', self.store.default_delivery_fee or 0))
-            return (
-                f"🛵 Para *{zone_name}* a taxa de entrega é *R$ {zone_fee:.2f}*.\n\n"
-                "Se quiser, já posso seguir com o pedido."
-            )
-
-        base_fee = float(metadata.get('delivery_base_fee', self.store.default_delivery_fee or 0))
-        free_km = metadata.get('delivery_free_km')
-        fee_per_km = metadata.get('delivery_fee_per_km')
-        max_fee = metadata.get('delivery_max_fee')
-        fixed_zones = metadata.get('fixed_price_zones') or []
-
         lines = [
             "🚚 *Informações de entrega*",
             "",
-            f"• Taxa base: *R$ {base_fee:.2f}*",
+            "A taxa varia de acordo com a localização.",
+            "Me envie sua localização pelo *alfinete do WhatsApp* para eu calcular certinho.",
         ]
-        if free_km is not None and fee_per_km is not None:
-            lines.append(f"• Cálculo padrão: taxa base até {free_km} km e depois +R$ {float(fee_per_km):.2f}/km")
-        if max_fee is not None:
-            lines.append(f"• Teto da taxa dinâmica: *R$ {float(max_fee):.2f}*")
         if self.store.min_order_value:
-            lines.append(f"• Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*")
-
-        if fixed_zones:
-            special_names = ", ".join(zone.get('name') for zone in fixed_zones if zone.get('name'))
-            if special_names:
-                lines.append(f"• Regiões com taxa fixa: {special_names}")
-
-        if normalized_message and any(
-            token in normalized_message
-            for token in ('taquaralto', 'aureny', 'bertaville', 'taquari', 'taquarucu')
-        ):
-            lines.append("")
-            lines.append("Me diga o bairro exato ou compartilhe a localização para eu calcular certinho.")
-
+            lines.extend(["", f"Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*"])
         return "\n".join(lines)
 
     def _build_location_text(self) -> str:
@@ -353,8 +344,13 @@ class IntentHandler:
         except Exception as exc:
             logger.warning("[_send_pix_confirmation] Erro ao enviar msg1: %s", exc)
 
-        # Segunda mensagem: somente o código
-        return HandlerResult.text(pix_code)
+        # Segunda mensagem: somente o código PIX no corpo, com botão abaixo.
+        return HandlerResult.buttons(
+            body=pix_code,
+            buttons=[
+                {'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'},
+            ],
+        )
 
     def _handle_address_input(self, address_text: str) -> 'HandlerResult':
         """
@@ -450,7 +446,12 @@ class IntentHandler:
         address_components: dict = None,
     ) -> 'HandlerResult':
         """Calcula taxa, salva na sessão, envia confirmação e pergunta método de pagamento."""
-        fee_result = geo_svc.calculate_delivery_fee(self.store, lat, lng)
+        fee_result = geo_svc.calculate_delivery_fee(
+            self.store,
+            lat,
+            lng,
+            customer_address_text=formatted_address,
+        )
 
         fixed_zone_from_text = self._match_fixed_delivery_zone_from_text(formatted_address)
         if fixed_zone_from_text:
@@ -490,7 +491,7 @@ class IntentHandler:
 
         dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
         time_text = f" ~{int(duration_minutes)} min" if duration_minutes else ""
-        fee_text = f"R$ {float(fee):.2f}" if float(fee) > 0 else "Grátis 🎉"
+        fee_text = f"R$ {float(fee):.2f}".replace('.', ',') if float(fee) > 0 else "Grátis 🎉"
 
         try:
             self.whatsapp_service.send_text_message(
@@ -743,14 +744,14 @@ class PriceCheckHandler(IntentHandler):
 
 
 class ProductMentionHandler(IntentHandler):
-    """Handler quando usuário menciona produto — delega ao LLM (tem ferramenta buscar_produto)."""
+    """Handler quando usuário menciona produto — usa somente o catálogo real da loja."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         logger.info("[ProductMentionHandler] Respondendo via busca determinística")
         return self._legacy_handle(intent_data)
 
     def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        message = intent_data.get('original_message', '').lower().strip()
+        message = intent_data.get('original_message', '').strip()
         logger.info(f"[ProductMentionHandler] Mensagem: {message}")
 
         if not self.store:
@@ -765,6 +766,7 @@ class ProductMentionHandler(IntentHandler):
         # Se digitou algo genérico como "rondelli", "lasanha", "nhoque"
         # Mostra TODOS desse tipo
         search_term = message.lower().strip()
+        normalized_search = self._normalize_lookup_text(search_term)
         
         # Remove palavras comuns
         search_term = search_term.replace('de ', '').replace('com ', '').replace('e ', '')
@@ -773,19 +775,43 @@ class ProductMentionHandler(IntentHandler):
         matched_products = []
         for product in all_products:
             product_name_lower = product.name.lower()
+            normalized_name = self._normalize_lookup_text(product.name)
             # Verifica se o termo está no nome do produto
-            if search_term in product_name_lower:
+            if (
+                search_term in product_name_lower
+                or normalized_search == normalized_name
+                or (len(normalized_search) >= 5 and normalized_search in normalized_name)
+                or (len(normalized_name) >= 5 and normalized_name in normalized_search)
+            ):
                 matched_products.append(product)
                 logger.info(f"[ProductMentionHandler] Match: {product.name}")
         
         # Se encontrou produtos, mostra todos
         if matched_products:
             if len(matched_products) == 1:
-                # Só um tipo disponível
+                # Só um produto: salva na sessão e pergunta quantidade com botões.
                 p = matched_products[0]
-                return HandlerResult.text(
-                    f"*{p.name}* - R$ {p.price}\n\n"
-                    f"Quantos você quer? 😊"
+                try:
+                    session_manager = self._get_session_manager()
+                    session = session_manager.get_or_create_session()
+                    session.update_context('pending_product_id', str(p.id))
+                    session.update_context('pending_product_name', p.name)
+                    session.update_context('pending_product_price', float(p.price))
+                except Exception as exc:
+                    logger.warning('[ProductMentionHandler] session context save failed: %s', exc)
+
+                return HandlerResult.buttons(
+                    body=(
+                        f"🍽️ *{p.name}*\n"
+                        f"💰 R$ {p.price}\n\n"
+                        f"Quantas unidades você quer?"
+                    ),
+                    buttons=[
+                        {'id': f'add_{p.id}_1', 'title': '1 unidade'},
+                        {'id': f'add_{p.id}_2', 'title': '2 unidades'},
+                        {'id': f'add_{p.id}_3', 'title': '3 unidades'},
+                    ],
+                    footer="Ou digite a quantidade desejada",
                 )
             else:
                 # Vários tipos - mostra todos
@@ -926,6 +952,42 @@ class MenuRequestHandler(IntentHandler):
                 return HandlerResult.text("Nenhum produto disponível no momento. 😔")
         
         # Envia lista interativa
+        product_sections = []
+        total_product_items = 0
+        max_product_items = 30
+
+        for cat_name, products in list(products_by_category.items())[:10]:
+            if total_product_items >= max_product_items:
+                break
+
+            remaining_items = max_product_items - total_product_items
+            product_items = [
+                {'product_retailer_id': str(p.id)}
+                for p in products[:remaining_items]
+            ]
+            if not product_items:
+                continue
+
+            product_sections.append({
+                'title': cat_name[:24],
+                'product_items': product_items,
+            })
+            total_product_items += len(product_items)
+
+        if product_sections:
+            logger.info(
+                "[MenuRequestHandler] Enviando catálogo WhatsApp com %s seções e %s produtos",
+                len(product_sections),
+                total_product_items,
+            )
+            return HandlerResult.product_list(
+                header=f"Cardápio - {self.store.name}",
+                body="Escolha seus itens pelo catálogo abaixo.",
+                footer="As imagens, preços e detalhes vêm do catálogo do WhatsApp.",
+                sections=product_sections,
+                fallback_sections=sections,
+            )
+
         logger.info(f"[MenuRequestHandler] Enviando lista com {len(sections)} seções")
         return HandlerResult.list_message(
             body=f"📋 *Cardápio - {self.store.name}*\n\nEscolha uma opção:",
@@ -1058,9 +1120,39 @@ class DeliveryInfoHandler(IntentHandler):
 class TrackOrderHandler(IntentHandler):
     """Handler para rastrear pedido"""
 
+    def _build_phone_variants(self) -> list[str]:
+        from apps.core.utils import normalize_phone_number
+
+        raw_phone = self.conversation.phone_number or ''
+        normalized = normalize_phone_number(raw_phone)
+        digits_only = ''.join(filter(str.isdigit, raw_phone))
+        variants = [raw_phone, normalized, digits_only]
+        if normalized:
+            variants.append(f'+{normalized}')
+        return [value for value in dict.fromkeys(v for v in variants if v)]
+
+    def _extract_order_number(self, intent_data: Dict[str, Any]) -> str:
+        entities = intent_data.get('entities', {}) or {}
+        order_number = (entities.get('order_number') or '').strip()
+        if order_number:
+            return order_number
+
+        message = (intent_data.get('original_message') or '').strip()
+        if not message:
+            return ''
+
+        patterns = [
+            r'(?:pedido|ordem|order)\s*[#:-]?\s*([A-Za-z0-9][A-Za-z0-9\-_.]{2,})',
+            r'#\s*([A-Za-z0-9][A-Za-z0-9\-_.]{2,})',
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, message, flags=re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+        return ''
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        entities = intent_data.get('entities', {})
-        order_number = entities.get('order_number')
+        order_number = self._extract_order_number(intent_data)
 
         logger.info(f"Track order: number={order_number}")
 
@@ -1070,17 +1162,40 @@ class TrackOrderHandler(IntentHandler):
                 "Quer fazer um pedido novo?"
             )
 
-        # Se não informou número, busca último pedido
-        if not order_number:
-            last_order = Order.objects.filter(
-                customer_phone=self.conversation.phone_number,
-                store=self.store
-            ).order_by('-created_at').first()
-        else:
-            last_order = Order.objects.filter(
-                order_number=order_number,
-                customer_phone=self.conversation.phone_number
-            ).first()
+        phone_variants = self._build_phone_variants()
+
+        order_qs = Order.objects.all()
+        if self.store:
+            order_qs = order_qs.filter(store=self.store)
+
+        last_order = None
+
+        if order_number:
+            order_qs_by_number = order_qs.filter(order_number__iexact=order_number)
+            if phone_variants:
+                order_qs_by_number = order_qs_by_number.filter(customer_phone__in=phone_variants)
+            last_order = order_qs_by_number.order_by('-created_at').first()
+
+            if not last_order:
+                last_order = order_qs.filter(order_number__iexact=order_number).order_by('-created_at').first()
+
+        if not last_order and phone_variants:
+            last_order = order_qs.filter(customer_phone__in=phone_variants).order_by('-created_at').first()
+
+        if not last_order:
+            try:
+                session_manager = self._get_session_manager()
+                session_data = session_manager.get_session_data()
+                session_order_id = session_data.get('order_id')
+                if session_order_id:
+                    from uuid import UUID
+                    try:
+                        UUID(str(session_order_id))
+                        last_order = order_qs.filter(id=session_order_id).first()
+                    except (ValueError, TypeError):
+                        last_order = order_qs.filter(order_number__iexact=str(session_order_id)).first()
+            except Exception as exc:
+                logger.warning('[TrackOrderHandler] Failed to inspect session order id: %s', exc)
         
         if last_order:
             status_map = {
@@ -1259,14 +1374,9 @@ class PaymentStatusHandler(IntentHandler):
 
             if pix_code:
                 return HandlerResult.buttons(
-                    body=(
-                        f"💳 *Pagamento Pendente*\n\n"
-                        f"Valor: R$ {session_data.get('cart_total', 0)}\n\n"
-                        f"*Código PIX:*\n`{pix_code[:30]}...`\n\n"
-                        f"Cole este código no seu aplicativo bancário para pagar."
-                    ),
+                    body=pix_code,
                     buttons=[
-                        {'id': 'pix_copy', 'title': '📋 Ver código PIX'},
+                        {'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'},
                         {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
                         {'id': 'cancel_order', 'title': '❌ Cancelar'},
                     ]
@@ -1287,15 +1397,9 @@ class PaymentStatusHandler(IntentHandler):
             )
 
             return HandlerResult.buttons(
-                body=(
-                    f"💳 *Pagamento Pendente*\n\n"
-                    f"Pedido: #{pending_order.order_number}\n"
-                    f"Valor: R$ {pending_order.total}\n\n"
-                    f"*Código PIX:*\n`{pending_order.pix_code[:30]}...`\n\n"
-                    f"Cole este código no seu aplicativo bancário para pagar."
-                ),
+                body=pending_order.pix_code,
                 buttons=[
-                    {'id': f'pix_copy_{pending_order.id}', 'title': '📋 Ver código PIX'},
+                    {'id': f'pix_copy_{pending_order.id}', 'title': 'COPIAR CODIGO PIX'},
                     {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
                     {'id': 'cancel_order', 'title': '❌ Cancelar'},
                 ]
@@ -1429,14 +1533,7 @@ class CopyPixHandler(IntentHandler):
                 "Quer fazer um pedido novo?"
             )
         
-        # Retorna o código PIX formatado para cópia fácil
-        return HandlerResult.text(
-            f"📋 *Código PIX para copiar:*\n\n"
-            f"```\n{pix_code}\n```\n\n"
-            f"✅ Toque no código acima para copiar\n"
-            f"📱 Cole no seu app bancário\n"
-            f"⏳ Válido por 30 minutos"
-        )
+        return HandlerResult.text(pix_code)
 
 
 class ProductNotFoundHandler(IntentHandler):
@@ -1511,9 +1608,22 @@ class UnknownHandler(IntentHandler):
                 if result:
                     return result
 
-        # Mensagem não reconhecida como estado especial — delega ao LLM
-        logger.info("[UnknownHandler] Mensagem não reconhecida em estado especial — delegando ao LLM")
-        return HandlerResult.needs_llm()
+        # Mensagem não reconhecida como estado especial. Quando existe agente
+        # ativo, deixa o pipeline consultar o LLM com o contexto real da loja.
+        if intent_data.get('llm_available'):
+            logger.info("[UnknownHandler] Mensagem desconhecida delegada ao LLM")
+            return HandlerResult.needs_llm()
+
+        # Sem agente ativo, mantém fallback determinístico para evitar inventar
+        # item, preço, taxa ou estado de pedido.
+        logger.info("[UnknownHandler] Mensagem não reconhecida — fallback determinístico")
+        return HandlerResult.buttons(
+            body="Não consegui identificar isso com segurança. Como quer continuar?",
+            buttons=[
+                {'id': 'view_menu', 'title': '📋 Cardápio'},
+                {'id': 'contact_support', 'title': '👤 Atendente'},
+            ],
+        )
 
     def _try_pending_product_order(self, qty: int) -> Optional[HandlerResult]:
         """Se há produto pendente na sessão, cria pedido com a quantidade digitada."""

@@ -23,6 +23,7 @@ from apps.automation.services.unified_service import (
     _validate_buttons,
 )
 from apps.automation.services.pipeline_health import health_check, get_pipeline_stats
+from apps.whatsapp.intents.detector import IntentType
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -192,15 +193,31 @@ class UnifiedServiceProcessMessageTestCase(TestCase):
     def test_llm_called_when_no_handler_or_template(self):
         svc = _make_unified_service(use_llm=True)
 
-        with patch.object(svc, '_run_handler', return_value=None), \
+        with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.GREETING}), \
+             patch.object(svc, '_run_handler', return_value=None), \
              patch.object(svc, '_get_template_for_intent', return_value=None), \
              patch.object(svc, '_get_session_data', return_value={}), \
              patch.object(svc, '_build_context', return_value='ctx'), \
              patch.object(svc, '_call_llm', return_value='Resposta do LLM'):
 
-            resp = svc.process_message('Alguma pergunta complexa')
+            resp = svc.process_message('oi')
         self.assertEqual(resp.source, ResponseSource.LLM)
         self.assertEqual(resp.content, 'Resposta do LLM')
+
+    def test_unknown_message_uses_llm_when_agent_available(self):
+        agent = MagicMock()
+        svc = _make_unified_service(use_llm=True, agent=agent)
+
+        with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.UNKNOWN}), \
+             patch.object(svc, '_get_template_for_intent', return_value=None), \
+             patch.object(svc, '_get_session_data', return_value={}), \
+             patch.object(svc, '_build_context', return_value='ctx'), \
+             patch.object(svc, '_call_llm', return_value='Resposta do atendente'):
+
+            resp = svc.process_message('tem salada sem cebola?')
+
+        self.assertEqual(resp.source, ResponseSource.LLM)
+        self.assertEqual(resp.content, 'Resposta do atendente')
 
     def test_fallback_when_all_providers_fail(self):
         svc = _make_unified_service(use_llm=True)
@@ -213,6 +230,40 @@ class UnifiedServiceProcessMessageTestCase(TestCase):
 
             resp = svc.process_message('???')
         self.assertEqual(resp.source, ResponseSource.FALLBACK)
+
+    def test_out_of_hours_short_circuits_eligible_intent(self):
+        store = MagicMock()
+        store.id = 'store-1'
+        store.is_open.return_value = False
+        store.name = 'Loja Teste'
+        store.operating_hours = {}
+        svc = _make_unified_service(store=store)
+
+        with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.MENU_REQUEST}), \
+             patch.object(svc, '_run_handler') as mock_handler, \
+             patch.object(svc, '_get_session_data', return_value={}), \
+             patch.object(svc, '_get_out_of_hours_response', return_value=UnifiedResponse(content='fora do horario', source=ResponseSource.TEMPLATE)):
+            resp = svc.process_message('cardapio')
+
+        self.assertEqual(resp.content, 'fora do horario')
+        self.assertEqual(resp.source, ResponseSource.TEMPLATE)
+        mock_handler.assert_not_called()
+
+    def test_out_of_hours_does_not_override_business_hours_intent(self):
+        store = MagicMock()
+        store.id = 'store-1'
+        store.is_open.return_value = False
+        store.name = 'Loja Teste'
+        store.operating_hours = {}
+        svc = _make_unified_service(store=store)
+        handler_response = UnifiedResponse(content='horario normal', source=ResponseSource.HANDLER)
+
+        with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.BUSINESS_HOURS}), \
+             patch.object(svc, '_run_handler', return_value=handler_response):
+            resp = svc.process_message('que horas abre?')
+
+        self.assertEqual(resp.content, 'horario normal')
+        self.assertEqual(resp.source, ResponseSource.HANDLER)
 
 
 # ─── Testes: pipeline_health ──────────────────────────────────────────────────

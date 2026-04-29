@@ -15,6 +15,7 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 from apps.stores.models import Store, StoreCart, StoreCartComboItem
+from apps.stores.models import StoreOrder
 from apps.stores.services import cart_service, checkout_service
 
 User = get_user_model()
@@ -121,7 +122,10 @@ class VirtualComboCartTestCase(TestCase):
                 'combo_name': 'Monte sua Salada',
                 'unit_price': '29.90',
                 'quantity': 1,
-                'customizations': {'is_salad_builder': True},
+                'customizations': {
+                    'is_salad_builder': True,
+                    'ingredients': ['Rúcula', 'Frango'],
+                },
                 'notes': 'Base: Rúcula',
                 'cart_key': self.cart_key,
             },
@@ -132,6 +136,21 @@ class VirtualComboCartTestCase(TestCase):
         combo_items = data.get('combo_items', [])
         self.assertEqual(len(combo_items), 1)
         self.assertEqual(combo_items[0]['combo_name'], 'Monte sua Salada')
+
+    def test_cart_add_custom_salad_requires_ingredients(self):
+        response = self.client.post(
+            f'/api/v1/stores/{self.store.slug}/cart/add/',
+            data={
+                'combo_name': 'Minha Salada',
+                'unit_price': '29.90',
+                'quantity': 1,
+                'customizations': {'is_salad_builder': True, 'ingredients': []},
+                'cart_key': self.cart_key,
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('ingredientes', response.json().get('error', '').lower())
 
     def test_checkout_empty_cart_returns_400(self):
         response = self.client.post(
@@ -157,6 +176,10 @@ class VirtualComboCartTestCase(TestCase):
                 'combo_name': 'Monte sua Salada',
                 'unit_price': '29.90',
                 'quantity': 1,
+                'customizations': {
+                    'is_salad_builder': True,
+                    'ingredients': ['Rúcula', 'Frango'],
+                },
                 'cart_key': self.cart_key,
             },
             format='json',
@@ -178,3 +201,53 @@ class VirtualComboCartTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         data = response.json()
         self.assertIn('order_number', data)
+        self.assertEqual(data['items'][0]['customizations'].get('type'), 'custom_salad')
+
+    def test_loyalty_reward_discounts_one_salad(self):
+        cart = cart_service.get_or_create_cart(self.store, user=self.user, session_key=None)
+        cart_service.add_combo(
+            cart,
+            combo=None,
+            combo_name='Salada Clube',
+            unit_price=Decimal('31.00'),
+            customizations={
+                'is_salad_builder': True,
+                'ingredients': ['Rúcula', 'Frango', 'Tahine'],
+            },
+        )
+
+        earned_order = StoreOrder.objects.create(
+            store=self.store,
+            customer=self.user,
+            customer_name='Cliente Clube',
+            customer_email='clube@example.com',
+            customer_phone='61999999999',
+            status=StoreOrder.OrderStatus.DELIVERED,
+            payment_status=StoreOrder.PaymentStatus.PAID,
+            subtotal=Decimal('300.00'),
+            delivery_fee=Decimal('0.00'),
+            total=Decimal('300.00'),
+            delivery_method=StoreOrder.DeliveryMethod.PICKUP,
+        )
+        for index in range(10):
+            earned_order.items.create(
+                product_name=f'Salada {index + 1}',
+                unit_price=Decimal('30.00'),
+                quantity=1,
+                subtotal=Decimal('30.00'),
+            )
+
+        order = checkout_service.create_order(
+            cart=cart,
+            customer_data={
+                'name': 'Cliente Clube',
+                'email': self.user.email,
+                'phone': '61999999999',
+            },
+            delivery_data={'method': 'pickup', 'address': {}, 'notes': ''},
+            use_loyalty_reward=True,
+        )
+
+        self.assertEqual(order.discount, Decimal('31.00'))
+        self.assertEqual(order.total, Decimal('0.00'))
+        self.assertTrue(order.metadata['loyalty_reward']['applied'])

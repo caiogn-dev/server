@@ -14,10 +14,11 @@ from datetime import timedelta
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.stores.services.order_service import OrderService
+from apps.stores.services.print_service import enqueue_order_print_job
 from apps.core.permissions import StoreQuerysetMixin
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
-    StoreCustomerSerializer
+    StoreCustomerSerializer, StorePrintJobSerializer,
 )
 from .base import IsStoreOwnerOrStaff, filter_by_store
 
@@ -194,6 +195,20 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         self._notify_order_update(order, 'order.updated')
         return Response(StoreOrderSerializer(order).data)
 
+    @action(detail=True, methods=['post'], url_path='reprint-kitchen-ticket')
+    def reprint_kitchen_ticket(self, request, pk=None):
+        """Queue a manual kitchen ticket reprint for the order."""
+        order = self.get_object()
+        result = enqueue_order_print_job(
+            order,
+            station='kitchen',
+            template='kitchen_ticket',
+            source='manual_reprint',
+            dedupe=False,
+            requested_by=request.user.email or request.user.username,
+        )
+        return Response(StorePrintJobSerializer(result.job).data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):
         """Return a lightweight timeline for the order."""
@@ -291,28 +306,20 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Cancel an order."""
         order = self.get_object()
         reason = request.data.get('reason', '')
-        
-        if order.status == 'cancelled':
-            return Response(
-                {'error': 'Order is already cancelled'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        order.status = 'cancelled'
-        if reason:
-            order.internal_notes = f"{order.internal_notes}\n\nMotivo do cancelamento: {reason}".strip()
-        order.save(update_fields=['status', 'internal_notes', 'updated_at'])
-        
-        # Restore stock if needed
-        if order.items.exists():
-            for item in order.items.all():
-                if item.product and item.product.track_stock:
-                    item.product.stock_quantity += item.quantity
-                    item.product.save(update_fields=['stock_quantity'])
-        
-        # Notify via WebSocket
+
+        order_service = OrderService()
+        result = order_service.cancel_order(
+            order,
+            reason=reason,
+            restore_stock=True,
+            notify_customer=True,
+        )
+
+        if not result.get('success'):
+            return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+        order.refresh_from_db()
         self._notify_order_update(order, 'order.cancelled')
-        
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=False, methods=['get'])

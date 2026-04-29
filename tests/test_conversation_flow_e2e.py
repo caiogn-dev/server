@@ -28,6 +28,7 @@ from apps.stores.models import Store, StoreProduct, StoreOrder
 from apps.automation.models import CompanyProfile, CustomerSession
 from apps.whatsapp.models import WhatsAppAccount
 from apps.conversations.models import Conversation
+from apps.whatsapp.intents.detector import IntentDetector, IntentType
 
 User = get_user_model()
 
@@ -550,3 +551,45 @@ class StockDecrementOnOrderTest(ConversationFlowBase):
         self.assertTrue(result['success'])
         untracked.refresh_from_db()
         self.assertEqual(untracked.stock_quantity, 0)
+
+
+# ─── Fluxo 8: Rastreamento de pedido do site ─────────────────────────────────
+
+class SiteOrderTrackingTest(ConversationFlowBase):
+    """
+    Pedidos criados no site devem ser localizáveis pelo bot mesmo quando
+    o telefone chega em formato normalizado diferente do salvo no pedido.
+    """
+
+    def test_detector_routes_realizei_o_pedido_to_track_order(self):
+        detector = IntentDetector(use_llm_fallback=False)
+        intent = detector.detect_regex('realizei o pedido TEST-FLOW-001')
+        self.assertEqual(intent, IntentType.TRACK_ORDER)
+
+    def test_track_order_finds_site_order_by_phone_and_number(self):
+        from apps.whatsapp.intents.handlers import TrackOrderHandler
+
+        site_order = StoreOrder.objects.create(
+            store=self.store,
+            order_number='SITE-TRACK-001',
+            customer_phone='5563900000050',
+            customer_name='Cliente Site',
+            customer_email='site@example.com',
+            status='confirmed',
+            payment_status='paid',
+            subtotal=Decimal('30.00'),
+            total=Decimal('30.00'),
+            delivery_method='delivery',
+            payment_method='pix',
+        )
+
+        handler = self._handler(TrackOrderHandler)
+        result = handler.handle({
+            'original_message': 'realizei o pedido SITE-TRACK-001',
+            'entities': {'order_number': 'SITE-TRACK-001'},
+        })
+
+        self.assertTrue(result.use_interactive)
+        self.assertIn(site_order.order_number, result.interactive_data.get('body', ''))
+        button_ids = [button['id'] for button in result.interactive_data.get('buttons', [])]
+        self.assertIn(f'track_{site_order.id}', button_ids)

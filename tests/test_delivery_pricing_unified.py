@@ -5,7 +5,8 @@ Cobertura:
 1. HereMapsService.calculate_delivery_fee delega a CheckoutService._calculate_dynamic_fee
 2. Ambos produzem a mesma taxa para distância idêntica (não divergem)
 3. StoreValidateDeliveryView.post() usa store.latitude/longitude/metadata (não variáveis locais)
-4. CheckoutService._calculate_dynamic_fee respeita base_fee, per_km, free_km, max_fee
+4. StoreValidateDeliveryView.post() usa o geo service unificado para respeitar zonas fixas
+5. CheckoutService._calculate_dynamic_fee respeita base_fee, per_km, free_km, max_fee
 
 Executar:
     python manage.py test tests.test_delivery_pricing_unified --keepdb -v 2
@@ -19,6 +20,7 @@ from django.urls import reverse
 
 from apps.stores.models import Store
 from apps.stores.services.checkout_service import CheckoutService
+from apps.stores.services.geo.service import GeoService
 
 User = get_user_model()
 
@@ -95,6 +97,93 @@ class DynamicFeeCalculationTest(TestCase):
         result = CheckoutService._calculate_dynamic_fee(store, Decimal('1.0'))
         # default_delivery_fee = 8.00, distance=1 <= free_km(3) → base fee
         self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('8.00'))
+
+
+class DynamicDeliveryAreaPolicyTest(TestCase):
+    def setUp(self):
+        owner = _make_user('area_policy_owner')
+        self.store = _make_store(
+            owner,
+            slug='area-policy-store',
+            lat='-10.1853248',
+            lng='-48.3037058',
+            metadata={
+                'delivery_base_fee': '9.00',
+                'delivery_fee_per_km': '1.00',
+                'delivery_flat_km': '4.0',
+                'dynamic_delivery_area_label': 'Plano Diretor Norte/Sul',
+                'dynamic_delivery_area_keywords': [
+                    'plano diretor sul', 'plano diretor norte',
+                    'arse', 'arso', 'acsu', 'acno', 'arne', 'arno',
+                ],
+                'fixed_price_zones': [
+                    {'name': 'Taquaralto', 'fee': 45, 'keywords': ['taquaralto']},
+                    {'name': 'Taquari', 'fee': 45, 'keywords': ['taquari']},
+                    {'name': 'Santa Bárbara', 'fee': 45, 'keywords': ['santa barbara', 'santa bárbara']},
+                    {'name': 'Bertaville', 'fee': 45, 'keywords': ['bertaville']},
+                ],
+            },
+        )
+        self.service = GeoService()
+
+    def test_plano_diretor_address_uses_dynamic_fee(self):
+        with patch.object(self.service, '_get_route', return_value={
+            'distance_km': 6.31,
+            'duration_minutes': 11.2,
+            'polyline': '',
+        }), patch.object(self.service, 'reverse_geocode', return_value={
+            'neighborhood': 'Arse',
+            'formatted_address': 'Q. 404 Sul Alameda 3, Arse, Palmas - TO',
+        }):
+            result = self.service.calculate_delivery_fee(
+                self.store,
+                customer_lat=-10.2054738,
+                customer_lng=-48.3295824,
+                customer_address_text='Q. 404 Sul Alameda 3, Plano Diretor Sul',
+            )
+
+        self.assertTrue(result['is_within_area'])
+        self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('11.31'))
+
+    def test_fixed_taquaralto_overrides_dynamic_area_restriction(self):
+        with patch.object(self.service, '_get_route', return_value={
+            'distance_km': 12.0,
+            'duration_minutes': 25,
+            'polyline': '',
+        }), patch.object(self.service, 'reverse_geocode', return_value={
+            'neighborhood': 'Taquaralto',
+            'formatted_address': 'Taquaralto, Palmas - TO',
+        }):
+            result = self.service.calculate_delivery_fee(
+                self.store,
+                customer_lat=-10.30,
+                customer_lng=-48.30,
+                customer_address_text='Taquaralto',
+            )
+
+        self.assertTrue(result['is_within_area'])
+        self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('45.00'))
+        self.assertEqual(result['zone']['name'], 'Taquaralto')
+
+    def test_non_fixed_area_outside_plano_diretor_is_not_dynamic(self):
+        with patch.object(self.service, '_get_route', return_value={
+            'distance_km': 8.0,
+            'duration_minutes': 18,
+            'polyline': '',
+        }), patch.object(self.service, 'reverse_geocode', return_value={
+            'neighborhood': 'Aeroporto',
+            'formatted_address': 'Aeroporto, Palmas - TO',
+        }):
+            result = self.service.calculate_delivery_fee(
+                self.store,
+                customer_lat=-10.24,
+                customer_lng=-48.35,
+                customer_address_text='Aeroporto',
+            )
+
+        self.assertFalse(result['is_within_area'])
+        self.assertIsNone(result['fee'])
+        self.assertEqual(result['reason'], 'outside_dynamic_delivery_area')
 
 
 # ─── Testes: HereMapsService delega a CheckoutService ────────────────────────
@@ -220,3 +309,37 @@ class StoreValidateDeliveryViewTest(TestCase):
         self.assertNotEqual(response.status_code, 500,
                             "View returned 500 — possible NameError in store coordinates")
         self.assertIn(response.status_code, [200, 400, 404])
+
+    def test_post_uses_unified_geo_fee_calculation(self):
+        with patch(
+            'apps.stores.api.maps_views.here_maps_service.validate_delivery_address',
+            return_value={
+                'is_valid': True,
+                'distance_km': 12.4,
+                'duration_minutes': 27,
+                'message': 'ok',
+            },
+        ), patch(
+            'apps.stores.api.maps_views.here_maps_service.calculate_delivery_fee',
+            return_value={
+                'fee': Decimal('45.00'),
+                'distance_km': 12.4,
+                'duration_minutes': 27,
+                'is_within_area': True,
+                'zone': {'name': 'Taquaralto'},
+                'message': 'Entrega com taxa fixa para a região: Taquaralto',
+            },
+        ) as mock_geo_fee, patch(
+            'apps.stores.services.checkout_service.CheckoutService.calculate_delivery_fee'
+        ) as legacy_fee:
+            response = self.client.post(
+                f'/api/v1/stores/{self.store.slug}/validate-delivery/',
+                data={'lat': -10.26, 'lng': -48.33},
+                content_type='application/json',
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Decimal(str(response.json()['delivery_fee'])).quantize(Decimal('0.01')), Decimal('45.00'))
+        self.assertEqual(response.json()['delivery_zone'], 'Taquaralto')
+        mock_geo_fee.assert_called_once()
+        legacy_fee.assert_not_called()

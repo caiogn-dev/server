@@ -430,21 +430,6 @@ class WebhookService:
             conversation=message.conversation,
         )
 
-        # Skip automation for conversations in human mode
-        if message.conversation and message.conversation.mode == 'human':
-            logger.info(
-                '[pipeline] Conversation in human mode, skipping automation',
-                extra={'message_id': str(message.id)},
-            )
-            return
-
-        import threading
-        import time as _time
-
-        orchestrator_response = None
-        orchestrator_error = None
-        _t0 = _time.monotonic()
-
         # Extrair dados de reply interativo (clique em botão / item de lista)
         _interactive_reply = None
         _location_data = None
@@ -489,6 +474,67 @@ class WebhookService:
                     _location_data['lat'], _location_data['lng'],
                     extra={'message_id': str(message.id)},
                 )
+
+        catalog_order_response = self._build_catalog_order_response(
+            event=event,
+            message=message,
+            company_profile=context.profile,
+            store=context.store,
+        )
+        if catalog_order_response:
+            try:
+                self._send_unified_interactive(event, message, catalog_order_response)
+                if not message.processed_by_agent:
+                    message.processed_by_agent = True
+                    message.save(update_fields=['processed_by_agent'])
+                logger.info(
+                    '[pipeline] Catalog order handled deterministically',
+                    extra={'pipeline.source': 'catalog_order', 'message_id': str(message.id)},
+                )
+                return
+            except Exception as exc:
+                logger.error(
+                    '[pipeline] Failed to handle catalog order: %s',
+                    exc,
+                    exc_info=True,
+                    extra={'message_id': str(message.id)},
+                )
+
+        # Human mode should suppress general bot chat, but it must not swallow
+        # deterministic order events. Otherwise catalog orders and pending
+        # delivery/payment steps never become StoreOrder rows in the panel.
+        if message.conversation and message.conversation.mode == 'human':
+            transactional_reply_ids = {
+                'order_delivery',
+                'order_pickup',
+                'pay_pix',
+                'pay_card',
+                'pay_pickup',
+            }
+            reply_id = (_interactive_reply or {}).get('id', '')
+            allow_transactional = (
+                reply_id in transactional_reply_ids
+                or reply_id.startswith('add_')
+                or reply_id.startswith('product_')
+                or bool(_location_data)
+            )
+            if not allow_transactional:
+                logger.info(
+                    '[pipeline] Conversation in human mode, skipping automation',
+                    extra={'message_id': str(message.id)},
+                )
+                return
+            logger.info(
+                '[pipeline] Human mode bypass for deterministic order flow',
+                extra={'message_id': str(message.id), 'reply_id': reply_id},
+            )
+
+        import threading
+        import time as _time
+
+        orchestrator_response = None
+        orchestrator_error = None
+        _t0 = _time.monotonic()
 
         def _run_orchestrator():
             nonlocal orchestrator_response, orchestrator_error
@@ -612,6 +658,148 @@ class WebhookService:
                 extra={'pipeline.dropped': True, 'message_id': str(message.id)},
             )
 
+    def _build_catalog_order_response(self, event, message, company_profile=None, store=None):
+        """Handle native WhatsApp catalog order payloads without involving the LLM."""
+        order = (message.content or {}).get('order') or {}
+        product_items = order.get('product_items') or []
+        if not product_items:
+            return None
+
+        from apps.automation.services import UnifiedResponse
+        from apps.automation.services.unified_service import ResponseSource
+        from apps.automation.services import get_session_manager
+        from apps.stores.models import StoreProduct
+
+        if store is None:
+            store = getattr(event.account, 'store', None)
+
+        if not store:
+            return UnifiedResponse(
+                content=(
+                    "Recebi seu pedido pelo catalogo, mas nao consegui identificar a loja agora. "
+                    "Vou chamar um atendente para conferir."
+                ),
+                source=ResponseSource.HANDLER,
+                metadata={'intent': 'catalog_order', 'error': 'store_not_found'},
+            )
+
+        retailer_ids = [
+            str(item.get('product_retailer_id'))
+            for item in product_items
+            if item.get('product_retailer_id')
+        ]
+        products = {
+            str(product.id): product
+            for product in StoreProduct.objects.filter(
+                store=store,
+                id__in=retailer_ids,
+                is_active=True,
+            )
+        }
+
+        pending_items = []
+        item_lines = []
+        missing_items = []
+        total = 0.0
+
+        for item in product_items:
+            product_id = str(item.get('product_retailer_id') or '')
+            try:
+                quantity = max(1, int(item.get('quantity') or 1))
+            except (TypeError, ValueError):
+                quantity = 1
+
+            product = products.get(product_id)
+            if not product:
+                missing_items.append(product_id)
+                continue
+
+            product_price = float(product.price)
+            unit_price = product_price
+            meta_price = item.get('item_price')
+            if meta_price is not None:
+                try:
+                    meta_price_float = float(meta_price)
+                    if meta_price_float >= 0:
+                        unit_price = meta_price_float
+                    if abs(meta_price_float - product_price) >= 0.01:
+                        logger.warning(
+                            '[catalog_order] Meta catalog price differs from store price: '
+                            'product=%s meta=%.2f store=%.2f',
+                            product.id,
+                            meta_price_float,
+                            product_price,
+                            extra={'message_id': str(message.id)},
+                        )
+                except (TypeError, ValueError):
+                    pass
+
+            pending_items.append({
+                'product_id': str(product.id),
+                'quantity': quantity,
+                'unit_price': unit_price,
+                'price_source': 'whatsapp_catalog',
+            })
+            line_total = unit_price * quantity
+            total += line_total
+            item_lines.append(f"• {quantity}x {product.name} - R$ {line_total:.2f}")
+
+        if not pending_items:
+            logger.warning(
+                '[catalog_order] No matching products for catalog order: %s',
+                missing_items,
+                extra={'message_id': str(message.id)},
+            )
+            return UnifiedResponse(
+                content=(
+                    "Recebi seu pedido pelo catalogo, mas nao encontrei esses itens no sistema. "
+                    "Vou chamar um atendente para conferir."
+                ),
+                source=ResponseSource.HANDLER,
+                metadata={'intent': 'catalog_order', 'missing_items': missing_items},
+            )
+
+        try:
+            session_manager = get_session_manager(company_profile or store or event.account, message.from_number)
+            session_manager.save_pending_order_items(pending_items)
+        except Exception as exc:
+            logger.error(
+                '[catalog_order] Failed to save pending items: %s',
+                exc,
+                exc_info=True,
+                extra={'message_id': str(message.id)},
+            )
+
+        delivery_enabled = getattr(store, 'delivery_enabled', True)
+        pickup_enabled = getattr(store, 'pickup_enabled', True)
+        buttons = []
+        if delivery_enabled:
+            buttons.append({'id': 'order_delivery', 'title': '🛵 Entrega'})
+        if pickup_enabled:
+            buttons.append({'id': 'order_pickup', 'title': '🏪 Retirada'})
+        if not buttons:
+            buttons = [{'id': 'order_delivery', 'title': '🛵 Entrega'}]
+
+        body = (
+            "Recebi seu pedido pelo catalogo:\n\n"
+            f"{chr(10).join(item_lines)}\n\n"
+            f"Total dos itens: *R$ {total:.2f}*\n\n"
+            "Como prefere receber?"
+        )
+
+        return UnifiedResponse(
+            content=body,
+            source=ResponseSource.HANDLER,
+            buttons=buttons,
+            metadata={
+                'intent': 'catalog_order',
+                'catalog_id': order.get('catalog_id'),
+                'missing_items': missing_items,
+            },
+            interactive_type='buttons',
+            interactive_data={'body': body, 'buttons': buttons},
+        )
+
     def _is_llm_enabled_for_account(self, account: WhatsAppAccount, conversation=None) -> bool:
         from apps.automation.services.context_service import AutomationContextService
 
@@ -637,6 +825,39 @@ class WebhookService:
 
         if isinstance(header, str):
             header = {'type': 'text', 'text': header}
+
+        if unified_response.interactive_type == 'product_list':
+            try:
+                svc.send_product_list(
+                    account_id=account_id,
+                    to=message.from_number,
+                    sections=interactive_data.get('sections', []),
+                    body_text=interactive_data.get('body') or unified_response.content,
+                    catalog_id=interactive_data.get('catalog_id'),
+                    header_text=header.get('text') if isinstance(header, dict) else header,
+                    footer=footer,
+                    reply_to=str(message.whatsapp_message_id),
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    '[pipeline] Product list send failed, falling back to WhatsApp list: %s',
+                    exc,
+                    extra={'message_id': str(message.id)},
+                )
+                fallback_sections = interactive_data.get('fallback_sections') or []
+                if fallback_sections:
+                    svc.send_interactive_list(
+                        account_id=account_id,
+                        to=message.from_number,
+                        body_text=interactive_data.get('body') or unified_response.content,
+                        button_text=interactive_data.get('button', 'Ver opcoes'),
+                        sections=fallback_sections,
+                        header=header.get('text') if isinstance(header, dict) else header,
+                        footer=footer,
+                        reply_to=str(message.whatsapp_message_id),
+                    )
+                    return
 
         if unified_response.interactive_type == 'list':
             svc.send_interactive_list(
@@ -741,7 +962,8 @@ class WebhookService:
         elif message_type == 'location':
             location = message_data.get('location', {})
             content = {'location': location}
-            text_body = f"\U0001f4cd {location.get('name', location.get('address', 'Localiza\u00e7\u00e3o'))}"
+            location_label = location.get('name') or location.get('address') or 'Localizacao'
+            text_body = f"\U0001f4cd {location_label}"
         elif message_type == 'contacts':
             contacts = message_data.get('contacts', [])
             content = {'contacts': contacts}
@@ -790,6 +1012,21 @@ class WebhookService:
                 phone_number=from_number,
                 contact_name=contact_data.get('profile', {}).get('name', '')
             )
+            contact_update_fields = []
+            wa_id = contact_data.get('wa_id') or ''
+            profile_name = contact_data.get('profile', {}).get('name', '')
+            if wa_id and conversation.wa_id != wa_id:
+                conversation.wa_id = wa_id
+                contact_update_fields.append('wa_id')
+            if profile_name and conversation.contact_name != profile_name:
+                conversation.contact_name = profile_name
+                conversation.profile_name_last_seen_at = timezone.now()
+                contact_update_fields.extend(['contact_name', 'profile_name_last_seen_at'])
+            elif profile_name:
+                conversation.profile_name_last_seen_at = timezone.now()
+                contact_update_fields.append('profile_name_last_seen_at')
+            if contact_update_fields:
+                conversation.save(update_fields=list(dict.fromkeys(contact_update_fields + ['updated_at'])))
             logger.info(f"[_process_inbound_message] Conversation created/retrieved: id={conversation.id}")
         except Exception as conv_error:
             logger.error(f"[_process_inbound_message] Failed to create conversation: {conv_error}", exc_info=True)
@@ -980,6 +1217,9 @@ class WebhookService:
                         'id': str(conversation.id),
                         'phone_number': phone_number,
                         'contact_name': contact_name,
+                        'wa_id': '',
+                        'profile_picture': '',
+                        'profile_picture_url': '',
                         'status': conversation.status,
                         'mode': conversation.mode,
                         'created_at': conversation.created_at.isoformat()

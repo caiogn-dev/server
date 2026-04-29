@@ -34,6 +34,16 @@ from .order_views import (
     StoreCustomerViewSet,
 )
 
+# Printing
+from .print_views import (
+    StorePrintAgentViewSet,
+    StorePrintJobViewSet,
+    PrintAgentHeartbeatView,
+    PrintAgentClaimNextJobView,
+    PrintAgentCompleteJobView,
+    PrintAgentFailJobView,
+)
+
 # Coupon management
 from .coupon_views import (
     StoreCouponViewSet,
@@ -76,6 +86,13 @@ __all__ = [
     # Orders
     'StoreOrderViewSet',
     'StoreCustomerViewSet',
+    # Printing
+    'StorePrintAgentViewSet',
+    'StorePrintJobViewSet',
+    'PrintAgentHeartbeatView',
+    'PrintAgentClaimNextJobView',
+    'PrintAgentCompleteJobView',
+    'PrintAgentFailJobView',
     # Coupons
     'StoreCouponViewSet',
     # Delivery

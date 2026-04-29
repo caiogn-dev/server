@@ -18,6 +18,8 @@ Métricas estruturadas emitidas em cada etapa:
 import logging
 import re
 import time
+import unicodedata
+from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -99,6 +101,18 @@ class UnifiedService:
         IntentType.UNKNOWN,
     }
 
+    OUT_OF_HOURS_INTENTS = {
+        IntentType.GREETING,
+        IntentType.MENU_REQUEST,
+        IntentType.PRODUCT_INQUIRY,
+        IntentType.PRODUCT_MENTION,
+        IntentType.CREATE_ORDER,
+        IntentType.ADD_TO_CART,
+        IntentType.DELIVERY_INFO,
+        IntentType.PRICE_CHECK,
+        IntentType.RECOMMENDATION,
+    }
+
     def __init__(self, account, conversation, debug: bool = False, use_llm: bool = True):
         self.account = account
         self.conversation = conversation
@@ -133,7 +147,6 @@ class UnifiedService:
             IntentType.BUSINESS_HOURS: 'business_hours',
             IntentType.LOCATION: 'business_hours',
             IntentType.FAQ: 'faq',
-            IntentType.UNKNOWN: 'welcome',
         }
         return mapping.get(intent, 'custom')
 
@@ -170,6 +183,45 @@ class UnifiedService:
             'pix_pending': bool(session.pix_code and not session.payment_id),
         }
 
+    def _normalize_lookup_text(self, value: str) -> str:
+        if not value:
+            return ''
+        normalized = unicodedata.normalize('NFD', value.lower())
+        normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+        return re.sub(r'[^a-z0-9\s]', ' ', normalized).strip()
+
+    def _message_matches_catalog_product(self, message: str) -> bool:
+        """Return True when free text is very likely a product name from this store."""
+        if not self.store or not message:
+            return False
+
+        normalized_message = self._normalize_lookup_text(message)
+        if len(normalized_message) < 3:
+            return False
+
+        try:
+            from apps.stores.models import StoreProduct
+
+            products = StoreProduct.objects.filter(
+                store=self.store,
+                is_active=True,
+            ).exclude(tags__contains=['ingrediente']).only('name')
+
+            for product in products:
+                normalized_name = self._normalize_lookup_text(product.name)
+                if not normalized_name:
+                    continue
+                if normalized_message == normalized_name:
+                    return True
+                if len(normalized_message) >= 5 and (
+                    normalized_message in normalized_name or normalized_name in normalized_message
+                ):
+                    return True
+        except Exception as exc:
+            logger.warning('[unified] Product lookup failed before LLM routing: %s', exc)
+
+        return False
+
     def _build_context(self, intent_data: Dict[str, Any], session_data: Dict[str, Any]) -> str:
         parts: List[str] = []
 
@@ -200,6 +252,62 @@ class UnifiedService:
                 parts.extend(product_lines)
 
         return '\n'.join(parts)
+
+    def _build_out_of_hours_fallback(self) -> str:
+        """Return a concise out-of-hours message using store hours when available."""
+        if not self.store:
+            return (
+                "Agora estamos fora do horário de atendimento.\n"
+                "Me mande sua mensagem e eu continuo assim que a loja abrir."
+            )
+
+        store_name = self.store.name
+        hours = getattr(self.store, 'operating_hours', None) or {}
+        now = timezone.localtime()
+        today = now.strftime('%A').lower()
+        today_hours = hours.get(today) or {}
+
+        lines = [f"{store_name} está fora do horário no momento."]
+        if today_hours.get('open') and today_hours.get('close'):
+            lines.append(f"Hoje atendemos de {today_hours['open']} às {today_hours['close']}.")
+        lines.append("Você pode me enviar sua mensagem agora que seguimos assim que a loja abrir.")
+        return "\n".join(lines)
+
+    def _get_out_of_hours_response(self, session_data: Dict[str, Any]) -> Optional[UnifiedResponse]:
+        """Resolve a configured out-of-hours template or a safe fallback text."""
+        if not self.company:
+            return UnifiedResponse(
+                content=self._build_out_of_hours_fallback(),
+                source=ResponseSource.TEMPLATE,
+                metadata={'event_type': 'out_of_hours', 'intent': 'out_of_hours'},
+            )
+
+        template = AutoMessage.objects.filter(
+            company=self.company,
+            event_type=AutoMessage.EventType.OUT_OF_HOURS,
+            is_active=True,
+        ).order_by('priority').first()
+
+        if template:
+            validated_buttons = _validate_buttons(template.buttons)
+            return UnifiedResponse(
+                content=self._render_template(template, session_data),
+                source=ResponseSource.TEMPLATE,
+                buttons=validated_buttons,
+                metadata={
+                    'template_id': str(template.id),
+                    'event_type': template.event_type,
+                    'intent': 'out_of_hours',
+                },
+                interactive_type='buttons' if validated_buttons else None,
+                interactive_data={'buttons': validated_buttons} if validated_buttons else None,
+            )
+
+        return UnifiedResponse(
+            content=self._build_out_of_hours_fallback(),
+            source=ResponseSource.TEMPLATE,
+            metadata={'event_type': 'out_of_hours', 'intent': 'out_of_hours'},
+        )
 
     def _render_template(self, template: AutoMessage, session_data: Dict[str, Any]) -> str:
         """
@@ -253,6 +361,53 @@ class UnifiedService:
         and order tracking must stay centralized in handlers/templates.
         """
         return self.use_llm and intent in self.CONSULTATIVE_INTENTS
+
+    def _has_pending_delivery_address_session(self) -> bool:
+        """Return True when this customer has an order waiting for delivery address."""
+        if not self.conversation:
+            return False
+
+        phone_number = self.conversation.phone_number
+        digits_only = re.sub(r'\D', '', phone_number or '')
+        phone_candidates = [phone_number]
+        if digits_only:
+            phone_candidates.extend([digits_only, f'+{digits_only}'])
+        phone_candidates = [value for value in dict.fromkeys(phone_candidates) if value]
+
+        sessions = CustomerSession.objects.filter(
+            phone_number__in=phone_candidates,
+            status__in=['active', 'cart_created', 'checkout', 'payment_pending'],
+            cart_data__waiting_for_address=True,
+        )
+        if self.company:
+            sessions = sessions.filter(company=self.company)
+        elif self.store:
+            sessions = sessions.filter(company__store=self.store)
+
+        return sessions.exists()
+
+    def _is_human_mode_transactional_step(
+        self,
+        message_text: str,
+        interactive_reply: Optional[Dict[str, Any]] = None,
+        location_data: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Human mode blocks normal automation, but order checkout steps are safe to
+        continue because they are deterministic and write the StoreOrder.
+        """
+        reply_id = str((interactive_reply or {}).get('id') or '')
+        if (
+            reply_id in {'order_delivery', 'order_pickup', 'pay_pix', 'pay_card', 'pay_pickup'}
+            or reply_id.startswith('add_')
+            or reply_id.startswith('product_')
+        ):
+            return True
+
+        if location_data and location_data.get('lat') and location_data.get('lng'):
+            return self._has_pending_delivery_address_session()
+
+        return bool((message_text or '').strip() and self._has_pending_delivery_address_session())
 
     def _run_handler(self, intent_data: Dict[str, Any]) -> Optional[UnifiedResponse]:
         intent = intent_data.get('intent', IntentType.UNKNOWN)
@@ -399,7 +554,15 @@ class UnifiedService:
         Emite log estruturado ao final com:
           unified.intent, unified.source, unified.duration_ms, unified.store_id
         """
-        if self.conversation and getattr(self.conversation, 'mode', None) == 'human':
+        if (
+            self.conversation
+            and getattr(self.conversation, 'mode', None) == 'human'
+            and not self._is_human_mode_transactional_step(
+                message_text,
+                interactive_reply=interactive_reply,
+                location_data=location_data,
+            )
+        ):
             logger.info(
                 '[unified] Conversation in human mode — skipping automation',
                 extra={'conversation_id': str(self.conversation.pk)},
@@ -510,6 +673,14 @@ class UnifiedService:
         intent_data = self.detector.detect(normalized.lower())
         intent = intent_data.get('intent', IntentType.UNKNOWN)
 
+        if intent == IntentType.UNKNOWN and self._message_matches_catalog_product(normalized):
+            intent = IntentType.PRODUCT_MENTION
+            intent_data['intent'] = intent
+            intent_data['method'] = 'catalog_match'
+            intent_data['confidence'] = 0.98
+
+        intent_data['llm_available'] = bool(self.use_llm and self.agent)
+
         if self.debug:
             logger.debug(
                 '[unified] intent=%s llm=%s store=%s company=%s',
@@ -517,6 +688,24 @@ class UnifiedService:
                 getattr(self.store, 'slug', None),
                 getattr(self.company, 'id', None),
             )
+
+        session_data = self._get_session_data()
+
+        if (
+            self.store
+            and not self.store.is_open()
+            and intent in self.OUT_OF_HOURS_INTENTS
+        ):
+            response = self._get_out_of_hours_response(session_data)
+            _ms = round((time.monotonic() - _t0) * 1000, 1)
+            logger.info(
+                '[unified] out_of_hours response (%.0fms) intent=%s',
+                _ms, intent.value,
+                extra={'unified.source': 'template', 'unified.intent': 'out_of_hours',
+                       'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+            )
+            self.stats['template'] += 1
+            return response
 
         # 1. Handler determinístico
         handler_response = self._run_handler(intent_data)
@@ -529,8 +718,6 @@ class UnifiedService:
             )
             self.stats['handler'] += 1
             return handler_response
-
-        session_data = self._get_session_data()
 
         # 2. Template do banco de dados (determinístico, antes do LLM)
         # Pular template para intents consultivas quando há agente LLM ativo —

@@ -478,17 +478,23 @@ class AutomationService:
         """Check if current time is within business hours."""
         if not profile.business_hours:
             return True  # No hours defined = always open
-        
+
         now = timezone.localtime()
         day_name = now.strftime('%A').lower()
-        
-        day_hours = profile.business_hours.get(day_name, {})
+        short_day = day_name[:3]
+
+        day_hours = (
+            profile.business_hours.get(day_name, {})
+            or profile.business_hours.get(short_day, {})
+        )
         if not day_hours or not day_hours.get('open'):
             return False
         
         try:
-            open_time = datetime.strptime(day_hours.get('start', '00:00'), '%H:%M').time()
-            close_time = datetime.strptime(day_hours.get('end', '23:59'), '%H:%M').time()
+            open_value = day_hours.get('open') or day_hours.get('start') or '00:00'
+            close_value = day_hours.get('close') or day_hours.get('end') or '23:59'
+            open_time = datetime.strptime(open_value, '%H:%M').time()
+            close_time = datetime.strptime(close_value, '%H:%M').time()
             return open_time <= now.time() <= close_time
         except (ValueError, TypeError):
             return True

@@ -8,11 +8,13 @@ Products store type-specific values in the type_attributes JSONField.
 import uuid as uuid_module
 from decimal import Decimal, InvalidOperation
 from rest_framework import serializers
+from django.utils import timezone
 from apps.stores.models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
     StoreProduct, StoreProductVariant, StoreOrder, StoreOrderItem,
     StoreCustomer, StoreWishlist, StoreProductType,
-    StorePaymentGateway, StorePayment, StorePaymentWebhookEvent
+    StorePaymentGateway, StorePayment, StorePaymentWebhookEvent,
+    StorePrintAgent, StorePrintJob,
 )
 
 
@@ -475,6 +477,83 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     
     def get_items_count(self, obj):
         return obj.items.count()
+
+
+class StorePrintAgentSerializer(serializers.ModelSerializer):
+    """Serializer for local print agents."""
+
+    is_online = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StorePrintAgent
+        fields = [
+            'id', 'store', 'name', 'slug', 'status', 'station',
+            'platform', 'connection_mode', 'printer_name', 'printer_host',
+            'printer_port', 'poll_interval_seconds', 'max_retries',
+            'last_seen_at', 'last_seen_ip', 'last_error',
+            'app_version', 'host_name', 'metadata', 'is_online',
+            'created_at', 'updated_at', 'is_active',
+        ]
+        read_only_fields = [
+            'id', 'last_seen_at', 'last_seen_ip', 'last_error',
+            'app_version', 'host_name', 'created_at', 'updated_at',
+        ]
+
+    def get_is_online(self, obj):
+        if not obj.last_seen_at:
+            return False
+        return (timezone.now() - obj.last_seen_at).total_seconds() <= (obj.poll_interval_seconds * 4)
+
+
+class StorePrintAgentCreateSerializer(serializers.ModelSerializer):
+    """Create serializer that returns the one-time raw API key."""
+
+    api_key = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = StorePrintAgent
+        fields = [
+            'id', 'store', 'name', 'slug', 'status', 'station',
+            'platform', 'connection_mode', 'printer_name', 'printer_host',
+            'printer_port', 'poll_interval_seconds', 'max_retries',
+            'metadata', 'api_key', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'api_key', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        raw_key, prefix, hashed = StorePrintAgent.generate_api_key()
+        agent = StorePrintAgent.objects.create(
+            api_key_prefix=prefix,
+            api_key_hash=hashed,
+            **validated_data,
+        )
+        agent._raw_api_key = raw_key
+        return agent
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['api_key'] = getattr(instance, '_raw_api_key', '')
+        return data
+
+
+class StorePrintJobSerializer(serializers.ModelSerializer):
+    """Serializer for print jobs."""
+
+    store_name = serializers.CharField(source='store.name', read_only=True)
+    order_number = serializers.CharField(source='order.order_number', read_only=True)
+    claimed_by_name = serializers.CharField(source='claimed_by.name', read_only=True)
+
+    class Meta:
+        model = StorePrintJob
+        fields = [
+            'id', 'store', 'store_name', 'order', 'order_number',
+            'status', 'station', 'template', 'source', 'title',
+            'payload', 'dedupe_key', 'claimed_by', 'claimed_by_name',
+            'claimed_at', 'printed_at', 'failed_at', 'available_at',
+            'attempts', 'max_attempts', 'last_error', 'printer_name',
+            'metadata', 'created_at', 'updated_at',
+        ]
+        read_only_fields = fields
 
 
 class StoreOrderCreateItemSerializer(serializers.Serializer):

@@ -8,6 +8,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Stack**: Django 4 + DRF + Django Channels (WebSocket) + Celery + Redis + PostgreSQL + Langchain (multi-LLM)
 
+## Current Context - 2026-04-26
+
+Canonical continuation doc: `/home/graco/WORK/PASTITA_ESTADO_PLANEJAMENTO_2026-04-24.md`.
+
+Recent production-facing decisions:
+
+- `server2` is the canonical backend for `ce-saladas-flutter`.
+- WhatsApp OTP mobile uses:
+  - `POST /api/v1/auth/whatsapp/send/`
+  - `POST /api/v1/auth/whatsapp/verify/`
+  - Meta template `codigo_verificacao`
+- OTP template sends the code in both body and URL/copy-code button parameters. Do not fall back to free text for OTP outside the 24h WhatsApp window.
+- Placeholder emails like `{phone}@pastita.local` are internal identity fallbacks only. API/mobile display must not show them as real customer email/name.
+- Customer profile display should prefer real `first_name/last_name`, `Conversation.contact_name`, or `UnifiedUser.name`; never expose `cliente_...` as user-facing name.
+- Cê Saladas delivery/geo rules must stay centralized. Avoid duplicating fee logic between checkout, WhatsApp agent and geo services.
+- WhatsApp agent `Caio` should ask for address/location to calculate delivery and must not expose internal fee rules or generate Pix before clear items exist.
+- Flutter mobile order detail should prefer `GET /api/v1/stores/orders/by-token/{token}/` when the order list provides `access_token`. Avoid using `/api/v1/stores/orders/{id}/` for the customer mobile detail path because it currently conflicts with administrative store order routing.
+- Long-term backend cleanup: create a clean mobile/customer namespace for order detail, status, tracking and reorder, then add contract tests so route ordering cannot break the app again.
+
+Critical contracts:
+
+- `docs/CONTRATOS_CRITICOS_2026-04-24.md`
+
+Critical pending work:
+
+1. Create/verify a dedicated mobile customer order API namespace for detail/status/tracking/reorder.
+2. Support custom salad items from Flutter builder in checkout/order/receipt.
+3. Add regression tests for OTP, delivery zones, route calculation, checkout payload, orders by token and agent guardrails.
+4. Resolve Google vs HERE as the canonical geo provider in docs/env/service names.
+5. Keep delivery-fee and route calculation as backend-owned truth; Flutter should never hardcode delivery prices.
+
 ## Commands
 
 All commands run inside Docker containers via `make` or `docker-compose exec`:

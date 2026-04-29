@@ -395,7 +395,12 @@ PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', '')
 META_PIXEL_ID = os.environ.get('META_PIXEL_ID', '').strip()
 META_CAPI_ACCESS_TOKEN = os.environ.get('META_CAPI_ACCESS_TOKEN', '').strip()
 META_CAPI_TEST_EVENT_CODE = os.environ.get('META_CAPI_TEST_EVENT_CODE', '').strip()
-META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v20.0').strip()
+META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v25.0').strip()
+META_CAPI_STORE_SLUGS = [
+    slug.strip()
+    for slug in os.environ.get('META_CAPI_STORE_SLUGS', 'ce-saladas').split(',')
+    if slug.strip()
+]
 
 # ============================================================================
 # AI/LLM CONFIGURATION - Unified through LiteLLM Proxy (preferred) or direct
@@ -478,6 +483,32 @@ RATE_LIMIT_WINDOW = int(os.environ.get('RATE_LIMIT_WINDOW', '60'))
 _RATE_LIMIT_WHITELIST = os.environ.get('RATE_LIMIT_WHITELIST_PATHS', '/api/v1/stores/orders/by-token/,/api/v1/stores/stores/,/api/v1/notifications/,/api/v1/automation/')
 RATE_LIMIT_WHITELIST_PATHS = [
     path.strip() for path in _RATE_LIMIT_WHITELIST.split(',') if path.strip()
+]
+RATE_LIMIT_SCOPED_PATHS = [
+    {
+        'prefix': '/api/v1/stores/print/',
+        'requests': int(os.environ.get('RATE_LIMIT_PRINT_REQUESTS', '1200')),
+        'window': int(os.environ.get('RATE_LIMIT_PRINT_WINDOW', '60')),
+        'key_by': 'print_agent_or_ip',
+    },
+    {
+        'prefix': '/api/v1/stores/orders/',
+        'requests': int(os.environ.get('RATE_LIMIT_STORE_ORDERS_REQUESTS', '600')),
+        'window': int(os.environ.get('RATE_LIMIT_STORE_ORDERS_WINDOW', '60')),
+        'key_by': 'auth_or_ip',
+    },
+    {
+        'prefix': '/api/v1/whatsapp/messages/',
+        'requests': int(os.environ.get('RATE_LIMIT_WHATSAPP_MESSAGES_REQUESTS', '600')),
+        'window': int(os.environ.get('RATE_LIMIT_WHATSAPP_MESSAGES_WINDOW', '60')),
+        'key_by': 'auth_or_ip',
+    },
+    {
+        'prefix': '/api/v1/conversations/',
+        'requests': int(os.environ.get('RATE_LIMIT_CONVERSATIONS_REQUESTS', '600')),
+        'window': int(os.environ.get('RATE_LIMIT_CONVERSATIONS_WINDOW', '60')),
+        'key_by': 'auth_or_ip',
+    },
 ]
 
 # Logging
@@ -592,9 +623,6 @@ else:
 
 # ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
 WHITENOISE_MANIFEST_STRICT = False
-
-
-
 
 
 

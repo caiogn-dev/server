@@ -43,6 +43,12 @@ from .payment import (
     StorePaymentWebhookEvent,
 )
 
+# Printing
+from .printing import (
+    StorePrintAgent,
+    StorePrintJob,
+)
+
 
 __all__ = [
     # Base
@@ -77,4 +83,7 @@ __all__ = [
     'StorePaymentGateway',
     'StorePayment',
     'StorePaymentWebhookEvent',
+    # Printing
+    'StorePrintAgent',
+    'StorePrintJob',
 ]

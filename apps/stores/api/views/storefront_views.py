@@ -40,7 +40,7 @@ from apps.stores.models import (
     StoreWishlist
 )
 from apps.stores.services import cart_service, checkout_service
-from apps.stores.services.geo import geo_service as here_maps_service
+from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
@@ -51,6 +51,7 @@ from ..serializers import (
 logger = logging.getLogger(__name__)
 
 _STORE_CACHE_TTL = 60  # seconds — store config changes are rare
+_CATALOG_CACHE_TTL = 300  # 5 min — catalog changes are infrequent
 
 
 def get_active_store(slug: str):
@@ -170,9 +171,41 @@ def build_store_customer_profile(store, user):
     default_index = store_customer.default_address_index or 0
     default_address = addresses[default_index] if 0 <= default_index < len(addresses) else None
 
+    def _looks_placeholder(value: str) -> bool:
+        value = (value or '').strip().lower()
+        return (
+            not value
+            or value.startswith('cliente_')
+            or value == 'desconhecido'
+            or value.endswith('@pastita.local')
+        )
+
     full_name = f"{user.first_name} {user.last_name}".strip()
-    if not full_name:
-        full_name = user.username or user.email or ''
+    if _looks_placeholder(full_name):
+        from apps.core.services.customer_identity import CustomerIdentityService
+        from apps.conversations.models import Conversation
+        from apps.users.models import UnifiedUser
+
+        phones = set(CustomerIdentityService.phone_candidates(profile.phone or ''))
+        conversation_name = (
+            Conversation.objects
+            .filter(phone_number__in=phones)
+            .exclude(contact_name='')
+            .order_by('-last_message_at', '-created_at')
+            .values_list('contact_name', flat=True)
+            .first()
+        )
+        unified_name = (
+            UnifiedUser.objects
+            .filter(phone_number__in=phones)
+            .exclude(name__iexact='desconhecido')
+            .values_list('name', flat=True)
+            .first()
+        )
+        full_name = next(
+            (candidate for candidate in [conversation_name, unified_name, user.username, user.email] if not _looks_placeholder(candidate)),
+            ''
+        )
 
     return {
         'user': {
@@ -202,6 +235,7 @@ def build_store_customer_profile(store, user):
             'total_spent': float(store_customer.total_spent or 0),
             'last_order_at': store_customer.last_order_at.isoformat() if store_customer.last_order_at else None,
         },
+        'loyalty': checkout_service.get_loyalty_status(store, user),
         'preferences': {
             'accepts_marketing': store_customer.accepts_marketing,
         },
@@ -224,62 +258,70 @@ class StoreCatalogView(APIView):
     """Public catalog endpoint for a store."""
     permission_classes = [permissions.AllowAny]
     throttle_classes = [PublicReadThrottle]
-    
+
     def get(self, request, store_slug):
         """Get store catalog with categories, products, and combos."""
+        from django.core.cache import cache
+
         store = get_active_store(store_slug)
-        
-        # Get all active products for the store
-        products = StoreProduct.objects.filter(
-            store=store, status='active'
-        ).order_by('sort_order', 'name')
-        
-        # Get featured products
-        featured_products = products.filter(featured=True)
-        
-        # Get active categories with their products
-        categories = StoreCategory.objects.filter(
-            store=store, is_active=True
-        ).prefetch_related(
-            Prefetch(
-                'products',
-                queryset=StoreProduct.objects.filter(status='active').order_by('sort_order', 'name')
-            )
-        ).order_by('sort_order', 'name')
-        
-        # Build products_by_category
+        cache_key = f'catalog:{store_slug}'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+
+        # Single query for all active products — evaluated once, grouped in Python
+        all_products = list(
+            StoreProduct.objects.filter(store=store, status='active')
+            .select_related('category')
+            .order_by('sort_order', 'name')
+        )
+
+        categories = list(
+            StoreCategory.objects.filter(store=store, is_active=True)
+            .order_by('sort_order', 'name')
+        )
+
+        # Group products by category_id in Python — no extra DB hits per category
+        from collections import defaultdict
+        products_by_cat_id = defaultdict(list)
+        for p in all_products:
+            products_by_cat_id[p.category_id].append(p)
+
         products_by_category = []
         for category in categories:
-            category_products = products.filter(category=category)
-            if category_products.exists():
+            cat_products = products_by_cat_id.get(category.id, [])
+            if cat_products:
                 products_by_category.append({
                     'category': StoreCategorySerializer(category).data,
-                    'products': StoreProductSerializer(category_products, many=True).data
+                    'products': StoreProductSerializer(cat_products, many=True).data,
                 })
-        
-        # Get combos
-        combos = StoreCombo.objects.filter(
-            store=store, is_active=True
-        ).prefetch_related('items__product').order_by('sort_order', 'name')
-        
-        # Get featured combos (combos_destaque)
-        combos_destaque = combos.filter(featured=True)
-        
-        # Get product types
-        product_types = StoreProductType.objects.filter(
-            store=store, is_active=True
-        ).order_by('sort_order', 'name')
-        
-        return Response({
+
+        featured_products = [p for p in all_products if p.featured]
+
+        combos = list(
+            StoreCombo.objects.filter(store=store, is_active=True)
+            .prefetch_related('items__product')
+            .order_by('sort_order', 'name')
+        )
+        combos_destaque = [c for c in combos if c.featured]
+
+        product_types = list(
+            StoreProductType.objects.filter(store=store, is_active=True)
+            .order_by('sort_order', 'name')
+        )
+
+        payload = {
             'store': StoreSerializer(store).data,
             'categories': StoreCategorySerializer(categories, many=True).data,
-            'products': StoreProductSerializer(products, many=True).data,
+            'products': StoreProductSerializer(all_products, many=True).data,
             'featured_products': StoreProductSerializer(featured_products, many=True).data,
             'combos': StoreComboSerializer(combos, many=True).data,
             'combos_destaque': StoreComboSerializer(combos_destaque, many=True).data,
             'product_types': CatalogProductTypeSerializer(product_types, many=True).data,
             'products_by_category': products_by_category,
-        })
+        }
+        cache.set(cache_key, payload, _CATALOG_CACHE_TTL)
+        return Response(payload)
 
 
 class StoreAppConfigView(APIView):
@@ -453,6 +495,12 @@ class StoreCartViewSet(viewsets.ViewSet):
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 customizations = request.data.get('customizations', {})
+                if customizations.get('is_salad_builder') or customizations.get('type') == 'custom_salad':
+                    customizations = checkout_service.normalize_custom_salad_payload(
+                        customizations,
+                        combo_name=combo_name,
+                        unit_price=unit_price,
+                    )
                 from decimal import Decimal
                 cart_service.add_combo(
                     cart,
@@ -572,7 +620,11 @@ class StoreCheckoutView(APIView):
                 customer_data=customer_data,
                 delivery_data=delivery_data,
                 coupon_code=coupon_code,
-                notes=notes
+                notes=notes,
+                use_loyalty_reward=bool(
+                    request.data.get('use_loyalty_reward')
+                    or request.data.get('loyalty_reward')
+                ),
             )
 
             request.session['customer_name'] = order.customer_name or ''
@@ -587,6 +639,15 @@ class StoreCheckoutView(APIView):
                     order, payment_method, payment_payload
                 )
 
+            payment_failed = bool(payment_result and not payment_result.get('success'))
+            if not payment_failed:
+                try:
+                    from apps.stores.services.meta_pixel_service import send_purchase_event
+                    meta_tracking = request.data.get('meta') if isinstance(request.data.get('meta'), dict) else {}
+                    send_purchase_event(order, request=request, tracking_data=meta_tracking)
+                except Exception as exc:
+                    logger.warning("Meta CAPI Purchase failed for %s: %s", order.order_number, exc)
+
             broadcast_order_event(order, event_type='order.created')
              
             # Clear cart after successful order
@@ -599,6 +660,28 @@ class StoreCheckoutView(APIView):
                 'total_amount': float(order.total),
                 'payment_status': order.payment_status,
                 'access_token': order.access_token,
+                'items': [
+                    {
+                        'id': str(item.id),
+                        'product_name': item.product_name,
+                        'variant_name': item.variant_name,
+                        'quantity': item.quantity,
+                        'unit_price': float(item.unit_price),
+                        'subtotal': float(item.subtotal),
+                        'customizations': item.options,
+                        'is_custom_salad': bool(
+                            isinstance(item.options, dict)
+                            and (
+                                item.options.get('is_salad_builder')
+                                or item.options.get('type') == 'custom_salad'
+                            )
+                        ),
+                    }
+                    for item in order.items.all()
+                ],
+                'delivery_quote': (order.metadata or {}).get('delivery_quote', {}),
+                'loyalty': checkout_service.get_loyalty_status(store, order.customer),
+                'loyalty_reward': (order.metadata or {}).get('loyalty_reward', {}),
                 'customer': {
                     'user_id': str(order.customer_id) if order.customer_id else '',
                     'name': order.customer_name,
@@ -659,7 +742,7 @@ class StoreDeliveryFeeView(APIView):
                     distance_km=Decimal(str(distance_km)),
                     zip_code=zip_code,
                 )
-                return Response(delivery_info)
+                return Response(checkout_service.normalize_delivery_quote(delivery_info))
             except Exception as e:
                 logger.error(f"Delivery fee calculation error: {e}")
                 return Response(
@@ -677,7 +760,7 @@ class StoreDeliveryFeeView(APIView):
             # If only address or zip code provided, geocode it first
             if not (lat and lng):
                 geocode_target = address or zip_code
-                geocode_result = here_maps_service.geocode(geocode_target)
+                geocode_result = geo_service.geocode(geocode_target)
                 if geocode_result:
                     lat = geocode_result.get('lat')
                     lng = geocode_result.get('lng')
@@ -687,10 +770,10 @@ class StoreDeliveryFeeView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            delivery_info = here_maps_service.calculate_delivery_fee(
+            delivery_info = geo_service.calculate_delivery_fee(
                 store, float(lat), float(lng)
             )
-            return Response(delivery_info)
+            return Response(checkout_service.normalize_delivery_quote(delivery_info))
         except Exception as e:
             logger.error(f"Delivery fee calculation error: {e}")
             return Response(

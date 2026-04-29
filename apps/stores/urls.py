@@ -13,6 +13,7 @@ from .api.views import (
     StoreViewSet, StoreIntegrationViewSet, StoreWebhookViewSet,
     StoreCategoryViewSet, StoreProductViewSet, StoreProductVariantViewSet,
     StoreOrderViewSet, StoreCustomerViewSet,
+    StorePrintAgentViewSet, StorePrintJobViewSet,
     # Unified storefront views
     StoreCartViewSet, StoreCheckoutView, StoreDeliveryFeeView,
     StoreCouponValidateView, StoreCatalogView, StorePublicView,
@@ -23,7 +24,9 @@ from .api.views import (
     # Wishlist views
     StoreWishlistViewSet,
     # Admin views for full CRUD
-    StoreProductTypeAdminViewSet
+    StoreProductTypeAdminViewSet,
+    PrintAgentHeartbeatView, PrintAgentClaimNextJobView,
+    PrintAgentCompleteJobView, PrintAgentFailJobView,
 )
 from .api.webhooks import (
     MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
@@ -56,6 +59,8 @@ router.register(r'combos', StoreComboViewSet, basename='combo')
 router.register(r'product-types', StoreProductTypeViewSet, basename='product-type')
 router.register(r'coupons', StoreCouponViewSet, basename='coupon')
 router.register(r'delivery-zones', StoreDeliveryZoneViewSet, basename='delivery-zone')
+router.register(r'print-agents', StorePrintAgentViewSet, basename='print-agent')
+router.register(r'print-jobs', StorePrintJobViewSet, basename='print-job')
 # Admin viewset for product types (full CRUD)
 router.register(r'admin/product-types', StoreProductTypeAdminViewSet, basename='admin-product-type')
 
@@ -77,6 +82,8 @@ stores_router.register(r'categories', StoreCategoryViewSet, basename='store-cate
 stores_router.register(r'products', StoreProductViewSet, basename='store-products')
 stores_router.register(r'orders', StoreOrderViewSet, basename='store-orders')
 stores_router.register(r'customers', StoreCustomerViewSet, basename='store-customers')
+stores_router.register(r'print-agents', StorePrintAgentViewSet, basename='store-print-agents')
+stores_router.register(r'print-jobs', StorePrintJobViewSet, basename='store-print-jobs')
 
 # Nested router for product variants
 
@@ -146,6 +153,7 @@ urlpatterns = [
     
     # Customer orders list (requires auth)
     path('customer/orders/', CustomerOrdersView.as_view(), name='customer-orders'),
+    path('customer/orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail-auth'),
     
     # Single order detail (public - by order ID)
     path('orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail'),
@@ -188,6 +196,14 @@ urlpatterns = [
     
     # Payment Webhook Events (read-only)
     path('payments/webhook-events/', include(webhook_event_router.urls)),
+
+    # ==========================================================================
+    # LOCAL PRINT AGENT ENDPOINTS
+    # ==========================================================================
+    path('print/agent/heartbeat/', PrintAgentHeartbeatView.as_view(), name='print-agent-heartbeat'),
+    path('print/agent/claim-next/', PrintAgentClaimNextJobView.as_view(), name='print-agent-claim-next'),
+    path('print/jobs/<uuid:job_id>/complete/', PrintAgentCompleteJobView.as_view(), name='print-job-complete'),
+    path('print/jobs/<uuid:job_id>/fail/', PrintAgentFailJobView.as_view(), name='print-job-fail'),
 
     # ==========================================================================
     # PUBLIC STOREFRONT ENDPOINTS (by store slug)

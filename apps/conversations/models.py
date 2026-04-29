@@ -28,6 +28,23 @@ class Conversation(BaseModel):
     
     phone_number = models.CharField(max_length=20, db_index=True)
     contact_name = models.CharField(max_length=255, blank=True)
+    wa_id = models.CharField(
+        max_length=32,
+        blank=True,
+        db_index=True,
+        help_text='WhatsApp user id from webhook contacts[].wa_id'
+    )
+    profile_picture_url = models.URLField(
+        blank=True,
+        help_text='External/profile avatar URL when available from CRM or linked user profile'
+    )
+    profile_picture_file = models.ImageField(
+        upload_to='whatsapp/profile_pictures/',
+        blank=True,
+        null=True,
+        help_text='Locally persisted contact avatar'
+    )
+    profile_name_last_seen_at = models.DateTimeField(null=True, blank=True)
     
     mode = models.CharField(
         max_length=10,
@@ -82,6 +99,7 @@ class Conversation(BaseModel):
         indexes = [
             models.Index(fields=['account', 'status', '-last_message_at']),
             models.Index(fields=['assigned_agent', 'status']),
+            models.Index(fields=['account', 'wa_id']),
         ]
 
     def save(self, *args, **kwargs):

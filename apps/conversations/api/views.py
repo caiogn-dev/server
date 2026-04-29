@@ -3,6 +3,7 @@ Conversation API views.
 """
 import logging
 from django.utils import timezone
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -23,6 +24,7 @@ from .serializers import (
     TagSerializer,
     AssignAgentSerializer,
 )
+from apps.whatsapp.api.serializers import MessageSerializer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -74,6 +76,47 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
         serializer = UniversalConversationSerializer(rows, many=True)
         return Response(serializer.data)
+
+    @extend_schema(
+        summary="Get conversation messages",
+        description="Returns messages for this conversation ordered oldest to newest. Use before_id for infinite scroll.",
+        responses={200: dict}
+    )
+    @action(detail=True, methods=['get'])
+    def messages(self, request, pk=None):
+        """Return a cursor-friendly message history for a WhatsApp conversation."""
+        conversation = self.get_object()
+
+        try:
+            limit = int(request.query_params.get('limit', 50))
+        except (TypeError, ValueError):
+            limit = 50
+        limit = max(1, min(limit, 100))
+
+        queryset = conversation.messages.select_related(
+            'account', 'conversation', 'conversation__assigned_agent'
+        ).order_by('-created_at', '-id')
+
+        before_id = request.query_params.get('before_id')
+        if before_id:
+            before_message = queryset.filter(id=before_id).first()
+            if before_message:
+                queryset = queryset.filter(
+                    Q(created_at__lt=before_message.created_at) |
+                    Q(created_at=before_message.created_at, id__lt=before_message.id)
+                )
+
+        rows = list(queryset[:limit + 1])
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_before_id = str(rows[-1].id) if has_more and rows else None
+        rows.reverse()
+
+        return Response({
+            'results': MessageSerializer(rows, many=True, context={'request': request}).data,
+            'has_more': has_more,
+            'next_before_id': next_before_id,
+        })
 
     @extend_schema(
         summary="Switch to human mode",

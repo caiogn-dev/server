@@ -70,13 +70,25 @@ class WhatsAppOrderService:
                     continue
 
                 quantity = max(int(item.get('quantity', 1)), 1)
-                item_total = product.price * quantity
+                unit_price = product.price
+                if item.get('price_source') == 'whatsapp_catalog' and item.get('unit_price') is not None:
+                    try:
+                        candidate_price = Decimal(str(item.get('unit_price')))
+                        if candidate_price >= 0:
+                            unit_price = candidate_price
+                    except Exception:
+                        logger.warning(
+                            "[create_order_from_cart] Invalid WhatsApp catalog price for product %s: %s",
+                            product_id,
+                            item.get('unit_price'),
+                        )
+                item_total = unit_price * quantity
                 subtotal += item_total
                 order_items_data.append({
                     'product': product,
                     'product_name': product.name,
                     'quantity': quantity,
-                    'unit_price': product.price,
+                    'unit_price': unit_price,
                     'total': item_total,
                 })
                 logger.info(f"[create_order_from_cart] Item: {product.name} x{quantity} = R$ {item_total}")

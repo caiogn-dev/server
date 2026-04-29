@@ -88,10 +88,16 @@
 /api/v1/stores/{store_slug}/delivery-fee/ → Calculate fee
 /api/v1/stores/{store_slug}/validate-coupon/ → Coupon validation
 /api/v1/stores/{store_slug}/route/        → HERE route calculation
-/api/v1/stores/orders/by-token/{token}/   → Public order status
+/api/v1/stores/orders/by-token/{token}/   → Public order detail/status for mobile post-checkout
 /api/v1/stores/maps/geocode/              → Address geocoding
 /api/v1/stores/maps/reverse-geocode/      → Reverse geocode
 ```
+
+Mobile note, 2026-04-26:
+
+- `ce-saladas-flutter` must prefer `/api/v1/stores/orders/by-token/{token}/` for OrderDetail when it has `access_token`.
+- Avoid using `/api/v1/stores/orders/{id}/` for customer mobile detail. That path conflicts with the admin `StoreOrderViewSet` router because router URLs are included before public customer order paths.
+- Long-term fix: create a namespaced mobile/customer order detail route that cannot conflict with admin routers, for example `/api/v1/mobile/stores/{slug}/orders/{id}/` or `/api/v1/stores/customer/orders/{id}/` with explicit auth/token behavior and tests.
 
 ### Webhooks
 

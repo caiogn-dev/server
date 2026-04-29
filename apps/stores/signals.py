@@ -18,8 +18,42 @@ def invalidate_store_slug_cache(sender, instance, **kwargs):
     """Bust the storefront slug cache when a store is saved."""
     try:
         cache.delete(f'store:slug:{instance.slug}')
+        cache.delete(f'catalog:{instance.slug}')
     except Exception as e:
         logger.warning("Failed to invalidate store cache for %s: %s", instance.slug, e)
+
+
+@receiver(post_save, sender='stores.StoreProduct')
+def invalidate_catalog_on_product_change(sender, instance, **kwargs):
+    """Bust the catalog cache whenever a product is saved."""
+    try:
+        slug = instance.store.slug if instance.store_id else None
+        if slug:
+            cache.delete(f'catalog:{slug}')
+    except Exception as e:
+        logger.warning("Failed to invalidate catalog cache on product save: %s", e)
+
+
+@receiver(post_save, sender='stores.StoreCategory')
+def invalidate_catalog_on_category_change(sender, instance, **kwargs):
+    """Bust the catalog cache whenever a category is saved."""
+    try:
+        slug = instance.store.slug if instance.store_id else None
+        if slug:
+            cache.delete(f'catalog:{slug}')
+    except Exception as e:
+        logger.warning("Failed to invalidate catalog cache on category save: %s", e)
+
+
+@receiver(post_save, sender='stores.StoreCombo')
+def invalidate_catalog_on_combo_change(sender, instance, **kwargs):
+    """Bust the catalog cache whenever a combo is saved."""
+    try:
+        slug = instance.store.slug if instance.store_id else None
+        if slug:
+            cache.delete(f'catalog:{slug}')
+    except Exception as e:
+        logger.warning("Failed to invalidate catalog cache on combo save: %s", e)
 
 
 @receiver(pre_save, sender='stores.StoreOrder')
@@ -43,13 +77,15 @@ def capture_order_previous_status(sender, instance, **kwargs):
 
 @receiver(post_save, sender='stores.StoreOrder')
 def on_order_created(sender, instance, created, **kwargs):
-    """Trigger push notification when a new order is created."""
+    """Trigger push notification and automatic print queue when a new order is created."""
     if not created:
         return
     try:
         from apps.stores.tasks import notify_new_order_push
+        from apps.stores.services.print_service import enqueue_order_print_job
         order_id = str(instance.id)
         transaction.on_commit(lambda: notify_new_order_push.delay(order_id))
+        transaction.on_commit(lambda: enqueue_order_print_job(instance))
     except Exception as e:
         logger.error(f"on_order_created signal error: {e}")
 

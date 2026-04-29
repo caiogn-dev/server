@@ -8,6 +8,7 @@ import logging
 import traceback
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -15,8 +16,10 @@ from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Max, Q
 from django.utils import timezone
+from django.core.files.storage import default_storage
 
 from ..models import Campaign, CampaignRecipient, ContactList
+from apps.core.utils import build_absolute_media_url
 from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
 from ..services import CampaignService
 from .serializers import (
@@ -246,6 +249,70 @@ class CampaignViewSet(viewsets.ModelViewSet):
             CampaignSerializer(campaign).data,
             status=status.HTTP_201_CREATED
         )
+
+    @extend_schema(summary="Upload campaign media")
+    @action(
+        detail=False,
+        methods=['post'],
+        url_path='upload-media',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def upload_media(self, request):
+        """Upload an image/document to be used as WhatsApp campaign media."""
+        import os
+        import uuid as uuid_mod
+
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        mime = file_obj.content_type or ''
+        if mime.startswith('image/'):
+            media_type = 'image'
+        elif mime == 'application/pdf' or mime.startswith('application/'):
+            media_type = 'document'
+        else:
+            return Response(
+                {'error': 'Only image or document files are supported for campaigns'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        file_to_save = file_obj
+        if media_type == 'image' and mime not in {'image/jpeg', 'image/png'}:
+            from io import BytesIO
+            from django.core.files.base import ContentFile
+            from PIL import Image
+
+            image = Image.open(file_obj)
+            if getattr(image, 'is_animated', False):
+                image.seek(0)
+            if image.mode not in {'RGB', 'RGBA'}:
+                image = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
+            if image.mode == 'RGBA':
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.getchannel('A'))
+                image = background
+            else:
+                image = image.convert('RGB')
+
+            output = BytesIO()
+            image.save(output, format='JPEG', quality=90, optimize=True)
+            file_to_save = ContentFile(output.getvalue())
+            mime = 'image/jpeg'
+
+        ext = '.jpg' if mime == 'image/jpeg' else (os.path.splitext(file_obj.name)[1] or '')
+        saved_path = default_storage.save(
+            f'campaigns/whatsapp/{uuid_mod.uuid4().hex}{ext}',
+            file_to_save,
+        )
+        media_url = build_absolute_media_url(default_storage.url(saved_path))
+
+        return Response({
+            'media_url': media_url,
+            'media_type': media_type,
+            'filename': file_obj.name,
+            'mime_type': mime,
+        })
     
     @extend_schema(summary="Schedule campaign")
     @action(detail=True, methods=['post'])

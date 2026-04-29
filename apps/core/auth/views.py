@@ -172,11 +172,9 @@ def verify_whatsapp_auth_code(request):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
-        display_name = (
-            f"{user.first_name} {user.last_name}".strip()
-            or whatsapp_user.get('name')
-            or user.username
-        )
+        display_name = f"{user.first_name} {user.last_name}".strip() or whatsapp_user.get('name') or ''
+        if not display_name or display_name.lower().startswith('cliente_'):
+            display_name = profile.phone or result.get('phone_number') or ''
 
         return Response({
             'valid': True,

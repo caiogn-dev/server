@@ -31,6 +31,8 @@ class CampaignService:
         audience_filters: Optional[Dict[str, Any]] = None,
         contact_list: Optional[List[Dict[str, Any]]] = None,
         scheduled_at: Optional[timezone.datetime] = None,
+        messages_per_minute: int = 60,
+        delay_between_messages: int = 1,
         created_by: Optional[User] = None,
     ) -> Campaign:
         """Create a new campaign."""
@@ -46,6 +48,8 @@ class CampaignService:
             audience_filters=audience_filters or {},
             contact_list=contact_list or [],
             scheduled_at=scheduled_at,
+            messages_per_minute=messages_per_minute or 60,
+            delay_between_messages=delay_between_messages if delay_between_messages is not None else 1,
             status=Campaign.CampaignStatus.DRAFT,
             created_by=created_by,
         )
@@ -322,18 +326,39 @@ class CampaignService:
                     )
                 else:
                     text = self._personalize_message(
-                        campaign.message_content.get('text', ''),
+                        campaign.message_content.get('caption') or campaign.message_content.get('text', ''),
                         {
                             'nome': recipient.contact_name,
                             'name': recipient.contact_name,
                             **recipient.variables,
                         }
                     )
-                    message = message_service.send_text_message(
-                        account_id=str(campaign.account.id),
-                        to=recipient.phone_number,
-                        text=text,
-                    )
+                    media_type = (campaign.message_content.get('media_type') or '').lower()
+                    media_url = campaign.message_content.get('media_url') or campaign.message_content.get('image_url')
+                    if media_url and media_type == 'image':
+                        message = message_service.send_image(
+                            account_id=str(campaign.account.id),
+                            to=recipient.phone_number,
+                            image_url=media_url,
+                            caption=text or None,
+                            metadata={'source': 'campaign', 'campaign_id': str(campaign.id)},
+                        )
+                    elif media_url and media_type == 'document':
+                        message = message_service.send_document(
+                            account_id=str(campaign.account.id),
+                            to=recipient.phone_number,
+                            document_url=media_url,
+                            filename=campaign.message_content.get('filename') or 'campanha.pdf',
+                            caption=text or None,
+                            metadata={'source': 'campaign', 'campaign_id': str(campaign.id)},
+                        )
+                    else:
+                        message = message_service.send_text_message(
+                            account_id=str(campaign.account.id),
+                            to=recipient.phone_number,
+                            text=text,
+                            metadata={'source': 'campaign', 'campaign_id': str(campaign.id)},
+                        )
                 
                 recipient.message_id = str(message.id)
                 recipient.whatsapp_message_id = message.whatsapp_message_id

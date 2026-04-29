@@ -81,6 +81,9 @@ class IntentDetector:
             r'(que horas (abre|fecha)|hor[áa]rio|funcionamento|atendimento|aberto|fecha que horas)',
             r'(at[eé] que horas|qual o hor[áa]rio|quando abre|quando fecha)',
             r'(abre quando|fecha quando|vai abrir|vai fechar)',
+            r'(j[áa]\s+(fechou|fechado|fechada)|est[áa]\s+(fechado|fechada|aberto|aberta))',
+            r'(loja\s+(fechou|fechada|fechado|aberta|aberto)|a loja est[áa]\s+(aberta|aberto|fechada|fechado))',
+            r'(ainda\s+(est[áa]\s+)?(aberto|aberta|funcionando|atendendo)|nem pra retirada)',
         ],
         IntentType.DELIVERY_INFO: [
             r'(frete|entrega|delivery|envia|entregam|tempo de entrega|quanto tempo demora|prazo)',
@@ -95,6 +98,7 @@ class IntentDetector:
         IntentType.TRACK_ORDER: [
             r'(rastrear|rastreio|status (do )?pedido|onde est[áa] (meu )?pedido|n[úu]mero do pedido|acompanhar)',
             r'(meu pedido|onde ficou meu pedido|como est[áa] meu pedido|status da entrega)',
+            r'(confirmar pedido|quero confirmar meu pedido|realizei o pedido|fiz o pedido|pedido \#?\w+)',
         ],
         IntentType.PAYMENT_STATUS: [
             r'(status do pagamento|ver pagamento|consultar pagamento)',
@@ -115,8 +119,8 @@ class IntentDetector:
             r'(quero (fazer( um)? )?pedido|quero pedir|fazer pedido|vou querer|queria (comprar|pedir)|quero comprar)',
             r'(come[çc]ar pedido|novo pedido|quero encomendar|quero solicitar)',
             r'(pode fazer pedido|aceita pedido|tem como pedir|pedido rápido)',
-            r'(confirmar pedido|finalizar pedido|fechar pedido|concluir pedido|criar pedido)',
-            r'(quero confirmar|quero finalizar|confirmar compra|finalizar compra)',
+            r'(finalizar pedido|fechar pedido|concluir pedido|criar pedido)',
+            r'(quero finalizar|confirmar compra|finalizar compra)',
         ],
         IntentType.CANCEL_ORDER: [
             r'(cancelar pedido|quero cancelar|posso cancelar|preciso cancelar)',

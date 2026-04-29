@@ -263,6 +263,68 @@ class WhatsAppAPIService:
             data=payload
         )
 
+    def get_product_catalogs(self) -> Dict[str, Any]:
+        """List product catalogs connected to the account WABA."""
+        if not self.account.waba_id:
+            return {'data': []}
+        return self._make_request('GET', f'{self.account.waba_id}/product_catalogs')
+
+    def get_default_product_catalog_id(self) -> str:
+        """Return the first configured/connected product catalog id for this WABA."""
+        metadata_catalog_id = (self.account.metadata or {}).get('product_catalog_id')
+        if metadata_catalog_id:
+            return str(metadata_catalog_id)
+
+        catalogs = self.get_product_catalogs().get('data', [])
+        if not catalogs:
+            raise WhatsAppAPIError(
+                message='No WhatsApp product catalog connected to this WABA',
+                code='catalog_not_found'
+            )
+        return str(catalogs[0]['id'])
+
+    def send_product_list(
+        self,
+        to: str,
+        sections: List[Dict],
+        body_text: str,
+        catalog_id: Optional[str] = None,
+        header_text: Optional[str] = None,
+        footer: Optional[str] = None,
+        reply_to: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Send a WhatsApp native multi-product catalog message."""
+        catalog_id = catalog_id or self.get_default_product_catalog_id()
+        payload = {
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': to,
+            'type': 'interactive',
+            'interactive': {
+                'type': 'product_list',
+                'header': {
+                    'type': 'text',
+                    'text': (header_text or 'Catalogo')[:60],
+                },
+                'body': {'text': body_text[:1024]},
+                'action': {
+                    'catalog_id': catalog_id,
+                    'sections': sections[:10],
+                },
+            },
+        }
+
+        if footer:
+            payload['interactive']['footer'] = {'text': footer[:60]}
+        if reply_to:
+            payload['context'] = {'message_id': reply_to}
+
+        return self._make_request(
+            'POST',
+            f'{self.phone_number_id}/messages',
+            data=payload
+        )
+
     def send_image(
         self,
         to: str,

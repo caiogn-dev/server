@@ -66,6 +66,7 @@ class StoreCart(models.Model):
 
     def clear(self):
         self.items.all().delete()
+        self.combo_items.all().delete()
 
     def merge_with(self, other_cart):
         for item in other_cart.items.all():
