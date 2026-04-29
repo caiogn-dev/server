@@ -509,6 +509,9 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
     payment_method = serializers.CharField(required=False, allow_blank=True)
     coupon_code = serializers.CharField(required=False, allow_blank=True)
+    discount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    surcharge = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    adjustment_reason = serializers.CharField(required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True)
 
     def _resolve_store(self, validated_data):
@@ -584,9 +587,24 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         except (ValueError, InvalidOperation):
             delivery_fee = Decimal('0.00')
 
-        discount = Decimal('0.00')
+        discount = validated_data.get('discount', Decimal('0.00'))
+        surcharge = validated_data.get('surcharge', Decimal('0.00'))
+        try:
+            discount = max(Decimal('0.00'), Decimal(str(discount)))
+        except (ValueError, InvalidOperation):
+            discount = Decimal('0.00')
+        try:
+            surcharge = max(Decimal('0.00'), Decimal(str(surcharge)))
+        except (ValueError, InvalidOperation):
+            surcharge = Decimal('0.00')
+
         tax = Decimal('0.00')
-        total = subtotal - discount + tax + delivery_fee
+        total = subtotal - discount + tax + delivery_fee + surcharge
+        if total < Decimal('0.00'):
+            raise serializers.ValidationError({
+                'discount': 'Discount cannot make order total negative'
+            })
+
         delivery_address = validated_data.get('delivery_address', {})
         if isinstance(delivery_address, str):
             delivery_address = {'address': delivery_address}
@@ -596,6 +614,17 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             digits = ''.join(ch for ch in validated_data.get('customer_phone', '') if ch.isdigit())
             suffix = digits[-8:] if digits else 'cliente'
             customer_email = f'{suffix}@local.invalid'
+
+        metadata = {}
+        adjustment_reason = (validated_data.get('adjustment_reason') or '').strip()
+        if surcharge > 0:
+            metadata['manual_surcharge'] = str(surcharge)
+        if discount > 0 or surcharge > 0 or adjustment_reason:
+            metadata['manual_adjustment'] = {
+                'discount': str(discount),
+                'surcharge': str(surcharge),
+                'reason': adjustment_reason,
+            }
 
         order = StoreOrder.objects.create(
             store=store,
@@ -618,6 +647,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             scheduled_date=validated_data.get('scheduled_date'),
             scheduled_time=validated_data.get('scheduled_time', ''),
             customer_notes=validated_data.get('customer_notes') or validated_data.get('notes', ''),
+            metadata=metadata,
         )
 
         for item in resolved_items:
