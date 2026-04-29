@@ -207,6 +207,8 @@ services:
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: pastita_cloudflared
+    profiles:
+      - internal-tunnel
     restart: unless-stopped
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
