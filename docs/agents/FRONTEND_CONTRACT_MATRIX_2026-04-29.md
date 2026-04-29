@@ -47,14 +47,14 @@ Scope: `ce-saladas`, `ce-saladas-flutter`, `pastita-dash`, and `server2` API con
 | Consumer | Endpoint | Status | Notes |
 |---|---|---|---|
 | `ce-saladas` web | `GET /stores/orders/by-token/{access_token}/`, `GET /stores/orders/{id}/payment-status/`, `GET /stores/orders/{id}/whatsapp/` | canonical public | Used by payment success/error/pending pages and WhatsApp confirmation. |
-| `ce-saladas-flutter` | `GET /stores/customer/orders/`, `GET /stores/customer/orders/{id}/`, `GET /stores/orders/by-token/{token}/`, `GET /orders/{id}/payment-status/` | risk | Payment status path lacks `/stores` prefix in mobile service and should be verified against current server routing. |
+| `ce-saladas-flutter` | `GET /stores/customer/orders/`, `GET /stores/customer/orders/{id}/`, `GET /stores/orders/by-token/{token}/`, `GET /stores/orders/{id}/payment-status/` | risk | Payment status path was fixed locally in `ce-saladas-flutter`; still needs versioning/owning-repo commit and device validation. |
 | `pastita-dash` | `GET/PATCH/POST /stores/orders/`, `/stores/{slug}/orders/{id}/update_status/` | canonical operational | Staff order board/detail uses operational order APIs and websocket/SSE. |
 
 ## WhatsApp, Conversations, Campaigns
 
 | Consumer | Endpoint | Status | Notes |
 |---|---|---|---|
-| `pastita-dash` | `/whatsapp/accounts/`, `/whatsapp/messages/*`, `/conversations/*`, `/campaigns/*` | mixed | Active dashboard surface. Risk: duplicated chat clients (`WhatsAppWsContext`, `useWhatsAppWS`, reusable `ChatWindow`) and mock-success methods for unsupported backend actions. |
+| `pastita-dash` | `/whatsapp/accounts/`, `/whatsapp/messages/*`, `/conversations/*`, `/campaigns/*`, `/ws/whatsapp/dashboard/` | mixed | Active dashboard surface. Mock-success methods were removed in commit `fad2bce`; remaining risk is duplicated chat clients (`WhatsAppWsContext`, `useWhatsAppWS`, reusable `ChatWindow`). |
 | `ce-saladas` web | `/auth/whatsapp/send/`, `/auth/whatsapp/verify/`, `/auth/whatsapp/resend/` | canonical auth | WhatsApp OTP login/signup. |
 | `ce-saladas-flutter` | `/auth/whatsapp/send/`, `/auth/whatsapp/verify/`, `/auth/whatsapp/resend/` | canonical auth | Same OTP endpoints as web. |
 
@@ -70,6 +70,5 @@ Scope: `ce-saladas`, `ce-saladas-flutter`, `pastita-dash`, and `server2` API con
 
 1. Add server contract tests for `/stores/{slug}/catalog/` and `/public/{slug}/catalog/`, then decide whether Flutter should migrate to the store catalog shape.
 2. Add one mobile checkout fixture test that posts the actual Flutter payload to `/stores/{slug}/checkout/`.
-3. Fix or confirm `ce-saladas-flutter` payment status path: current service calls `/orders/{orderId}/payment-status/`, while server exposes `/stores/orders/{order_id}/payment-status/`.
-4. Replace `pastita-dash` mock-success WhatsApp methods with explicit unsupported UI states or real backend endpoints.
-5. Before P2 order unification, inventory WhatsApp order service payloads and write a contract test for equivalent totals between storefront checkout and WhatsApp catalog order.
+3. Version and validate the local `ce-saladas-flutter` payment status path fix in the owning repo.
+4. Before P2 order unification, inventory WhatsApp order service payloads and write a contract test for equivalent totals between storefront checkout and WhatsApp catalog order.

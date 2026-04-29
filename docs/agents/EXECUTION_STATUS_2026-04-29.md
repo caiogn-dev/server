@@ -32,6 +32,12 @@ This file tracks the current implementation sequence across `server2`, `pastita-
   - Added `CLAUDE.md`.
 - Real production sanity:
   - User confirmed a normal Cê Saladas Pix order completed successfully after the webhook work.
+- `pastita-dash` WhatsApp/dashboard contract cleanup:
+  - Commit `fad2bce` on `main`.
+  - Dashboard WebSocket now points to `/ws/whatsapp/dashboard/`.
+  - Removed fake success responses for unsupported WhatsApp actions; they now fail explicitly through existing UI error handling.
+  - Removed manual `multipart/form-data` headers from product/category/product-type uploads so Axios can set the boundary.
+  - Validation: `npm run build`; `rg` confirmed no remaining manual multipart headers in `src`.
 
 ## Local Fix Not Yet Versioned
 
@@ -55,8 +61,7 @@ This file tracks the current implementation sequence across `server2`, `pastita-
    - `/public/{slug}/catalog/`
    - Flutter checkout payload against `/stores/{slug}/checkout/`
    - delivery fee examples for Palmas fixed/dynamic zones
-4. Replace dashboard mock-success WhatsApp API methods with explicit unsupported UI states or real endpoints.
-5. Only after contracts are in place, start P2: make WhatsApp order creation call `CheckoutService`.
+4. Only after contracts are in place, start P2: make WhatsApp order creation call `CheckoutService`.
 
 ## Guardrails
 
