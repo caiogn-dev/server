@@ -21,10 +21,6 @@ class MercadoPagoHandler(BaseHandler):
         Process Mercado Pago webhook.
         Delegates to the existing store webhook service.
         """
-        from apps.stores.services.webhook_service import WebhookService
-        
-        service = WebhookService()
-        
         # Extract data from payload
         event_type = payload.get('type', '')
         data_id = payload.get('data', {}).get('id')
@@ -43,19 +39,80 @@ class MercadoPagoHandler(BaseHandler):
     
     def _handle_payment_webhook(self, payload: dict) -> Dict[str, Any]:
         """Handle payment-related webhooks."""
-        from apps.stores.services.mercadopago_service import MercadoPagoService
+        from django.db import DatabaseError
+        from apps.stores.models import StoreOrder
+        from apps.stores.services.checkout_service import CheckoutService, checkout_service
         
         data_id = payload.get('data', {}).get('id')
         if not data_id:
             return {'processed': False, 'error': 'Missing data.id'}
-        
-        # Fetch payment details from MP API
-        # This is done by the existing service
-        
+
+        payment_id = str(data_id)
+        payment_status = (
+            payload.get('status')
+            or payload.get('data', {}).get('status')
+            or payload.get('action')
+        )
+
+        if payment_status in {'payment.created', 'payment.updated'}:
+            payment_status = None
+
+        if not payment_status:
+            try:
+                order = StoreOrder.objects.filter(payment_id=payment_id).select_related('store').first()
+            except DatabaseError as exc:
+                logger.error("Mercado Pago webhook order lookup failed: %s", exc)
+                return {
+                    'processed': False,
+                    'payment_id': payment_id,
+                    'reason': 'order_lookup_failed',
+                }
+            if not order:
+                return {
+                    'processed': False,
+                    'payment_id': payment_id,
+                    'reason': 'order_not_found',
+                }
+
+            try:
+                import mercadopago
+            except ImportError:
+                return {
+                    'processed': False,
+                    'payment_id': payment_id,
+                    'reason': 'mercadopago_sdk_unavailable',
+                }
+
+            credentials = checkout_service.get_payment_credentials(order.store)
+            if not credentials:
+                return {
+                    'processed': False,
+                    'payment_id': payment_id,
+                    'order_id': str(order.id),
+                    'reason': 'payment_credentials_not_found',
+                }
+
+            sdk = mercadopago.SDK(credentials['access_token'])
+            response = sdk.payment().get(payment_id)
+            if response.get('status') != 200:
+                return {
+                    'processed': False,
+                    'payment_id': payment_id,
+                    'order_id': str(order.id),
+                    'reason': 'payment_fetch_failed',
+                    'status_code': response.get('status'),
+                }
+            payment_status = response.get('response', {}).get('status')
+
+        order = CheckoutService.process_payment_webhook(payment_id, payment_status)
+
         return {
-            'processed': True,
-            'payment_id': data_id,
-            'action': 'payment_updated'
+            'processed': bool(order),
+            'payment_id': payment_id,
+            'order_id': str(order.id) if order else None,
+            'order_number': order.order_number if order else '',
+            'payment_status': payment_status,
+            'action': 'payment_updated',
         }
     
     def _handle_order_webhook(self, payload: dict) -> Dict[str, Any]:
