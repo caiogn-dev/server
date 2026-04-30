@@ -386,6 +386,30 @@ class UnifiedService:
 
         return sessions.exists()
 
+    def _has_pending_notes_session(self) -> bool:
+        """Return True when this customer is in the notes collection step of checkout."""
+        if not self.conversation:
+            return False
+
+        phone_number = self.conversation.phone_number
+        digits_only = re.sub(r'\D', '', phone_number or '')
+        phone_candidates = [phone_number]
+        if digits_only:
+            phone_candidates.extend([digits_only, f'+{digits_only}'])
+        phone_candidates = [value for value in dict.fromkeys(phone_candidates) if value]
+
+        sessions = CustomerSession.objects.filter(
+            phone_number__in=phone_candidates,
+            status__in=['active', 'cart_created', 'checkout', 'payment_pending'],
+            cart_data__waiting_for_notes=True,
+        )
+        if self.company:
+            sessions = sessions.filter(company=self.company)
+        elif self.store:
+            sessions = sessions.filter(company__store=self.store)
+
+        return sessions.exists()
+
     def _is_human_mode_transactional_step(
         self,
         message_text: str,
@@ -407,7 +431,13 @@ class UnifiedService:
         if location_data and location_data.get('lat') and location_data.get('lng'):
             return self._has_pending_delivery_address_session()
 
-        return bool((message_text or '').strip() and self._has_pending_delivery_address_session())
+        if (message_text or '').strip():
+            return (
+                self._has_pending_delivery_address_session()
+                or self._has_pending_notes_session()
+            )
+
+        return False
 
     def _run_handler(self, intent_data: Dict[str, Any]) -> Optional[UnifiedResponse]:
         intent = intent_data.get('intent', IntentType.UNKNOWN)
@@ -486,7 +516,14 @@ class UnifiedService:
                 agent=self.agent,
                 phone_number=self.conversation.phone_number,
             ).order_by('-last_message_at').first()
-            session_id = str(agent_conversation.session_id) if agent_conversation else None
+            # Use a stable Redis memory key even before the DB tracking row exists.
+            # This avoids context loss when two inbound messages for the same
+            # WhatsApp conversation are processed concurrently.
+            session_id = (
+                str(agent_conversation.session_id)
+                if agent_conversation
+                else str(self.conversation.id)
+            )
 
             # Passa a mensagem diretamente — LangchainService já constrói o contexto
             # completo (cardápio, pedidos, horários) via _build_dynamic_context().
@@ -503,16 +540,40 @@ class UnifiedService:
             # Persiste/atualiza AgentConversation no DB para que o próximo turno
             # encontre o mesmo session_id e reutilize a memória Redis.
             if used_session_id:
-                from django.db.models import F
-                AgentConversation.objects.update_or_create(
-                    agent=self.agent,
-                    phone_number=self.conversation.phone_number,
-                    defaults={
-                        'session_id': used_session_id,
-                        'whatsapp_conversation': self.conversation,
-                        'metadata': {'last_response_ms': round((time.monotonic() - _t0) * 1000, 1)},
-                    },
-                )
+                from django.db import IntegrityError, transaction
+
+                defaults = {
+                    'session_id': used_session_id,
+                    'whatsapp_conversation': self.conversation,
+                    'metadata': {'last_response_ms': round((time.monotonic() - _t0) * 1000, 1)},
+                }
+                try:
+                    with transaction.atomic():
+                        existing = (
+                            AgentConversation.objects
+                            .select_for_update()
+                            .filter(agent=self.agent, phone_number=self.conversation.phone_number)
+                            .order_by('-last_message_at')
+                            .first()
+                        )
+                        if existing:
+                            for field, value in defaults.items():
+                                setattr(existing, field, value)
+                            existing.save(update_fields=['session_id', 'whatsapp_conversation', 'metadata', 'updated_at'])
+                        else:
+                            AgentConversation.objects.create(
+                                agent=self.agent,
+                                phone_number=self.conversation.phone_number,
+                                **defaults,
+                            )
+                except IntegrityError:
+                    AgentConversation.objects.filter(
+                        agent=self.agent,
+                        phone_number=self.conversation.phone_number,
+                    ).update(
+                        whatsapp_conversation=self.conversation,
+                        metadata=defaults['metadata'],
+                    )
 
             _llm_ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(

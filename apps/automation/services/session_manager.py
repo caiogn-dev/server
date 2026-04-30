@@ -266,6 +266,40 @@ class SessionManager:
             return bool((session.cart_data or {}).get('waiting_for_address', False))
         return False
 
+    def set_waiting_for_notes(self, value: bool) -> None:
+        """Marca sessão como aguardando observações do cliente (ex: sem cebola)."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data['waiting_for_notes'] = value
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    def is_waiting_for_notes(self) -> bool:
+        """Verifica se a sessão está aguardando observações do cliente."""
+        session = self.get_or_create_session()
+        if session:
+            return bool((session.cart_data or {}).get('waiting_for_notes', False))
+        return False
+
+    def save_customer_notes(self, notes: str) -> None:
+        """Salva observações do cliente e encerra estado de espera de notas."""
+        session = self.get_or_create_session()
+        if session:
+            data = dict(session.cart_data or {})
+            data['customer_notes'] = notes
+            data['waiting_for_notes'] = False
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+            logger.info("[SessionManager] Customer notes saved: %r", notes[:60] if notes else '')
+
+    def get_customer_notes(self) -> str:
+        """Recupera observações do cliente salvas na sessão."""
+        session = self.get_or_create_session()
+        if session:
+            return (session.cart_data or {}).get('customer_notes', '')
+        return ''
+
     def save_delivery_address_info(
         self,
         address: str,

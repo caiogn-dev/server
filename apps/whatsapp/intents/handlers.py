@@ -10,6 +10,8 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 import logging
 
+from django.core.cache import cache
+
 from apps.whatsapp.intents.detector import IntentType, IntentData
 from apps.whatsapp.services import create_order_from_whatsapp
 from apps.automation.models import AutoMessage
@@ -445,7 +447,7 @@ class IntentHandler:
         formatted_address: str,
         address_components: dict = None,
     ) -> 'HandlerResult':
-        """Calcula taxa, salva na sessão, envia confirmação e pergunta método de pagamento."""
+        """Calcula taxa, salva na sessão e mostra resumo do pedido com campo de observações."""
         fee_result = geo_svc.calculate_delivery_fee(
             self.store,
             lat,
@@ -489,22 +491,13 @@ class IntentHandler:
             address_components=address_components or {},
         )
 
-        dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
-        time_text = f" ~{int(duration_minutes)} min" if duration_minutes else ""
-        fee_text = f"R$ {float(fee):.2f}".replace('.', ',') if float(fee) > 0 else "Grátis 🎉"
-
-        try:
-            self.whatsapp_service.send_text_message(
-                to=self.conversation.phone_number,
-                text=(
-                    f"📍 *Endereço confirmado:*\n{formatted_address}\n\n"
-                    f"🛵 Taxa de entrega{dist_text}: *{fee_text}*{time_text}\n"
-                ),
-            )
-        except Exception as exc:
-            logger.warning("[_process_location_and_ask_payment] Erro ao enviar confirmação: %s", exc)
-
-        return self._ask_payment_method('delivery')
+        return self._show_order_summary_and_ask_notes(
+            delivery_method='delivery',
+            delivery_address=formatted_address,
+            delivery_fee=float(fee),
+            distance_km=distance_km,
+            duration_minutes=duration_minutes,
+        )
 
     def _ask_delivery_method(self, items: List[Dict[str, Any]]) -> 'HandlerResult':
         """Salva itens na sessão e pergunta entrega ou retirada."""
@@ -550,6 +543,95 @@ class IntentHandler:
 
         return HandlerResult.buttons(
             body="💳 *Como prefere pagar?*",
+            buttons=buttons,
+        )
+
+    def _show_order_summary_and_ask_notes(
+        self,
+        delivery_method: str,
+        delivery_address: str = '',
+        delivery_fee: float = 0.0,
+        distance_km: float = None,
+        duration_minutes: float = None,
+    ) -> 'HandlerResult':
+        """Mostra resumo completo do pedido (itens, endereço, taxa, total) e pede observações."""
+        try:
+            session_manager = self._get_session_manager()
+            items = session_manager.get_pending_order_items()
+            session_manager.set_waiting_for_notes(True)
+        except Exception as exc:
+            logger.warning("[_show_order_summary_and_ask_notes] Erro ao acessar sessão: %s", exc)
+            items = []
+
+        lines = ["📋 *Resumo do seu pedido:*\n"]
+        subtotal = 0.0
+
+        if items and self.store:
+            from apps.stores.models import StoreProduct
+            for it in items:
+                try:
+                    p = StoreProduct.objects.get(id=it['product_id'], is_active=True)
+                    qty = int(it.get('quantity', 1))
+                    price = float(p.price)
+                    item_total = qty * price
+                    subtotal += item_total
+                    price_fmt = f"R$ {item_total:.2f}".replace('.', ',')
+                    lines.append(f"• {qty}x {p.name} — {price_fmt}")
+                except Exception as exc:
+                    logger.warning("[_show_order_summary_and_ask_notes] Produto %s: %s", it.get('product_id'), exc)
+
+        fee = float(delivery_fee or 0)
+        total = subtotal + fee
+
+        if delivery_method == 'delivery':
+            dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
+            time_text = f" (~{int(duration_minutes)} min)" if duration_minutes else ""
+            fee_fmt = f"R$ {fee:.2f}".replace('.', ',') if fee > 0 else "Grátis 🎉"
+            addr_display = delivery_address or 'a definir'
+            lines.append(f"\n📍 *Endereço:* {addr_display}")
+            lines.append(f"🛵 *Taxa de entrega{dist_text}{time_text}:* {fee_fmt}")
+        else:
+            lines.append("\n🏪 *Retirada no local*")
+
+        total_fmt = f"R$ {total:.2f}".replace('.', ',')
+        lines.append(f"\n💰 *Total: {total_fmt}*")
+        lines.append(
+            "\n📝 *Alguma observação para o preparo?*\n"
+            "_(ex: sem cebola, ponto da carne, alergia)_\n\n"
+            "Responda *não* para continuar sem observações."
+        )
+
+        return HandlerResult.text("\n".join(lines))
+
+    def _handle_notes_input(self, notes_text: str) -> 'HandlerResult':
+        """Salva observações do cliente e exibe as formas de pagamento disponíveis."""
+        _SKIP_WORDS = {
+            'nao', 'n', 'nn', 'no', 'nope', 'nada', 'ok', 'okay', 'tudo bem',
+            'tudo certo', 'sem observacao', 'sem observacoes', 'nenhuma',
+            'nenhum', 'negativo', 'pode ser', 'pode', 'ta', 'ta bom', 'tá', 'tá bom',
+            'sem obs', 'sem nada', 'nao tem', 'nao ha', 'sem', 'nothing',
+        }
+        session_manager = self._get_session_manager()
+        normalized = self._normalize_lookup_text(notes_text)
+        notes = '' if normalized in _SKIP_WORDS else notes_text.strip()
+
+        try:
+            session_manager.save_customer_notes(notes)
+            delivery_method = session_manager.get_pending_delivery_method()
+        except Exception as exc:
+            logger.warning("[_handle_notes_input] Erro ao salvar observações: %s", exc)
+            delivery_method = 'delivery'
+
+        buttons = [
+            {'id': 'pay_pix', 'title': '💠 PIX'},
+            {'id': 'pay_card', 'title': '💳 Cartão Crédito/Débito'},
+        ]
+        if delivery_method == 'pickup':
+            buttons.append({'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'})
+
+        note_line = f"✅ _Anotado: {notes}_\n\n" if notes else ""
+        return HandlerResult.buttons(
+            body=f"{note_line}💳 *Como prefere pagar?*",
             buttons=buttons,
         )
 
@@ -1590,14 +1672,17 @@ class UnknownHandler(IntentHandler):
             except Exception as exc:
                 logger.warning("[UnknownHandler] Erro ao processar localização: %s", exc)
 
-        # ── Verifica se estamos aguardando endereço de entrega (texto) ───────
+        # ── Verifica estado de checkout pendente (endereço ou observações) ──
         try:
             session_manager = self._get_session_manager()
             if session_manager.is_waiting_for_address() and len(original_message) >= 5:
                 logger.info("[UnknownHandler] Interceptando como endereço de entrega: %s", original_message[:60])
                 return self._handle_address_input(original_message)
+            if session_manager.is_waiting_for_notes():
+                logger.info("[UnknownHandler] Interceptando como observação do pedido: %s", original_message[:60])
+                return self._handle_notes_input(original_message)
         except Exception as exc:
-            logger.warning("[UnknownHandler] Erro ao verificar waiting_for_address: %s", exc)
+            logger.warning("[UnknownHandler] Erro ao verificar estado da sessão: %s", exc)
         # ────────────────────────────────────────────────────────────────────
 
         # Se a mensagem é só um número, pode ser quantidade após seleção de produto
@@ -1783,9 +1868,13 @@ class InteractiveReplyHandler(IntentHandler):
                 "_ARSE 72, Rua 4, Casa 3_"
             )
 
-        # Retirada — vai direto para pagamento
-        logger.info('[InteractiveReplyHandler] Pickup — perguntando pagamento')
-        return self._ask_payment_method(delivery_method)
+        # Retirada — mostra resumo do pedido e pede observações
+        logger.info('[InteractiveReplyHandler] Pickup — mostrando resumo e pedindo observações')
+        try:
+            session_manager.save_pending_delivery_method('pickup')
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao salvar pickup: %s', exc)
+        return self._show_order_summary_and_ask_notes(delivery_method='pickup')
 
     def _handle_payment_choice(self, reply_id: str) -> HandlerResult:
         """Usuário escolheu o método de pagamento — recupera itens + delivery + endereço e cria o pedido."""
@@ -1798,17 +1887,35 @@ class InteractiveReplyHandler(IntentHandler):
 
         try:
             session_manager = self._get_session_manager()
+            session = session_manager.get_or_create_session()
+            lock_key = f"whatsapp:checkout:{getattr(session, 'id', self.conversation.id)}"
+            if not cache.add(lock_key, '1', timeout=240):
+                return HandlerResult.text(
+                    "Estou finalizando seu pedido e gerando o pagamento. "
+                    "Pode levar alguns instantes, já te envio aqui."
+                )
             items = session_manager.get_pending_order_items()
             delivery_method = session_manager.get_pending_delivery_method()
             addr_info = session_manager.get_delivery_address_info()
-            session_manager.clear_pending_order_items()
+            customer_notes = session_manager.get_customer_notes()
         except Exception as exc:
             logger.error('[InteractiveReplyHandler] Erro ao recuperar dados pendentes: %s', exc)
+            lock_key = None
+            session_manager = None
             items = []
             delivery_method = 'delivery'
             addr_info = {}
+            customer_notes = ''
 
         if not items:
+            try:
+                session_data = session_manager.get_session_data() if session_manager else {}
+            except Exception:
+                session_data = {}
+            if lock_key:
+                cache.delete(lock_key)
+            if session_data.get('pix_code'):
+                return HandlerResult.text(session_data['pix_code'])
             return HandlerResult.text(
                 "❌ Não encontrei itens no seu pedido.\n\n"
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
@@ -1818,19 +1925,32 @@ class InteractiveReplyHandler(IntentHandler):
         delivery_fee_override = addr_info.get('fee')  # None se pickup ou se não calculou
 
         logger.info(
-            '[InteractiveReplyHandler] Finalizando pedido: delivery=%s payment=%s fee=%s address=%s lat=%s lng=%s',
+            '[InteractiveReplyHandler] Finalizando pedido: delivery=%s payment=%s fee=%s address=%s lat=%s lng=%s notes=%r',
             delivery_method, payment_method, delivery_fee_override,
             delivery_address[:40] if delivery_address else '',
             addr_info.get('lat'), addr_info.get('lng'),
+            customer_notes[:40] if customer_notes else '',
         )
-        return self._finalize_order(
+        result = self._finalize_order(
             items,
             delivery_method=delivery_method,
             payment_method=payment_method,
             delivery_address=delivery_address,
+            customer_notes=customer_notes,
             delivery_fee_override=delivery_fee_override,
             addr_info=addr_info,
         )
+        if not (
+            result.response_text
+            and result.response_text.startswith(('❌ Erro ao criar pedido', '❌ Loja'))
+        ):
+            try:
+                session_manager.clear_pending_order_items()
+            except Exception as exc:
+                logger.warning('[InteractiveReplyHandler] Erro ao limpar itens pendentes: %s', exc)
+        if lock_key:
+            cache.delete(lock_key)
+        return result
 
     def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:
         """User selected a product from the interactive list — ask for quantity."""
