@@ -50,8 +50,14 @@ class SchedulerService:
         
         if content:
             message_text = content.get('text', '') or content.get('caption', '')
-            media_url = content.get('image_url', '') or content.get('document_url', '')
+            media_url = content.get('media_url', '') or content.get('image_url', '') or content.get('document_url', '')
             buttons = content.get('buttons', [])
+            media_type = (content.get('media_type') or '').lower()
+            if media_url and message_type == ScheduledMessage.MessageType.TEXT:
+                if media_type == 'image' or content.get('image_url'):
+                    message_type = ScheduledMessage.MessageType.IMAGE
+                elif media_type == 'document' or content.get('document_url'):
+                    message_type = ScheduledMessage.MessageType.DOCUMENT
         
         scheduled_message = ScheduledMessage.objects.create(
             account=account,

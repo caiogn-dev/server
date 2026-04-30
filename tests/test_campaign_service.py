@@ -8,6 +8,8 @@ from datetime import timedelta
 
 from apps.campaigns.models import Campaign, CampaignRecipient
 from apps.campaigns.services import CampaignService
+from apps.campaigns.services.scheduler_service import SchedulerService
+from apps.automation.models import ScheduledMessage
 from apps.whatsapp.models import WhatsAppAccount
 
 User = get_user_model()
@@ -106,3 +108,50 @@ class CampaignServiceCreateTest(TestCase):
                 account_id='00000000-0000-0000-0000-000000000000',
                 name='Ghost Campaign',
             )
+
+
+class SchedulerServiceMediaTest(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username='scheduler_owner', email='scheduler@example.com', password='pass'
+        )
+        self.account = _make_account(self.user, name='Scheduler Account')
+        self.service = SchedulerService()
+
+    def test_media_url_image_content_is_scheduled_as_image(self):
+        scheduled = self.service.schedule_message(
+            account_id=str(self.account.id),
+            to_number='556399999999',
+            scheduled_at=timezone.now() + timedelta(hours=1),
+            message_type=ScheduledMessage.MessageType.TEXT,
+            content={
+                'text': 'Oferta com foto',
+                'media_url': 'https://cdn.example.com/campanha.jpg',
+                'media_type': 'image',
+                'filename': 'campanha.jpg',
+            },
+            created_by=self.user,
+        )
+
+        self.assertEqual(scheduled.message_type, ScheduledMessage.MessageType.IMAGE)
+        self.assertEqual(scheduled.media_url, 'https://cdn.example.com/campanha.jpg')
+        self.assertEqual(scheduled.message_text, 'Oferta com foto')
+
+    def test_media_url_document_content_is_scheduled_as_document(self):
+        scheduled = self.service.schedule_message(
+            account_id=str(self.account.id),
+            to_number='556388888888',
+            scheduled_at=timezone.now() + timedelta(hours=1),
+            message_type=ScheduledMessage.MessageType.TEXT,
+            content={
+                'caption': 'Cardapio em PDF',
+                'media_url': 'https://cdn.example.com/cardapio.pdf',
+                'media_type': 'document',
+                'filename': 'cardapio.pdf',
+            },
+            created_by=self.user,
+        )
+
+        self.assertEqual(scheduled.message_type, ScheduledMessage.MessageType.DOCUMENT)
+        self.assertEqual(scheduled.media_url, 'https://cdn.example.com/cardapio.pdf')
+        self.assertEqual(scheduled.message_text, 'Cardapio em PDF')
