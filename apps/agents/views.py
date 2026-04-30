@@ -185,9 +185,9 @@ class AgentViewSet(viewsets.ModelViewSet):
                 {'value': 'gpt-4-turbo', 'label': 'GPT-4 Turbo'},
             ],
             'anthropic': [
-                {'value': 'claude-opus-4', 'label': 'Claude Opus 4'},
-                {'value': 'claude-sonnet-4', 'label': 'Claude Sonnet 4'},
-                {'value': 'claude-haiku-4', 'label': 'Claude Haiku 4'},
+                {'value': 'claude-opus-4-7', 'label': 'Claude Opus 4.7 (Mais capaz)'},
+                {'value': 'claude-sonnet-4-6', 'label': 'Claude Sonnet 4.6 (Recomendado)', 'default': True},
+                {'value': 'claude-haiku-4-5-20251001', 'label': 'Claude Haiku 4.5 (Mais rápido)'},
             ],
             'ollama': [
                 {'value': 'llama3', 'label': 'Llama 3'},
@@ -220,7 +220,7 @@ class AgentViewSet(viewsets.ModelViewSet):
             },
             'anthropic': {
                 'base_url': getattr(settings, 'ANTHROPIC_BASE_URL', 'https://api.anthropic.com'),
-                'model_name': getattr(settings, 'ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022'),
+                'model_name': getattr(settings, 'ANTHROPIC_MODEL_NAME', 'claude-sonnet-4-6'),
                 'api_style': 'anthropic',
             },
             'nvidia': {

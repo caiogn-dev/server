@@ -31,12 +31,12 @@ class Agent(BaseModel):
     provider = models.CharField(
         max_length=20,
         choices=AgentProvider.choices,
-        default=AgentProvider.KIMI,
+        default=AgentProvider.ANTHROPIC,
         verbose_name='Provedor'
     )
     model_name = models.CharField(
         max_length=100,
-        default='kimi-coder',
+        default='claude-sonnet-4-6',
         verbose_name='Modelo'
     )
     api_key = models.CharField(
@@ -46,7 +46,7 @@ class Agent(BaseModel):
     )
     base_url = models.URLField(
         blank=True,
-        default='https://api.moonshot.cn/v1',
+        default='https://api.anthropic.com',
         verbose_name='Base URL'
     )
 
