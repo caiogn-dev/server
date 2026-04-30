@@ -46,16 +46,25 @@ __all__ = [
 
 @shared_task(bind=True, max_retries=3)
 def send_abandoned_cart_notification(self, session_id: str):
-    """Send abandoned cart notification."""
+    """Send abandoned cart notification.
+
+    DELEGATOR: notificação enviada via AutomationService._send_notification(),
+    que é o canal canônico para mensagens proativas (não passa pelo pipeline de
+    resposta a mensagens entrantes do UnifiedService).
+    """
+    logger.warning(
+        '[LEGACY] send_abandoned_cart_notification fired — delegating to AutomationService._send_notification. '
+        'Caller should be updated.'
+    )
     from ..models import CustomerSession, AutoMessage
     from ..services import AutomationService
-    
+
     try:
         session = CustomerSession.objects.select_related('company').get(
             id=session_id,
             is_active=True
         )
-        
+
         # Check if session is still abandoned (not completed)
         if session.status not in [
             CustomerSession.SessionStatus.CART_CREATED,
@@ -63,12 +72,12 @@ def send_abandoned_cart_notification(self, session_id: str):
         ]:
             logger.info(f"Session {session_id} no longer abandoned, skipping notification")
             return
-        
+
         # Check if notification was already sent
         if session.was_notification_sent(AutoMessage.EventType.CART_ABANDONED):
             logger.info(f"Abandoned cart notification already sent for session {session_id}")
             return
-        
+
         service = AutomationService()
         service._send_notification(
             session.company,
@@ -76,9 +85,9 @@ def send_abandoned_cart_notification(self, session_id: str):
             AutoMessage.EventType.CART_ABANDONED,
             {}
         )
-        
+
         logger.info(f"Abandoned cart notification sent for session {session_id}")
-        
+
     except CustomerSession.DoesNotExist:
         logger.warning(f"Session not found: {session_id}")
     except Exception as e:
@@ -88,21 +97,30 @@ def send_abandoned_cart_notification(self, session_id: str):
 
 @shared_task(bind=True, max_retries=3)
 def send_pix_reminder(self, session_id: str):
-    """Send PIX payment reminder."""
+    """Send PIX payment reminder.
+
+    DELEGATOR: notificação enviada via AutomationService._send_notification(),
+    que é o canal canônico para mensagens proativas (não passa pelo pipeline de
+    resposta a mensagens entrantes do UnifiedService).
+    """
+    logger.warning(
+        '[LEGACY] send_pix_reminder fired — delegating to AutomationService._send_notification. '
+        'Caller should be updated.'
+    )
     from ..models import CustomerSession, AutoMessage
     from ..services import AutomationService
-    
+
     try:
         session = CustomerSession.objects.select_related('company').get(
             id=session_id,
             is_active=True
         )
-        
+
         # Check if payment is still pending
         if session.status != CustomerSession.SessionStatus.PAYMENT_PENDING:
             logger.info(f"Session {session_id} no longer pending payment")
             return
-        
+
         # Check if PIX expired
         if session.pix_expires_at and session.pix_expires_at < timezone.now():
             # Send expired notification instead
@@ -114,11 +132,11 @@ def send_pix_reminder(self, session_id: str):
                 {}
             )
             return
-        
+
         # Check if reminder was already sent
         if session.was_notification_sent(AutoMessage.EventType.PIX_REMINDER):
             return
-        
+
         service = AutomationService()
         service._send_notification(
             session.company,
@@ -128,9 +146,9 @@ def send_pix_reminder(self, session_id: str):
                 'amount': str(session.cart_total),
             }
         )
-        
+
         logger.info(f"PIX reminder sent for session {session_id}")
-        
+
     except CustomerSession.DoesNotExist:
         logger.warning(f"Session not found: {session_id}")
     except Exception as e:
@@ -217,24 +235,74 @@ def cleanup_expired_sessions():
 
 @shared_task(bind=True, max_retries=3)
 def process_incoming_message(self, account_id: str, from_number: str, message_text: str, message_type: str = 'text', message_data: dict = None):
-    """Process incoming message and send auto-response."""
-    from ..services import AutomationService
-    
+    """Process incoming message and send auto-response.
+
+    DELEGATOR: roteado para UnifiedService que é o pipeline canônico de resposta
+    a mensagens entrantes. AutomationService.handle_incoming_message() foi
+    substituído por este caminho.
+
+    # TODO P5: remover esta task assim que todos os callers forem migrados para
+    #          chamar o webhook/UnifiedService diretamente (sem passar por Celery).
+    """
+    logger.warning(
+        '[LEGACY] process_incoming_message fired — delegating to UnifiedService. '
+        'Caller should be updated.'
+    )
     try:
-        service = AutomationService()
-        response = service.handle_incoming_message(
-            account_id=account_id,
-            from_number=from_number,
-            message_text=message_text,
-            message_type=message_type,
-            message_data=message_data
+        from apps.whatsapp.models import WhatsAppAccount
+        from apps.conversations.models import Conversation
+        from apps.automation.services.context_service import AutomationContextService
+        from apps.automation.services.unified_service import UnifiedService
+
+        try:
+            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
+        except WhatsAppAccount.DoesNotExist:
+            logger.warning('[LEGACY] process_incoming_message: account %s not found, aborting.', account_id)
+            return None
+
+        conversation = Conversation.objects.filter(
+            account=account,
+            phone_number=from_number,
+        ).order_by('-updated_at').first()
+
+        if not conversation:
+            logger.warning(
+                '[LEGACY] process_incoming_message: no conversation found for %s — cannot delegate to UnifiedService.',
+                from_number,
+            )
+            return None
+
+        interactive_reply = None
+        if message_type == 'interactive' and message_data:
+            button_reply = message_data.get('button_reply') or {}
+            list_reply = message_data.get('list_reply') or {}
+            reply = button_reply or list_reply
+            if reply:
+                interactive_reply = {
+                    'type': 'button' if button_reply else 'list',
+                    'id': reply.get('id', ''),
+                    'title': reply.get('title', ''),
+                }
+
+        service = UnifiedService(account=account, conversation=conversation)
+        response = service.process_message(
+            message_text=message_text or '',
+            interactive_reply=interactive_reply,
         )
-        
+
         if response:
-            logger.info(f"Auto-response sent to {from_number}")
-        
-        return response
-        
+            from apps.whatsapp.services.message_service import MessageService
+            MessageService().send_text_message(
+                account_id=str(account.id),
+                to=from_number,
+                text=response.content,
+                metadata={'source': 'legacy_process_incoming_message_delegator'},
+            )
+            logger.info('[LEGACY] process_incoming_message: delegated response sent to %s', from_number)
+            return response.content
+
+        return None
+
     except Exception as e:
-        logger.error(f"Error processing incoming message: {str(e)}")
+        logger.error(f"Error in process_incoming_message delegator: {str(e)}", exc_info=True)
         raise self.retry(exc=e, countdown=30)
