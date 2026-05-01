@@ -2,7 +2,7 @@
 Testes para WhatsAppOrderService.
 
 Cobertura:
-1. _build_delivery_address — mapeamento de componentes HERE Maps para chaves padrão do frontend
+1. _build_delivery_address — mapeamento de componentes de geocode para chaves padrão do frontend
 2. create_order_from_cart — criação de pedido, decremento de estoque, taxa de entrega
 3. create_order_from_cart — tratamento de produto inválido, itens sem produto, erro geral
 
@@ -15,7 +15,15 @@ from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 
-from apps.stores.models import Store, StoreProduct, StoreOrder, StoreOrderItem
+from apps.stores.models import (
+    Store,
+    StoreCart,
+    StoreCartItem,
+    StoreProduct,
+    StoreOrder,
+    StoreOrderItem,
+)
+from apps.stores.services.checkout_service import CheckoutService
 
 User = get_user_model()
 
@@ -63,7 +71,7 @@ _PATCH_BROADCAST = 'apps.whatsapp.services.order_service.broadcast_order_event'
 
 class BuildDeliveryAddressTest(TestCase):
     """
-    Garante que _build_delivery_address mapeia corretamente os campos HERE Maps
+    Garante que _build_delivery_address mapeia corretamente os campos do provider de geocode
     para o formato esperado pelo frontend (street, number, neighborhood, etc.)
     e preserva raw_address como fallback.
     """
@@ -86,7 +94,7 @@ class BuildDeliveryAddressTest(TestCase):
 
     def test_geocode_components_mapped_correctly(self):
         """
-        geocode() retorna keys HERE: houseNumber, district, stateCode, postalCode.
+        geocode() pode retornar keys legadas: houseNumber, district, stateCode, postalCode.
         Devem ser mapeados para: number, neighborhood, state, zip_code.
         """
         addr_info = {
@@ -267,3 +275,84 @@ class CreateOrderFromCartTest(TestCase):
         self.assertFalse(result['success'])
         self.assertIn('error', result)
         self.assertFalse(StoreOrder.objects.filter(store=self.store).exists())
+
+
+class WhatsAppCheckoutEquivalenceTest(TestCase):
+    """
+    Guards the minimum order-shape equivalence required before moving WhatsApp
+    order creation behind CheckoutService.
+    """
+
+    def setUp(self):
+        self.owner = _make_user('wa_checkout_equiv_owner')
+        self.customer = _make_user('wa_checkout_equiv_customer')
+        self.store = _make_store(self.owner, 'wa-checkout-equiv-store')
+        self.product = _make_product(self.store, 'Salada', Decimal('31.50'))
+
+    def _checkout_order(self, delivery_method='pickup'):
+        cart = StoreCart.objects.create(store=self.store, user=self.customer)
+        StoreCartItem.objects.create(cart=cart, product=self.product, quantity=2)
+        delivery_data = {'method': delivery_method}
+        if delivery_method == 'delivery':
+            delivery_data['address'] = {'raw_address': 'Rua A, 10'}
+
+        with patch('apps.stores.services.checkout_service.trigger_order_email_automation'):
+            return CheckoutService.create_order(
+                cart=cart,
+                customer_data={
+                    'name': 'Jesse',
+                    'email': 'jesse@example.com',
+                    'phone': '+556392732632',
+                },
+                delivery_data=delivery_data,
+                notes='Contrato equivalencia',
+            )
+
+    def _whatsapp_order(self, delivery_method='pickup', payment_method='cash'):
+        from apps.whatsapp.services.order_service import WhatsAppOrderService
+
+        svc = WhatsAppOrderService(
+            store=self.store,
+            phone_number='+556392732632',
+            customer_name='Jesse',
+        )
+        with patch(_PATCH_PAYMENT, return_value={'success': True}), \
+             patch(_PATCH_BROADCAST), \
+             patch.object(svc, '_update_session'):
+            result = svc.create_order_from_cart(
+                items=[{'product_id': str(self.product.id), 'quantity': 2}],
+                delivery_method=delivery_method,
+                payment_method=payment_method,
+                delivery_address='Rua A, 10' if delivery_method == 'delivery' else '',
+                customer_notes='Contrato equivalencia',
+            )
+
+        self.assertTrue(result['success'], result)
+        return StoreOrder.objects.get(order_number=result['order_number'])
+
+    def _order_snapshot(self, order):
+        item = order.items.get()
+        return {
+            'subtotal': order.subtotal,
+            'delivery_fee': order.delivery_fee,
+            'total': order.total,
+            'delivery_method': order.delivery_method,
+            'item_name': item.product_name,
+            'item_quantity': item.quantity,
+            'item_unit_price': item.unit_price,
+            'item_subtotal': item.subtotal,
+        }
+
+    def test_pickup_order_shape_matches_checkout_service(self):
+        checkout_order = self._checkout_order(delivery_method='pickup')
+        whatsapp_order = self._whatsapp_order(delivery_method='pickup', payment_method='cash')
+
+        self.assertEqual(self._order_snapshot(whatsapp_order), self._order_snapshot(checkout_order))
+        self.assertEqual(whatsapp_order.metadata.get('source'), 'whatsapp')
+
+    def test_default_delivery_order_shape_matches_checkout_service(self):
+        checkout_order = self._checkout_order(delivery_method='delivery')
+        whatsapp_order = self._whatsapp_order(delivery_method='delivery', payment_method='cash')
+
+        self.assertEqual(self._order_snapshot(whatsapp_order), self._order_snapshot(checkout_order))
+        self.assertEqual(whatsapp_order.metadata.get('source'), 'whatsapp')
