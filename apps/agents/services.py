@@ -444,22 +444,21 @@ class LangchainService:
         
         # 2. Load store menu/catalog
         try:
-            # Try to get store from conversation or agent accounts
+            # Try to get store from the canonical automation context first.
             store = None
             
-            # First try from conversation
             if conversation_id:
                 try:
                     from apps.conversations.models import Conversation
+                    from apps.automation.services.context_service import AutomationContextService
                     conv = Conversation.objects.select_related('account').get(id=conversation_id)
-                    if hasattr(conv.account, 'store'):
-                        store = conv.account.store
-                        if store:
-                            logger.info(f"[AGENT CONTEXT] Found store via conversation: {store.name}")
+                    store = AutomationContextService.resolve(conversation=conv).store
+                    if store:
+                        logger.info(f"[AGENT CONTEXT] Found store via automation context: {store.name}")
                 except Conversation.DoesNotExist:
                     logger.warning(f"[AGENT CONTEXT] Conversation {conversation_id} not found")
                 except Exception as e:
-                    logger.error(f"[AGENT CONTEXT] Error loading store from conversation: {e}")
+                    logger.error(f"[AGENT CONTEXT] Error loading store from automation context: {e}")
 
             # If not found, try from agent's associated accounts
             if not store:
@@ -630,6 +629,25 @@ class LangchainService:
 
                     if cart_data.get('waiting_for_address'):
                         session_parts.append("Status: aguardando endereço de entrega do cliente.")
+
+                    last_order = cart_data.get('last_order') or {}
+                    if last_order:
+                        last_order_lines = [
+                            f"Último pedido na sessão: #{last_order.get('order_number', '?')}",
+                            f"Status: {last_order.get('status', '?')}",
+                            f"Pagamento: {last_order.get('payment_status', '?')}",
+                            f"Total: R$ {last_order.get('total', '?')}",
+                            f"Entrega: {last_order.get('delivery_method', '?')}",
+                        ]
+                        order_items = last_order.get('items') or []
+                        if order_items:
+                            item_lines = [
+                                f"  - {item.get('quantity', '?')}x {item.get('product_name', 'produto')} "
+                                f"(R$ {item.get('subtotal', '?')})"
+                                for item in order_items[:8]
+                            ]
+                            last_order_lines.append("Itens:\n" + "\n".join(item_lines))
+                        session_parts.append("\n".join(last_order_lines))
 
                     if session.pix_code:
                         session_parts.append(
@@ -814,9 +832,9 @@ class LangchainService:
         if conversation_id:
             try:
                 from apps.conversations.models import Conversation
+                from apps.automation.services.context_service import AutomationContextService
                 conv = Conversation.objects.select_related('account').get(id=conversation_id)
-                if hasattr(conv.account, 'store'):
-                    store = conv.account.store
+                store = AutomationContextService.resolve(conversation=conv).store
             except Exception:
                 pass
         if not store:
@@ -1313,7 +1331,7 @@ class AgentService:
         from apps.users.models import UnifiedUser
         
         try:
-            # Resolve store from explicit arg > slug > conversation > legacy fallback.
+            # Resolve store from explicit arg > slug > conversation.
             if store is None and store_slug:
                 store = Store.objects.filter(slug=store_slug).first()
             if store is None and conversation_id:
@@ -1324,8 +1342,6 @@ class AgentService:
                     store = AutomationContextService.resolve(conversation=conversation).store
                 except Exception:
                     store = None
-            if store is None:
-                store = Store.objects.filter(slug='pastita').first()
             if not store:
                 return {'success': False, 'error': 'Loja não encontrada'}
             
