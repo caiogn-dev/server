@@ -75,14 +75,14 @@ class Command(BaseCommand):
         else:
             self.stdout.write(f'Using existing owner: {owner_email}')
 
-        here_api_key = getattr(settings, 'HERE_API_KEY', '').strip()
+        google_maps_key = getattr(settings, 'GOOGLE_MAPS_KEY', '').strip()
         pastita_whatsapp_number = getattr(settings, 'PASTITA_WHATSAPP_NUMBER', '').strip()
         store_metadata = {
             'legacy_app': 'pastita',
             'product_types': ['molho', 'carne', 'rondelli', 'combo'],
         }
-        if here_api_key:
-            store_metadata['here_api_key'] = here_api_key
+        if google_maps_key:
+            store_metadata['google_maps_key_configured'] = True
 
         # Create Pastita Store
         store = Store.objects.create(

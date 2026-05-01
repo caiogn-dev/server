@@ -126,7 +126,7 @@ urlpatterns = [
     path('', include(products_router.urls)),
 
     # ==========================================================================
-    # HERE MAPS ENDPOINTS
+    # GEO/MAPS ENDPOINTS
     # ==========================================================================
     
     # Global maps endpoints

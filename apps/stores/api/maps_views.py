@@ -9,7 +9,7 @@ from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store
 from apps.stores.services import checkout_service
-from apps.stores.services.geo import geo_service as here_maps_service
+from apps.stores.services.geo import geo_service
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class StoreGeocodeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        result = here_maps_service.geocode(address)
+        result = geo_service.geocode(address)
         if result:
             return Response(result)
         return Response(
@@ -58,7 +58,7 @@ class StoreReverseGeocodeView(APIView):
             )
         
         try:
-            result = here_maps_service.reverse_geocode(float(lat), float(lng))
+            result = geo_service.reverse_geocode(float(lat), float(lng))
             if result:
                 return Response(result)
             return Response(
@@ -109,9 +109,9 @@ class StoreRouteView(APIView):
             
             logger.info(f"Route request: store={store.slug}, origin={origin}, destination={destination}")
             
-            result = here_maps_service.calculate_route(origin, destination)
+            result = geo_service.calculate_route(origin, destination)
             if result:
-                delivery_info = here_maps_service.calculate_delivery_fee(
+                delivery_info = geo_service.calculate_delivery_fee(
                     store=store,
                     customer_lat=float(dest_lat),
                     customer_lng=float(dest_lng),
@@ -183,7 +183,7 @@ class StoreValidateDeliveryView(APIView):
             # Try to geocode address
             address = request.data.get('address')
             if address:
-                geocoded = here_maps_service.geocode(address)
+                geocoded = geo_service.geocode(address)
                 if geocoded:
                     lat = geocoded['lat']
                     lng = geocoded['lng']
@@ -212,7 +212,7 @@ class StoreValidateDeliveryView(APIView):
             )
             max_time = float(store.metadata.get('max_delivery_time_minutes', 45))
             
-            result = here_maps_service.validate_delivery_address(
+            result = geo_service.validate_delivery_address(
                 store_location=store_location,
                 delivery_address=delivery_location,
                 max_distance_km=max_distance,
@@ -222,7 +222,7 @@ class StoreValidateDeliveryView(APIView):
             # Use the unified geo pricing flow so fixed-price neighborhoods and
             # delivery zones behave exactly like WhatsApp and the delivery-fee API.
             if result['is_valid']:
-                fee_info = here_maps_service.calculate_delivery_fee(
+                fee_info = geo_service.calculate_delivery_fee(
                     store=store,
                     customer_lat=float(lat),
                     customer_lng=float(lng),
@@ -283,7 +283,7 @@ class StoreDeliveryZonesView(APIView):
         else:
             time_ranges = [10, 20, 30, 45]
         
-        zones = here_maps_service.get_delivery_zones_isolines(center, time_ranges)
+        zones = geo_service.get_delivery_zones_isolines(center, time_ranges)
         
         return Response({
             'store': {
@@ -318,6 +318,6 @@ class StoreAutosuggestView(APIView):
                 center = (float(store.latitude), float(store.longitude))
         
         limit = int(request.query_params.get('limit', 5))
-        suggestions = here_maps_service.autosuggest(query, center=center, limit=limit)
+        suggestions = geo_service.autosuggest(query, center=center, limit=limit)
         
         return Response({'suggestions': suggestions})

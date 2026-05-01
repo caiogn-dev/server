@@ -310,7 +310,7 @@ class SessionManager:
         lng: float = None,
         address_components: dict = None,
     ) -> None:
-        """Salva endereço geocodificado e taxa calculada pelo HERE."""
+        """Salva endereço geocodificado e taxa calculada pelo GeoService."""
         session = self.get_or_create_session()
         if session:
             data = dict(session.cart_data or {})

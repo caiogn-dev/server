@@ -301,7 +301,7 @@ Adicionar configuração:
 - `GEO_PROVIDER=google`
 - `GOOGLE_MAPS_KEY=...`
 - opcional: `GOOGLE_PLACES_KEY=...` se quiser separar billing/permissões depois
-- legado temporário: `HERE_API_KEY` mantido apenas até remoção completa
+- legado temporário removido: `HERE_API_KEY` nao deve ser usado em runtime novo
 
 Rollout recomendado:
 

@@ -356,7 +356,7 @@ class IntentHandler:
 
     def _handle_address_input(self, address_text: str) -> 'HandlerResult':
         """
-        Geocodifica o endereço via HERE, calcula a taxa de entrega e salva na sessão.
+        Geocodifica o endereço via GeoService, calcula a taxa de entrega e salva na sessão.
         Chamado pelo UnknownHandler quando session.waiting_for_address=True.
         O geocode já aplica "Palmas, Tocantins" e bbox automaticamente.
         """

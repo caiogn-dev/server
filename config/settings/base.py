@@ -369,7 +369,6 @@ INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN'
 # Maps
 GEO_PROVIDER = os.environ.get('GEO_PROVIDER', 'google').strip().lower()
 GOOGLE_MAPS_KEY = os.environ.get('GOOGLE_MAPS_KEY', '').strip()
-HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
 
 # Toca Delivery SaaS integration
 TOCA_DELIVERY_API_URL = os.environ.get('TOCA_DELIVERY_API_URL', 'https://api.tocadelivery.com.br').strip()
@@ -623,7 +622,6 @@ else:
 
 # ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
 WHITENOISE_MANIFEST_STRICT = False
-
 
 
 
