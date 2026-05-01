@@ -58,7 +58,6 @@ x-django-env: &django-env
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL}
   # Maps
   GOOGLE_MAPS_KEY: ${GOOGLE_MAPS_KEY}
-  HERE_API_KEY: ${HERE_API_KEY}
   # Toca Delivery
   TOCA_DELIVERY_API_URL: ${TOCA_DELIVERY_API_URL:-https://api.tocadelivery.com.br}
   TOCA_DELIVERY_EMAIL: ${TOCA_DELIVERY_EMAIL}
