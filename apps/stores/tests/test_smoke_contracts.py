@@ -11,6 +11,7 @@ from apps.stores.models import (
     StoreCart,
     StoreCartItem,
     StoreCategory,
+    StoreDeliveryZone,
     StoreOrder,
     StoreOrderItem,
     StoreProduct,
@@ -184,3 +185,35 @@ class StorefrontSmokeContractTests(APITestCase):
         self.assertTrue(payload['available'])
         self.assertEqual(Decimal(str(payload['fee'])), Decimal('9.50'))
         self.assertEqual(Decimal(str(payload['distance_km'])), Decimal('4.2'))
+
+    def test_delivery_fee_real_zone_palmas_inner_ring(self):
+        StoreDeliveryZone.objects.create(
+            store=self.store,
+            name='Palmas até 5km',
+            zone_type='custom_distance',
+            min_km=Decimal('0'),
+            max_km=Decimal('5'),
+            delivery_fee=Decimal('6.00'),
+            is_active=True,
+        )
+        response = self.client.post(
+            f'/api/v1/stores/{self.store.slug}/delivery-fee/',
+            {'distance_km': '3.5'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertTrue(payload['available'])
+        self.assertEqual(Decimal(str(payload['fee'])), Decimal('6.00'))
+        self.assertEqual(payload['zone_name'], 'Palmas até 5km')
+
+    def test_delivery_fee_out_of_area_returns_unavailable(self):
+        response = self.client.post(
+            f'/api/v1/stores/{self.store.slug}/delivery-fee/',
+            {'distance_km': '25.0'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        payload = response.json()
+        self.assertFalse(payload['available'])
+        self.assertIsNone(payload.get('fee'))

@@ -289,6 +289,47 @@ class CreateOrderFromCartTest(TestCase):
         )
         self.assertFalse(StoreOrder.objects.filter(store=self.store).exists())
 
+    def test_pix_payment_calls_create_payment_with_pix(self):
+        from apps.whatsapp.services.order_service import WhatsAppOrderService
+        svc = WhatsAppOrderService(
+            store=self.store,
+            phone_number='+5563999990002',
+            customer_name='PIX Smoke',
+        )
+        mock_payment = MagicMock(return_value={'success': True, 'pix_code': 'pix-code-123'})
+        with patch(_PATCH_PAYMENT, mock_payment), \
+             patch(_PATCH_BROADCAST), \
+             patch.object(svc, '_update_session'):
+            result = svc.create_order_from_cart(
+                items=self.items,
+                delivery_method='pickup',
+                payment_method='pix',
+            )
+        self.assertTrue(result['success'])
+        mock_payment.assert_called_once()
+        _, call_kw = mock_payment.call_args
+        self.assertEqual(call_kw.get('payment_method'), 'pix')
+
+    def test_cash_payment_calls_create_payment_with_cash(self):
+        from apps.whatsapp.services.order_service import WhatsAppOrderService
+        svc = WhatsAppOrderService(
+            store=self.store,
+            phone_number='+5563999990003',
+            customer_name='Cash Smoke',
+        )
+        mock_payment = MagicMock(return_value={'success': True})
+        with patch(_PATCH_PAYMENT, mock_payment), \
+             patch(_PATCH_BROADCAST), \
+             patch.object(svc, '_update_session'):
+            svc.create_order_from_cart(
+                items=self.items,
+                delivery_method='pickup',
+                payment_method='cash',
+            )
+        mock_payment.assert_called_once()
+        _, call_kw = mock_payment.call_args
+        self.assertEqual(call_kw.get('payment_method'), 'cash')
+
 
 class WhatsAppCheckoutEquivalenceTest(TestCase):
     """

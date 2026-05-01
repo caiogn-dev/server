@@ -111,6 +111,23 @@ class CheckoutDeliveryFeeTest(TestCase):
         result = CheckoutService.calculate_delivery_fee(self.store, distance_km=Decimal('50.0'))
         self.assertLessEqual(result['fee'], 25.0)
 
+    def test_dynamic_fee_flat_within_4km(self):
+        result = CheckoutService.calculate_delivery_fee(self.store, distance_km=Decimal('3.0'))
+        self.assertTrue(result['available'])
+        self.assertEqual(result['fee'], 8.0)  # store default_delivery_fee = 8.00
+
+    def test_dynamic_fee_increases_beyond_flat_km(self):
+        result = CheckoutService.calculate_delivery_fee(self.store, distance_km=Decimal('6.0'))
+        self.assertTrue(result['available'])
+        # 8.00 base + (6 - 4) * 1.00 per_km = 10.00
+        self.assertAlmostEqual(result['fee'], 10.0, places=2)
+
+    def test_out_of_range_returns_unavailable(self):
+        result = CheckoutService.calculate_delivery_fee(self.store, distance_km=Decimal('20.0'))
+        self.assertFalse(result['available'])
+        self.assertIsNone(result['fee'])
+        self.assertEqual(result.get('reason'), 'out_of_range')
+
 
 class CheckoutCouponValidationTest(TestCase):
     """Tests for validate_coupon."""
