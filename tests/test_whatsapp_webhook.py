@@ -224,3 +224,59 @@ class WhatsAppWebhookNoSlashTestCase(TestCase):
         # Should succeed — the route is in urls.py
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertIn(b'challenge-no-slash', resp.content)
+
+
+class MessageDeduplicationRegressionTest(TestCase):
+    """
+    Guards the dedup regression: context_message_id=None must be treated as ''
+    so duplicate detection does not silently skip the context_message_id filter
+    and match messages across different inbound events.
+    """
+
+    def setUp(self):
+        from apps.whatsapp.models import WhatsAppAccount
+        self.account = WhatsAppAccount.objects.create(
+            name='Dedup Test Account',
+            phone_number_id='dedup-phone-id-unique',
+            waba_id='dedup-waba',
+            phone_number='+5500000000001',
+            display_phone_number='5500000000001',
+            status=WhatsAppAccount.AccountStatus.ACTIVE,
+            access_token_encrypted='placeholder',
+        )
+
+    def _create_outbound(self, text, context_id=''):
+        from apps.whatsapp.models import Message
+        return Message.objects.create(
+            account=self.account,
+            direction=Message.MessageDirection.OUTBOUND,
+            message_type=Message.MessageType.TEXT,
+            to_number='+5511000000001',
+            text_body=text,
+            context_message_id=context_id,
+            status=Message.MessageStatus.SENT,
+        )
+
+    def test_none_context_id_matches_empty_string_context(self):
+        from apps.whatsapp.repositories.message_repository import MessageRepository
+        repo = MessageRepository()
+        msg = self._create_outbound('Olá!', context_id='')
+        result = repo.find_recent_outbound_text_duplicate(
+            account=self.account,
+            to_number='+5511000000001',
+            text_body='Olá!',
+            context_message_id=None,
+        )
+        self.assertEqual(result.id, msg.id)
+
+    def test_different_context_ids_are_not_deduplicated(self):
+        from apps.whatsapp.repositories.message_repository import MessageRepository
+        repo = MessageRepository()
+        self._create_outbound('Olá!', context_id='wamid.inbound-A')
+        result = repo.find_recent_outbound_text_duplicate(
+            account=self.account,
+            to_number='+5511000000001',
+            text_body='Olá!',
+            context_message_id='wamid.inbound-B',
+        )
+        self.assertIsNone(result)
