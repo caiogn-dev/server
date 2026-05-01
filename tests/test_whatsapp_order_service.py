@@ -9,6 +9,7 @@ Cobertura:
 Executar:
     python manage.py test tests.test_whatsapp_order_service --keepdb -v 2
 """
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch, MagicMock
 
@@ -276,6 +277,18 @@ class CreateOrderFromCartTest(TestCase):
         self.assertIn('error', result)
         self.assertFalse(StoreOrder.objects.filter(store=self.store).exists())
 
+    def test_out_of_stock_returns_error_with_estoque_keyword(self):
+        product = _make_product(self.store, 'Esgotado', Decimal('30.00'),
+                                track_stock=True, stock_quantity=0)
+        result = self._call(items=[{'product_id': str(product.id), 'quantity': 1}])
+        self.assertFalse(result['success'])
+        error = result.get('error', '')
+        self.assertTrue(
+            'estoque' in error.lower() or 'Erros de estoque' in error,
+            f"Expected stock error message, got: {error!r}",
+        )
+        self.assertFalse(StoreOrder.objects.filter(store=self.store).exists())
+
 
 class WhatsAppCheckoutEquivalenceTest(TestCase):
     """
@@ -356,3 +369,80 @@ class WhatsAppCheckoutEquivalenceTest(TestCase):
 
         self.assertEqual(self._order_snapshot(whatsapp_order), self._order_snapshot(checkout_order))
         self.assertEqual(whatsapp_order.metadata.get('source'), 'whatsapp')
+
+
+class MessageDedupRegressionTest(TestCase):
+    """Regression: context_message_id=None must filter by '' not skip the filter."""
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from apps.whatsapp.models import WhatsAppAccount, Message
+        from apps.whatsapp.repositories.message_repository import MessageRepository
+        from django.utils import timezone
+
+        User = get_user_model()
+        owner = User.objects.create_user(
+            username='dedup_owner', email='dedup@test.com', password='pass'
+        )
+        self.account = WhatsAppAccount.objects.create(
+            name='Dedup Test Account',
+            phone_number_id='dedup_pnid_001',
+            waba_id='dedup_waba_001',
+            phone_number='+5500000000001',
+            access_token_encrypted='tok',
+            owner=owner,
+            status=WhatsAppAccount.AccountStatus.ACTIVE,
+        )
+        self.Message = Message
+        self.repo = MessageRepository()
+        self.to = '+5511999990000'
+        self.text = 'Olá, seu pedido foi recebido!'
+        self.since = timezone.now() - timedelta(seconds=10)
+
+    def _make_message(self, context_id=''):
+        from django.utils import timezone
+        return self.Message.objects.create(
+            account=self.account,
+            direction=self.Message.MessageDirection.OUTBOUND,
+            message_type=self.Message.MessageType.TEXT,
+            to_number=self.to,
+            text_body=self.text,
+            context_message_id=context_id,
+            status=self.Message.MessageStatus.SENT,
+        )
+
+    def test_none_context_id_matches_empty_string_message(self):
+        """Passing context_message_id=None should match messages with context_message_id=''."""
+        self._make_message(context_id='')
+        result = self.repo.find_recent_outbound_text_duplicate(
+            account=self.account,
+            to_number=self.to,
+            text_body=self.text,
+            context_message_id=None,
+            since=self.since,
+        )
+        self.assertIsNotNone(result)
+
+    def test_different_context_ids_not_deduplicated(self):
+        """A message with context_id='A' must not suppress a send with context_id='B'."""
+        self._make_message(context_id='inbound-msg-A')
+        result = self.repo.find_recent_outbound_text_duplicate(
+            account=self.account,
+            to_number=self.to,
+            text_body=self.text,
+            context_message_id='inbound-msg-B',
+            since=self.since,
+        )
+        self.assertIsNone(result)
+
+    def test_same_context_id_is_deduplicated(self):
+        """Same context_id and same text within the window must be suppressed."""
+        self._make_message(context_id='inbound-msg-X')
+        result = self.repo.find_recent_outbound_text_duplicate(
+            account=self.account,
+            to_number=self.to,
+            text_body=self.text,
+            context_message_id='inbound-msg-X',
+            since=self.since,
+        )
+        self.assertIsNotNone(result)

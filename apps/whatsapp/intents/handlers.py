@@ -665,8 +665,13 @@ class IntentHandler:
 
         if not result.get('success'):
             error = result.get('error', 'Erro desconhecido')
+            if 'Erros de estoque' in error or 'fora de estoque' in error.lower() or 'estoque insuficiente' in error.lower():
+                return HandlerResult.text(
+                    "⚠️ *Um ou mais itens do seu pedido estão indisponíveis no momento.*\n\n"
+                    "Por favor, revise seu pedido ou fale com um atendente para verificar o cardápio atualizado. 🙏"
+                )
             return HandlerResult.text(
-                f"❌ Erro ao criar pedido: {error}\n\nTente novamente ou fale com um atendente."
+                f"❌ Não conseguimos finalizar seu pedido agora.\n\nTente novamente em instantes ou fale com um atendente."
             )
 
         order = result['order']

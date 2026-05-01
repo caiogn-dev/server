@@ -252,6 +252,41 @@ class CheckoutCreateOrderTest(TestCase):
         self.assertEqual(order.discount, Decimal('5.00'))
         self.assertEqual(order.coupon_code, 'FLAT5')
 
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_trusted_delivery_fee_bypasses_zone_calculation(self, _mock_email):
+        cart = self._make_cart_with_item()
+        customer_data = {'name': 'Fee', 'email': 'fee@test.com', 'phone': '+5511555554444'}
+        delivery_data = {'method': 'delivery', 'address': {'raw_address': 'Rua A, 10'}}
+        order = CheckoutService.create_order(
+            cart, customer_data,
+            delivery_data=delivery_data,
+            trusted_delivery_fee=Decimal('17.50'),
+        )
+        self.assertEqual(order.delivery_fee, Decimal('17.50'))
+
+    def test_negative_trusted_delivery_fee_raises(self):
+        cart = self._make_cart_with_item()
+        customer_data = {'name': 'Bad', 'email': 'bad@test.com', 'phone': '+5511444443333'}
+        delivery_data = {'method': 'delivery', 'address': {'raw_address': 'Rua B, 5'}}
+        with self.assertRaises(ValueError):
+            CheckoutService.create_order(
+                cart, customer_data,
+                delivery_data=delivery_data,
+                trusted_delivery_fee=Decimal('-5.00'),
+            )
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_pre_calculated_fee_in_delivery_data_is_ignored(self, _mock_email):
+        cart = self._make_cart_with_item()
+        customer_data = {'name': 'Ign', 'email': 'ign@test.com', 'phone': '+5511333332222'}
+        delivery_data = {
+            'method': 'delivery',
+            'address': {'raw_address': 'Rua C, 1'},
+            'pre_calculated_fee': Decimal('999.00'),
+        }
+        order = CheckoutService.create_order(cart, customer_data, delivery_data=delivery_data)
+        self.assertNotEqual(order.delivery_fee, Decimal('999.00'))
+
 
 class CheckoutProcessWebhookTest(TestCase):
     """Tests for process_payment_webhook."""
@@ -295,3 +330,53 @@ class CheckoutProcessWebhookTest(TestCase):
     def test_unknown_payment_id_returns_none(self):
         result = CheckoutService.process_payment_webhook('nonexistent_pay', 'approved')
         self.assertIsNone(result)
+
+
+class CheckoutTrustedDeliveryFeeTest(TestCase):
+    """Regression: trusted_delivery_fee must be an explicit parameter, not read from delivery_data."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username='tdf_owner', email='tdf@test.com', password='pass'
+        )
+        self.store = _make_store(self.owner, slug='tdf-store')
+        self.product = _make_product(self.store)
+
+    def _cart(self):
+        cart = StoreCart.objects.create(store=self.store)
+        StoreCartItem.objects.create(cart=cart, product=self.product, quantity=1)
+        return cart
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_negative_trusted_fee_raises(self, _mock):
+        with self.assertRaises(ValueError):
+            CheckoutService.create_order(
+                self._cart(),
+                {'name': 'T', 'email': 't@t.com', 'phone': '+5511000000001'},
+                delivery_data={'method': 'delivery', 'address': {'raw_address': 'Rua A'}},
+                trusted_delivery_fee=Decimal('-1.00'),
+            )
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_pre_calculated_fee_in_delivery_data_is_ignored(self, _mock):
+        """pre_calculated_fee inside delivery_data must no longer influence the fee."""
+        order = CheckoutService.create_order(
+            self._cart(),
+            {'name': 'T', 'email': 't@t.com', 'phone': '+5511000000002'},
+            delivery_data={
+                'method': 'delivery',
+                'pre_calculated_fee': 999.0,
+                'address': {'raw_address': 'Rua A'},
+            },
+        )
+        self.assertNotEqual(order.delivery_fee, Decimal('999.00'))
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_trusted_fee_used_when_provided(self, _mock):
+        order = CheckoutService.create_order(
+            self._cart(),
+            {'name': 'T', 'email': 't@t.com', 'phone': '+5511000000003'},
+            delivery_data={'method': 'delivery', 'address': {'raw_address': 'Rua A'}},
+            trusted_delivery_fee=Decimal('12.50'),
+        )
+        self.assertEqual(order.delivery_fee, Decimal('12.50'))
