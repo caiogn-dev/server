@@ -136,22 +136,23 @@ class MessageRepository:
         account: WhatsAppAccount,
         to_number: str,
         text_body: str,
-        context_message_id: str = '',
+        context_message_id: Optional[str] = '',
         since: Optional[datetime] = None,
     ) -> Optional[Message]:
         """Return a recent non-failed outbound text message with the same payload."""
         window_start = since or (timezone.now() - timedelta(seconds=5))
-        return Message.objects.filter(
+        queryset = Message.objects.filter(
             account=account,
             direction=Message.MessageDirection.OUTBOUND,
             message_type=Message.MessageType.TEXT,
             to_number=to_number,
             text_body=text_body,
-            context_message_id=context_message_id,
             created_at__gte=window_start,
         ).exclude(
             status=Message.MessageStatus.FAILED,
-        ).order_by('-created_at').first()
+        )
+        queryset = queryset.filter(context_message_id=context_message_id or '')
+        return queryset.order_by('-created_at').first()
 
     def get_unprocessed_inbound(self, limit: int = 100) -> QuerySet[Message]:
         """Get unprocessed inbound messages."""

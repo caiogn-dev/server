@@ -6,13 +6,14 @@ gera PIX real e transmite para o dashboard.
 """
 import logging
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from typing import Optional, Dict, Any, List
 from django.db.models import F
 from django.utils import timezone
 from django.db import transaction
 
-from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreProduct
+from apps.stores.models import Store, StoreCart, StoreCartItem, StoreOrder, StoreOrderItem, StoreProduct
 from apps.stores.services.checkout_service import CheckoutService
 from apps.stores.services.realtime_service import broadcast_order_event
 
@@ -44,13 +45,25 @@ class WhatsAppOrderService:
         """Cria pedido a partir dos itens do carrinho.
 
         payment_method: 'pix' | 'card' | 'cash'
-        delivery_fee_override: taxa calculada pelo HERE (sobrescreve cálculo padrão)
+        delivery_fee_override: taxa ja calculada pelo GeoService (sobrescreve cálculo padrão)
         addr_info: dict com lat, lng, distance_km, duration_minutes do geocoding
         """
         logger.info(
             f"[create_order_from_cart] Iniciando para {self.phone_number} "
             f"delivery={delivery_method} payment={payment_method}"
         )
+
+        checkout_result = self._try_create_order_with_checkout_service(
+            items=items,
+            delivery_address=delivery_address,
+            customer_notes=customer_notes,
+            delivery_method=delivery_method,
+            payment_method=payment_method,
+            delivery_fee_override=delivery_fee_override,
+            addr_info=addr_info,
+        )
+        if checkout_result is not None:
+            return checkout_result
 
         try:
             # 1. Valida itens e calcula subtotal
@@ -100,9 +113,9 @@ class WhatsAppOrderService:
             if delivery_method == 'pickup':
                 delivery_fee = Decimal('0')
             elif delivery_fee_override is not None:
-                # Taxa calculada pelo HERE Maps — usa diretamente
+                # Taxa previamente calculada pelo GeoService; usa diretamente.
                 delivery_fee = Decimal(str(delivery_fee_override))
-                logger.info(f"[create_order_from_cart] Taxa HERE override: R$ {delivery_fee}")
+                logger.info(f"[create_order_from_cart] Taxa GeoService override: R$ {delivery_fee}")
             else:
                 store_fee = Decimal(str(self.store.default_delivery_fee or '0'))
                 threshold = self.store.free_delivery_threshold
@@ -190,11 +203,138 @@ class WhatsAppOrderService:
         except Exception as e:
             logger.error(f"[create_order_from_cart] ERRO: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
+
+    def _try_create_order_with_checkout_service(
+        self,
+        items: List[Dict[str, Any]],
+        delivery_address: str = '',
+        customer_notes: str = '',
+        delivery_method: str = 'delivery',
+        payment_method: str = 'pix',
+        delivery_fee_override: float = None,
+        addr_info: dict = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Create simple WhatsApp carts through the canonical CheckoutService.
+
+        Returns None when the payload uses legacy-only features that CheckoutService
+        cannot represent yet, such as WhatsApp catalog price overrides.
+        """
+        if not items:
+            return {'success': False, 'error': 'Nenhum item válido no carrinho'}
+
+        try:
+            product_quantities = {}
+            for item in items:
+                product_id = item.get('product_id')
+                if item.get('price_source') == 'whatsapp_catalog' and item.get('unit_price') is not None:
+                    logger.info(
+                        "[create_order_from_cart] Using legacy path for WhatsApp catalog price override"
+                    )
+                    return None
+
+                try:
+                    product = StoreProduct.objects.get(
+                        id=product_id,
+                        store=self.store,
+                        is_active=True,
+                    )
+                except StoreProduct.DoesNotExist:
+                    logger.warning(f"[create_order_from_cart] Produto {product_id} não encontrado ou inativo")
+                    continue
+
+                quantity = max(int(item.get('quantity', 1)), 1)
+                product_quantities[product.id] = product_quantities.get(product.id, 0) + quantity
+
+            if not product_quantities:
+                return {'success': False, 'error': 'Nenhum item válido no carrinho'}
+
+            cart = StoreCart.objects.create(
+                store=self.store,
+                session_key=f"whatsapp:{self.phone_number}:{uuid.uuid4()}",
+                metadata={
+                    'source': 'whatsapp',
+                    'phone_number': self.phone_number,
+                },
+            )
+            products = StoreProduct.objects.in_bulk(product_quantities.keys())
+            for product_id, quantity in product_quantities.items():
+                StoreCartItem.objects.create(
+                    cart=cart,
+                    product=products[product_id],
+                    quantity=quantity,
+                )
+
+            address_payload = self._build_delivery_address(delivery_address, addr_info)
+            delivery_payload = {
+                'method': delivery_method,
+                'address': address_payload,
+                'notes': customer_notes,
+                'metadata': {
+                    'source': 'whatsapp',
+                    'created_via': 'whatsapp_automation',
+                    'phone_number': self.phone_number,
+                    'created_at_whatsapp': timezone.now().isoformat(),
+                    'payment_method': payment_method,
+                },
+            }
+            if delivery_fee_override is not None:
+                delivery_payload['zone_name'] = 'WhatsApp'
+            if addr_info:
+                if addr_info.get('distance_km') is not None:
+                    delivery_payload['distance_km'] = addr_info['distance_km']
+                if addr_info.get('duration_minutes') is not None:
+                    delivery_payload['duration_minutes'] = addr_info['duration_minutes']
+                    delivery_payload['estimated_minutes'] = addr_info['duration_minutes']
+
+            _trusted_fee = (
+                Decimal(str(delivery_fee_override))
+                if delivery_fee_override is not None
+                else None
+            )
+            order = CheckoutService.create_order(
+                cart=cart,
+                customer_data={
+                    'name': self.customer_name,
+                    'email': f"whatsapp_{self.phone_number}@whatsapp.bot",
+                    'phone': self.phone_number,
+                },
+                delivery_data=delivery_payload,
+                notes=customer_notes,
+                trusted_delivery_fee=_trusted_fee,
+            )
+
+            if payment_method == 'pix':
+                payment_data = self._generate_pix(order)
+            elif payment_method == 'card':
+                payment_data = self._generate_card_checkout_link(order)
+            else:
+                payment_data = self._register_cash_payment(order)
+
+            if payment_data.get('success'):
+                logger.info(f"[create_order_from_cart] Pagamento processado: {payment_method}")
+            else:
+                logger.error(f"[create_order_from_cart] Erro no pagamento: {payment_data.get('error')}")
+
+            transaction.on_commit(lambda: broadcast_order_event(order, event_type='order.created'))
+            self._update_session(order, payment_data)
+
+            return {
+                'success': True,
+                'order': order,
+                'order_number': order.order_number,
+                'payment_method': payment_method,
+                'payment_data': payment_data,
+                'pix_data': payment_data if payment_method == 'pix' else {'success': False},
+                'total': float(order.total),
+            }
+        except Exception as e:
+            logger.error(f"[create_order_from_cart] CheckoutService path failed: {e}", exc_info=True)
+            return {'success': False, 'error': str(e)}
     
     def _build_delivery_address(self, raw_address: str, addr_info: dict = None) -> dict:
         """Build delivery_address JSON with structured fields the frontend can render.
 
-        Merges HERE Maps address components (from geocode or reverse_geocode) into the
+        Merges provider address components (from geocode or reverse_geocode) into the
         standard frontend-expected shape: street, number, neighborhood, city, state, zip_code.
         raw_address is always preserved as a display fallback.
         """
@@ -213,9 +353,7 @@ class WhatsAppOrderService:
             if addr_info.get('duration_minutes') is not None:
                 data['duration_minutes'] = addr_info['duration_minutes']
 
-            # Map HERE geocode/reverse_geocode components to standard frontend keys.
-            # geocode() uses HERE API keys: houseNumber, district, stateCode, postalCode
-            # reverse_geocode() uses normalized keys: house_number, neighborhood, state_code, zip_code
+            # Map provider-specific geocode/reverse_geocode components to standard frontend keys.
             components = addr_info.get('address_components') or {}
             if components:
                 number = (
@@ -361,17 +499,73 @@ class WhatsAppOrderService:
                 phone_number=self.phone_number
             )
             
+            session = session_manager.get_or_create_session()
+            if not session:
+                logger.warning(f"[_update_session] Sessão não encontrada para {self.phone_number}")
+                return
+
+            order_items = [
+                {
+                    'product_name': item.product_name,
+                    'quantity': item.quantity,
+                    'unit_price': str(item.unit_price),
+                    'subtotal': str(item.subtotal),
+                }
+                for item in order.items.all()
+            ]
+            cart_data = dict(session.cart_data or {})
+            for key in (
+                'pending_items',
+                'pending_delivery_method',
+                'waiting_for_address',
+                'checkout_in_progress',
+            ):
+                cart_data.pop(key, None)
+            cart_data['last_order'] = {
+                'id': str(order.id),
+                'order_number': order.order_number,
+                'items': order_items,
+                'subtotal': str(order.subtotal),
+                'delivery_fee': str(order.delivery_fee),
+                'total': str(order.total),
+                'payment_method': order.payment_method,
+                'delivery_method': order.delivery_method,
+                'delivery_address': order.delivery_address,
+                'payment_status': order.payment_status,
+                'status': order.status,
+            }
+
+            session.order = order
+            session.external_order_id = order.order_number
+            session.cart_data = cart_data
+            session.cart_total = order.total
+            session.cart_items_count = len(order_items)
+            session.cart_updated_at = timezone.now()
+
             if pix_data.get('success'):
-                session_manager.set_payment_pending(
-                    pix_code=pix_data.get('pix_code', ''),
-                    payment_id=str(order.id)
-                )
+                session.pix_code = pix_data.get('pix_code', '')
+                session.pix_qr_code = pix_data.get('pix_qr_code', '')
+                session.payment_id = str(order.id)
+                session.pix_expires_at = timezone.now() + timedelta(hours=24)
+                session.status = type(session).SessionStatus.PAYMENT_PENDING
                 logger.info(f"[_update_session] Sessão atualizada com PIX para {self.phone_number}")
-            
-            session_manager.update_cart(
-                items=[{'order_id': str(order.id)}],
-                total=order.total
-            )
+            else:
+                session.status = type(session).SessionStatus.ORDER_PLACED
+
+            session.save(update_fields=[
+                'order',
+                'external_order_id',
+                'cart_data',
+                'cart_total',
+                'cart_items_count',
+                'cart_updated_at',
+                'pix_code',
+                'pix_qr_code',
+                'payment_id',
+                'pix_expires_at',
+                'status',
+                'updated_at',
+            ])
             
         except Exception as e:
             logger.error(f"[_update_session] Erro ao atualizar sessão: {e}")

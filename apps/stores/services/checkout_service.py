@@ -6,6 +6,7 @@ import logging
 import re
 import uuid
 from decimal import Decimal
+from typing import Optional
 from urllib.parse import urlparse
 from django.db import models, transaction
 from django.db.models import F, Q
@@ -132,6 +133,11 @@ def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_c
     """Trigger email automation for order events."""
     try:
         from apps.marketing.services.email_automation_service import email_automation_service
+
+        metadata = order.metadata or {}
+        if metadata.get('source') == 'whatsapp' or str(order.customer_email or '').endswith('@whatsapp.bot'):
+            logger.debug(f"WhatsApp order {order.order_number}, skipping email automation")
+            return
         
         if not order.customer_email:
             logger.debug(f"No customer email for order {order.order_number}, skipping automation")
@@ -367,7 +373,12 @@ class CheckoutService:
         payload = dict(info or {})
         route_payload = dict(route or {})
 
-        fee = payload.get('fee', payload.get('delivery_fee'))
+        def json_safe(value):
+            if isinstance(value, Decimal):
+                return float(value)
+            return value
+
+        fee = json_safe(payload.get('fee', payload.get('delivery_fee')))
         is_valid = payload.get('is_valid')
         if is_valid is None:
             is_valid = payload.get('available')
@@ -382,9 +393,9 @@ class CheckoutService:
             or payload.get('delivery_zone')
             or zone.get('name')
         )
-        distance_km = payload.get('distance_km', route_payload.get('distance_km'))
-        duration_minutes = payload.get('duration_minutes', route_payload.get('duration_minutes'))
-        estimated_minutes = payload.get('estimated_minutes') or duration_minutes
+        distance_km = json_safe(payload.get('distance_km', route_payload.get('distance_km')))
+        duration_minutes = json_safe(payload.get('duration_minutes', route_payload.get('duration_minutes')))
+        estimated_minutes = json_safe(payload.get('estimated_minutes') or duration_minutes)
         reason = payload.get('reason') or (None if is_valid else payload.get('calculation') or 'unavailable')
 
         stable = {
@@ -608,6 +619,7 @@ class CheckoutService:
         coupon_code: str = None,
         notes: str = '',
         use_loyalty_reward: bool = False,
+        trusted_delivery_fee: Optional[Decimal] = None,
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -639,13 +651,28 @@ class CheckoutService:
             'available': True,
         })
         if delivery_payload and delivery_payload.get('method') == 'delivery':
-            distance = delivery_payload.get('distance_km')
-            zip_code = delivery_payload.get('zip_code')
-            delivery_info = CheckoutService.calculate_delivery_fee(
-                store,
-                distance_km=Decimal(str(distance)) if distance else None,
-                zip_code=zip_code
-            )
+            if trusted_delivery_fee is not None:
+                if trusted_delivery_fee < 0:
+                    raise ValueError("Taxa de entrega não pode ser negativa")
+                delivery_info = {
+                    'fee': trusted_delivery_fee,
+                    'delivery_fee': trusted_delivery_fee,
+                    'is_valid': True,
+                    'available': True,
+                    'zone_name': delivery_payload.get('zone_name') or 'Pre-calculada',
+                    'estimated_minutes': delivery_payload.get('estimated_minutes'),
+                    'distance_km': delivery_payload.get('distance_km'),
+                    'duration_minutes': delivery_payload.get('duration_minutes'),
+                    'calculation': 'pre_calculated',
+                }
+            else:
+                distance = delivery_payload.get('distance_km')
+                zip_code = delivery_payload.get('zip_code')
+                delivery_info = CheckoutService.calculate_delivery_fee(
+                    store,
+                    distance_km=Decimal(str(distance)) if distance else None,
+                    zip_code=zip_code
+                )
             delivery_info = CheckoutService.normalize_delivery_quote(delivery_info)
         
         if delivery_info.get('fee') is None:
@@ -706,6 +733,8 @@ class CheckoutService:
         # Calculate total (no tax - just subtotal + delivery - discount)
         total = subtotal + delivery_fee - discount
 
+        extra_metadata = dict(delivery_payload.get('metadata') or {})
+
         # Create order
         order = StoreOrder.objects.create(
             store=store,
@@ -740,6 +769,7 @@ class CheckoutService:
                     'cpf': customer_data.get('cpf', '') or '',
                     'auth_channel': 'whatsapp_otp',
                 },
+                **extra_metadata,
             }
         )
         if customer_user and customer_user != cart.user:
