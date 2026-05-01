@@ -624,6 +624,9 @@ class WebhookService:
                             'message_id': str(message.id),
                         },
                     )
+                    if not message.processed_by_agent:
+                        message.processed_by_agent = True
+                        message.save(update_fields=['processed_by_agent'])
                     _response_sent = True
                 except Exception as exc:
                     orchestrator_error = exc
