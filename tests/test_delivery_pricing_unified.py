@@ -287,7 +287,7 @@ class StoreValidateDeliveryViewTest(TestCase):
             'address_components': {'city': 'Palmas'},
         }
         with patch(
-            'apps.stores.api.maps_views.here_maps_service.calculate_delivery_fee',
+            'apps.stores.api.maps_views.geo_service.calculate_delivery_fee',
             return_value={
                 'fee': Decimal('8.00'),
                 'distance_km': 3.0,
@@ -297,7 +297,7 @@ class StoreValidateDeliveryViewTest(TestCase):
                 'message': 'ok',
             },
         ), patch(
-            'apps.stores.api.maps_views.here_maps_service.geocode',
+            'apps.stores.api.maps_views.geo_service.geocode',
             return_value=mock_geo,
         ):
             response = self.client.post(
@@ -312,7 +312,7 @@ class StoreValidateDeliveryViewTest(TestCase):
 
     def test_post_uses_unified_geo_fee_calculation(self):
         with patch(
-            'apps.stores.api.maps_views.here_maps_service.validate_delivery_address',
+            'apps.stores.api.maps_views.geo_service.validate_delivery_address',
             return_value={
                 'is_valid': True,
                 'distance_km': 12.4,
@@ -320,7 +320,7 @@ class StoreValidateDeliveryViewTest(TestCase):
                 'message': 'ok',
             },
         ), patch(
-            'apps.stores.api.maps_views.here_maps_service.calculate_delivery_fee',
+            'apps.stores.api.maps_views.geo_service.calculate_delivery_fee',
             return_value={
                 'fee': Decimal('45.00'),
                 'distance_km': 12.4,

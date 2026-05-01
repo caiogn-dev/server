@@ -103,7 +103,7 @@ Regras:
 Estado desejado:
 
 - Google como provider canonico se essa decisao for mantida.
-- HERE deve ser documentado como legado ou removido gradualmente.
+- Google Maps e o provider canonico; nomes legados devem permanecer apenas como compatibilidade temporaria.
 - Delivery fee deve ser fonte unica para storefront, WhatsApp agent e checkout.
 
 Regras Cê Saladas recuperadas:
@@ -172,4 +172,3 @@ Antes de deploy relevante:
    - pedido ambiguo
 9. Dashboard auth e overview.
 10. Media WhatsApp no painel sem renderizar objeto JSON como React child.
-

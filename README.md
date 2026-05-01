@@ -40,7 +40,7 @@ python manage.py runserver
 - WhatsApp Business API integration with conversational checkout flow
 - AI-powered WhatsApp automation pipeline (`UnifiedService` → deterministic intent handlers → LLM agents)
 - AutoMessage template system for order status notifications (with direct fallback for unconfigured stores)
-- HERE Maps geocoding + reverse geocoding, structured address components propagated to orders
+- Google Maps geocoding + reverse geocoding via `GeoService`, structured address components propagated to orders
 - Real-time WebSocket updates via Django Channels (`store_{slug}_orders` group)
 - Langflow LLM automation
 - Email notifications (Resend)
@@ -61,7 +61,7 @@ python manage.py test tests.test_whatsapp_order_service --keepdb -v 2
 python manage.py test tests.test_whatsapp_order_service   # WhatsApp order creation + _build_delivery_address
 python manage.py test tests.test_automessage_dispatch      # AutoMessage/signal deduplication regression
 python manage.py test tests.test_delivery_pricing_unified  # Unified fee formula + maps view fix
-python manage.py test tests.test_session_address_components # HERE Maps address_components session flow
+python manage.py test tests.test_session_address_components # GeoService address_components session flow
 python manage.py test tests.test_checkout_service          # CheckoutService core logic
 python manage.py test tests.test_checkout_e2e             # End-to-end checkout scenarios
 ```
@@ -69,7 +69,7 @@ python manage.py test tests.test_checkout_e2e             # End-to-end checkout 
 ### Test Conventions
 
 - Module-level `_make_*()` helpers create isolated fixtures (not `setUpTestData`)
-- External dependencies (MercadoPago, Redis, HERE Maps, Celery tasks) are always mocked with `@patch`
+- External dependencies (MercadoPago, Redis, Google Maps/GeoService, Celery tasks) are always isolated with `@patch`
 - Patch paths use the import location in the consuming module (e.g. `apps.whatsapp.services.order_service.broadcast_order_event`)
 - `--keepdb` speeds up repeated runs by reusing the test database schema
 
@@ -79,7 +79,7 @@ See `/docs` folder in the project root for:
 - [Technical Evaluation](../docs/TECHNICAL_EVALUATION.md)
 - [API Reference](../docs/API_REFERENCE.md)
 - [Deployment Guide](../docs/DEPLOYMENT.md)
-- [HERE Maps Integration](../docs/HERE_MAPS_INTEGRATION.md)
+- [Google Maps Migration Architecture](docs/GOOGLE_MAPS_MIGRATION_ARCHITECTURE_2026-04-17.md)
 - [Pending Tasks](../docs/TODO.md)
 
 ## API Documentation

@@ -1,6 +1,6 @@
 """
 Tests that ensure the new `/api/v1/stores/` endpoints (catalog and maps) are wired correctly.
-We exercise the storefront and HERE Maps routes against the unified API.
+We exercise the storefront and GeoService maps routes against the unified API.
 """
 from decimal import Decimal
 from unittest.mock import patch
@@ -45,7 +45,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         response = self.client.get(f'/api/v1/stores/{self.store.slug}/catalog/')
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    @patch('apps.stores.api.maps_views.here_maps_service')
+    @patch('apps.stores.api.maps_views.geo_service')
     def test_maps_geocode_endpoint(self, mock_maps_service):
         mock_maps_service.geocode.return_value = {
             'lat': -10.185,
@@ -62,7 +62,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         self.assertEqual(response.data['latitude'], -10.185)
         self.assertEqual(response.data['display_name'], 'Palmas, TO')
 
-    @patch('apps.stores.api.maps_views.here_maps_service')
+    @patch('apps.stores.api.maps_views.geo_service')
     def test_maps_reverse_geocode_endpoint(self, mock_maps_service):
         mock_maps_service.reverse_geocode.return_value = {
             'lat': -10.185,
@@ -80,7 +80,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         self.assertEqual(response.data['city'], 'Palmas')
         self.assertEqual(response.data['latitude'], -10.185)
 
-    @patch('apps.stores.api.maps_views.here_maps_service')
+    @patch('apps.stores.api.maps_views.geo_service')
     def test_maps_autosuggest_endpoint(self, mock_maps_service):
         mock_maps_service.autosuggest.return_value = [
             {
@@ -98,7 +98,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         self.assertTrue(response.data['suggestions'])
         self.assertEqual(response.data['suggestions'][0]['display_name'], 'Palmas, TO')
 
-    @patch('apps.stores.api.maps_views.here_maps_service')
+    @patch('apps.stores.api.maps_views.geo_service')
     def test_store_delivery_zones_endpoint(self, mock_maps_service):
         mock_maps_service.get_delivery_zones_isolines.return_value = [
             {'minutes': 10, 'polygons': []}
@@ -108,16 +108,15 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('zones', response.data)
 
-    @patch('apps.stores.api.maps_views.here_maps_service')
-    @patch('apps.stores.api.maps_views.CheckoutService.calculate_delivery_fee')
-    def test_validate_delivery_endpoint(self, mock_calc_fee, mock_maps_service):
+    @patch('apps.stores.api.maps_views.geo_service')
+    def test_validate_delivery_endpoint(self, mock_maps_service):
         mock_maps_service.validate_delivery_address.return_value = {
             'is_valid': True,
             'distance_km': 2.5,
             'duration_minutes': 7.0,
             'polyline': '',
         }
-        mock_calc_fee.return_value = {
+        mock_maps_service.calculate_delivery_fee.return_value = {
             'fee': Decimal('8.00'),
             'zone_name': 'Centro',
             'estimated_minutes': 25,

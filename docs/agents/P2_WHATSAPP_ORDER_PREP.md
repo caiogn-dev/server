@@ -1,6 +1,32 @@
 # P2 — WhatsApp Order Creation via CheckoutService
 
-## Current WhatsApp Order Flow
+## Implementation Status — 2026-04-30
+
+P2 is now partially implemented for simple WhatsApp product carts:
+
+- `WhatsAppOrderService.create_order_from_cart()` first tries a canonical path through `CheckoutService.create_order()`.
+- The WhatsApp path now builds a transient `StoreCart`, creates `StoreCartItem` rows, passes WhatsApp metadata into `CheckoutService`, then continues to process payment inline for `pix`, `card`, or `cash`.
+- `CheckoutService.create_order()` now accepts a pre-calculated delivery fee via `delivery_data.pre_calculated_fee` / `delivery_fee_override`, preserving WhatsApp/GeoService fee quotes instead of recalculating or rejecting them.
+- `CheckoutService.create_order()` now accepts extra `delivery_data.metadata`, including `metadata.source = "whatsapp"`.
+- `trigger_order_email_automation()` skips WhatsApp orders and `@whatsapp.bot` customer emails.
+- Legacy direct `StoreOrder.objects.create()` code remains as fallback for WhatsApp catalog price overrides because `StoreCartItem.unit_price` currently derives from the product/variant and cannot represent arbitrary catalog override prices safely.
+
+Validated on 2026-04-30:
+
+- `python manage.py test tests.test_whatsapp_order_service --keepdb -v 2` — 16 tests OK.
+- `python manage.py test tests.test_whatsapp_order_service tests.test_checkout_service apps.stores.tests.test_smoke_contracts apps.automation.tests.test_pipeline --keepdb -v 2` — 80 tests OK.
+- `python manage.py check` — OK.
+- `python manage.py makemigrations --check --dry-run` — no changes detected.
+- `python -m py_compile apps/whatsapp/services/order_service.py apps/stores/services/checkout_service.py` — OK.
+
+Remaining follow-up before removing the fallback:
+
+- Add a cart-item price override model/service path or map WhatsApp catalog prices back to real products consistently.
+- Add an explicit PIX smoke/regression check that verifies the real Mercado Pago integration path stays wired through `CheckoutService.create_payment()`. Unit tests may isolate the external provider, but they do not replace production/payment smoke validation.
+- Add a user-facing handler test for stock validation errors so sold-out items produce a clear WhatsApp response.
+- Decide whether WhatsApp-created `@whatsapp.bot` identities should create/link real customer records or stay operational-only.
+
+## Previous WhatsApp Order Flow
 
 `WhatsAppOrderService.create_order_from_cart()` in `apps/whatsapp/services/order_service.py`:
 
@@ -9,7 +35,7 @@
 3. Supports an optional `price_source == 'whatsapp_catalog'` override on the unit price.
 4. Calculates delivery fee:
    - `pickup` → R$ 0
-   - `delivery_fee_override` present → uses that value directly (from HERE Maps geocoding result)
+   - `delivery_fee_override` present → uses that value directly (from GeoService geocoding result)
    - otherwise → falls back to `store.default_delivery_fee`, respecting `store.free_delivery_threshold`
 5. Creates `StoreOrder` directly via `StoreOrder.objects.create(...)` with `source = 'whatsapp'` in `metadata`. Does NOT go through `CheckoutService.create_order()`.
 6. Creates `StoreOrderItem` rows and atomically decrements stock with `F('stock_quantity') - quantity`.
@@ -53,7 +79,7 @@ Triggered by: `apps/whatsapp/intents/handlers.py` (checkout step handlers) → `
 |---|-----|-----------|
 | 1 | **No StoreCart** | WhatsApp builds items from conversation — there is no `StoreCart` object. Need to either create a transient cart or refactor `create_order` to accept items directly. |
 | 2 | **Customer identity** | WhatsApp uses `whatsapp_{phone}@whatsapp.bot` as email; no `CustomerIdentityService` call; `order.customer` FK is `None`. `CheckoutService` links a real `UnifiedUser` and `StoreCustomer`. |
-| 3 | **Delivery fee calculation** | WhatsApp uses HERE-override or `store.default_delivery_fee` flat. `CheckoutService` uses zone-based `calculate_delivery_fee()` with `normalize_delivery_quote()` and can reject out-of-zone addresses. |
+| 3 | **Delivery fee calculation** | WhatsApp uses GeoService override or `store.default_delivery_fee` flat. `CheckoutService` uses zone-based `calculate_delivery_fee()` with `normalize_delivery_quote()` and can reject out-of-zone addresses. |
 | 4 | **Coupon/loyalty support** | WhatsApp has none. `CheckoutService` supports both. |
 | 5 | **Variant support** | WhatsApp ignores variants. `CheckoutService` handles `StoreProductVariant` with separate stock decrements. |
 | 6 | **Combo item support** | WhatsApp has no combo items. `CheckoutService` handles real and virtual combos. |

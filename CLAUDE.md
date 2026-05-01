@@ -36,7 +36,7 @@ Critical pending work:
 1. Create/verify a dedicated mobile customer order API namespace for detail/status/tracking/reorder.
 2. Support custom salad items from Flutter builder in checkout/order/receipt.
 3. Add regression tests for OTP, delivery zones, route calculation, checkout payload, orders by token and agent guardrails.
-4. Resolve Google vs HERE as the canonical geo provider in docs/env/service names.
+4. Google Maps is the canonical geo provider; do not reintroduce HERE envs or frontend dependencies.
 5. Keep delivery-fee and route calculation as backend-owned truth; Flutter should never hardcode delivery prices.
 
 ## Commands

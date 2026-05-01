@@ -87,7 +87,7 @@
 /api/v1/stores/{store_slug}/checkout/     → Place order
 /api/v1/stores/{store_slug}/delivery-fee/ → Calculate fee
 /api/v1/stores/{store_slug}/validate-coupon/ → Coupon validation
-/api/v1/stores/{store_slug}/route/        → HERE route calculation
+/api/v1/stores/{store_slug}/route/        → GeoService route calculation (Google primary)
 /api/v1/stores/orders/by-token/{token}/   → Public order detail/status for mobile post-checkout
 /api/v1/stores/maps/geocode/              → Address geocoding
 /api/v1/stores/maps/reverse-geocode/      → Reverse geocode
@@ -166,7 +166,7 @@ Public storefront endpoints (`/api/v1/public/`) use `AllowAny` with rate limitin
 Key settings:
 - `WHATSAPP_APP_SECRET` — HMAC signature validation for WhatsApp webhooks
 - `WHATSAPP_WEBHOOK_VERIFY_TOKEN` — Meta verification token
-- `HERE_MAPS_API_KEY` — Geocoding and routing
+- `GOOGLE_MAPS_KEY` — Geocoding and routing
 - `CELERY_BROKER_URL` — Redis URL (default: `redis://localhost:6379/0`)
 
 ---
@@ -196,7 +196,7 @@ UnifiedService.process_message()
       ├── Decrements stock via F() expression (atomic, only when track_stock=True)
       ├── Calls CheckoutService.create_payment() for PIX/card flows
       ├── Builds structured delivery_address via _build_delivery_address()
-      │     maps HERE Maps keys (houseNumber, district, stateCode, postalCode)
+      │     normalizes provider address component keys
       │     to frontend-standard keys (number, neighborhood, state, zip_code)
       └── Dispatches broadcast_order_event() via transaction.on_commit
 ```

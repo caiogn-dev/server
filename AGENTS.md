@@ -146,4 +146,4 @@ celery -A config beat -l info
 - `config/settings/development.py` — SQLite, DEBUG, permissive CORS
 - `config/settings/production.py` — PostgreSQL, WhiteNoise, strict CORS
 
-Key env vars: `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, `HERE_MAPS_API_KEY`, `DATABASE_URL`, `REDIS_URL`, `CELERY_BROKER_URL`.
+Key env vars: `WHATSAPP_APP_SECRET`, `WHATSAPP_WEBHOOK_VERIFY_TOKEN`, `GOOGLE_MAPS_KEY`, `DATABASE_URL`, `REDIS_URL`, `CELERY_BROKER_URL`.

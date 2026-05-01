@@ -13,7 +13,7 @@ Cobertura:
 Convenção:
   Cada fluxo é testado no nível dos handlers (IntentHandler / InteractiveReplyHandler),
   que é o nível em que as decisões de negócio são tomadas.
-  Dependências externas (HERE Maps, MercadoPago, WhatsApp API) são sempre mockadas.
+  Dependências externas (GeoService/Google Maps, MercadoPago, WhatsApp API) são sempre isoladas.
 
 Executar:
     python manage.py test tests.test_conversation_flow_e2e --keepdb -v 2
