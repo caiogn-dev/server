@@ -269,10 +269,10 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
         with patch(
-            'apps.stores.services.here_maps_service.HereMapsService.geocode',
+            'apps.stores.services.geo.service.GeoService.geocode',
             return_value=mock_geo,
         ), patch(
-            'apps.stores.services.here_maps_service.HereMapsService.calculate_delivery_fee',
+            'apps.stores.services.geo.service.GeoService.calculate_delivery_fee',
             return_value=mock_fee,
         ):
             result = handler._handle_address_input('Rua das Flores, 42')
@@ -326,7 +326,7 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
         with patch(
-            'apps.stores.services.here_maps_service.HereMapsService.geocode',
+            'apps.stores.services.geo.service.GeoService.geocode',
             return_value=None,
         ):
             result = handler._handle_address_input('endereço inválido !!!')
@@ -366,10 +366,10 @@ class DeliveryGPSFlowTest(ConversationFlowBase):
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
         with patch(
-            'apps.stores.services.here_maps_service.HereMapsService.calculate_delivery_fee',
+            'apps.stores.services.geo.service.GeoService.calculate_delivery_fee',
             return_value=mock_fee,
         ), patch(
-            'apps.stores.services.here_maps_service.HereMapsService.reverse_geocode',
+            'apps.stores.services.geo.service.GeoService.reverse_geocode',
             return_value=mock_rev,
         ):
             result = handler._handle_location_input(-10.18, -48.33)
@@ -397,10 +397,10 @@ class DeliveryGPSFlowTest(ConversationFlowBase):
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
         with patch(
-            'apps.stores.services.here_maps_service.HereMapsService.calculate_delivery_fee',
+            'apps.stores.services.geo.service.GeoService.calculate_delivery_fee',
             return_value=mock_fee,
         ), patch(
-            'apps.stores.services.here_maps_service.HereMapsService.reverse_geocode',
+            'apps.stores.services.geo.service.GeoService.reverse_geocode',
             return_value={'formatted_address': 'Longe, Outro Estado'},
         ):
             result = handler._handle_location_input(-20.0, -50.0)

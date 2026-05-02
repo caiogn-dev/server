@@ -3,7 +3,6 @@ from .store_service import store_service
 from .cart_service import cart_service, CartService
 from .checkout_service import checkout_service, CheckoutService
 from .geo import geo_service, GeoService, GoogleMapsProvider
-from .here_maps_service import here_maps_service, HereMapsService
 from .payment_service import PaymentService, get_payment_service
 from .order_service import order_service, OrderService
 from .print_service import (
@@ -25,8 +24,6 @@ __all__ = [
     'geo_service',
     'GeoService',
     'GoogleMapsProvider',
-    'here_maps_service',
-    'HereMapsService',
     'PaymentService',
     'get_payment_service',
     'order_service',

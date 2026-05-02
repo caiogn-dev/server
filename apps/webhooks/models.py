@@ -73,8 +73,16 @@ class WebhookEvent(BaseModel):
         indexes = [
             models.Index(fields=['provider', 'event_type']),
             models.Index(fields=['provider', 'status']),
+            models.Index(fields=['provider', 'created_at']),
             models.Index(fields=['event_id']),
             models.Index(fields=['created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'event_id'],
+                condition=models.Q(event_id__gt=''),
+                name='unique_webhook_event_per_provider',
+            )
         ]
 
     def __str__(self):

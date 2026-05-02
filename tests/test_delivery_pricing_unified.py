@@ -242,7 +242,7 @@ class HereMapsServiceDelegatesTest(TestCase):
 
         mock_route = {'distance_km': float(distance), 'duration_minutes': 18, 'polyline': None}
         with patch(
-            'apps.stores.services.here_maps_service.HereMapsService._get_route',
+            'apps.stores.services.geo.service.GeoService._get_route',
             return_value=mock_route,
         ):
             from apps.stores.services.here_maps_service import HereMapsService

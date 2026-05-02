@@ -487,3 +487,38 @@ class MessageDedupRegressionTest(TestCase):
             since=self.since,
         )
         self.assertIsNotNone(result)
+
+
+class WhatsAppPIXSmokeTest(TestCase):
+    """Smoke: pagamento PIX via WhatsApp chama CheckoutService.create_payment."""
+
+    def setUp(self):
+        self.owner = _make_user('pix_smoke_owner')
+        self.store = _make_store(self.owner, 'pix-smoke-store')
+        self.product = _make_product(self.store, 'PIX Item', Decimal('30.00'))
+
+    def test_pix_order_calls_checkout_create_payment(self):
+        from apps.whatsapp.services.order_service import WhatsAppOrderService
+
+        svc = WhatsAppOrderService(
+            store=self.store,
+            phone_number='+5563999990099',
+            customer_name='PIX Smoke Cliente',
+        )
+
+        with patch(
+            'apps.whatsapp.services.order_service.CheckoutService.create_payment',
+            return_value={'success': True, 'pix_code': 'test-pix-code-123'},
+        ) as mock_create_payment, \
+             patch(_PATCH_BROADCAST), \
+             patch.object(svc, '_update_session'):
+            result = svc.create_order_from_cart(
+                items=[{'product_id': str(self.product.id), 'quantity': 1}],
+                delivery_method='pickup',
+                payment_method='pix',
+            )
+
+        self.assertTrue(result['success'])
+        self.assertTrue(mock_create_payment.called)
+        pix_data = result['pix_data']
+        self.assertTrue(pix_data['success'])

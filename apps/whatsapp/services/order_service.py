@@ -84,17 +84,6 @@ class WhatsAppOrderService:
 
                 quantity = max(int(item.get('quantity', 1)), 1)
                 unit_price = product.price
-                if item.get('price_source') == 'whatsapp_catalog' and item.get('unit_price') is not None:
-                    try:
-                        candidate_price = Decimal(str(item.get('unit_price')))
-                        if candidate_price >= 0:
-                            unit_price = candidate_price
-                    except Exception:
-                        logger.warning(
-                            "[create_order_from_cart] Invalid WhatsApp catalog price for product %s: %s",
-                            product_id,
-                            item.get('unit_price'),
-                        )
                 item_total = unit_price * quantity
                 subtotal += item_total
                 order_items_data.append({
@@ -226,12 +215,6 @@ class WhatsAppOrderService:
             product_quantities = {}
             for item in items:
                 product_id = item.get('product_id')
-                if item.get('price_source') == 'whatsapp_catalog' and item.get('unit_price') is not None:
-                    logger.info(
-                        "[create_order_from_cart] Using legacy path for WhatsApp catalog price override"
-                    )
-                    return None
-
                 try:
                     product = StoreProduct.objects.get(
                         id=product_id,

@@ -153,11 +153,9 @@ urlpatterns = [
     
     # Customer orders list (requires auth)
     path('customer/orders/', CustomerOrdersView.as_view(), name='customer-orders'),
-    path('customer/orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail-auth'),
-    
-    # Single order detail (public - by order ID)
-    path('orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail'),
-    
+    # Flutter mobile: use this path with ?token= for unauthenticated customer detail
+    path('customer/orders/<uuid:order_id>/', CustomerOrderDetailView.as_view(), name='customer-order-detail'),
+
     # WhatsApp confirmation link
     path('orders/<uuid:order_id>/whatsapp/', OrderWhatsAppView.as_view(), name='order-whatsapp'),
     path('orders/<uuid:order_id>/receipt/', OrderReceiptView.as_view(), name='order-receipt'),
