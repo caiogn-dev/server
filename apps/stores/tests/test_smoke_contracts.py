@@ -344,15 +344,15 @@ class DeliveryZoneContractTest(APITestCase):
         payload = response.json()
         self.assertFalse(payload['available'])
 
-    def test_missing_distance_uses_default(self):
+    def test_missing_location_returns_400(self):
+        """Empty payload without any location info must return 400, not a default fee."""
         response = self.client.post(
             f'/api/v1/stores/{self.store.slug}/delivery-fee/',
             {},
             format='json',
         )
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        payload = response.json()
-        self.assertTrue(payload['available'])
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('error', response.json())
 
 
 @override_settings(
