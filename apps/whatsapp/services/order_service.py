@@ -269,11 +269,6 @@ class WhatsAppOrderService:
                     delivery_payload['duration_minutes'] = addr_info['duration_minutes']
                     delivery_payload['estimated_minutes'] = addr_info['duration_minutes']
 
-            _trusted_fee = (
-                Decimal(str(delivery_fee_override))
-                if delivery_fee_override is not None
-                else None
-            )
             order = CheckoutService.create_order(
                 cart=cart,
                 customer_data={
@@ -283,7 +278,7 @@ class WhatsAppOrderService:
                 },
                 delivery_data=delivery_payload,
                 notes=customer_notes,
-                trusted_delivery_fee=_trusted_fee,
+                trusted_delivery_fee=None,
             )
 
             if payment_method == 'pix':

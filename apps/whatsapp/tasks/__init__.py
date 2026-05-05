@@ -159,15 +159,17 @@ def process_message_with_agent(self, message_id: str):
             order_created = None
             whatsapp_response = {}
         
-        # Always mark as processed, even if there was an error
-        try:
-            message_repo.mark_as_processed_by_agent(message)
-        except Exception as mark_error:
-            logger.warning(f"Failed to mark message as processed: {str(mark_error)}")
-        
         # Send response if we have one
         if response_text:
             try:
+                message.refresh_from_db(fields=['processed_by_agent'])
+                if message.processed_by_agent:
+                    logger.info("Agent response suppressed; message already claimed: %s", message_id)
+                    return
+                try:
+                    message_repo.mark_as_processed_by_agent(message)
+                except Exception as mark_error:
+                    logger.warning(f"Failed to mark message as processed: {str(mark_error)}")
                 send_agent_response.delay(
                     str(account.id),
                     message.from_number,
@@ -216,11 +218,38 @@ def send_agent_response(
 ):
     """Send an automated WhatsApp response and persist its origin metadata."""
     from ..services import MessageService
+    from ..models import Message
     
     try:
         message_service = MessageService()
         # Ensure phone number has + prefix for E.164 format
         formatted_to = to if to.startswith('+') else '+' + to
+
+        if reply_to:
+            response_lock = f"whatsapp:auto_response_sent:{account_id}:{reply_to}"
+            if not acquire_lock(response_lock, timeout=900):
+                logger.warning(
+                    "Automated response suppressed for inbound %s via %s: already claimed",
+                    reply_to,
+                    response_source,
+                )
+                return
+
+            existing = Message.objects.filter(
+                account_id=account_id,
+                direction=Message.MessageDirection.OUTBOUND,
+                context_message_id=reply_to,
+            ).exclude(
+                status=Message.MessageStatus.FAILED,
+            ).first()
+            if existing:
+                logger.warning(
+                    "Automated response suppressed for inbound %s via %s: outbound %s already exists",
+                    reply_to,
+                    response_source,
+                    existing.id,
+                )
+                return
 
         whatsapp_response = whatsapp_response or {}
         response_type = whatsapp_response.get('type')

@@ -8,7 +8,7 @@ from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store
-from apps.stores.services import checkout_service
+from apps.stores.services.delivery_quote_service import delivery_quote_service
 from apps.stores.services.geo import geo_service
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ class StoreRouteView(APIView):
                     customer_lat=float(dest_lat),
                     customer_lng=float(dest_lng),
                 )
-                delivery_quote = checkout_service.normalize_delivery_quote(delivery_info, route=result)
+                delivery_quote = delivery_quote_service.normalize(delivery_info, route=result)
                 return Response({
                     'store': {
                         'name': store.name,

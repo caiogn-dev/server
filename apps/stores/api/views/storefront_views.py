@@ -40,6 +40,7 @@ from apps.stores.models import (
     StoreWishlist
 )
 from apps.stores.services import cart_service, checkout_service
+from apps.stores.services.delivery_quote_service import delivery_quote_service
 from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
 from ..serializers import (
@@ -735,22 +736,21 @@ class StoreDeliveryFeeView(APIView):
         zip_code = request.data.get('zip_code') or request.query_params.get('zip_code')
         distance_km = request.data.get('distance_km') or request.query_params.get('distance_km')
 
-        if distance_km is not None:
-            try:
-                delivery_info = checkout_service.calculate_delivery_fee(
-                    store,
-                    distance_km=Decimal(str(distance_km)),
-                    zip_code=zip_code,
-                )
-                return Response(checkout_service.normalize_delivery_quote(delivery_info))
-            except Exception as e:
-                logger.error(f"Delivery fee calculation error: {e}")
-                return Response(
-                    {'error': str(e)},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
         if not (lat and lng) and not address and not zip_code:
+            if distance_km is not None:
+                try:
+                    delivery_info = delivery_quote_service.calculate_for_distance(
+                        store,
+                        distance_km=Decimal(str(distance_km)),
+                        zip_code=zip_code,
+                    )
+                    return Response(delivery_quote_service.normalize(delivery_info))
+                except Exception as e:
+                    logger.error(f"Delivery fee calculation error: {e}")
+                    return Response(
+                        {'error': str(e)},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
             return Response(
                 {'error': 'Either lat/lng, address, or zip_code is required'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -770,10 +770,18 @@ class StoreDeliveryFeeView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            delivery_info = geo_service.calculate_delivery_fee(
-                store, float(lat), float(lng)
-            )
-            return Response(checkout_service.normalize_delivery_quote(delivery_info))
+            delivery_payload = {
+                'method': 'delivery',
+                'distance_km': distance_km,
+                'zip_code': zip_code,
+                'address': {
+                    'lat': lat,
+                    'lng': lng,
+                    'raw_address': address or zip_code or '',
+                },
+            }
+            delivery_info = delivery_quote_service.calculate_for_payload(store, delivery_payload)
+            return Response(delivery_quote_service.normalize(delivery_info))
         except Exception as e:
             logger.error(f"Delivery fee calculation error: {e}")
             return Response(

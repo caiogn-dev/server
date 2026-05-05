@@ -98,6 +98,36 @@ class DynamicFeeCalculationTest(TestCase):
         # default_delivery_fee = 8.00, distance=1 <= free_km(3) → base fee
         self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('8.00'))
 
+    @patch('apps.stores.services.geo.service.geo_service.calculate_delivery_fee')
+    def test_checkout_payload_recalculates_from_address_before_using_browser_distance(self, calculate_delivery_fee):
+        calculate_delivery_fee.return_value = {
+            'fee': 10.82,
+            'delivery_fee': 10.82,
+            'distance_km': 5.82,
+            'duration_minutes': 9.8,
+            'is_within_area': True,
+            'zone': None,
+            'message': 'Taxa: R$ 10.82 (5.8 km)',
+        }
+
+        result = CheckoutService.calculate_delivery_fee_for_payload(self.store, {
+            'method': 'delivery',
+            'distance_km': 4.86,
+            'address': {
+                'street': 'Qd 203 Sul, Av LO 5',
+                'number': 'S/n',
+                'neighborhood': 'Plano Diretor Sul',
+                'city': 'Palmas',
+                'state': 'TO',
+                'raw_address': 'Qd 203 Sul, Av LO 5, casa Rosa liga feminina, Palmas, TO',
+            },
+        })
+
+        self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('10.82'))
+        self.assertEqual(Decimal(str(result['distance_km'])).quantize(Decimal('0.01')), Decimal('5.82'))
+        calculate_delivery_fee.assert_called_once()
+        self.assertIn('destination_address', calculate_delivery_fee.call_args.kwargs)
+
 
 class DynamicDeliveryAreaPolicyTest(TestCase):
     def setUp(self):

@@ -17,6 +17,7 @@ from apps.whatsapp.services import create_order_from_whatsapp
 from apps.automation.models import AutoMessage
 from apps.stores.models import StoreProduct
 from apps.stores.models.order import StoreOrder as Order
+from apps.stores.services.delivery_quote_service import delivery_quote_service
 
 logger = logging.getLogger(__name__)
 
@@ -448,30 +449,22 @@ class IntentHandler:
         address_components: dict = None,
     ) -> 'HandlerResult':
         """Calcula taxa, salva na sessão e mostra resumo do pedido com campo de observações."""
-        fee_result = geo_svc.calculate_delivery_fee(
-            self.store,
-            lat,
-            lng,
-            customer_address_text=formatted_address,
+        fee_result = delivery_quote_service.normalize(
+            delivery_quote_service.calculate_for_payload(
+                self.store,
+                {
+                    'method': 'delivery',
+                    'address': {
+                        'raw_address': formatted_address,
+                        'lat': lat,
+                        'lng': lng,
+                        **(address_components or {}),
+                    },
+                },
+            )
         )
 
-        fixed_zone_from_text = self._match_fixed_delivery_zone_from_text(formatted_address)
-        if fixed_zone_from_text:
-            fixed_fee = float(fixed_zone_from_text.get('fee', self.store.default_delivery_fee or 0))
-            fee_result = {
-                **fee_result,
-                'fee': fixed_fee,
-                'is_within_area': True,
-                'zone': {
-                    'id': None,
-                    'name': fixed_zone_from_text.get('name') or 'Taxa fixa',
-                    'min_distance': None,
-                    'max_distance': None,
-                },
-                'message': f"Entrega com taxa fixa para a região: {fixed_zone_from_text.get('name', 'especial')}",
-            }
-
-        if not fee_result.get('is_within_area', True):
+        if not fee_result.get('is_valid', fee_result.get('is_within_area', True)):
             return HandlerResult.text(
                 "😔 Infelizmente seu endereço está fora da nossa área de entrega.\n\n"
                 "Você pode retirar o pedido em nossa loja! Digite *retirada* para continuar."

@@ -218,6 +218,29 @@ class GoogleMapsProvider:
             return None
         return self._parse_geocode_result(best_result)
 
+    def geocode_place_id(self, place_id: str) -> Optional[Dict]:
+        if not self.api_key or not place_id:
+            return None
+
+        response = requests.get(
+            GOOGLE_GEOCODE_URL,
+            params={
+                'place_id': place_id,
+                'key': self.api_key,
+                'language': 'pt-BR',
+                'region': 'br',
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+        if payload.get('status') != 'OK' or not payload.get('results'):
+            logger.warning("Google place geocode returned %s for place_id=%s", payload.get('status'), place_id)
+            return None
+
+        return self._parse_geocode_result(payload['results'][0])
+
     def reverse_geocode(self, lat: float, lng: float) -> Optional[Dict]:
         if not self.api_key:
             return None
@@ -327,6 +350,7 @@ class GoogleMapsProvider:
         if center:
             params['location'] = f'{center[0]},{center[1]}'
             params['radius'] = 30000
+            params['strictbounds'] = 'true'
 
         response = requests.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=params, timeout=10)
         response.raise_for_status()
@@ -341,17 +365,29 @@ class GoogleMapsProvider:
         for prediction in payload.get('predictions', [])[:limit]:
             formatting = prediction.get('structured_formatting', {})
             display_name = prediction.get('description', '')
+            place_id = prediction.get('place_id')
+            place = self.geocode_place_id(place_id) if place_id else None
+            components = (place or {}).get('address_components') or {}
+            lat = (place or {}).get('lat')
+            lng = (place or {}).get('lng')
             suggestions.append({
                 'display_name': display_name,
                 'title': prediction.get('description', ''),
                 'subtitle': formatting.get('secondary_text', ''),
                 'main_text': formatting.get('main_text', ''),
                 'secondary_text': formatting.get('secondary_text', ''),
-                'lat': None,
-                'lng': None,
-                'latitude': None,
-                'longitude': None,
-                'place_id': prediction.get('place_id'),
+                'lat': lat,
+                'lng': lng,
+                'latitude': lat,
+                'longitude': lng,
+                'formatted_address': (place or {}).get('formatted_address') or display_name,
+                'street': components.get('street', '') or formatting.get('main_text', ''),
+                'number': components.get('number', ''),
+                'neighborhood': components.get('neighborhood', ''),
+                'city': components.get('city', ''),
+                'state': components.get('state_code') or components.get('state', ''),
+                'zip_code': components.get('zip_code', ''),
+                'place_id': place_id,
             })
         if suggestions:
             return suggestions

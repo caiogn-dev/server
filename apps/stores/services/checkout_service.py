@@ -19,8 +19,9 @@ from apps.core.services.customer_identity import CustomerIdentityService
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem, StoreOrderComboItem,
     StoreProduct, StoreProductVariant, StoreIntegration,
-    StoreDeliveryZone, StoreCoupon
+    StoreCoupon
 )
+from apps.stores.services.delivery_quote_service import DeliveryQuoteService
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
@@ -241,43 +242,7 @@ class CheckoutService:
         Uses dynamic distance-based calculation for consistent pricing.
         Configured zones are only used if they have proper min_km/max_km ranges.
         """
-        if distance_km is not None:
-            logger.info(f"Calculating delivery fee for distance: {distance_km} km")
-            
-            # Check for properly configured distance zones with explicit ranges
-            zones = StoreDeliveryZone.objects.filter(
-                store=store,
-                is_active=True,
-                zone_type='custom_distance',
-                min_km__isnull=False,
-                max_km__isnull=False
-            ).order_by('min_km')
-            
-            # Only use zones that have explicit min/max km configured
-            for zone in zones:
-                if zone.min_km <= distance_km < zone.max_km:
-                    fee = zone.delivery_fee
-                    if zone.fee_per_km:
-                        fee += zone.fee_per_km * distance_km
-                    logger.info(f"Using configured zone '{zone.name}': R${fee}")
-                    return {
-                        'fee': float(fee),
-                        'delivery_fee': float(fee),
-                        'is_valid': True,
-                        'available': True,
-                        'zone_id': str(zone.id),
-                        'zone_name': zone.name,
-                        'estimated_minutes': zone.estimated_minutes,
-                        'estimated_days': zone.estimated_days,
-                        'distance_km': float(distance_km),
-                    }
-            
-            # No matching zone - use dynamic calculation
-            logger.info(f"No matching zone found, using dynamic calculation")
-            return CheckoutService._calculate_dynamic_fee(store, distance_km)
-        
-        # No distance provided - return base fee
-        return CheckoutService._calculate_dynamic_fee(store, None)
+        return DeliveryQuoteService.calculate_for_distance(store, distance_km=distance_km, zip_code=zip_code)
     
     @staticmethod
     def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
@@ -296,129 +261,21 @@ class CheckoutService:
           delivery_max_km        (default 16.0 — acima disso retorna fee=None)
           delivery_max_fee       (optional legacy cap; when present, caps fee instead of out-of-range)
         """
-        metadata = store.metadata or {}
-        base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or '9.00')))
-        fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', '1.00')))
-        flat_km = Decimal(str(metadata.get('delivery_flat_km') or metadata.get('delivery_free_km') or '4.0'))
-        max_km_raw = metadata.get('delivery_max_km') or metadata.get('max_delivery_distance_km')
-        max_km = Decimal(str(max_km_raw)) if max_km_raw is not None else Decimal('16.0')
-        max_fee_raw = metadata.get('delivery_max_fee')
-        max_fee = Decimal(str(max_fee_raw)) if max_fee_raw not in (None, '') else None
-
-        if distance_km is None:
-            return {
-                'fee': float(base_fee),
-                'delivery_fee': float(base_fee),
-                'is_valid': True,
-                'available': True,
-                'zone_name': 'Padrão',
-                'estimated_minutes': 30,
-                'estimated_days': 0,
-                'distance_km': None,
-                'calculation': 'dynamic',
-            }
-
-        distance = Decimal(str(distance_km))
-
-        # Acima do limite máximo → a combinar
-        if max_fee is None and distance > max_km:
-            return {
-                'fee': None,
-                'delivery_fee': None,
-                'is_valid': False,
-                'available': False,
-                'zone_name': 'Fora da área',
-                'estimated_minutes': None,
-                'estimated_days': 0,
-                'distance_km': float(distance),
-                'calculation': 'out_of_range',
-                'reason': 'out_of_range',
-                'message': 'Distância acima de 16 km — entrar em contato para combinar frete',
-            }
-
-        if distance <= flat_km:
-            fee = base_fee
-            zone_name = 'Próximo'
-        else:
-            extra_km = distance - flat_km
-            fee = base_fee + (extra_km * fee_per_km)
-            if distance <= 8:
-                zone_name = 'Padrão'
-            elif distance <= 12:
-                zone_name = 'Distante'
-            else:
-                zone_name = 'Remoto'
-
-        if max_fee is not None:
-            fee = min(fee, max_fee)
-
-        fee = fee.quantize(Decimal('0.01'))
-        estimated_minutes = int(15 + (float(distance) * 3))
-
-        return {
-            'fee': float(fee),
-            'delivery_fee': float(fee),
-            'is_valid': True,
-            'available': True,
-            'zone_name': zone_name,
-            'estimated_minutes': estimated_minutes,
-            'estimated_days': 0,
-            'distance_km': float(distance),
-            'calculation': 'dynamic',
-        }
+        return DeliveryQuoteService.calculate_dynamic_fee(store, distance_km)
 
     @staticmethod
     def normalize_delivery_quote(info: dict, route: dict = None) -> dict:
         """Return a stable delivery quote while preserving legacy response keys."""
-        payload = dict(info or {})
-        route_payload = dict(route or {})
+        return DeliveryQuoteService.normalize(info, route)
 
-        def json_safe(value):
-            if isinstance(value, Decimal):
-                return float(value)
-            return value
+    @staticmethod
+    def calculate_delivery_fee_for_payload(store: Store, delivery_payload: dict) -> dict:
+        """Resolve a delivery fee from distance, coordinates, or address text.
 
-        fee = json_safe(payload.get('fee', payload.get('delivery_fee')))
-        is_valid = payload.get('is_valid')
-        if is_valid is None:
-            is_valid = payload.get('available')
-        if is_valid is None:
-            is_valid = payload.get('is_within_area')
-        if is_valid is None:
-            is_valid = fee is not None
-
-        zone = payload.get('zone') if isinstance(payload.get('zone'), dict) else {}
-        zone_name = (
-            payload.get('zone_name')
-            or payload.get('delivery_zone')
-            or zone.get('name')
-        )
-        distance_km = json_safe(payload.get('distance_km', route_payload.get('distance_km')))
-        duration_minutes = json_safe(payload.get('duration_minutes', route_payload.get('duration_minutes')))
-        estimated_minutes = json_safe(payload.get('estimated_minutes') or duration_minutes)
-        reason = payload.get('reason') or (None if is_valid else payload.get('calculation') or 'unavailable')
-
-        stable = {
-            'is_valid': bool(is_valid),
-            'valid': bool(is_valid),
-            'available': bool(is_valid),
-            'fee': fee,
-            'delivery_fee': fee,
-            'distance_km': distance_km,
-            'duration_minutes': duration_minutes,
-            'estimated_minutes': estimated_minutes,
-            'zone_name': zone_name,
-            'delivery_zone': zone_name,
-            'zone': zone or ({'name': zone_name} if zone_name else None),
-            'message': payload.get('message') or ('Entrega disponível' if is_valid else 'Entrega indisponível'),
-            'reason': reason,
-            'calculation': payload.get('calculation'),
-            'polyline': payload.get('polyline') or route_payload.get('polyline'),
-            'provider': payload.get('provider') or route_payload.get('provider'),
-            'rain_surcharge_applied': bool(payload.get('rain_surcharge_applied', False)),
-        }
-        payload.update({k: v for k, v in stable.items() if v is not None})
-        return payload
+        Checkout must not silently fall back to the base fee when the storefront
+        loses the pre-calculated distance. That undercharges longer routes.
+        """
+        return DeliveryQuoteService.calculate_for_payload(store, delivery_payload)
 
     @staticmethod
     def normalize_custom_salad_payload(customizations: dict, combo_name: str, unit_price=None) -> dict:
@@ -666,12 +523,9 @@ class CheckoutService:
                     'calculation': 'pre_calculated',
                 }
             else:
-                distance = delivery_payload.get('distance_km')
-                zip_code = delivery_payload.get('zip_code')
-                delivery_info = CheckoutService.calculate_delivery_fee(
+                delivery_info = CheckoutService.calculate_delivery_fee_for_payload(
                     store,
-                    distance_km=Decimal(str(distance)) if distance else None,
-                    zip_code=zip_code
+                    delivery_payload,
                 )
             delivery_info = CheckoutService.normalize_delivery_quote(delivery_info)
         
