@@ -4,6 +4,7 @@ Product management API views.
 import uuid as uuid_module
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.db.models import Q
 
@@ -19,6 +20,12 @@ from ..serializers import (
     StoreComboSerializer, StoreProductTypeSerializer
 )
 from .base import IsStoreOwnerOrStaff, filter_by_store
+
+
+class StoreCatalogPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 500
 
 
 class StoreCategoryViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
@@ -41,6 +48,7 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store products."""
 
     queryset = StoreProduct.objects.all()
+    pagination_class = StoreCatalogPagination
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
 
