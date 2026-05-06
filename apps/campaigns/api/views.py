@@ -21,6 +21,7 @@ from django.core.files.storage import default_storage
 from ..models import Campaign, CampaignRecipient, ContactList
 from apps.core.utils import build_absolute_media_url
 from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
+from apps.whatsapp.models import WhatsAppAccount
 from ..services import CampaignService
 from .serializers import (
     CampaignSerializer,

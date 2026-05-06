@@ -426,15 +426,26 @@ class CampaignService:
         variables: Dict[str, Any],
     ) -> List[Dict[str, Any]]:
         """Build template components with personalization."""
-        components = content.get('components', [])
-        
-        for component in components:
-            if 'parameters' in component:
-                for param in component['parameters']:
-                    if param.get('type') == 'text' and 'variable' in param:
-                        var_name = param['variable']
-                        param['text'] = variables.get(var_name, param.get('text', ''))
-        
+        components = []
+
+        for component in content.get('components', []):
+            component_copy = dict(component)
+            parameters = []
+
+            for param in component.get('parameters', []):
+                param_copy = dict(param)
+                variable_name = param_copy.pop('variable', None) or param_copy.get('parameter_name')
+
+                if param_copy.get('type') == 'text' and variable_name:
+                    param_copy['text'] = str(variables.get(variable_name, param_copy.get('text', '')))
+
+                parameters.append(param_copy)
+
+            if parameters:
+                component_copy['parameters'] = parameters
+
+            components.append(component_copy)
+
         return components
     
     def _personalize_message(
