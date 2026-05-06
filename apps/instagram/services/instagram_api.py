@@ -168,7 +168,7 @@ class InstagramAPI:
         fields = [
             'id', 'username', 'name', 'biography', 'website',
             'followers_count', 'follows_count', 'media_count',
-            'profile_picture_url', 'verified'
+            'profile_picture_url'
         ]
         
         return self.get(self.account.instagram_business_id, {'fields': ','.join(fields)})
@@ -184,7 +184,8 @@ class InstagramAPI:
             self.account.follows_count = info.get('follows_count', 0)
             self.account.media_count = info.get('media_count', 0)
             self.account.profile_picture_url = info.get('profile_picture_url', '')
-            self.account.is_verified = info.get('verified', False)
+            if 'verified' in info:
+                self.account.is_verified = info.get('verified', False)
             self.account.last_sync_at = datetime.now()
             self.account.save()
             return True

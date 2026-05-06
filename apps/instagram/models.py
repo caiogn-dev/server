@@ -40,9 +40,9 @@ class InstagramAccount(models.Model):
     followers_count = models.IntegerField(default=0)
     follows_count = models.IntegerField(default=0)
     media_count = models.IntegerField(default=0)
-    profile_picture_url = models.URLField(null=True, blank=True)
+    profile_picture_url = models.URLField(max_length=1000, null=True, blank=True)
     biography = models.TextField(blank=True)
-    website = models.URLField(null=True, blank=True)
+    website = models.URLField(max_length=500, null=True, blank=True)
     
     # IA
     default_agent = models.ForeignKey(

@@ -2,7 +2,7 @@
 Instagram Webhook Service — processa eventos recebidos via webhook da Meta.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timezone as dt_timezone
 from typing import Dict, Any, List
 
 from django.utils import timezone
@@ -110,22 +110,43 @@ class InstagramWebhookService:
             message_type = 'STORY_REPLY'
             content = message.get('text', '')
 
-        sent_at = datetime.fromtimestamp(timestamp / 1000) if timestamp else timezone.now()
-
-        msg = InstagramMessage.objects.create(
-            conversation=conv,
-            instagram_message_id=message.get('mid', ''),
-            message_type=message_type,
-            content=content,
-            media_url=media_url,
-            is_from_business=False,
-            is_read=False,
-            sent_at=sent_at,
+        sent_at = (
+            datetime.fromtimestamp(timestamp / 1000, tz=dt_timezone.utc)
+            if timestamp
+            else timezone.now()
         )
 
-        conv.unread_count += 1
-        conv.last_message_at = sent_at
-        conv.save(update_fields=['unread_count', 'last_message_at'])
+        mid = message.get('mid') or ''
+        if mid:
+            msg, created = InstagramMessage.objects.get_or_create(
+                instagram_message_id=mid,
+                defaults={
+                    'conversation': conv,
+                    'message_type': message_type,
+                    'content': content,
+                    'media_url': media_url,
+                    'is_from_business': False,
+                    'is_read': False,
+                    'sent_at': sent_at,
+                },
+            )
+        else:
+            msg = InstagramMessage.objects.create(
+                conversation=conv,
+                instagram_message_id='',
+                message_type=message_type,
+                content=content,
+                media_url=media_url,
+                is_from_business=False,
+                is_read=False,
+                sent_at=sent_at,
+            )
+            created = True
+
+        if created:
+            conv.unread_count += 1
+            conv.last_message_at = sent_at
+            conv.save(update_fields=['unread_count', 'last_message_at'])
 
         # Real-time via channel layer
         self._push_ws_event(

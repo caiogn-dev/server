@@ -239,7 +239,8 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             account.follows_count = info.get("follows_count", 0)
             account.media_count = info.get("media_count", 0)
             account.profile_picture_url = info.get("profile_picture_url", "")
-            account.is_verified = info.get("verified", False)
+            if "verified" in info:
+                account.is_verified = info.get("verified", False)
             from django.utils import timezone
             account.last_sync_at = timezone.now()
             account.save()
@@ -588,7 +589,11 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
     permission_classes = []
 
     def create(self, request):
-        return Response({"status": "received"})
+        from ..services.instagram_webhook_service import InstagramWebhookService
+
+        payload = request.data
+        result = InstagramWebhookService().process_webhook(payload)
+        return Response({"status": "received", **result})
 
     @action(detail=False, methods=["get"])
     def verify(self, request):
