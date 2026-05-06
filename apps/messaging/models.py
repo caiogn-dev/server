@@ -44,18 +44,31 @@ class MessengerAccount(models.Model):
     app_id = models.CharField(max_length=255, null=True, blank=True)
     app_secret = models.CharField(max_length=255, null=True, blank=True)
     
+    # IA
+    default_agent = models.ForeignKey(
+        'agents.Agent',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='messenger_accounts',
+        help_text='Agente IA padrão para resposta automática em conversas do Messenger',
+    )
+    auto_response_enabled = models.BooleanField(
+        default=False,
+        help_text='Habilitar resposta automática de IA via Messenger',
+    )
+
     # Status
     is_active = models.BooleanField(default=True)
     webhook_verified = models.BooleanField(default=False)
-    
+
     # Metadados
     category = models.CharField(max_length=255, blank=True)
     followers_count = models.IntegerField(default=0)
-    
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
-    
+
     class Meta:
         db_table = 'messenger_accounts'
         ordering = ['-created_at']

@@ -232,7 +232,7 @@ class WebhookDispatcherView(View):
                 return False
             
             # Calculate expected signature
-            if provider == 'whatsapp' or provider == 'instagram':
+            if provider in ('whatsapp', 'instagram', 'messenger'):
                 # Meta signature format: sha256=<hmac>
                 expected = hmac.new(
                     endpoint.secret.encode(),

@@ -21,9 +21,17 @@ class MessengerHandler(BaseHandler):
 
     def handle(self, event: WebhookEvent, payload: dict, headers: dict) -> Dict[str, Any]:
         from apps.messaging.services.messenger_webhook_service import MessengerWebhookService
+        from apps.messaging.tasks import process_messenger_dm
 
         service = MessengerWebhookService()
         result = service.process_webhook(payload)
+
+        for r in result.get('results', []):
+            if r.get('type') == 'message_received' and r.get('message_id'):
+                try:
+                    process_messenger_dm.delay(r['message_id'])
+                except Exception as e:
+                    logger.warning(f"Celery dispatch failed for Messenger DM {r['message_id']}: {e}")
 
         logger.info(
             f"Messenger webhook processed: {result.get('processed', 0)} events"

@@ -21,9 +21,17 @@ class InstagramHandler(BaseHandler):
 
     def handle(self, event: WebhookEvent, payload: dict, headers: dict) -> Dict[str, Any]:
         from apps.instagram.services.instagram_webhook_service import InstagramWebhookService
+        from apps.instagram.tasks import process_instagram_dm
 
         service = InstagramWebhookService()
         result = service.process_webhook(payload)
+
+        for r in result.get('results', []):
+            if r.get('type') == 'dm_received' and r.get('message_id'):
+                try:
+                    process_instagram_dm.delay(r['message_id'])
+                except Exception as e:
+                    logger.warning(f"Celery dispatch failed for Instagram DM {r['message_id']}: {e}")
 
         logger.info(
             f"Instagram webhook processed: {result.get('processed', 0)} events"

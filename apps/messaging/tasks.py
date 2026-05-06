@@ -9,6 +9,60 @@ from .services import MessengerService, MessengerPlatformService, MessengerBroad
 logger = logging.getLogger(__name__)
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def process_messenger_dm(self, message_id: str):
+    """Processa mensagem recebida do Messenger e gera resposta via agente IA, se configurado."""
+    from apps.agents.services import AgentService
+    from .models import MessengerMessage, MessengerAccount
+    from .services import MessengerService
+
+    try:
+        msg = MessengerMessage.objects.select_related('conversation__account').get(id=message_id)
+    except MessengerMessage.DoesNotExist:
+        logger.warning(f"process_messenger_dm: message {message_id} not found")
+        return
+
+    if msg.is_from_page:
+        return
+
+    account = msg.conversation.account
+    if not account.is_active or not account.auto_response_enabled:
+        return
+
+    agent = account.default_agent
+    if not agent:
+        logger.info(f"process_messenger_dm: no agent configured for account {account.page_name}")
+        return
+
+    conversation_id = str(msg.conversation.id)
+    psid = msg.conversation.psid
+
+    try:
+        result = AgentService.get_agent_response(
+            agent_id=str(agent.id),
+            message=msg.content or '',
+            session_id=conversation_id,
+            phone_number=psid,
+            conversation_id=conversation_id,
+        )
+        response_text = result.get('response', '')
+    except Exception as e:
+        logger.error(f"process_messenger_dm: AgentService error for message {message_id}: {e}", exc_info=True)
+        response_text = 'Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente?'
+
+    if not response_text:
+        logger.warning(f"process_messenger_dm: no response text for message {message_id}")
+        return
+
+    try:
+        messenger = MessengerService(account)
+        messenger.send_message(psid, {'text': response_text})
+        logger.info(f"process_messenger_dm: response sent for message {message_id}")
+    except Exception as e:
+        logger.error(f"process_messenger_dm: send error for message {message_id}: {e}", exc_info=True)
+        raise self.retry(exc=e)
+
+
 @shared_task
 def send_scheduled_broadcasts():
     """Envia broadcasts agendados"""
