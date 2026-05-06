@@ -6,8 +6,9 @@ from typing import Optional, Dict, Any, List
 from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
 from django.utils import timezone
+from rest_framework.exceptions import ValidationError
 
-from apps.whatsapp.models import WhatsAppAccount
+from apps.whatsapp.models import WhatsAppAccount, MessageTemplate
 from apps.whatsapp.services import MessageService
 # Import unified messaging service for integration
 from apps.automation.services import UnifiedMessagingService
@@ -37,6 +38,13 @@ class CampaignService:
     ) -> Campaign:
         """Create a new campaign."""
         account = WhatsAppAccount.objects.get(id=account_id)
+
+        if template_id:
+            template = MessageTemplate.objects.get(id=template_id)
+            if template.account_id != account.id:
+                raise ValidationError("Template does not belong to the selected WhatsApp account")
+            if template.category == MessageTemplate.TemplateCategory.AUTHENTICATION:
+                raise ValidationError("Authentication templates cannot be used for marketing campaigns")
         
         campaign = Campaign.objects.create(
             account=account,

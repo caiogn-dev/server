@@ -2,6 +2,7 @@
 WhatsApp Business API Service.
 """
 import logging
+import copy
 import requests
 from typing import Dict, Any, Optional, List
 from django.conf import settings
@@ -98,6 +99,22 @@ class WhatsAppAPIService:
                 code='request_failed'
             )
 
+    def _clean_template_components(self, components: List[Dict]) -> List[Dict]:
+        """Remove dashboard-only metadata before sending components to Meta."""
+        cleaned = copy.deepcopy(components)
+
+        def strip_internal_keys(value):
+            if isinstance(value, dict):
+                value.pop('variable', None)
+                for nested in value.values():
+                    strip_internal_keys(nested)
+            elif isinstance(value, list):
+                for item in value:
+                    strip_internal_keys(item)
+
+        strip_internal_keys(cleaned)
+        return cleaned
+
     def send_text_message(
         self,
         to: str,
@@ -171,7 +188,7 @@ class WhatsAppAPIService:
         }
         
         if components:
-            payload['template']['components'] = components
+            payload['template']['components'] = self._clean_template_components(components)
         
         return self._make_request(
             'POST',
