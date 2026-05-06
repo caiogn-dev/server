@@ -603,7 +603,6 @@ class StoreCheckoutView(APIView):
             'method': delivery_method,
             'address': request.data.get('delivery_address', {}),
             'notes': request.data.get('delivery_notes', ''),
-            'distance_km': request.data.get('delivery_distance_km'),
             'zip_code': request.data.get('delivery_zip_code'),
         }
         
