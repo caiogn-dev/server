@@ -1,6 +1,7 @@
 """
 Base WebSocket consumer with common functionality, throttling, and caching.
 """
+import asyncio
 import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from channels.db import database_sync_to_async
@@ -20,6 +21,74 @@ from .consumer_cache import (
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+class FirstMessageAuthMixin:
+    """
+    First-message WebSocket authentication — no tokens in URLs.
+
+    Protocol:
+      1. Server accepts the connection immediately.
+      2. Client sends {"type": "auth", "token": "<drf-token>"} within AUTH_TIMEOUT seconds.
+      3. On success: _post_auth_connect() is called.
+      4. On failure or timeout: connection is closed with code 4001.
+
+    If the middleware already authenticated the user via Authorization header,
+    the handshake is skipped and _post_auth_connect() is called right away.
+
+    Subclasses implement:
+      _setup_params()      — extract URL kwargs before accept()
+      _post_auth_connect() — join groups, send welcome message
+      handle_message(content) — handle messages after auth
+    """
+    AUTH_TIMEOUT = 5
+
+    async def connect(self):
+        self._authenticated = False
+        self._auth_task = None
+        self.user = self.scope.get('user')
+
+        await self._setup_params()
+        await self.accept()
+
+        if self.user and getattr(self.user, 'is_authenticated', False):
+            self._authenticated = True
+            await self._post_auth_connect()
+            return
+
+        self._auth_task = asyncio.ensure_future(self._auth_timeout())
+
+    async def _auth_timeout(self):
+        await asyncio.sleep(self.AUTH_TIMEOUT)
+        if not self._authenticated:
+            logger.warning("WS auth timeout on %s", self.scope.get('path', ''))
+            await self.close(code=4001)
+
+    async def receive_json(self, content):
+        if not self._authenticated:
+            if content.get('type') == 'auth':
+                token = content.get('token', '')
+                user = await get_cached_user_async(token) if token else None
+                if user and getattr(user, 'is_authenticated', False):
+                    self._authenticated = True
+                    if self._auth_task:
+                        self._auth_task.cancel()
+                    self.user = user
+                    self.scope['user'] = user
+                    await self._post_auth_connect()
+                    return
+            await self.close(code=4001)
+            return
+        await self.handle_message(content)
+
+    async def _setup_params(self):
+        pass
+
+    async def _post_auth_connect(self):
+        pass
+
+    async def handle_message(self, content):
+        pass
 
 
 class ThrottledWebSocketConsumer(AsyncJsonWebsocketConsumer):

@@ -1,23 +1,21 @@
 """
 Instagram WebSocket consumers for real-time message updates.
 """
-import json
 import logging
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
-from rest_framework.authtoken.models import Token
-from apps.core.base_consumer import ThrottledWebSocketConsumer
+from apps.core.base_consumer import FirstMessageAuthMixin, ThrottledWebSocketConsumer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
-class InstagramConsumer(ThrottledWebSocketConsumer):
+class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
     """
     WebSocket consumer for Instagram DM real-time updates.
-    
+
     Clients connect to: ws/instagram/{account_id}/
-    
+
     Events sent to clients:
     - instagram_message_received: New inbound message
     - instagram_message_sent: Outbound message confirmation
@@ -26,82 +24,52 @@ class InstagramConsumer(ThrottledWebSocketConsumer):
     - instagram_story_mention: Story mention notification
     - instagram_story_reply: Story reply notification
     """
-    
-    # Throttling: Limit events per second
-    THROTTLE_RATE = 5  # Max 5 events per second
-    THROTTLE_WINDOW = 1.0  # 1 second window
-    
+
+    THROTTLE_RATE = 5
+    THROTTLE_WINDOW = 1.0
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.event_timestamps = []  # Track recent event times
+        self.event_timestamps = []
         self.throttled_count = 0
-    
+
     def _should_throttle(self) -> bool:
-        """Check if we should throttle based on recent event rate."""
         import time
         now = time.time()
-        
-        # Remove old timestamps outside window
-        self.event_timestamps = [
-            ts for ts in self.event_timestamps 
-            if now - ts < self.THROTTLE_WINDOW
-        ]
-        
-        # Check if we exceeded rate
+        self.event_timestamps = [ts for ts in self.event_timestamps if now - ts < self.THROTTLE_WINDOW]
         if len(self.event_timestamps) >= self.THROTTLE_RATE:
             self.throttled_count += 1
-            if self.throttled_count % 10 == 1:  # Log every 10th throttle
+            if self.throttled_count % 10 == 1:
                 logger.warning(
-                    f"Instagram WS throttling: {len(self.event_timestamps)} events in {self.THROTTLE_WINDOW}s",
-                    extra={'account_id': self.account_id}
+                    "Instagram WS throttling: %d events in %ss",
+                    len(self.event_timestamps), self.THROTTLE_WINDOW,
+                    extra={'account_id': self.account_id},
                 )
             return True
-        
-        # Add current timestamp
         self.event_timestamps.append(now)
         return False
-    
-    async def connect(self):
-        """Handle WebSocket connection."""
+
+    async def _setup_params(self):
         self.account_id = self.scope['url_route']['kwargs'].get('account_id')
-        self.user = None
         self.account_group = None
         self.conversation_groups = set()
-        
-        # Authenticate via token in query string
-        query_string = self.scope.get('query_string', b'').decode()
-        token = self._extract_token(query_string)
-        
-        if token:
-            self.user = await self.get_user_from_token(token)
-        
-        if not self.user:
-            logger.warning(f"Instagram WS: Unauthorized connection attempt for account {self.account_id}")
-            await self.close(code=4001)
-            return
-        
-        # Verify user has access to this account
+
+    async def _post_auth_connect(self):
         has_access = await self.verify_account_access(self.account_id)
         if not has_access:
-            logger.warning(f"Instagram WS: User {self.user.id} denied access to account {self.account_id}")
+            logger.warning("Instagram WS: User %s denied access to account %s", self.user.id, self.account_id)
             await self.close(code=4003)
             return
-        
-        # Join account-specific group
+
         self.account_group = f"instagram_{self.account_id}"
         await self.channel_layer.group_add(self.account_group, self.channel_name)
-        
-        # Also join user-specific group for cross-account notifications
         await self.channel_layer.group_add(f"user_{self.user.id}_instagram", self.channel_name)
-        
-        await self.accept()
-        
-        logger.info(f"Instagram WS: User {self.user.id} connected to account {self.account_id}")
-        
+
+        logger.info("Instagram WS: User %s connected to account %s", self.user.id, self.account_id)
         await self.send_json({
             'type': 'connection_established',
             'account_id': self.account_id,
-            'message': 'Connected to Instagram DM real-time service'
+            'message': 'Connected to Instagram DM real-time service',
         })
     
     async def disconnect(self, close_code):
@@ -118,8 +86,7 @@ class InstagramConsumer(ThrottledWebSocketConsumer):
         
         logger.info(f"Instagram WS: Disconnected from account {self.account_id}")
     
-    async def receive_json(self, content):
-        """Handle incoming WebSocket messages from client."""
+    async def handle_message(self, content):
         message_type = content.get('type')
         
         if message_type == 'ping':
@@ -247,22 +214,6 @@ class InstagramConsumer(ThrottledWebSocketConsumer):
             'type': 'conversation_updated',
             'conversation': event.get('conversation'),
         })
-    
-    # === Helper methods ===
-    
-    def _extract_token(self, query_string: str) -> str:
-        """Extract token from query string."""
-        params = dict(param.split('=') for param in query_string.split('&') if '=' in param)
-        return params.get('token', '')
-    
-    @database_sync_to_async
-    def get_user_from_token(self, token_key: str):
-        """Get user from authentication token."""
-        try:
-            token = Token.objects.select_related('user').get(key=token_key)
-            return token.user
-        except Token.DoesNotExist:
-            return None
     
     @database_sync_to_async
     def verify_account_access(self, account_id: str) -> bool:

@@ -40,12 +40,13 @@ class TokenAuthMiddleware(BaseMiddleware):
     """
     Custom middleware that authenticates WebSocket connections using token.
 
-    Token must be passed via Authorization header only:
+    Preferred token transport:
     - Authorization: Token xxx
     - Authorization: Bearer xxx
 
-    Query parameter tokens are intentionally rejected: they appear in server
-    logs, browser history, and proxy access logs.
+    Browser WebSocket clients cannot send arbitrary Authorization headers, so
+    `?token=` is also accepted for app-owned dashboard sockets. Never log the
+    token value.
     """
 
     async def __call__(self, scope, receive, send):
@@ -57,14 +58,6 @@ class TokenAuthMiddleware(BaseMiddleware):
         query_params = parse_qs(query_string)
         token_key = None
 
-        # Reject query param tokens — they leak into logs and browser history
-        if 'token' in query_params:
-            logger.warning(
-                f"WebSocket connection rejected: token passed via query param is not allowed. "
-                f"Use the Authorization header instead. path={path}"
-            )
-
-        # Accept tokens only from Authorization header
         headers = dict(scope.get('headers', []))
         auth_header = headers.get(b'authorization', b'').decode()
         if auth_header.startswith('Token '):
@@ -73,6 +66,9 @@ class TokenAuthMiddleware(BaseMiddleware):
         elif auth_header.startswith('Bearer '):
             token_key = auth_header[7:]
             logger.debug(f"WebSocket token found in Bearer header")
+        elif query_params.get('token'):
+            token_key = query_params['token'][0]
+            logger.debug("WebSocket token found in query parameter")
         
         # Authenticate user
         if token_key:
