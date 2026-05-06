@@ -5,7 +5,6 @@ import time
 import json
 import logging
 import hashlib
-from urllib.parse import parse_qs
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
@@ -38,24 +37,20 @@ def get_user_from_token(token_key):
 
 class TokenAuthMiddleware(BaseMiddleware):
     """
-    Custom middleware that authenticates WebSocket connections using token.
+    Authenticates WebSocket connections via Authorization header only.
 
-    Preferred token transport:
+    Accepted formats:
     - Authorization: Token xxx
     - Authorization: Bearer xxx
 
-    Browser WebSocket clients cannot send arbitrary Authorization headers, so
-    `?token=` is also accepted for app-owned dashboard sockets. Never log the
-    token value.
+    Tokens must never appear in URLs. Consumers that need auth without
+    an Authorization header use first-message auth (FirstMessageAuthMixin).
     """
 
     async def __call__(self, scope, receive, send):
-        # Log connection details for debugging
         path = scope.get('path', 'unknown')
         logger.info(f"WebSocket middleware processing: path={path}")
 
-        query_string = scope.get('query_string', b'').decode()
-        query_params = parse_qs(query_string)
         token_key = None
 
         headers = dict(scope.get('headers', []))
@@ -66,9 +61,6 @@ class TokenAuthMiddleware(BaseMiddleware):
         elif auth_header.startswith('Bearer '):
             token_key = auth_header[7:]
             logger.debug(f"WebSocket token found in Bearer header")
-        elif query_params.get('token'):
-            token_key = query_params['token'][0]
-            logger.debug("WebSocket token found in query parameter")
         
         # Authenticate user
         if token_key:
