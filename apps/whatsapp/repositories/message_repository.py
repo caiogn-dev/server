@@ -138,8 +138,14 @@ class MessageRepository:
         text_body: str,
         context_message_id: Optional[str] = '',
         since: Optional[datetime] = None,
+        conversation=None,
     ) -> Optional[Message]:
-        """Return a recent non-failed outbound text message with the same payload."""
+        """Return a recent non-failed outbound text message with the same payload.
+
+        When ``conversation`` is provided the match is scoped to that conversation,
+        preventing identical texts sent to the same recipient in *different*
+        conversations from being incorrectly suppressed.
+        """
         window_start = since or (timezone.now() - timedelta(seconds=5))
         queryset = Message.objects.filter(
             account=account,
@@ -150,8 +156,9 @@ class MessageRepository:
             created_at__gte=window_start,
         ).exclude(
             status=Message.MessageStatus.FAILED,
-        )
-        queryset = queryset.filter(context_message_id=context_message_id or '')
+        ).filter(context_message_id=context_message_id or '')
+        if conversation is not None:
+            queryset = queryset.filter(conversation=conversation)
         return queryset.order_by('-created_at').first()
 
     def get_unprocessed_inbound(self, limit: int = 100) -> QuerySet[Message]:

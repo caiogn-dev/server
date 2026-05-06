@@ -39,12 +39,21 @@ class MessageService:
         account = self._get_account(account_id)
         logger.info(f"[send_text_message] Account retrieved: {account.id}, phone_number_id={account.phone_number_id}")
 
+        # Resolve conversation before the dedup check so identical texts in
+        # different conversations are never suppressed.
+        conversation = None
+        try:
+            conversation = self._get_or_create_conversation(account, to)
+        except Exception:
+            pass
+
         duplicate = self.message_repo.find_recent_outbound_text_duplicate(
             account=account,
             to_number=to,
             text_body=text,
             context_message_id=reply_to or '',
             since=timezone.now() - timedelta(seconds=5),
+            conversation=conversation,
         )
         if duplicate:
             logger.warning(

@@ -278,7 +278,6 @@ class WhatsAppOrderService:
                 },
                 delivery_data=delivery_payload,
                 notes=customer_notes,
-                trusted_delivery_fee=None,
             )
 
             if payment_method == 'pix':

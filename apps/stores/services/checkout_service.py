@@ -6,7 +6,6 @@ import logging
 import re
 import uuid
 from decimal import Decimal
-from typing import Optional
 from urllib.parse import urlparse
 from django.db import models, transaction
 from django.db.models import F, Q
@@ -476,7 +475,6 @@ class CheckoutService:
         coupon_code: str = None,
         notes: str = '',
         use_loyalty_reward: bool = False,
-        trusted_delivery_fee: Optional[Decimal] = None,
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -508,25 +506,10 @@ class CheckoutService:
             'available': True,
         })
         if delivery_payload and delivery_payload.get('method') == 'delivery':
-            if trusted_delivery_fee is not None:
-                if trusted_delivery_fee < 0:
-                    raise ValueError("Taxa de entrega não pode ser negativa")
-                delivery_info = {
-                    'fee': trusted_delivery_fee,
-                    'delivery_fee': trusted_delivery_fee,
-                    'is_valid': True,
-                    'available': True,
-                    'zone_name': delivery_payload.get('zone_name') or 'Pre-calculada',
-                    'estimated_minutes': delivery_payload.get('estimated_minutes'),
-                    'distance_km': delivery_payload.get('distance_km'),
-                    'duration_minutes': delivery_payload.get('duration_minutes'),
-                    'calculation': 'pre_calculated',
-                }
-            else:
-                delivery_info = CheckoutService.calculate_delivery_fee_for_payload(
-                    store,
-                    delivery_payload,
-                )
+            delivery_info = CheckoutService.calculate_delivery_fee_for_payload(
+                store,
+                delivery_payload,
+            )
             delivery_info = CheckoutService.normalize_delivery_quote(delivery_info)
         
         if delivery_info.get('fee') is None:
@@ -700,6 +683,13 @@ class CheckoutService:
         cart.clear()
         cart.is_active = False
         cart.save()
+
+        from apps.stores.services.print_service import enqueue_order_print_job
+        transaction.on_commit(
+            lambda order_id=order.id: enqueue_order_print_job(
+                StoreOrder.objects.get(id=order_id)
+            )
+        )
         
         logger.info(f"Order {order.order_number} created for store {store.slug}")
         
