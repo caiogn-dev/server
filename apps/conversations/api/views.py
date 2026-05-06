@@ -6,6 +6,7 @@ from django.utils import timezone
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model
@@ -30,6 +31,22 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+class ConversationPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 200
+
+
+def _search_token_variants(token):
+    variants = {token}
+    lower = token.lower()
+    if lower == 'audio':
+        variants.add('áudio')
+    if lower == 'áudio':
+        variants.add('audio')
+    return variants
+
+
 def _accessible_conversations(user):
     queryset = Conversation.objects.select_related(
         'account', 'assigned_agent'
@@ -50,12 +67,27 @@ def _accessible_conversations(user):
 class ConversationViewSet(viewsets.ModelViewSet):
     """ViewSet for Conversation management."""
     serializer_class = ConversationSerializer
+    pagination_class = ConversationPagination
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['account', 'status', 'mode', 'assigned_agent']
 
     def get_queryset(self):
-        return _accessible_conversations(self.request.user)
+        queryset = _accessible_conversations(self.request.user)
+        search = (self.request.query_params.get('search') or '').strip()
+        if search:
+            for token in search.split():
+                token_query = Q()
+                for variant in _search_token_variants(token):
+                    token_query |= (
+                        Q(contact_name__icontains=variant) |
+                        Q(phone_number__icontains=variant) |
+                        Q(wa_id__icontains=variant) |
+                        Q(messages__text_body__icontains=variant)
+                    )
+                queryset = queryset.filter(token_query)
+            queryset = queryset.distinct()
+        return queryset
 
     @extend_schema(
         summary="List multichannel conversations",
