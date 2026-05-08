@@ -104,8 +104,10 @@ class WhatsAppWebhookView(APIView):
             
             # Validate signature using the raw body we captured earlier
             if not service.validate_signature(raw_body, signature):
-                logger.warning("Invalid webhook signature - skipping validation in dev mode")
-                # Continue anyway for debugging
+                if getattr(settings, 'WHATSAPP_APP_SECRET', ''):
+                    logger.error("Webhook rejected: invalid X-Hub-Signature-256")
+                    return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
+                logger.warning("Webhook signature check skipped: WHATSAPP_APP_SECRET not configured")
             
             # Convert headers to simple dict
             headers = {}
