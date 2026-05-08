@@ -242,10 +242,12 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        update_fields = ['payment_status', 'updated_at']
         order.payment_status = new_status
-        if new_status == 'paid':
+        if new_status == 'paid' and not order.paid_at:
             order.paid_at = timezone.now()
-        order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+            update_fields.append('paid_at')
+        order.save(update_fields=update_fields)
         
         return Response(StoreOrderSerializer(order).data)
     
@@ -278,8 +280,11 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
             )
         
         order.status = 'cancelled'
-        order.notes = f"{order.notes}\n\nCancellation reason: {reason}".strip()
-        order.save(update_fields=['status', 'notes', 'updated_at'])
+        order.cancelled_at = timezone.now()
+        if reason:
+            existing = order.internal_notes or ''
+            order.internal_notes = f"{existing}\n\nMotivo do cancelamento: {reason}".strip()
+        order.save(update_fields=['status', 'cancelled_at', 'internal_notes', 'updated_at'])
         
         # Restore stock if needed
         if order.items.exists():

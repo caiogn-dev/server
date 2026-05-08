@@ -150,7 +150,8 @@ class RequestLoggingMiddleware:
     def get_client_ip(self, request):
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
+            ips = [ip.strip() for ip in x_forwarded_for.split(',')]
+            return ips[-1]
         return request.META.get('REMOTE_ADDR', '')
 
 
@@ -209,9 +210,16 @@ class RateLimitMiddleware:
         return response
 
     def get_client_ip(self, request):
+        # Use the rightmost IP in X-Forwarded-For that was appended by the trusted
+        # proxy (Cloudflare/Nginx), not the leftmost which can be spoofed by clients.
+        # Django's USE_X_FORWARDED_HOST + SECURE_PROXY_SSL_HEADER are set in production,
+        # so REMOTE_ADDR is the connecting proxy IP; the real client IP is the last
+        # entry added by Cloudflare/Nginx.
         x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
         if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
+            # Cloudflare appends the real visitor IP as the last entry
+            ips = [ip.strip() for ip in x_forwarded_for.split(',')]
+            return ips[-1]
         return request.META.get('REMOTE_ADDR', '')
 
 
