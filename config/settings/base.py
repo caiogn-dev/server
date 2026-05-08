@@ -322,27 +322,6 @@ INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
 
-# ============================================================================
-# LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
-# ============================================================================
-# Kimi API (Kimi Coding API - Anthropic-style)
-KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
-KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
-
-# OpenAI (opcional)
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
-
-# Anthropic (opcional)
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
-
-# Ollama (local - opcional)
-OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
-OLLAMA_MODEL_NAME = os.environ.get('OLLAMA_MODEL_NAME', 'llama3.2')
-
 # Maps (HERE)
 HERE_API_KEY = os.environ.get('HERE_API_KEY', '').strip()
 
@@ -354,6 +333,8 @@ DASHBOARD_URL = os.environ.get('DASHBOARD_URL', 'https://painel.pastita.com.br')
 # Mercado Pago Integration
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 MERCADO_PAGO_PUBLIC_KEY = os.environ.get('MERCADO_PAGO_PUBLIC_KEY', '')
+MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
+MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'PASTITA')
 MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED = os.environ.get(
     'MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED',
     'True',
@@ -389,6 +370,10 @@ OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
 # Anthropic (optional fallback)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
+
+# Ollama (local - optional)
+OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
+OLLAMA_MODEL_NAME = os.environ.get('OLLAMA_MODEL_NAME', 'llama3.2')
 
 # Unified AI Configuration Helper
 def get_ai_config():
@@ -494,10 +479,6 @@ SPECTACULAR_SETTINGS = {
     'COMPONENT_SPLIT_REQUEST': True,
 }
 
-# Mercado Pago
-MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
-MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
-MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'PASTITA')
 BACKEND_URL = os.environ.get('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 ECOMMERCE_DEFAULT_ACCOUNT_ID = os.environ.get('ECOMMERCE_DEFAULT_ACCOUNT_ID', '').strip()
@@ -541,27 +522,3 @@ else:
 
 # ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
 WHITENOISE_MANIFEST_STRICT = False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
