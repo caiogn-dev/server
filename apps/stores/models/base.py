@@ -179,6 +179,9 @@ class Store(BaseModel):
         indexes = [
             models.Index(fields=['owner', 'status'], name='store_owner_status_idx'),
             models.Index(fields=['status', 'is_active'], name='store_status_active_idx'),
+            models.Index(fields=['status'], name='store_status_idx'),
+            models.Index(fields=['phone'], name='store_phone_idx'),
+            models.Index(fields=['whatsapp_number'], name='store_whatsapp_idx'),
         ]
 
     def __str__(self):

@@ -191,6 +191,13 @@ class StorePrintJob(BaseModel):
         blank=True,
         related_name='claimed_jobs',
     )
+    target_agent = models.ForeignKey(
+        'stores.StorePrintAgent',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_jobs',
+    )
     claimed_at = models.DateTimeField(null=True, blank=True)
     printed_at = models.DateTimeField(null=True, blank=True)
     failed_at = models.DateTimeField(null=True, blank=True)

@@ -7,6 +7,7 @@ Products store type-specific values in the type_attributes JSONField.
 """
 import uuid as uuid_module
 from decimal import Decimal, InvalidOperation
+from django.db import transaction
 from rest_framework import serializers
 from django.utils import timezone
 from apps.stores.models import (
@@ -16,6 +17,7 @@ from apps.stores.models import (
     StorePaymentGateway, StorePayment, StorePaymentWebhookEvent,
     StorePrintAgent, StorePrintJob,
 )
+from apps.core.services.customer_identity import CustomerIdentityService
 
 
 class StoreSerializer(serializers.ModelSerializer):
@@ -542,6 +544,7 @@ class StorePrintJobSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
     order_number = serializers.CharField(source='order.order_number', read_only=True)
     claimed_by_name = serializers.CharField(source='claimed_by.name', read_only=True)
+    target_agent_name = serializers.CharField(source='target_agent.name', read_only=True)
 
     class Meta:
         model = StorePrintJob
@@ -549,6 +552,7 @@ class StorePrintJobSerializer(serializers.ModelSerializer):
             'id', 'store', 'store_name', 'order', 'order_number',
             'status', 'station', 'template', 'source', 'title',
             'payload', 'dedupe_key', 'claimed_by', 'claimed_by_name',
+            'target_agent', 'target_agent_name',
             'claimed_at', 'printed_at', 'failed_at', 'available_at',
             'attempts', 'max_attempts', 'last_error', 'printer_name',
             'metadata', 'created_at', 'updated_at',
@@ -582,14 +586,29 @@ class StoreOrderCreateSerializer(serializers.Serializer):
     )
     delivery_address = serializers.JSONField(required=False, default=dict)
     delivery_notes = serializers.CharField(required=False, allow_blank=True)
-    delivery_fee = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    delivery_fee = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal('0.00'),
+    )
     scheduled_date = serializers.DateField(required=False)
     scheduled_time = serializers.CharField(required=False, allow_blank=True)
 
     payment_method = serializers.CharField(required=False, allow_blank=True)
     coupon_code = serializers.CharField(required=False, allow_blank=True)
-    discount = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
-    surcharge = serializers.DecimalField(max_digits=10, decimal_places=2, required=False)
+    discount = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal('0.00'),
+    )
+    surcharge = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal('0.00'),
+    )
     adjustment_reason = serializers.CharField(required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True)
 
@@ -626,6 +645,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
         return store
 
+    @transaction.atomic
     def create(self, validated_data):
         store = self._resolve_store(validated_data)
         request = self.context.get('request')
@@ -696,6 +716,13 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
         metadata = {}
         adjustment_reason = (validated_data.get('adjustment_reason') or '').strip()
+        if 'delivery_fee' in validated_data:
+            metadata['manual_delivery_fee'] = {
+                'amount': str(delivery_fee),
+                'reason': adjustment_reason,
+                'source': 'dashboard_order_create',
+                'user_id': str(request.user.id) if request and request.user.is_authenticated else '',
+            }
         if surcharge > 0:
             metadata['manual_surcharge'] = str(surcharge)
         if discount > 0 or surcharge > 0 or adjustment_reason:
@@ -705,9 +732,27 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                 'reason': adjustment_reason,
             }
 
+        customer_record = CustomerIdentityService.sync_checkout_customer(
+            store=store,
+            customer_name=validated_data['customer_name'],
+            email=customer_email,
+            phone=validated_data['customer_phone'],
+            delivery_method=validated_data.get('delivery_method', 'delivery'),
+            delivery_address=delivery_address,
+        )
+        customer_user = customer_record.get('user')
+        store_customer = customer_record.get('store_customer')
+
+        if store_customer:
+            metadata['customer'] = {
+                'user_id': str(customer_user.id) if customer_user else '',
+                'store_customer_id': str(store_customer.id),
+                'source': 'dashboard_order_create',
+            }
+
         order = StoreOrder.objects.create(
             store=store,
-            customer=request.user if request and request.user.is_authenticated else None,
+            customer=customer_user,
             customer_name=validated_data['customer_name'],
             customer_email=customer_email,
             customer_phone=validated_data['customer_phone'],
@@ -743,6 +788,13 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                 options=item['options'],
                 notes=item['notes'],
             )
+
+        from apps.stores.services.print_service import enqueue_order_print_job
+        transaction.on_commit(
+            lambda order_id=order.id: enqueue_order_print_job(
+                StoreOrder.objects.get(id=order_id)
+            )
+        )
 
         return order
 

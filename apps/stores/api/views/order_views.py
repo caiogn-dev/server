@@ -5,6 +5,7 @@ import logging
 import uuid as uuid_module
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Sum, Count
@@ -25,10 +26,17 @@ from .base import IsStoreOwnerOrStaff, filter_by_store
 logger = logging.getLogger(__name__)
 
 
+class StoreOperationsPagination(PageNumberPagination):
+    page_size = 500
+    page_size_query_param = 'page_size'
+    max_page_size = 500
+
+
 class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store orders."""
 
     queryset = StoreOrder.objects.all()
+    pagination_class = StoreOperationsPagination
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
 
@@ -79,6 +87,14 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             return StoreOrderUpdateSerializer
         return StoreOrderSerializer
 
+    def create(self, request, *args, **kwargs):
+        """Create an order and return the full order contract used by the dashboard."""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = serializer.save()
+        self._notify_order_update(order, 'order.created')
+        return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
     def perform_create(self, serializer):
         order = serializer.save()
         self._notify_order_update(order, 'order.created')
@@ -99,6 +115,23 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         instance.refresh_from_db()
+
+        if (
+            previous_payment_status != instance.payment_status
+            and instance.payment_status == StoreOrder.PaymentStatus.PAID
+            and not instance.paid_at
+        ):
+            metadata = instance.metadata if isinstance(instance.metadata, dict) else {}
+            metadata['manual_payment'] = {
+                'source': 'dashboard',
+                'user_id': str(request.user.id) if request.user and request.user.is_authenticated else '',
+                'marked_at': timezone.now().isoformat(),
+            }
+            instance.payment_status = StoreOrder.PaymentStatus.PAID
+            instance.paid_at = timezone.now()
+            instance.metadata = metadata
+            instance.save(update_fields=['paid_at', 'metadata', 'updated_at'])
+            instance.refresh_from_db()
 
         if previous_payment_status != instance.payment_status and instance.payment_status == StoreOrder.PaymentStatus.PAID:
             self._notify_order_update(instance, 'order.paid')
@@ -322,6 +355,34 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         self._notify_order_update(order, 'order.cancelled')
         return Response(StoreOrderSerializer(order).data)
     
+    @action(detail=True, methods=['post'], url_path='generate_payment')
+    def generate_payment(self, request, pk=None):
+        """Generate a real PIX/card payment link for an admin-created order."""
+        from apps.stores.services.checkout_service import CheckoutService
+
+        order = self.get_object()
+        payment_method = request.data.get('payment_method', order.payment_method or 'pix')
+        payment_data = request.data.get('payment_data', {})
+
+        try:
+            result = CheckoutService.create_payment(order, payment_method, payment_data)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Payment generation failed for order %s', order.id)
+            return Response({'error': 'Erro ao gerar pagamento'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if not result.get('success'):
+            return Response(
+                {'error': result.get('error', 'Erro ao gerar pagamento')},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        order.refresh_from_db()
+        self._notify_order_update(order, 'order.updated')
+
+        return Response({'payment': result, 'order': StoreOrderSerializer(order).data})
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get order statistics."""
@@ -381,6 +442,7 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store customers."""
 
     queryset = StoreCustomer.objects.all()
+    pagination_class = StoreOperationsPagination
     serializer_class = StoreCustomerSerializer
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'

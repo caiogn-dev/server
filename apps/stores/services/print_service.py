@@ -9,6 +9,7 @@ from decimal import Decimal
 from typing import Iterable
 
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.stores.models import StoreOrder, StorePrintAgent, StorePrintJob
@@ -156,33 +157,55 @@ def enqueue_order_print_job(
     requested_by: str = '',
 ) -> PrintJobResult:
     payload = build_order_print_payload(order, template=template)
-    dedupe_key = ''
-    if dedupe:
-        dedupe_key = f"order:{order.id}:station:{station}:template:{template}:source:{source}"
+    target_agents = list(
+        StorePrintAgent.objects.filter(
+            store=order.store,
+            station=station,
+            status=StorePrintAgent.AgentStatus.ACTIVE,
+            is_active=True,
+        ).order_by('created_at')
+    )
+    targets: list[StorePrintAgent | None] = target_agents or [None]
 
-    defaults = {
-        'store': order.store,
-        'order': order,
-        'station': station,
-        'template': template,
-        'source': source,
-        'payload': payload,
-        'title': f"{order.store.name} #{order.order_number}",
-        'max_attempts': 3,
-        'metadata': {'requested_by': requested_by} if requested_by else {},
-    }
+    first_result: PrintJobResult | None = None
+    any_created = False
 
-    try:
-        with transaction.atomic():
-            job, created = StorePrintJob.objects.get_or_create(
-                dedupe_key=dedupe_key,
-                defaults=defaults,
-            ) if dedupe_key else (StorePrintJob.objects.create(**defaults), True)
-    except IntegrityError:
-        job = StorePrintJob.objects.get(dedupe_key=dedupe_key)
-        created = False
+    for target_agent in targets:
+        dedupe_key = ''
+        if dedupe:
+            target_part = f":agent:{target_agent.id}" if target_agent else ''
+            dedupe_key = f"order:{order.id}:station:{station}:template:{template}:source:{source}{target_part}"
 
-    return PrintJobResult(job=job, created=created)
+        defaults = {
+            'store': order.store,
+            'order': order,
+            'target_agent': target_agent,
+            'station': station,
+            'template': template,
+            'source': source,
+            'payload': payload,
+            'title': f"{order.store.name} #{order.order_number}",
+            'max_attempts': target_agent.max_retries if target_agent else 3,
+            'metadata': {'requested_by': requested_by} if requested_by else {},
+        }
+
+        try:
+            with transaction.atomic():
+                job, created = StorePrintJob.objects.get_or_create(
+                    dedupe_key=dedupe_key,
+                    defaults=defaults,
+                ) if dedupe_key else (StorePrintJob.objects.create(**defaults), True)
+        except IntegrityError:
+            job = StorePrintJob.objects.get(dedupe_key=dedupe_key)
+            created = False
+
+        any_created = any_created or created
+        if first_result is None:
+            first_result = PrintJobResult(job=job, created=created)
+
+    if first_result is None:
+        raise RuntimeError('No print job target resolved')
+    return PrintJobResult(job=first_result.job, created=any_created)
 
 
 def claim_next_print_job(agent: StorePrintAgent) -> StorePrintJob | None:
@@ -196,6 +219,7 @@ def claim_next_print_job(agent: StorePrintAgent) -> StorePrintJob | None:
                 status=StorePrintJob.JobStatus.PENDING,
                 available_at__lte=timezone.now(),
             )
+            .filter(Q(target_agent=agent) | Q(target_agent__isnull=True))
             .order_by('created_at')
             .first()
         )

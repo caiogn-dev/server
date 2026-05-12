@@ -19,7 +19,7 @@ from .product import (
 )
 
 # Customer
-from .customer import StoreCustomer
+from .customer import StoreCustomer, StoreCustomerAddress
 
 # Order models
 from .order import StoreOrder, StoreOrderItem, StoreOrderComboItem
@@ -64,6 +64,7 @@ __all__ = [
     'StoreWishlist',
     # Customer
     'StoreCustomer',
+    'StoreCustomerAddress',
     # Order
     'StoreOrder',
     'StoreOrderItem',

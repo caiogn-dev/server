@@ -4,6 +4,7 @@ Django signals for the stores app.
 import logging
 from django.core.cache import cache
 from django.db import transaction
+from django.db.models import Q
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
@@ -77,17 +78,85 @@ def capture_order_previous_status(sender, instance, **kwargs):
 
 @receiver(post_save, sender='stores.StoreOrder')
 def on_order_created(sender, instance, created, **kwargs):
-    """Trigger push notification and automatic print queue when a new order is created."""
+    """Trigger push notification when a new order is created."""
     if not created:
         return
     try:
         from apps.stores.tasks import notify_new_order_push
-        from apps.stores.services.print_service import enqueue_order_print_job
         order_id = str(instance.id)
         transaction.on_commit(lambda: notify_new_order_push.delay(order_id))
-        transaction.on_commit(lambda: enqueue_order_print_job(instance))
     except Exception as e:
         logger.error(f"on_order_created signal error: {e}")
+
+
+@receiver(post_save, sender='stores.StoreOrder')
+def update_customer_stats_for_order(sender, instance, **kwargs):
+    """Keep customer dashboard numbers aligned with paid orders."""
+    try:
+        from apps.core.services.customer_identity import CustomerIdentityService
+        from apps.stores.models import StoreCustomer
+
+        phones = set(CustomerIdentityService.phone_candidates(instance.customer_phone))
+        qs = StoreCustomer.objects.filter(store=instance.store)
+        if instance.customer_id:
+            qs = qs.filter(user_id=instance.customer_id) | StoreCustomer.objects.filter(
+                store=instance.store,
+                phone__in=phones,
+            ) | StoreCustomer.objects.filter(
+                store=instance.store,
+                whatsapp__in=phones,
+            )
+        elif phones:
+            qs = qs.filter(Q(phone__in=phones) | Q(whatsapp__in=phones))
+        else:
+            qs = qs.none()
+
+        for customer in qs.distinct():
+            transaction.on_commit(lambda customer_id=customer.id: StoreCustomer.objects.get(id=customer_id).update_stats())
+    except Exception as e:
+        logger.error("update_customer_stats_for_order signal error: %s", e)
+
+
+@receiver(post_save, sender='stores.StoreOrder')
+def update_customer_sessions_for_order(sender, instance, **kwargs):
+    """Keep automation customer sessions aligned with the linked order."""
+    try:
+        from apps.automation.models import CustomerSession
+
+        sessions = CustomerSession.objects.filter(
+            Q(order=instance) |
+            Q(external_order_id=instance.order_number) |
+            Q(payment_id=str(instance.id))
+        ).distinct()
+        if not sessions.exists():
+            return
+
+        if instance.status in {'delivered', 'completed'}:
+            session_status = CustomerSession.SessionStatus.COMPLETED
+        elif instance.payment_status == 'paid':
+            session_status = CustomerSession.SessionStatus.PAYMENT_CONFIRMED
+        elif instance.status in {'cancelled', 'failed', 'refunded'} or instance.payment_status in {'failed', 'refunded'}:
+            session_status = CustomerSession.SessionStatus.EXPIRED
+        elif instance.payment_status in {'pending', 'processing'}:
+            session_status = CustomerSession.SessionStatus.PAYMENT_PENDING
+        else:
+            session_status = CustomerSession.SessionStatus.ORDER_PLACED
+
+        update = {
+            'order': instance,
+            'external_order_id': instance.order_number,
+            'cart_total': instance.total,
+            'cart_items_count': instance.items.count(),
+            'status': session_status,
+        }
+        if instance.customer_name:
+            update['customer_name'] = instance.customer_name
+        if instance.customer_email:
+            update['customer_email'] = instance.customer_email
+
+        sessions.update(**update)
+    except Exception as e:
+        logger.error("update_customer_sessions_for_order signal error: %s", e)
 
 
 @receiver(post_save, sender='stores.StoreOrder')

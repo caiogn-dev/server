@@ -160,10 +160,15 @@ class StoreOrder(BaseModel):
             models.Index(fields=['store', 'payment_status']),
             models.Index(fields=['customer_phone']),
             models.Index(fields=['customer_email']),
-            # Customer order history page
             models.Index(fields=['customer', 'store'], name='order_customer_store_idx'),
-            # Dashboard listing sorted by date
             models.Index(fields=['store', 'created_at'], name='order_store_created_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(subtotal__gte=0), name='order_subtotal_gte_0'),
+            models.CheckConstraint(check=models.Q(discount__gte=0), name='order_discount_gte_0'),
+            models.CheckConstraint(check=models.Q(total__gte=0), name='order_total_gte_0'),
+            models.CheckConstraint(check=models.Q(delivery_fee__gte=0), name='order_delivery_fee_gte_0'),
+            models.CheckConstraint(check=models.Q(tax__gte=0), name='order_tax_gte_0'),
         ]
 
     def __str__(self):
