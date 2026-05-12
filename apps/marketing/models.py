@@ -242,20 +242,29 @@ class EmailRecipient(models.Model):
 
 class Subscriber(models.Model):
     """Email subscriber/contact."""
-    
+
     class SubscriberStatus(models.TextChoices):
         ACTIVE = 'active', 'Ativo'
         UNSUBSCRIBED = 'unsubscribed', 'Descadastrado'
         BOUNCED = 'bounced', 'Bounce'
         COMPLAINED = 'complained', 'Reclamação'
-    
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     store = models.ForeignKey(
         Store,
         on_delete=models.CASCADE,
         related_name='subscribers'
     )
-    
+
+    unified_user = models.ForeignKey(
+        'users.UnifiedUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='marketing_subscriptions',
+        verbose_name='Identidade Universal',
+    )
+
     email = models.EmailField()
     name = models.CharField(max_length=255, blank=True)
     phone = models.CharField(max_length=20, blank=True)
