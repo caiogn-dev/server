@@ -202,3 +202,78 @@ class AgentMessage(BaseModel):
         verbose_name = 'Mensagem do Agente'
         verbose_name_plural = 'Mensagens dos Agentes'
         ordering = ['created_at']
+
+
+class AgentKnowledgeEntry(BaseModel):
+    """
+    Padrões aprendidos automaticamente de atendimentos anteriores.
+    Injetados como exemplos no prompt do agente para guiar comportamento.
+    """
+
+    class TopicChoice(models.TextChoices):
+        MENU = 'cardapio', 'Cardápio / Preços'
+        DELIVERY = 'entrega', 'Entrega / Frete'
+        ORDER_FLOW = 'pedido', 'Fluxo de Pedido'
+        PAYMENT = 'pagamento', 'Pagamento / PIX'
+        GREETING = 'saudacao', 'Saudação'
+        COMPLAINT = 'reclamacao', 'Reclamação'
+        OUT_OF_STOCK = 'indisponivel', 'Produto Indisponível'
+        CUSTOM = 'outro', 'Outro'
+
+    class SourceChoice(models.TextChoices):
+        MANUAL = 'manual', 'Criado manualmente'
+        AUTO = 'auto', 'Extraído automaticamente'
+        REVIEWED = 'reviewed', 'Revisado pelo humano'
+
+    agent = models.ForeignKey(
+        Agent,
+        on_delete=models.CASCADE,
+        related_name='knowledge_entries',
+        verbose_name='Agente',
+    )
+    store = models.ForeignKey(
+        'stores.Store',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='agent_knowledge',
+        verbose_name='Loja',
+        help_text='Nulo = vale para todos os stores deste agente',
+    )
+    topic = models.CharField(
+        max_length=20,
+        choices=TopicChoice.choices,
+        default=TopicChoice.CUSTOM,
+        verbose_name='Tópico',
+    )
+    example_input = models.TextField(verbose_name='Exemplo de mensagem do cliente')
+    example_response = models.TextField(verbose_name='Exemplo de boa resposta')
+    notes = models.TextField(blank=True, verbose_name='Notas adicionais')
+
+    # Qualidade e uso
+    confidence = models.FloatField(
+        default=1.0,
+        verbose_name='Confiança (0-1)',
+        help_text='Quanto confiamos neste padrão — decrements por má avaliação',
+    )
+    usage_count = models.PositiveIntegerField(default=0, verbose_name='Vezes injetado')
+    source = models.CharField(
+        max_length=20,
+        choices=SourceChoice.choices,
+        default=SourceChoice.AUTO,
+        verbose_name='Origem',
+    )
+    is_active = models.BooleanField(default=True, verbose_name='Ativo')
+
+    class Meta:
+        db_table = 'agent_knowledge_entries'
+        verbose_name = 'Conhecimento Aprendido'
+        verbose_name_plural = 'Conhecimentos Aprendidos'
+        ordering = ['-confidence', '-usage_count']
+        indexes = [
+            models.Index(fields=['agent', 'is_active'], name='know_agent_active_idx'),
+            models.Index(fields=['agent', 'store', 'topic'], name='know_agent_store_topic_idx'),
+        ]
+
+    def __str__(self):
+        return f"[{self.get_topic_display()}] {self.example_input[:60]}"

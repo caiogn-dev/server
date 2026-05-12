@@ -99,6 +99,16 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.sync_toca_delivery_statuses',
         'schedule': 60.0,
     },
+    # Agent learning — extrai padrões de atendimentos a cada 6h
+    'agent-learn-all': {
+        'task': 'apps.agents.tasks.learn_all_active_agents',
+        'schedule': 21600.0,  # 6h
+    },
+    # Decay de conhecimento obsoleto — diário
+    'agent-decay-stale-knowledge': {
+        'task': 'apps.agents.tasks.decay_stale_knowledge',
+        'schedule': 86400.0,
+    },
 }
 
 

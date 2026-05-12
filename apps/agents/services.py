@@ -38,6 +38,12 @@ class LangchainService:
     def __init__(self, agent: Agent):
         self.agent = agent
         self.llm = self._create_llm()
+        self.redis_client = self._create_redis_client()
+
+    def _create_redis_client(self):
+        import redis
+        redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
+        return redis.from_url(redis_url, decode_responses=True)
     
     def _create_llm(self):
         """Create Langchain LLM instance based on provider."""
@@ -245,6 +251,245 @@ class LangchainService:
     def _format_brl(self, value: float) -> str:
         return f"R$ {float(value):.2f}".replace('.', ',')
 
+    def _phone_candidates(self, phone_number: str) -> List[str]:
+        """Return canonical phone variants used across WhatsApp, users and orders."""
+        if not phone_number:
+            return []
+
+        try:
+            from apps.core.utils import normalize_phone_number
+
+            normalized = normalize_phone_number(phone_number)
+        except Exception:
+            normalized = ''
+
+        digits = re.sub(r'\D', '', phone_number or '')
+        variants = [
+            phone_number,
+            digits,
+            normalized,
+            f"+{normalized}" if normalized else '',
+        ]
+
+        if digits.startswith('55'):
+            variants.append(digits[2:])
+        elif digits:
+            variants.append(f"55{digits}")
+            variants.append(f"+55{digits}")
+
+        return [value for value in dict.fromkeys(v for v in variants if v)]
+
+    def _format_address_for_context(self, address: Any) -> str:
+        """Format address dicts/strings compactly for agent context."""
+        if not address:
+            return ''
+        if isinstance(address, str):
+            return address
+        if not isinstance(address, dict):
+            return str(address)
+
+        if address.get('formatted'):
+            return str(address['formatted'])
+
+        parts = [
+            address.get('street') or address.get('address') or address.get('raw_address'),
+            address.get('number'),
+            address.get('complement'),
+            address.get('neighborhood'),
+            address.get('city'),
+            address.get('state'),
+            address.get('zip_code'),
+        ]
+        return ', '.join(str(part) for part in parts if part)
+
+    def _is_store_identity_name(self, name: str, store=None) -> bool:
+        """Return True when a supposed customer name is actually the store identity."""
+        normalized_name = self._normalize_runtime_text(name)
+        if not normalized_name:
+            return False
+
+        blocked = {'cliente whatsapp', 'cliente', 'desconhecido'}
+        if normalized_name in blocked:
+            return True
+
+        candidates = []
+        if store:
+            candidates.extend([
+                getattr(store, 'name', ''),
+                getattr(store, 'slug', ''),
+                getattr(store, 'whatsapp_number', ''),
+            ])
+        try:
+            for account in self.agent.accounts.all()[:3]:
+                candidates.extend([
+                    getattr(account, 'name', ''),
+                    getattr(account, 'display_phone_number', ''),
+                    getattr(account, 'phone_number', ''),
+                ])
+        except Exception:
+            pass
+
+        for candidate in candidates:
+            normalized_candidate = self._normalize_runtime_text(candidate)
+            if normalized_candidate and normalized_name == normalized_candidate:
+                return True
+
+        return False
+
+    def _build_customer_context(
+        self,
+        *,
+        phone_number: str,
+        conversation_id: Optional[str] = None,
+        store=None,
+    ) -> str:
+        """
+        Build factual CRM/order context for the current customer.
+
+        This context is intentionally read-only. It lets the agent answer who the
+        customer is and what they bought before, but explicitly forbids reusing
+        old orders as the current cart without a new confirmation.
+        """
+        phone_candidates = self._phone_candidates(phone_number)
+        if not phone_candidates and not conversation_id:
+            return ''
+
+        try:
+            from django.db.models import Count
+            from apps.conversations.models import Conversation
+            from apps.stores.models import StoreCustomer, StoreOrder
+            from apps.users.models import UnifiedUser
+        except Exception as exc:
+            logger.error("[AGENT CONTEXT] Error importing customer context models: %s", exc)
+            return ''
+
+        name_candidates: List[str] = []
+        saved_addresses: List[str] = []
+
+        try:
+            if conversation_id:
+                conv = Conversation.objects.filter(id=conversation_id).first()
+                if conv:
+                    if conv.contact_name:
+                        name_candidates.append(conv.contact_name)
+                    if conv.phone_number:
+                        phone_candidates.extend(self._phone_candidates(conv.phone_number))
+                    if conv.wa_id:
+                        phone_candidates.extend(self._phone_candidates(conv.wa_id))
+        except Exception as exc:
+            logger.warning("[AGENT CONTEXT] Conversation customer lookup failed: %s", exc)
+
+        phone_candidates = [value for value in dict.fromkeys(phone_candidates) if value]
+
+        try:
+            store_customer_qs = StoreCustomer.objects.filter(
+                models.Q(phone__in=phone_candidates) | models.Q(whatsapp__in=phone_candidates)
+            ).select_related('store', 'user')
+            if store:
+                store_customer_qs = store_customer_qs.filter(store=store)
+
+            for store_customer in store_customer_qs[:3]:
+                full_name = store_customer.user.get_full_name() or getattr(store_customer.user, 'email', '')
+                if (
+                    full_name
+                    and '@pastita.local' not in full_name
+                    and not self._is_store_identity_name(full_name, store=store)
+                ):
+                    name_candidates.append(full_name)
+                for address in (store_customer.addresses or [])[:2]:
+                    formatted = self._format_address_for_context(address)
+                    if formatted:
+                        saved_addresses.append(formatted)
+        except Exception as exc:
+            logger.warning("[AGENT CONTEXT] StoreCustomer lookup failed: %s", exc)
+
+        try:
+            for user in UnifiedUser.objects.filter(phone_number__in=phone_candidates)[:3]:
+                if (
+                    user.name
+                    and user.name.lower() != 'desconhecido'
+                    and not self._is_store_identity_name(user.name, store=store)
+                ):
+                    name_candidates.append(user.name)
+        except Exception as exc:
+            logger.warning("[AGENT CONTEXT] UnifiedUser lookup failed: %s", exc)
+
+        try:
+            order_qs = StoreOrder.objects.filter(customer_phone__in=phone_candidates)
+            if store:
+                order_qs = order_qs.filter(store=store)
+
+            order_qs = order_qs.select_related('store').prefetch_related('items').order_by('-created_at')
+            recent_orders = list(order_qs[:5])
+            if not recent_orders and not name_candidates and not saved_addresses:
+                return ''
+
+            if recent_orders:
+                for order in recent_orders:
+                    if order.customer_name and not self._is_store_identity_name(order.customer_name, store=store):
+                        name_candidates.append(order.customer_name)
+                    formatted = self._format_address_for_context(order.delivery_address)
+                    if formatted:
+                        saved_addresses.append(formatted)
+
+            total_orders = order_qs.count()
+            stats = order_qs.order_by().values('status').annotate(count=Count('id'))
+            status_counts = {row['status']: row['count'] for row in stats}
+            successful_count = sum(
+                status_counts.get(status, 0)
+                for status in ('paid', 'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'completed')
+            )
+            cancelled_count = status_counts.get('cancelled', 0)
+
+            customer_name = next(
+                (
+                    name for name in name_candidates
+                    if name
+                    and name.lower() != 'desconhecido'
+                    and not self._is_store_identity_name(name, store=store)
+                ),
+                '',
+            )
+            lines = [
+                "👤 CONTEXTO DO CLIENTE (dados reais do CRM/pedidos):",
+                "• Use apenas como histórico/identidade. Nunca trate pedido antigo como pedido atual sem confirmação nova.",
+            ]
+            if customer_name:
+                lines.append(f"• Nome provável: {customer_name}")
+            if phone_candidates:
+                lines.append(f"• Telefones equivalentes: {', '.join(phone_candidates[:4])}")
+            lines.append(
+                f"• Total de pedidos encontrados: {total_orders}"
+                f" ({successful_count} ativos/concluídos, {cancelled_count} cancelados)"
+            )
+
+            unique_addresses = []
+            for address in saved_addresses:
+                if address and address not in unique_addresses:
+                    unique_addresses.append(address)
+            if unique_addresses:
+                lines.append("• Endereço salvo/mais recente: " + unique_addresses[0])
+
+            if recent_orders:
+                lines.append("• Pedidos recentes:")
+                for order in recent_orders:
+                    items = ", ".join(
+                        f"{item.quantity}x {item.product_name}"
+                        for item in order.items.all()[:5]
+                    ) or "sem itens salvos"
+                    address = self._format_address_for_context(order.delivery_address)
+                    address_text = f" | endereço: {address}" if address else ""
+                    lines.append(
+                        f"  - #{order.order_number} em {order.created_at.strftime('%d/%m/%Y')}: "
+                        f"{items} | total R$ {order.total} | status {order.status}/{order.payment_status}"
+                        f"{address_text}"
+                    )
+
+            return "\n".join(lines)
+        except Exception as exc:
+            logger.error("[AGENT CONTEXT] Error loading customer order history: %s", exc)
+            return ''
+
     def _get_delivery_fee_runtime_reply(self, message: str, store=None) -> Optional[str]:
         """Resolve delivery fee questions deterministically, never by LLM prose."""
         if not store:
@@ -364,7 +609,8 @@ class LangchainService:
             from apps.stores.models import StoreOrder
             from apps.automation.models import CustomerSession
 
-            session_qs = CustomerSession.objects.filter(phone_number=phone_number)
+            phone_candidates = self._phone_candidates(phone_number)
+            session_qs = CustomerSession.objects.filter(phone_number__in=phone_candidates)
             if store:
                 from apps.automation.models import CompanyProfile as _CP
                 profile_ids = _CP.objects.filter(store=store).values_list('id', flat=True)
@@ -386,11 +632,7 @@ class LangchainService:
                 }
 
             order = StoreOrder.objects.filter(
-                customer_phone__in=[
-                    phone_number,
-                    phone_number.lstrip('+'),
-                    f"+{phone_number.lstrip('+')}",
-                ],
+                customer_phone__in=phone_candidates,
                 payment_status='pending',
             ).exclude(pix_code='').order_by('-created_at').first()
             if order and order.pix_code:
@@ -423,22 +665,17 @@ class LangchainService:
         if self.agent.context_prompt:
             context_parts.append(self.agent.context_prompt)
         
-        # 1. Load customer name only.
-        # Do not inject order history or favorites into the system prompt:
-        # that was causing the model to revive old purchases as if they were
-        # part of the current order flow.
+        # 1. Load customer identity/order context.
+        # Keep this factual and guarded: history is useful for CRM answers, but
+        # must never become the current cart without explicit confirmation.
         try:
-            from apps.conversations.models import Conversation
-            
-            # Get customer name from conversation
-            if conversation_id:
-                try:
-                    conv = Conversation.objects.get(id=conversation_id)
-                    if conv.contact_name:
-                        context_parts.append(f"Nome do cliente: {conv.contact_name}")
-                except Conversation.DoesNotExist:
-                    pass
-                        
+            customer_context = self._build_customer_context(
+                phone_number=phone_number,
+                conversation_id=conversation_id,
+                store=None,
+            )
+            if customer_context:
+                context_parts.append(customer_context)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading customer/order data: {e}")
         
@@ -477,6 +714,20 @@ class LangchainService:
 
             if not store:
                 logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
+
+            # Rebuild customer context scoped to the resolved store when possible.
+            if store:
+                scoped_customer_context = self._build_customer_context(
+                    phone_number=phone_number,
+                    conversation_id=conversation_id,
+                    store=store,
+                )
+                if scoped_customer_context:
+                    context_parts = [
+                        part for part in context_parts
+                        if not part.startswith("👤 CONTEXTO DO CLIENTE")
+                    ]
+                    context_parts.append(scoped_customer_context)
             
             # Add operational guidance scoped to the current store context.
             if store:
@@ -490,6 +741,7 @@ class LangchainService:
                     "• Se pedirem o cardápio, mostre no máximo 5 opções com nome e preço.\n"
                     "• Não despeje o cardápio inteiro, a menos que o cliente insista.\n"
                     "• Se o pedido estiver ambíguo, peça o nome exato dos itens antes de seguir.\n"
+                    "• Ofereça APENAS produtos que aparecem no CARDÁPIO INTERNO acima — nunca sugira itens fora dele.\n"
                     "• Nunca transforme recomendação em pedido sem confirmação explícita.\n"
                     "• Só diga que PIX foi gerado se existir um código PIX real disponível.\n"
                     "• Nunca diga que criou pedido, calculou entrega ou gerou pagamento se isso ainda não aconteceu.\n"
@@ -587,8 +839,9 @@ class LangchainService:
                 from apps.automation.models import CustomerSession
                 from apps.stores.models import StoreProduct as _SP
 
+                phone_candidates = self._phone_candidates(phone_number)
                 session_qs = CustomerSession.objects.filter(
-                    phone_number=phone_number,
+                    phone_number__in=phone_candidates,
                     status__in=['active', 'cart_created', 'checkout', 'payment_pending'],
                 )
                 if store:
@@ -668,13 +921,10 @@ class LangchainService:
                 from apps.stores.models import StoreOrder
 
                 normalized_phone = normalize_phone_number(phone_number)
-                phone_candidates = {
-                    phone_number,
-                    normalized_phone,
-                    f"+{normalized_phone}" if normalized_phone else '',
-                    ''.join(filter(str.isdigit, phone_number or '')),
-                }
-                phone_candidates = [value for value in dict.fromkeys(v for v in phone_candidates if v)]
+                phone_candidates = self._phone_candidates(phone_number)
+                if normalized_phone:
+                    phone_candidates.extend(self._phone_candidates(normalized_phone))
+                phone_candidates = [value for value in dict.fromkeys(phone_candidates) if value]
 
                 recent_order_qs = StoreOrder.objects.filter(
                     customer_phone__in=phone_candidates,
@@ -716,16 +966,31 @@ class LangchainService:
             if not store:
                 return "Cardápio indisponível no momento."
             try:
+                import unicodedata
+
+                def _normalize(s: str) -> str:
+                    return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
+
                 from apps.stores.models import StoreProduct
-                products = StoreProduct.objects.filter(
-                    store=store, is_active=True, name__icontains=nome
-                ).select_related('category')[:6]
-                if not products:
+                all_products = (
+                    StoreProduct.objects
+                    .filter(store=store, is_active=True)
+                    .exclude(tags__contains=["ingrediente"])
+                    .select_related("category")
+                )
+                # Normaliza o nome da busca e faz matching em Python (tolerante a acentos)
+                normalized_query = _normalize(nome)
+                matched = [
+                    p for p in all_products
+                    if normalized_query in _normalize(p.name)
+                ][:6]
+
+                if not matched:
                     return f"Nenhum produto encontrado para '{nome}'."
                 lines = []
-                for p in products:
+                for p in matched:
                     cat = p.category.name if p.category else "Geral"
-                    desc = f" — {p.description[:70]}..." if p.description else ""
+                    desc = f" — {p.description[:70]}..." if getattr(p, "description", "") else ""
                     lines.append(f"[{cat}] {p.name} — R$ {p.price}{desc} (id: {p.id})")
                 return "\n".join(lines)
             except Exception as exc:
@@ -756,8 +1021,9 @@ class LangchainService:
                 return "Telefone do cliente não disponível."
             try:
                 from apps.stores.models import StoreOrder
+                phone_candidates = self._phone_candidates(phone_number)
                 order = StoreOrder.objects.filter(
-                    customer_phone=phone_number,
+                    customer_phone__in=phone_candidates,
                     payment_status='pending',
                 ).order_by('-created_at').first()
                 if not order:
@@ -781,9 +1047,9 @@ class LangchainService:
                 return "Telefone do cliente não disponível."
             try:
                 from apps.stores.models import StoreOrder
+                phone_candidates = self._phone_candidates(phone_number)
                 orders = StoreOrder.objects.filter(
-                    customer_phone=phone_number,
-                    status__in=['completed', 'delivered'],
+                    customer_phone__in=phone_candidates,
                 ).order_by('-created_at')[:5]
                 if not orders:
                     return "Nenhum pedido anterior encontrado."
@@ -823,8 +1089,185 @@ class LangchainService:
                 return pix_data['pix_code']
             return pix_data.get('message') or 'Nenhum PIX pendente encontrado.'
 
-        return [buscar_produto, listar_categorias, verificar_pedido_pendente,
-                consultar_historico_pedidos, informacoes_entrega, consultar_pagamento]
+        # ── Cart tools (ordem completa sem intervenção humana) ─────────────────
+
+        _cart_key = f"agent_cart:{self.agent.id}:{phone_number}"
+
+        def _get_cart() -> dict:
+            import json
+            raw = self.redis_client.get(_cart_key)
+            return json.loads(raw) if raw else {"items": []}
+
+        def _save_cart(cart: dict) -> None:
+            import json
+            self.redis_client.setex(_cart_key, 3600 * 6, json.dumps(cart))
+
+        @tool
+        def adicionar_ao_carrinho(produto_nome: str, quantidade: int = 1) -> str:
+            """
+            Adiciona um produto ao carrinho do cliente pelo nome.
+            Retorna confirmação com nome do produto, preço unitário e subtotal do carrinho.
+            Use esta ferramenta quando o cliente quiser pedir um item.
+            """
+            if not store:
+                return "Loja não disponível."
+            try:
+                import unicodedata
+
+                def _norm(s: str) -> str:
+                    return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
+
+                from apps.stores.models import StoreProduct
+                all_prods = (
+                    StoreProduct.objects
+                    .filter(store=store, is_active=True)
+                    .exclude(tags__contains=["ingrediente"])
+                    .select_related("category")
+                )
+                nq = _norm(produto_nome)
+                matches = [p for p in all_prods if nq in _norm(p.name)]
+                if not matches:
+                    return f"Produto '{produto_nome}' não encontrado no cardápio."
+
+                product = matches[0]
+                cart = _get_cart()
+                items = cart["items"]
+
+                # Verifica se já está no carrinho
+                existing = next((i for i in items if i["product_id"] == str(product.id)), None)
+                if existing:
+                    existing["quantity"] += quantidade
+                    existing["total"] = float(product.price) * existing["quantity"]
+                else:
+                    items.append({
+                        "product_id": str(product.id),
+                        "product_name": product.name,
+                        "quantity": quantidade,
+                        "unit_price": float(product.price),
+                        "total": float(product.price) * quantidade,
+                    })
+                cart["items"] = items
+                _save_cart(cart)
+
+                cart_total = sum(i["total"] for i in items)
+                return (
+                    f"✓ {quantidade}x {product.name} (R$ {product.price} cada) adicionado.\n"
+                    f"Carrinho: {len(items)} item(ns) | Total: R$ {cart_total:.2f}"
+                )
+            except Exception as exc:
+                return f"Erro ao adicionar ao carrinho: {exc}"
+
+        @tool
+        def ver_carrinho() -> str:
+            """
+            Mostra o carrinho atual do cliente com todos os itens e total.
+            Use quando o cliente quiser revisar o pedido antes de confirmar.
+            """
+            cart = _get_cart()
+            items = cart.get("items", [])
+            if not items:
+                return "Carrinho vazio."
+            lines = [f"• {i['quantity']}x {i['product_name']} — R$ {i['total']:.2f}" for i in items]
+            cart_total = sum(i["total"] for i in items)
+            lines.append(f"TOTAL: R$ {cart_total:.2f}")
+            return "\n".join(lines)
+
+        @tool
+        def remover_do_carrinho(produto_nome: str) -> str:
+            """Remove um item do carrinho pelo nome do produto."""
+            import unicodedata
+
+            def _norm(s: str) -> str:
+                return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
+
+            cart = _get_cart()
+            items = cart.get("items", [])
+            nq = _norm(produto_nome)
+            original_len = len(items)
+            cart["items"] = [i for i in items if nq not in _norm(i["product_name"])]
+            if len(cart["items"]) == original_len:
+                return f"'{produto_nome}' não está no carrinho."
+            _save_cart(cart)
+            return f"'{produto_nome}' removido do carrinho."
+
+        @tool
+        def finalizar_pedido(endereco: str, observacoes: str = "") -> str:
+            """
+            Finaliza o pedido: cria o pedido no sistema, calcula a taxa de entrega e gera o código PIX.
+            Só chame DEPOIS de ter os itens no carrinho e o endereço do cliente.
+            Retorna o valor total, taxa de entrega e o código PIX para pagamento.
+            """
+            if not store:
+                return "Loja não disponível."
+            if not phone_number:
+                return "Telefone do cliente não disponível."
+
+            cart = _get_cart()
+            items = cart.get("items", [])
+            if not items:
+                return "Carrinho vazio. Adicione itens antes de finalizar."
+            if not endereco.strip():
+                return "Endereço não informado. Peça o endereço completo ao cliente."
+
+            try:
+                from apps.whatsapp.services.order_service import WhatsAppOrderService
+
+                customer_name = ""
+                try:
+                    from apps.stores.models import StoreCustomer
+                    phone_candidates = self._phone_candidates(phone_number)
+                    cust = StoreCustomer.objects.filter(
+                        store=store, phone__in=phone_candidates
+                    ).first()
+                    customer_name = cust.name if cust else ""
+                except Exception:
+                    pass
+
+                svc = WhatsAppOrderService(
+                    store=store,
+                    phone_number=phone_number,
+                    customer_name=customer_name,
+                )
+                result = svc.create_order_from_cart(
+                    items=items,
+                    delivery_address=endereco,
+                    customer_notes=observacoes,
+                    delivery_method="delivery",
+                    payment_method="pix",
+                )
+
+                if not result.get("success"):
+                    return f"Não foi possível criar o pedido: {result.get('error', 'erro desconhecido')}"
+
+                # Limpa o carrinho após sucesso
+                self.redis_client.delete(_cart_key)
+
+                order = result.get("order")
+                pix_code = result.get("pix_code") or result.get("pix", {}).get("qr_code") or ""
+                total = result.get("total") or (order.total if order else "?")
+                delivery_fee = result.get("delivery_fee", "")
+                order_num = order.order_number if order else result.get("order_number", "")
+
+                response = f"Pedido #{order_num} criado!\n"
+                if delivery_fee:
+                    response += f"Taxa de entrega: R$ {delivery_fee}\n"
+                response += f"Total: R$ {total}\n"
+                if pix_code:
+                    response += f"PIX (copia e cola):\n{pix_code}"
+                else:
+                    response += "PIX sendo gerado — use consultar_pagamento em instantes."
+                return response
+
+            except Exception as exc:
+                logger.exception("[AGENT] Erro ao finalizar pedido: %s", exc)
+                return f"Erro ao finalizar pedido: {exc}"
+
+        return [
+            buscar_produto, listar_categorias,
+            adicionar_ao_carrinho, ver_carrinho, remover_do_carrinho, finalizar_pedido,
+            verificar_pedido_pendente, consultar_historico_pedidos,
+            informacoes_entrega, consultar_pagamento,
+        ]
 
     def _get_store_for_context(self, conversation_id: Optional[str] = None):
         """Resolve the store for tool binding (same logic as _build_dynamic_context)."""
@@ -1423,3 +1866,112 @@ class AgentService:
         except Exception as e:
             logger.error(f"Error creating order: {e}")
             return {'success': False, 'error': str(e)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LangGraphService — substitui o agentic loop manual do LangchainService
+# ─────────────────────────────────────────────────────────────────────────────
+
+class LangGraphService:
+    """
+    Agente baseado em LangGraph.
+
+    Substitui o while-loop manual de tool calling do LangchainService por um
+    StateGraph explícito.  Reutiliza _create_llm(), _build_tools() e
+    _build_customer_context() do LangchainService — sem duplicar lógica.
+
+    Interface idêntica a LangchainService.process_message() para troca
+    transparente no webhook_service.
+    """
+
+    def __init__(self, agent: Agent):
+        self.agent = agent
+        self._lc = LangchainService(agent)   # reusa LLM + tools + contexto
+        self._graph = None
+
+    def _get_graph(self):
+        """Compila o grafo uma vez e armazena em cache na instância."""
+        if self._graph is None:
+            from .graph import build_agent_graph
+            self._graph = build_agent_graph(self.agent, self._lc)
+        return self._graph
+
+    def process_message(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        conversation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Processa uma mensagem pelo grafo LangGraph.
+
+        Carrega histórico do Redis antes de invocar e salva ao terminar,
+        mantendo compatibilidade com a memória existente.
+        """
+        start = time.time()
+        session_id = session_id or self._lc._generate_session_id()
+
+        # ── Carrega histórico do Redis ─────────────────────────────────────
+        from langchain_core.messages import HumanMessage as HM
+        history_messages = []
+        memory = self._lc._get_memory(session_id)
+        if memory:
+            try:
+                history_messages = list(memory.messages[-self.agent.max_context_messages:])
+            except Exception as exc:
+                logger.warning("[LANGGRAPH] Falha ao carregar memória: %s", exc)
+
+        # ── Invoca o grafo ─────────────────────────────────────────────────
+        initial_state: dict = {
+            "messages": history_messages + [HM(content=message)],
+            "phone_number": phone_number or "",
+            "conversation_id": conversation_id or "",
+            "session_id": session_id,
+            "store": None,
+            "tools": [],
+            "customer_context": "",
+            "store_context": "",
+            "delivery_info": "",
+            "response": "",
+        }
+
+        try:
+            final_state = self._get_graph().invoke(initial_state)
+        except Exception:
+            logger.exception("[LANGGRAPH] Erro na execução do grafo")
+            return {
+                "response": "Desculpa, tive um problema. Pode repetir?",
+                "session_id": session_id,
+                "processing_time": time.time() - start,
+                "model": self.agent.model_name,
+                "tokens_used": 0,
+                "order_created": None,
+            }
+
+        response_text = final_state.get("response", "")
+
+        # ── Salva turno no Redis ───────────────────────────────────────────
+        if memory and response_text:
+            try:
+                memory.add_user_message(message)
+                memory.add_ai_message(response_text)
+            except Exception as exc:
+                logger.warning("[LANGGRAPH] Falha ao salvar memória: %s", exc)
+
+        logger.info("[LANGGRAPH] Resposta: %r", response_text[:120])
+
+        return {
+            "response": response_text,
+            "session_id": session_id,
+            "processing_time": time.time() - start,
+            "model": self.agent.model_name,
+            "tokens_used": 0,
+            "order_created": None,
+        }
+
+    def get_conversation_history(self, session_id: str, limit: int = 50) -> list:
+        return self._lc.get_conversation_history(session_id, limit)
+
+    def clear_memory(self, session_id: str) -> bool:
+        return self._lc.clear_memory(session_id)
