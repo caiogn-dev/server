@@ -43,9 +43,14 @@ class MercadoPagoWebhookView(APIView):
             
             # Validate webhook signature if secret is configured
             if not self._validate_signature(request, store_slug):
-                logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+                logger.warning(
+                    "MP webhook rejected: invalid signature for store %s",
+                    store_slug,
+                )
+                return Response(
+                    {'status': 'invalid_signature'},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -111,7 +116,7 @@ class MercadoPagoWebhookView(APIView):
             
         except Exception as e:
             logger.error(f"Signature validation error: {e}")
-            return True  # Allow request on validation error (fail open for now)
+            return False  # Fail secure on validation errors
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""
