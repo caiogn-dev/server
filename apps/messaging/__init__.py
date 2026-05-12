@@ -21,4 +21,3 @@ Estrutura:
                  Uso: from apps.messaging.dispatcher import dispatcher
 """
 
-default_app_config = 'apps.messaging.apps.MessagingConfig'

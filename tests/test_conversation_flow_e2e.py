@@ -284,6 +284,39 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
         self.assertEqual(components.get('street'), 'Rua das Flores')
         self.assertEqual(components.get('city'), 'Palmas')
 
+    def test_notes_no_keeps_cart_and_returns_payment_buttons_before_llm(self):
+        """'nao' during notes step means no notes and must not lose pending items."""
+        from apps.automation.services.unified_service import UnifiedService, ResponseSource
+
+        self._seed_session_items(qty=1)
+        self._seed_session_delivery('pickup')
+        self.session.cart_data['waiting_for_notes'] = True
+        self.session.save(update_fields=['cart_data'])
+
+        service = UnifiedService(
+            account=self.account,
+            conversation=self.conversation,
+            use_llm=True,
+        )
+        response = service.process_message('NAO')
+
+        self.assertIsNotNone(response)
+        self.assertEqual(response.source, ResponseSource.HANDLER)
+        self.assertEqual(response.interactive_type, 'buttons')
+        self.assertIn('Como prefere pagar', response.content)
+        self.assertEqual(
+            [button['id'] for button in response.buttons],
+            ['pay_pix', 'pay_card', 'pay_pickup'],
+        )
+
+        self.session.refresh_from_db()
+        self.assertFalse(self.session.cart_data.get('waiting_for_notes'))
+        self.assertEqual(
+            self.session.cart_data.get('pending_items'),
+            [{'product_id': str(self.product.id), 'quantity': 1}],
+        )
+        self.assertEqual(self.session.cart_data.get('customer_notes'), '')
+
     def test_pay_pix_with_delivery_creates_order_with_fee(self):
         """pay_pix após delivery com fee na sessão cria pedido com taxa correta."""
         self._seed_session_items(qty=2)

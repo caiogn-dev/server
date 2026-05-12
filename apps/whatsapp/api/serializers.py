@@ -180,6 +180,17 @@ class SendInteractiveListSerializer(serializers.Serializer):
         return value
 
 
+class SendCatalogMenuSerializer(serializers.Serializer):
+    """Serializer for sending native WhatsApp catalog (product_list) for a store."""
+    account_id = serializers.UUIDField()
+    to = serializers.CharField(max_length=20)
+    store_id = serializers.IntegerField(required=False, allow_null=True)
+    header_text = serializers.CharField(max_length=60, required=False, allow_blank=True)
+    body_text = serializers.CharField(max_length=1024, required=False, allow_blank=True)
+    footer = serializers.CharField(max_length=60, required=False, allow_blank=True)
+    metadata = serializers.JSONField(required=False, default=dict)
+
+
 class SendImageSerializer(serializers.Serializer):
     """Serializer for sending image message."""
     account_id = serializers.UUIDField()

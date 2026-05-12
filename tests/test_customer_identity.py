@@ -6,7 +6,9 @@ from django.contrib.auth import get_user_model
 
 from apps.core.services.customer_identity import CustomerIdentityService
 from apps.core.models import UserProfile
-from apps.stores.models import Store, StoreCustomer
+from decimal import Decimal
+
+from apps.stores.models import Store, StoreCustomer, StoreOrder
 
 User = get_user_model()
 
@@ -206,6 +208,60 @@ class CustomerIdentitySyncCheckoutTest(TestCase):
         store_customer = result['store_customer']
         # For pickup, address should NOT be stored
         self.assertFalse(store_customer.addresses)
+
+    def test_customer_stats_count_paid_orders_by_payment_status(self):
+        result = CustomerIdentityService.sync_checkout_customer(
+            store=self.store,
+            customer_name='Dyessika Rayanne',
+            email='dyessika@test.com',
+            phone='556384354052',
+        )
+        customer = result['store_customer']
+        StoreOrder.objects.create(
+            store=self.store,
+            customer=result['user'],
+            customer_name='Dyessika Rayanne',
+            customer_email='dyessika@test.com',
+            customer_phone='556384354052',
+            status=StoreOrder.OrderStatus.PENDING,
+            payment_status=StoreOrder.PaymentStatus.PAID,
+            subtotal=Decimal('40.67'),
+            delivery_fee=Decimal('0.00'),
+            total=Decimal('40.67'),
+        )
+
+        customer.update_stats()
+        customer.refresh_from_db()
+
+        self.assertEqual(customer.total_orders, 1)
+        self.assertEqual(customer.total_spent, Decimal('40.67'))
+
+    def test_customer_stats_match_orders_by_phone_even_without_fk(self):
+        result = CustomerIdentityService.sync_checkout_customer(
+            store=self.store,
+            customer_name='Cliente WhatsApp',
+            email='cliente@test.com',
+            phone='556384354052',
+        )
+        customer = result['store_customer']
+        StoreOrder.objects.create(
+            store=self.store,
+            customer=None,
+            customer_name='Dyessika Rayanne',
+            customer_email='dyessika@test.com',
+            customer_phone='+556384354052',
+            status=StoreOrder.OrderStatus.PENDING,
+            payment_status=StoreOrder.PaymentStatus.PAID,
+            subtotal=Decimal('40.67'),
+            delivery_fee=Decimal('0.00'),
+            total=Decimal('40.67'),
+        )
+
+        customer.update_stats()
+        customer.refresh_from_db()
+
+        self.assertEqual(customer.total_orders, 1)
+        self.assertEqual(customer.total_spent, Decimal('40.67'))
 
 
 class CustomerIdentityBuildAddressTest(TestCase):

@@ -51,7 +51,7 @@ def _parse_items_from_text_dynamic(text: str, store) -> List[Dict[str, Any]]:
     if not text_lower:
         return []
 
-    products = list(StoreProduct.objects.filter(store=store, is_active=True))
+    products = list(StoreProduct.objects.filter(store=store, is_active=True).exclude(tags__contains=['ingrediente']))
     if not products:
         return []
 
@@ -767,7 +767,7 @@ class PriceCheckHandler(IntentHandler):
                 store=self.store,
                 name__icontains=product_name,
                 is_active=True
-            )[:5]
+            ).exclude(tags__contains=['ingrediente'])[:5]
             
             if products:
                 if len(products) == 1:
@@ -807,7 +807,7 @@ class PriceCheckHandler(IntentHandler):
         products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
-        ).order_by('-created_at')[:5]
+        ).exclude(tags__contains=['ingrediente']).order_by('-created_at')[:5]
         
         if products:
             response = f"💰 *Alguns dos nossos produtos:*\n\n"
@@ -837,11 +837,11 @@ class ProductMentionHandler(IntentHandler):
         if not self.store:
             return HandlerResult.text("Cardápio não disponível. 😔")
         
-        # Busca TODOS os produtos ativos
+        # Busca TODOS os produtos ativos (sem ingredientes do SaladBuilder)
         all_products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
-        )
+        ).exclude(tags__contains=['ingrediente'])
         
         # Se digitou algo genérico como "rondelli", "lasanha", "nhoque"
         # Mostra TODOS desse tipo
@@ -1626,12 +1626,12 @@ class ProductNotFoundHandler(IntentHandler):
                 "Digite *cardápio* para ver o que temos disponível! 📋"
             )
 
-        # Busca produtos similares
+        # Busca produtos similares (sem ingredientes do SaladBuilder)
         from apps.stores.models import StoreProduct
         products = StoreProduct.objects.filter(
             store=self.store,
             is_active=True
-        )[:5]
+        ).exclude(tags__contains=['ingrediente'])[:5]
 
         product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in products])
 

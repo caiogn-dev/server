@@ -182,7 +182,7 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
         content = request.data.get("content", "")
         attachment_url = request.data.get("attachment_url")
 
-        messenger = MessengerService(conversation.account)
+        messenger = MessengerPlatformService(MessengerService(conversation.account))
 
         try:
             normalized = str(message_type).lower()
@@ -223,10 +223,10 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="mark-read")
     def mark_read(self, request, pk=None):
         conversation = self.get_object()
-        messenger = MessengerService(conversation.account)
+        messenger = MessengerPlatformService(MessengerService(conversation.account))
 
         try:
-            messenger.mark_seen(conversation.psid)
+            messenger.messenger.mark_seen(conversation.psid)
         except Exception:
             pass
 

@@ -114,7 +114,8 @@ class SignalDispatchesCeleryTaskTest(TestCase):
 
         with patch(
             'apps.whatsapp.tasks.automation_tasks.notify_order_status_change'
-        ) as mock_task:
+        ) as mock_task, \
+             patch('apps.automation.signals.transaction.on_commit', side_effect=lambda fn: fn()):
             order.status = 'confirmed'
             order.save(update_fields=['status'])
 
@@ -132,10 +133,40 @@ class SignalDispatchesCeleryTaskTest(TestCase):
 
         mock_task.delay.assert_not_called()
 
+    def test_full_save_without_status_change_does_not_queue_notification(self):
+        """
+        PATCH do painel para lançar pagamento salva o serializer inteiro
+        (update_fields=None), mas não deve notificar se status não mudou.
+        """
+        order = _make_order(self.store, status='confirmed')
+
+        with patch(
+            'apps.whatsapp.tasks.automation_tasks.notify_order_status_change'
+        ) as mock_task, \
+             patch('apps.automation.signals.transaction.on_commit', side_effect=lambda fn: fn()):
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.save()
+
+        mock_task.delay.assert_not_called()
+
+    def test_full_save_with_status_change_queues_notification(self):
+        """Full save ainda deve notificar quando o status realmente muda."""
+        order = _make_order(self.store, status='pending')
+
+        with patch(
+            'apps.whatsapp.tasks.automation_tasks.notify_order_status_change'
+        ) as mock_task, \
+             patch('apps.automation.signals.transaction.on_commit', side_effect=lambda fn: fn()):
+            order.status = 'confirmed'
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.save()
+
+        mock_task.delay.assert_called_once_with(str(order.id), 'confirmed')
+
 
 # ─── Testes: notify_order_status_change task ─────────────────────────────────
 
-_PATCH_WA_SERVICE = 'apps.whatsapp.tasks.automation_tasks.WhatsAppAPIService'
+_PATCH_WA_SERVICE = 'apps.whatsapp.services.message_service.MessageService'
 _PATCH_GET_PROFILE = 'apps.whatsapp.tasks.automation_tasks._get_store_profile'
 _PATCH_GET_ACCOUNT = 'apps.whatsapp.tasks.automation_tasks._get_account_for_profile'
 
@@ -165,10 +196,12 @@ class NotifyOrderStatusChangeTest(TestCase):
 
     def test_uses_automessage_template_when_exists(self):
         """Quando existe AutoMessage ativo, usa render_message + send_text_message."""
-        template = AutoMessage.objects.create(
+        AutoMessage.objects.filter(company=self.profile, event_type='order_confirmed').delete()
+        AutoMessage.objects.create(
             company=self.profile,
             event_type='order_confirmed',
-            message_template='Olá {customer_name}, pedido {order_number} confirmado!',
+            name='Pedido confirmado teste',
+            message_text='Olá {customer_name}, pedido {order_number} confirmado!',
             is_active=True,
         )
         mock_account = MagicMock()

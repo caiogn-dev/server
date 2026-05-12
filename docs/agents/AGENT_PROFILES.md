@@ -31,6 +31,8 @@ Start every agent with a read-only audit unless the task explicitly asks for imp
 | `ce-saladas-flutter` | `.claude/agents/ce-saladas-flutter.md` | `docs/agents/ce-saladas-flutter.md` | Flutter mobile app, design system, providers, APK |
 | `pastita-dash` | `.claude/agents/pastita-dash.md` | `docs/agents/pastita-dash.md` | React/TS admin dashboard, inbox, handover, uploads |
 | `whatsapp-bot` | `.claude/agents/whatsapp-bot.md` | `docs/agents/whatsapp-bot.md` | WhatsApp pipeline, Caio LLM, intent handlers, guards |
+| `security-audit` | `.claude/agents/security-audit.md` | `docs/agents/security-audit.md` | OWASP Top 10, CVEs, webhook HMAC, injection, tenant isolation |
+| `deps-update` | `.claude/agents/deps-update.md` | `docs/agents/deps-update.md` | npm audit, pip-audit, safe upgrades, Django migration planning |
 
 ## Shared Ground Rules
 
@@ -42,21 +44,24 @@ Start every agent with a read-only audit unless the task explicitly asks for imp
 - Findings must include file paths, line references when available, risk level, and a proposed safe cut.
 - Implementation plans must separate quick bug fixes from structural refactors.
 
-## Current Platform State (2026-04-28)
+## Current Platform State (2026-05-12)
 
-### Production (deployed 2026-04-27)
+### Production Changes (deployed / confirmed)
 - PIX payment response: interactive button template (code + copy button). No prose.
 - `confirmar pedido` → TRACK_ORDER (not CREATE_ORDER).
 - TrackOrderHandler: multi-variant phone lookup + order number from message text.
 - Distributed webhook lock (Redis) prevents duplicate processing.
 - Agent guards: max_iterations reduced, tools restricted per intent, direct reply bypasses LLM.
+- `buscar_produto` LangChain tool excludes `ingrediente`-tagged products (2026-05-07).
+- All 6 `ingrediente` exclusion paths patched across 3 files (2026-05-07).
+- npm packages updated: pastita-dash 16→8 vulns, ce-saladas next 15→16 (2026-05-12).
 
 ### Highest Priority Pending
-- P0: Mercado Pago central webhook route fix (`apps/webhooks/handlers/mercadopago_handler.py` imports broken service).
+- P0: Django 4.2 LTS → 5.2 migration (LTS support ends April 2026).
 - P0: Flutter checkout not yet connected to server2 real endpoint.
 - P0: Salada personalizada needs backend contract (persistent order item).
-- P1: Frontend contract matrix — map all endpoints consumed by each frontend.
-- P1: CheckoutService canonicalization — WhatsApp order flow must call same factory as storefront.
+- P1: Rate limiting on `/api/v1/auth/whatsapp/send/` (OTP abuse vector).
+- P1: HERE Maps removal — inventory remaining imports in ce-saladas.
 - P1: DB constraints — order_number uniqueness, active cart uniqueness, stock concurrency.
 
 ### Key Documents

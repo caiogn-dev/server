@@ -24,6 +24,7 @@ from .serializers import (
     SendTemplateMessageSerializer,
     SendInteractiveButtonsSerializer,
     SendInteractiveListSerializer,
+    SendCatalogMenuSerializer,
     SendImageSerializer,
     SendDocumentSerializer,
     SendAudioSerializer,
@@ -408,6 +409,82 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
         )
+
+    @action(detail=False, methods=['post'])
+    def send_catalog_menu(self, request):
+        """Send native WhatsApp catalog (product_list) for a store, excluding ingredients."""
+        from apps.stores.models import StoreProduct, Store
+
+        serializer = SendCatalogMenuSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        account_id = str(data['account_id'])
+        to = data['to']
+        store_id = data.get('store_id')
+
+        # Resolve store: explicit store_id or first store on account
+        if store_id:
+            try:
+                store = Store.objects.get(id=store_id)
+            except Store.DoesNotExist:
+                return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            try:
+                account = WhatsAppAccount.objects.get(id=account_id)
+                store = account.stores.first()
+            except WhatsAppAccount.DoesNotExist:
+                return Response({'detail': 'Conta não encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not store:
+            return Response({'detail': 'Nenhuma loja associada à conta.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Products excluding ingredients (same logic as MenuRequestHandler)
+        products = (
+            StoreProduct.objects.filter(store=store, is_active=True)
+            .exclude(tags__contains=['ingrediente'])
+            .select_related('category')
+            .order_by('category__sort_order', 'category__name', 'name')
+        )
+
+        if not products.exists():
+            return Response({'detail': 'Nenhum produto disponível para enviar.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Group by category and build product_list sections
+        products_by_category: dict = {}
+        for p in products:
+            cat = p.category.name if p.category else 'Outros'
+            if ' - ' in cat:
+                cat = cat.split(' - ')[-1]
+            products_by_category.setdefault(cat, []).append(p)
+
+        sections = []
+        total = 0
+        for cat_name, items in list(products_by_category.items())[:10]:
+            if total >= 30:
+                break
+            remaining = 30 - total
+            product_items = [{'product_retailer_id': str(p.id)} for p in items[:remaining]]
+            if product_items:
+                sections.append({'title': cat_name[:24], 'product_items': product_items})
+                total += len(product_items)
+
+        header_text = data.get('header_text') or f'Cardápio - {store.name}'
+        body_text = data.get('body_text') or 'Escolha seus itens pelo catálogo abaixo.'
+        footer = data.get('footer') or 'Imagens e preços do catálogo do WhatsApp.'
+
+        service = MessageService()
+        message = service.send_product_list(
+            account_id=account_id,
+            to=to,
+            sections=sections,
+            body_text=body_text,
+            header_text=header_text,
+            footer=footer,
+            metadata=data.get('metadata', {}),
+        )
+
+        return Response(MessageSerializer(message).data, status=status.HTTP_201_CREATED)
 
     @extend_schema(
         summary="Send image message",

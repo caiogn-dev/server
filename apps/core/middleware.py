@@ -160,6 +160,23 @@ class RateLimitMiddleware:
             return self.get_response(request)
 
         if request.path.startswith('/webhooks/'):
+            # Webhooks bypass the general limit but get a dedicated flood guard.
+            # 300 req/min per IP lets Meta burst freely; blocks blind flooding.
+            if request.method == 'POST':
+                client_ip = self.get_client_ip(request)
+                wh_key = f"rate_limit:webhook:{client_ip}"
+                wh_count = cache.get(wh_key, 0)
+                wh_max = getattr(settings, 'WEBHOOK_RATE_LIMIT_REQUESTS', 300)
+                if wh_count >= wh_max:
+                    logger.warning(
+                        f"Webhook flood guard triggered for IP: {client_ip}",
+                        extra={'ip': client_ip, 'count': wh_count},
+                    )
+                    return JsonResponse(
+                        {'error': {'code': 'rate_limit_exceeded', 'message': 'Too many requests.'}},
+                        status=429,
+                    )
+                cache.set(wh_key, wh_count + 1, 60)
             return self.get_response(request)
 
         if request.path.startswith('/admin/'):

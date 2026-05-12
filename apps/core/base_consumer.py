@@ -106,19 +106,6 @@ class ThrottledWebSocketConsumer(AsyncJsonWebsocketConsumer):
     message_rate_limit = 100  # messages per minute
     connection_rate_limit = 10  # connections per minute
     
-    def _extract_token(self, query_string: str) -> str:
-        """Extract token from query string."""
-        if not query_string:
-            return None
-        
-        # Parse query string: token=abc123
-        for param in query_string.split('&'):
-            if '=' in param:
-                key, value = param.split('=', 1)
-                if key == 'token':
-                    return value
-        return None
-    
     async def get_user_from_token(self, token_key: str):
         """Get user from authentication token with caching."""
         return await get_cached_user_async(token_key)

@@ -27,11 +27,12 @@ class Command(BaseCommand):
         vapid = Vapid()
         vapid.generate_keys()
 
-        private_key = vapid.private_pem().decode("utf-8").strip()
-        public_key = vapid.public_key.public_bytes(
-            encoding=__import__("cryptography.hazmat.primitives.serialization", fromlist=["Encoding"]).Encoding.PEM,
-            format=__import__("cryptography.hazmat.primitives.serialization", fromlist=["PublicFormat"]).PublicFormat.SubjectPublicKeyInfo,
-        ).decode("utf-8").strip()
+        import base64
+
+        private_value = vapid.private_key.private_numbers().private_value
+        private_key = base64.urlsafe_b64encode(
+            private_value.to_bytes(32, "big")
+        ).decode("utf-8").rstrip("=")
 
         # Also get the URL-safe base64 public key (used in the browser)
         try:
@@ -39,7 +40,6 @@ class Command(BaseCommand):
                 encoding=__import__("cryptography.hazmat.primitives.serialization", fromlist=["Encoding"]).Encoding.X962,
                 format=__import__("cryptography.hazmat.primitives.serialization", fromlist=["PublicFormat"]).PublicFormat.UncompressedPoint,
             )
-            import base64
             public_key_url_safe = base64.urlsafe_b64encode(public_key_b64).decode("utf-8").rstrip("=")
         except Exception:
             public_key_url_safe = "(could not derive URL-safe key)"

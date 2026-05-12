@@ -151,6 +151,88 @@ class ConversationViewSet(viewsets.ModelViewSet):
         })
 
     @extend_schema(
+        summary="Checkout/session debug for a conversation",
+        responses={200: dict},
+    )
+    @action(detail=True, methods=['get'])
+    def checkout_debug(self, request, pk=None):
+        """Return the deterministic checkout/session state for support debugging."""
+        conversation = self.get_object()
+
+        from apps.automation.models import CustomerSession
+        from apps.automation.services.context_service import AutomationContextService
+        from apps.core.utils import normalize_phone_number
+
+        digits = ''.join(ch for ch in str(conversation.phone_number or '') if ch.isdigit())
+        normalized = normalize_phone_number(digits) if digits else ''
+        phone_candidates = [
+            conversation.phone_number,
+            digits,
+            normalized,
+            f'+{normalized}' if normalized else '',
+        ]
+        if normalized.startswith('55') and len(normalized) > 11:
+            local = normalized[2:]
+            phone_candidates.extend([local, f'+{local}'])
+        phone_candidates = [value for value in dict.fromkeys(v for v in phone_candidates if v)]
+
+        context = AutomationContextService.resolve(conversation=conversation)
+        sessions = CustomerSession.objects.filter(phone_number__in=phone_candidates)
+        if context.store:
+            sessions = sessions.filter(company__store=context.store)
+        elif context.profile:
+            sessions = sessions.filter(company=context.profile)
+
+        session = sessions.order_by('-updated_at').first()
+        messages = conversation.messages.order_by('-created_at')[:10]
+
+        return Response({
+            'conversation': {
+                'id': str(conversation.id),
+                'phone_number': conversation.phone_number,
+                'wa_id': conversation.wa_id,
+                'contact_name': conversation.contact_name,
+                'mode': conversation.mode,
+                'status': conversation.status,
+                'last_message_at': conversation.last_message_at,
+            },
+            'context': {
+                'store_id': str(context.store.id) if context.store else None,
+                'store_slug': context.store.slug if context.store else None,
+                'profile_id': str(context.profile.id) if context.profile else None,
+                'account_id': str(context.account.id) if context.account else None,
+            },
+            'phone_candidates': phone_candidates,
+            'session': None if not session else {
+                'id': str(session.id),
+                'status': session.status,
+                'phone_number': session.phone_number,
+                'updated_at': session.updated_at,
+                'last_activity_at': session.last_activity_at,
+                'cart_total': str(session.cart_total),
+                'cart_items_count': session.cart_items_count,
+                'external_order_id': session.external_order_id,
+                'has_pix_code': bool(session.pix_code),
+                'cart_data': session.cart_data,
+                'last_checkout_step': (session.cart_data or {}).get('last_checkout_step'),
+                'checkout_snapshots': (session.cart_data or {}).get('checkout_snapshots') or [],
+            },
+            'recent_messages': [
+                {
+                    'id': str(message.id),
+                    'created_at': message.created_at,
+                    'direction': message.direction,
+                    'type': message.message_type,
+                    'status': message.status,
+                    'processed_by_agent': message.processed_by_agent,
+                    'text': message.text_body,
+                    'metadata': message.metadata,
+                }
+                for message in messages
+            ],
+        })
+
+    @extend_schema(
         summary="Switch to human mode",
         request=SwitchModeSerializer,
         responses={200: ConversationSerializer}

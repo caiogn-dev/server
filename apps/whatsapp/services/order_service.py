@@ -16,6 +16,7 @@ from django.db import transaction
 from apps.stores.models import Store, StoreCart, StoreCartItem, StoreOrder, StoreOrderItem, StoreProduct
 from apps.stores.services.checkout_service import CheckoutService
 from apps.stores.services.realtime_service import broadcast_order_event
+from apps.core.services.customer_identity import CustomerIdentityService
 
 logger = logging.getLogger(__name__)
 
@@ -117,10 +118,22 @@ class WhatsAppOrderService:
 
             # 3. Cria o pedido
             order_number = self._generate_order_number()
+            customer_record = CustomerIdentityService.sync_checkout_customer(
+                store=self.store,
+                customer_name=self.customer_name,
+                email=f"whatsapp_{self.phone_number}@whatsapp.bot",
+                phone=self.phone_number,
+                delivery_method=delivery_method,
+                delivery_address=self._build_delivery_address(delivery_address, addr_info),
+            )
+            customer_user = customer_record.get('user')
+            store_customer = customer_record.get('store_customer')
+            delivery_address_payload = self._build_delivery_address(delivery_address, addr_info)
             order = StoreOrder.objects.create(
                 store=self.store,
                 order_number=order_number,
                 access_token=str(uuid.uuid4()),
+                customer=customer_user,
                 customer_name=self.customer_name,
                 customer_email=f"whatsapp_{self.phone_number}@whatsapp.bot",
                 customer_phone=self.phone_number,
@@ -130,7 +143,7 @@ class WhatsAppOrderService:
                 delivery_fee=delivery_fee,
                 total=total,
                 delivery_method=delivery_method,
-                delivery_address=self._build_delivery_address(delivery_address, addr_info),
+                delivery_address=delivery_address_payload,
                 customer_notes=customer_notes,
                 metadata={
                     'source': 'whatsapp',
@@ -138,6 +151,11 @@ class WhatsAppOrderService:
                     'phone_number': self.phone_number,
                     'created_at_whatsapp': timezone.now().isoformat(),
                     'payment_method': payment_method,
+                    'customer': {
+                        'user_id': str(customer_user.id) if customer_user else '',
+                        'store_customer_id': str(store_customer.id) if store_customer else '',
+                        'source': 'whatsapp_automation',
+                    },
                 },
             )
             logger.info(f"[create_order_from_cart] Pedido criado: {order.order_number}")

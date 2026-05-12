@@ -7,6 +7,7 @@ import json
 import time
 import logging
 import uuid as uuid_module
+from datetime import timedelta
 from django.http import StreamingHttpResponse, JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
@@ -14,6 +15,7 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.authtoken.models import Token
 from django.core.cache import cache
 from django.db import connection
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -196,13 +198,36 @@ class OrderSSEView(BaseSSEView):
     """
     
     poll_interval = 3  # Check every 3 seconds
+
+    def _accessible_orders_queryset(self, user):
+        from apps.core.permissions import accessible_store_ids
+        from apps.stores.models import StoreOrder
+
+        tracked_order = getattr(user, 'order', None)
+        if tracked_order is not None:
+            return StoreOrder.objects.filter(id=tracked_order.id)
+
+        return StoreOrder.objects.filter(store_id__in=accessible_store_ids(user))
+
+    def _filter_requested_scope(self, queryset, store_id=None, order_id=None):
+        if order_id:
+            return queryset.filter(id=order_id)
+
+        if store_id:
+            try:
+                uuid_module.UUID(str(store_id))
+                return queryset.filter(store_id=store_id)
+            except (ValueError, AttributeError):
+                return queryset.filter(store__slug=store_id)
+
+        return queryset
     
     def get_event_stream(self, request, user, last_event_id=None):
         """Stream order updates."""
-        from apps.stores.models import StoreOrder
-        
         store_id = request.GET.get('store_id')
         order_id = request.GET.get('order_id')
+        base_query = self._accessible_orders_queryset(user)
+        scoped_query = self._filter_requested_scope(base_query, store_id=store_id, order_id=order_id)
         
         # Track last check time
         last_check = time.time()
@@ -211,25 +236,21 @@ class OrderSSEView(BaseSSEView):
         if order_id:
             # Single order tracking
             try:
-                order = StoreOrder.objects.get(id=order_id)
+                order = scoped_query.get()
                 last_status = order.status
-            except StoreOrder.DoesNotExist:
+            except Exception:
                 yield SSEEvent(
                     event_type='error',
-                    data={'message': 'Order not found'}
+                    data={'message': 'Order not found or access denied'}
                 )
                 return
         elif store_id:
             # Store orders
-            try:
-                uuid_module.UUID(str(store_id))
-                last_count = StoreOrder.objects.filter(store_id=store_id).count()
-            except (ValueError, AttributeError):
-                last_count = StoreOrder.objects.filter(store__slug=store_id).count()
+            last_count = scoped_query.count()
             last_order_id = None
         else:
             # All orders user has access to
-            last_count = 0
+            last_count = scoped_query.count()
             last_order_id = None
         
         while True:
@@ -238,7 +259,7 @@ class OrderSSEView(BaseSSEView):
             if order_id:
                 # Check single order status
                 try:
-                    order = StoreOrder.objects.get(id=order_id)
+                    order = scoped_query.get()
                     if order.status != last_status:
                         yield SSEEvent(
                             event_type='order_updated',
@@ -253,7 +274,7 @@ class OrderSSEView(BaseSSEView):
                             id=f"order_{order.id}_{int(current_time)}"
                         )
                         last_status = order.status
-                except StoreOrder.DoesNotExist:
+                except Exception:
                     yield SSEEvent(
                         event_type='order_deleted',
                         data={'order_id': order_id, 'timestamp': current_time}
@@ -261,13 +282,7 @@ class OrderSSEView(BaseSSEView):
                     break
             else:
                 # Check for new orders
-                query = StoreOrder.objects.all()
-                if store_id:
-                    try:
-                        uuid_module.UUID(str(store_id))
-                        query = query.filter(store_id=store_id)
-                    except (ValueError, AttributeError):
-                        query = query.filter(store__slug=store_id)
+                query = scoped_query
                 
                 current_count = query.count()
                 
