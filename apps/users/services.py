@@ -21,23 +21,16 @@ class UnifiedUserService:
     def get_or_create_by_phone(phone_number: str, name: str = None) -> tuple[UnifiedUser, bool]:
         """
         Busca ou cria usuário por telefone.
-        
-        Returns:
-            (user, created)
+        Usa UnifiedUser.resolve() para evitar duplicatas por formato de telefone.
         """
-        defaults = {}
-        if name:
-            defaults['name'] = name
-        
-        user, created = UnifiedUser.objects.get_or_create(
-            phone_number=phone_number,
-            defaults=defaults
-        )
-        
-        if created:
-            logger.info(f"[UnifiedUser] Created new user: {user.id} ({phone_number})")
-        
-        return user, created
+        try:
+            user, created = UnifiedUser.resolve(phone=phone_number, name=name or "")
+            if created:
+                logger.info("[UnifiedUser] Created new user: %s (%s)", user.id, phone_number)
+            return user, created
+        except Exception as exc:
+            logger.error("[UnifiedUser] get_or_create_by_phone failed: %s", exc)
+            raise
     
     @staticmethod
     def get_by_phone_cached(phone_number: str) -> Optional[UnifiedUser]:
@@ -95,9 +88,9 @@ class UnifiedUserService:
         Atualiza dados do usuário a partir de um pedido.
         """
         try:
-            user, _ = UnifiedUser.objects.get_or_create(
-                phone_number=phone_number,
-                defaults={'name': order_data.get('customer_name', 'Desconhecido')}
+            user, _ = UnifiedUser.resolve(
+                phone=phone_number,
+                name=order_data.get('customer_name', ''),
             )
             
             # Atualiza totais
@@ -128,10 +121,7 @@ class UnifiedUserService:
         Marca carrinho como abandonado.
         """
         try:
-            user, _ = UnifiedUser.objects.get_or_create(
-                phone_number=phone_number,
-                defaults={'name': 'Desconhecido'}
-            )
+            user, _ = UnifiedUser.resolve(phone=phone_number)
             
             user.has_abandoned_cart = True
             user.abandoned_cart_value = cart_data.get('total', 0)

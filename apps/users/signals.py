@@ -7,34 +7,43 @@ import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.db.models import Sum, Count
+from apps.core.utils import normalize_phone_number
 
 from .models import UnifiedUser, UnifiedUserActivity
 
 logger = logging.getLogger(__name__)
 
 
+def _phone_candidates(phone: str) -> list[str]:
+    digits = ''.join(ch for ch in str(phone or '') if ch.isdigit())
+    if not digits:
+        return []
+
+    normalized = normalize_phone_number(digits)
+    candidates = [phone, digits, normalized, f'+{digits}', f'+{normalized}']
+    if normalized.startswith('55') and len(normalized) > 11:
+        local = normalized[2:]
+        candidates.extend([local, f'+{local}'])
+
+    return [value for value in dict.fromkeys(c for c in candidates if c)]
+
+
 @receiver(post_save, sender='conversations.Conversation')
 def sync_conversation_to_unified_user(sender, instance, created, **kwargs):
     """
     Quando uma conversa é criada/atualizada, sincroniza com UnifiedUser.
-    NÃO ALTERA Conversation, apenas lê dados.
+    Usa UnifiedUser.resolve() para nunca criar duplicatas.
     """
     if not instance.phone_number:
         return
 
     try:
-        user, user_created = UnifiedUser.objects.get_or_create(
-            phone_number=instance.phone_number,
-            defaults={
-                'name': instance.contact_name or 'Desconhecido',
-            }
+        user, user_created = UnifiedUser.resolve(
+            phone=instance.phone_number,
+            name=instance.contact_name or "",
         )
 
-        if instance.contact_name and not user.name:
-            user.name = instance.contact_name
-            user.save(update_fields=['name'])
-
-        if created:
+        if created and user_created:
             UnifiedUserActivity.objects.create(
                 user=user,
                 activity_type=UnifiedUserActivity.ActivityType.WHATSAPP_MESSAGE,
@@ -42,10 +51,10 @@ def sync_conversation_to_unified_user(sender, instance, created, **kwargs):
                 metadata={'conversation_id': str(instance.id)}
             )
 
-        logger.info(f"[UnifiedUser] Synced conversation {instance.id} to user {user.id}")
+        logger.info("[UnifiedUser] Synced conversation %s → user %s (created=%s)", instance.id, user.id, user_created)
 
     except Exception as e:
-        logger.error(f"[UnifiedUser] Error syncing conversation: {e}")
+        logger.error("[UnifiedUser] Error syncing conversation %s: %s", instance.id, e)
 
 
 @receiver(post_save, sender='whatsapp.Message')
@@ -87,16 +96,15 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         return
 
     try:
-        # Normaliza o número removendo caracteres não-numéricos (exceto +)
-        normalized = ''.join(c for c in phone if c.isdigit() or c == '+')
+        normalized = normalize_phone_number(phone)
         if not normalized:
             return
 
-        # Tenta encontrar UnifiedUser por telefone (com ou sem +55)
+        phone_candidates = _phone_candidates(phone)
+
+        # Tenta encontrar UnifiedUser por telefone normalizado/variações
         user = (
-            UnifiedUser.objects.filter(phone_number=normalized).first()
-            or UnifiedUser.objects.filter(phone_number=normalized.lstrip('+')).first()
-            or UnifiedUser.objects.filter(phone_number='+' + normalized.lstrip('+')).first()
+            UnifiedUser.objects.filter(phone_number__in=phone_candidates).first()
         )
 
         if not user:
@@ -105,14 +113,14 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         # Recalcula os totais a partir de todos os pedidos deste telefone
         from apps.stores.models import StoreOrder
         stats = StoreOrder.objects.filter(
-            customer_phone__in=[normalized, normalized.lstrip('+'), '+' + normalized.lstrip('+')],
+            customer_phone__in=phone_candidates,
         ).aggregate(
             total_orders=Count('id'),
             total_spent=Sum('total'),
         )
 
         last_order = StoreOrder.objects.filter(
-            customer_phone__in=[normalized, normalized.lstrip('+'), '+' + normalized.lstrip('+')],
+            customer_phone__in=phone_candidates,
         ).order_by('-created_at').values_list('created_at', flat=True).first()
 
         update_fields = []
