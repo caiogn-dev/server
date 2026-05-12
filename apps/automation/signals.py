@@ -6,10 +6,14 @@ Handles automatic creation and linking of CompanyProfile with Store and WhatsApp
 import logging
 from django.db import connection
 from django.db import transaction
-from django.db.models.signals import post_save
+from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 
 logger = logging.getLogger(__name__)
+
+# Tracks StoreOrder.status before save so full-model saves can distinguish
+# a real status transition from unrelated updates such as manual payment launch.
+_ORDER_PREV_STATUS = {}
 
 
 def _company_profile_table_ready() -> bool:
@@ -196,6 +200,21 @@ def sync_company_profile_ai_to_account(sender, instance, **kwargs):
 # StoreOrder → WhatsApp notifications
 # ──────────────────────────────────────────────────────────────────────────────
 
+@receiver(pre_save, sender='stores.StoreOrder')
+def capture_order_previous_status(sender, instance, **kwargs):
+    """Capture previous order status before save for transition detection."""
+    if not instance.pk:
+        return
+
+    previous_status = (
+        sender.objects
+        .filter(pk=instance.pk)
+        .values_list('status', flat=True)
+        .first()
+    )
+    _ORDER_PREV_STATUS[instance.pk] = previous_status
+
+
 @receiver(post_save, sender='stores.StoreOrder')
 def trigger_order_status_notification(sender, instance, created, update_fields, **kwargs):
     """
@@ -225,8 +244,14 @@ def trigger_order_status_notification(sender, instance, created, update_fields, 
             transaction.on_commit(lambda: _dispatch_status('received'))
             return
 
-        # Only trigger when 'status' was part of the save
+        # Only trigger when 'status' was part of the save. When update_fields is
+        # None, compare the persisted previous value: DRF serializer saves use a
+        # full-model save even for PATCH payment_status-only updates.
         if update_fields is not None and 'status' not in update_fields:
+            return
+
+        previous_status = _ORDER_PREV_STATUS.pop(instance.pk, None)
+        if previous_status == instance.status:
             return
 
         transaction.on_commit(lambda: _dispatch_status(instance.status))

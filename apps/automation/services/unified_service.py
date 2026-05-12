@@ -25,7 +25,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from apps.agents.models import AgentConversation
-from apps.agents.services import LangchainService
+from apps.agents.services import LangGraphService
 from apps.automation.models import AutoMessage, CustomerSession
 from apps.automation.services.context_service import AutomationContextService
 from apps.whatsapp.intents.detector import IntentDetector, IntentType
@@ -245,7 +245,7 @@ class UnifiedService:
         if self.store:
             from apps.stores.models import StoreProduct
 
-            products = StoreProduct.objects.filter(store=self.store, is_active=True)[:5]
+            products = StoreProduct.objects.filter(store=self.store, is_active=True).exclude(tags__contains=['ingrediente'])[:5]
             if products:
                 product_lines = [f'- {product.name}: R$ {product.price:.2f}' for product in products]
                 parts.append('Produtos ativos:')
@@ -509,7 +509,7 @@ class UnifiedService:
 
         _t0 = time.monotonic()
         try:
-            service = LangchainService(self.agent)
+            service = LangGraphService(self.agent)
 
             # Busca conversa existente para reutilizar o session_id do Redis
             agent_conversation = AgentConversation.objects.filter(
@@ -731,6 +731,51 @@ class UnifiedService:
             )
 
         normalized = message_text.strip()
+
+        # Checkout state has priority over intent detection/LLM.
+        # Example: after asking for preparation notes, "nao" means "no notes",
+        # not a general negative answer for the LLM to reinterpret.
+        if self._has_pending_delivery_address_session() or self._has_pending_notes_session():
+            from apps.whatsapp.intents.handlers import UnknownHandler
+            try:
+                handler = UnknownHandler(self.account, self.conversation, self.company)
+                if self.store:
+                    handler.store = self.store
+                result = handler.handle({'original_message': normalized})
+                if result and not result.requires_llm:
+                    _ms = round((time.monotonic() - _t0) * 1000, 1)
+                    logger.info(
+                        '[unified] pending checkout text handler (%.0fms)',
+                        _ms,
+                        extra={
+                            'unified.source': 'handler',
+                            'unified.intent': 'pending_checkout_text',
+                            'unified.duration_ms': _ms,
+                            'unified.store_id': _store_id,
+                        },
+                    )
+                    self.stats['handler'] += 1
+                    if result.use_interactive:
+                        interactive_data = result.interactive_data or {}
+                        return UnifiedResponse(
+                            content=interactive_data.get('body') or result.response_text or '',
+                            source=ResponseSource.HANDLER,
+                            buttons=interactive_data.get('buttons'),
+                            header=interactive_data.get('header'),
+                            footer=interactive_data.get('footer'),
+                            metadata={'intent': 'pending_checkout_text'},
+                            interactive_type=result.interactive_type,
+                            interactive_data=interactive_data,
+                        )
+                    if result.response_text not in {None, '', 'BUTTONS_SENT', 'LIST_SENT', 'INTERACTIVE_SENT'}:
+                        return UnifiedResponse(
+                            content=result.response_text,
+                            source=ResponseSource.HANDLER,
+                            metadata={'intent': 'pending_checkout_text'},
+                        )
+            except Exception as exc:
+                logger.error('[unified] pending checkout text handler failed: %s', exc, exc_info=True)
+
         intent_data = self.detector.detect(normalized.lower())
         intent = intent_data.get('intent', IntentType.UNKNOWN)
 

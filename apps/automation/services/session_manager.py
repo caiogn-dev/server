@@ -23,6 +23,22 @@ from .context_service import AutomationContextService
 logger = logging.getLogger(__name__)
 
 
+def _append_checkout_snapshot(data: Dict[str, Any], step: str, payload: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    """Persist a compact checkout trail inside cart_data for support/debug."""
+    updated = dict(data or {})
+    snapshots = list(updated.get('checkout_snapshots') or [])
+    snapshot = {
+        'step': step,
+        'at': timezone.now().isoformat(),
+    }
+    if payload:
+        snapshot.update(payload)
+    snapshots.append(snapshot)
+    updated['checkout_snapshots'] = snapshots[-20:]
+    updated['last_checkout_step'] = step
+    return updated
+
+
 class SessionContext:
     """Contexto da sessão atual do usuário"""
     
@@ -210,7 +226,11 @@ class SessionManager:
         """Salva itens pendentes na sessão enquanto espera escolha de entrega/pagamento."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'items_selected',
+                {'items_count': len(items), 'items': items},
+            )
             data['pending_items'] = items
             session.cart_data = data
             session.save(update_fields=['cart_data'])
@@ -227,7 +247,7 @@ class SessionManager:
         """Remove itens pendentes da sessão após criar o pedido."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(session.cart_data or {}, 'order_finalized')
             data.pop('pending_items', None)
             data.pop('pending_delivery_method', None)
             session.cart_data = data
@@ -237,7 +257,11 @@ class SessionManager:
         """Salva método de entrega enquanto espera escolha de pagamento."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'delivery_method_selected',
+                {'delivery_method': delivery_method},
+            )
             data['pending_delivery_method'] = delivery_method
             session.cart_data = data
             session.save(update_fields=['cart_data'])
@@ -254,7 +278,10 @@ class SessionManager:
         """Marca sessão como aguardando endereço de entrega do cliente."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'waiting_for_address' if value else 'address_wait_cleared',
+            )
             data['waiting_for_address'] = value
             session.cart_data = data
             session.save(update_fields=['cart_data'])
@@ -270,7 +297,10 @@ class SessionManager:
         """Marca sessão como aguardando observações do cliente (ex: sem cebola)."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'waiting_for_notes' if value else 'notes_wait_cleared',
+            )
             data['waiting_for_notes'] = value
             session.cart_data = data
             session.save(update_fields=['cart_data'])
@@ -286,7 +316,11 @@ class SessionManager:
         """Salva observações do cliente e encerra estado de espera de notas."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'notes_collected',
+                {'has_notes': bool(notes), 'notes_preview': (notes or '')[:80]},
+            )
             data['customer_notes'] = notes
             data['waiting_for_notes'] = False
             session.cart_data = data
@@ -313,7 +347,17 @@ class SessionManager:
         """Salva endereço geocodificado e taxa calculada pelo GeoService."""
         session = self.get_or_create_session()
         if session:
-            data = dict(session.cart_data or {})
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'address_collected',
+                {
+                    'address': address,
+                    'fee': fee,
+                    'distance_km': distance_km,
+                    'lat': lat,
+                    'lng': lng,
+                },
+            )
             data['delivery_address'] = address
             data['delivery_fee_calculated'] = fee
             data['delivery_distance_km'] = distance_km
@@ -362,6 +406,11 @@ class SessionManager:
         """Define status de pagamento pendente"""
         session = self.get_or_create_session()
         if session:
+            session.cart_data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'payment_pending',
+                {'payment_id': payment_id, 'has_pix_code': bool(pix_code)},
+            )
             session.pix_code = pix_code
             session.pix_qr_code = pix_qr_code
             session.payment_id = payment_id
