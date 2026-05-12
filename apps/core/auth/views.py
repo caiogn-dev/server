@@ -150,8 +150,9 @@ def send_whatsapp_auth_code(request):
     phone = request.data.get('phone_number')
     account_id = request.data.get('whatsapp_account_id')
     
-    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
-    
+    masked_phone = f"***{phone[-4:]}" if phone and len(phone) > 4 else "***"
+    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {masked_phone}")
+
     if not phone:
         return Response(
             {'error': 'phone_number é obrigatório'},
@@ -171,7 +172,7 @@ def send_whatsapp_auth_code(request):
             # Em desenvolvimento, retorna o código para facilitar testes
             from django.conf import settings
             if settings.DEBUG:
-                logger.info(f"[WHATSAPP AUTH API] Code sent (DEBUG mode): {result.get('code')}")
+                logger.info(f"[WHATSAPP AUTH API] Code sent (DEBUG mode) to: {masked_phone}")
             else:
                 # Remove código do response em produção
                 result.pop('code', None)

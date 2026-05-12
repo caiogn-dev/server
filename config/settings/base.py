@@ -318,9 +318,9 @@ DEFAULT_WHATSAPP_STORE_SLUGS = [
 DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
 
 # Instagram API Configuration
-INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
+INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
-INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
+INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')
 
 # ============================================================================
 # LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
