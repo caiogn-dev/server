@@ -122,13 +122,21 @@ class CustomerIdentityService:
             profile = (
                 UserProfile.objects.select_related("user")
                 .filter(phone__in=cls.phone_candidates(normalized_phone))
+                .exclude(user__is_staff=True)
+                .exclude(user__is_superuser=True)
                 .first()
             )
             if profile:
                 phone_user = profile.user
 
         if normalized_email:
-            email_user = user_model.objects.filter(email__iexact=normalized_email).first()
+            email_user = (
+                user_model.objects
+                .filter(email__iexact=normalized_email)
+                .exclude(is_staff=True)
+                .exclude(is_superuser=True)
+                .first()
+            )
 
         if phone_user and email_user and phone_user.id != email_user.id:
             logger.warning(
@@ -166,12 +174,13 @@ class CustomerIdentityService:
             profile = UserProfile.objects.create(user=resolved_user)
 
         user_updates = []
-        if first_name and resolved_user.first_name != first_name:
-            resolved_user.first_name = first_name
-            user_updates.append("first_name")
-        if last_name and resolved_user.last_name != last_name:
-            resolved_user.last_name = last_name
-            user_updates.append("last_name")
+        if not resolved_user.is_staff and not resolved_user.is_superuser:
+            if first_name and resolved_user.first_name != first_name:
+                resolved_user.first_name = first_name
+                user_updates.append("first_name")
+            if last_name and resolved_user.last_name != last_name:
+                resolved_user.last_name = last_name
+                user_updates.append("last_name")
 
         if normalized_email and normalized_email != (resolved_user.email or "").strip().lower():
             email_in_use = user_model.objects.filter(email__iexact=normalized_email).exclude(id=resolved_user.id).exists()
@@ -307,25 +316,56 @@ class CustomerIdentityService:
             store_customer_updates.append("whatsapp")
 
         if normalized_address:
-            addresses = list(store_customer.addresses or [])
-            existing_index = next(
-                (
-                    index for index, current in enumerate(addresses)
-                    if cls._build_address_record(current, store=store) == normalized_address
-                ),
-                None,
-            )
-            if existing_index is None:
-                addresses.insert(0, normalized_address)
-                store_customer.addresses = addresses
-                store_customer.default_address_index = 0
-                store_customer_updates.extend(["addresses", "default_address_index"])
-            elif store_customer.default_address_index != existing_index:
-                store_customer.default_address_index = existing_index
-                store_customer_updates.append("default_address_index")
+            from apps.stores.models import StoreCustomerAddress
+            existing = (
+                StoreCustomerAddress.objects
+                .filter(customer=store_customer, formatted=normalized_address["formatted"])
+                .first()
+            ) if normalized_address.get("formatted") else None
+
+            if not existing:
+                StoreCustomerAddress.objects.filter(
+                    customer=store_customer, is_default=True
+                ).update(is_default=False)
+                StoreCustomerAddress.objects.create(
+                    customer=store_customer,
+                    street=normalized_address.get("street", ""),
+                    number=normalized_address.get("number", ""),
+                    complement=normalized_address.get("complement", ""),
+                    neighborhood=normalized_address.get("neighborhood", ""),
+                    city=normalized_address.get("city", ""),
+                    state=normalized_address.get("state", ""),
+                    zip_code=normalized_address.get("zip_code", ""),
+                    reference=normalized_address.get("reference", ""),
+                    formatted=normalized_address.get("formatted", ""),
+                    is_default=True,
+                )
+            elif not existing.is_default:
+                existing.set_as_default()
 
         if store_customer_updates:
             store_customer.save(update_fields=store_customer_updates)
+
+        # Link to UnifiedUser if not already done
+        if store_customer.unified_user_id is None:
+            try:
+                from apps.users.models import UnifiedUser
+                unified = (
+                    UnifiedUser.objects
+                    .filter(django_user=resolved_user)
+                    .first()
+                )
+                if unified is None and normalized_phone:
+                    unified = (
+                        UnifiedUser.objects
+                        .filter(phone_number=normalized_phone)
+                        .first()
+                    )
+                if unified:
+                    store_customer.unified_user = unified
+                    store_customer.save(update_fields=["unified_user"])
+            except Exception:
+                logger.debug("[IDENTITY] Não foi possível linkar UnifiedUser ao StoreCustomer")
 
         return {
             "user": resolved_user,

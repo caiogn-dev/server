@@ -836,10 +836,18 @@ class CustomerSession(BaseModel):
         related_name='customer_sessions'
     )
     
-    # Customer identification
+    # Customer identification — phone is the universal key
     phone_number = models.CharField(max_length=20, db_index=True)
     customer_name = models.CharField(max_length=255, blank=True)
     customer_email = models.EmailField(blank=True)
+    # Link to unified identity (populated lazily by CustomerIdentityService)
+    unified_user = models.ForeignKey(
+        'users.UnifiedUser',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='customer_sessions',
+    )
     
     # Session tracking
     session_id = models.CharField(
