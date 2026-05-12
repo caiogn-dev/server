@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 import uuid
+from apps.core.fields import EncryptedCharField
 
 
 class InstagramAccount(models.Model):
@@ -19,16 +20,18 @@ class InstagramAccount(models.Model):
     facebook_page_id = models.CharField(max_length=255, null=True, blank=True)
     username = models.CharField(max_length=255)
     
-    # Tokens de acesso
-    access_token = models.TextField(
-        help_text='User Access Token ou Instagram Business Token (leitura de mídia, insights).'
+    # Tokens de acesso (encrypted at rest via Fernet/AES-128)
+    access_token = EncryptedCharField(
+        max_length=2000,
+        help_text='User Access Token ou Instagram Business Token (leitura de mídia, insights).',
     )
     token_expires_at = models.DateTimeField(null=True, blank=True)
     # Page Access Token — obrigatório para enviar mensagens via /{page_id}/messages
-    page_access_token = models.TextField(
+    page_access_token = EncryptedCharField(
+        max_length=2000,
         blank=True,
         default='',
-        help_text='Page Access Token da Página Facebook conectada. Necessário para enviar DMs via Instagram.'
+        help_text='Page Access Token da Página Facebook conectada. Necessário para enviar DMs via Instagram.',
     )
     page_token_expires_at = models.DateTimeField(
         null=True,

@@ -110,8 +110,8 @@ class UserProfile(models.Model):
         on_delete=models.CASCADE,
         related_name='profile'
     )
-    phone = models.CharField(max_length=20, blank=True)
-    cpf = models.CharField(max_length=14, blank=True)
+    phone = models.CharField(max_length=20, blank=True, db_index=True)
+    cpf = models.CharField(max_length=14, blank=True, db_index=True)
     address = models.TextField(blank=True)
     number = models.CharField(max_length=20, blank=True)
     complement = models.CharField(max_length=100, blank=True)
