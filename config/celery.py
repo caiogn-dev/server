@@ -80,9 +80,9 @@ app.conf.beat_schedule = {
         'task': 'apps.campaigns.tasks.check_scheduled_campaigns',
         'schedule': 60.0,  # Every minute
     },
-    # Instagram token refresh (daily at 3 AM)
+    # Instagram token refresh (daily) — renew tokens expiring within 7 days
     'refresh-instagram-tokens': {
-        'task': 'apps.instagram.tasks.refresh_access_tokens',
+        'task': 'apps.instagram.tasks.refresh_instagram_tokens',
         'schedule': 86400.0,  # Daily
     },
     # Cleanup old IntentLog entries (daily at 3 AM)

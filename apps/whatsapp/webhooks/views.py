@@ -142,14 +142,13 @@ class WhatsAppWebhookView(APIView):
 
 
 class WebhookDebugView(APIView):
-    """Debug endpoint to check webhook status."""
+    """Debug endpoint to check webhook status. Only available in DEBUG mode."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Return webhook status information."""
-        from ..tasks import process_webhook_event
-        
-        # Check Celery status
+        if not settings.DEBUG:
+            return Response({'detail': 'Not found.'}, status=404)
+
         try:
             from celery import current_app
             inspector = current_app.control.inspect()
@@ -157,7 +156,7 @@ class WebhookDebugView(APIView):
             celery_status = 'running' if stats else 'not running'
         except Exception as e:
             celery_status = f'error: {str(e)}'
-        
+
         return Response({
             'celery_status': celery_status,
             'verify_token_configured': bool(getattr(settings, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN', None)),

@@ -11,8 +11,25 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
+from django.core.cache import cache
 
 from .models import WebhookEvent, WebhookEndpoint
+
+# Per-IP rate limit: max 60 webhook POSTs per minute
+_RATE_LIMIT = 60
+_RATE_WINDOW = 60  # seconds
+
+
+def _check_rate_limit(ip: str, provider: str) -> bool:
+    """Returns True if the request should be allowed, False if rate-limited."""
+    key = f"webhook_rl:{provider}:{ip}"
+    try:
+        # cache.add is atomic "set if not exists"; then incr is also atomic in Redis
+        cache.add(key, 0, timeout=_RATE_WINDOW)
+        count = cache.incr(key)
+        return count <= _RATE_LIMIT
+    except Exception:
+        return True  # If cache is unavailable, allow through
 from .handlers.base import BaseHandler
 
 logger = logging.getLogger(__name__)
@@ -39,6 +56,13 @@ class WebhookDispatcherView(View):
     
     def post(self, request, provider: str, **kwargs):
         """Handle POST requests."""
+        ip = (
+            request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip()
+            or request.META.get('REMOTE_ADDR', 'unknown')
+        )
+        if not _check_rate_limit(ip, provider):
+            logger.warning("Webhook rate limit exceeded: provider=%s ip=%s", provider, ip)
+            return HttpResponse("Too Many Requests", status=429)
         return self._handle_webhook(request, provider, **kwargs)
     
     def get(self, request, provider: str, **kwargs):
@@ -82,16 +106,17 @@ class WebhookDispatcherView(View):
         event_type = self._extract_event_type(provider, payload, headers)
         event_id = self._extract_event_id(provider, payload, headers)
 
-        # Check for duplicates
+        # Check for duplicates — any non-failed status means we already have it
         if event_id:
             existing = WebhookEvent.objects.filter(
                 provider=provider,
                 event_id=event_id,
-                status__in=[WebhookEvent.Status.COMPLETED, WebhookEvent.Status.DUPLICATE]
+            ).exclude(
+                status=WebhookEvent.Status.FAILED,
             ).first()
 
             if existing:
-                logger.info(f"Duplicate webhook event: {event_id}")
+                logger.info(f"Duplicate webhook event: {event_id} (status={existing.status})")
                 return HttpResponse("OK", status=200)
 
         # Create event log (only after HMAC passes)

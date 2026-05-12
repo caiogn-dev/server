@@ -6,6 +6,7 @@ from .api.views import (
     InstagramConversationViewSet, InstagramMessageViewSet,
     InstagramWebhookViewSet
 )
+from .api.data_deletion_view import MetaDataDeletionView, MetaDataDeletionStatusView
 
 app_name = 'instagram'
 
@@ -19,5 +20,9 @@ router.register(r'messages', InstagramMessageViewSet, basename='instagram-messag
 router.register(r'webhooks', InstagramWebhookViewSet, basename='instagram-webhooks')
 
 urlpatterns = [
+    # Meta App Review: Data Deletion Request callback
+    path('data-deletion/', MetaDataDeletionView.as_view(), name='meta-data-deletion'),
+    path('data-deletion/status/', MetaDataDeletionStatusView.as_view(), name='meta-data-deletion-status'),
+
     path('', include(router.urls)),
 ]
