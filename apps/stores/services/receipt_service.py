@@ -182,6 +182,20 @@ def generate_order_receipt_pdf(order: "StoreOrder") -> bytes:
 
     for ci in combo_items:
         name = ci.combo_name or "-"
+        customizations = ci.customizations if isinstance(ci.customizations, dict) else {}
+        if customizations.get('is_salad_builder') and customizations.get('ingredients'):
+            ingredients = customizations['ingredients']
+            ingredient_parts = []
+            for ing in ingredients:
+                if not isinstance(ing, dict):
+                    continue
+                ing_name = str(ing.get('name') or '').strip()
+                if not ing_name:
+                    continue
+                role = str(ing.get('role') or '').strip()
+                ingredient_parts.append(f"{role}: {ing_name}" if role else ing_name)
+            if ingredient_parts:
+                name += "\n" + ", ".join(ingredient_parts)
         if ci.notes:
             name += f"\nObs: {ci.notes}"
         item_rows.append([

@@ -42,6 +42,13 @@ class StoreCart(models.Model):
             # Includes is_active for the common "get active cart" query
             models.Index(fields=['user', 'store', 'is_active'], name='cart_user_store_active_idx'),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'store'],
+                condition=models.Q(is_active=True, user__isnull=False),
+                name='unique_active_cart_per_user_store',
+            ),
+        ]
 
     def __str__(self):
         if self.user:

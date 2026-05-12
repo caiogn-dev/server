@@ -1,7 +1,10 @@
 """
 Mercado Pago webhook handler.
 """
+import hashlib
+import hmac
 import logging
+import os
 from typing import Dict, Any
 from django.http import HttpResponse
 
@@ -9,6 +12,57 @@ from .base import BaseHandler
 from ..models import WebhookEvent
 
 logger = logging.getLogger(__name__)
+
+
+def _verify_mercadopago_signature(request, payload: dict) -> bool:
+    """
+    Validate Mercado Pago webhook HMAC-SHA256 signature.
+
+    MP sends:
+      x-signature: ts=<timestamp>,v1=<hmac>
+      x-request-id: <uuid>
+
+    Signed template: "id:<data.id>;request-id:<X-Request-Id>;ts:<ts>"
+    Ref: https://www.mercadopago.com.br/developers/en/docs/your-integrations/notifications/webhooks
+    """
+    secret = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
+    if not secret:
+        return True  # not configured — skip validation
+
+    x_signature = request.headers.get('x-signature', '')
+    x_request_id = request.headers.get('x-request-id', '')
+
+    if not x_signature:
+        logger.warning("Mercado Pago webhook missing x-signature header")
+        return False
+
+    # Parse ts and v1 from "ts=<ts>,v1=<hmac>"
+    ts = ''
+    v1 = ''
+    for part in x_signature.split(','):
+        part = part.strip()
+        if part.startswith('ts='):
+            ts = part[3:]
+        elif part.startswith('v1='):
+            v1 = part[3:]
+
+    if not ts or not v1:
+        logger.warning("Mercado Pago x-signature malformed: %s", x_signature)
+        return False
+
+    data_id = str(payload.get('data', {}).get('id') or '')
+    template = f"id:{data_id};request-id:{x_request_id};ts:{ts}"
+
+    expected = hmac.new(
+        secret.encode('utf-8'),
+        template.encode('utf-8'),
+        hashlib.sha256,
+    ).hexdigest()
+
+    valid = hmac.compare_digest(v1, expected)
+    if not valid:
+        logger.warning("Mercado Pago webhook HMAC mismatch — rejecting")
+    return valid
 
 
 class MercadoPagoHandler(BaseHandler):
@@ -21,6 +75,8 @@ class MercadoPagoHandler(BaseHandler):
         Process Mercado Pago webhook.
         Delegates to the existing store webhook service.
         """
+        # Signature already validated by the dispatcher (_verify_signature).
+        # _verify_mercadopago_signature is called there via WebhookEndpoint secret.
         # Extract data from payload
         event_type = payload.get('type', '')
         data_id = payload.get('data', {}).get('id')

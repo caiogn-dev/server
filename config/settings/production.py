@@ -21,6 +21,8 @@ WHITENOISE_KEEP_ONLY_HASHED_FILES = True
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 
 # Disable SSL redirect - Cloudflare/Nginx handles HTTPS at the proxy level
 SECURE_SSL_REDIRECT = False

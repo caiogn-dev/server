@@ -16,4 +16,3 @@ Estrutura:
 - admin.py: Configuração do Django Admin
 """
 
-default_app_config = 'apps.instagram.apps.InstagramConfig'

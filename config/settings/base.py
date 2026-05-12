@@ -231,6 +231,9 @@ CORS_ALLOWED_ORIGINS = [
     "https://pastita-3d.vercel.app",
     # ce-saladas storefront — Vercel deployment
     "https://ce-saladas.vercel.app",
+    # ce-saladas dev server (openclaw tunnel + local)
+    "https://openclaw.pastita.com.br",
+    "http://localhost:3001",
     # Backend / API self-origin (health checks, swagger)
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",

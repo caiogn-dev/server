@@ -66,11 +66,22 @@ class WebhookDispatcherView(View):
         
         # Get headers
         headers = dict(request.headers)
-        
+
+        # Verify HMAC signature BEFORE any DB write.
+        # Prevents table flooding: an attacker sending spoofed requests would create a
+        # WebhookEvent row per request if we wrote first, then validated.
+        # None = no endpoint configured (skip), True = valid, False = invalid (reject).
+        signature_valid = self._verify_signature(request, provider, payload)
+        if signature_valid is False:
+            logger.warning(
+                f"Webhook signature invalid — rejecting provider={provider} without DB write"
+            )
+            return HttpResponse("Invalid signature", status=403)
+
         # Extract event type
         event_type = self._extract_event_type(provider, payload, headers)
         event_id = self._extract_event_id(provider, payload, headers)
-        
+
         # Check for duplicates
         if event_id:
             existing = WebhookEvent.objects.filter(
@@ -78,12 +89,12 @@ class WebhookDispatcherView(View):
                 event_id=event_id,
                 status__in=[WebhookEvent.Status.COMPLETED, WebhookEvent.Status.DUPLICATE]
             ).first()
-            
+
             if existing:
                 logger.info(f"Duplicate webhook event: {event_id}")
                 return HttpResponse("OK", status=200)
-        
-        # Create event log
+
+        # Create event log (only after HMAC passes)
         event = WebhookEvent.objects.create(
             provider=provider,
             event_type=event_type,
@@ -91,23 +102,9 @@ class WebhookDispatcherView(View):
             payload=payload,
             headers=headers,
             query_params=dict(request.GET),
-            status=WebhookEvent.Status.PENDING
+            status=WebhookEvent.Status.PENDING,
+            signature_valid=signature_valid,
         )
-        
-        # Verify signature — None means "no verification configured" (allowed), False means invalid (reject)
-        signature_valid = self._verify_signature(request, provider, payload)
-        event.signature_valid = signature_valid
-        event.save(update_fields=['signature_valid'])
-
-        if signature_valid is False:
-            logger.warning(
-                f"Webhook signature invalid — rejecting event from provider={provider}, "
-                f"event_id={event.id}"
-            )
-            event.status = WebhookEvent.Status.FAILED
-            event.error_message = 'Invalid webhook signature'
-            event.save(update_fields=['status', 'error_message'])
-            return HttpResponse("Invalid signature", status=403)
 
         # Process with handler
         try:
@@ -244,13 +241,30 @@ class WebhookDispatcherView(View):
                     return hmac.compare_digest(signature_header[7:], expected)
             
             elif provider == 'mercadopago':
-                # Mercado Pago signature format
+                # MP format: x-signature: ts=<ts>,v1=<hmac>
+                # Signed template: "id:<data.id>;request-id:<X-Request-Id>;ts:<ts>"
+                x_sig = request.headers.get('x-signature', '')
+                x_req_id = request.headers.get('x-request-id', '')
+                ts = v1 = ''
+                for part in x_sig.split(','):
+                    part = part.strip()
+                    if part.startswith('ts='):
+                        ts = part[3:]
+                    elif part.startswith('v1='):
+                        v1 = part[3:]
+                if not ts or not v1:
+                    return False
+                try:
+                    data_id = str(payload.get('data', {}).get('id') or '')
+                except Exception:
+                    data_id = ''
+                template = f"id:{data_id};request-id:{x_req_id};ts:{ts}"
                 expected = hmac.new(
                     endpoint.secret.encode(),
-                    request.body,
-                    hashlib.sha256
+                    template.encode(),
+                    hashlib.sha256,
                 ).hexdigest()
-                return hmac.compare_digest(signature_header, expected)
+                return hmac.compare_digest(v1, expected)
             
             return None
             
