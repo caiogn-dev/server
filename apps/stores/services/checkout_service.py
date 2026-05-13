@@ -266,8 +266,15 @@ class CheckoutService:
         """
         Create an order from a cart with atomic stock decrement.
         """
+        # Lock the cart row first to prevent concurrent checkouts from the same cart
+        # (e.g. double-tap on the checkout button or network retry).
+        # Any second request will block here, then see is_active=False and abort.
+        cart = StoreCart.objects.select_for_update().get(id=cart.id)
+        if not cart.is_active:
+            raise ValueError("Este carrinho já foi finalizado. Por favor, inicie um novo pedido.")
+
         store = cart.store
-        
+
         # Validate stock
         stock_errors = cart_service.validate_stock_for_checkout(cart)
         if stock_errors:
