@@ -37,7 +37,7 @@ from apps.stores.models import (
     Store, StoreProduct, StoreCategory, StoreCart, StoreCartItem,
     StoreCombo, StoreProductType, StoreCoupon, StoreDeliveryZone,
     StoreCustomer, StorePaymentGateway,
-    StoreWishlist
+    StoreWishlist, StoreCustomerAddress,
 )
 from apps.stores.services import cart_service, checkout_service
 from apps.stores.services.delivery_quote_service import delivery_quote_service
@@ -172,7 +172,6 @@ def build_store_customer_profile(store, user):
         'street', 'number', 'complement', 'neighborhood',
         'city', 'state', 'zip_code', 'reference', 'formatted', 'is_default',
     ))
-    addresses = addr_records
     default_address = next((a for a in addr_records if a['is_default']), addr_records[0] if addr_records else None)
     default_index = 0
 
@@ -232,7 +231,7 @@ def build_store_customer_profile(store, user):
             'state': profile.state,
             'zip_code': profile.zip_code,
         },
-        'addresses': addresses,
+        'addresses': addr_records,
         'default_address_index': default_index,
         'default_address': default_address,
         'stats': {
@@ -417,8 +416,6 @@ class StoreCustomerProfileView(APIView):
         store_customer = customer_record.get('store_customer')
         if store_customer:
             if isinstance(addresses, list) and addresses:
-                from apps.stores.models import StoreCustomerAddress
-                store_customer.address_list.filter(is_default=True).update(is_default=False)
                 for i, addr_dict in enumerate(addresses):
                     if not isinstance(addr_dict, dict):
                         continue
@@ -429,8 +426,15 @@ class StoreCustomerProfileView(APIView):
                             addr_dict.get('neighborhood', ''), addr_dict.get('city', ''),
                         ]
                         formatted = ', '.join(p for p in parts if p)
+                    if not formatted and not any([
+                        addr_dict.get('street'), addr_dict.get('number'),
+                        addr_dict.get('city'),
+                    ]):
+                        continue  # skip entirely-blank address dicts
                     already = store_customer.address_list.filter(formatted=formatted).first() if formatted else None
                     if not already:
+                        if i == 0:
+                            store_customer.address_list.filter(is_default=True).update(is_default=False)
                         StoreCustomerAddress.objects.create(
                             customer=store_customer,
                             street=addr_dict.get('street', ''),
@@ -445,13 +449,8 @@ class StoreCustomerProfileView(APIView):
                             is_default=(i == 0),
                         )
                     elif i == 0 and not already.is_default:
+                        store_customer.address_list.filter(is_default=True).exclude(pk=already.pk).update(is_default=False)
                         already.set_as_default()
-            default_index = data.get('default_address_index')
-            if default_index is not None:
-                try:
-                    store_customer.default_address_index = max(0, int(default_index))
-                except (TypeError, ValueError):
-                    pass
             if 'accepts_marketing' in data:
                 store_customer.accepts_marketing = bool(data.get('accepts_marketing'))
             store_customer.save()
