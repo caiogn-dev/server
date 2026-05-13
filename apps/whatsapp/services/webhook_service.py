@@ -440,49 +440,20 @@ class WebhookService:
             logger.info("[PastitaOrchestrator] Response sent successfully")
             return
             
+        except ImportError as e:
+            logger.warning(f"[PastitaOrchestrator] Import error (module not ready): {e}")
         except Exception as e:
             logger.exception(f"[PastitaOrchestrator] Error: {e}")
-            
-            # Fallback final
             try:
                 from ..tasks import send_agent_response
                 send_agent_response.delay(
                     str(event.account.id),
                     message.from_number,
                     "Desculpe, tive um problema. Tente novamente ou digite 'atendente' para falar com uma pessoa.",
-                    str(message.whatsapp_message_id)
+                    str(message.whatsapp_message_id),
                 )
             except Exception as fallback_error:
-                logger.error(f"[post_process] Fallback failed: {fallback_error}")
-                # Se tem botões/interativo, envia mensagem interativa
-                if llm_response.buttons or llm_response.interactive_type:
-                    try:
-                        self._send_unified_interactive(event, message, llm_response)
-                        logger.info("[LLMOrchestrator] Interactive response sent successfully")
-                        return  # Sucesso!
-                    except Exception as e:
-                        logger.error(f"[LLMOrchestrator] Failed to send interactive: {e}")
-                
-                # Se tem conteúdo de texto, envia mensagem
-                if llm_response.content:
-                    try:
-                        from ..tasks import send_agent_response
-                        send_agent_response.delay(
-                            str(event.account.id),
-                            message.from_number,
-                            llm_response.content,
-                            str(message.whatsapp_message_id)
-                        )
-                        logger.info("[LLMOrchestrator] Response queued successfully")
-                        return  # Sucesso!
-                    except Exception as e:
-                        logger.error(f"[LLMOrchestrator] Failed to queue response: {e}")
-                        # Continua para fallback
-                    
-        except ImportError as e:
-            logger.warning(f"[LLMOrchestrator] Import error (module not ready): {e}")
-        except Exception as e:
-            logger.warning(f"[LLMOrchestrator] Unexpected error: {e}")
+                logger.error(f"[PastitaOrchestrator] Fallback message also failed: {fallback_error}")
 
         # ========== NÍVEL 2: WhatsAppAutomationService (sistema anterior) ==========
         intent_response = None
