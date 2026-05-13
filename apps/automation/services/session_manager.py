@@ -110,13 +110,16 @@ class SessionManager:
     como pedidos, pagamentos, etc.
     """
     
-    def __init__(self, account: WhatsAppAccount | CompanyProfile | Store, phone_number: str):
+    def __init__(self, account: "WhatsAppAccount | CompanyProfile | Store | None" = None, phone_number: str = '', *, store: "Store | None" = None):
         self.phone_number = phone_number
         digits_only = re.sub(r'\D', '', phone_number or '')
         phone_candidates = [phone_number]
         if digits_only:
             phone_candidates.extend([digits_only, f'+{digits_only}'])
         self.phone_number_variants = [value for value in dict.fromkeys(phone_candidates) if value]
+        # `store` kwarg is a convenience alias for passing a Store as the first arg.
+        if store is not None and account is None:
+            account = store
         context_kwargs: Dict[str, Any] = {}
         if isinstance(account, WhatsAppAccount):
             context_kwargs['account'] = account

@@ -48,7 +48,8 @@ class TocaDispatchSignalTest(TestCase):
     @override_settings(TOCA_DELIVERY_ENABLED=False)
     @patch('apps.stores.tasks.dispatch_order_to_toca_delivery.delay')
     def test_enqueues_toca_dispatch_when_order_becomes_confirmed(self, mock_delay):
-        self.order.status = StoreOrder.OrderStatus.CONFIRMED
-        self.order.save(update_fields=['status', 'updated_at'])
+        with self.captureOnCommitCallbacks(execute=True):
+            self.order.status = StoreOrder.OrderStatus.CONFIRMED
+            self.order.save(update_fields=['status', 'updated_at'])
 
         mock_delay.assert_called_once_with(str(self.order.id))

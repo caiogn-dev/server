@@ -475,6 +475,7 @@ class CheckoutService:
         coupon_code: str = None,
         notes: str = '',
         use_loyalty_reward: bool = False,
+        trusted_delivery_fee: "Decimal | None" = None,
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -497,6 +498,10 @@ class CheckoutService:
         if stock_errors:
             raise ValueError(f"Erros de estoque: {stock_errors}")
         
+        # Validate trusted_delivery_fee early so callers get a clear error.
+        if trusted_delivery_fee is not None and trusted_delivery_fee < 0:
+            raise ValueError("trusted_delivery_fee não pode ser negativo")
+
         # Calculate delivery fee
         delivery_info = CheckoutService.normalize_delivery_quote({
             'fee': 0.0,
@@ -505,12 +510,28 @@ class CheckoutService:
             'is_valid': True,
             'available': True,
         })
-        if delivery_payload and delivery_payload.get('method') == 'delivery':
-            delivery_info = CheckoutService.calculate_delivery_fee_for_payload(
-                store,
-                delivery_payload,
-            )
-            delivery_info = CheckoutService.normalize_delivery_quote(delivery_info)
+        if trusted_delivery_fee is not None:
+            # Caller already computed the fee; use it verbatim.
+            delivery_info = CheckoutService.normalize_delivery_quote({
+                **(delivery_payload or {}),
+                'fee': float(trusted_delivery_fee),
+                'is_valid': True,
+                'available': True,
+            })
+        elif delivery_payload and delivery_payload.get('method') == 'delivery':
+            if delivery_payload.get('fee') is not None:
+                # Pre-computed fee (WhatsApp override or GeoService result); skip recalculation.
+                delivery_info = CheckoutService.normalize_delivery_quote({
+                    **delivery_payload,
+                    'is_valid': True,
+                    'available': True,
+                })
+            else:
+                delivery_info = CheckoutService.calculate_delivery_fee_for_payload(
+                    store,
+                    delivery_payload,
+                )
+                delivery_info = CheckoutService.normalize_delivery_quote(delivery_info)
         
         if delivery_info.get('fee') is None:
             raise ValueError(delivery_info.get('message') or 'Endereço fora da área de entrega')

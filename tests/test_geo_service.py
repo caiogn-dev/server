@@ -393,6 +393,7 @@ class HaversineTest(TestCase):
 class GeoServiceGeocodeTest(TestCase):
     def setUp(self):
         self.provider = MagicMock(spec=GoogleMapsProvider)
+        self.provider.validate_address.return_value = None
         self.service = GeoService(provider=self.provider)
 
     def _make_provider_result(self, lat=-10.184, lng=-48.334):

@@ -1,6 +1,6 @@
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -57,6 +57,7 @@ class WhatsAppCatalogOrderTests(TestCase):
             price=Decimal('10.00'),
             status=StoreProduct.ProductStatus.ACTIVE,
             is_active=True,
+            track_stock=False,
         )
         self.product_b = StoreProduct.objects.create(
             store=self.store,
@@ -65,6 +66,7 @@ class WhatsAppCatalogOrderTests(TestCase):
             price=Decimal('20.00'),
             status=StoreProduct.ProductStatus.ACTIVE,
             is_active=True,
+            track_stock=False,
         )
 
     def test_catalog_order_builds_deterministic_delivery_prompt_and_session_items(self):
@@ -140,27 +142,28 @@ class WhatsAppCatalogOrderTests(TestCase):
             ],
         )
 
-    @patch('apps.whatsapp.services.order_service.CheckoutService.create_payment')
     @patch('apps.whatsapp.services.order_service.broadcast_order_event')
-    def test_whatsapp_catalog_unit_price_is_used_when_order_is_created(self, _broadcast, payment_mock):
-        payment_mock.return_value = {'success': True, 'pix_code': 'pix-code'}
-
-        result = WhatsAppOrderService(
+    def test_whatsapp_catalog_unit_price_is_used_when_order_is_created(self, _broadcast):
+        svc = WhatsAppOrderService(
             store=self.store,
             phone_number=self.conversation.phone_number,
             customer_name=self.conversation.contact_name,
-        ).create_order_from_cart(
-            items=[
-                {
-                    'product_id': str(self.product_b.id),
-                    'quantity': 2,
-                    'unit_price': 17.5,
-                    'price_source': 'whatsapp_catalog',
-                },
-            ],
-            delivery_method='pickup',
-            payment_method='pix',
         )
+        pix_mock = MagicMock(return_value={'success': True, 'pix_code': 'pix-code'})
+        with patch.object(svc, '_generate_pix', pix_mock), \
+             patch.object(svc, '_update_session'):
+            result = svc.create_order_from_cart(
+                items=[
+                    {
+                        'product_id': str(self.product_b.id),
+                        'quantity': 2,
+                        'unit_price': 17.5,
+                        'price_source': 'whatsapp_catalog',
+                    },
+                ],
+                delivery_method='pickup',
+                payment_method='pix',
+            )
 
         self.assertTrue(result['success'])
         order = StoreOrder.objects.get(id=result['order'].id)

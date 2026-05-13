@@ -140,11 +140,17 @@ class PublicApiNoAuthTestCase(TestCase):
 
     # --- Products ---
 
+    def _products_data(self, resp):
+        """Return the product list from a paginated or plain response."""
+        data = resp.data
+        return data['results'] if isinstance(data, dict) and 'results' in data else data
+
     def test_products_no_auth(self):
         resp = self.client.get(f'/api/v1/public/{self.store.slug}/products/')
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
-        self.assertIsInstance(resp.data, list)
-        self.assertEqual(len(resp.data), 1)
+        products = self._products_data(resp)
+        self.assertIsInstance(products, list)
+        self.assertEqual(len(products), 1)
 
     def test_products_filter_by_category(self):
         other_cat = _make_category(self.store, name='Drinks', slug='drinks')
@@ -153,8 +159,9 @@ class PublicApiNoAuthTestCase(TestCase):
         resp = self.client.get(
             f'/api/v1/public/{self.store.slug}/products/?category={other_cat.slug}'
         )
-        self.assertEqual(len(resp.data), 1)
-        self.assertEqual(resp.data[0]['name'], 'Coke')
+        products = self._products_data(resp)
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0]['name'], 'Coke')
 
     def test_products_search(self):
         _make_product(self.store, self.category, name='Veggie Wrap', slug='veggie-wrap', price=18.00)
@@ -162,8 +169,9 @@ class PublicApiNoAuthTestCase(TestCase):
         resp = self.client.get(
             f'/api/v1/public/{self.store.slug}/products/?search=Veggie'
         )
-        self.assertEqual(len(resp.data), 1)
-        self.assertEqual(resp.data[0]['name'], 'Veggie Wrap')
+        products = self._products_data(resp)
+        self.assertEqual(len(products), 1)
+        self.assertEqual(products[0]['name'], 'Veggie Wrap')
 
     def test_products_excludes_inactive(self):
         StoreProduct.objects.create(
@@ -172,7 +180,7 @@ class PublicApiNoAuthTestCase(TestCase):
             status=StoreProduct.ProductStatus.INACTIVE,
         )
         resp = self.client.get(f'/api/v1/public/{self.store.slug}/products/')
-        names = [p['name'] for p in resp.data]
+        names = [p['name'] for p in self._products_data(resp)]
         self.assertNotIn('Draft', names)
 
     # --- Product detail ---

@@ -1,13 +1,13 @@
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-from django.test import SimpleTestCase
+from django.test import TestCase
 
 from apps.agents.services import LangchainService
 from apps.core.auth.whatsapp_auth import WhatsAppAuthService
 from apps.whatsapp.tasks import send_agent_response
 
 
-class AgentRuntimeGuardsTestCase(SimpleTestCase):
+class AgentRuntimeGuardsTestCase(TestCase):
     def _make_service(self):
         service = LangchainService.__new__(LangchainService)
         service.agent = None
@@ -57,7 +57,7 @@ class AgentRuntimeGuardsTestCase(SimpleTestCase):
             account_id="11111111-1111-1111-1111-111111111111",
             to="556399547790",
             response_text="123456",
-            reply_to="msg-1",
+            reply_to=None,
             response_source="ai_agent",
             whatsapp_response={
                 "type": "template",

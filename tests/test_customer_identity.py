@@ -190,8 +190,9 @@ class CustomerIdentitySyncCheckoutTest(TestCase):
             },
         )
         store_customer = result['store_customer']
-        self.assertTrue(len(store_customer.addresses) > 0)
-        self.assertIn('Rua das Flores', store_customer.addresses[0].get('street', ''))
+        addr_qs = store_customer.address_list.all()
+        self.assertTrue(addr_qs.exists())
+        self.assertIn('Rua das Flores', addr_qs.first().street)
 
     def test_pickup_delivery_does_not_store_address(self):
         result = CustomerIdentityService.sync_checkout_customer(

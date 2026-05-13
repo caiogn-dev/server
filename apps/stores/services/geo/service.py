@@ -220,8 +220,8 @@ class GeoService:
             normalized_keywords = [self._normalize_text(kw) for kw in keywords if kw]
             return any(kw and kw in normalized_text for kw in normalized_keywords)
 
-        if address_text:
-            return _matches(address_text)
+        if address_text and _matches(address_text):
+            return True
 
         searchable_parts = []
         if customer_lat is not None and customer_lng is not None:
@@ -267,7 +267,17 @@ class GeoService:
             return cached
 
         try:
-            result = self.provider.geocode(query, country=country, restrict_to_city=restrict_to_city)
+            result = None
+            if restrict_to_city and hasattr(self.provider, 'validate_address'):
+                try:
+                    result = self.provider.validate_address(query, region_code='BR')
+                except Exception as exc:
+                    logger.warning(
+                        "Address validation unavailable; falling back to geocode: %s",
+                        exc,
+                    )
+            if not result:
+                result = self.provider.geocode(query, country=country, restrict_to_city=restrict_to_city)
             if not result and restrict_to_city:
                 return self.geocode(address, country=country, restrict_to_city=False)
             if not result:

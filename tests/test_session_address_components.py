@@ -196,8 +196,10 @@ class OrderCreationUsesSessionComponentsTest(TestCase):
         self.product = StoreProduct.objects.create(
             store=self.store,
             name='Item',
+            slug='item-ocusc',
             price=Decimal('10.00'),
             status=StoreProduct.ProductStatus.ACTIVE,
+            track_stock=False,
         )
 
     def _call(self, addr_info=None):

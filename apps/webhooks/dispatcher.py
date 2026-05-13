@@ -227,18 +227,50 @@ class WebhookDispatcherView(View):
     
     def _extract_event_id(self, provider: str, payload: dict, headers: dict) -> Optional[str]:
         """Extract unique event ID for deduplication."""
-        if provider == 'whatsapp':
-            # WhatsApp message ID
-            try:
+        try:
+            if provider == 'whatsapp':
                 entry = payload.get('entry', [{}])[0]
                 changes = entry.get('changes', [{}])[0]
                 value = changes.get('value', {})
                 messages = value.get('messages', [])
                 if messages:
-                    return messages[0].get('id')
-            except (KeyError, IndexError):
-                pass
-        
+                    return f"wa_msg_{messages[0]['id']}"
+                statuses = value.get('statuses', [])
+                if statuses:
+                    # status updates: deduplicate per message + status combo
+                    s = statuses[0]
+                    return f"wa_status_{s.get('id')}_{s.get('status')}"
+
+            elif provider in ('instagram', 'messenger'):
+                entry = payload.get('entry', [{}])[0]
+                messaging = entry.get('messaging', [{}])[0]
+                mid = messaging.get('message', {}).get('mid')
+                if mid:
+                    return f"{provider}_msg_{mid}"
+                # delivery/read receipts
+                watermark = (
+                    messaging.get('delivery', {}).get('watermark')
+                    or messaging.get('read', {}).get('watermark')
+                )
+                sender = messaging.get('sender', {}).get('id', '')
+                if watermark and sender:
+                    return f"{provider}_delivery_{sender}_{watermark}"
+
+            elif provider == 'mercadopago':
+                # MP sends a unique id at payload root
+                mp_id = payload.get('id') or payload.get('data', {}).get('id')
+                action = payload.get('action', payload.get('type', ''))
+                if mp_id:
+                    return f"mp_{action}_{mp_id}"
+
+            elif provider == 'toca-delivery':
+                event_id = payload.get('event_id') or payload.get('id')
+                if event_id:
+                    return f"toca_{event_id}"
+
+        except (KeyError, IndexError, TypeError):
+            pass
+
         return None
     
     def _verify_signature(self, request, provider: str, payload: dict) -> Optional[bool]:

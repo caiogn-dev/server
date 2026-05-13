@@ -80,6 +80,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.core.middleware.TenantMiddleware',
+    'apps.core.middleware.TokenExpirationMiddleware',
     'apps.core.middleware.RequestLoggingMiddleware',
     'apps.core.middleware.RateLimitMiddleware',
 ]
@@ -431,7 +432,7 @@ ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet
 # NVIDIA NIM (optional fallback)
 NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
 NVIDIA_API_BASE_URL = os.environ.get('NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1')
-NVIDIA_MODEL_NAME = os.environ.get('NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct')
+NVIDIA_MODEL_NAME = os.environ.get('NVIDIA_MODEL_NAME', 'nvidia/llama-3.1-nemotron-70b-instruct')
 
 # Unified AI Configuration Helper
 def get_ai_config():
@@ -512,6 +513,11 @@ RATE_LIMIT_SCOPED_PATHS = [
         'key_by': 'auth_or_ip',
     },
 ]
+
+# DRF Token TTL — tokens older than this many days are rejected with 401.
+# Set AUTH_TOKEN_TTL_DAYS=0 in env to disable expiration entirely (returns None).
+_raw_ttl = os.environ.get('AUTH_TOKEN_TTL_DAYS', '30')
+AUTH_TOKEN_TTL_DAYS = None if _raw_ttl == '0' else int(_raw_ttl)
 
 # Logging
 LOGGING = {

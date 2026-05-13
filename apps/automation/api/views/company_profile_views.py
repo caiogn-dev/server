@@ -2,6 +2,7 @@
 Company Profile API views.
 """
 import logging
+from django.db import models
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -35,16 +36,23 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         user = self.request.user
-        
+
         if not user.is_superuser:
+            from django.db.models import Q
+            from apps.stores.models import Store
             account_ids = accessible_whatsapp_account_ids(user)
-            queryset = queryset.filter(account_id__in=account_ids).distinct()
-        
+            owned_store_ids = Store.objects.filter(
+                Q(owner=user) | Q(staff=user)
+            ).values_list('id', flat=True)
+            queryset = queryset.filter(
+                Q(account_id__in=account_ids) | Q(store_id__in=owned_store_ids)
+            ).distinct()
+
         # Filter by account if provided
         account_id = self.request.query_params.get('account_id')
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        
+
         # Filter by store if provided
         store_slug = self.request.query_params.get('store_slug')
         if store_slug:

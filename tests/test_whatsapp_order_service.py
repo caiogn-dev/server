@@ -289,15 +289,15 @@ class CreateOrderFromCartTest(TestCase):
         )
         self.assertFalse(StoreOrder.objects.filter(store=self.store).exists())
 
-    def test_pix_payment_calls_create_payment_with_pix(self):
+    def test_pix_payment_calls_generate_pix(self):
         from apps.whatsapp.services.order_service import WhatsAppOrderService
         svc = WhatsAppOrderService(
             store=self.store,
             phone_number='+5563999990002',
             customer_name='PIX Smoke',
         )
-        mock_payment = MagicMock(return_value={'success': True, 'pix_code': 'pix-code-123'})
-        with patch(_PATCH_PAYMENT, mock_payment), \
+        mock_pix = MagicMock(return_value={'success': True, 'pix_code': 'pix-code-123'})
+        with patch.object(svc, '_generate_pix', mock_pix), \
              patch(_PATCH_BROADCAST), \
              patch.object(svc, '_update_session'):
             result = svc.create_order_from_cart(
@@ -306,9 +306,7 @@ class CreateOrderFromCartTest(TestCase):
                 payment_method='pix',
             )
         self.assertTrue(result['success'])
-        mock_payment.assert_called_once()
-        _, call_kw = mock_payment.call_args
-        self.assertEqual(call_kw.get('payment_method'), 'pix')
+        mock_pix.assert_called_once()
 
     def test_cash_payment_calls_create_payment_with_cash(self):
         from apps.whatsapp.services.order_service import WhatsAppOrderService
@@ -506,10 +504,8 @@ class WhatsAppPIXSmokeTest(TestCase):
             customer_name='PIX Smoke Cliente',
         )
 
-        with patch(
-            'apps.whatsapp.services.order_service.CheckoutService.create_payment',
-            return_value={'success': True, 'pix_code': 'test-pix-code-123'},
-        ) as mock_create_payment, \
+        mock_pix = MagicMock(return_value={'success': True, 'pix_code': 'test-pix-code-123'})
+        with patch.object(svc, '_generate_pix', mock_pix), \
              patch(_PATCH_BROADCAST), \
              patch.object(svc, '_update_session'):
             result = svc.create_order_from_cart(
@@ -519,6 +515,6 @@ class WhatsAppPIXSmokeTest(TestCase):
             )
 
         self.assertTrue(result['success'])
-        self.assertTrue(mock_create_payment.called)
+        self.assertTrue(mock_pix.called)
         pix_data = result['pix_data']
         self.assertTrue(pix_data['success'])

@@ -66,9 +66,13 @@ def _make_store(owner, slug='flow-e2e', lat='-10.18', lng='-48.33'):
 
 def _make_product(store, name='Pizza', price=Decimal('25.00'),
                   track_stock=False, stock_quantity=0):
+    import uuid as _uuid
+    from django.utils.text import slugify as _slugify
+    slug = f"{_slugify(name)}-{_uuid.uuid4().hex[:6]}"
     return StoreProduct.objects.create(
         store=store,
         name=name,
+        slug=slug,
         price=price,
         status=StoreProduct.ProductStatus.ACTIVE,
         track_stock=track_stock,

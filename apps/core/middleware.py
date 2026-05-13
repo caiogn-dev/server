@@ -2,12 +2,13 @@
 Core middleware for logging, rate limiting, and WebSocket authentication.
 """
 import time
-import json
 import logging
 import hashlib
+from datetime import timedelta
 from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
+from django.utils import timezone
 from channels.db import database_sync_to_async
 from channels.middleware import BaseMiddleware
 from django.contrib.auth.models import AnonymousUser
@@ -88,6 +89,55 @@ def TokenAuthMiddlewareStack(inner):
 # ============================================
 # HTTP Middleware
 # ============================================
+
+
+class TokenExpirationMiddleware:
+    """
+    Rejects DRF Token auth requests when the token is older than AUTH_TOKEN_TTL_DAYS.
+    Tokens issued before this middleware was added are treated as expired immediately.
+    Default TTL: 30 days. Set AUTH_TOKEN_TTL_DAYS = None to disable expiration.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+        self.ttl_days = getattr(settings, 'AUTH_TOKEN_TTL_DAYS', 30)
+
+    def __call__(self, request):
+        if self.ttl_days is None:
+            return self.get_response(request)
+
+        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+        if not auth_header.startswith('Token '):
+            return self.get_response(request)
+
+        token_key = auth_header[6:].strip()
+        if not token_key:
+            return self.get_response(request)
+
+        if self._is_expired(token_key):
+            return JsonResponse(
+                {
+                    'error': {
+                        'code': 'token_expired',
+                        'message': 'Token expirado. Faça login novamente.',
+                    }
+                },
+                status=401,
+            )
+
+        return self.get_response(request)
+
+    def _is_expired(self, token_key):
+        from rest_framework.authtoken.models import Token
+        try:
+            token = Token.objects.only('created').get(key=token_key)
+            cutoff = timezone.now() - timedelta(days=self.ttl_days)
+            return token.created < cutoff
+        except Token.DoesNotExist:
+            # Let DRF handle the 401 for unknown tokens.
+            return False
+        except Exception:
+            return False
 
 
 class RequestLoggingMiddleware:

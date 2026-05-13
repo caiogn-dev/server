@@ -84,7 +84,11 @@ class WhatsAppOrderService:
                     continue
 
                 quantity = max(int(item.get('quantity', 1)), 1)
-                unit_price = product.price
+                # Honor catalog-supplied price; fall back to DB price.
+                if item.get('price_source') == 'whatsapp_catalog' and item.get('unit_price') is not None:
+                    unit_price = Decimal(str(item['unit_price']))
+                else:
+                    unit_price = product.price
                 item_total = unit_price * quantity
                 subtotal += item_total
                 order_items_data.append({
@@ -229,6 +233,11 @@ class WhatsAppOrderService:
         if not items:
             return {'success': False, 'error': 'Nenhum item válido no carrinho'}
 
+        # Catalog orders carry custom unit prices that StoreCartItem cannot store.
+        # Fall back to the fast path which respects price_source=whatsapp_catalog.
+        if any(i.get('price_source') == 'whatsapp_catalog' for i in items):
+            return None
+
         try:
             product_quantities = {}
             for item in items:
@@ -280,6 +289,7 @@ class WhatsAppOrderService:
             }
             if delivery_fee_override is not None:
                 delivery_payload['zone_name'] = 'WhatsApp'
+                delivery_payload['fee'] = float(delivery_fee_override)
             if addr_info:
                 if addr_info.get('distance_km') is not None:
                     delivery_payload['distance_km'] = addr_info['distance_km']

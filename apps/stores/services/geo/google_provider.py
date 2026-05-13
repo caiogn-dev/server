@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 GOOGLE_DIRECTIONS_URL = "https://maps.googleapis.com/maps/api/directions/json"
 GOOGLE_PLACES_AUTOCOMPLETE_URL = "https://maps.googleapis.com/maps/api/place/autocomplete/json"
+GOOGLE_ADDRESS_VALIDATION_URL = "https://addressvalidation.googleapis.com/v1:validateAddress"
 GOOGLE_REVERSE_RESULT_TYPES = "street_address|premise|subpremise|route|intersection|neighborhood|sublocality|locality"
 
 
@@ -19,7 +20,7 @@ class GoogleMapsProvider:
     DEFAULT_CITY_SUFFIX = "Palmas, TO"
 
     def __init__(self, api_key: str | None = None):
-        self.api_key = api_key or getattr(settings, 'GOOGLE_MAPS_KEY', '').strip()
+        self.api_key = api_key if api_key is not None else getattr(settings, 'GOOGLE_MAPS_KEY', '').strip()
 
     def _parse_address_components(self, result: Dict) -> Dict[str, str]:
         components: Dict[str, str] = {}
@@ -108,6 +109,51 @@ class GoogleMapsProvider:
             'address_components': self._parse_address_components(result),
             'result_types': result.get('types', []),
             'location_type': result.get('geometry', {}).get('location_type', ''),
+        }
+
+    def _parse_validated_address(self, payload: Dict) -> Optional[Dict]:
+        result = payload.get('result') or {}
+        address = result.get('address') or {}
+        geocode = result.get('geocode') or {}
+        location = geocode.get('location') or {}
+        lat = location.get('latitude')
+        lng = location.get('longitude')
+        if lat is None or lng is None:
+            return None
+
+        components: Dict[str, str] = {}
+        for component in address.get('addressComponents') or []:
+            component_name = component.get('componentName') or {}
+            value = component_name.get('text') or ''
+            types = set(component.get('componentType') or [])
+
+            if 'route' in types:
+                components['street'] = value
+            if 'street_number' in types:
+                components['number'] = value
+            if 'sublocality_level_1' in types or 'neighborhood' in types:
+                components.setdefault('neighborhood', value)
+            if 'locality' in types:
+                components['city'] = value
+            if 'administrative_area_level_1' in types:
+                components['state'] = value
+                components['state_code'] = value
+            if 'postal_code' in types:
+                components['zip_code'] = value
+            if 'country' in types:
+                components['country'] = value
+                components['country_code'] = 'BR' if value.lower() in {'br', 'brasil', 'brazil'} else value
+
+        return {
+            'lat': lat,
+            'lng': lng,
+            'formatted_address': address.get('formattedAddress') or '',
+            'place_id': geocode.get('placeId'),
+            'address_components': components,
+            'result_types': ['validated_address'],
+            'location_type': result.get('verdict', {}).get('geocodeGranularity', ''),
+            'address_confidence': 'validated',
+            'validation_verdict': result.get('verdict') or {},
         }
 
     def _is_precise_reverse_result(self, parsed_result: Dict) -> bool:
@@ -217,6 +263,31 @@ class GoogleMapsProvider:
         if not best_result:
             return None
         return self._parse_geocode_result(best_result)
+
+    def validate_address(self, query: str, *, region_code: str = "BR") -> Optional[Dict]:
+        if not self.api_key or not query:
+            return None
+
+        response = requests.post(
+            GOOGLE_ADDRESS_VALIDATION_URL,
+            params={'key': self.api_key},
+            json={
+                'address': {
+                    'regionCode': region_code,
+                    'addressLines': [query],
+                },
+                'languageOptions': {
+                    'returnEnglishLatinAddress': False,
+                },
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        parsed = self._parse_validated_address(payload)
+        if not parsed:
+            logger.warning("Google address validation returned no geocode for query=%s", query[:80])
+        return parsed
 
     def geocode_place_id(self, place_id: str) -> Optional[Dict]:
         if not self.api_key or not place_id:
