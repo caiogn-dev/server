@@ -343,6 +343,7 @@ class CustomerIdentityService:
             elif not existing.is_default:
                 existing.set_as_default()
 
+
         if store_customer_updates:
             store_customer.save(update_fields=store_customer_updates)
 

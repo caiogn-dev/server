@@ -396,8 +396,15 @@ class LangchainService:
                     and not self._is_store_identity_name(full_name, store=store)
                 ):
                     name_candidates.append(full_name)
-                for address in (store_customer.addresses or [])[:2]:
-                    formatted = self._format_address_for_context(address)
+                for addr in store_customer.address_list.order_by('-is_default', '-created_at')[:2]:
+                    formatted = self._format_address_for_context({
+                        'street': addr.street,
+                        'number': addr.number,
+                        'neighborhood': addr.neighborhood,
+                        'city': addr.city,
+                        'state': addr.state,
+                        'formatted': addr.formatted,
+                    })
                     if formatted:
                         saved_addresses.append(formatted)
         except Exception as exc:
@@ -1191,10 +1198,58 @@ class LangchainService:
             return f"'{produto_nome}' removido do carrinho."
 
         @tool
-        def finalizar_pedido(endereco: str, observacoes: str = "") -> str:
+        def salvar_endereco_entrega(endereco: str) -> str:
+            """Salva ou atualiza o endereço de entrega para o pedido atual.
+            Chame sempre que o cliente informar ou corrigir o endereço — inclusive quando disser
+            que informou errado ou quiser mudar. Também calcula e confirma a taxa de entrega."""
+            endereco = endereco.strip()
+            if not endereco:
+                return "Endereço inválido. Informe o endereço completo com quadra/rua e número."
+            cart = _get_cart()
+            cart['delivery_address'] = endereco
+            _save_cart(cart)
+            if store:
+                try:
+                    from apps.stores.services.geo import geo_service
+                    geo = geo_service.geocode(endereco, restrict_to_city=True)
+                    if geo and geo.get('lat') and geo.get('lng'):
+                        fee_info = geo_service.calculate_delivery_fee(
+                            store,
+                            customer_lat=float(geo['lat']),
+                            customer_lng=float(geo['lng']),
+                            customer_address_text=geo.get('formatted_address') or endereco,
+                        )
+                    else:
+                        fee_info = geo_service.calculate_delivery_fee(
+                            store,
+                            destination_address=endereco,
+                            customer_address_text=endereco,
+                        )
+                    if not fee_info.get('is_within_area', True) or fee_info.get('fee') is None:
+                        cart.pop('delivery_address', None)
+                        _save_cart(cart)
+                        return (
+                            fee_info.get('message')
+                            or "Esse endereço fica fora da nossa área de entrega."
+                        )
+                    fee = float(fee_info['fee'])
+                    cart['delivery_fee'] = fee
+                    _save_cart(cart)
+                    dist = fee_info.get('distance_km')
+                    dist_text = f" ({float(dist):.1f} km)" if dist else ""
+                    return (
+                        f"Endereço salvo: {geo.get('formatted_address') or endereco}{dist_text}\n"
+                        f"Taxa de entrega: {self._format_brl(fee)}"
+                    )
+                except Exception as exc:
+                    logger.warning("[AGENT] salvar_endereco_entrega fee calc failed: %s", exc)
+            return f"Endereço salvo: {endereco}"
+
+        @tool
+        def finalizar_pedido(endereco: str = "", observacoes: str = "") -> str:
             """
             Finaliza o pedido: cria o pedido no sistema, calcula a taxa de entrega e gera o código PIX.
-            Só chame DEPOIS de ter os itens no carrinho e o endereço do cliente.
+            Só chame DEPOIS de ter os itens no carrinho e o endereço confirmado via salvar_endereco_entrega.
             Retorna o valor total, taxa de entrega e o código PIX para pagamento.
             """
             if not store:
@@ -1206,8 +1261,10 @@ class LangchainService:
             items = cart.get("items", [])
             if not items:
                 return "Carrinho vazio. Adicione itens antes de finalizar."
-            if not endereco.strip():
-                return "Endereço não informado. Peça o endereço completo ao cliente."
+            effective_address = cart.get('delivery_address') or endereco.strip()
+            if not effective_address:
+                return "Endereço não informado. Use salvar_endereco_entrega com o endereço do cliente."
+            endereco = effective_address
 
             try:
                 from apps.whatsapp.services.order_service import WhatsAppOrderService
@@ -1264,7 +1321,8 @@ class LangchainService:
 
         return [
             buscar_produto, listar_categorias,
-            adicionar_ao_carrinho, ver_carrinho, remover_do_carrinho, finalizar_pedido,
+            adicionar_ao_carrinho, ver_carrinho, remover_do_carrinho,
+            salvar_endereco_entrega, finalizar_pedido,
             verificar_pedido_pendente, consultar_historico_pedidos,
             informacoes_entrega, consultar_pagamento,
         ]

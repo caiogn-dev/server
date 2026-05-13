@@ -168,9 +168,13 @@ def build_store_customer_profile(store, user):
     profile, _ = UserProfile.objects.get_or_create(user=user)
     store_customer, _ = StoreCustomer.objects.get_or_create(store=store, user=user)
 
-    addresses = store_customer.addresses if isinstance(store_customer.addresses, list) else []
-    default_index = store_customer.default_address_index or 0
-    default_address = addresses[default_index] if 0 <= default_index < len(addresses) else None
+    addr_records = list(store_customer.address_list.values(
+        'street', 'number', 'complement', 'neighborhood',
+        'city', 'state', 'zip_code', 'reference', 'formatted', 'is_default',
+    ))
+    addresses = addr_records
+    default_address = next((a for a in addr_records if a['is_default']), addr_records[0] if addr_records else None)
+    default_index = 0
 
     def _looks_placeholder(value: str) -> bool:
         value = (value or '').strip().lower()
@@ -412,8 +416,34 @@ class StoreCustomerProfileView(APIView):
 
         store_customer = customer_record.get('store_customer')
         if store_customer:
-            if isinstance(addresses, list):
-                store_customer.addresses = addresses
+            if isinstance(addresses, list) and addresses:
+                from apps.stores.models import StoreCustomerAddress
+                store_customer.address_list.filter(is_default=True).update(is_default=False)
+                for i, addr_dict in enumerate(addresses):
+                    if not isinstance(addr_dict, dict):
+                        continue
+                    formatted = addr_dict.get('formatted', '')
+                    if not formatted:
+                        parts = [
+                            addr_dict.get('street', ''), addr_dict.get('number', ''),
+                            addr_dict.get('neighborhood', ''), addr_dict.get('city', ''),
+                        ]
+                        formatted = ', '.join(p for p in parts if p)
+                    already = store_customer.address_list.filter(formatted=formatted).first() if formatted else None
+                    if not already:
+                        StoreCustomerAddress.objects.create(
+                            customer=store_customer,
+                            street=addr_dict.get('street', ''),
+                            number=addr_dict.get('number', ''),
+                            complement=addr_dict.get('complement', ''),
+                            neighborhood=addr_dict.get('neighborhood', ''),
+                            city=addr_dict.get('city', ''),
+                            state=addr_dict.get('state', ''),
+                            zip_code=addr_dict.get('zip_code', ''),
+                            reference=addr_dict.get('reference', ''),
+                            formatted=formatted,
+                            is_default=(i == 0),
+                        )
             default_index = data.get('default_address_index')
             if default_index is not None:
                 try:

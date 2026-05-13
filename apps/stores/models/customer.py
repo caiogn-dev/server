@@ -128,9 +128,22 @@ class StoreCustomer(BaseModel):
         return f"{self.store.name} - {self.user.email}"
 
     def get_default_address(self):
-        if self.addresses and len(self.addresses) > self.default_address_index:
-            return self.addresses[self.default_address_index]
-        return None
+        addr = self.address_list.filter(is_default=True).first()
+        if addr is None:
+            addr = self.address_list.order_by('-created_at').first()
+        if addr is None:
+            return None
+        return {
+            'street': addr.street,
+            'number': addr.number,
+            'complement': addr.complement,
+            'neighborhood': addr.neighborhood,
+            'city': addr.city,
+            'state': addr.state,
+            'zip_code': addr.zip_code,
+            'reference': addr.reference,
+            'formatted': addr.formatted,
+        }
 
     def update_stats(self):
         """Update customer statistics from orders."""
