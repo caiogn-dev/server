@@ -19,6 +19,7 @@ from apps.stores.models import (
     StoreWishlist
 )
 from apps.stores.services import cart_service, checkout_service, here_maps_service
+from ..throttles import CheckoutRateThrottle, CouponValidateRateThrottle, StorefrontReadRateThrottle
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 class StorePublicView(APIView):
     """Public store information endpoint."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [StorefrontReadRateThrottle]
+
     def get(self, request, store_slug):
         """Get public store information."""
         store = get_object_or_404(Store, slug=store_slug, status='active')
@@ -42,7 +44,8 @@ class StorePublicView(APIView):
 class StoreCatalogView(APIView):
     """Public catalog endpoint for a store."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [StorefrontReadRateThrottle]
+
     def get(self, request, store_slug):
         """Get store catalog with categories, products, and combos."""
         store = get_object_or_404(Store, slug=store_slug, status='active')
@@ -219,7 +222,8 @@ class StoreCartViewSet(viewsets.ViewSet):
 class StoreCheckoutView(APIView):
     """Checkout endpoint for creating orders."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [CheckoutRateThrottle]
+
     def post(self, request, store_slug):
         """Process checkout and create order."""
         store = get_object_or_404(Store, slug=store_slug, status='active')
@@ -358,7 +362,8 @@ class StoreDeliveryFeeView(APIView):
 class StoreCouponValidateView(APIView):
     """Validate coupon code endpoint."""
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [CouponValidateRateThrottle]
+
     def post(self, request, store_slug):
         """Validate a coupon code."""
         store = get_object_or_404(Store, slug=store_slug, status='active')
