@@ -94,11 +94,21 @@ class WebhookDispatcherView(View):
             status=WebhookEvent.Status.PENDING
         )
         
-        # Verify signature
+        # Verify signature — explicit False means secret is configured but signature is wrong
         signature_valid = self._verify_signature(request, provider, payload)
         event.signature_valid = signature_valid
         event.save(update_fields=['signature_valid'])
-        
+
+        if signature_valid is False:
+            logger.warning(
+                f"Invalid webhook signature for provider={provider}",
+                extra={"event_id": str(event.id)},
+            )
+            event.status = WebhookEvent.Status.FAILED
+            event.error_message = "Invalid signature"
+            event.save(update_fields=["status", "error_message"])
+            return HttpResponse("Invalid signature", status=200)  # 200 to prevent provider retries
+
         # Process with handler
         try:
             handler = handler_class()
