@@ -38,9 +38,13 @@ class ConversationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'mode', 'assigned_agent']
 
     def get_queryset(self):
-        return Conversation.objects.select_related(
+        user = self.request.user
+        qs = Conversation.objects.select_related(
             'account', 'assigned_agent'
         ).filter(is_active=True)
+        if user.is_staff or user.is_superuser:
+            return qs
+        return qs.filter(account__owner=user)
 
     @extend_schema(
         summary="Switch to human mode",
