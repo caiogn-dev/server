@@ -104,8 +104,8 @@ class WhatsAppWebhookView(APIView):
             
             # Validate signature using the raw body we captured earlier
             if not service.validate_signature(raw_body, signature):
-                logger.warning("Invalid webhook signature - skipping validation in dev mode")
-                # Continue anyway for debugging
+                logger.warning("Invalid webhook signature — request rejected")
+                return Response({'error': 'Invalid signature'}, status=403)
             
             # Convert headers to simple dict
             headers = {}
