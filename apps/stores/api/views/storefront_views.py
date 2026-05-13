@@ -444,6 +444,8 @@ class StoreCustomerProfileView(APIView):
                             formatted=formatted,
                             is_default=(i == 0),
                         )
+                    elif i == 0 and not already.is_default:
+                        already.set_as_default()
             default_index = data.get('default_address_index')
             if default_index is not None:
                 try:
