@@ -46,7 +46,11 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        user = self.request.user
+        qs = WhatsAppAccount.objects.filter(is_active=True)
+        if user.is_staff or user.is_superuser:
+            return qs
+        return qs.filter(owner=user)
 
     def get_serializer_class(self):
         if self.action == 'create':

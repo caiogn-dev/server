@@ -2,7 +2,10 @@
 """Verificar detalhes do token atual"""
 import requests
 
-token = "EAAfvtRGbGh8BQjiMh4J5KeZAV1JOFzTzZCf8aS17XPRjUEb5hi7HppHn0KZAurm5uSjY5qSmn2BsfAIKLkYJSlhzjlw30fKB67ncBm7vhgyjG4u2n7gmGOTYLqE74dejB0wRaEyhPSfJTZAbv0J8kGqrfGf7zRzY4eD92a0PUXjOob5ZAe4zwGZA80MXLQCAZDZD"
+import os
+token = os.environ.get('FACEBOOK_ACCESS_TOKEN', '')
+if not token:
+    raise SystemExit("Defina a variável de ambiente FACEBOOK_ACCESS_TOKEN antes de executar este script.")
 
 print("\n" + "="*70)
 print("DIAGNÓSTICO DO TOKEN")
