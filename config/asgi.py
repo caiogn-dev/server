@@ -20,29 +20,10 @@ from apps.core.routing import websocket_urlpatterns
 
 logger = logging.getLogger(__name__)
 
-# Custom origin validator that allows all origins in development
-# and validates against ALLOWED_HOSTS in production
-class PermissiveOriginValidator:
-    """
-    Allow WebSocket connections from any origin.
-    This is needed because the dashboard may be hosted on a different domain.
-    """
-    def __init__(self, application):
-        self.application = application
-    
-    async def __call__(self, scope, receive, send):
-        # Log connection attempt for debugging
-        headers = dict(scope.get('headers', []))
-        origin = headers.get(b'origin', b'').decode()
-        logger.info(f"WebSocket connection attempt from origin: {origin}")
-        
-        # Always allow - we handle authentication in the consumer
-        return await self.application(scope, receive, send)
-
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": PermissiveOriginValidator(
+    "websocket": AllowedHostsOriginValidator(
         TokenAuthMiddlewareStack(
             AuthMiddlewareStack(
                 URLRouter(websocket_urlpatterns)
