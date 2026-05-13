@@ -203,6 +203,9 @@ REST_FRAMEWORK = {
         'user': '300/minute',     # Reduzido de 10000 para segurança
         'webhook': '10000/hour',  # Webhooks podem ter volume alto
         'auth': '10/minute',      # Novo: limite para endpoints de auth
+        'storefront_checkout': '10/minute',   # Max 10 checkouts/min por IP
+        'storefront_coupon': '20/minute',     # Max 20 validações de cupom/min por IP
+        'storefront_read': '120/minute',      # Catálogo/info da loja (leitura)
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
