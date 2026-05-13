@@ -44,8 +44,7 @@ class MercadoPagoWebhookView(APIView):
             # Validate webhook signature if secret is configured
             if not self._validate_signature(request, store_slug):
                 logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -111,7 +110,7 @@ class MercadoPagoWebhookView(APIView):
             
         except Exception as e:
             logger.error(f"Signature validation error: {e}")
-            return True  # Allow request on validation error (fail open for now)
+            return False  # Fail closed on validation errors
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""
@@ -505,31 +504,36 @@ class CustomerOrderDetailView(APIView):
     """
     Get single order details for customer.
     Only allows access if:
-    - User is authenticated and owns the order
-    - Order was created in the last 24 hours (for payment status page)
+    - User is authenticated and owns the order, OR
+    - A valid access_token is provided in query params
     """
-    
+
     authentication_classes = []
     permission_classes = []
-    
+
     def get(self, request, order_id):
         """Get order details."""
         try:
             order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
-            
-            # Security check: verify access permission
+
+            # Security check: require token OR authenticated owner/staff
             user = request.user
-            is_owner = user.is_authenticated and order.customer == user
-            
-            # Allow access to recent orders (within 24h) for payment status page
-            # This is needed because user might not be logged in during checkout
-            from django.utils import timezone
-            from datetime import timedelta
-            is_recent = order.created_at > timezone.now() - timedelta(hours=24)
-            
-            if not is_owner and not is_recent:
+            is_authenticated_owner = user.is_authenticated and (
+                order.customer == user
+                or getattr(user, 'is_staff', False)
+                or getattr(user, 'is_superuser', False)
+            )
+
+            token = request.query_params.get('token', '')
+            has_valid_token = bool(token and order.access_token and token == order.access_token)
+
+            if not has_valid_token and not is_authenticated_owner:
+                logger.warning(
+                    f"Unauthorized access attempt to order {order.order_number}",
+                    extra={'order_id': str(order.id), 'ip': request.META.get('REMOTE_ADDR', '')},
+                )
                 return Response(
-                    {'error': 'Acesso negado. Faça login para ver seus pedidos.'},
+                    {'error': 'Acesso negado. Forneça um token válido ou faça login.'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             
