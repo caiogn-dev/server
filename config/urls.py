@@ -92,6 +92,8 @@ urlpatterns = [
         path('instagram/', include('apps.instagram.urls')),
         # Messaging v2 - API unificada (nova)
         path('messaging/v2/', include('apps.messaging_v2.urls')),
+        # Messenger (Facebook Messenger Platform)
+        path('messaging/messenger/', include('apps.messenger.urls')),
         path('conversations/', include('apps.conversations.urls')),
         path('automation/', include('apps.automation.urls')),
         path('handover/', include('apps.handover.urls')),

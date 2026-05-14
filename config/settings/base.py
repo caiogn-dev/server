@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'apps.stores',  # Multi-store management (unified)
     'apps.marketing',  # Email marketing with Resend
     'apps.instagram',  # Instagram Messaging API integration
+    'apps.messenger',  # Facebook Messenger Platform integration
     # 'apps.messaging',  # DEPRECATED: Use messaging_v2
     'apps.webhooks',  # Centralized webhook handling
     'apps.handover',  # Handover Protocol (Bot/Human transfer)
