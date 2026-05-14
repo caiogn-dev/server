@@ -3,7 +3,10 @@ Models for Langchain Agents
 """
 import uuid
 from django.db import models
+from django.contrib.auth import get_user_model
 from apps.core.models import BaseModel
+
+User = get_user_model()
 
 
 class Agent(BaseModel):
@@ -64,6 +67,16 @@ class Agent(BaseModel):
         blank=True,
         verbose_name='Contexto Adicional',
         help_text='Informações adicionais sobre o negócio, cardápio, etc.'
+    )
+
+    # Proprietário do agente (permite escopo multi-tenant)
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='owned_agents',
+        verbose_name='Proprietário',
     )
 
     # Status

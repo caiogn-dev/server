@@ -36,15 +36,24 @@ class AgentViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'provider']
     
     def get_queryset(self):
-        return Agent.objects.filter(is_active=True)
-    
+        user = self.request.user
+        qs = Agent.objects.filter(is_active=True)
+        # Superusuários e staff veem todos os agentes
+        if user.is_staff or user.is_superuser:
+            return qs
+        # Usuários comuns veem apenas seus próprios agentes
+        return qs.filter(owner=user)
+
     def get_serializer_class(self):
         if self.action == 'list':
             return AgentListSerializer
         elif self.action in ['create', 'update', 'partial_update']:
             return AgentCreateUpdateSerializer
         return AgentDetailSerializer
-    
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
     def perform_destroy(self, instance):
         instance.is_active = False
         instance.save()

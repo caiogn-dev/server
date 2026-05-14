@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'apps.stores',  # Multi-store management (unified)
     'apps.marketing',  # Email marketing with Resend
     'apps.instagram',  # Instagram Messaging API integration
+    'apps.messenger',  # Facebook Messenger integration
     # 'apps.messaging',  # DEPRECATED: Use messaging_v2
     'apps.webhooks',  # Centralized webhook handling
     'apps.handover',  # Handover Protocol (Bot/Human transfer)
@@ -321,23 +322,6 @@ DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_MET
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '955411496814093')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
-
-# ============================================================================
-# LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
-# ============================================================================
-# Kimi API (Kimi Coding API - Anthropic-style)
-KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
-KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
-
-# OpenAI (opcional)
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
-
-# Anthropic (opcional)
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
 
 # Ollama (local - opcional)
 OLLAMA_BASE_URL = os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434')
