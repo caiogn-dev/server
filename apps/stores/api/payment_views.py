@@ -80,10 +80,14 @@ class StorePaymentGatewayViewSet(viewsets.ModelViewSet):
     @extend_schema(summary="Set as default gateway")
     @action(detail=True, methods=['post'])
     def set_default(self, request, pk=None):
-        """Set this gateway as the default for its store."""
+        """Define este gateway como padrão para a loja, removendo o flag dos demais."""
         gateway = self.get_object()
+        # Remove o flag is_default de todos os outros gateways da mesma loja
+        StorePaymentGateway.objects.filter(store=gateway.store, is_default=True).exclude(pk=gateway.pk).update(
+            is_default=False
+        )
         gateway.is_default = True
-        gateway.save()
+        gateway.save(update_fields=['is_default'])
         return Response(StorePaymentGatewaySerializer(gateway).data)
 
 

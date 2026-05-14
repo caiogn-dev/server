@@ -16,6 +16,49 @@ from django.contrib.auth.models import AnonymousUser
 logger = logging.getLogger(__name__)
 
 
+def _get_client_ip(request) -> str:
+    """
+    Retorna o IP real do cliente de forma segura contra spoofing.
+
+    Ordem de preferência:
+    1. CF-Connecting-IP — definido pelo Cloudflare, não pode ser forjado por
+       clientes externos quando o tráfego passa pelo Cloudflare.
+    2. REMOTE_ADDR — IP da conexão TCP direta (Nginx → Gunicorn). Não pode
+       ser forjado porque é definido pelo SO, não pelo cliente.
+    3. Último IP de X-Forwarded-For — adicionado pelo proxy mais próximo.
+       Apenas como último recurso; os IPs anteriores podem ser forjados.
+    """
+    # 1. Cloudflare injeta CF-Connecting-IP com o IP real do visitante
+    cf_ip = request.META.get('HTTP_CF_CONNECTING_IP', '').strip()
+    if cf_ip:
+        return cf_ip
+
+    # 2. IP da conexão TCP direta (confiável: set pelo SO/proxy)
+    remote_addr = request.META.get('REMOTE_ADDR', '').strip()
+
+    # 3. Parseia X-Forwarded-For apenas se REMOTE_ADDR for um loopback/privado
+    #    (indica que há um proxy intermediário local como Nginx)
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '').strip()
+    if x_forwarded_for and _is_private_ip(remote_addr):
+        # Usa o último IP adicionado pelo proxy mais próximo (rightmost)
+        # que é o mais confiável quando há proxies encadeados conhecidos
+        ips = [ip.strip() for ip in x_forwarded_for.split(',') if ip.strip()]
+        if ips:
+            return ips[-1]
+
+    return remote_addr or ''
+
+
+def _is_private_ip(ip: str) -> bool:
+    """Retorna True se o IP for loopback ou de rede privada RFC1918."""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+        return addr.is_private or addr.is_loopback
+    except ValueError:
+        return False
+
+
 # ============================================
 # WebSocket Token Authentication Middleware
 # ============================================
@@ -148,10 +191,7 @@ class RequestLoggingMiddleware:
         return response
 
     def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', '')
+        return _get_client_ip(request)
 
 
 class RateLimitMiddleware:
@@ -209,10 +249,7 @@ class RateLimitMiddleware:
         return response
 
     def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', '')
+        return _get_client_ip(request)
 
 
 # ============================================
