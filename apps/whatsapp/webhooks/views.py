@@ -81,32 +81,36 @@ class WhatsAppWebhookView(APIView):
     def post(self, request):
         """Handle incoming webhook events from Meta."""
         try:
-            # Get raw body for signature verification
-            raw_body = request.body.decode('utf-8')
-            
+            # Lê o body raw em bytes para verificação de assinatura HMAC
+            raw_body_bytes = request.body
+
             # Parse JSON payload
             try:
-                payload = json.loads(raw_body)
+                payload = json.loads(raw_body_bytes)
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON payload: {e}")
                 return Response({'status': 'error', 'message': 'Invalid JSON'}, status=400)
-            
+
             # Get signature from headers
             signature = request.headers.get('X-Hub-Signature-256', '')
-            
+
             # Initialize service
             service = WebhookService()
-            
+
             # Log webhook details
             object_type = payload.get('object', 'unknown')
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
-            
-            # Validate signature using the raw body we captured earlier
-            if not service.validate_signature(raw_body, signature):
-                logger.warning("Invalid webhook signature - skipping validation in dev mode")
-                # Continue anyway for debugging
-            
+
+            # Valida assinatura HMAC-SHA256 com bytes originais (antes de qualquer decode)
+            if not service.validate_signature(raw_body_bytes, signature):
+                logger.warning(
+                    "Webhook rejeitado: assinatura inválida ou ausente. "
+                    "Verifique se WHATSAPP_APP_SECRET está configurado corretamente."
+                )
+                # Retorna 200 para o Meta não fazer retry, mas não processa o payload
+                return Response({'status': 'ok'})
+
             # Convert headers to simple dict
             headers = {}
             for key, value in request.headers.items():

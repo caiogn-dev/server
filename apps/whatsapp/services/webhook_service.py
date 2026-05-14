@@ -49,22 +49,34 @@ class WebhookService:
         raise WebhookValidationError(message="Webhook verification failed")
 
     def validate_signature(self, payload: bytes, signature: str) -> bool:
-        """Validate webhook signature."""
+        """Valida assinatura HMAC-SHA256 do webhook Meta.
+
+        Retorna True quando a assinatura é válida. Retorna True também quando
+        WHATSAPP_APP_SECRET não está configurado (ambiente de desenvolvimento
+        sem secret configurado), mas loga um aviso.
+        """
         app_secret = settings.WHATSAPP_APP_SECRET
-        
+
         if not app_secret:
-            logger.warning("WHATSAPP_APP_SECRET not configured, skipping signature validation")
+            logger.warning(
+                "WHATSAPP_APP_SECRET não configurado – validação de assinatura desativada. "
+                "Configure a variável de ambiente em produção."
+            )
             return True
-        
+
         if not signature:
-            logger.warning("No signature provided in webhook request")
+            logger.warning("Webhook sem cabeçalho X-Hub-Signature-256")
             return False
-        
+
+        if isinstance(payload, str):
+            # Garante que o payload seja bytes antes do HMAC
+            payload = payload.encode('utf-8')
+
         is_valid = verify_webhook_signature(payload, signature, app_secret)
-        
+
         if not is_valid:
-            logger.warning("Invalid webhook signature")
-        
+            logger.warning("Assinatura do webhook inválida")
+
         return is_valid
 
     def process_webhook(
