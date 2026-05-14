@@ -6,6 +6,7 @@ import hmac
 import hashlib
 from typing import Dict, Any, Optional, Type
 from django.http import HttpResponse, JsonResponse
+from django.utils import timezone
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -229,5 +230,4 @@ def register_default_handlers():
 
 
 # Auto-register on module load
-from django.utils import timezone
 register_default_handlers()
