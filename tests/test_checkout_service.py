@@ -397,3 +397,121 @@ class CheckoutTrustedDeliveryFeeTest(TestCase):
             trusted_delivery_fee=Decimal('12.50'),
         )
         self.assertEqual(order.delivery_fee, Decimal('12.50'))
+
+
+from apps.stores.models import StoreCategory
+
+
+class SaladBuilderCheckoutTest(TestCase):
+    """
+    Salad builder items (is_salad_builder=True in options) devem passar no
+    checkout mesmo quando o produto base tem track_stock=False,
+    pois a salada é montada customizada — não tem estoque real.
+    """
+
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username='salad_owner', email='salad@test.com', password='pass'
+        )
+        self.store = Store.objects.create(
+            owner=self.owner,
+            name='Salad Store',
+            slug='salad-store',
+            status='active',
+            is_active=True,
+        )
+        self.category = StoreCategory.objects.create(
+            store=self.store, name='Saladas', slug='saladas', is_active=True
+        )
+        self.product = StoreProduct.objects.create(
+            store=self.store,
+            category=self.category,
+            name='Monte sua Salada',
+            slug='monte-salada',
+            price=Decimal('29.90'),
+            status='active',
+            track_stock=False,
+            is_active=True,
+        )
+        self.customer = User.objects.create_user(
+            username='salad_customer', email='cust@test.com', password='pass'
+        )
+        self.cart = StoreCart.objects.create(
+            store=self.store,
+            user=self.customer,
+        )
+        StoreCartItem.objects.create(
+            cart=self.cart,
+            product=self.product,
+            quantity=1,
+            options={'is_salad_builder': True, 'ingredients': ['alface', 'tomate']},
+        )
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_salad_builder_item_passes_stock_check(self, _mock_email):
+        order = CheckoutService.create_order(
+            cart=self.cart,
+            customer_data={
+                'name': 'Test Customer',
+                'email': 'cust@test.com',
+                'phone': '11999990001',
+            },
+            delivery_data={'method': 'pickup'},
+        )
+        self.assertIsNotNone(order)
+        self.assertEqual(order.items.count(), 1)
+        self.assertEqual(order.subtotal, Decimal('29.90'))
+
+
+class CouponMinOrderTest(TestCase):
+    """
+    Cupom com min_purchase deve ser rejeitado quando subtotal < mínimo.
+    """
+
+    def setUp(self):
+        self.owner = User.objects.create_user(
+            username='coupon_min_owner', email='couponmin@test.com', password='pass'
+        )
+        self.store = Store.objects.create(
+            owner=self.owner, name='Coupon Min Store', slug='coupon-min-store',
+            status='active', is_active=True,
+        )
+        self.category = StoreCategory.objects.create(
+            store=self.store, name='Cat', slug='cat-coupon-min', is_active=True
+        )
+        self.product = StoreProduct.objects.create(
+            store=self.store, category=self.category,
+            name='Item', slug='item-coupon-min', price=Decimal('20.00'),
+            status='active', track_stock=False, is_active=True,
+        )
+        self.customer = User.objects.create_user(
+            username='coupon_min_cust', email='cmcust@test.com', password='pass'
+        )
+        self.cart = StoreCart.objects.create(
+            store=self.store, user=self.customer,
+        )
+        StoreCartItem.objects.create(
+            cart=self.cart, product=self.product,
+            quantity=1,
+        )
+        from django.utils import timezone
+        from datetime import timedelta
+        self.coupon = StoreCoupon.objects.create(
+            store=self.store,
+            code='MIN50',
+            discount_type='percentage',
+            discount_value=Decimal('10'),
+            min_purchase=Decimal('50.00'),
+            is_active=True,
+            valid_from=timezone.now(),
+            valid_until=timezone.now() + timedelta(days=365),
+        )
+
+    def test_coupon_below_minimum_is_invalid(self):
+        result = CheckoutService.validate_coupon(self.store, 'MIN50', Decimal('20.00'))
+        self.assertFalse(result['valid'])
+        self.assertIn('minimo', result.get('error', '').lower())
+
+    def test_coupon_at_minimum_is_valid(self):
+        result = CheckoutService.validate_coupon(self.store, 'MIN50', Decimal('50.00'))
+        self.assertTrue(result['valid'])
