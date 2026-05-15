@@ -116,16 +116,15 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_id = self.kwargs.get('store_pk')
-        if store_id:
-            return StoreIntegration.objects.filter(store_id=store_id)
-        
         user = self.request.user
+
+        base = StoreIntegration.objects.filter(store_id=store_id) if store_id else StoreIntegration.objects.all()
         if user.is_staff:
-            return StoreIntegration.objects.all()
-        return StoreIntegration.objects.filter(
+            return base
+        return base.filter(
             Q(store__owner=user) | Q(store__staff=user)
         ).distinct()
-    
+
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
             return StoreIntegrationCreateSerializer
@@ -155,16 +154,15 @@ class StoreWebhookViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_id = self.kwargs.get('store_pk')
-        if store_id:
-            return StoreWebhook.objects.filter(store_id=store_id)
-        
         user = self.request.user
+
+        base = StoreWebhook.objects.filter(store_id=store_id) if store_id else StoreWebhook.objects.all()
         if user.is_staff:
-            return StoreWebhook.objects.all()
-        return StoreWebhook.objects.filter(
+            return base
+        return base.filter(
             Q(store__owner=user) | Q(store__staff=user)
         ).distinct()
-    
+
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):
         """Send a test webhook."""
