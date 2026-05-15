@@ -6,11 +6,17 @@ import logging
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 
 from .whatsapp_auth import WhatsAppAuthService, WhatsAppAuthError
+
+
+class AuthRateThrottle(AnonRateThrottle):
+    """Limite específico para endpoints de autenticação (10 req/min)."""
+    scope = 'auth'
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +132,7 @@ def _get_or_create_auth_user(whatsapp_user, phone_number):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def send_whatsapp_auth_code(request):
     """
     Envia código de autenticação para número de WhatsApp.
@@ -190,6 +197,7 @@ def send_whatsapp_auth_code(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def verify_whatsapp_auth_code(request):
     """
     Verifica código de autenticação e autentica usuário.
@@ -279,6 +287,7 @@ def verify_whatsapp_auth_code(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def resend_whatsapp_auth_code(request):
     """
     Reenvia código de autenticação (após expiração).
