@@ -18,6 +18,13 @@ from apps.whatsapp.intents.detector import IntentType
 from apps.whatsapp.models.intent_models import IntentLog, IntentDailyStats
 
 
+def _scoped_intent_logs(user):
+    """Return IntentLog queryset restricted to the user's WhatsApp accounts."""
+    if user.is_staff or user.is_superuser:
+        return IntentLog.objects.all()
+    return IntentLog.objects.filter(account__owner=user)
+
+
 class IntentStatsViewSet(viewsets.ViewSet):
     """
     ViewSet para estatísticas de detecção de intenções.
@@ -51,14 +58,14 @@ class IntentStatsViewSet(viewsets.ViewSet):
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
         # Query base
-        queryset = IntentLog.objects.filter(
+        queryset = _scoped_intent_logs(request.user).filter(
             created_at__gte=start_date,
             created_at__lte=end_date
         )
-        
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        
+
         # Estatísticas agregadas
         total_detected = queryset.count()
         
@@ -137,8 +144,8 @@ class IntentLogViewSet(viewsets.ViewSet):
         phone_number = request.query_params.get('phone_number')
         
         # Query base
-        queryset = IntentLog.objects.all()
-        
+        queryset = _scoped_intent_logs(request.user)
+
         # Filtros
         if account_id:
             queryset = queryset.filter(account_id=account_id)
@@ -188,7 +195,7 @@ class IntentLogViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         """Retorna um log específico."""
         try:
-            log = IntentLog.objects.get(id=pk)
+            log = _scoped_intent_logs(request.user).get(id=pk)
             return Response({
                 'id': str(log.id),
                 'message_id': str(log.message_id) if log.message else None,
@@ -228,8 +235,8 @@ class IntentLogViewSet(viewsets.ViewSet):
         account_id = request.query_params.get('account_id')
         
         # Query base
-        queryset = IntentLog.objects.all()
-        
+        queryset = _scoped_intent_logs(request.user)
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         if start_date_str:
@@ -321,11 +328,11 @@ class AutomationDashboardViewSet(viewsets.ViewSet):
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
         # Query base de logs
-        queryset = IntentLog.objects.filter(
+        queryset = _scoped_intent_logs(request.user).filter(
             created_at__gte=start_date,
             created_at__lte=end_date
         )
-        
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         
