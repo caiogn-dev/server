@@ -197,9 +197,13 @@ class CampaignViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['account', 'status', 'campaign_type']
-    
+
     def get_queryset(self):
-        return Campaign.objects.filter(is_active=True)
+        user = self.request.user
+        qs = Campaign.objects.filter(is_active=True)
+        if user.is_staff or user.is_superuser:
+            return qs
+        return qs.filter(account__owner=user)
     
     @extend_schema(
         summary="Create campaign",
@@ -408,9 +412,13 @@ class ContactListViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['account', 'source']
-    
+
     def get_queryset(self):
-        return ContactList.objects.filter(is_active=True)
+        user = self.request.user
+        qs = ContactList.objects.filter(is_active=True)
+        if user.is_staff or user.is_superuser:
+            return qs
+        return qs.filter(account__owner=user)
     
     @extend_schema(
         summary="Create contact list",
