@@ -358,14 +358,13 @@ class StoreCustomerViewSet(viewsets.ModelViewSet):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         queryset = StoreCustomer.objects.all()
         
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if not filtered:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
-        
+        queryset, _ = filter_by_store(queryset, store_param)
+        user = self.request.user
+        if not user.is_staff:
+            queryset = queryset.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
