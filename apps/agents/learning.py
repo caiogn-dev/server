@@ -31,16 +31,25 @@ _TOPIC_RULES: list[tuple[str, list[str]]] = [
                      "tem ", "vocês têm", "voces tem"]),
     ("entrega",     ["entrega", "frete", "taxa", "endereço", "bairro", "quanto fica",
                      "delivery", "motoboy", "prazo"]),
-    ("pedido",      ["pedido", "pedir", "quero", "fazer pedido", "encomendar",
+    ("pedido",      ["pedido", "pedir", "fazer pedido", "encomendar",
                      "meu pedido", "status do pedido", "onde está"]),
     ("pagamento",   ["pix", "pagamento", "pagar", "boleto", "cartão", "transferência",
                      "qr code", "código", "comprovante"]),
     ("saudacao",    ["oi", "olá", "boa tarde", "bom dia", "boa noite", "tudo bem",
-                     "e aí", "salve"]),
+                     "e aí", "salve", "mais informações", "mais informacoes",
+                     "tenho interesse", "queria saber", "pode me ajudar"]),
     ("reclamacao",  ["reclamação", "problema", "errado", "não chegou", "frio",
                      "demora", "cancelar", "reembolso"]),
     ("indisponivel", ["esgotado", "acabou", "sem estoque", "não tem", "nao tem",
                       "indisponível"]),
+]
+
+# Inputs vagos — não guardar como exemplos de atendimento (sem produto/contexto específico)
+_VAGUE_INPUT_PATTERNS = [
+    r'^(oi|olá|ola|e aí|eai|bom dia|boa tarde|boa noite)[!?.\s]*$',
+    r'^(quero\s+)?(mais\s+)?informa[çc][õo]es[!?.\s]*$',
+    r'^(tenho interesse|pode me ajudar|queria saber)[!?.\s]*$',
+    r'^\w{1,3}[!?.\s]*$',  # mensagem com 1-3 palavras apenas
 ]
 
 
@@ -62,10 +71,19 @@ _BAD_RESPONSE_PATTERNS = [
     r"erro ao ",
     r"ferramenta .* não encontrada",
     r"desculpa, tive um probleminha",
+    r"qualquer d[úu]vida estou aqui",
 ]
 
+# Padrão de "dump": resposta que mistura taxa de entrega + categorias + produto — sinal de despejo
+_DUMP_SIGNAL_PATTERNS = [
+    r"taxa de entrega",
+    r"categorias de produtos",
+    r"r\$\s*\d+[,.]?\d*.*r\$\s*\d+[,.]?\d*.*r\$\s*\d+[,.]?\d*",  # 3+ preços na mesma resposta
+]
+_DUMP_SIGNAL_MIN_MATCHES = 2  # 2+ sinais = provável dump
+
 _MIN_RESPONSE_TOKENS = 20   # respostas muito curtas provavelmente são echoes
-_MAX_RESPONSE_TOKENS = 500  # respostas muito longas não são bons exemplos
+_MAX_RESPONSE_TOKENS = 400  # respostas muito longas não são bons exemplos
 
 
 def _is_good_response(response_text: str) -> bool:
@@ -77,7 +95,25 @@ def _is_good_response(response_text: str) -> bool:
     for pattern in _BAD_RESPONSE_PATTERNS:
         if re.search(pattern, response_text, re.IGNORECASE):
             return False
+    # Rejeita respostas que parecem "dump" de informações (vários sinais juntos)
+    dump_hits = sum(
+        1 for p in _DUMP_SIGNAL_PATTERNS
+        if re.search(p, response_text, re.IGNORECASE)
+    )
+    if dump_hits >= _DUMP_SIGNAL_MIN_MATCHES:
+        return False
     return True
+
+
+def _is_vague_input(text: str) -> bool:
+    """Retorna True para inputs genéricos que não devem ser aprendidos como exemplos."""
+    text = text.strip()
+    if len(text.split()) <= 3:
+        return True
+    for pattern in _VAGUE_INPUT_PATTERNS:
+        if re.match(pattern, text, re.IGNORECASE):
+            return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +209,7 @@ class AgentLearningService:
             user_text = (msg.get("content") or "").strip()
             bot_text = (next_msg.get("content") or "").strip()
 
-            if not user_text or not _is_good_response(bot_text):
+            if not user_text or _is_vague_input(user_text) or not _is_good_response(bot_text):
                 continue
 
             topic = _classify_topic(user_text)

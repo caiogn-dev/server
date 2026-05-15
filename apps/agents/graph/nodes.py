@@ -177,7 +177,7 @@ def _catalog_summary(store) -> str:
             .filter(store=store, is_active=True, status="active")
             .exclude(tags__contains=["ingrediente"])
             .order_by("sort_order")
-            .select_related("category")[:20]
+            .select_related("category")[:12]
         )
         lines = []
         if cats:
@@ -186,7 +186,7 @@ def _catalog_summary(store) -> str:
             lines.append("Itens:")
             for p in products:
                 cat = f"[{p.category.name}] " if p.category else ""
-                desc = f" — {p.description[:60]}..." if getattr(p, "description", "") else ""
+                desc = f" — {p.description[:40]}..." if getattr(p, "description", "") else ""
                 lines.append(f"  • {cat}{p.name} — R$ {p.price}{desc}")
         return "\n".join(lines) if lines else "Use buscar_produto para detalhes."
     except Exception as exc:
