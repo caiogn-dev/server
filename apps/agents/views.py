@@ -34,9 +34,14 @@ class AgentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'provider']
-    
+
     def get_queryset(self):
-        return Agent.objects.filter(is_active=True)
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return Agent.objects.filter(is_active=True)
+        return Agent.objects.filter(
+            is_active=True, accounts__owner=user
+        ).distinct()
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -198,9 +203,11 @@ class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = 'session_id'
     
     def get_queryset(self):
-        return AgentConversation.objects.filter(
-            agent__is_active=True
-        ).order_by('-last_message_at')
+        user = self.request.user
+        base = AgentConversation.objects.filter(agent__is_active=True).order_by('-last_message_at')
+        if user.is_staff or user.is_superuser:
+            return base
+        return base.filter(agent__accounts__owner=user).distinct()
     
     @extend_schema(summary="Histórico da conversa")
     @action(detail=True, methods=['get'])
