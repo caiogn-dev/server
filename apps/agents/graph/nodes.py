@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import random
 from typing import Any
 
 from django.db import models
@@ -18,6 +20,65 @@ from .state import AgentState
 logger = logging.getLogger(__name__)
 
 _TOOL_CAPABLE_PROVIDERS = {"openai", "anthropic", "nvidia"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NÓ 0: sondagem (intercepta primeiro contato vago — sem chamar LLM)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_VAGUE_FIRST_CONTACT_PATTERNS = [
+    r'^(oi|olá|ola|e\s*a[íi]|eae|bom dia|boa tarde|boa noite)[!?.\s,]*$',
+    r'^(oi|olá|ola)[!?.\s,]*(tudo\s*(bem|bom|certo|ok)|como\s*vai)?[!?.\s,]*$',
+    r'^(quero?\s+)?(mais\s+)?informa[çc][õo]es[!?.\s]*$',
+    r'^(tenho interesse|pode me ajudar|me\s*ajuda|queria saber|vim saber)[!?.\s]*$',
+    r'^(oi.{0,30})?(quero?\s+)?(mais\s+)?informa[çc][õo]es[!?.\s]*$',
+]
+
+_SPECIFIC_TERMS = [
+    "cardápio", "cardapio", "menu", "pedir", "pedido", "quero ",
+    "salada", "bebida", "entrega", "frete", "preço", "preco",
+    "quanto", "disponível", "disponivel",
+]
+
+_SONDAGEM_RESPONSES = [
+    "Oi! Que bom que entrou em contato 😊 O que você gostaria de saber — tem algum prato em mente, ou prefere dar uma olhada no cardápio?",
+    "Olá! Com prazer em ajudar 😊 Está procurando algum prato específico, ou quer ver o que temos no cardápio?",
+    "Oi! Fico feliz em te atender 😊 Tem algo específico que está buscando, ou quer dar uma olhada nas nossas opções?",
+]
+
+
+def sondagem_node(state: AgentState) -> dict:
+    """
+    Intercepta o primeiro contato vago e injeta uma AIMessage de sondagem
+    sem chamar o LLM. Isso evita que modelos fracos "despejem" o cardápio.
+    Só atua quando há 1 única mensagem no histórico (primeiro turno).
+    """
+    messages = state.get("messages") or []
+    if len(messages) != 1:
+        return {}
+
+    last = messages[-1]
+    text = (getattr(last, "content", "") or "").strip()
+
+    word_count = len(text.split())
+    is_vague = word_count <= 8 and any(
+        re.match(p, text, re.IGNORECASE) for p in _VAGUE_FIRST_CONTACT_PATTERNS
+    )
+    has_specific = any(t in text.lower() for t in _SPECIFIC_TERMS)
+
+    if is_vague and not has_specific:
+        response = random.choice(_SONDAGEM_RESPONSES)
+        logger.info("[SONDAGEM] Primeiro contato vago detectado — respondendo sem LLM")
+        return {"messages": [AIMessage(content=response)]}
+
+    return {}
+
+
+def should_skip_llm(state: AgentState) -> str:
+    """Se o nó de sondagem já injetou um AIMessage, pula direto para extract_response."""
+    last = (state.get("messages") or [None])[-1]
+    if isinstance(last, AIMessage):
+        return "skip"
+    return "agent"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,11 +108,20 @@ Você é {atendente_name}, atendente d{article} {store_name} no WhatsApp.{store_
 • Se uma ferramenta retornar "não encontrado", responda com naturalidade sugerindo alternativas do CARDÁPIO
 • Chame cada ferramenta no máximo UMA vez por resposta
 
-━━━━ PRIMEIRO CONTATO / SONDAGEM ━━━━
-• Quando o cliente for vago ("quero mais informações", "tenho interesse", "oi queria saber", "pode me ajudar") → NÃO despeje o cardápio, categorias nem informações de entrega
-• Responda com: saudação calorosa + 1 pergunta de descoberta — pergunte o que ele quer saber (prato específico, como funciona, entrega, etc.)
-• Só aprofunde um assunto DEPOIS de entender o interesse do cliente
-• Se cliente mencionar produto ou categoria específica → aí sim: descreva com entusiasmo e convide para pedir
+━━━━ REGRA CRÍTICA — PRIMEIRO CONTATO ━━━━
+SE o cliente mandar uma saudação ou mensagem vaga SEM mencionar produto, prato ou pergunta específica:
+  → SUA RESPOSTA DEVE TER APENAS: saudação + 1 única pergunta de descoberta.
+  → PROIBIDO incluir: taxa de entrega, categorias, lista de produtos, preços, qualquer informação não solicitada.
+  → PROIBIDO começar a resposta listando o que a loja tem.
+
+EXEMPLO OBRIGATÓRIO — siga exatamente este padrão para primeiro contato vago:
+  Cliente: "Oi quero mais informações" / "Tenho interesse" / "Oi, tudo bem?"
+  Você: "Oi! Que bom que entrou em contato 😊 O que você gostaria de saber — tem algum prato em mente, ou prefere dar uma olhada no cardápio?"
+
+NÃO FAÇA ISSO (proibido em resposta a mensagem vaga):
+  "A taxa de entrega varia..." / "Temos as categorias..." / "O produto X custa R$..."
+
+Só aprofunde um assunto (cardápio, entrega, produto) DEPOIS que o cliente perguntar sobre aquilo especificamente.
 
 ━━━━ CONVERSÃO ━━━━
 • Apresente no máximo 2 opções de uma vez — nunca liste o cardápio inteiro na primeira resposta sobre produtos

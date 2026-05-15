@@ -17,6 +17,8 @@ from langgraph.graph import StateGraph, END
 from .state import AgentState
 from .nodes import (
     load_context_node,
+    sondagem_node,
+    should_skip_llm,
     agent_node,
     execute_tools_node,
     extract_response_node,
@@ -49,12 +51,18 @@ def build_agent_graph(agent, langchain_service):
 
     g = StateGraph(AgentState)
     g.add_node("load_context", _load_ctx)
+    g.add_node("sondagem", sondagem_node)
     g.add_node("agent", _agent)
     g.add_node("execute_tools", execute_tools_node)
     g.add_node("extract_response", extract_response_node)
 
     g.set_entry_point("load_context")
-    g.add_edge("load_context", "agent")
+    g.add_edge("load_context", "sondagem")
+    g.add_conditional_edges(
+        "sondagem",
+        should_skip_llm,
+        {"skip": "extract_response", "agent": "agent"},
+    )
     g.add_edge("execute_tools", "agent")   # após tools, volta ao LLM
     g.add_edge("extract_response", END)
 
