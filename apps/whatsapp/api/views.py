@@ -46,7 +46,10 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return WhatsAppAccount.objects.filter(is_active=True)
+        return WhatsAppAccount.objects.filter(is_active=True, owner=user)
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -299,20 +302,26 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
-        queryset = Message.objects.select_related('account', 'conversation').all()
-        
+        from django.db.models import Q
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            queryset = Message.objects.select_related('account', 'conversation').all()
+        else:
+            queryset = Message.objects.select_related('account', 'conversation').filter(
+                account__owner=user
+            )
+
         # Filter by phone_number (from_number OR to_number)
         phone_number = self.request.query_params.get('phone_number')
         if phone_number:
-            from django.db.models import Q
             queryset = queryset.filter(
                 Q(from_number__icontains=phone_number) | Q(to_number__icontains=phone_number)
             )
-        
+
         # Default ordering by created_at desc
         ordering = self.request.query_params.get('ordering', '-created_at')
         queryset = queryset.order_by(ordering)
-        
+
         return queryset
 
     @extend_schema(
@@ -520,4 +529,9 @@ class MessageTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'status', 'category']
 
     def get_queryset(self):
-        return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        return MessageTemplate.objects.select_related('account').filter(
+            is_active=True, account__owner=user
+        )
