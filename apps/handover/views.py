@@ -216,17 +216,19 @@ class HandoverRequestViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Retorna solicitações visíveis para o usuário."""
         user = self.request.user
-        
-        # Se é superusuário, vê tudo
-        if user.is_superuser:
+
+        if user.is_superuser or user.is_staff:
             return HandoverRequest.objects.all()
-        
-        # Se é operador, vê solicitações pendentes da loja
-        # e solicitações atribuídas a ele
+
+        # Restringe ao escopo do tenant: apenas conversas de contas
+        # WhatsApp que pertencem ao usuário autenticado.
         return HandoverRequest.objects.filter(
-            Q(status=HandoverRequestStatus.PENDING) |
-            Q(assigned_to=user) |
-            Q(requested_by=user)
+            Q(conversation__account__owner=user) &
+            (
+                Q(status=HandoverRequestStatus.PENDING) |
+                Q(assigned_to=user) |
+                Q(requested_by=user)
+            )
         ).distinct()
     
     @action(detail=True, methods=['post'])
@@ -302,12 +304,10 @@ class HandoverLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Retorna logs visíveis para o usuário."""
         user = self.request.user
-        
-        if user.is_superuser:
+
+        if user.is_superuser or user.is_staff:
             return HandoverLog.objects.all()
-        
-        # Logs de conversas da loja do usuário
-        # (assumindo que o usuário tem uma loja associada)
+
         return HandoverLog.objects.filter(
-            conversation__store__members=user
+            conversation__account__owner=user
         )
