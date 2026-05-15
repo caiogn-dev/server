@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 
 from apps.marketing.models import (
     EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
@@ -23,14 +24,23 @@ from .serializers import (
 )
 
 
+def _filter_by_store_ownership(queryset, user):
+    """Restrict queryset to stores owned by or staffed by the user."""
+    if user.is_staff or user.is_superuser:
+        return queryset
+    return queryset.filter(
+        Q(store__owner=user) | Q(store__staff=user)
+    ).distinct()
+
+
 class EmailTemplateViewSet(viewsets.ModelViewSet):
     """ViewSet for email templates."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailTemplateSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        queryset = _filter_by_store_ownership(EmailTemplate.objects.all(), self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -89,12 +99,12 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
 
 class EmailCampaignViewSet(viewsets.ModelViewSet):
     """ViewSet for email campaigns."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailCampaignSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        queryset = _filter_by_store_ownership(EmailCampaign.objects.all(), self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -198,12 +208,12 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
 
 class SubscriberViewSet(viewsets.ModelViewSet):
     """ViewSet for subscribers."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = SubscriberSerializer
-    
+
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        queryset = _filter_by_store_ownership(Subscriber.objects.all(), self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -606,12 +616,12 @@ class QuickActionsViewSet(viewsets.ViewSet):
 
 class EmailAutomationViewSet(viewsets.ModelViewSet):
     """ViewSet for email automations."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailAutomationSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        queryset = _filter_by_store_ownership(EmailAutomation.objects.all(), self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
