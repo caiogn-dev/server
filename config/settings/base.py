@@ -8,9 +8,20 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'your-secret-key-change-in-production'))
+_SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', ''))
+_IS_DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
+if not _SECRET_KEY:
+    if _IS_DEBUG:
+        import secrets as _secrets
+        _SECRET_KEY = _secrets.token_hex(50)
+    else:
+        raise RuntimeError(
+            "A variável de ambiente SECRET_KEY (ou DJANGO_SECRET_KEY) não está definida. "
+            "Configure-a antes de iniciar o servidor em produção."
+        )
+SECRET_KEY = _SECRET_KEY
 
-DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
+DEBUG = _IS_DEBUG
 
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
