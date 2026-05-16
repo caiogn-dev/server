@@ -15,26 +15,33 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from ..models import Store, StoreOrder, StoreProduct, StoreCustomer
-from .views import IsStoreOwnerOrStaff
 
 
 class BaseExportView(APIView):
     """Base class for export views."""
-    
-    permission_classes = [IsAuthenticated, IsStoreOwnerOrStaff]
-    
+
+    permission_classes = [IsAuthenticated]
+
     def get_store(self, request):
-        """Get store from query params."""
+        """Get store from query params, restricted to the requesting user's stores."""
         store_param = request.query_params.get('store')
         if not store_param:
             return None
-        
+
         try:
             import uuid
             uuid.UUID(store_param)
-            return Store.objects.get(id=store_param)
+            store_qs = Store.objects.filter(id=store_param)
         except (ValueError, AttributeError):
-            return Store.objects.filter(slug=store_param).first()
+            store_qs = Store.objects.filter(slug=store_param)
+
+        if not request.user.is_staff:
+            from django.db.models import Q
+            store_qs = store_qs.filter(
+                Q(owner=request.user) | Q(staff=request.user)
+            )
+
+        return store_qs.first()
     
     def get_date_range(self, request):
         """Get date range from query params."""
