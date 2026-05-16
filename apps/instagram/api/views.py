@@ -1,10 +1,17 @@
+import hashlib
+import hmac
+import json
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.conf import settings
 from django.utils import timezone
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from ..models import (
     InstagramAccount, InstagramMedia, InstagramConversation, 
@@ -370,21 +377,54 @@ class InstagramMessageViewSet(viewsets.ViewSet):
 class InstagramWebhookViewSet(viewsets.ViewSet):
     """ViewSet para processamento de webhooks"""
     permission_classes = []  # Webhooks não requerem autenticação
-    
+
+    def _validate_signature(self, request) -> bool:
+        """Validate X-Hub-Signature-256 from Meta."""
+        app_secret = getattr(settings, 'INSTAGRAM_APP_SECRET', '') or getattr(settings, 'FACEBOOK_APP_SECRET', '')
+        if not app_secret:
+            if getattr(settings, 'DEBUG', False):
+                logger.warning("INSTAGRAM_APP_SECRET não configurado — validação ignorada em DEBUG")
+                return True
+            logger.error("INSTAGRAM_APP_SECRET não configurado em produção")
+            return False
+
+        signature_header = request.headers.get('X-Hub-Signature-256', '')
+        if not signature_header.startswith('sha256='):
+            logger.warning("Instagram webhook: header X-Hub-Signature-256 ausente ou inválido")
+            return False
+
+        expected = 'sha256=' + hmac.new(
+            app_secret.encode('utf-8'),
+            request.body,
+            hashlib.sha256
+        ).hexdigest()
+        return hmac.compare_digest(expected, signature_header)
+
     def create(self, request):
         """Processa webhook do Instagram"""
-        # Verificar assinatura
-        # Processar payload
-        # Criar logs
+        if not self._validate_signature(request):
+            if not getattr(settings, 'DEBUG', False):
+                logger.error("Instagram webhook rejeitado: assinatura inválida")
+                return Response({'error': 'Invalid signature'}, status=status.HTTP_401_UNAUTHORIZED)
+            logger.warning("Instagram webhook: assinatura inválida ignorada em DEBUG")
+
+        try:
+            payload = json.loads(request.body) if isinstance(request.body, bytes) else request.data
+        except (json.JSONDecodeError, Exception):
+            return Response({'error': 'Invalid JSON'}, status=status.HTTP_400_BAD_REQUEST)
+
+        logger.info(f"Instagram webhook recebido: object={payload.get('object', 'unknown')}")
         return Response({'status': 'received'})
-    
+
     @action(detail=False, methods=['get'])
     def verify(self, request):
         """Verificação do webhook pelo Facebook"""
         mode = request.query_params.get('hub.mode')
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
-        
-        if mode == 'subscribe' and token == settings.INSTAGRAM_VERIFY_TOKEN:
+
+        verify_token = getattr(settings, 'INSTAGRAM_VERIFY_TOKEN', None)
+        if mode == 'subscribe' and token == verify_token:
             return Response(int(challenge))
+        logger.warning(f"Instagram webhook verify falhou: mode={mode}")
         return Response('Verification failed', status=403)
