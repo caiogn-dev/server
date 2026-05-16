@@ -1,21 +1,31 @@
 """
 Commerce - Views.
 """
-from rest_framework import viewsets, status
+from django.db.models import Q, Sum
+from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Store, Category, Product, Customer, Order
+from .models import Category, Customer, Order, Product, Store
 from .serializers import (
-    StoreSerializer, CategorySerializer, ProductSerializer,
-    CustomerSerializer, OrderSerializer
+    CategorySerializer, CustomerSerializer, OrderSerializer,
+    ProductSerializer, StoreSerializer,
 )
 
 
 class StoreViewSet(viewsets.ModelViewSet):
-    queryset = Store.objects.all()
     serializer_class = StoreSerializer
+    permission_classes = [permissions.IsAuthenticated]
     lookup_field = 'slug'
-    
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Store.objects.all()
+        return Store.objects.filter(owner=user)
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
     @action(detail=True, methods=['get'])
     def products(self, request, slug=None):
         store = self.get_object()
@@ -25,47 +35,69 @@ class StoreViewSet(viewsets.ModelViewSet):
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Category.objects.all()
+        return Category.objects.filter(store__owner=user)
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    
+    permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        user = self.request.user
+        if user.is_staff:
+            base_qs = Product.objects.all()
+        else:
+            base_qs = Product.objects.filter(store__owner=user)
+
         store_slug = self.request.query_params.get('store')
         if store_slug:
-            queryset = queryset.filter(store__slug=store_slug)
-        return queryset.filter(is_active=True)
+            base_qs = base_qs.filter(store__slug=store_slug)
+        return base_qs.filter(is_active=True)
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
-    queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
-    
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return Customer.objects.all()
+        return Customer.objects.filter(store__owner=user)
+
     @action(detail=False, methods=['get'])
     def by_phone(self, request):
         phone = request.query_params.get('phone')
         if phone:
-            customer = Customer.objects.filter(phone=phone).first()
+            customer = self.get_queryset().filter(phone=phone).first()
             if customer:
                 return Response(CustomerSerializer(customer).data)
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    
+    permission_classes = [permissions.IsAuthenticated]
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        user = self.request.user
+        if user.is_staff:
+            base_qs = Order.objects.all()
+        else:
+            base_qs = Order.objects.filter(store__owner=user)
+
         store_slug = self.request.query_params.get('store')
         if store_slug:
-            queryset = queryset.filter(store__slug=store_slug)
-        return queryset
-    
+            base_qs = base_qs.filter(store__slug=store_slug)
+        return base_qs
+
     @action(detail=True, methods=['get'])
     def payment(self, request, pk=None):
         """Get payment status for an order."""
@@ -74,46 +106,40 @@ class OrderViewSet(viewsets.ModelViewSet):
             'status': order.payment_status,
             'payment_url': order.payment_url if hasattr(order, 'payment_url') else None
         })
-    
+
     @action(detail=True, methods=['post'])
     def events(self, request, pk=None):
         """Add an event to the order."""
         order = self.get_object()
         event_type = request.data.get('type')
         description = request.data.get('description')
-        
-        # Create event logic here
+
         return Response({
             'id': str(order.id),
             'type': event_type,
             'description': description,
             'created_at': order.created_at.isoformat()
         })
-    
+
     @action(detail=True, methods=['get'])
     def events_list(self, request, pk=None):
         """Get all events for an order."""
-        order = self.get_object()
-        # Return order events
+        self.get_object()
         return Response([])
-    
+
     @action(detail=False, methods=['get'])
     def export(self, request):
         """Export orders as CSV."""
         from django.http import HttpResponse
         import csv
         import io
-        
-        store_slug = request.query_params.get('store')
+
         queryset = self.get_queryset()
-        
-        if store_slug:
-            queryset = queryset.filter(store__slug=store_slug)
-        
+
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(['ID', 'Number', 'Customer', 'Total', 'Status', 'Date'])
-        
+
         for order in queryset:
             writer.writerow([
                 str(order.id),
@@ -123,28 +149,23 @@ class OrderViewSet(viewsets.ModelViewSet):
                 order.status,
                 order.created_at.strftime('%Y-%m-%d %H:%M')
             ])
-        
+
         output.seek(0)
         response = HttpResponse(output.read(), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="orders.csv"'
         return response
-    
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get order statistics."""
-        from django.db.models import Sum, Count
-        from django.utils import timezone
         from datetime import timedelta
-        
-        store_slug = request.query_params.get('store')
+        from django.utils import timezone
+
         queryset = self.get_queryset()
-        
-        if store_slug:
-            queryset = queryset.filter(store__slug=store_slug)
-        
+
         today = timezone.now().date()
         week_ago = today - timedelta(days=7)
-        
+
         stats = {
             'total': queryset.count(),
             'pending': queryset.filter(status='pending').count(),
@@ -158,5 +179,5 @@ class OrderViewSet(viewsets.ModelViewSet):
                 payment_status='paid'
             ).aggregate(total=Sum('total'))['total'] or 0)
         }
-        
+
         return Response(stats)
