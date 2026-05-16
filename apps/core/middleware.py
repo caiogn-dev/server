@@ -202,9 +202,10 @@ class RateLimitMiddleware:
         cache.set(cache_key, request_count + 1, self.window)
 
         response = self.get_response(request)
+        reset_timestamp = int(time.time()) + self.window
         response['X-RateLimit-Limit'] = str(self.max_requests)
         response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count - 1))
-        response['X-RateLimit-Reset'] = str(self.window)
+        response['X-RateLimit-Reset'] = str(reset_timestamp)
 
         return response
 
