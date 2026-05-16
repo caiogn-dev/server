@@ -104,9 +104,14 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
         export_service = ExportService()
         audit_service = AuditService()
         
-        # Get queryset based on export type
+        user = request.user
+
+        # Get queryset based on export type — always scoped to the requesting user's tenant
         if export_type == 'messages':
-            queryset = Message.objects.all()
+            if user.is_staff:
+                queryset = Message.objects.all()
+            else:
+                queryset = Message.objects.filter(account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
@@ -114,9 +119,12 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('direction'):
                 queryset = queryset.filter(direction=filters['direction'])
             response = export_service.export_messages(queryset, export_format, request.user)
-            
+
         elif export_type == 'orders':
-            queryset = StoreOrder.objects.filter(is_active=True)
+            if user.is_staff:
+                queryset = StoreOrder.objects.filter(is_active=True)
+            else:
+                queryset = StoreOrder.objects.filter(is_active=True, store__owner=user)
             store_filter = filters.get('store') or filters.get('store_id')
             if store_filter:
                 try:
@@ -128,9 +136,12 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
             response = export_service.export_orders(queryset, export_format, request.user)
-            
+
         elif export_type == 'conversations':
-            queryset = Conversation.objects.filter(is_active=True)
+            if user.is_staff:
+                queryset = Conversation.objects.filter(is_active=True)
+            else:
+                queryset = Conversation.objects.filter(is_active=True, account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
