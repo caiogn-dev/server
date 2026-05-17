@@ -98,29 +98,15 @@ class AgentFlowViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def execute(self, request, pk=None):
-        """Execute/test a flow (for debugging)."""
-        try:
-            flow = self.get_object()
-            node_id = request.data.get('node_id')
-            context = request.data.get('context', {})
-            
-            # TODO: Implement flow execution via FlowExecutor
-            # from apps.automation.services import FlowExecutor
-            # executor = FlowExecutor(flow)
-            # result = executor.execute_node(node_id, context)
-            
-            return Response({
-                'status': 'Flow execution not yet implemented',
+        """Execute/test a flow (for debugging). Not yet implemented."""
+        flow = self.get_object()
+        return Response(
+            {
+                'detail': 'Execução de fluxo ainda não está implementada.',
                 'flow_id': str(flow.id),
-                'node_id': node_id,
-                'context': context
-            })
-        except Exception as e:
-            logger.error(f'Error executing flow: {e}')
-            return Response(
-                {'error': 'Failed to execute flow'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            },
+            status=status.HTTP_501_NOT_IMPLEMENTED,
+        )
 
 
 class FlowSessionViewSet(viewsets.ReadOnlyModelViewSet):
