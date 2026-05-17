@@ -24,17 +24,23 @@ class BaseExportView(APIView):
     permission_classes = [IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_store(self, request):
-        """Get store from query params."""
+        """Get store from query params and verify the caller has access to it."""
         store_param = request.query_params.get('store')
         if not store_param:
             return None
-        
+
         try:
             import uuid
             uuid.UUID(store_param)
-            return Store.objects.get(id=store_param)
+            store = Store.objects.filter(id=store_param).first()
         except (ValueError, AttributeError):
-            return Store.objects.filter(slug=store_param).first()
+            store = Store.objects.filter(slug=store_param).first()
+
+        if store is not None:
+            # Raises PermissionDenied (403) if the user is not owner/staff
+            self.check_object_permissions(request, store)
+
+        return store
     
     def get_date_range(self, request):
         """Get date range from query params."""
