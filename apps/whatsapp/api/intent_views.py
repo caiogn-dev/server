@@ -11,7 +11,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
-from django.db.models import Count, Avg, Q
+from django.db.models import Count, Avg, Q, Sum
 from django.db import connection
 
 from apps.whatsapp.intents.detector import IntentType
@@ -336,33 +336,102 @@ class AutomationDashboardViewSet(viewsets.ViewSet):
             if count > 0:
                 by_event_type[intent.value] = count
         
+        total_logs = queryset.count()
+        automations_triggered = queryset.exclude(handler_used='').count()
+        payment_confirmed_count = queryset.filter(intent_type='payment_confirmed').count()
+
+        # Conversion rate: confirmações de pagamento / automações disparadas
+        conversion_rate = (
+            round(payment_confirmed_count / automations_triggered * 100, 2)
+            if automations_triggered > 0 else 0.0
+        )
+
+        # Receita de automações: pedidos pagos de clientes que passaram por automação
+        phones_in_automations = queryset.exclude(handler_used='').values_list(
+            'phone_number', flat=True
+        ).distinct()
+
+        try:
+            from apps.stores.models import StoreOrder
+            revenue_qs = StoreOrder.objects.filter(
+                customer_phone__in=phones_in_automations,
+                payment_status='paid',
+                created_at__gte=start_date,
+                created_at__lte=end_date,
+            )
+            revenue_from_automations = float(
+                revenue_qs.aggregate(total=Sum('total'))['total'] or 0
+            )
+        except Exception:
+            revenue_from_automations = 0.0
+
+        # Cart recovery: phones que tiveram cart_abandoned E depois payment_confirmed
+        abandoned_phones = set(
+            queryset.filter(intent_type='cart_abandoned').values_list('phone_number', flat=True)
+        )
+        recovered_phones = set(
+            queryset.filter(intent_type='payment_confirmed').values_list('phone_number', flat=True)
+        )
+        abandoned_carts = len(abandoned_phones)
+        recovered_count = len(abandoned_phones & recovered_phones)
+        recovery_rate = (
+            round(recovered_count / abandoned_carts * 100, 2) if abandoned_carts > 0 else 0.0
+        )
+
+        # Receita recuperada de carrinhos
+        try:
+            recovered_revenue = float(
+                StoreOrder.objects.filter(
+                    customer_phone__in=list(abandoned_phones & recovered_phones),
+                    payment_status='paid',
+                    created_at__gte=start_date,
+                    created_at__lte=end_date,
+                ).aggregate(total=Sum('total'))['total'] or 0
+            )
+        except Exception:
+            recovered_revenue = 0.0
+
+        # Payment reminders conversion
+        pix_reminders_sent = queryset.filter(intent_type='pix_reminder').count()
+        pix_phones_reminded = set(
+            queryset.filter(intent_type='pix_reminder').values_list('phone_number', flat=True)
+        )
+        paid_after_reminder = queryset.filter(
+            intent_type='payment_confirmed',
+            phone_number__in=pix_phones_reminded,
+        ).count()
+        reminder_conversion = (
+            round(paid_after_reminder / pix_reminders_sent * 100, 2)
+            if pix_reminders_sent > 0 else 0.0
+        )
+
         stats = {
             'period': {
                 'start': start_date.isoformat(),
                 'end': end_date.isoformat(),
             },
             'summary': {
-                'total_messages_sent': queryset.count(),
-                'total_automations_triggered': queryset.exclude(handler_used='').count(),
-                'conversion_rate': 0.0,  # TODO: Calcular baseado em pedidos
-                'revenue_from_automations': 0.0,  # TODO: Calcular baseado em pedidos
+                'total_messages_sent': total_logs,
+                'total_automations_triggered': automations_triggered,
+                'conversion_rate': conversion_rate,
+                'revenue_from_automations': revenue_from_automations,
             },
             'by_event_type': by_event_type,
             'cart_recovery': {
-                'abandoned_carts': queryset.filter(intent_type='cart_abandoned').count(),
+                'abandoned_carts': abandoned_carts,
                 'reminders_sent': queryset.filter(intent_type='cart_reminder').count(),
-                'recovered': 0,  # TODO: Calcular
-                'recovery_rate': 0.0,
-                'revenue_recovered': 0.0,
+                'recovered': recovered_count,
+                'recovery_rate': recovery_rate,
+                'revenue_recovered': recovered_revenue,
             },
             'payment_reminders': {
                 'pending_payments': queryset.filter(intent_type='pix_generated').count(),
-                'reminders_sent': queryset.filter(intent_type='pix_reminder').count(),
-                'paid_after_reminder': queryset.filter(intent_type='payment_confirmed').count(),
-                'conversion_rate': 0.0,
+                'reminders_sent': pix_reminders_sent,
+                'paid_after_reminder': paid_after_reminder,
+                'conversion_rate': reminder_conversion,
             },
         }
-        
+
         return Response(stats)
 
 
