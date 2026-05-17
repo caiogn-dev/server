@@ -1,6 +1,7 @@
 import logging
 from typing import Optional, Dict, List, Any
 from datetime import datetime
+from django.db import models
 from .instagram_api import InstagramAPI, InstagramAPIException
 from ..models import InstagramConversation, InstagramMessage
 
@@ -147,23 +148,23 @@ class InstagramDirectService:
             for msg in reversed(messages)  # Ordem cronológica
         ]
     
-    def send_message(self, conversation_id: str, message_type: str, 
+    def send_message(self, conversation_id: str, message_type: str,
                      content: str = None, media_url: str = None,
                      reply_to_id: str = None) -> InstagramMessage:
-        """Envia uma mensagem"""
+        """Envia uma mensagem via Instagram Graph API e persiste localmente."""
         try:
             conv = InstagramConversation.objects.get(
                 account=self.api.account,
                 id=conversation_id
             )
-            
+
             reply_to = None
             if reply_to_id:
                 reply_to = InstagramMessage.objects.get(
                     conversation=conv,
                     id=reply_to_id
                 )
-            
+
             message = InstagramMessage.objects.create(
                 conversation=conv,
                 message_type=message_type,
@@ -174,19 +175,69 @@ class InstagramDirectService:
                 is_read=True,
                 sent_at=datetime.now()
             )
-            
-            # Atualiza conversa
+
             conv.last_message_at = datetime.now()
-            conv.save()
-            
-            # TODO: Integrar com API real do Instagram para envio
-            
+            conv.save(update_fields=['last_message_at', 'updated_at'])
+
+            # Envio via Instagram Messaging API (Graph API v18.0)
+            self._send_via_api(conv.participant_id, message_type, content, media_url, message)
+
             return message
-            
+
         except InstagramConversation.DoesNotExist:
             raise InstagramAPIException("Conversa não encontrada")
         except InstagramMessage.DoesNotExist:
             raise InstagramAPIException("Mensagem de resposta não encontrada")
+
+    def _send_via_api(self, recipient_id: str, message_type: str,
+                      content: str, media_url: str, message: InstagramMessage) -> None:
+        """Faz a chamada real à Instagram Messaging API e persiste o message_id."""
+        try:
+            if message_type == 'TEXT':
+                if not content:
+                    raise InstagramAPIException("Conteúdo de texto não pode ser vazio")
+                payload = {
+                    'recipient': {'id': recipient_id},
+                    'message': {'text': content},
+                }
+            elif message_type in ('IMAGE', 'VIDEO', 'AUDIO'):
+                if not media_url:
+                    raise InstagramAPIException(f"URL de mídia obrigatória para tipo {message_type}")
+                attachment_type = {
+                    'IMAGE': 'image',
+                    'VIDEO': 'video',
+                    'AUDIO': 'audio',
+                }.get(message_type, 'file')
+                payload = {
+                    'recipient': {'id': recipient_id},
+                    'message': {
+                        'attachment': {
+                            'type': attachment_type,
+                            'payload': {'url': media_url, 'is_reusable': True},
+                        }
+                    },
+                }
+            else:
+                logger.warning(f"Tipo de mensagem não suportado pela API: {message_type}")
+                return
+
+            # Endpoint: POST /{ig-business-id}/messages
+            business_id = self.api.account.instagram_business_id
+            if not business_id:
+                raise InstagramAPIException("instagram_business_id não configurado na conta")
+
+            response = self.api.post(f"{business_id}/messages", data=payload)
+
+            ig_message_id = response.get('message_id') or response.get('id')
+            if ig_message_id:
+                message.instagram_message_id = ig_message_id
+                message.save(update_fields=['instagram_message_id'])
+
+        except InstagramAPIException:
+            raise
+        except Exception as e:
+            logger.error(f"Erro ao enviar mensagem Instagram via API: {e}", exc_info=True)
+            raise InstagramAPIException(f"Falha ao enviar mensagem: {e}")
     
     def send_text_message(self, conversation_id: str, text: str, reply_to_id: str = None) -> InstagramMessage:
         """Envia mensagem de texto"""
@@ -341,7 +392,3 @@ class InstagramDirectService:
             }
             for msg in messages
         ]
-
-
-# Import para busca
-from django.db import models
