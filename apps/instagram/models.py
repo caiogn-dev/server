@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from apps.core.utils import token_encryption, mask_token
 import uuid
 
 
@@ -9,19 +10,40 @@ class InstagramAccount(models.Model):
         ('instagram', 'Instagram'),
         ('facebook', 'Facebook'),
     ]
-    
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='instagram_accounts')
     platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES, default='instagram')
-    
+
     # Identificadores da API
     instagram_business_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     facebook_page_id = models.CharField(max_length=255, null=True, blank=True)
     username = models.CharField(max_length=255)
-    
-    # Tokens de acesso
-    access_token = models.TextField()
+
+    # Tokens de acesso (criptografados)
+    access_token_encrypted = models.TextField(blank=True, default='')
     token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def access_token(self) -> str:
+        """Descriptografa e retorna o access token."""
+        if not self.access_token_encrypted:
+            return ''
+        return token_encryption.decrypt(self.access_token_encrypted)
+
+    @access_token.setter
+    def access_token(self, value: str):
+        """Criptografa e armazena o access token."""
+        if value:
+            self.access_token_encrypted = token_encryption.encrypt(value)
+        else:
+            self.access_token_encrypted = ''
+
+    @property
+    def masked_token(self) -> str:
+        """Retorna token mascarado para exibição."""
+        token = self.access_token
+        return mask_token(token) if token else ''
     
     # Metadados
     followers_count = models.IntegerField(default=0)
