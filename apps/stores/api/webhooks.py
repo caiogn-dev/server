@@ -2,6 +2,8 @@
 Unified Payment Webhooks for all stores.
 Handles Mercado Pago webhooks and routes to correct store.
 """
+import hashlib
+import hmac as hmac_module
 import logging
 import json
 from decimal import Decimal
@@ -43,9 +45,8 @@ class MercadoPagoWebhookView(APIView):
             
             # Validate webhook signature if secret is configured
             if not self._validate_signature(request, store_slug):
-                logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+                logger.warning(f"MP webhook signature validation failed for store: {store_slug}")
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_200_OK)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -66,52 +67,73 @@ class MercadoPagoWebhookView(APIView):
     def _validate_signature(self, request, store_slug):
         """
         Validate Mercado Pago webhook signature.
-        Uses the webhook_secret from StoreIntegration.
+
+        MP sends these headers on every notification:
+          x-signature:  ts=<UNIX_TIMESTAMP>,v1=<HMAC_HEX>
+          x-request-id: <UUID>
+
+        The HMAC-SHA256 is computed over the string:
+          "id:<data.id>;request-id:<x-request-id>;ts:<ts>"
+        using the store's webhook secret.
+
+        If the store has no webhook secret configured, the request is
+        accepted without signature validation (opt-in security).
+        If a secret IS configured but the signature is absent or wrong,
+        the request is rejected (fail closed).
         """
         try:
-            # Get signature from headers
-            signature = request.headers.get('X-Signature') or request.headers.get('X-Hub-Signature')
-            
-            if not signature and store_slug:
-                # Try to get secret from store integration
-                integration = StoreIntegration.objects.filter(
-                    store__slug=store_slug,
-                    integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
-                    status=StoreIntegration.IntegrationStatus.ACTIVE
-                ).first()
-                
-                if integration and integration.webhook_secret:
-                    # For Mercado Pago, the signature is in the query string
-                    # Format: signature=timestamp,token
-                    query_sig = request.query_params.get('signature')
-                    if query_sig:
-                        # Validate using the secret
-                        import hmac
-                        import hashlib
-                        
-                        # Get the request body
-                        body = request.body.decode('utf-8')
-                        
-                        # Calculate expected signature
-                        expected_sig = hmac.new(
-                            integration.webhook_secret.encode('utf-8'),
-                            body.encode('utf-8'),
-                            hashlib.sha256
-                        ).hexdigest()
-                        
-                        # Compare signatures
-                        if hmac.compare_digest(query_sig, expected_sig):
-                            return True
-                        else:
-                            logger.warning(f"Invalid signature for store {store_slug}")
-                            return False
-            
-            # If no signature validation needed, allow the request
+            integration = StoreIntegration.objects.filter(
+                store__slug=store_slug,
+                integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+                status=StoreIntegration.IntegrationStatus.ACTIVE
+            ).first()
+
+            if not integration or not integration.webhook_secret:
+                # No secret configured — skip signature validation
+                return True
+
+            secret = integration.webhook_secret
+
+            # Parse x-signature header: "ts=1704306690,v1=618c85345248..."
+            signature_header = request.headers.get('X-Signature', '')
+            if not signature_header:
+                logger.warning(f"Missing x-signature header for store {store_slug}")
+                return False
+
+            ts = None
+            v1 = None
+            for part in signature_header.split(','):
+                part = part.strip()
+                if part.startswith('ts='):
+                    ts = part[3:]
+                elif part.startswith('v1='):
+                    v1 = part[3:]
+
+            if not ts or not v1:
+                logger.warning(f"Malformed x-signature header for store {store_slug}: {signature_header!r}")
+                return False
+
+            request_id = request.headers.get('X-Request-Id', '')
+            data_id = request.data.get('data', {}).get('id', '')
+
+            # Build the signed string exactly as MP specifies
+            signed_string = f"id:{data_id};request-id:{request_id};ts:{ts}"
+
+            expected = hmac_module.new(
+                secret.encode('utf-8'),
+                signed_string.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+
+            if not hmac_module.compare_digest(v1, expected):
+                logger.warning(f"Invalid MP signature for store {store_slug}")
+                return False
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Signature validation error: {e}")
-            return True  # Allow request on validation error (fail open for now)
+            return False  # Fail closed
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""
