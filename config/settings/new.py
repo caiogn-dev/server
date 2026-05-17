@@ -7,10 +7,24 @@ from urllib.parse import urlparse, unquote, parse_qs
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', 'your-secret-key-here')
+SECRET_KEY = os.environ.get('SECRET_KEY', '')
+if not SECRET_KEY:
+    raise RuntimeError(
+        "A variável de ambiente SECRET_KEY não está definida. "
+        "Defina SECRET_KEY antes de iniciar o servidor."
+    )
+
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+_allowed_hosts_env = os.environ.get('ALLOWED_HOSTS', '')
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()]
+if not ALLOWED_HOSTS and not DEBUG:
+    raise RuntimeError(
+        "A variável de ambiente ALLOWED_HOSTS não está definida. "
+        "Defina ALLOWED_HOSTS com os domínios permitidos."
+    )
+elif not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 # APENAS APPS NOVOS
 INSTALLED_APPS = [
