@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 import uuid
+from apps.core.utils import token_encryption
 
 
 class InstagramAccount(models.Model):
@@ -20,7 +21,7 @@ class InstagramAccount(models.Model):
     username = models.CharField(max_length=255)
     
     # Tokens de acesso
-    access_token = models.TextField()
+    access_token_encrypted = models.TextField()
     token_expires_at = models.DateTimeField(null=True, blank=True)
     
     # Metadados
@@ -44,6 +45,22 @@ class InstagramAccount(models.Model):
         verbose_name = 'Instagram Account'
         verbose_name_plural = 'Instagram Accounts'
     
+    @property
+    def access_token(self) -> str:
+        if not self.access_token_encrypted:
+            return ''
+        try:
+            return token_encryption.decrypt(self.access_token_encrypted)
+        except Exception:
+            return self.access_token_encrypted  # legacy plaintext
+
+    @access_token.setter
+    def access_token(self, value: str) -> None:
+        if value:
+            self.access_token_encrypted = token_encryption.encrypt(value)
+        else:
+            self.access_token_encrypted = ''
+
     def __str__(self):
         return f"@{self.username}"
 
