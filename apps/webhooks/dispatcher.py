@@ -94,11 +94,22 @@ class WebhookDispatcherView(View):
             status=WebhookEvent.Status.PENDING
         )
         
-        # Verify signature
+        # Verify signature — None means no secret configured (skip), False means invalid
+        from django.conf import settings as django_settings
         signature_valid = self._verify_signature(request, provider, payload)
         event.signature_valid = signature_valid
         event.save(update_fields=['signature_valid'])
-        
+
+        if signature_valid is False:
+            if not django_settings.DEBUG:
+                logger.error(f"Assinatura inválida para provider={provider} — requisição rejeitada")
+                event.status = WebhookEvent.Status.FAILED
+                event.error_message = "Invalid signature"
+                event.save(update_fields=['status', 'error_message'])
+                return HttpResponse("OK", status=200)
+            else:
+                logger.warning(f"Assinatura inválida para provider={provider} — ignorando em DEBUG")
+
         # Process with handler
         try:
             handler = handler_class()
