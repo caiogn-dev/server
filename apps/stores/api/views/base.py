@@ -11,12 +11,24 @@ def filter_by_store(queryset, store_param):
     """Filter queryset by store UUID or slug."""
     if not store_param:
         return queryset, False
-    
+
     try:
         uuid_module.UUID(store_param)
         return queryset.filter(store_id=store_param), True
     except (ValueError, AttributeError):
         return queryset.filter(store__slug=store_param), True
+
+
+def filter_by_user(queryset, user):
+    """
+    Restrict queryset to stores owned or managed by the user.
+
+    Call this *before* filter_by_store so that supplying an arbitrary
+    store_id cannot bypass ownership checks.
+    """
+    if user.is_staff:
+        return queryset
+    return queryset.filter(Q(store__owner=user) | Q(store__staff=user)).distinct()
 
 
 class IsStoreOwnerOrStaff(permissions.BasePermission):

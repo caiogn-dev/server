@@ -17,7 +17,7 @@ from ..serializers import (
     StoreProductVariantSerializer,
     StoreComboSerializer, StoreProductTypeSerializer
 )
-from .base import IsStoreOwnerOrStaff, filter_by_store
+from .base import IsStoreOwnerOrStaff, filter_by_store, filter_by_user
 
 
 class StoreCategoryViewSet(viewsets.ModelViewSet):
@@ -28,17 +28,9 @@ class StoreCategoryViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreCategory.objects.all()
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if filtered:
-            return queryset.order_by('sort_order', 'name')
-        
-        user = self.request.user
-        if user.is_staff:
-            return queryset.order_by('sort_order', 'name')
-        return queryset.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct().order_by('sort_order', 'name')
+        queryset = filter_by_user(StoreCategory.objects.all(), self.request.user)
+        queryset, _ = filter_by_store(queryset, store_param)
+        return queryset.order_by('sort_order', 'name')
 
 
 class StoreProductViewSet(viewsets.ModelViewSet):
@@ -48,16 +40,9 @@ class StoreProductViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreProduct.objects.all()
-        
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if not filtered:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
-        
+        queryset = filter_by_user(StoreProduct.objects.all(), self.request.user)
+        queryset, _ = filter_by_store(queryset, store_param)
+
         # Filters
         category = self.request.query_params.get('category')
         if category:
@@ -154,9 +139,15 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         product_id = self.kwargs.get('product_pk')
-        if product_id:
-            return StoreProductVariant.objects.filter(product_id=product_id)
-        return StoreProductVariant.objects.none()
+        if not product_id:
+            return StoreProductVariant.objects.none()
+        user = self.request.user
+        qs = StoreProductVariant.objects.filter(product_id=product_id)
+        if not user.is_staff:
+            qs = qs.filter(
+                Q(product__store__owner=user) | Q(product__store__staff=user)
+            ).distinct()
+        return qs
 
 
 class StoreComboViewSet(viewsets.ModelViewSet):
@@ -222,23 +213,7 @@ class StoreProductTypeAdminViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        import uuid as uuid_module
         store_param = self.request.query_params.get('store')
-        queryset = StoreProductType.objects.all()
-        
-        if store_param:
-            try:
-                uuid_module.UUID(store_param)
-                queryset = queryset.filter(store_id=store_param)
-            except (ValueError, AttributeError):
-                queryset = queryset.filter(store__slug=store_param)
-        
-        user = self.request.user
-        if not user.is_staff:
-            from apps.stores.models import Store
-            user_stores = Store.objects.filter(
-                Q(owner=user) | Q(staff=user)
-            ).values_list('id', flat=True)
-            queryset = queryset.filter(store_id__in=user_stores)
-        
+        queryset = filter_by_user(StoreProductType.objects.all(), self.request.user)
+        queryset, _ = filter_by_store(queryset, store_param)
         return queryset.select_related('store').order_by('sort_order', 'name')
