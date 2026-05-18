@@ -16,6 +16,25 @@ from django.contrib.auth.models import AnonymousUser
 logger = logging.getLogger(__name__)
 
 
+def get_client_ip(request) -> str:
+    """
+    Extrai o IP real do cliente de forma segura.
+
+    Prioridade:
+    1. CF-Connecting-IP (Cloudflare — não pode ser forjado pelo cliente)
+    2. REMOTE_ADDR (conexão direta com o servidor)
+
+    O header X-Forwarded-For NÃO é usado diretamente porque o primeiro
+    valor da cadeia é fornecido pelo próprio cliente e pode ser forjado.
+    Só seria seguro usá-lo se todos os proxies intermediários fossem
+    explicitamente confiáveis e o número de hops fosse conhecido.
+    """
+    cf_ip = request.META.get('HTTP_CF_CONNECTING_IP', '').strip()
+    if cf_ip:
+        return cf_ip
+    return request.META.get('REMOTE_ADDR', '')
+
+
 # ============================================
 # WebSocket Token Authentication Middleware
 # ============================================
@@ -132,7 +151,7 @@ class RequestLoggingMiddleware:
             'path': request.path,
             'status_code': response.status_code,
             'duration_ms': round(duration * 1000, 2),
-            'ip': self.get_client_ip(request),
+            'ip': get_client_ip(request),
             'user_agent': request.META.get('HTTP_USER_AGENT', ''),
         }
 
@@ -146,12 +165,6 @@ class RequestLoggingMiddleware:
 
         response['X-Request-ID'] = request_id
         return response
-
-    def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', '')
 
 
 class RateLimitMiddleware:
@@ -209,10 +222,7 @@ class RateLimitMiddleware:
         return response
 
     def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', '')
+        return get_client_ip(request)
 
 
 # ============================================
