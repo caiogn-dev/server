@@ -46,7 +46,10 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        user = self.request.user
+        if user.is_staff:
+            return WhatsAppAccount.objects.filter(is_active=True)
+        return WhatsAppAccount.objects.filter(is_active=True, owner=user)
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -299,8 +302,14 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
-        queryset = Message.objects.select_related('account', 'conversation').all()
-        
+        user = self.request.user
+        if user.is_staff:
+            queryset = Message.objects.select_related('account', 'conversation').all()
+        else:
+            queryset = Message.objects.select_related('account', 'conversation').filter(
+                account__owner=user
+            )
+
         # Filter by phone_number (from_number OR to_number)
         phone_number = self.request.query_params.get('phone_number')
         if phone_number:
@@ -520,4 +529,9 @@ class MessageTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'status', 'category']
 
     def get_queryset(self):
-        return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        user = self.request.user
+        if user.is_staff:
+            return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        return MessageTemplate.objects.select_related('account').filter(
+            is_active=True, account__owner=user
+        )
