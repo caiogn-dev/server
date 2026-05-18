@@ -4,6 +4,7 @@ Models for Langchain Agents
 import uuid
 from django.db import models
 from apps.core.models import BaseModel
+from apps.core.utils import token_encryption
 
 
 class Agent(BaseModel):
@@ -39,10 +40,9 @@ class Agent(BaseModel):
         default='kimi-coder',
         verbose_name='Modelo'
     )
-    api_key = models.CharField(
-        max_length=500,
+    api_key_encrypted = models.TextField(
         blank=True,
-        verbose_name='API Key'
+        verbose_name='API Key (criptografada)'
     )
     base_url = models.URLField(
         blank=True,
@@ -103,6 +103,22 @@ class Agent(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.provider})"
+
+    @property
+    def api_key(self) -> str:
+        if not self.api_key_encrypted:
+            return ''
+        try:
+            return token_encryption.decrypt(self.api_key_encrypted)
+        except Exception:
+            return self.api_key_encrypted  # legacy plaintext
+
+    @api_key.setter
+    def api_key(self, value: str) -> None:
+        if value:
+            self.api_key_encrypted = token_encryption.encrypt(value)
+        else:
+            self.api_key_encrypted = ''
 
     def get_full_prompt(self) -> str:
         """Returns the complete prompt with system + context."""
