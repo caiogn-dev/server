@@ -232,30 +232,47 @@ class PaymentService:
         reason: str = '',
     ) -> StorePayment:
         """Refund a payment (partial or full)."""
-        payment = StorePayment.objects.select_related('order', 'gateway').get(id=payment_id)
+        # select_for_update() inside a transaction prevents concurrent requests
+        # from both passing can_refund() checks and triggering a double refund.
+        with transaction.atomic():
+            payment = (
+                StorePayment.objects
+                .select_related('order', 'gateway')
+                .select_for_update()
+                .get(id=payment_id)
+            )
 
-        if not payment.can_refund():
-            raise ValueError(f"Payment cannot be refunded. Status: {payment.status}, Refunded: {payment.refunded_amount}")
+            if not payment.can_refund():
+                raise ValueError(
+                    f"Payment cannot be refunded. Status: {payment.status}, "
+                    f"Refunded: {payment.refunded_amount}"
+                )
 
-        refund_amount = amount or payment.get_refundable_amount()
-        
-        if refund_amount > payment.get_refundable_amount():
-            raise ValueError(f"Refund amount {refund_amount} exceeds refundable amount {payment.get_refundable_amount()}")
+            refund_amount = amount or payment.get_refundable_amount()
 
-        # Process refund through gateway if needed
-        if payment.gateway and payment.gateway.gateway_type == StorePaymentGateway.GatewayType.MERCADOPAGO:
-            self._refund_mercadopago(payment, refund_amount)
+            if refund_amount > payment.get_refundable_amount():
+                raise ValueError(
+                    f"Refund amount {refund_amount} exceeds refundable amount "
+                    f"{payment.get_refundable_amount()}"
+                )
 
-        payment.refunded_amount += refund_amount
-        
-        if payment.refunded_amount >= payment.amount:
-            payment.status = StorePayment.PaymentStatus.REFUNDED
-        else:
-            payment.status = StorePayment.PaymentStatus.PARTIALLY_REFUNDED
-        
-        payment.refunded_at = timezone.now()
-        payment.metadata['refund_reason'] = reason
-        payment.save()
+            # Call the gateway INSIDE the transaction so that a DB failure after
+            # a successful gateway call still rolls back the locked row.  If the
+            # gateway call itself fails the exception propagates and the
+            # transaction is rolled back — no partial state is written.
+            if payment.gateway and payment.gateway.gateway_type == StorePaymentGateway.GatewayType.MERCADOPAGO:
+                self._refund_mercadopago(payment, refund_amount)
+
+            payment.refunded_amount += refund_amount
+
+            if payment.refunded_amount >= payment.amount:
+                payment.status = StorePayment.PaymentStatus.REFUNDED
+            else:
+                payment.status = StorePayment.PaymentStatus.PARTIALLY_REFUNDED
+
+            payment.refunded_at = timezone.now()
+            payment.metadata['refund_reason'] = reason
+            payment.save()
 
         self.logger.info(f"Payment {payment.payment_id} refunded: {refund_amount}")
         return payment
