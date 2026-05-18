@@ -51,10 +51,12 @@ class HandoverViewSet(viewsets.ViewSet):
     ViewSet para gerenciar handover de conversas.
     """
     permission_classes = [permissions.IsAuthenticated]
-    
-    def get_conversation(self, pk):
-        """Obtém a conversa pelo ID."""
-        return get_object_or_404(Conversation, pk=pk)
+
+    def get_conversation(self, pk, user):
+        """Obtém a conversa pelo ID, verificando propriedade da conta."""
+        if user.is_staff or user.is_superuser:
+            return get_object_or_404(Conversation, pk=pk)
+        return get_object_or_404(Conversation, pk=pk, account__owner=user)
     
     def get_or_create_handover(self, conversation):
         """Obtém ou cria o registro de handover."""
@@ -71,7 +73,7 @@ class HandoverViewSet(viewsets.ViewSet):
         
         POST /api/v1/conversations/<id>/handover/bot/
         """
-        conversation = self.get_conversation(pk)
+        conversation = self.get_conversation(pk, request.user)
         handover = self.get_or_create_handover(conversation)
         
         # Validar dados
@@ -98,7 +100,7 @@ class HandoverViewSet(viewsets.ViewSet):
         
         POST /api/v1/conversations/<id>/handover/human/
         """
-        conversation = self.get_conversation(pk)
+        conversation = self.get_conversation(pk, request.user)
         handover = self.get_or_create_handover(conversation)
         
         # Validar dados
@@ -139,7 +141,7 @@ class HandoverViewSet(viewsets.ViewSet):
         
         GET /api/v1/conversations/<id>/handover/status/
         """
-        conversation = self.get_conversation(pk)
+        conversation = self.get_conversation(pk, request.user)
         handover = self.get_or_create_handover(conversation)
         
         response_data = {
@@ -167,7 +169,7 @@ class HandoverViewSet(viewsets.ViewSet):
         
         GET /api/v1/conversations/<id>/handover/logs/
         """
-        conversation = self.get_conversation(pk)
+        conversation = self.get_conversation(pk, request.user)
         logs = HandoverLog.objects.filter(conversation=conversation)[:50]
         serializer = HandoverLogSerializer(logs, many=True)
         return Response(serializer.data)
@@ -179,7 +181,7 @@ class HandoverViewSet(viewsets.ViewSet):
         
         POST /api/v1/conversations/<id>/handover/request/
         """
-        conversation = self.get_conversation(pk)
+        conversation = self.get_conversation(pk, request.user)
         
         # Validar dados
         serializer = CreateHandoverRequestSerializer(data=request.data)
@@ -306,8 +308,6 @@ class HandoverLogViewSet(viewsets.ReadOnlyModelViewSet):
         if user.is_superuser:
             return HandoverLog.objects.all()
         
-        # Logs de conversas da loja do usuário
-        # (assumindo que o usuário tem uma loja associada)
         return HandoverLog.objects.filter(
-            conversation__store__members=user
+            conversation__account__owner=user
         )
