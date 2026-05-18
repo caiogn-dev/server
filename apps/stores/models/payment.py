@@ -12,6 +12,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from django.contrib.auth import get_user_model
 from apps.core.models import BaseModel
+from apps.core.utils import token_encryption
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -51,15 +52,17 @@ class StorePaymentGateway(BaseModel):
     is_sandbox = models.BooleanField(default=True, help_text='Use sandbox/test mode')
     is_default = models.BooleanField(default=False, help_text='Use as default gateway for this store')
 
-    # Credentials (encrypted at application level if needed)
-    api_key = models.CharField(max_length=500, blank=True, help_text='API Key')
-    api_secret = models.CharField(max_length=500, blank=True, help_text='API Secret')
-    access_token = models.CharField(max_length=500, blank=True, help_text='Access Token (for MP)')
-    webhook_secret = models.CharField(max_length=500, blank=True, help_text='Webhook Secret')
-    public_key = models.CharField(max_length=500, blank=True, help_text='Public Key (for MP)')
+    # Credentials — armazenadas criptografadas. Use as propriedades api_key, api_secret,
+    # access_token, webhook_secret e public_key para ler/escrever; nunca acesse
+    # os campos _encrypted diretamente.
+    api_key_encrypted = models.TextField(blank=True)
+    api_secret_encrypted = models.TextField(blank=True)
+    access_token_encrypted = models.TextField(blank=True)
+    webhook_secret_encrypted = models.TextField(blank=True)
+    public_key_encrypted = models.TextField(blank=True)
 
     # URLs
-    endpoint_url = models.URLField(blank=True, help_text='Gateway API endpoint')
+    endpoint_url = models.URLField(blank=True, help_text='Gateway API endpoint (non-sensitive)')
     webhook_url = models.URLField(blank=True, help_text='Webhook URL for this gateway')
 
     # Configuration
@@ -86,6 +89,65 @@ class StorePaymentGateway(BaseModel):
                 condition=models.Q(is_enabled=True)
             )
         ]
+
+    # ------------------------------------------------------------------
+    # Propriedades de credenciais (encrypt/decrypt transparente)
+    # ------------------------------------------------------------------
+
+    def _get_credential(self, field_name: str) -> str:
+        value = getattr(self, field_name, '') or ''
+        if not value:
+            return ''
+        try:
+            return token_encryption.decrypt(value)
+        except Exception:
+            return value  # Dado legado não criptografado — retorna como está
+
+    def _set_credential(self, field_name: str, value: str) -> None:
+        if value:
+            setattr(self, field_name, token_encryption.encrypt(value))
+        else:
+            setattr(self, field_name, '')
+
+    @property
+    def api_key(self) -> str:
+        return self._get_credential('api_key_encrypted')
+
+    @api_key.setter
+    def api_key(self, value: str) -> None:
+        self._set_credential('api_key_encrypted', value)
+
+    @property
+    def api_secret(self) -> str:
+        return self._get_credential('api_secret_encrypted')
+
+    @api_secret.setter
+    def api_secret(self, value: str) -> None:
+        self._set_credential('api_secret_encrypted', value)
+
+    @property
+    def access_token(self) -> str:
+        return self._get_credential('access_token_encrypted')
+
+    @access_token.setter
+    def access_token(self, value: str) -> None:
+        self._set_credential('access_token_encrypted', value)
+
+    @property
+    def webhook_secret(self) -> str:
+        return self._get_credential('webhook_secret_encrypted')
+
+    @webhook_secret.setter
+    def webhook_secret(self, value: str) -> None:
+        self._set_credential('webhook_secret_encrypted', value)
+
+    @property
+    def public_key(self) -> str:
+        return self._get_credential('public_key_encrypted')
+
+    @public_key.setter
+    def public_key(self, value: str) -> None:
+        self._set_credential('public_key_encrypted', value)
 
     def __str__(self):
         return f"{self.store.name} - {self.name} ({self.gateway_type})"
