@@ -96,27 +96,37 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
         """Export data to CSV or Excel."""
         serializer = ExportRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         export_type = serializer.validated_data['export_type']
         export_format = serializer.validated_data['export_format']
         filters = serializer.validated_data.get('filters', {})
-        
+
         export_service = ExportService()
         audit_service = AuditService()
-        
-        # Get queryset based on export type
+        user = request.user
+
+        # Get queryset based on export type, always scoped to the requesting user.
         if export_type == 'messages':
-            queryset = Message.objects.all()
+            if user.is_staff:
+                queryset = Message.objects.all()
+            else:
+                queryset = Message.objects.filter(account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
             if filters.get('direction'):
                 queryset = queryset.filter(direction=filters['direction'])
-            response = export_service.export_messages(queryset, export_format, request.user)
-            
+            response = export_service.export_messages(queryset, export_format, user)
+
         elif export_type == 'orders':
-            queryset = StoreOrder.objects.filter(is_active=True)
+            from django.db.models import Q
+            if user.is_staff:
+                queryset = StoreOrder.objects.filter(is_active=True)
+            else:
+                queryset = StoreOrder.objects.filter(
+                    is_active=True
+                ).filter(Q(store__owner=user) | Q(store__staff=user)).distinct()
             store_filter = filters.get('store') or filters.get('store_id')
             if store_filter:
                 try:
@@ -127,16 +137,19 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
                     queryset = queryset.filter(store__slug=store_filter)
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
-            response = export_service.export_orders(queryset, export_format, request.user)
-            
+            response = export_service.export_orders(queryset, export_format, user)
+
         elif export_type == 'conversations':
-            queryset = Conversation.objects.filter(is_active=True)
+            if user.is_staff:
+                queryset = Conversation.objects.filter(is_active=True)
+            else:
+                queryset = Conversation.objects.filter(is_active=True, account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
-            response = export_service.export_conversations(queryset, export_format, request.user)
-            
+            response = export_service.export_conversations(queryset, export_format, user)
+
         else:
             return Response(
                 {'error': 'Invalid export type'},
