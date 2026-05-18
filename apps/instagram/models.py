@@ -254,6 +254,54 @@ class InstagramLiveComment(models.Model):
         ordering = ['-created_at']
 
 
+class InstagramWebhookEvent(models.Model):
+    """Webhook events received from Meta/Instagram — used for idempotency and debugging."""
+
+    class EventType(models.TextChoices):
+        MESSAGES = 'messages', 'Mensagem'
+        MESSAGING_SEEN = 'messaging_seen', 'Leitura'
+        MESSAGING_POSTBACKS = 'messaging_postbacks', 'Postback'
+        MESSAGING_REFERRAL = 'messaging_referral', 'Referral'
+        COMMENTS = 'comments', 'Comentário'
+        MENTIONS = 'mentions', 'Menção'
+        OTHER = 'other', 'Outro'
+
+    class ProcessingStatus(models.TextChoices):
+        PENDING = 'pending', 'Pendente'
+        COMPLETED = 'completed', 'Concluído'
+        FAILED = 'failed', 'Falhou'
+        DUPLICATE = 'duplicate', 'Duplicado'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        InstagramAccount, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='webhook_events'
+    )
+    event_id = models.CharField(max_length=64, unique=True, db_index=True)
+    event_type = models.CharField(
+        max_length=30, choices=EventType.choices, default=EventType.OTHER
+    )
+    payload = models.JSONField()
+    headers = models.JSONField(default=dict, blank=True)
+    processing_status = models.CharField(
+        max_length=20, choices=ProcessingStatus.choices,
+        default=ProcessingStatus.PENDING, db_index=True
+    )
+    related_message = models.ForeignKey(
+        'InstagramMessage', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='webhook_events'
+    )
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'instagram_webhook_events'
+        ordering = ['-created_at']
+        verbose_name = 'Instagram Webhook Event'
+        verbose_name_plural = 'Instagram Webhook Events'
+
+
 class InstagramConversation(models.Model):
     """Conversas do Instagram Direct"""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -110,11 +110,18 @@ class InstagramWebhookHandler:
         return results
     
     def _get_account(self, account_id: str) -> Optional[InstagramAccount]:
-        """Get Instagram account by ID."""
+        """Get Instagram account by Instagram Business ID or Facebook Page ID."""
         try:
             return InstagramAccount.objects.get(
-                instagram_account_id=account_id,
-                status=InstagramAccount.AccountStatus.ACTIVE
+                instagram_business_id=account_id,
+                is_active=True
+            )
+        except InstagramAccount.DoesNotExist:
+            pass
+        try:
+            return InstagramAccount.objects.get(
+                facebook_page_id=account_id,
+                is_active=True
             )
         except InstagramAccount.DoesNotExist:
             return None
