@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('instagram', '0001_initial'),
+        ('instagram', '0002_encrypt_access_token'),
     ]
 
     operations = [

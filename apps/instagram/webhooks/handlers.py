@@ -70,8 +70,8 @@ class InstagramWebhookHandler:
             'events': []
         }
         
-        # Instagram webhooks have 'object' = 'instagram'
-        if payload.get('object') != 'instagram':
+        # Instagram webhooks have 'object' = 'instagram' or 'page' (page-connected accounts)
+        if payload.get('object') not in ('instagram', 'page'):
             logger.warning(f"Unexpected webhook object: {payload.get('object')}")
             return results
         
