@@ -5,6 +5,7 @@ import uuid
 from django.db import models
 from django.conf import settings
 from apps.core_v2.models import BaseModel
+from apps.core.utils import token_encryption
 
 
 class PlatformAccount(BaseModel):
@@ -38,8 +39,8 @@ class PlatformAccount(BaseModel):
     page_name = models.CharField(max_length=255, blank=True)
     instagram_account_id = models.CharField(max_length=255, blank=True)
     
-    # Token de acesso
-    access_token = models.TextField(blank=True)
+    # Token de acesso (armazenado criptografado)
+    access_token_encrypted = models.TextField(blank=True, verbose_name='Access Token (criptografado)')
     token_expires_at = models.DateTimeField(null=True, blank=True)
     
     # Status
@@ -106,6 +107,22 @@ class PlatformAccount(BaseModel):
     def is_messenger(self):
         return self.platform == self.Platform.MESSENGER
     
+    @property
+    def access_token(self) -> str:
+        if not self.access_token_encrypted:
+            return ''
+        try:
+            return token_encryption.decrypt(self.access_token_encrypted)
+        except Exception:
+            return self.access_token_encrypted  # legacy plaintext fallback
+
+    @access_token.setter
+    def access_token(self, value: str) -> None:
+        if value:
+            self.access_token_encrypted = token_encryption.encrypt(value)
+        else:
+            self.access_token_encrypted = ''
+
     @property
     def user(self):
         """Compatibilidade com código que espera user em vez de created_by."""
