@@ -25,10 +25,14 @@ X_FRAME_OPTIONS = 'DENY'
 # Disable SSL redirect - Cloudflare/Nginx handles HTTPS at the proxy level
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_HTTPONLY = False  # Precisa ser False para o frontend ler o token via JS
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # Trust headers from Cloudflare/Nginx
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
@@ -46,16 +50,21 @@ if not ALLOWED_HOSTS:
 CORS_ALLOW_ALL_ORIGINS = False
 
 # ==============================================================================
-# CSRF TRUSTED ORIGINS (FIX CRÍTICO)
+# CSRF TRUSTED ORIGINS
 # ==============================================================================
-# Lê DJANGO_CSRF_TRUSTED_ORIGINS primeiro, fallback para CSRF_TRUSTED_ORIGINS
-_csrf_env = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS')
+# Origens padrão dos domínios de produção — sobrescritas por env var se necessário.
+_DEFAULT_CSRF_ORIGINS = [
+    'https://painel.pastita.com.br',
+    'https://pastita.com.br',
+    'https://www.pastita.com.br',
+    'https://backend.pastita.com.br',
+]
 
+_csrf_env = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS') or os.environ.get('CSRF_TRUSTED_ORIGINS')
 if _csrf_env:
-    # Remove espaços em branco e cria a lista
     CSRF_TRUSTED_ORIGINS = [url.strip() for url in _csrf_env.split(',') if url.strip()]
 else:
-    CSRF_TRUSTED_ORIGINS = []
+    CSRF_TRUSTED_ORIGINS = _DEFAULT_CSRF_ORIGINS
 
 # Logging Configuration
 LOGGING = {
