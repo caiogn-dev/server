@@ -17,7 +17,7 @@ from ..serializers import (
     StoreWebhookSerializer,
     StoreStatsSerializer
 )
-from .base import IsStoreOwnerOrStaff
+from .base import IsStoreOwnerOrStaff, filter_by_user
 
 logger = logging.getLogger(__name__)
 
@@ -116,15 +116,10 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_id = self.kwargs.get('store_pk')
+        queryset = filter_by_user(StoreIntegration.objects.all(), self.request.user)
         if store_id:
-            return StoreIntegration.objects.filter(store_id=store_id)
-        
-        user = self.request.user
-        if user.is_staff:
-            return StoreIntegration.objects.all()
-        return StoreIntegration.objects.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+            queryset = queryset.filter(store_id=store_id)
+        return queryset
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -155,15 +150,10 @@ class StoreWebhookViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_id = self.kwargs.get('store_pk')
+        queryset = filter_by_user(StoreWebhook.objects.all(), self.request.user)
         if store_id:
-            return StoreWebhook.objects.filter(store_id=store_id)
-        
-        user = self.request.user
-        if user.is_staff:
-            return StoreWebhook.objects.all()
-        return StoreWebhook.objects.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+            queryset = queryset.filter(store_id=store_id)
+        return queryset
     
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):

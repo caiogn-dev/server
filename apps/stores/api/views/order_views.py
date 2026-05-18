@@ -18,7 +18,7 @@ from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
     StoreCustomerSerializer
 )
-from .base import IsStoreOwnerOrStaff, filter_by_store
+from .base import IsStoreOwnerOrStaff, filter_by_store, filter_by_user
 
 logger = logging.getLogger(__name__)
 
@@ -30,21 +30,9 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreOrder.objects.all()
-        
-        if store_param:
-            try:
-                uuid_module.UUID(store_param)
-                queryset = queryset.filter(store_id=store_param)
-            except (ValueError, AttributeError):
-                queryset = queryset.filter(store__slug=store_param)
-        else:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
-        
+        queryset = filter_by_user(StoreOrder.objects.all(), self.request.user)
+        queryset, _ = filter_by_store(queryset, store_param)
+
         # Filters
         status_filter = self.request.query_params.get('status')
         if status_filter:
@@ -356,16 +344,9 @@ class StoreCustomerViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreCustomer.objects.all()
-        
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if not filtered:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
-        
+        queryset = filter_by_user(StoreCustomer.objects.all(), self.request.user)
+        queryset, _ = filter_by_store(queryset, store_param)
+
         search = self.request.query_params.get('search')
         if search:
             queryset = queryset.filter(
@@ -373,7 +354,7 @@ class StoreCustomerViewSet(viewsets.ModelViewSet):
                 Q(phone__icontains=search) |
                 Q(whatsapp__icontains=search)
             )
-        
+
         return queryset.select_related('user', 'store')
     
     @action(detail=True, methods=['post'])
