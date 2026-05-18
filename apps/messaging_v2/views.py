@@ -97,7 +97,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Retornar conversas das contas do usuário."""
         queryset = Conversation.objects.filter(
-            platform_account__user=self.request.user
+            platform_account__created_by=self.request.user
         )
         
         # Filtro por busca
@@ -180,7 +180,7 @@ class UnifiedMessageViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Retornar mensagens das conversas do usuário."""
         return UnifiedMessage.objects.filter(
-            conversation__platform_account__user=self.request.user
+            conversation__platform_account__created_by=self.request.user
         ).select_related('conversation')
 
 
@@ -195,5 +195,5 @@ class MessageTemplateViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Retornar templates das contas do usuário."""
         return MessageTemplate.objects.filter(
-            platform_account__user=self.request.user
+            platform_account__created_by=self.request.user
         ).select_related('platform_account')
