@@ -1,20 +1,24 @@
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.conf import settings
 from datetime import datetime, timedelta
 
 from ..models import (
-    InstagramAccount, InstagramMedia, InstagramConversation, 
-    InstagramMessage, InstagramLive, InstagramCatalog, 
+    InstagramAccount, InstagramMedia, InstagramConversation,
+    InstagramMessage, InstagramLive, InstagramCatalog,
     InstagramProduct, InstagramScheduledPost, InstagramInsight
 )
 from ..services import (
     InstagramAPI, InstagramGraphService, InstagramShoppingService,
     InstagramLiveService, InstagramDirectService
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InstagramAccountViewSet(viewsets.ModelViewSet):
@@ -368,23 +372,54 @@ class InstagramMessageViewSet(viewsets.ViewSet):
 
 
 class InstagramWebhookViewSet(viewsets.ViewSet):
-    """ViewSet para processamento de webhooks"""
+    """ViewSet para processamento de webhooks do Instagram/Meta."""
     permission_classes = []  # Webhooks não requerem autenticação
-    
+
     def create(self, request):
-        """Processa webhook do Instagram"""
-        # Verificar assinatura
-        # Processar payload
-        # Criar logs
-        return Response({'status': 'received'})
-    
+        """Recebe e processa eventos de webhook do Instagram."""
+        from ..webhooks.handlers import InstagramWebhookHandler
+
+        raw_body = request.body
+        signature = request.headers.get('X-Hub-Signature-256', '')
+
+        handler = InstagramWebhookHandler()
+
+        if not handler.verify_signature(raw_body, signature):
+            if settings.DEBUG:
+                logger.warning("Assinatura do webhook Instagram inválida — ignorando em DEBUG")
+            else:
+                logger.error("Assinatura do webhook Instagram inválida — requisição descartada")
+                # Retorna 200 para evitar que a Meta tente reenviar indefinidamente
+                return Response({'status': 'ok'})
+
+        try:
+            payload = request.data
+            object_type = payload.get('object', '')
+
+            if object_type not in ('instagram', 'page'):
+                logger.info(f"Webhook Instagram ignorado: object={object_type}")
+                return Response({'status': 'ok'})
+
+            results = handler.process_webhook(payload)
+            logger.info(
+                f"Webhook Instagram processado: {results['processed']} eventos, "
+                f"{results['errors']} erros"
+            )
+        except Exception as e:
+            logger.error(f"Erro ao processar webhook Instagram: {e}", exc_info=True)
+
+        return Response({'status': 'ok'})
+
     @action(detail=False, methods=['get'])
     def verify(self, request):
-        """Verificação do webhook pelo Facebook"""
+        """Verificação do webhook pelo Facebook."""
         mode = request.query_params.get('hub.mode')
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
-        
-        if mode == 'subscribe' and token == settings.INSTAGRAM_VERIFY_TOKEN:
+
+        verify_token = getattr(settings, 'INSTAGRAM_VERIFY_TOKEN', None)
+        if mode == 'subscribe' and token == verify_token:
+            logger.info(f"Webhook Instagram verificado: challenge={challenge}")
             return Response(int(challenge))
-        return Response('Verification failed', status=403)
+        logger.warning(f"Verificação de webhook Instagram falhou: mode={mode}")
+        return Response({'error': 'Verification failed'}, status=403)
