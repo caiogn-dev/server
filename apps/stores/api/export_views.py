@@ -446,3 +446,177 @@ class StoreDashboardStatsView(BaseExportView):
                 'low_stock_products': low_stock
             }
         })
+
+
+class SaladasReportView(BaseExportView):
+    """KPIs consolidados para o dashboard do Ce-Saladas."""
+
+    def get(self, request):
+        store = self.get_store(request)
+        if not store:
+            return Response({'error': 'Store parameter required'}, status=400)
+
+        period = request.query_params.get('period', 'today')
+        today = timezone.now().date()
+
+        if period == 'today':
+            start = today
+            end = today
+            prev_start = today - timedelta(days=1)
+            prev_end = today - timedelta(days=1)
+            period_label = 'Hoje'
+        elif period == '7d':
+            start = today - timedelta(days=6)
+            end = today
+            prev_start = today - timedelta(days=13)
+            prev_end = today - timedelta(days=7)
+            period_label = 'Semana'
+        else:  # 30d
+            start = today - timedelta(days=29)
+            end = today
+            prev_start = today - timedelta(days=59)
+            prev_end = today - timedelta(days=30)
+            period_label = 'Mês'
+
+        paid_orders = StoreOrder.objects.filter(
+            store=store,
+            created_at__date__gte=start,
+            created_at__date__lte=end,
+            payment_status='paid',
+        )
+        prev_paid_orders = StoreOrder.objects.filter(
+            store=store,
+            created_at__date__gte=prev_start,
+            created_at__date__lte=prev_end,
+            payment_status='paid',
+        )
+
+        curr = paid_orders.aggregate(
+            revenue=Sum('total'),
+            orders=Count('id'),
+            avg_ticket=Avg('total'),
+        )
+        prev = prev_paid_orders.aggregate(
+            revenue=Sum('total'),
+            orders=Count('id'),
+        )
+
+        def pct_change(curr_val, prev_val):
+            if prev_val and prev_val > 0:
+                return round(float((curr_val - prev_val) / prev_val * 100), 1)
+            return None
+
+        curr_revenue = float(curr['revenue'] or 0)
+        prev_revenue = float(prev['revenue'] or 0)
+        curr_orders = curr['orders'] or 0
+        prev_orders = prev['orders'] or 0
+
+        # Gráfico de barras por dia
+        chart_data = (
+            paid_orders
+            .annotate(day=TruncDate('created_at'))
+            .values('day')
+            .annotate(value=Sum('total'))
+            .order_by('day')
+        )
+        revenue_chart = [
+            {'label': item['day'].strftime('%d/%m'), 'value': float(item['value'] or 0)}
+            for item in chart_data
+        ]
+
+        # Top produtos via StoreOrderItem
+        from apps.stores.models.order import StoreOrderItem
+        top_products_qs = (
+            StoreOrderItem.objects.filter(order__in=paid_orders)
+            .values('product_name')
+            .annotate(quantity=Sum('quantity'), revenue=Sum('subtotal'))
+            .order_by('-quantity')[:10]
+        )
+        top_products = [
+            {'name': p['product_name'], 'quantity': p['quantity'], 'revenue': float(p['revenue'] or 0)}
+            for p in top_products_qs
+        ]
+
+        # Receita por categoria
+        cat_qs = (
+            StoreOrderItem.objects.filter(order__in=paid_orders, product__isnull=False)
+            .values('product__category__name')
+            .annotate(revenue=Sum('subtotal'))
+            .order_by('-revenue')
+        )
+        total_cat_revenue = sum(float(c['revenue'] or 0) for c in cat_qs)
+        category_revenue = [
+            {
+                'name': c['product__category__name'] or 'Sem categoria',
+                'revenue': float(c['revenue'] or 0),
+                'percent': round(float(c['revenue'] or 0) / total_cat_revenue * 100) if total_cat_revenue > 0 else 0,
+            }
+            for c in cat_qs
+        ]
+
+        # Clientes novos vs recorrentes
+        period_phones = list(paid_orders.values_list('customer_phone', flat=True).distinct())
+        total_period_customers = len(period_phones)
+        returning = (
+            StoreOrder.objects.filter(
+                store=store,
+                payment_status='paid',
+                customer_phone__in=period_phones,
+                created_at__date__lt=start,
+            )
+            .values('customer_phone')
+            .distinct()
+            .count()
+        )
+        new_customers = max(total_period_customers - returning, 0)
+
+        # Top clientes por gasto
+        top_customers_qs = (
+            paid_orders
+            .values('customer_name', 'customer_phone')
+            .annotate(total_spent=Sum('total'), order_count=Count('id'), avg_ticket=Avg('total'))
+            .order_by('-total_spent')[:10]
+        )
+        top_customers = [
+            {
+                'name': c['customer_name'],
+                'phone': c['customer_phone'],
+                'orders': c['order_count'],
+                'total_spent': float(c['total_spent'] or 0),
+                'avg_ticket': float(c['avg_ticket'] or 0),
+            }
+            for c in top_customers_qs
+        ]
+
+        # Top bairros
+        delivery_orders = StoreOrder.objects.filter(
+            store=store,
+            created_at__date__gte=start,
+            created_at__date__lte=end,
+            delivery_method='delivery',
+        ).only('delivery_address')
+        neighborhoods: dict = {}
+        for order in delivery_orders:
+            addr = order.delivery_address or {}
+            name = addr.get('neighborhood') or addr.get('bairro') or ''
+            if name:
+                neighborhoods[name] = neighborhoods.get(name, 0) + 1
+        top_neighborhoods = [
+            {'name': n, 'orders': cnt}
+            for n, cnt in sorted(neighborhoods.items(), key=lambda x: -x[1])[:10]
+        ]
+
+        return Response({
+            'period': {'label': period_label, 'start': start.isoformat(), 'end': end.isoformat()},
+            'kpis': {
+                'revenue': {'value': curr_revenue, 'change_percent': pct_change(curr_revenue, prev_revenue)},
+                'orders': {'value': curr_orders, 'change_abs': curr_orders - prev_orders},
+                'avg_ticket': {'value': float(curr['avg_ticket'] or 0), 'change_percent': None},
+            },
+            'revenue_chart': revenue_chart,
+            'top_products': top_products,
+            'category_revenue': category_revenue,
+            'customers': {'total': total_period_customers, 'new': new_customers, 'returning': returning},
+            'top_customers': top_customers,
+            'top_neighborhoods': top_neighborhoods,
+        })

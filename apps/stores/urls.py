@@ -39,7 +39,8 @@ from .api.maps_views import (
 )
 from .api.export_views import (
     OrdersExportView, RevenueReportView, ProductsReportView,
-    StockReportView, CustomersReportView, StoreDashboardStatsView
+    StockReportView, CustomersReportView, StoreDashboardStatsView,
+    SaladasReportView,
 )
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
@@ -178,6 +179,7 @@ urlpatterns = [
     
     # Customers report
     path('reports/customers/', CustomersReportView.as_view(), name='customers-report'),
+    path('reports/saladas/', SaladasReportView.as_view(), name='saladas-report'),
     
     # Dashboard stats overview
     path('reports/dashboard/', StoreDashboardStatsView.as_view(), name='store-dashboard-stats'),
