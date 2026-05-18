@@ -4,7 +4,7 @@ Views para UnifiedUser API.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.shortcuts import get_object_or_404
 
 from .models import UnifiedUser, UnifiedUserActivity
@@ -28,39 +28,38 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
         return UnifiedUserSerializer
     
     def get_queryset(self):
-        """Filtra por query params."""
+        """Filtra por query params. Não-staff vê queryset vazio (bloqueia list/search em massa)."""
+        if not self.request.user.is_staff and self.action in ('list',):
+            return UnifiedUser.objects.none()
+
         queryset = super().get_queryset()
-        
-        # Filtro por telefone
+
         phone = self.request.query_params.get('phone')
         if phone:
             queryset = queryset.filter(phone_number__icontains=phone)
-        
-        # Filtro por email
+
         email = self.request.query_params.get('email')
         if email:
             queryset = queryset.filter(email__icontains=email)
-        
-        # Filtro por nome
+
         name = self.request.query_params.get('name')
         if name:
             queryset = queryset.filter(name__icontains=name)
-        
-        # Filtro: tem carrinho abandonado
+
         has_cart = self.request.query_params.get('has_abandoned_cart')
         if has_cart:
             queryset = queryset.filter(has_abandoned_cart=True)
-        
+
         return queryset
-    
-    @action(detail=True, methods=['get'])
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
     def activities(self, request, pk=None):
-        """Retorna atividades do usuário."""
+        """Retorna atividades do usuário (somente staff)."""
         user = self.get_object()
         activities = user.activities.all()[:50]
         serializer = UnifiedUserActivitySerializer(activities, many=True)
         return Response(serializer.data)
-    
+
     @action(detail=True, methods=['get'])
     def context(self, request, pk=None):
         """Retorna contexto formatado para o agente."""
@@ -111,18 +110,18 @@ class UnifiedUserActivityViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet para atividades (somente leitura)."""
     queryset = UnifiedUserActivity.objects.all()
     serializer_class = UnifiedUserActivitySerializer
-    permission_classes = [IsAuthenticated]
-    
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
     def get_queryset(self):
         """Filtra por usuário se especificado."""
         queryset = super().get_queryset()
-        
+
         user_id = self.request.query_params.get('user_id')
         if user_id:
             queryset = queryset.filter(user_id=user_id)
-        
+
         activity_type = self.request.query_params.get('type')
         if activity_type:
             queryset = queryset.filter(activity_type=activity_type)
-        
+
         return queryset

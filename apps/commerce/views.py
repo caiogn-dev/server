@@ -4,6 +4,7 @@ Commerce - Views.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from .models import Store, Category, Product, Customer, Order
 from .serializers import (
     StoreSerializer, CategorySerializer, ProductSerializer,
@@ -11,11 +12,25 @@ from .serializers import (
 )
 
 
+def _user_stores(user):
+    """Return stores owned by the requesting user (staff sees all)."""
+    if user.is_staff:
+        return Store.objects.all()
+    return Store.objects.filter(owner=user)
+
+
 class StoreViewSet(viewsets.ModelViewSet):
     queryset = Store.objects.all()
     serializer_class = StoreSerializer
+    permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
-    
+
+    def get_queryset(self):
+        return _user_stores(self.request.user)
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
     @action(detail=True, methods=['get'])
     def products(self, request, slug=None):
         store = self.get_object()
@@ -27,14 +42,19 @@ class StoreViewSet(viewsets.ModelViewSet):
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Category.objects.filter(store__in=_user_stores(self.request.user))
 
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    
+    permission_classes = [IsAuthenticated]
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = Product.objects.filter(store__in=_user_stores(self.request.user))
         store_slug = self.request.query_params.get('store')
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
@@ -44,12 +64,16 @@ class ProductViewSet(viewsets.ModelViewSet):
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
-    
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Customer.objects.filter(store__in=_user_stores(self.request.user))
+
     @action(detail=False, methods=['get'])
     def by_phone(self, request):
         phone = request.query_params.get('phone')
         if phone:
-            customer = Customer.objects.filter(phone=phone).first()
+            customer = self.get_queryset().filter(phone=phone).first()
             if customer:
                 return Response(CustomerSerializer(customer).data)
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -58,9 +82,10 @@ class CustomerViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    
+    permission_classes = [IsAuthenticated]
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        queryset = Order.objects.filter(store__in=_user_stores(self.request.user))
         store_slug = self.request.query_params.get('store')
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)

@@ -13,6 +13,13 @@ from .serializers import (
 from .tasks import execute_automation, process_scheduled_messages
 
 
+def _user_stores(user):
+    from apps.commerce.models import Store
+    if user.is_staff:
+        return Store.objects.all()
+    return Store.objects.filter(owner=user)
+
+
 class CampaignViewSet(viewsets.ModelViewSet):
     """Gerenciar campanhas de marketing."""
     queryset = Campaign.objects.all()
@@ -20,6 +27,9 @@ class CampaignViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'channel', 'store']
+
+    def get_queryset(self):
+        return Campaign.objects.filter(store__in=_user_stores(self.request.user))
 
     @action(detail=True, methods=['post'])
     def schedule(self, request, pk=None):
@@ -48,6 +58,9 @@ class TemplateViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['channel', 'whatsapp_status']
 
+    def get_queryset(self):
+        return Template.objects.filter(store__in=_user_stores(self.request.user))
+
 
 class AutomationViewSet(viewsets.ModelViewSet):
     """Gerenciar automações."""
@@ -56,6 +69,9 @@ class AutomationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['trigger', 'is_active']
+
+    def get_queryset(self):
+        return Automation.objects.filter(store__in=_user_stores(self.request.user))
 
     @action(detail=True, methods=['post'])
     def trigger(self, request, pk=None):
@@ -80,6 +96,9 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'channel', 'store']
+
+    def get_queryset(self):
+        return ScheduledMessage.objects.filter(store__in=_user_stores(self.request.user))
 
     @action(detail=False, methods=['post'])
     def process_pending(self, request):
