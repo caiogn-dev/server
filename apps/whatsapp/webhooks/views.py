@@ -102,10 +102,14 @@ class WhatsAppWebhookView(APIView):
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
             
-            # Validate signature using the raw body we captured earlier
+            # Validate signature using the raw body we captured earlier.
+            # Always return HTTP 200 to Meta (retries on 4xx/5xx) but only process valid requests.
             if not service.validate_signature(raw_body, signature):
-                logger.warning("Invalid webhook signature - skipping validation in dev mode")
-                # Continue anyway for debugging
+                if settings.DEBUG:
+                    logger.warning("Assinatura do webhook inválida — ignorando em modo DEBUG")
+                else:
+                    logger.error("Assinatura do webhook inválida — requisição descartada sem processamento")
+                    return Response({'status': 'ok'})
             
             # Convert headers to simple dict
             headers = {}
