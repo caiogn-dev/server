@@ -75,7 +75,10 @@ class SystemContactsView(APIView):
         if source in ['all', 'conversations']:
             try:
                 from apps.conversations.models import Conversation
-                conv_qs = Conversation.objects.all()
+                if request.user.is_staff:
+                    conv_qs = Conversation.objects.all()
+                else:
+                    conv_qs = Conversation.objects.filter(account__owner=request.user)
                 if account_id:
                     conv_qs = conv_qs.filter(account_id=account_id)
                 
@@ -100,7 +103,10 @@ class SystemContactsView(APIView):
         if source in ['all', 'orders']:
             try:
                 from apps.stores.models import StoreOrder, StoreIntegration
-                orders_qs = StoreOrder.objects.all()
+                if request.user.is_staff:
+                    orders_qs = StoreOrder.objects.all()
+                else:
+                    orders_qs = StoreOrder.objects.filter(store__owner=request.user)
                 if account_id:
                     from apps.whatsapp.models import WhatsAppAccount
                     account = WhatsAppAccount.objects.get(id=account_id)
@@ -133,7 +139,12 @@ class SystemContactsView(APIView):
         if source in ['all', 'subscribers']:
             try:
                 from apps.marketing.models import Subscriber
-                subscribers = Subscriber.objects.filter(
+                from apps.commerce.models import Store
+                if request.user.is_staff:
+                    sub_qs = Subscriber.objects.all()
+                else:
+                    sub_qs = Subscriber.objects.filter(store__owner=request.user)
+                subscribers = sub_qs.filter(
                     phone__isnull=False
                 ).exclude(
                     phone=''
@@ -199,7 +210,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'campaign_type']
     
     def get_queryset(self):
-        return Campaign.objects.filter(is_active=True)
+        user = self.request.user
+        if user.is_staff:
+            return Campaign.objects.filter(is_active=True)
+        return Campaign.objects.filter(is_active=True, created_by=user)
     
     @extend_schema(
         summary="Create campaign",
@@ -410,7 +424,10 @@ class ContactListViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'source']
     
     def get_queryset(self):
-        return ContactList.objects.filter(is_active=True)
+        user = self.request.user
+        if user.is_staff:
+            return ContactList.objects.filter(is_active=True)
+        return ContactList.objects.filter(is_active=True, created_by=user)
     
     @extend_schema(
         summary="Create contact list",

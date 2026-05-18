@@ -23,14 +23,23 @@ from .serializers import (
 )
 
 
+def _user_stores(user):
+    from apps.commerce.models import Store
+    if user.is_staff:
+        return Store.objects.all()
+    return Store.objects.filter(owner=user)
+
+
 class EmailTemplateViewSet(viewsets.ModelViewSet):
     """ViewSet for email templates."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailTemplateSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        queryset = EmailTemplate.objects.filter(
+            store__in=_user_stores(self.request.user)
+        )
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -94,7 +103,9 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
     serializer_class = EmailCampaignSerializer
     
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        queryset = EmailCampaign.objects.filter(
+            store__in=_user_stores(self.request.user)
+        )
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -203,7 +214,9 @@ class SubscriberViewSet(viewsets.ModelViewSet):
     serializer_class = SubscriberSerializer
     
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        queryset = Subscriber.objects.filter(
+            store__in=_user_stores(self.request.user)
+        )
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -611,7 +624,9 @@ class EmailAutomationViewSet(viewsets.ModelViewSet):
     serializer_class = EmailAutomationSerializer
     
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        queryset = EmailAutomation.objects.filter(
+            store__in=_user_stores(self.request.user)
+        )
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
