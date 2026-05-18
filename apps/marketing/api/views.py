@@ -6,6 +6,15 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
+
+
+def _user_stores(user):
+    """Return stores the user owns or is staff of."""
+    from apps.stores.models import Store
+    if user.is_staff:
+        return Store.objects.all()
+    return Store.objects.filter(Q(owner=user) | Q(staff=user))
 
 from apps.marketing.models import (
     EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
@@ -30,7 +39,8 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
     serializer_class = EmailTemplateSerializer
     
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        user_stores = _user_stores(self.request.user)
+        queryset = EmailTemplate.objects.filter(store__in=user_stores)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -94,7 +104,8 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
     serializer_class = EmailCampaignSerializer
     
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        user_stores = _user_stores(self.request.user)
+        queryset = EmailCampaign.objects.filter(store__in=user_stores)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -203,7 +214,8 @@ class SubscriberViewSet(viewsets.ModelViewSet):
     serializer_class = SubscriberSerializer
     
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        user_stores = _user_stores(self.request.user)
+        queryset = Subscriber.objects.filter(store__in=user_stores)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -220,15 +232,22 @@ class SubscriberViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def import_csv(self, request):
         """Import subscribers from CSV."""
+        from apps.stores.models import Store
+
         store_id = request.data.get('store')
         contacts = request.data.get('contacts', [])
-        
+
         if not store_id:
             return Response(
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        try:
+            _user_stores(request.user).get(id=store_id)
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
         created = 0
         updated = 0
         
@@ -287,19 +306,18 @@ class CustomersViewSet(viewsets.ViewSet):
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder
         from django.db.models import Count, Sum, Max
-        
+
         User = get_user_model()
-        
+
         store_id = request.query_params.get('store')
         if not store_id:
             return Response(
                 {'error': 'store parameter is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        # Get store to find associated WhatsApp account
+
         try:
-            store = Store.objects.get(id=store_id)
+            store = _user_stores(request.user).get(id=store_id)
         except Store.DoesNotExist:
             return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
         
@@ -444,66 +462,49 @@ class CustomersViewSet(viewsets.ViewSet):
         """Get customer count for a store."""
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder
-        
+
         User = get_user_model()
-        
+
         store_id = request.query_params.get('store')
         if not store_id:
             return Response({'count': 0})
-        
-        # Count registered users (non-staff)
-        user_count = User.objects.filter(
-            is_active=True,
-            is_staff=False,
-            is_superuser=False
-        ).count()
-        
-        # Count subscribers
-        subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
-        
-        # Count unique order emails
+
         try:
-            Store.objects.get(id=store_id)
-            order_emails = StoreOrder.objects.filter(
-                store_id=store_id,
-                customer_email__isnull=False
-            ).exclude(customer_email='').values('customer_email').distinct().count()
+            _user_stores(request.user).get(id=store_id)
         except Store.DoesNotExist:
-            order_emails = 0
-        
-        # Return the highest count (users are the main source now)
-        return Response({'count': max(user_count, subscriber_count, order_emails)})
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
+
+        order_emails = StoreOrder.objects.filter(
+            store_id=store_id,
+            customer_email__isnull=False
+        ).exclude(customer_email='').values('customer_email').distinct().count()
+
+        return Response({'count': max(subscriber_count, order_emails)})
     
     @action(detail=False, methods=['get'])
     def debug(self, request):
-        """Debug endpoint to check data sources."""
+        """Debug endpoint — staff only."""
+        if not request.user.is_staff:
+            return Response(
+                {'error': 'Forbidden'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder
-        
+
         User = get_user_model()
-        
+
         store_id = request.query_params.get('store')
-        
-        # Count all users
-        all_users = User.objects.count()
-        active_users = User.objects.filter(is_active=True).count()
-        staff_users = User.objects.filter(is_staff=True).count()
-        superusers = User.objects.filter(is_superuser=True).count()
+
         customer_users = User.objects.filter(
             is_active=True
         ).exclude(is_staff=True).exclude(is_superuser=True).count()
-        
-        # Sample users (first 5 non-staff)
-        sample_users = list(User.objects.filter(
-            is_active=True
-        ).exclude(is_staff=True).exclude(is_superuser=True).values(
-            'id', 'email', 'first_name', 'last_name', 'is_staff', 'is_superuser', 'date_joined'
-        )[:5])
-        
-        # Subscribers count
+
         subscriber_count = Subscriber.objects.filter(store_id=store_id).count() if store_id else 0
-        
-        # Orders count
+
         order_count = 0
         if store_id:
             try:
@@ -514,16 +515,9 @@ class CustomersViewSet(viewsets.ViewSet):
                 ).exclude(customer_email='').count()
             except Store.DoesNotExist:
                 pass
-        
+
         return Response({
-            'users': {
-                'total': all_users,
-                'active': active_users,
-                'staff': staff_users,
-                'superusers': superusers,
-                'customers': customer_users,
-                'sample': sample_users,
-            },
+            'customers': customer_users,
             'subscribers': subscriber_count,
             'orders_with_email': order_count,
             'store_id': store_id,
@@ -537,14 +531,21 @@ class MarketingStatsViewSet(viewsets.ViewSet):
     
     def list(self, request):
         """Get marketing stats for a store."""
+        from apps.stores.models import Store
+
         store_id = request.query_params.get('store')
-        
+
         if not store_id:
             return Response(
                 {'error': 'store parameter is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        try:
+            _user_stores(request.user).get(id=store_id)
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
         stats = email_marketing_service.get_stats(store_id)
         return Response(stats)
 
@@ -557,16 +558,23 @@ class QuickActionsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def send_coupon(self, request):
         """Send a coupon email."""
+        from apps.stores.models import Store
+
         serializer = SendCouponEmailSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         store_id = request.data.get('store')
         if not store_id:
             return Response(
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        try:
+            _user_stores(request.user).get(id=store_id)
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
         result = email_marketing_service.send_coupon_email(
             store_id=store_id,
             to_email=serializer.validated_data['to_email'],
@@ -583,16 +591,23 @@ class QuickActionsViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'])
     def send_welcome(self, request):
         """Send a welcome email."""
+        from apps.stores.models import Store
+
         serializer = SendWelcomeEmailSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         store_id = request.data.get('store')
         if not store_id:
             return Response(
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        try:
+            _user_stores(request.user).get(id=store_id)
+        except Store.DoesNotExist:
+            return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
         result = email_marketing_service.send_welcome_email(
             store_id=store_id,
             to_email=serializer.validated_data['to_email'],
@@ -611,7 +626,8 @@ class EmailAutomationViewSet(viewsets.ModelViewSet):
     serializer_class = EmailAutomationSerializer
     
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        user_stores = _user_stores(self.request.user)
+        queryset = EmailAutomation.objects.filter(store__in=user_stores)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)

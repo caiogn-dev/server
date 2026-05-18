@@ -199,8 +199,11 @@ class CampaignViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'campaign_type']
     
     def get_queryset(self):
-        return Campaign.objects.filter(is_active=True)
-    
+        user = self.request.user
+        if user.is_staff:
+            return Campaign.objects.filter(is_active=True)
+        return Campaign.objects.filter(is_active=True, account__owner=user)
+
     @extend_schema(
         summary="Create campaign",
         request=CampaignCreateSerializer,
@@ -410,8 +413,11 @@ class ContactListViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'source']
     
     def get_queryset(self):
-        return ContactList.objects.filter(is_active=True)
-    
+        user = self.request.user
+        if user.is_staff:
+            return ContactList.objects.filter(is_active=True)
+        return ContactList.objects.filter(is_active=True, account__owner=user)
+
     @extend_schema(
         summary="Create contact list",
         request=ContactListCreateSerializer,

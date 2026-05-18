@@ -36,8 +36,13 @@ class AgentViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'provider']
     
     def get_queryset(self):
-        return Agent.objects.filter(is_active=True)
-    
+        user = self.request.user
+        if user.is_staff:
+            return Agent.objects.filter(is_active=True)
+        return Agent.objects.filter(
+            is_active=True, accounts__owner=user
+        ).distinct()
+
     def get_serializer_class(self):
         if self.action == 'list':
             return AgentListSerializer
@@ -198,9 +203,14 @@ class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = 'session_id'
     
     def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return AgentConversation.objects.filter(
+                agent__is_active=True
+            ).order_by('-last_message_at')
         return AgentConversation.objects.filter(
-            agent__is_active=True
-        ).order_by('-last_message_at')
+            agent__is_active=True, agent__accounts__owner=user
+        ).distinct().order_by('-last_message_at')
     
     @extend_schema(summary="Histórico da conversa")
     @action(detail=True, methods=['get'])
