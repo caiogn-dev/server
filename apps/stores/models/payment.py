@@ -489,9 +489,8 @@ class StorePaymentWebhookEvent(BaseModel):
 
     def mark_processed(self):
         """Mark event as successfully processed."""
-        self.processing_status = self.ProcessingStatus.COMPLETED
-        self.processed_at = models.DateTimeField()._get_val_from_obj(self)
         from django.utils import timezone
+        self.processing_status = self.ProcessingStatus.COMPLETED
         self.processed_at = timezone.now()
         self.save(update_fields=['processing_status', 'processed_at'])
 
