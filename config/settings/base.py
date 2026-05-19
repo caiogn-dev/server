@@ -199,10 +199,12 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '60/minute',      # Reduzido de 1000 para segurança
-        'user': '300/minute',     # Reduzido de 10000 para segurança
-        'webhook': '10000/hour',  # Webhooks podem ter volume alto
-        'auth': '10/minute',      # Novo: limite para endpoints de auth
+        'anon': '60/minute',              # Reduzido de 1000 para segurança
+        'user': '300/minute',             # Reduzido de 10000 para segurança
+        'webhook': '10000/hour',          # Webhooks podem ter volume alto
+        'auth': '10/minute',              # Limite genérico para endpoints de auth
+        'whatsapp_auth_send': '5/minute', # Limite para envio de OTP por IP
+        'whatsapp_auth_verify': '10/minute', # Limite para verificação de OTP por IP
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
