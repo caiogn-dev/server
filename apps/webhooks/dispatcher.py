@@ -98,7 +98,16 @@ class WebhookDispatcherView(View):
         signature_valid = self._verify_signature(request, provider, payload)
         event.signature_valid = signature_valid
         event.save(update_fields=['signature_valid'])
-        
+
+        # Reject explicitly invalid signatures (None means no verification configured)
+        if signature_valid is False:
+            logger.warning(f"Rejecting webhook from {provider}: invalid signature")
+            event.status = WebhookEvent.Status.FAILED
+            event.error_message = 'Invalid signature'
+            event.save(update_fields=['status', 'error_message'])
+            # Return 200 to suppress provider retries, but do not process
+            return HttpResponse("OK", status=200)
+
         # Process with handler
         try:
             handler = handler_class()
