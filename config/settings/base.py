@@ -8,9 +8,24 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'your-secret-key-change-in-production'))
-
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
+
+_secret_key = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY'))
+if not _secret_key:
+    if DEBUG:
+        import warnings
+        _secret_key = 'insecure-dev-only-secret-key-nao-usar-em-producao'
+        warnings.warn(
+            "SECRET_KEY não configurada. Usando chave insegura APENAS para desenvolvimento. "
+            "Defina a variável de ambiente SECRET_KEY antes de ir para produção.",
+            stacklevel=1,
+        )
+    else:
+        raise RuntimeError(
+            "A variável de ambiente SECRET_KEY é obrigatória em produção. "
+            "Configure SECRET_KEY (ou DJANGO_SECRET_KEY) antes de iniciar o servidor."
+        )
+SECRET_KEY = _secret_key
 
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
