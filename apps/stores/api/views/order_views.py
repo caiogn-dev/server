@@ -40,7 +40,8 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(store__slug=store_param)
         else:
             user = self.request.user
-            if not user.is_staff:
+            # Superusers can see all orders; regular staff are limited to their stores
+            if not user.is_superuser:
                 queryset = queryset.filter(
                     Q(store__owner=user) | Q(store__staff=user)
                 ).distinct()
