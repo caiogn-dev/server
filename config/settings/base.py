@@ -8,7 +8,14 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'your-secret-key-change-in-production'))
+_secret_key = os.environ.get('SECRET_KEY') or os.environ.get('DJANGO_SECRET_KEY')
+if not _secret_key:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "SECRET_KEY não está definido. Configure a variável de ambiente SECRET_KEY "
+        "ou DJANGO_SECRET_KEY antes de iniciar a aplicação."
+    )
+SECRET_KEY = _secret_key
 
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 

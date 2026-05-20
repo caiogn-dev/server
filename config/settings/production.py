@@ -36,9 +36,7 @@ USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
 # Enforce required production settings
-if SECRET_KEY == 'your-secret-key-change-in-production':
-    raise ImproperlyConfigured('SECRET_KEY must be set in production.')
-
+# SECRET_KEY já é validado em base.py — base.py levanta ImproperlyConfigured se não definido
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured('ALLOWED_HOSTS must be set in production.')
 

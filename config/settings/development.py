@@ -1,8 +1,13 @@
 """
 Django development settings.
 """
-from .base import *
 import os
+
+# Garante que SECRET_KEY tenha um valor padrão em desenvolvimento antes de importar base
+if not os.environ.get('SECRET_KEY') and not os.environ.get('DJANGO_SECRET_KEY'):
+    os.environ['SECRET_KEY'] = 'dev-only-insecure-secret-key-do-not-use-in-production'
+
+from .base import *
 
 DEBUG = True
 
