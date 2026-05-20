@@ -168,14 +168,13 @@ def send_whatsapp_auth_code(request):
         result = WhatsAppAuthService.send_auth_code(phone, account_id)
         
         if result.get('success'):
-            # Em desenvolvimento, retorna o código para facilitar testes
+            # O código nunca é retornado na resposta HTTP — o usuário deve
+            # recebê-lo pelo WhatsApp. Em DEBUG, logamos internamente apenas.
             from django.conf import settings
             if settings.DEBUG:
-                logger.info(f"[WHATSAPP AUTH API] Code sent (DEBUG mode): {result.get('code')}")
-            else:
-                # Remove código do response em produção
-                result.pop('code', None)
-            
+                logger.debug("[WHATSAPP AUTH API] Code sent (DEBUG mode) — check server logs only")
+            result.pop('code', None)
+
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
