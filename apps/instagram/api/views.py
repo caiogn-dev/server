@@ -1,3 +1,5 @@
+import hmac
+import hashlib
 import logging
 
 from rest_framework import viewsets, status
@@ -10,6 +12,25 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
+
+
+def _verify_instagram_signature(raw_body: bytes, signature: str) -> bool:
+    """Verify X-Hub-Signature-256 from Meta using INSTAGRAM_APP_SECRET."""
+    app_secret = getattr(settings, 'INSTAGRAM_APP_SECRET', '')
+    if not app_secret:
+        if getattr(settings, 'DEBUG', False):
+            logger.warning('[Instagram Webhook] INSTAGRAM_APP_SECRET não configurado — verificação ignorada em DEBUG')
+            return True
+        logger.error('[Instagram Webhook] INSTAGRAM_APP_SECRET não configurado — rejeitando em produção')
+        return False
+    if not signature or not signature.startswith('sha256='):
+        return False
+    expected = hmac.new(
+        app_secret.encode('utf-8'),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, signature[7:])
 
 from ..models import (
     InstagramAccount, InstagramMedia, InstagramConversation, 
@@ -378,23 +399,16 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
 
     def create(self, request):
         """Processa webhook do Instagram"""
-        from ..webhooks.handlers import InstagramWebhookHandler
         from ..tasks import process_instagram_webhook
 
         raw_body = request.body
         signature = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
 
-        handler = InstagramWebhookHandler()
-        if not handler.verify_signature(raw_body, signature):
+        if not _verify_instagram_signature(raw_body, signature):
             logger.warning('[Instagram Webhook] Assinatura inválida — rejeitando requisição')
             return Response({'error': 'invalid_signature'}, status=status.HTTP_403_FORBIDDEN)
 
-        try:
-            payload = request.data
-        except Exception:
-            return Response({'error': 'invalid_payload'}, status=status.HTTP_400_BAD_REQUEST)
-
-        process_instagram_webhook.delay(payload)
+        process_instagram_webhook.delay(request.data)
         return Response({'status': 'received'})
 
     @action(detail=False, methods=['get'])
