@@ -1,10 +1,15 @@
+import logging
+
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 from ..models import (
     InstagramAccount, InstagramMedia, InstagramConversation, 
@@ -370,21 +375,36 @@ class InstagramMessageViewSet(viewsets.ViewSet):
 class InstagramWebhookViewSet(viewsets.ViewSet):
     """ViewSet para processamento de webhooks"""
     permission_classes = []  # Webhooks não requerem autenticação
-    
+
     def create(self, request):
         """Processa webhook do Instagram"""
-        # Verificar assinatura
-        # Processar payload
-        # Criar logs
+        from ..webhooks.handlers import InstagramWebhookHandler
+        from ..tasks import process_instagram_webhook
+
+        raw_body = request.body
+        signature = request.META.get('HTTP_X_HUB_SIGNATURE_256', '')
+
+        handler = InstagramWebhookHandler()
+        if not handler.verify_signature(raw_body, signature):
+            logger.warning('[Instagram Webhook] Assinatura inválida — rejeitando requisição')
+            return Response({'error': 'invalid_signature'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            payload = request.data
+        except Exception:
+            return Response({'error': 'invalid_payload'}, status=status.HTTP_400_BAD_REQUEST)
+
+        process_instagram_webhook.delay(payload)
         return Response({'status': 'received'})
-    
+
     @action(detail=False, methods=['get'])
     def verify(self, request):
         """Verificação do webhook pelo Facebook"""
         mode = request.query_params.get('hub.mode')
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
-        
-        if mode == 'subscribe' and token == settings.INSTAGRAM_VERIFY_TOKEN:
+
+        verify_token = getattr(settings, 'INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')
+        if mode == 'subscribe' and token and token == verify_token:
             return Response(int(challenge))
         return Response('Verification failed', status=403)
