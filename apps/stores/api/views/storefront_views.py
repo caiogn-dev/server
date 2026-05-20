@@ -148,7 +148,18 @@ class StoreCartViewSet(viewsets.ViewSet):
         
         product_id = request.data.get('product_id')
         combo_id = request.data.get('combo_id')
-        quantity = int(request.data.get('quantity', 1))
+        try:
+            quantity = int(request.data.get('quantity', 1))
+        except (ValueError, TypeError):
+            return Response(
+                {'error': 'quantity deve ser um número inteiro'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if quantity <= 0:
+            return Response(
+                {'error': 'quantity deve ser maior que zero'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         notes = request.data.get('notes', '')
         
         # Validate that at least one of product_id or combo_id is provided
@@ -191,7 +202,13 @@ class StoreCartViewSet(viewsets.ViewSet):
         
         quantity = request.data.get('quantity')
         if quantity is not None:
-            quantity = int(quantity)
+            try:
+                quantity = int(quantity)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'quantity deve ser um número inteiro'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             if quantity <= 0:
                 cart_service.remove_item(cart, item_id)
             else:
@@ -341,10 +358,19 @@ class StoreDeliveryFeeView(APIView):
                         {'error': 'Could not geocode address'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
-            
+
+            try:
+                lat_f = float(lat)
+                lng_f = float(lng)
+            except (ValueError, TypeError):
+                return Response(
+                    {'error': 'lat e lng devem ser números válidos'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
             # Calculate delivery fee
             delivery_info = here_maps_service.calculate_delivery_fee(
-                store, float(lat), float(lng)
+                store, lat_f, lng_f
             )
             return Response(delivery_info)
         except Exception as e:
@@ -364,8 +390,14 @@ class StoreCouponValidateView(APIView):
         store = get_object_or_404(Store, slug=store_slug, status='active')
         
         code = request.data.get('code')
-        subtotal = Decimal(str(request.data.get('subtotal', 0)))
-        
+        try:
+            subtotal = Decimal(str(request.data.get('subtotal', 0)))
+        except Exception:
+            return Response(
+                {'error': 'subtotal deve ser um valor numérico válido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         if not code:
             return Response(
                 {'error': 'Coupon code is required'},
