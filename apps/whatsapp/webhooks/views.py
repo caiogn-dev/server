@@ -81,31 +81,31 @@ class WhatsAppWebhookView(APIView):
     def post(self, request):
         """Handle incoming webhook events from Meta."""
         try:
-            # Get raw body for signature verification
-            raw_body = request.body.decode('utf-8')
-            
+            raw_body = request.body  # bytes — required for HMAC verification
+
             # Parse JSON payload
             try:
                 payload = json.loads(raw_body)
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON payload: {e}")
                 return Response({'status': 'error', 'message': 'Invalid JSON'}, status=400)
-            
+
             # Get signature from headers
             signature = request.headers.get('X-Hub-Signature-256', '')
-            
+
             # Initialize service
             service = WebhookService()
-            
+
             # Log webhook details
             object_type = payload.get('object', 'unknown')
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
-            
-            # Validate signature using the raw body we captured earlier
+
+            # Validate signature — reject forged webhooks
             if not service.validate_signature(raw_body, signature):
-                logger.warning("Invalid webhook signature - skipping validation in dev mode")
-                # Continue anyway for debugging
+                logger.warning("Invalid webhook signature — rejecting request")
+                # Return 200 to prevent Meta from retrying, but do NOT process payload
+                return Response({'status': 'invalid_signature'})
             
             # Convert headers to simple dict
             headers = {}
