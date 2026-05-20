@@ -287,7 +287,7 @@ else:
 # WhatsApp Business API
 WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v18.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
-WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', 'your-verify-token')
+WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
 
 # Default WhatsApp account configuration (existing account lookup + optional auto-create)
@@ -358,7 +358,7 @@ MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED = os.environ.get(
     'MERCADO_PAGO_GLOBAL_FALLBACK_ENABLED',
     'True',
 ).strip().lower() == 'true'
-PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '5563992957931')
+PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '')
 PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', 'https://agriao.shop')
 
 # Meta Pixel (Conversions API)
