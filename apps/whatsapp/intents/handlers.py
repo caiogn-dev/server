@@ -1179,7 +1179,7 @@ class ViewQRCodeHandler(IntentHandler):
             from apps.stores.models import StoreOrder
             order = StoreOrder.objects.get(id=order_id)
             ticket_url = order.payment_url if hasattr(order, 'payment_url') else None
-        except:
+        except Exception:
             ticket_url = None
         
         if ticket_url:

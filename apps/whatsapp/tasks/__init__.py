@@ -184,7 +184,7 @@ def process_message_with_agent(self, message_id: str):
                         "Obrigado pela mensagem! Em breve retornaremos.",
                         None
                     )
-                except:
+                except Exception:
                     pass
         else:
             logger.warning(f"No response text generated for message: {message_id}")
@@ -339,7 +339,7 @@ def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
                             quantity = 1
                         if quantity > 20:  # Sanity check
                             quantity = 1
-                    except:
+                    except Exception:
                         quantity = 1
                 
                 items.append({

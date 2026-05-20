@@ -122,7 +122,7 @@ def add_to_cart(session_id: str, product_identifier: str, quantity: int = 1) -> 
                 store=store,
                 status=StoreProduct.ProductStatus.ACTIVE
             ).first()
-        except:
+        except Exception:
             pass
         
         # Try by SKU

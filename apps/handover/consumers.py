@@ -120,7 +120,7 @@ class HandoverConsumer(AsyncWebsocketConsumer):
             return list(Store.objects.filter(
                 members=self.user
             ).values_list('id', flat=True))
-        except:
+        except Exception:
             return []
 
 

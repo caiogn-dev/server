@@ -238,7 +238,7 @@ class LangchainService:
                     conv = Conversation.objects.select_related('account').get(id=conversation_id)
                     if hasattr(conv.account, 'store'):
                         store = conv.account.store
-                except:
+                except Exception:
                     pass
             
             # If not found, try from agent's associated accounts

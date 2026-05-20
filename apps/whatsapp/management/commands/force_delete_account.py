@@ -52,7 +52,7 @@ class Command(BaseCommand):
         try:
             from apps.conversations.models import Conversation
             counts['conversations'] = Conversation.objects.filter(account=account).count()
-        except:
+        except Exception:
             counts['conversations'] = '?'
             
         try:
@@ -61,13 +61,13 @@ class Command(BaseCommand):
             counts['campaigns'] = Campaign.objects.filter(account=account).count()
             counts['scheduled_messages'] = ScheduledMessage.objects.filter(account=account).count()
             counts['contact_lists'] = ContactList.objects.filter(account=account).count()
-        except:
+        except Exception:
             counts['campaigns'] = '?'
             
         try:
             from apps.automation.models import CompanyProfile
             counts['company_profiles'] = CompanyProfile.objects.filter(account=account).count()
-        except:
+        except Exception:
             counts['company_profiles'] = '?'
 
         try:
@@ -81,7 +81,7 @@ class Command(BaseCommand):
             store_ids = list(store_ids)
             counts['store_integrations'] = len(store_ids)
             counts['store_orders'] = StoreOrder.objects.filter(store_id__in=store_ids).count()
-        except:
+        except Exception:
             counts['store_integrations'] = '?'
             counts['store_orders'] = '?'
         
