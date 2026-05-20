@@ -16,3 +16,11 @@ media/
 htmlcov/
 .venv/
 .idea/
+
+# Scripts de debug/diagnóstico ad-hoc — NÃO commitar scripts com tokens hardcoded
+# Usar 'git add --force diagnose_xxx.py' se for necessário versionar um script específico
+diagnose_*.py
+debug_*.py
+test_token*.py
+*_token.txt
+new_token.txt
