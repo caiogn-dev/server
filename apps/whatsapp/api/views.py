@@ -46,7 +46,10 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        qs = WhatsAppAccount.objects.filter(is_active=True)
+        if self.request.user.is_superuser:
+            return qs
+        return qs.filter(owner=self.request.user)
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -299,7 +302,17 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
-        queryset = Message.objects.select_related('account', 'conversation').all()
+        user = self.request.user
+        if user.is_superuser:
+            owned_account_ids = None
+        else:
+            owned_account_ids = WhatsAppAccount.objects.filter(
+                owner=user, is_active=True
+            ).values_list('id', flat=True)
+
+        queryset = Message.objects.select_related('account', 'conversation')
+        if owned_account_ids is not None:
+            queryset = queryset.filter(account_id__in=owned_account_ids)
         
         # Filter by phone_number (from_number OR to_number)
         phone_number = self.request.query_params.get('phone_number')
@@ -477,14 +490,21 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        account_id = str(serializer.validated_data['account_id'])
+        if not self._user_owns_account(request.user, account_id):
+            return Response(
+                {'error': 'Você não tem permissão para acessar esta conta.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         service = MessageService()
         messages = service.get_conversation_history(
-            account_id=str(serializer.validated_data['account_id']),
+            account_id=account_id,
             phone_number=serializer.validated_data['phone_number'],
             limit=serializer.validated_data.get('limit', 50)
         )
-        
+
         return Response(MessageSerializer(messages, many=True).data)
 
     @extend_schema(
@@ -497,15 +517,30 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        account_id = str(serializer.validated_data['account_id'])
+        if not self._user_owns_account(request.user, account_id):
+            return Response(
+                {'error': 'Você não tem permissão para acessar esta conta.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         service = MessageService()
         stats = service.get_message_stats(
-            account_id=str(serializer.validated_data['account_id']),
+            account_id=account_id,
             start_date=serializer.validated_data['start_date'],
             end_date=serializer.validated_data['end_date']
         )
-        
+
         return Response(stats)
+
+    def _user_owns_account(self, user, account_id: str) -> bool:
+        """Check that the user owns the given WhatsApp account."""
+        if user.is_superuser:
+            return True
+        return WhatsAppAccount.objects.filter(
+            id=account_id, owner=user, is_active=True
+        ).exists()
 
 
 @extend_schema_view(
@@ -520,4 +555,11 @@ class MessageTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'status', 'category']
 
     def get_queryset(self):
-        return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        user = self.request.user
+        qs = MessageTemplate.objects.select_related('account').filter(is_active=True)
+        if user.is_superuser:
+            return qs
+        owned_account_ids = WhatsAppAccount.objects.filter(
+            owner=user, is_active=True
+        ).values_list('id', flat=True)
+        return qs.filter(account_id__in=owned_account_ids)
