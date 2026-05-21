@@ -15,58 +15,37 @@ User = get_user_model()
 class WhatsAppConsumer(ThrottledWebSocketConsumer):
     """
     WebSocket consumer for WhatsApp real-time updates.
-    
+
     Clients connect to: ws/whatsapp/{account_id}/
-    
+
+    Authentication is supported in two ways (in priority order):
+    1. Auth message: client sends { type: 'auth', token: '<key>' } after onopen
+    2. Query string: ?token=<key> (legacy — only used if no auth message is sent)
+
     Events sent to clients:
-    - whatsapp_message_received: New inbound message
-    - whatsapp_message_sent: Outbound message confirmation
-    - whatsapp_status_updated: Message status change (sent, delivered, read)
-    - whatsapp_typing: Typing indicator
+    - message_received: New inbound message
+    - message_sent: Outbound message confirmation
+    - status_updated: Message status change (sent, delivered, read)
+    - typing: Typing indicator
     """
-    
+
     async def connect(self):
-        """Handle WebSocket connection."""
+        """Accept the raw connection; defer auth to the first auth message."""
         self.account_id = self.scope['url_route']['kwargs'].get('account_id')
         self.user = None
         self.account_group = None
         self.conversation_groups = set()
-        
-        # Authenticate via token in query string
+        self._authenticated = False
+
+        # Accept first so we can receive the auth message.
+        # If authentication fails we close with 4001 / 4003.
+        await self.accept()
+
+        # Backward-compat: if token is already in the query string, authenticate now.
         query_string = self.scope.get('query_string', b'').decode()
         token = self._extract_token(query_string)
-        
         if token:
-            self.user = await self.get_user_from_token(token)
-        
-        if not self.user:
-            logger.warning(f"WhatsApp WS: Unauthorized connection attempt for account {self.account_id}")
-            await self.close(code=4001)
-            return
-        
-        # Verify user has access to this account
-        has_access = await self.verify_account_access(self.account_id)
-        if not has_access:
-            logger.warning(f"WhatsApp WS: User {self.user.id} denied access to account {self.account_id}")
-            await self.close(code=4003)
-            return
-        
-        # Join account-specific group
-        self.account_group = f"whatsapp_{self.account_id}"
-        await self.channel_layer.group_add(self.account_group, self.channel_name)
-        
-        # Also join user-specific group for cross-account notifications
-        await self.channel_layer.group_add(f"user_{self.user.id}_whatsapp", self.channel_name)
-        
-        await self.accept()
-        
-        logger.info(f"WhatsApp WS: User {self.user.id} connected to account {self.account_id}")
-        
-        await self.send_json({
-            'type': 'connection_established',
-            'account_id': self.account_id,
-            'message': 'Connected to WhatsApp real-time service'
-        })
+            await self._authenticate_and_join(token)
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
@@ -82,10 +61,52 @@ class WhatsAppConsumer(ThrottledWebSocketConsumer):
         
         logger.info(f"WhatsApp WS: Disconnected from account {self.account_id}")
     
+    async def _authenticate_and_join(self, token: str):
+        """Validate token and join channel groups. Closes with error code on failure."""
+        self.user = await self.get_user_from_token(token)
+        if not self.user:
+            logger.warning(f"WhatsApp WS: Unauthorized connection attempt for account {self.account_id}")
+            await self.close(code=4001)
+            return
+
+        has_access = await self.verify_account_access(self.account_id)
+        if not has_access:
+            logger.warning(f"WhatsApp WS: User {self.user.id} denied access to account {self.account_id}")
+            await self.close(code=4003)
+            return
+
+        self._authenticated = True
+        self.account_group = f"whatsapp_{self.account_id}"
+        await self.channel_layer.group_add(self.account_group, self.channel_name)
+        await self.channel_layer.group_add(f"user_{self.user.id}_whatsapp", self.channel_name)
+
+        logger.info(f"WhatsApp WS: User {self.user.id} connected to account {self.account_id}")
+        await self.send_json({
+            'type': 'connection_established',
+            'account_id': self.account_id,
+            'message': 'Connected to WhatsApp real-time service',
+        })
+
     async def receive_json(self, content):
         """Handle incoming WebSocket messages from client."""
         message_type = content.get('type')
-        
+
+        # Handle auth message before checking authentication for other types.
+        if message_type == 'auth':
+            if self._authenticated:
+                return  # already authenticated, ignore duplicate auth
+            token = content.get('token', '')
+            if token:
+                await self._authenticate_and_join(token)
+            else:
+                await self.close(code=4001)
+            return
+
+        # Require authentication for all other message types.
+        if not self._authenticated:
+            await self.close(code=4001)
+            return
+
         if message_type == 'ping':
             await self.send_json({'type': 'pong'})
         
@@ -233,49 +254,26 @@ class WhatsAppConsumer(ThrottledWebSocketConsumer):
 class WhatsAppDashboardConsumer(ThrottledWebSocketConsumer):
     """
     WebSocket consumer for WhatsApp dashboard overview.
-    
+
     Provides aggregated updates across all accounts the user has access to.
     Clients connect to: ws/whatsapp/dashboard/
+
+    Authentication supports auth message and legacy query-string token.
     """
-    
+
     async def connect(self):
-        """Handle WebSocket connection."""
+        """Accept connection; defer auth to auth message or query string."""
         self.user = None
         self.account_groups = set()
-        
-        # Authenticate
+        self._authenticated = False
+
+        await self.accept()
+
+        # Backward-compat: authenticate immediately if token is in query string.
         query_string = self.scope.get('query_string', b'').decode()
         token = self._extract_token(query_string)
-        
         if token:
-            self.user = await self.get_user_from_token(token)
-        
-        if not self.user:
-            await self.close(code=4001)
-            return
-        
-        try:
-            # Get all accounts user has access to and join their groups
-            account_ids = await self.get_user_account_ids()
-            
-            for account_id in account_ids:
-                group_name = f"whatsapp_{account_id}"
-                await self.channel_layer.group_add(group_name, self.channel_name)
-                self.account_groups.add(group_name)
-            
-            # Join user-specific group
-            await self.channel_layer.group_add(f"user_{self.user.id}_whatsapp", self.channel_name)
-            
-            await self.accept()
-            
-            await self.send_json({
-                'type': 'connection_established',
-                'accounts': account_ids,
-                'message': 'Connected to WhatsApp dashboard service'
-            })
-        except Exception as e:
-            logger.error(f"WhatsApp Dashboard WS connect error: {e}")
-            await self.close(code=4000)
+            await self._authenticate_and_join(token)
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
@@ -285,13 +283,53 @@ class WhatsAppDashboardConsumer(ThrottledWebSocketConsumer):
         if self.user:
             await self.channel_layer.group_discard(f"user_{self.user.id}_whatsapp", self.channel_name)
     
+    async def _authenticate_and_join(self, token: str):
+        """Validate token and join all account groups for this user."""
+        self.user = await self.get_user_from_token(token)
+        if not self.user:
+            await self.close(code=4001)
+            return
+
+        try:
+            account_ids = await self.get_user_account_ids()
+            for account_id in account_ids:
+                group_name = f"whatsapp_{account_id}"
+                await self.channel_layer.group_add(group_name, self.channel_name)
+                self.account_groups.add(group_name)
+
+            await self.channel_layer.group_add(f"user_{self.user.id}_whatsapp", self.channel_name)
+            self._authenticated = True
+
+            await self.send_json({
+                'type': 'connection_established',
+                'accounts': account_ids,
+                'message': 'Connected to WhatsApp dashboard service',
+            })
+        except Exception as e:
+            logger.error(f"WhatsApp Dashboard WS connect error: {e}")
+            await self.close(code=4000)
+
     async def receive_json(self, content):
         """Handle incoming messages."""
         message_type = content.get('type')
-        
+
+        if message_type == 'auth':
+            if self._authenticated:
+                return
+            token = content.get('token', '')
+            if token:
+                await self._authenticate_and_join(token)
+            else:
+                await self.close(code=4001)
+            return
+
+        if not self._authenticated:
+            await self.close(code=4001)
+            return
+
         if message_type == 'ping':
             await self.send_json({'type': 'pong'})
-        
+
         elif message_type == 'subscribe_conversation':
             # Subscribe to a specific conversation for typing indicators
             conversation_id = content.get('conversation_id')
@@ -303,7 +341,7 @@ class WhatsAppDashboardConsumer(ThrottledWebSocketConsumer):
                     'type': 'subscribed',
                     'conversation_id': conversation_id
                 })
-        
+
         elif message_type == 'unsubscribe_conversation':
             conversation_id = content.get('conversation_id')
             if conversation_id:
@@ -314,7 +352,7 @@ class WhatsAppDashboardConsumer(ThrottledWebSocketConsumer):
                     'type': 'unsubscribed',
                     'conversation_id': conversation_id
                 })
-        
+
         elif message_type == 'typing':
             # Broadcast typing indicator to conversation
             conversation_id = content.get('conversation_id')
@@ -329,7 +367,7 @@ class WhatsAppDashboardConsumer(ThrottledWebSocketConsumer):
                         'is_typing': is_typing
                     }
                 )
-    
+
     # Event handlers - same as WhatsAppConsumer
     async def whatsapp_message_received(self, event):
         await self.send_json({
