@@ -20,28 +20,29 @@ class AgentListSerializer(serializers.ModelSerializer):
 class AgentDetailSerializer(serializers.ModelSerializer):
     """Serializer for agent details."""
     accounts = serializers.SerializerMethodField()
-    
+    has_api_key = serializers.SerializerMethodField()
+
     class Meta:
         model = Agent
         fields = [
             'id', 'name', 'description', 'provider', 'model_name',
             'base_url', 'temperature', 'max_tokens', 'timeout',
             'system_prompt', 'context_prompt', 'status',
-            'use_memory', 'memory_ttl', 'accounts',
+            'use_memory', 'memory_ttl', 'accounts', 'has_api_key',
             'created_at', 'updated_at'
         ]
-        extra_kwargs = {
-            'api_key': {'write_only': True},  # Hide API key in responses
-        }
-    
+
     def get_accounts(self, obj):
         from apps.whatsapp.api.serializers import WhatsAppAccountSerializer
         return WhatsAppAccountSerializer(obj.accounts.all(), many=True).data
 
+    def get_has_api_key(self, obj) -> bool:
+        return bool(obj.api_key)
+
 
 class AgentCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating agents."""
-    
+
     class Meta:
         model = Agent
         fields = [
@@ -50,6 +51,9 @@ class AgentCreateUpdateSerializer(serializers.ModelSerializer):
             'timeout', 'system_prompt', 'context_prompt',
             'status', 'use_memory', 'memory_ttl', 'accounts'
         ]
+        extra_kwargs = {
+            'api_key': {'write_only': True},
+        }
 
 
 class AgentMessageSerializer(serializers.ModelSerializer):
