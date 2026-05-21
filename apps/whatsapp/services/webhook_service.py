@@ -39,32 +39,36 @@ class WebhookService:
 
     def verify_webhook(self, mode: str, token: str, challenge: str) -> str:
         """Verify webhook subscription."""
+        import hmac as _hmac
         verify_token = settings.WHATSAPP_WEBHOOK_VERIFY_TOKEN
-        
-        if mode == 'subscribe' and token == verify_token:
+
+        if mode == 'subscribe' and _hmac.compare_digest(token, verify_token):
             logger.info("Webhook verification successful")
             return challenge
-        
+
         logger.warning(f"Webhook verification failed: mode={mode}")
         raise WebhookValidationError(message="Webhook verification failed")
 
     def validate_signature(self, payload: bytes, signature: str) -> bool:
         """Validate webhook signature."""
         app_secret = settings.WHATSAPP_APP_SECRET
-        
+
         if not app_secret:
-            logger.warning("WHATSAPP_APP_SECRET not configured, skipping signature validation")
-            return True
-        
-        if not signature:
-            logger.warning("No signature provided in webhook request")
+            if settings.DEBUG:
+                logger.warning("WHATSAPP_APP_SECRET não configurado — validação ignorada em modo DEBUG")
+                return True
+            logger.error("WHATSAPP_APP_SECRET não configurado em ambiente de produção")
             return False
-        
+
+        if not signature:
+            logger.warning("Nenhuma assinatura fornecida na requisição webhook")
+            return False
+
         is_valid = verify_webhook_signature(payload, signature, app_secret)
-        
+
         if not is_valid:
-            logger.warning("Invalid webhook signature")
-        
+            logger.warning("Assinatura webhook inválida")
+
         return is_valid
 
     def process_webhook(
