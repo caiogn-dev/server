@@ -3,6 +3,7 @@ Commerce - Views.
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .models import Store, Category, Product, Customer, Order
 from .serializers import (
@@ -12,10 +13,15 @@ from .serializers import (
 
 
 class StoreViewSet(viewsets.ModelViewSet):
-    queryset = Store.objects.all()
     serializer_class = StoreSerializer
+    permission_classes = [IsAuthenticated]
     lookup_field = 'slug'
-    
+
+    def get_queryset(self):
+        if self.request.user.is_superuser:
+            return Store.objects.all()
+        return Store.objects.filter(owner=self.request.user)
+
     @action(detail=True, methods=['get'])
     def products(self, request, slug=None):
         store = self.get_object()
@@ -25,16 +31,27 @@ class StoreViewSet(viewsets.ModelViewSet):
 
 
 class CategoryViewSet(viewsets.ModelViewSet):
-    queryset = Category.objects.all()
+    permission_classes = [IsAuthenticated]
     serializer_class = CategorySerializer
+
+    def get_queryset(self):
+        if self.request.user.is_superuser:
+            return Category.objects.all()
+        owned_stores = Store.objects.filter(owner=self.request.user).values_list('id', flat=True)
+        return Category.objects.filter(store_id__in=owned_stores)
 
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.all()
+    permission_classes = [IsAuthenticated]
     serializer_class = ProductSerializer
-    
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        if self.request.user.is_superuser:
+            queryset = Product.objects.all()
+        else:
+            owned_stores = Store.objects.filter(owner=self.request.user).values_list('id', flat=True)
+            queryset = Product.objects.filter(store_id__in=owned_stores)
+
         store_slug = self.request.query_params.get('store')
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
@@ -42,25 +59,36 @@ class ProductViewSet(viewsets.ModelViewSet):
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
-    queryset = Customer.objects.all()
+    permission_classes = [IsAuthenticated]
     serializer_class = CustomerSerializer
-    
+
+    def get_queryset(self):
+        if self.request.user.is_superuser:
+            return Customer.objects.all()
+        owned_stores = Store.objects.filter(owner=self.request.user).values_list('id', flat=True)
+        return Customer.objects.filter(store_id__in=owned_stores)
+
     @action(detail=False, methods=['get'])
     def by_phone(self, request):
         phone = request.query_params.get('phone')
         if phone:
-            customer = Customer.objects.filter(phone=phone).first()
+            customer = self.get_queryset().filter(phone=phone).first()
             if customer:
                 return Response(CustomerSerializer(customer).data)
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
 
 
 class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all()
+    permission_classes = [IsAuthenticated]
     serializer_class = OrderSerializer
-    
+
     def get_queryset(self):
-        queryset = super().get_queryset()
+        if self.request.user.is_superuser:
+            queryset = Order.objects.all()
+        else:
+            owned_stores = Store.objects.filter(owner=self.request.user).values_list('id', flat=True)
+            queryset = Order.objects.filter(store_id__in=owned_stores)
+
         store_slug = self.request.query_params.get('store')
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
