@@ -20,29 +20,40 @@ from apps.core.routing import websocket_urlpatterns
 
 logger = logging.getLogger(__name__)
 
-# Custom origin validator that allows all origins in development
-# and validates against ALLOWED_HOSTS in production
-class PermissiveOriginValidator:
+class CORSOriginValidator:
     """
-    Allow WebSocket connections from any origin.
-    This is needed because the dashboard may be hosted on a different domain.
+    Validate WebSocket connection origins against CORS_ALLOWED_ORIGINS.
+    Falls back to permissive in DEBUG mode to ease local development.
+    Authentication is still enforced independently by TokenAuthMiddleware.
     """
     def __init__(self, application):
         self.application = application
-    
+
     async def __call__(self, scope, receive, send):
-        # Log connection attempt for debugging
+        from django.conf import settings
+
         headers = dict(scope.get('headers', []))
         origin = headers.get(b'origin', b'').decode()
-        logger.info(f"WebSocket connection attempt from origin: {origin}")
-        
-        # Always allow - we handle authentication in the consumer
-        return await self.application(scope, receive, send)
+
+        if not origin:
+            # No Origin header — likely a server-side or same-origin connection
+            return await self.application(scope, receive, send)
+
+        if settings.DEBUG:
+            logger.info(f"WebSocket connection (DEBUG, origin accepted): {origin}")
+            return await self.application(scope, receive, send)
+
+        allowed = getattr(settings, 'CORS_ALLOWED_ORIGINS', [])
+        if origin in allowed:
+            return await self.application(scope, receive, send)
+
+        logger.warning(f"WebSocket connection rejected — origin not in CORS_ALLOWED_ORIGINS: {origin}")
+        await send({'type': 'websocket.close', 'code': 4403})
 
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": PermissiveOriginValidator(
+    "websocket": CORSOriginValidator(
         TokenAuthMiddlewareStack(
             AuthMiddlewareStack(
                 URLRouter(websocket_urlpatterns)

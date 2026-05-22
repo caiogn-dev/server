@@ -10,7 +10,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = os.environ.get('SECRET_KEY', 'your-secret-key-here')
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']
+_allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else [
+    'backend.pastita.com.br',
+    'painel.pastita.com.br',
+    'pastita.com.br',
+    'localhost',
+    '127.0.0.1',
+]
 
 # APENAS APPS NOVOS
 INSTALLED_APPS = [
@@ -199,3 +206,11 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 WHATSAPP_VERIFY_TOKEN = os.environ.get('WHATSAPP_VERIFY_TOKEN', 'pastita-webhook-token')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
 INSTAGRAM_VERIFY_TOKEN = os.environ.get('INSTAGRAM_VERIFY_TOKEN', 'pastita-instagram-token')
+
+# Validate required settings in non-debug mode
+if not DEBUG:
+    from django.core.exceptions import ImproperlyConfigured
+    if SECRET_KEY in ('your-secret-key-here', ''):
+        raise ImproperlyConfigured('SECRET_KEY deve ser definida via variável de ambiente.')
+    if '*' in ALLOWED_HOSTS:
+        raise ImproperlyConfigured('ALLOWED_HOSTS não pode conter wildcard em produção.')
