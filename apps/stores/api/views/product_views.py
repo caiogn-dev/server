@@ -161,10 +161,14 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
 
 class StoreComboViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store combos."""
-    
+
     serializer_class = StoreComboSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated(), IsStoreOwnerOrStaff()]
+
     def get_queryset(self):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')
@@ -189,10 +193,14 @@ class StoreComboViewSet(viewsets.ModelViewSet):
 
 class StoreProductTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing product types."""
-    
+
     serializer_class = StoreProductTypeSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
+
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated(), IsStoreOwnerOrStaff()]
+
     def get_queryset(self):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')
