@@ -85,6 +85,11 @@ class Store(BaseModel):
         SUSPENDED = 'suspended', 'Suspended'
         PENDING = 'pending', 'Pending Setup'
 
+    class StoreTemplate(models.TextChoices):
+        FRESH = 'fresh', 'Fresh'
+        BOLD = 'bold', 'Bold'
+        CLASSIC = 'classic', 'Classic'
+
     # Basic Info
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=100, unique=True, db_index=True)
@@ -111,18 +116,13 @@ class Store(BaseModel):
     secondary_color = models.CharField(max_length=7, default='#ffffff', help_text="Hex color code")
 
     # Storefront
-    class StoreTemplate(models.TextChoices):
-        FRESH = 'fresh', 'Fresh'
-        BOLD = 'bold', 'Bold'
-        CLASSIC = 'classic', 'Classic'
-
     template = models.CharField(
         max_length=20,
         choices=StoreTemplate.choices,
         default=StoreTemplate.FRESH,
         help_text="Layout template do storefront",
     )
-    tagline = models.CharField(max_length=200, blank=True, default='')
+    tagline = models.CharField(max_length=200, blank=True, default='', help_text="Slogan curto exibido no storefront")
     custom_domain = models.CharField(
         max_length=255,
         blank=True,
