@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'apps.users',  # Unified user management (NEW)
     'apps.public_api',  # Public read-only API for storefronts (no auth required)
     'apps.panel',  # Pastita Panel — Django-rendered admin UI at /panel/
+    'apps.postado',  # Postado — AI social media posts for small businesses
 ]
 
 MIDDLEWARE = [
