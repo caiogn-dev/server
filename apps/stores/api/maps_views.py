@@ -14,6 +14,17 @@ from apps.stores.services.here_maps_service import here_maps_service
 logger = logging.getLogger(__name__)
 
 
+def _parse_coordinate(value: str, name: str, min_val: float, max_val: float):
+    """Parse and validate a lat/lng coordinate. Returns (float, error_response) tuple."""
+    try:
+        coord = float(value)
+    except (TypeError, ValueError):
+        return None, f'{name} must be a number'
+    if not (min_val <= coord <= max_val):
+        return None, f'{name} must be between {min_val} and {max_val}'
+    return coord, None
+
+
 class StoreGeocodeView(APIView):
     """Geocode an address."""
     
@@ -57,19 +68,20 @@ class StoreReverseGeocodeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        try:
-            result = here_maps_service.reverse_geocode(float(lat), float(lng))
-            if result:
-                return Response(result)
-            return Response(
-                {'error': 'Location not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except ValueError:
-            return Response(
-                {'error': 'Invalid lat/lng values'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        lat_val, lat_err = _parse_coordinate(lat, 'lat', -90.0, 90.0)
+        if lat_err:
+            return Response({'error': lat_err}, status=status.HTTP_400_BAD_REQUEST)
+        lng_val, lng_err = _parse_coordinate(lng, 'lng', -180.0, 180.0)
+        if lng_err:
+            return Response({'error': lng_err}, status=status.HTTP_400_BAD_REQUEST)
+
+        result = here_maps_service.reverse_geocode(lat_val, lng_val)
+        if result:
+            return Response(result)
+        return Response(
+            {'error': 'Location not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
 
 
 class StoreRouteView(APIView):
@@ -98,13 +110,20 @@ class StoreRouteView(APIView):
                 {'error': 'Store location not configured'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        dest_lat_val, lat_err = _parse_coordinate(dest_lat, 'dest_lat', -90.0, 90.0)
+        if lat_err:
+            return Response({'error': lat_err}, status=status.HTTP_400_BAD_REQUEST)
+        dest_lng_val, lng_err = _parse_coordinate(dest_lng, 'dest_lng', -180.0, 180.0)
+        if lng_err:
+            return Response({'error': lng_err}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             origin = (float(store.latitude), float(store.longitude))
-            destination = (float(dest_lat), float(dest_lng))
-            
+            destination = (dest_lat_val, dest_lng_val)
+
             logger.info(f"Route request: store={store.slug}, origin={origin}, destination={destination}")
-            
+
             result = here_maps_service.calculate_route(origin, destination)
             if result:
                 return Response({
@@ -114,8 +133,8 @@ class StoreRouteView(APIView):
                         'lng': float(store.longitude),
                     },
                     'destination': {
-                        'lat': float(dest_lat),
-                        'lng': float(dest_lng),
+                        'lat': dest_lat_val,
+                        'lng': dest_lng_val,
                     },
                     **result
                 })
@@ -183,10 +202,17 @@ class StoreValidateDeliveryView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         
+        lat_val, lat_err = _parse_coordinate(lat, 'lat', -90.0, 90.0)
+        if lat_err:
+            return Response({'error': lat_err}, status=status.HTTP_400_BAD_REQUEST)
+        lng_val, lng_err = _parse_coordinate(lng, 'lng', -180.0, 180.0)
+        if lng_err:
+            return Response({'error': lng_err}, status=status.HTTP_400_BAD_REQUEST)
+
         try:
             store_location = (float(store.latitude), float(store.longitude))
-            delivery_location = (float(lat), float(lng))
-            
+            delivery_location = (lat_val, lng_val)
+
             logger.info(f"Validating delivery: store={store_location}, delivery={delivery_location}")
             
             # Get max distance from store settings or use default
