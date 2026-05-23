@@ -110,6 +110,27 @@ class Store(BaseModel):
     primary_color = models.CharField(max_length=7, default='#000000', help_text="Hex color code")
     secondary_color = models.CharField(max_length=7, default='#ffffff', help_text="Hex color code")
 
+    # Storefront
+    class StoreTemplate(models.TextChoices):
+        FRESH = 'fresh', 'Fresh'
+        BOLD = 'bold', 'Bold'
+        CLASSIC = 'classic', 'Classic'
+
+    template = models.CharField(
+        max_length=20,
+        choices=StoreTemplate.choices,
+        default=StoreTemplate.FRESH,
+        help_text="Layout template do storefront",
+    )
+    tagline = models.CharField(max_length=200, blank=True, default='')
+    custom_domain = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        unique=True,
+        help_text="Domínio próprio da loja (ex: cesaladas.com.br)",
+    )
+
     # Contact Info
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=20, blank=True)
