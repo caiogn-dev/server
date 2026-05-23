@@ -25,16 +25,18 @@ from .serializers import (
 
 class EmailTemplateViewSet(viewsets.ModelViewSet):
     """ViewSet for email templates."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailTemplateSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        qs = EmailTemplate.objects.all()
+        if not self.request.user.is_staff:
+            qs = qs.filter(store__owner=self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
-        return queryset
+            qs = qs.filter(store_id=store_id)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -89,19 +91,21 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
 
 class EmailCampaignViewSet(viewsets.ModelViewSet):
     """ViewSet for email campaigns."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailCampaignSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        qs = EmailCampaign.objects.all()
+        if not self.request.user.is_staff:
+            qs = qs.filter(store__owner=self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            qs = qs.filter(store_id=store_id)
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        return queryset
+            qs = qs.filter(status=status_filter)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -198,19 +202,21 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
 
 class SubscriberViewSet(viewsets.ModelViewSet):
     """ViewSet for subscribers."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = SubscriberSerializer
-    
+
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        qs = Subscriber.objects.all()
+        if not self.request.user.is_staff:
+            qs = qs.filter(store__owner=self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            qs = qs.filter(store_id=store_id)
         status_filter = self.request.query_params.get('status')
         if status_filter:
-            queryset = queryset.filter(status=status_filter)
-        return queryset
+            qs = qs.filter(status=status_filter)
+        return qs
     
     def get_serializer_class(self):
         if self.action == 'list':
@@ -606,19 +612,21 @@ class QuickActionsViewSet(viewsets.ViewSet):
 
 class EmailAutomationViewSet(viewsets.ModelViewSet):
     """ViewSet for email automations."""
-    
+
     permission_classes = [IsAuthenticated]
     serializer_class = EmailAutomationSerializer
-    
+
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        qs = EmailAutomation.objects.all()
+        if not self.request.user.is_staff:
+            qs = qs.filter(store__owner=self.request.user)
         store_id = self.request.query_params.get('store')
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            qs = qs.filter(store_id=store_id)
         trigger_type = self.request.query_params.get('trigger_type')
         if trigger_type:
-            queryset = queryset.filter(trigger_type=trigger_type)
-        return queryset.select_related('template', 'store')
+            qs = qs.filter(trigger_type=trigger_type)
+        return qs.select_related('template', 'store')
     
     def get_serializer_class(self):
         if self.action == 'list':
