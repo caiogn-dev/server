@@ -494,7 +494,7 @@ class CustomerOrdersView(APIView):
                 'payment_status': order.payment_status,
                 'total': float(order.total),
                 'delivery_method': order.delivery_method,
-                'items_count': order.items.count(),
+                'items_count': len(order.items.all()),
                 'created_at': order.created_at.isoformat(),
             })
         

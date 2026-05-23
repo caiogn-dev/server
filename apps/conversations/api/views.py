@@ -282,7 +282,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         try:
             wa_messages = WhatsAppMessage.objects.filter(
                 conversation_id=conversation.id
-            ).order_by('created_at')
+            ).select_related('account').order_by('created_at')
             for msg in wa_messages:
                 messages_list.append({
                     'id': str(msg.id),
@@ -313,8 +313,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
         try:
             ig_messages = InstagramMessage.objects.filter(
                 conversation_id=conversation.id
-            ).order_by('created_at')
+            ).select_related('conversation__account').order_by('created_at')
             for msg in ig_messages:
+                ig_conv = msg.conversation
+                ig_account = ig_conv.account if ig_conv else None
+                sender = ig_conv.participant_id if not msg.is_from_business else (ig_account.instagram_business_id or '' if ig_account else '')
+                recipient = ig_account.instagram_business_id or '' if (ig_account and not msg.is_from_business) else ig_conv.participant_id
                 messages_list.append({
                     'id': str(msg.id),
                     'whatsapp_message_id': msg.instagram_message_id or '',
@@ -322,19 +326,19 @@ class ConversationViewSet(viewsets.ModelViewSet):
                     'direction': 'outbound' if msg.is_from_business else 'inbound',
                     'message_type': msg.message_type or 'text',
                     'status': 'read' if msg.is_read else 'sent',
-                    'from_number': msg.sender_id or '',
-                    'to_number': msg.recipient_id or '',
-                    'text_body': msg.text or '',
-                    'content': msg.text or '',
+                    'from_number': sender,
+                    'to_number': recipient,
+                    'text_body': msg.content or '',
+                    'content': msg.content or '',
                     'media_url': msg.media_url,
                     'media_mime_type': None,
                     'created_at': msg.created_at.isoformat() if msg.created_at else None,
                     'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
                     'delivered_at': None,
                     'read_at': msg.read_at.isoformat() if msg.read_at else None,
-                    'error_message': msg.error_message,
+                    'error_message': None,
                     'timestamp': msg.sent_at.isoformat() if msg.sent_at else msg.created_at.isoformat() if msg.created_at else None,
-                    'account': str(msg.account.id) if msg.account else None,
+                    'account': str(ig_account.id) if ig_account else None,
                     'updated_at': msg.created_at.isoformat() if msg.created_at else None,
                 })
         except Exception as e:
