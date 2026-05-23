@@ -68,3 +68,7 @@ openai>=1.0.0
 
 # MCP (Model Context Protocol) — bot pipeline inspector
 mcp>=1.0.0
+
+# Google Drive API (Postado SaaS)
+google-api-python-client>=2.100.0
+google-auth>=2.20.0
