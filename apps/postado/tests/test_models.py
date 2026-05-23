@@ -42,3 +42,31 @@ class TestPostadoModels(TestCase):
             post_type=PostadoPost.PostType.PROMO,
         )
         self.assertEqual(post.status, PostadoPost.Status.PENDING)
+
+    def test_pack_month_unique_per_client(self):
+        from django.db import IntegrityError
+        client = PostadoClient.objects.create(
+            business_name="Loja Dup",
+            niche=PostadoClient.Niche.STORE,
+            tone=PostadoClient.Tone.CASUAL,
+            email="dup@email.com",
+            whatsapp="61966666666",
+        )
+        PostadoPack.objects.create(client=client, month="2026-06")
+        with self.assertRaises(IntegrityError):
+            PostadoPack.objects.create(client=client, month="2026-06")
+
+    def test_total_posts_count(self):
+        client = PostadoClient.objects.create(
+            business_name="Conta Posts",
+            niche=PostadoClient.Niche.RESTAURANT,
+            tone=PostadoClient.Tone.CASUAL,
+            email="count@email.com",
+            whatsapp="61955555555",
+        )
+        pack = PostadoPack.objects.create(client=client, month="2026-07")
+        self.assertEqual(pack.total_posts, 0)
+        PostadoPost.objects.create(pack=pack, post_number=1, post_type=PostadoPost.PostType.PROMO)
+        PostadoPost.objects.create(pack=pack, post_number=2, post_type=PostadoPost.PostType.PRODUCT)
+        pack.refresh_from_db()
+        self.assertEqual(pack.total_posts, 2)

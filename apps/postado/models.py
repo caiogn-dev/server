@@ -1,4 +1,5 @@
 import uuid
+from django.core.validators import RegexValidator
 from django.db import models
 
 
@@ -25,8 +26,8 @@ class PostadoClient(models.Model):
     brand_colors = models.JSONField(default=list)
     logo_url = models.URLField(blank=True)
     photos = models.JSONField(default=list)
-    email = models.EmailField()
-    whatsapp = models.CharField(max_length=20)
+    email = models.EmailField(unique=True)
+    whatsapp = models.CharField(max_length=20, unique=True)
     drive_folder_id = models.CharField(max_length=255, blank=True)
     mp_subscription_id = models.CharField(max_length=255, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
@@ -49,7 +50,7 @@ class PostadoPack(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(PostadoClient, on_delete=models.CASCADE, related_name='packs')
-    month = models.CharField(max_length=7)  # YYYY-MM
+    month = models.CharField(max_length=7, validators=[RegexValidator(r'^\d{4}-\d{2}$', 'Format must be YYYY-MM')])
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     drive_folder_url = models.URLField(blank=True)
     generated_at = models.DateTimeField(null=True, blank=True)
