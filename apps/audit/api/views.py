@@ -43,8 +43,11 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     def my_activity(self, request):
         """Get current user's activity."""
         service = AuditService()
-        days = int(request.query_params.get('days', 30))
-        limit = int(request.query_params.get('limit', 100))
+        try:
+            days = max(1, min(int(request.query_params.get('days', 30)), 365))
+            limit = max(1, min(int(request.query_params.get('limit', 100)), 500))
+        except (TypeError, ValueError):
+            return Response({'error': 'days e limit devem ser inteiros'}, status=status.HTTP_400_BAD_REQUEST)
         
         logs = service.get_user_activity(request.user, days=days, limit=limit)
         serializer = self.get_serializer(logs, many=True)

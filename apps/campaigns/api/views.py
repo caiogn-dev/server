@@ -67,7 +67,10 @@ class SystemContactsView(APIView):
     def get(self, request):
         account_id = request.query_params.get('account_id')
         source = request.query_params.get('source', 'all')
-        limit = int(request.query_params.get('limit', 100))
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 100)), 1000))
+        except (TypeError, ValueError):
+            limit = 100
         
         contacts = {}  # Use dict to deduplicate by phone
         
@@ -199,7 +202,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'campaign_type']
     
     def get_queryset(self):
-        return Campaign.objects.filter(is_active=True)
+        qs = Campaign.objects.filter(is_active=True)
+        if not self.request.user.is_staff:
+            qs = qs.filter(account__owner=self.request.user)
+        return qs
     
     @extend_schema(
         summary="Create campaign",
@@ -410,7 +416,10 @@ class ContactListViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'source']
     
     def get_queryset(self):
-        return ContactList.objects.filter(is_active=True)
+        qs = ContactList.objects.filter(is_active=True)
+        if not self.request.user.is_staff:
+            qs = qs.filter(account__owner=self.request.user)
+        return qs
     
     @extend_schema(
         summary="Create contact list",
