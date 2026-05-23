@@ -46,7 +46,10 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        qs = WhatsAppAccount.objects.filter(is_active=True)
+        if not self.request.user.is_staff:
+            qs = qs.filter(owner=self.request.user)
+        return qs
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -298,22 +301,29 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
+    _ALLOWED_ORDERINGS = {
+        'created_at', '-created_at',
+        'sent_at', '-sent_at',
+        'status', '-status',
+    }
+
     def get_queryset(self):
         queryset = Message.objects.select_related('account', 'conversation').all()
-        
-        # Filter by phone_number (from_number OR to_number)
+
+        if not self.request.user.is_staff:
+            queryset = queryset.filter(account__owner=self.request.user)
+
         phone_number = self.request.query_params.get('phone_number')
         if phone_number:
             from django.db.models import Q
             queryset = queryset.filter(
                 Q(from_number__icontains=phone_number) | Q(to_number__icontains=phone_number)
             )
-        
-        # Default ordering by created_at desc
+
         ordering = self.request.query_params.get('ordering', '-created_at')
-        queryset = queryset.order_by(ordering)
-        
-        return queryset
+        if ordering not in self._ALLOWED_ORDERINGS:
+            ordering = '-created_at'
+        return queryset.order_by(ordering)
 
     @extend_schema(
         summary="Send text message",

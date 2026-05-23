@@ -148,7 +148,10 @@ class StoreCartViewSet(viewsets.ViewSet):
         
         product_id = request.data.get('product_id')
         combo_id = request.data.get('combo_id')
-        quantity = int(request.data.get('quantity', 1))
+        try:
+            quantity = max(1, int(request.data.get('quantity', 1)))
+        except (TypeError, ValueError):
+            return Response({'error': 'quantity must be a positive integer'}, status=status.HTTP_400_BAD_REQUEST)
         notes = request.data.get('notes', '')
         
         # Validate that at least one of product_id or combo_id is provided
@@ -191,7 +194,10 @@ class StoreCartViewSet(viewsets.ViewSet):
         
         quantity = request.data.get('quantity')
         if quantity is not None:
-            quantity = int(quantity)
+            try:
+                quantity = int(quantity)
+            except (TypeError, ValueError):
+                return Response({'error': 'quantity must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
             if quantity <= 0:
                 cart_service.remove_item(cart, item_id)
             else:

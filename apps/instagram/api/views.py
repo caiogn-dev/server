@@ -42,7 +42,10 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
     def insights(self, request, pk=None):
         """Obtém insights da conta"""
         account = self.get_object()
-        days = int(request.query_params.get('days', 30))
+        try:
+            days = max(1, min(int(request.query_params.get('days', 30)), 365))
+        except (TypeError, ValueError):
+            return Response({'error': 'days must be an integer'}, status=status.HTTP_400_BAD_REQUEST)
         
         since = timezone.now() - timedelta(days=days)
         until = timezone.now()

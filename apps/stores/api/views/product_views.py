@@ -116,7 +116,19 @@ class StoreProductViewSet(viewsets.ModelViewSet):
                 {'error': 'quantity is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        product.stock_quantity = int(quantity)
+        try:
+            stock = int(quantity)
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'quantity must be an integer'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        if stock < 0:
+            return Response(
+                {'error': 'quantity cannot be negative'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        product.stock_quantity = stock
         product.save(update_fields=['stock_quantity', 'updated_at'])
         return Response({'stock_quantity': product.stock_quantity})
     

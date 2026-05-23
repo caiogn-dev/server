@@ -285,7 +285,10 @@ class StoreAutosuggestView(APIView):
             if store.latitude and store.longitude:
                 center = (float(store.latitude), float(store.longitude))
         
-        limit = int(request.query_params.get('limit', 5))
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 5)), 20))
+        except (TypeError, ValueError):
+            limit = 5
         suggestions = here_maps_service.autosuggest(query, center=center, limit=limit)
         
         return Response({'suggestions': suggestions})

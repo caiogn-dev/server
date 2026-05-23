@@ -127,8 +127,14 @@ class IntentLogViewSet(viewsets.ViewSet):
         - phone_number: Filtrar por telefone
         """
         # Parâmetros
-        limit = int(request.query_params.get('limit', 20))
-        offset = int(request.query_params.get('offset', 0))
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 20)), 500))
+            offset = max(0, int(request.query_params.get('offset', 0)))
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'limit e offset devem ser inteiros'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         intent_type = request.query_params.get('intent_type')
         method = request.query_params.get('method')
         start_date_str = request.query_params.get('start_date')
