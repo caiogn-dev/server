@@ -202,7 +202,8 @@ REST_FRAMEWORK = {
         'anon': '60/minute',      # Reduzido de 1000 para segurança
         'user': '300/minute',     # Reduzido de 10000 para segurança
         'webhook': '10000/hour',  # Webhooks podem ter volume alto
-        'auth': '10/minute',      # Novo: limite para endpoints de auth
+        'auth': '5/minute',       # Login: máximo 5 tentativas por minuto por IP
+        'register': '5/minute',   # Cadastro: máximo 5 por minuto por IP
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }

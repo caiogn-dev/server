@@ -16,6 +16,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema
 from .models import UserProfile
+from .throttles import LoginRateThrottle, RegisterRateThrottle
 from apps.notifications.services import email_service
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ class LoginView(APIView):
     """Login endpoint to obtain authentication token."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [LoginRateThrottle]
 
     @extend_schema(
         summary="Login",
@@ -232,6 +234,7 @@ class RegisterView(APIView):
     """Register a new user."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [RegisterRateThrottle]
 
     def _trigger_new_user_automation(self, user, store_slug=None):
         """Trigger email automation for new user registration."""
