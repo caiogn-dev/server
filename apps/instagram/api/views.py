@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -385,6 +386,6 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
         
-        if mode == 'subscribe' and token == settings.INSTAGRAM_VERIFY_TOKEN:
+        if mode == 'subscribe' and token == settings.INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
             return Response(int(challenge))
         return Response('Verification failed', status=403)
