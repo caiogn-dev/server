@@ -43,9 +43,8 @@ class MercadoPagoWebhookView(APIView):
             
             # Validate webhook signature if secret is configured
             if not self._validate_signature(request, store_slug):
-                logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+                logger.warning("Webhook signature validation failed for store: %s", store_slug)
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -111,7 +110,7 @@ class MercadoPagoWebhookView(APIView):
             
         except Exception as e:
             logger.error(f"Signature validation error: {e}")
-            return True  # Allow request on validation error (fail open for now)
+            return False  # Fail closed — never allow requests on validation errors
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""
@@ -504,32 +503,40 @@ class CustomerOrdersView(APIView):
 class CustomerOrderDetailView(APIView):
     """
     Get single order details for customer.
-    Only allows access if:
-    - User is authenticated and owns the order
-    - Order was created in the last 24 hours (for payment status page)
+    Requires either:
+    - Authenticated owner / staff, OR
+    - A valid access_token query parameter (use GET ?token={access_token})
+
+    The 24-hour time-based bypass was removed because it allowed any caller with
+    a valid order UUID to read PII (name, email, phone, address) for any order
+    placed in the past day without authentication.
     """
-    
+
     authentication_classes = []
     permission_classes = []
-    
+
     def get(self, request, order_id):
         """Get order details."""
         try:
             order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
-            
-            # Security check: verify access permission
+
+            # Security: require ownership OR a valid per-order access token
             user = request.user
-            is_owner = user.is_authenticated and order.customer == user
-            
-            # Allow access to recent orders (within 24h) for payment status page
-            # This is needed because user might not be logged in during checkout
-            from django.utils import timezone
-            from datetime import timedelta
-            is_recent = order.created_at > timezone.now() - timedelta(hours=24)
-            
-            if not is_owner and not is_recent:
+            is_owner = user.is_authenticated and (
+                order.customer == user or user.is_staff or user.is_superuser
+            )
+
+            token = request.query_params.get('token', '')
+            has_valid_token = bool(token and order.access_token and token == order.access_token)
+
+            if not is_owner and not has_valid_token:
+                logger.warning(
+                    "Acesso não autorizado ao pedido %s de IP %s",
+                    order.order_number,
+                    request.META.get('REMOTE_ADDR', 'unknown'),
+                )
                 return Response(
-                    {'error': 'Acesso negado. Faça login para ver seus pedidos.'},
+                    {'error': 'Acesso negado. Forneça um token válido ou faça login.'},
                     status=status.HTTP_403_FORBIDDEN
                 )
             

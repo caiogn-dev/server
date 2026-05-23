@@ -42,6 +42,18 @@ if SECRET_KEY == 'your-secret-key-change-in-production':
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured('ALLOWED_HOSTS must be set in production.')
 
+if WHATSAPP_WEBHOOK_VERIFY_TOKEN == 'your-verify-token':
+    raise ImproperlyConfigured(
+        'WHATSAPP_WEBHOOK_VERIFY_TOKEN must be set to a secure random value in production. '
+        'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+    )
+
+if INSTAGRAM_WEBHOOK_VERIFY_TOKEN == 'pastita-ig-verify':
+    raise ImproperlyConfigured(
+        'INSTAGRAM_WEBHOOK_VERIFY_TOKEN must be set to a secure random value in production. '
+        'Generate one with: python -c "import secrets; print(secrets.token_hex(32))"'
+    )
+
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False
 
