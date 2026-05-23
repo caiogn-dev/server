@@ -36,6 +36,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'store_type', 'status',
             'logo', 'logo_url', 'banner', 'banner_url',
             'primary_color', 'secondary_color',
+            'template', 'tagline', 'custom_domain',
             'email', 'phone', 'whatsapp_number',
             'address', 'city', 'state', 'zip_code', 'country',
             'latitude', 'longitude',

@@ -14,6 +14,7 @@ class PublicStoreSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'slug', 'description', 'store_type',
             'logo_url', 'primary_color', 'secondary_color',
+            'template', 'tagline',
             'phone', 'email', 'address', 'city', 'state',
             'operating_hours', 'is_open',
         ]
