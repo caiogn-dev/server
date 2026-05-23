@@ -9,10 +9,22 @@ from .models import (
 
 @admin.register(Store)
 class StoreAdmin(admin.ModelAdmin):
-    list_display = ['name', 'slug', 'store_type', 'status', 'owner', 'created_at']
-    list_filter = ['store_type', 'status', 'created_at']
-    search_fields = ['name', 'slug', 'email']
+    list_display = ['name', 'slug', 'store_type', 'status', 'custom_domain', 'owner', 'created_at']
+    list_filter = ['store_type', 'status', 'template', 'created_at']
+    search_fields = ['name', 'slug', 'email', 'custom_domain']
     prepopulated_fields = {'slug': ('name',)}
+    fieldsets = (
+        (None, {'fields': ('owner', 'name', 'slug', 'description', 'store_type', 'status')}),
+        ('Branding', {'fields': ('logo', 'logo_url', 'banner', 'banner_url', 'primary_color', 'secondary_color')}),
+        ('Storefront', {
+            'fields': ('template', 'tagline', 'custom_domain'),
+            'description': 'Configurações do cardápio público multi-tenant',
+        }),
+        ('Contato', {'fields': ('email', 'phone', 'whatsapp_number', 'website_url', 'menu_url', 'order_url')}),
+        ('Endereço', {'fields': ('address', 'city', 'state', 'zip_code', 'country', 'latitude', 'longitude')}),
+        ('Delivery', {'fields': ('delivery_enabled', 'pickup_enabled', 'min_order_value', 'free_delivery_threshold', 'default_delivery_fee')}),
+        ('Config', {'fields': ('currency', 'timezone', 'tax_rate', 'operating_hours', 'metadata'), 'classes': ('collapse',)}),
+    )
 
 
 @admin.register(StoreIntegration)
