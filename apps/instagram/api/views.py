@@ -385,6 +385,6 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
         token = request.query_params.get('hub.verify_token')
         challenge = request.query_params.get('hub.challenge')
         
-        if mode == 'subscribe' and token == settings.INSTAGRAM_VERIFY_TOKEN:
+        if mode == 'subscribe' and token == settings.INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
             return Response(int(challenge))
         return Response('Verification failed', status=403)
