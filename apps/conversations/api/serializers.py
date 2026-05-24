@@ -45,6 +45,9 @@ class ConversationSerializer(serializers.ModelSerializer):
         ]
 
     def get_message_count(self, obj):
+        # Use annotation from get_queryset when available (avoids N+1)
+        if hasattr(obj, '_message_count'):
+            return obj._message_count
         return obj.messages.count() if hasattr(obj, 'messages') else 0
 
     def get_last_message_preview(self, obj):
@@ -58,6 +61,9 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     def get_unread_count(self, obj):
         """Count unread inbound messages."""
+        # Use annotation from get_queryset when available (avoids N+1)
+        if hasattr(obj, '_unread_count'):
+            return obj._unread_count
         if hasattr(obj, 'messages'):
             return obj.messages.filter(
                 direction='inbound',

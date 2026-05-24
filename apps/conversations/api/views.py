@@ -38,9 +38,28 @@ class ConversationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'mode', 'assigned_agent']
 
     def get_queryset(self):
-        return Conversation.objects.select_related(
-            'account', 'assigned_agent'
-        ).filter(is_active=True)
+        from django.db.models import Count, Q, Subquery, OuterRef
+        from apps.whatsapp.models import Message as WAMessage
+
+        user = self.request.user
+        qs = Conversation.objects.select_related(
+            'account', 'assigned_agent', 'ai_agent'
+        ).prefetch_related('handover').filter(is_active=True)
+
+        # Restrict non-staff users to conversations belonging to their own accounts
+        if not (user.is_staff or user.is_superuser):
+            qs = qs.filter(account__owner=user)
+
+        # Annotate counts in a single DB pass to avoid N+1 per conversation
+        qs = qs.annotate(
+            _message_count=Count('messages', distinct=True),
+            _unread_count=Count(
+                'messages',
+                filter=Q(messages__direction='inbound', messages__read_at__isnull=True),
+                distinct=True,
+            ),
+        )
+        return qs
 
     @extend_schema(
         summary="Switch to human mode",
@@ -264,86 +283,136 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Get conversation messages",
-        description="Returns all messages for this conversation from WhatsApp, Instagram, and Messenger",
+        description=(
+            "Retorna mensagens da conversa (WhatsApp + Instagram) com paginação cursor.\n\n"
+            "Parâmetros de query:\n"
+            "- `limit` (int, padrão 50): número máximo de mensagens por página\n"
+            "- `before_id` (str, opcional): ID da mensagem mais antiga já carregada "
+            "(retorna mensagens mais antigas que esse ID)\n\n"
+            "Resposta: `{results, has_more, next_before_id}`"
+        ),
         responses={200: dict}
     )
     @action(detail=True, methods=['get'])
     def messages(self, request, pk=None):
-        """Get all messages for the conversation."""
+        """Retorna mensagens paginadas por cursor para o frontend."""
         conversation = self.get_object()
-        
-        # Get messages from different sources
+
+        try:
+            limit = max(1, min(int(request.query_params.get('limit', 50)), 200))
+        except (ValueError, TypeError):
+            limit = 50
+        before_id = request.query_params.get('before_id')
+
         from apps.whatsapp.models import Message as WhatsAppMessage
         from apps.instagram.models import InstagramMessage
-        
+
+        def _serialize_wa(msg):
+            return {
+                'id': str(msg.id),
+                'whatsapp_message_id': msg.whatsapp_message_id,
+                'conversation_id': str(conversation.id),
+                'direction': msg.direction,
+                'message_type': msg.message_type,
+                'status': msg.status,
+                'from_number': msg.from_number,
+                'to_number': msg.to_number,
+                'text_body': msg.text_body,
+                'content': msg.content,
+                'media_url': msg.media_url,
+                'media_mime_type': msg.media_mime_type,
+                'created_at': msg.created_at.isoformat() if msg.created_at else None,
+                'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
+                'delivered_at': msg.delivered_at.isoformat() if msg.delivered_at else None,
+                'read_at': msg.read_at.isoformat() if msg.read_at else None,
+                'error_message': msg.error_message,
+                'timestamp': (
+                    msg.sent_at.isoformat() if msg.sent_at
+                    else msg.created_at.isoformat() if msg.created_at else None
+                ),
+                'account': str(msg.account.id) if msg.account else None,
+                'updated_at': msg.created_at.isoformat() if msg.created_at else None,
+                'media_caption': getattr(msg, 'media_caption', None),
+                'caption': getattr(msg, 'caption', None),
+                'media_filename': getattr(msg, 'media_filename', None),
+                'file_name': getattr(msg, 'file_name', None),
+                'media_type': getattr(msg, 'media_type', None),
+            }
+
+        def _serialize_ig(msg):
+            return {
+                'id': str(msg.id),
+                'whatsapp_message_id': msg.instagram_message_id or '',
+                'conversation_id': str(conversation.id),
+                'direction': 'outbound' if msg.is_from_business else 'inbound',
+                'message_type': msg.message_type or 'text',
+                'status': 'read' if msg.is_read else 'sent',
+                'from_number': msg.sender_id or '',
+                'to_number': msg.recipient_id or '',
+                'text_body': msg.text or '',
+                'content': msg.text or '',
+                'media_url': msg.media_url,
+                'media_mime_type': None,
+                'created_at': msg.created_at.isoformat() if msg.created_at else None,
+                'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
+                'delivered_at': None,
+                'read_at': msg.read_at.isoformat() if msg.read_at else None,
+                'error_message': getattr(msg, 'error_message', None),
+                'timestamp': (
+                    msg.sent_at.isoformat() if msg.sent_at
+                    else msg.created_at.isoformat() if msg.created_at else None
+                ),
+                'account': str(msg.account.id) if msg.account else None,
+                'updated_at': msg.created_at.isoformat() if msg.created_at else None,
+                'media_caption': None,
+                'caption': None,
+                'media_filename': None,
+                'file_name': None,
+                'media_type': None,
+            }
+
         messages_list = []
-        
-        # Get WhatsApp messages
+
+        # WhatsApp messages
         try:
-            wa_messages = WhatsAppMessage.objects.filter(
+            wa_qs = WhatsAppMessage.objects.filter(
                 conversation_id=conversation.id
-            ).order_by('created_at')
-            for msg in wa_messages:
-                messages_list.append({
-                    'id': str(msg.id),
-                    'whatsapp_message_id': msg.whatsapp_message_id,
-                    'conversation_id': str(conversation.id),
-                    'direction': msg.direction,
-                    'message_type': msg.message_type,
-                    'status': msg.status,
-                    'from_number': msg.from_number,
-                    'to_number': msg.to_number,
-                    'text_body': msg.text_body,
-                    'content': msg.content,
-                    'media_url': msg.media_url,
-                    'media_mime_type': msg.media_mime_type,
-                    'created_at': msg.created_at.isoformat() if msg.created_at else None,
-                    'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
-                    'delivered_at': msg.delivered_at.isoformat() if msg.delivered_at else None,
-                    'read_at': msg.read_at.isoformat() if msg.read_at else None,
-                    'error_message': msg.error_message,
-                    'timestamp': msg.sent_at.isoformat() if msg.sent_at else msg.created_at.isoformat() if msg.created_at else None,
-                    'account': str(msg.account.id) if msg.account else None,
-                    'updated_at': msg.created_at.isoformat() if msg.created_at else None,
-                })
+            ).select_related('account').order_by('created_at')
+            messages_list.extend(_serialize_wa(m) for m in wa_qs)
         except Exception as e:
             logger.error(f"Error fetching WhatsApp messages: {e}")
-        
-        # Get Instagram messages
+
+        # Instagram messages
         try:
-            ig_messages = InstagramMessage.objects.filter(
+            ig_qs = InstagramMessage.objects.filter(
                 conversation_id=conversation.id
-            ).order_by('created_at')
-            for msg in ig_messages:
-                messages_list.append({
-                    'id': str(msg.id),
-                    'whatsapp_message_id': msg.instagram_message_id or '',
-                    'conversation_id': str(conversation.id),
-                    'direction': 'outbound' if msg.is_from_business else 'inbound',
-                    'message_type': msg.message_type or 'text',
-                    'status': 'read' if msg.is_read else 'sent',
-                    'from_number': msg.sender_id or '',
-                    'to_number': msg.recipient_id or '',
-                    'text_body': msg.text or '',
-                    'content': msg.text or '',
-                    'media_url': msg.media_url,
-                    'media_mime_type': None,
-                    'created_at': msg.created_at.isoformat() if msg.created_at else None,
-                    'sent_at': msg.sent_at.isoformat() if msg.sent_at else None,
-                    'delivered_at': None,
-                    'read_at': msg.read_at.isoformat() if msg.read_at else None,
-                    'error_message': msg.error_message,
-                    'timestamp': msg.sent_at.isoformat() if msg.sent_at else msg.created_at.isoformat() if msg.created_at else None,
-                    'account': str(msg.account.id) if msg.account else None,
-                    'updated_at': msg.created_at.isoformat() if msg.created_at else None,
-                })
+            ).select_related('account').order_by('created_at')
+            messages_list.extend(_serialize_ig(m) for m in ig_qs)
         except Exception as e:
             logger.error(f"Error fetching Instagram messages: {e}")
-        
-        # Sort messages by created_at
+
+        # Sort combined list chronologically
         messages_list.sort(key=lambda x: x['created_at'] or '')
-        
-        return Response(messages_list)
+
+        # Apply cursor pagination (before_id = oldest ID already in the client's view)
+        if before_id:
+            cutoff_idx = next(
+                (i for i, m in enumerate(messages_list) if m['id'] == before_id),
+                None,
+            )
+            if cutoff_idx is not None:
+                messages_list = messages_list[:cutoff_idx]
+
+        # Return the last `limit` messages (most recent within the window)
+        has_more = len(messages_list) > limit
+        page = messages_list[-limit:] if len(messages_list) > limit else messages_list
+        next_before_id = page[0]['id'] if has_more and page else None
+
+        return Response({
+            'results': page,
+            'has_more': has_more,
+            'next_before_id': next_before_id,
+        })
 
     @extend_schema(
         summary="Get conversation statistics",
