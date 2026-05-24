@@ -3,12 +3,13 @@ Public API views — AllowAny, read-only.
 Used by pastita-3d and ce-saladas storefronts (no auth required).
 
 Endpoints:
-  GET /api/v1/public/{slug}/                      -> store info
-  GET /api/v1/public/{slug}/catalog/              -> full catalog (categories + products)
-  GET /api/v1/public/{slug}/categories/           -> categories
-  GET /api/v1/public/{slug}/products/             -> products (filterable)
-  GET /api/v1/public/{slug}/products/{pk}/        -> product detail
-  GET /api/v1/public/{slug}/availability/         -> store open/closed status
+  GET  /api/v1/public/{slug}/                      -> store info
+  GET  /api/v1/public/{slug}/catalog/              -> full catalog (categories + products)
+  GET  /api/v1/public/{slug}/categories/           -> categories
+  GET  /api/v1/public/{slug}/products/             -> products (filterable)
+  GET  /api/v1/public/{slug}/products/{pk}/        -> product detail
+  GET  /api/v1/public/{slug}/availability/         -> store open/closed status
+  POST /api/v1/public/leads/                       -> lead capture from /cadastro page
 """
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny
@@ -22,12 +23,18 @@ class _PublicReadThrottle(AnonRateThrottle):
     scope = 'public_read'
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+import logging
+from django.conf import settings
 from apps.stores.models import Store, StoreCategory, StoreProduct
+from .models import Lead
 from .serializers import (
     PublicStoreSerializer,
     PublicCategorySerializer,
     PublicProductSerializer,
+    LeadSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _PublicProductPagination(PageNumberPagination):
@@ -141,3 +148,51 @@ def public_store_availability(request, slug):
         'hours': hours,
         'operating_hours': store.operating_hours or {},
     })
+
+
+class _LeadThrottle(AnonRateThrottle):
+    scope = 'lead_create'
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([_LeadThrottle])
+def create_lead(request):
+    """Receive a lead from the /cadastro public page and notify the owner via WhatsApp."""
+    serializer = LeadSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    lead = serializer.save()
+    _notify_owner_whatsapp(lead)
+    return Response({'detail': 'Recebemos seu cadastro! Entraremos em contato em breve.'}, status=status.HTTP_201_CREATED)
+
+
+def _notify_owner_whatsapp(lead: Lead) -> None:
+    owner_phone = getattr(settings, 'OWNER_NOTIFICATION_PHONE', '').strip()
+    if not owner_phone:
+        logger.info('OWNER_NOTIFICATION_PHONE not set — skipping WhatsApp notification for lead %s', lead.id)
+        return
+    try:
+        from apps.whatsapp.utils import get_default_whatsapp_account
+        from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+        account = get_default_whatsapp_account()
+        if not account:
+            logger.warning('No default WhatsApp account — cannot notify owner for lead %s', lead.id)
+            return
+        svc = WhatsAppAPIService(account)
+        business = f' ({lead.business_type})' if lead.business_type else ''
+        city = f' — {lead.city}' if lead.city else ''
+        msg = (
+            f'🚀 *Novo lead no Pastita!*\n\n'
+            f'👤 *Nome:* {lead.name}\n'
+            f'📱 *WhatsApp:* {lead.phone}\n'
+            f'📧 *E-mail:* {lead.email or "—"}\n'
+            f'📍 *Cidade:* {lead.city or "—"}\n'
+            f'🏪 *Tipo de negócio:* {lead.business_type or "—"}\n'
+            f'💬 *Mensagem:* {lead.message or "—"}'
+        )
+        svc.send_text_message(to=owner_phone, text=msg)
+        logger.info('Owner WhatsApp notification sent for lead %s', lead.id)
+    except Exception as exc:
+        logger.error('Failed to send WhatsApp notification for lead %s: %s', lead.id, exc)

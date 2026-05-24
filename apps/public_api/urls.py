@@ -8,6 +8,7 @@ from . import views
 app_name = 'public_api'
 
 urlpatterns = [
+    path('leads/', views.create_lead, name='create-lead'),
     path('<slug:slug>/', views.public_store_detail, name='store-detail'),
     path('<slug:slug>/catalog/', views.public_store_catalog, name='store-catalog'),
     path('<slug:slug>/categories/', views.public_store_categories, name='store-categories'),

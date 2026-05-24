@@ -3,6 +3,7 @@ Public API serializers — read-only, no sensitive data exposed.
 """
 from rest_framework import serializers
 from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo
+from .models import Lead
 
 
 class PublicStoreSerializer(serializers.ModelSerializer):
@@ -83,3 +84,15 @@ class PublicComboSerializer(serializers.ModelSerializer):
             url = obj.image.url
             return request.build_absolute_uri(url) if request else url
         return None
+
+
+class LeadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lead
+        fields = ['name', 'phone', 'email', 'city', 'business_type', 'message']
+
+    def validate_phone(self, value):
+        digits = ''.join(c for c in value if c.isdigit())
+        if len(digits) < 10:
+            raise serializers.ValidationError('Número de telefone inválido.')
+        return value

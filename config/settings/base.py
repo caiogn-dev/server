@@ -213,6 +213,8 @@ REST_FRAMEWORK = {
         'checkout': '20/minute',
         # Auth: OTP brute-force protection — manter restritivo
         'auth': '10/minute',
+        # Lead capture form — low rate to prevent spam
+        'lead_create': '10/hour',
         # Webhooks de integrações externas — volume alto esperado
         'webhook': '10000/hour',
     },
@@ -351,6 +353,9 @@ DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL = os.environ.get(
     'DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL', os.environ.get('ADMIN_EMAIL', '')
 ).strip()
 DEFAULT_WHATSAPP_ACCOUNT_STATUS = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_STATUS', 'active').strip().lower()
+
+# WhatsApp phone (with country code, e.g. 5511999999999) that receives lead notifications from /cadastro
+OWNER_NOTIFICATION_PHONE = os.environ.get('OWNER_NOTIFICATION_PHONE', '').strip()
 DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE = os.environ.get(
     'DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE', 'False'
 ).strip().lower() == 'true'
