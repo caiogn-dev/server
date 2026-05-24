@@ -1,8 +1,9 @@
 import io
-import base64
+import os
+import socket
 import logging
 from typing import Optional
-import openai
+import requests
 from PIL import Image, ImageDraw
 from apps.postado.models import PostadoPost, PostadoClient
 
@@ -11,11 +12,43 @@ logger = logging.getLogger(__name__)
 FEED_SIZE = (1080, 1080)
 STORIES_SIZE = (1080, 1920)
 
+HF_API_URL = "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
+# HF DNS não resolve via systemd-resolved local — usa IP direto via resolve override
+HF_HOST = "router.huggingface.co"
+HF_IP = "108.139.166.30"
+
 NICHE_IMAGE_STYLE = {
     'restaurant': 'food photography, restaurant, warm lighting, appetizing, high-end cuisine, professional',
     'salon': 'beauty salon, hair care, elegant interior, soft lighting, luxury beauty treatment, professional',
     'store': 'retail store, product display, modern interior, clean background, lifestyle photography, professional',
 }
+
+
+def _hf_post(prompt: str) -> bytes:
+    """POST to HuggingFace router, bypassing broken local DNS with direct IP."""
+    hf_key = os.environ.get('HUGGINGFACE_API_KEY', '')
+    session = requests.Session()
+    # Inject IP resolution so we don't depend on systemd-resolved
+    session.get_adapter('https://').poolmanager.connection_pool_kw['server_hostname'] = HF_HOST
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, *args, **kwargs):
+        if host == HF_HOST:
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, '', (HF_IP, port))]
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    socket.getaddrinfo = patched_getaddrinfo
+    try:
+        response = session.post(
+            HF_API_URL,
+            headers={'Authorization': f'Bearer {hf_key}'},
+            json={'inputs': prompt},
+            timeout=90,
+        )
+        response.raise_for_status()
+        return response.content
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
 
 
 class ImageService:
@@ -30,18 +63,11 @@ class ImageService:
         )
 
         try:
-            response = openai.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                n=1,
-                size="1024x1024",
-                response_format="b64_json",
-            )
-            img_data = base64.b64decode(response.data[0].b64_json)
-            img = Image.open(io.BytesIO(img_data)).convert('RGB')
+            img_bytes = _hf_post(prompt)
+            img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
             return img.resize(FEED_SIZE, Image.LANCZOS)
         except Exception as e:
-            logger.error(f"GPT-Image generation failed for post {post.id}: {e}")
+            logger.error(f"HF image generation failed for post {post.id}: {e}")
             return self._placeholder_image(color, FEED_SIZE)
 
     def composite_feed(self, base: Image.Image, business_name: str,
