@@ -323,19 +323,19 @@ INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', 'pastita-ig-verify')
 
 # ============================================================================
-# LANGCHAIN AI CONFIGURATION (Native - sem Langflow)
+# AI/LLM CONFIGURATION (LangChain / Agentes)
 # ============================================================================
-# Kimi API (Kimi Coding API - Anthropic-style)
+# Kimi API (Moonshot AI - primary)
 KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
 KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
 KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
 
-# OpenAI (opcional)
+# OpenAI (fallback opcional)
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
 
-# Anthropic (opcional)
+# Anthropic (fallback opcional)
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
 
@@ -374,21 +374,6 @@ META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v20.0').strip()
 # LiteLLM Proxy (RECOMMENDED - centralized management)
 LITELLM_PROXY_URL = os.environ.get('LITELLM_PROXY_URL', 'http://litellm-proxy:4000')
 LITELLM_PROXY_KEY = os.environ.get('LITELLM_PROXY_KEY', '')
-
-# Direct API Keys (fallback when LiteLLM is not available)
-# Kimi API (Primary - Moonshot AI)
-KIMI_API_KEY = os.environ.get('KIMI_API_KEY', '')
-KIMI_BASE_URL = os.environ.get('KIMI_BASE_URL', 'https://api.kimi.com/coding/')
-KIMI_MODEL_NAME = os.environ.get('KIMI_MODEL_NAME', 'kimi-for-coding')
-
-# OpenAI (optional fallback)
-OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
-OPENAI_BASE_URL = os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1')
-OPENAI_MODEL_NAME = os.environ.get('OPENAI_MODEL_NAME', 'gpt-4o-mini')
-
-# Anthropic (optional fallback)
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet-20241022')
 
 # Unified AI Configuration Helper
 def get_ai_config():
