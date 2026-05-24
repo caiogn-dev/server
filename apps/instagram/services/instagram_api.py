@@ -58,8 +58,8 @@ class InstagramAPI:
         try:
             response = self.get('oauth/access_token', {
                 'grant_type': 'fb_exchange_token',
-                'client_id': settings.FACEBOOK_APP_ID,
-                'client_secret': settings.FACEBOOK_APP_SECRET,
+                'client_id': settings.INSTAGRAM_APP_ID,
+                'client_secret': settings.INSTAGRAM_APP_SECRET,
                 'fb_exchange_token': self.access_token
             })
             
