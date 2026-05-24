@@ -415,6 +415,147 @@ class ConversationViewSet(viewsets.ModelViewSet):
         })
 
     @extend_schema(
+        summary="Universal inbox — todas as plataformas",
+        description=(
+            "Agrega conversas de WhatsApp, Instagram e Messenger num único feed "
+            "ordenado por atividade recente. Retorna o envelope paginado padrão "
+            "{ count, results, next, previous } com objetos UniversalConversation."
+        ),
+        responses={200: dict}
+    )
+    @action(detail=False, methods=['get'])
+    def universal(self, request):
+        """Retorna conversas unificadas de todas as plataformas."""
+        user = request.user
+        all_convs = []
+
+        # ── WhatsApp ──────────────────────────────────────────────────────
+        try:
+            from apps.whatsapp.models import Message as WAMessage
+            wa_qs = Conversation.objects.select_related('account').filter(is_active=True)
+            if not (user.is_staff or user.is_superuser):
+                wa_qs = wa_qs.filter(account__owner=user)
+
+            for conv in wa_qs.order_by('-last_message_at', '-created_at')[:200]:
+                preview = ''
+                try:
+                    last = WAMessage.objects.filter(
+                        conversation=conv
+                    ).order_by('-created_at').values('text_body', 'message_type').first()
+                    if last:
+                        if last['text_body']:
+                            preview = last['text_body'][:80]
+                        elif last['message_type']:
+                            _icons = {'image': '📷 Imagem', 'audio': '🎵 Áudio', 'video': '🎥 Vídeo', 'document': '📄 Documento'}
+                            preview = _icons.get(last['message_type'], f"[{last['message_type']}]")
+                except Exception:
+                    pass
+
+                all_convs.append({
+                    'id': f"wa_{conv.id}",
+                    'platform': 'whatsapp',
+                    'platform_icon_key': 'whatsapp',
+                    'source_conversation_id': str(conv.id),
+                    'account_id': str(conv.account.id) if conv.account else None,
+                    'display_name': conv.contact_name or conv.phone_number,
+                    'secondary_identifier': conv.phone_number,
+                    'last_message_preview': preview,
+                    'last_message_at': conv.last_message_at.isoformat() if conv.last_message_at else None,
+                    'unread_count': 0,
+                    'status': conv.status,
+                    'route': '/whatsapp/inbox',
+                    'route_params': {'account': str(conv.account.id)} if conv.account else {},
+                    'is_actionable': True,
+                })
+        except Exception as exc:
+            logger.warning("universal: erro ao buscar conversas WhatsApp: %s", exc)
+
+        # ── Instagram ─────────────────────────────────────────────────────
+        try:
+            from apps.instagram.models import InstagramConversation, InstagramAccount
+            ig_accounts = InstagramAccount.objects.filter(user=user) if not (user.is_staff or user.is_superuser) else InstagramAccount.objects.all()
+            ig_qs = InstagramConversation.objects.filter(
+                account__in=ig_accounts, is_active=True
+            ).select_related('account').order_by('-last_message_at', '-created_at')[:200]
+
+            for conv in ig_qs:
+                preview = ''
+                try:
+                    last = conv.messages.order_by('-created_at').values('text', 'message_type').first()
+                    if last and last['text']:
+                        preview = last['text'][:80]
+                except Exception:
+                    pass
+
+                all_convs.append({
+                    'id': f"ig_{conv.id}",
+                    'platform': 'instagram',
+                    'platform_icon_key': 'instagram',
+                    'source_conversation_id': str(conv.id),
+                    'account_id': str(conv.account.id) if conv.account else None,
+                    'display_name': conv.participant_name or conv.participant_username,
+                    'secondary_identifier': conv.participant_username,
+                    'last_message_preview': preview,
+                    'last_message_at': conv.last_message_at.isoformat() if conv.last_message_at else None,
+                    'unread_count': conv.unread_count or 0,
+                    'status': 'open',
+                    'route': '/instagram/inbox',
+                    'route_params': {'account': str(conv.account.id)} if conv.account else {},
+                    'is_actionable': True,
+                })
+        except Exception as exc:
+            logger.warning("universal: erro ao buscar conversas Instagram: %s", exc)
+
+        # ── Messenger ─────────────────────────────────────────────────────
+        try:
+            from apps.messaging.models import MessengerConversation, MessengerAccount
+            ms_accounts = MessengerAccount.objects.filter(user=user) if not (user.is_staff or user.is_superuser) else MessengerAccount.objects.all()
+            ms_qs = MessengerConversation.objects.filter(
+                account__in=ms_accounts, is_active=True
+            ).select_related('account').order_by('-last_message_at', '-created_at')[:200]
+
+            for conv in ms_qs:
+                preview = ''
+                try:
+                    last = conv.messages.order_by('-created_at').values('text', 'message_type').first()
+                    if last and last['text']:
+                        preview = last['text'][:80]
+                except Exception:
+                    pass
+
+                all_convs.append({
+                    'id': f"ms_{conv.id}",
+                    'platform': 'messenger',
+                    'platform_icon_key': 'messenger',
+                    'source_conversation_id': str(conv.id),
+                    'account_id': str(conv.account.id) if conv.account else None,
+                    'display_name': conv.participant_name or conv.psid,
+                    'secondary_identifier': conv.psid,
+                    'last_message_preview': preview,
+                    'last_message_at': conv.last_message_at.isoformat() if conv.last_message_at else None,
+                    'unread_count': conv.unread_count or 0,
+                    'status': 'open',
+                    'route': '/messenger/inbox',
+                    'route_params': {'account': str(conv.account.id)} if conv.account else {},
+                    'is_actionable': True,
+                })
+        except Exception as exc:
+            logger.warning("universal: erro ao buscar conversas Messenger: %s", exc)
+
+        # Ordenar por last_message_at desc (None vai para o fim)
+        all_convs.sort(
+            key=lambda c: c['last_message_at'] or '',
+            reverse=True,
+        )
+
+        return Response({
+            'count': len(all_convs),
+            'next': None,
+            'previous': None,
+            'results': all_convs,
+        })
+
+    @extend_schema(
         summary="Get conversation statistics",
         responses={200: dict}
     )
