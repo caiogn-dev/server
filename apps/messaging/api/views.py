@@ -32,9 +32,15 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
     serializer_class = UnifiedConversationSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        return self.queryset.filter(platform_account__user=self.request.user)
+
 
 class MessengerMessageViewSet(viewsets.ModelViewSet):
     """ViewSet LEGACY para mensagens - redireciona para UnifiedMessage."""
     queryset = UnifiedMessage.objects.filter(conversation__platform='messenger')
     serializer_class = UnifiedMessageSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return self.queryset.filter(conversation__platform_account__user=self.request.user)

@@ -46,7 +46,11 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'is_active']
 
     def get_queryset(self):
-        return WhatsAppAccount.objects.filter(is_active=True)
+        user = self.request.user
+        qs = WhatsAppAccount.objects.filter(is_active=True)
+        if not (user.is_staff or user.is_superuser):
+            qs = qs.filter(owner=user)
+        return qs
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -299,21 +303,35 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
-        queryset = Message.objects.select_related('account', 'conversation').all()
-        
-        # Filter by phone_number (from_number OR to_number)
+        from django.db.models import Q
+        user = self.request.user
+        queryset = Message.objects.select_related('account', 'conversation')
+        if not (user.is_staff or user.is_superuser):
+            queryset = queryset.filter(account__owner=user)
+
         phone_number = self.request.query_params.get('phone_number')
         if phone_number:
-            from django.db.models import Q
             queryset = queryset.filter(
                 Q(from_number__icontains=phone_number) | Q(to_number__icontains=phone_number)
             )
-        
-        # Default ordering by created_at desc
+
         ordering = self.request.query_params.get('ordering', '-created_at')
         queryset = queryset.order_by(ordering)
-        
+
         return queryset
+
+    def _get_owned_account(self, account_id):
+        """Return account if it belongs to the requesting user, else raise PermissionDenied."""
+        from rest_framework.exceptions import PermissionDenied
+        user = self.request.user
+        try:
+            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
+        except WhatsAppAccount.DoesNotExist:
+            from rest_framework.exceptions import NotFound
+            raise NotFound('Account not found.')
+        if not (user.is_staff or user.is_superuser) and account.owner != user:
+            raise PermissionDenied('You do not have permission to use this account.')
+        return account
 
     @extend_schema(
         summary="Send text message",
@@ -325,7 +343,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a text message."""
         serializer = SendTextMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_text_message(**serializer.validated_data)
         
@@ -344,7 +363,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a text message (compatibility endpoint)."""
         serializer = SendTextMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_text_message(**serializer.validated_data)
         
@@ -363,7 +383,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a template message."""
         serializer = SendTemplateMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_template_message(**serializer.validated_data)
         
@@ -382,7 +403,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive buttons message."""
         serializer = SendInteractiveButtonsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_interactive_buttons(**serializer.validated_data)
         
@@ -401,7 +423,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive list message."""
         serializer = SendInteractiveListSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_interactive_list(**serializer.validated_data)
         
@@ -420,7 +443,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an image message."""
         serializer = SendImageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_image(**serializer.validated_data)
         
@@ -439,7 +463,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a document message."""
         serializer = SendDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         message = service.send_document(**serializer.validated_data)
         
@@ -458,7 +483,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Mark a message as read."""
         serializer = MarkAsReadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         success = service.mark_as_read(
             account_id=str(serializer.validated_data['account_id']),
@@ -477,7 +503,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         messages = service.get_conversation_history(
             account_id=str(serializer.validated_data['account_id']),
@@ -497,7 +524,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._get_owned_account(serializer.validated_data['account_id'])
+
         service = MessageService()
         stats = service.get_message_stats(
             account_id=str(serializer.validated_data['account_id']),
@@ -520,4 +548,8 @@ class MessageTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'status', 'category']
 
     def get_queryset(self):
-        return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        user = self.request.user
+        qs = MessageTemplate.objects.select_related('account').filter(is_active=True)
+        if not (user.is_staff or user.is_superuser):
+            qs = qs.filter(account__owner=user)
+        return qs
