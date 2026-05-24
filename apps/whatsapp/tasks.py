@@ -247,14 +247,15 @@ def process_message_with_agent(self, message_id: str):
         
         # Check handover status - don't respond if in human mode
         if message.conversation:
-            handover = getattr(message.conversation, 'handover', None)
-            if handover and handover.current_owner == 'human':
+            # Check conversation.mode (primary source of truth)
+            if getattr(message.conversation, 'mode', 'auto') == 'human':
                 logger.info(f"Conversation {message.conversation.id} in human mode, skipping agent")
                 return {'status': 'skipped', 'reason': 'human_mode'}
-            
-            # Check conversation handover status (legacy field)
-            if hasattr(message.conversation, 'handover_status') and message.conversation.handover_status == 'human':
-                logger.info(f"Conversation {message.conversation.id} handover_status is human, skipping agent")
+
+            # Check ConversationHandover.status (uses .status, not .current_owner)
+            handover = getattr(message.conversation, 'handover', None)
+            if handover and getattr(handover, 'status', 'bot') == 'human':
+                logger.info(f"Conversation {message.conversation.id} handover status is human, skipping agent")
                 return {'status': 'skipped', 'reason': 'human_mode'}
         
         # Process with agent

@@ -399,6 +399,24 @@ class WebhookService:
         except Exception as e:
             logger.warning(f"[post_process] Error updating contact name: {e}")
 
+        # Não responder quando a conversa está em atendimento humano
+        if message.conversation:
+            conv_mode = getattr(message.conversation, 'mode', 'auto')
+            if conv_mode == 'human':
+                logger.info(
+                    f"[post_process] Conversa {message.conversation.id} em modo humano, ignorando orquestrador"
+                )
+                return
+            try:
+                handover = getattr(message.conversation, 'handover', None)
+                if handover and getattr(handover, 'status', 'bot') == 'human':
+                    logger.info(
+                        f"[post_process] Conversa {message.conversation.id} com handover=human, ignorando orquestrador"
+                    )
+                    return
+            except Exception:
+                pass
+
         # ===== NOVO ORQUESTRADOR PASTITA =====
         try:
             orchestrator = PastitaOrchestrator(

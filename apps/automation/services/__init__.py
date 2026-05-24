@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-<<<<<<< HEAD
-from .context_service import AutomationContext, AutomationContextService
-=======
 """
 Pastita Automation Services
 
@@ -25,6 +22,9 @@ from .pastita_langgraph_orchestrator import (
     get_orchestrator,
 )
 
+# Context service
+from .context_service import AutomationContext, AutomationContextService
+
 # Tools do sistema
 from .pastita_tools import (
     PASTITA_TOOLS,
@@ -43,7 +43,6 @@ from .pastita_tools import (
 )
 
 # Serviços de sessão
->>>>>>> 51b7318 (feat: implementa novo orquestrador WhatsApp com PIX)
 from .session_manager import SessionManager, SessionContext, get_session_manager
 
 # Mensagens unificadas
@@ -67,6 +66,9 @@ __all__ = [
     'ContextRouter',
     'process_whatsapp_message_langgraph',
     'get_orchestrator',
+    # Context service
+    'AutomationContext',
+    'AutomationContextService',
     # Tools
     'PASTITA_TOOLS',
     'get_menu',
@@ -85,12 +87,7 @@ __all__ = [
     'SessionManager',
     'SessionContext',
     'get_session_manager',
-<<<<<<< HEAD
-    'AutomationContext',
-    'AutomationContextService',
-=======
     # Legacy
->>>>>>> 51b7318 (feat: implementa novo orquestrador WhatsApp com PIX)
     'AutomationService',
     # Messaging
     'UnifiedMessagingService',
