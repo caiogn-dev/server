@@ -52,6 +52,17 @@ class DriveService:
         result = svc.files().create(body=metadata, fields='id').execute()
         return result['id']
 
+    def create_subfolder_with_url(self, name: str, parent_id: str) -> tuple:
+        """Create a subfolder and return (folder_id, webViewLink)."""
+        svc = self._get_service()
+        metadata = {
+            'name': name,
+            'mimeType': 'application/vnd.google-apps.folder',
+            'parents': [parent_id],
+        }
+        result = svc.files().create(body=metadata, fields='id,webViewLink').execute()
+        return result['id'], result.get('webViewLink', '')
+
     def upload_image(self, image_bytes: bytes, filename: str, folder_id: str) -> tuple:
         svc = self._get_service()
         metadata = {'name': filename, 'parents': [folder_id]}

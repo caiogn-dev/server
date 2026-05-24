@@ -78,10 +78,23 @@ def generate_pack(self, pack_id: str):
         client_obj.drive_folder_id = folder_id
         client_obj.save(update_fields=['drive_folder_id'])
 
-    month_folder = drive_svc.create_subfolder(pack.month, client_obj.drive_folder_id)
-    feed_folder = drive_svc.create_subfolder('feed', month_folder)
-    stories_folder = drive_svc.create_subfolder('stories', month_folder)
+    # Fix 2: guard pre-loop Drive calls so a failure resets to PENDING and retries
+    try:
+        month_folder_id, month_folder_url = drive_svc.create_subfolder_with_url(
+            pack.month, client_obj.drive_folder_id
+        )
+        # Fix 3: persist the drive folder URL on the pack
+        pack.drive_folder_url = month_folder_url
+        pack.save(update_fields=['drive_folder_url'])
+        feed_folder = drive_svc.create_subfolder('feed', month_folder_id)
+        stories_folder = drive_svc.create_subfolder('stories', month_folder_id)
+    except Exception as exc:
+        pack.status = PostadoPack.Status.PENDING
+        pack.save(update_fields=['status'])
+        raise self.retry(exc=exc)
 
+    # Fix 1: track how many posts succeed
+    success_count = 0
     for idx, (post_type, _) in enumerate(template, start=1):
         try:
             post = PostadoPost.objects.create(
@@ -115,9 +128,17 @@ def generate_pack(self, pack_id: str):
             post.stories_image_url = stories_url
             post.status = PostadoPost.Status.GENERATED
             post.save()
+            success_count += 1
 
         except Exception as e:
             logger.error(f"generate_pack: post {idx} failed for pack {pack_id}: {e}")
+
+    # Fix 1: if all posts failed, reset to PENDING instead of advancing to REVIEW
+    if success_count == 0:
+        pack.status = PostadoPack.Status.PENDING
+        pack.save(update_fields=['status'])
+        logger.error(f"generate_pack: ALL posts failed for pack {pack_id}, resetting to PENDING")
+        return
 
     pack.status = PostadoPack.Status.REVIEW
     pack.generated_at = timezone.now()

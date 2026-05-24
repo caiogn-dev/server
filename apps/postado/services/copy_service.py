@@ -23,7 +23,13 @@ POST_TYPE_BRIEF = {
     'testimonial': 'Depoimento de cliente satisfeito. Inclua aspas e sensação de autenticidade.',
     'engagement': 'Pergunta ou dica para engajar seguidores. Convide a comentar ou marcar alguém.',
     'behind_scenes': 'Bastidor do negócio. Humanize a marca, mostre a equipe ou processo.',
-    'date': 'Relacionado a uma data comemorativa do mês de junho. Conecte ao negócio.',
+    'date': 'Relacionado a uma data comemorativa do mês. Conecte ao negócio.',
+}
+
+MONTH_NAMES_PT = {
+    1: 'janeiro', 2: 'fevereiro', 3: 'março', 4: 'abril',
+    5: 'maio', 6: 'junho', 7: 'julho', 8: 'agosto',
+    9: 'setembro', 10: 'outubro', 11: 'novembro', 12: 'dezembro',
 }
 
 
@@ -35,7 +41,13 @@ class CopyService:
         client_obj: PostadoClient = post.pack.client
         niche_ctx = NICHE_CONTEXT.get(client_obj.niche, '')
         tone_inst = TONE_INSTRUCTION.get(client_obj.tone, '')
-        type_brief = POST_TYPE_BRIEF.get(post.post_type, '')
+
+        if post.post_type == 'date':
+            month_num = int(post.pack.month.split('-')[1])
+            month_name = MONTH_NAMES_PT.get(month_num, 'do mês')
+            type_brief = f"Relacionado a uma data comemorativa do mês de {month_name}. Conecte ao negócio."
+        else:
+            type_brief = POST_TYPE_BRIEF.get(post.post_type, '')
 
         prompt = f"""Você é um copywriter especialista em redes sociais para {niche_ctx}.
 
