@@ -96,6 +96,9 @@ urlpatterns = [
         path('audit/', include('apps.audit.urls')),
     ])),
 
+    # Postado SaaS — signup + Mercado Pago webhook
+    path('api/postado/', include('apps.postado.api.urls')),
+
     # SSE (Server-Sent Events) - Fallback for WebSocket
     path('api/sse/', include([
         path('orders/', OrderSSEView.as_view(), name='sse_orders'),
