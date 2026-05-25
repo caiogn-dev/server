@@ -217,6 +217,9 @@ class TestGroup2Migrations(django.test.TestCase):
         importlib.reload(mcp_database)
         self.mod = mcp_database
 
+    def tearDown(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+
     def test_migration_status_returns_list(self):
         result = run(self.mod.call_tool('migration_status', {}))
         data = json.loads(result[0].text)
@@ -226,6 +229,7 @@ class TestGroup2Migrations(django.test.TestCase):
     def test_migration_status_filter_app(self):
         result = run(self.mod.call_tool('migration_status', {'app': 'stores'}))
         data = json.loads(result[0].text)
+        self.assertGreater(len(data['migrations']), 0)
         self.assertTrue(all(m['app'] == 'stores' for m in data['migrations']))
 
     def test_show_migration_sql_returns_sql(self):
@@ -242,7 +246,14 @@ class TestGroup2Migrations(django.test.TestCase):
         result = run(self.mod.call_tool('make_migrations', {'confirm': True}))
         data = json.loads(result[0].text)
         # Should succeed (no changes expected in clean state)
-        self.assertNotIn('Not implemented', data.get('error', ''))
+        self.assertIn('output', data)
+        self.assertIn('created', data)
+        self.assertFalse(data['created'])  # no model changes in clean state
+
+    def test_run_migrations_blocked_without_confirm_in_safe_mode(self):
+        result = run(self.mod.call_tool('run_migrations', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
 
 
 if __name__ == '__main__':

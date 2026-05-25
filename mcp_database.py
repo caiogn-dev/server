@@ -1081,7 +1081,7 @@ async def _make_migrations(args: dict) -> list[TextContent]:
     try:
         output = await sync_to_async(_run)()
     except Exception as exc:
-        return _ok({'output': str(exc), 'created': False})
+        return _err(f'makemigrations falhou: {exc}')
     return _ok({'output': output, 'created': 'No changes detected' not in output})
 
 
@@ -1103,7 +1103,10 @@ async def _run_migrations(args: dict) -> list[TextContent]:
         call_command('migrate', *call_args, stdout=out, verbosity=1)
         return out.getvalue()
 
-    output = await sync_to_async(_run)()
+    try:
+        output = await sync_to_async(_run)()
+    except Exception as exc:
+        return _err(f'migrate falhou: {exc}')
     return _ok({'output': output})
 
 
@@ -1117,7 +1120,10 @@ async def _show_migration_sql(args: dict) -> list[TextContent]:
         call_command('sqlmigrate', args['app'], args['migration'], stdout=out)
         return out.getvalue()
 
-    sql = await sync_to_async(_run)()
+    try:
+        sql = await sync_to_async(_run)()
+    except Exception as exc:
+        return _err(f'sqlmigrate falhou: {exc}')
     return _ok({'sql': sql, 'app': args['app'], 'migration': args['migration']})
 
 
