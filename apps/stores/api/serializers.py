@@ -994,6 +994,38 @@ class StoreCouponCreateSerializer(serializers.ModelSerializer):
             'applicable_categories', 'applicable_products'
         ]
 
+    def validate(self, data):
+        discount_type = data.get('discount_type')
+        if not discount_type and self.instance:
+            discount_type = self.instance.discount_type
+
+        discount_value = data.get('discount_value')
+        if discount_value is None and self.instance:
+            discount_value = self.instance.discount_value
+
+        if discount_value is not None and discount_value <= 0:
+            raise serializers.ValidationError(
+                {'discount_value': 'O valor do desconto deve ser maior que zero.'}
+            )
+
+        if (
+            discount_type == 'percentage'
+            and discount_value is not None
+            and discount_value > 100
+        ):
+            raise serializers.ValidationError(
+                {'discount_value': 'O desconto percentual não pode ser superior a 100%.'}
+            )
+
+        valid_from = data.get('valid_from')
+        valid_until = data.get('valid_until')
+        if valid_from and valid_until and valid_from >= valid_until:
+            raise serializers.ValidationError(
+                {'valid_until': 'A data de término deve ser posterior à data de início.'}
+            )
+
+        return data
+
 
 class CouponValidateSerializer(serializers.Serializer):
     """Serializer for coupon validation request."""
