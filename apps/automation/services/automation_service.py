@@ -479,13 +479,13 @@ class AutomationService:
         if not profile.business_hours:
             return True  # No hours defined = always open
 
+        _WEEKDAY = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
         now = timezone.localtime()
-        day_name = now.strftime('%A').lower()
-        short_day = day_name[:3]
+        day_name = _WEEKDAY[now.weekday()]
 
         day_hours = (
             profile.business_hours.get(day_name, {})
-            or profile.business_hours.get(short_day, {})
+            or profile.business_hours.get(day_name[:3], {})
         )
         if not day_hours or not day_hours.get('open'):
             return False

@@ -108,7 +108,6 @@ class UnifiedService:
         IntentType.PRODUCT_MENTION,
         IntentType.CREATE_ORDER,
         IntentType.ADD_TO_CART,
-        IntentType.DELIVERY_INFO,
         IntentType.PRICE_CHECK,
         IntentType.RECOMMENDATION,
     }
@@ -264,7 +263,8 @@ class UnifiedService:
         store_name = self.store.name
         hours = getattr(self.store, 'operating_hours', None) or {}
         now = timezone.localtime()
-        today = now.strftime('%A').lower()
+        _WEEKDAY = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        today = _WEEKDAY[now.weekday()]
         today_hours = hours.get(today) or {}
 
         lines = [f"{store_name} está fora do horário no momento."]
