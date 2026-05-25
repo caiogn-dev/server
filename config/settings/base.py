@@ -638,6 +638,11 @@ else:
 # ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
 WHITENOISE_MANIFEST_STRICT = False
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Postado — AI social media posts admin
+# ─────────────────────────────────────────────────────────────────────────────
+POSTADO_ADMIN_TOKEN = os.environ.get('POSTADO_ADMIN_TOKEN', '')
+
 
 
 
