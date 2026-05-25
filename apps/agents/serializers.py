@@ -41,7 +41,32 @@ class AgentDetailSerializer(serializers.ModelSerializer):
 
 class AgentCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating agents."""
-    
+
+    temperature = serializers.FloatField(
+        default=0.7,
+        min_value=0.0,
+        max_value=2.0,
+        help_text='Temperatura do modelo (0.0 a 2.0). Padrão: 0.7'
+    )
+    max_tokens = serializers.IntegerField(
+        default=1000,
+        min_value=1,
+        max_value=32000,
+        help_text='Máximo de tokens na resposta (1 a 32000). Padrão: 1000'
+    )
+    timeout = serializers.IntegerField(
+        default=30,
+        min_value=5,
+        max_value=300,
+        help_text='Timeout em segundos (5 a 300). Padrão: 30'
+    )
+    memory_ttl = serializers.IntegerField(
+        default=86400,
+        min_value=60,
+        max_value=2592000,
+        help_text='TTL da memória em segundos (60s a 30 dias). Padrão: 86400 (24h)'
+    )
+
     class Meta:
         model = Agent
         fields = [
