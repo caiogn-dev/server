@@ -303,8 +303,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
     def get_queryset(self):
+        user = self.request.user
         queryset = Message.objects.select_related('account', 'conversation').all()
-        
+
+        if not user.is_superuser:
+            queryset = queryset.filter(account__owner=user)
+
         # Filter by phone_number (from_number OR to_number)
         phone_number = self.request.query_params.get('phone_number')
         if phone_number:
@@ -312,11 +316,11 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(
                 Q(from_number__icontains=phone_number) | Q(to_number__icontains=phone_number)
             )
-        
+
         # Default ordering by created_at desc
         ordering = self.request.query_params.get('ordering', '-created_at')
         queryset = queryset.order_by(ordering)
-        
+
         return queryset
 
     @extend_schema(
@@ -524,4 +528,8 @@ class MessageTemplateViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['account', 'status', 'category']
 
     def get_queryset(self):
-        return MessageTemplate.objects.select_related('account').filter(is_active=True)
+        user = self.request.user
+        qs = MessageTemplate.objects.select_related('account').filter(is_active=True)
+        if not user.is_superuser:
+            qs = qs.filter(account__owner=user)
+        return qs
