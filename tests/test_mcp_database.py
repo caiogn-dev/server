@@ -328,5 +328,56 @@ class TestGroup3Queries(django.test.TestCase):
         self.assertIn('error', data)
 
 
+class TestGroup4Integrity(django.test.TestCase):
+    def setUp(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+        import mcp_database
+        importlib.reload(mcp_database)
+        self.mod = mcp_database
+
+    def tearDown(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+
+    def test_integrity_report_returns_structure(self):
+        result = run(self.mod.call_tool('integrity_report', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('broken_fks', data)
+        self.assertIn('unexpected_nulls', data)
+        self.assertIn('summary', data)
+
+    def test_integrity_report_filter_app(self):
+        result = run(self.mod.call_tool('integrity_report', {'app': 'stores'}))
+        data = json.loads(result[0].text)
+        self.assertIn('summary', data)
+
+    def test_find_orphans_no_store_fk(self):
+        result = run(self.mod.call_tool('find_orphans', {
+            'model_name': 'StoreProduct', 'field_name': 'store'
+        }))
+        data = json.loads(result[0].text)
+        self.assertIn('broken_count', data)
+        self.assertEqual(data['broken_count'], 0)
+
+    def test_find_orphans_unknown_model(self):
+        result = run(self.mod.call_tool('find_orphans', {
+            'model_name': 'Ghost', 'field_name': 'foo'
+        }))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+    def test_find_duplicates_returns_structure(self):
+        result = run(self.mod.call_tool('find_duplicates', {
+            'model_name': 'Store', 'fields': ['slug']
+        }))
+        data = json.loads(result[0].text)
+        self.assertIn('duplicates', data)
+
+    def test_check_nulls_returns_findings(self):
+        result = run(self.mod.call_tool('check_nulls', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('findings', data)
+        self.assertIn('total_findings', data)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1255,19 +1255,207 @@ async def _run_sql(args: dict) -> list[TextContent]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _integrity_report(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 6')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    app_filter = args.get('app', '')
+    broken_fks = []
+    unexpected_nulls = []
+
+    def _check_model(model):
+        local_broken = []
+        local_nulls = []
+        for f in model._meta.get_fields():
+            if not (hasattr(f, 'related_model') and f.related_model and hasattr(f, 'column')):
+                continue
+            if not getattr(f, 'null', False):
+                continue
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(f"""
+                        SELECT COUNT(*) FROM "{model._meta.db_table}" t
+                        WHERE t."{f.column}" IS NOT NULL
+                        AND NOT EXISTS (
+                            SELECT 1 FROM "{f.related_model._meta.db_table}" r
+                            WHERE r.id = t."{f.column}"
+                        )
+                    """)
+                    broken = cursor.fetchone()[0]
+                if broken > 0:
+                    local_broken.append({'model': model.__name__, 'field': f.name, 'broken_count': broken})
+            except Exception:
+                pass
+
+        for f in model._meta.get_fields():
+            if not hasattr(f, 'column'):
+                continue
+            if getattr(f, 'null', True) and getattr(f, 'blank', True):
+                continue
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f'SELECT COUNT(*) FROM "{model._meta.db_table}" WHERE "{f.column}" IS NULL'
+                    )
+                    null_count = cursor.fetchone()[0]
+                if null_count > 0:
+                    local_nulls.append({'model': model.__name__, 'field': f.name, 'null_count': null_count})
+            except Exception:
+                pass
+        return local_broken, local_nulls
+
+    for model in apps.get_models():
+        if app_filter and model._meta.app_label != app_filter:
+            continue
+        b, n = await sync_to_async(_check_model)(model)
+        broken_fks.extend(b)
+        unexpected_nulls.extend(n)
+
+    return _ok({
+        'broken_fks': broken_fks,
+        'unexpected_nulls': unexpected_nulls,
+        'summary': {
+            'total_issues': len(broken_fks) + len(unexpected_nulls),
+            'critical': len(broken_fks),
+            'warnings': len(unexpected_nulls),
+        },
+    })
 
 
 async def _find_orphans(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 6')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    model_name = args['model_name']
+    field_name = args['field_name']
+
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    field = next(
+        (f for f in model._meta.get_fields()
+         if f.name == field_name and hasattr(f, 'related_model') and f.related_model),
+        None
+    )
+    if not field:
+        return _err(f'Campo FK não encontrado: {field_name} em {model_name}')
+
+    related_table = field.related_model._meta.db_table
+    pk_col = field.related_model._meta.pk.column
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT COUNT(*), ARRAY_AGG(t.id::text)
+                FROM "{model._meta.db_table}" t
+                LEFT JOIN "{related_table}" r ON r.{pk_col} = t."{field.column}"
+                WHERE t."{field.column}" IS NOT NULL AND r.{pk_col} IS NULL
+            """)
+            row = cursor.fetchone()
+            return row[0] or 0, (row[1] or [])[:10]
+
+    broken_count, sample_ids = await sync_to_async(_fetch)()
+
+    return _ok({
+        'model': model_name, 'field': field_name,
+        'references': related_table, 'broken_count': broken_count, 'sample_ids': sample_ids,
+    })
 
 
 async def _find_duplicates(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 6')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    model_name = args['model_name']
+    fields = args['fields']
+
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    field_map = {f.name: f.column for f in model._meta.get_fields() if hasattr(f, 'column')}
+    col_names = [field_map.get(fname, fname) for fname in fields]
+    cols_sql = ', '.join(f'"{c}"' for c in col_names)
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT {cols_sql}, COUNT(*) AS cnt, ARRAY_AGG(id::text) AS ids
+                FROM "{model._meta.db_table}"
+                GROUP BY {cols_sql}
+                HAVING COUNT(*) > 1
+                ORDER BY cnt DESC
+                LIMIT 50
+            """)
+            return cursor.fetchall()
+
+    rows = await sync_to_async(_fetch)()
+    result = [
+        {'values': dict(zip(fields, row[:len(fields)])), 'count': row[len(fields)], 'ids': row[len(fields)+1] or []}
+        for row in rows
+    ]
+    return _ok({'model': model_name, 'fields': fields, 'duplicates': result, 'total_groups': len(result)})
 
 
 async def _check_nulls(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 6')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    model_name = args.get('model_name')
+
+    if model_name:
+        m = next(
+            (m for m in apps.get_models()
+             if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+            None
+        )
+        if not m:
+            return _err(f'Model não encontrado: {model_name}')
+        models_to_check = [m]
+    else:
+        models_to_check = list(apps.get_models())
+
+    findings = []
+
+    def _check_model(model):
+        local = []
+        for f in model._meta.get_fields():
+            if not hasattr(f, 'column'):
+                continue
+            if not (getattr(f, 'null', False) or getattr(f, 'blank', False)):
+                continue
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f'SELECT COUNT(*) FROM "{model._meta.db_table}" WHERE "{f.column}" IS NULL'
+                    )
+                    null_count = cursor.fetchone()[0]
+                if null_count > 0:
+                    local.append({
+                        'model': model.__name__, 'field': f.name,
+                        'blank_count': null_count, 'field_type': type(f).__name__,
+                        'severity': 'info' if getattr(f, 'null', False) else 'warning',
+                    })
+            except Exception:
+                pass
+        return local
+
+    for model in models_to_check:
+        findings.extend(await sync_to_async(_check_model)(model))
+
+    return _ok({'total_findings': len(findings), 'findings': findings})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
