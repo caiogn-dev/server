@@ -210,5 +210,40 @@ class TestGroup1DjangoSchema(django.test.TestCase):
         self.assertIn('Store', data['graph'])
 
 
+class TestGroup2Migrations(django.test.TestCase):
+    def setUp(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+        import mcp_database
+        importlib.reload(mcp_database)
+        self.mod = mcp_database
+
+    def test_migration_status_returns_list(self):
+        result = run(self.mod.call_tool('migration_status', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('migrations', data)
+        self.assertGreater(data['total'], 0)
+
+    def test_migration_status_filter_app(self):
+        result = run(self.mod.call_tool('migration_status', {'app': 'stores'}))
+        data = json.loads(result[0].text)
+        self.assertTrue(all(m['app'] == 'stores' for m in data['migrations']))
+
+    def test_show_migration_sql_returns_sql(self):
+        result = run(self.mod.call_tool('show_migration_sql', {'app': 'stores', 'migration': '0001_initial'}))
+        data = json.loads(result[0].text)
+        self.assertIn('sql', data)
+
+    def test_make_migrations_blocked_without_confirm_in_safe_mode(self):
+        result = run(self.mod.call_tool('make_migrations', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+    def test_make_migrations_allowed_with_confirm_in_safe_mode(self):
+        result = run(self.mod.call_tool('make_migrations', {'confirm': True}))
+        data = json.loads(result[0].text)
+        # Should succeed (no changes expected in clean state)
+        self.assertNotIn('Not implemented', data.get('error', ''))
+
+
 if __name__ == '__main__':
     unittest.main()

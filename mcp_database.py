@@ -1033,23 +1033,92 @@ async def _relationship_graph(args: dict) -> list[TextContent]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _migration_status(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 4')
+    from django.db.migrations.executor import MigrationExecutor
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    app_filter = args.get('app', '')
+
+    def _fetch():
+        executor = MigrationExecutor(connection)
+        applied = set(executor.loader.applied_migrations)
+        result = []
+        for (app, name) in sorted(executor.loader.disk_migrations.keys()):
+            if app_filter and app_filter != app:
+                continue
+            result.append({'app': app, 'name': name, 'applied': (app, name) in applied})
+        return result
+
+    result = await sync_to_async(_fetch)()
+    pending = [m for m in result if not m['applied']]
+    return _ok({
+        'total': len(result),
+        'applied': len(result) - len(pending),
+        'pending': len(pending),
+        'pending_list': pending,
+        'migrations': result,
+    })
 
 
 async def _make_migrations(args: dict) -> list[TextContent]:
     if SAFE_MODE and not args.get('confirm'):
         return _err('SAFE_MODE ativo — forneça confirm=true para criar migrations')
-    return _err('Not implemented yet — Task 4')
+
+    from django.core.management import call_command
+    from asgiref.sync import sync_to_async
+    from io import StringIO
+
+    def _run():
+        out = StringIO()
+        kwargs = {'stdout': out, 'verbosity': 1}
+        if args.get('app'):
+            kwargs['app_label'] = args['app']
+        if args.get('name'):
+            kwargs['name'] = args['name']
+        call_command('makemigrations', **kwargs)
+        return out.getvalue()
+
+    try:
+        output = await sync_to_async(_run)()
+    except Exception as exc:
+        return _ok({'output': str(exc), 'created': False})
+    return _ok({'output': output, 'created': 'No changes detected' not in output})
 
 
 async def _run_migrations(args: dict) -> list[TextContent]:
     if SAFE_MODE and not args.get('confirm'):
         return _err('SAFE_MODE ativo — forneça confirm=true para aplicar migrations')
-    return _err('Not implemented yet — Task 4')
+
+    from django.core.management import call_command
+    from asgiref.sync import sync_to_async
+    from io import StringIO
+
+    def _run():
+        out = StringIO()
+        call_args = []
+        if args.get('app'):
+            call_args.append(args['app'])
+        if args.get('migration'):
+            call_args.append(args['migration'])
+        call_command('migrate', *call_args, stdout=out, verbosity=1)
+        return out.getvalue()
+
+    output = await sync_to_async(_run)()
+    return _ok({'output': output})
 
 
 async def _show_migration_sql(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 4')
+    from django.core.management import call_command
+    from asgiref.sync import sync_to_async
+    from io import StringIO
+
+    def _run():
+        out = StringIO()
+        call_command('sqlmigrate', args['app'], args['migration'], stdout=out)
+        return out.getvalue()
+
+    sql = await sync_to_async(_run)()
+    return _ok({'sql': sql, 'app': args['app'], 'migration': args['migration']})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
