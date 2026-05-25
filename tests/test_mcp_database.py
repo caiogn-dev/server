@@ -379,5 +379,50 @@ class TestGroup4Integrity(django.test.TestCase):
         self.assertIn('total_findings', data)
 
 
+class TestGroup5Business(django.test.TestCase):
+    def setUp(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+        import mcp_database
+        importlib.reload(mcp_database)
+        self.mod = mcp_database
+
+    def tearDown(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+
+    def test_find_ghost_users_structure(self):
+        result = run(self.mod.call_tool('find_ghost_users', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('total_ghost_users', data)
+        self.assertIn('sample', data)
+        self.assertIn('recommendation', data)
+
+    def test_customer_identity_audit_structure(self):
+        result = run(self.mod.call_tool('customer_identity_audit', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('total_auth_users', data)
+        self.assertIn('ghost_users_total', data)
+        self.assertIn('recommendation', data)
+
+    def test_stats_drift_check_structure(self):
+        result = run(self.mod.call_tool('stats_drift_check', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('drift_count', data)
+        self.assertIn('customers_with_drift', data)
+
+    def test_security_audit_structure(self):
+        result = run(self.mod.call_tool('security_audit', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('plaintext_secrets', data)
+        self.assertIn('critical_count', data)
+
+    def test_pgvector_readiness_structure(self):
+        result = run(self.mod.call_tool('pgvector_readiness', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('extension_installed', data)
+        self.assertIn('pg_version', data)
+        self.assertIn('ready', data)
+        self.assertIsInstance(data['extension_installed'], bool)
+
+
 if __name__ == '__main__':
     unittest.main()

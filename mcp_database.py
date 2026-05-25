@@ -1469,23 +1469,251 @@ async def _check_nulls(args: dict) -> list[TextContent]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _find_ghost_users(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 7')
+    from django.contrib.auth import get_user_model
+    from asgiref.sync import sync_to_async
+
+    User = get_user_model()
+    limit = min(int(args.get('limit', 20)), 100)
+
+    def _fetch():
+        ghost_qs = User.objects.filter(email__contains='@pastita.local') | \
+                   User.objects.filter(username__startswith='cliente_')
+        total = ghost_qs.count()
+        sample = []
+        for user in ghost_qs.order_by('-date_joined')[:limit]:
+            sc_count = 0
+            try:
+                from apps.stores.models import StoreCustomer
+                sc_count = StoreCustomer.objects.filter(user=user).count()
+            except Exception:
+                pass
+            sample.append({
+                'id': user.id, 'email': user.email, 'username': user.username,
+                'date_joined': user.date_joined, 'store_customers': sc_count,
+            })
+        return total, sample
+
+    total, sample = await sync_to_async(_fetch)()
+    return _ok({
+        'total_ghost_users': total,
+        'sample': sample,
+        'recommendation': (
+            'Estes usuários podem ser migrados para UnifiedUser e removidos do auth.User '
+            'como parte do sub-projeto A (customer identity consolidation)'
+        ),
+    })
 
 
 async def _customer_identity_audit(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 7')
+    from django.contrib.auth import get_user_model
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    User = get_user_model()
+
+    def _fetch():
+        result = {}
+        result['total_auth_users'] = User.objects.count()
+
+        ghost_count = User.objects.filter(email__contains='@pastita.local').count()
+        ghost_count += User.objects.filter(username__startswith='cliente_').exclude(
+            email__contains='@pastita.local'
+        ).count()
+        result['ghost_users_total'] = ghost_count
+
+        try:
+            from apps.stores.models import StoreCustomer
+            sc_total = StoreCustomer.objects.count()
+            sc_no_unified = StoreCustomer.objects.filter(unified_user__isnull=True).count()
+            result['store_customers_total'] = sc_total
+            result['store_customers_without_unified_user'] = sc_no_unified
+        except Exception as exc:
+            result['store_customers_error'] = str(exc)
+            sc_total = 1
+            sc_no_unified = 1
+
+        try:
+            from apps.users.models import UnifiedUser
+            result['unified_users_total'] = UnifiedUser.objects.count()
+            result['unified_users_without_django_user'] = UnifiedUser.objects.filter(user__isnull=True).count()
+        except Exception as exc:
+            result['unified_users_error'] = str(exc)
+
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM (
+                        SELECT store_id, phone, COUNT(*) cnt
+                        FROM stores_storecustomer
+                        WHERE phone IS NOT NULL AND phone != ''
+                        GROUP BY store_id, phone HAVING COUNT(*) > 1
+                    ) t
+                """)
+                result['customers_with_duplicate_phone_same_store'] = cursor.fetchone()[0]
+        except Exception as exc:
+            result['duplicate_phone_error'] = str(exc)
+
+        sc_total_safe = result.get('store_customers_total', 1) or 1
+        sc_migrated = sc_total_safe - result.get('store_customers_without_unified_user', sc_total_safe)
+        result['migration_completion'] = f'{int(sc_migrated / sc_total_safe * 100)}%'
+        result['recommendation'] = (
+            'Sub-projeto A: (1) UnifiedUser canônico, (2) remover UserProfile redundante, '
+            '(3) migrar StoreCustomer.user → unified_user, (4) deletar ghost auth.Users'
+        )
+        return result
+
+    return _ok(await sync_to_async(_fetch)())
 
 
 async def _stats_drift_check(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 7')
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    store_slug = args.get('store_slug')
+    limit = min(int(args.get('limit', 20)), 100)
+
+    def _fetch():
+        extra_join = ''
+        params = []
+        where_extra = ''
+
+        if store_slug:
+            extra_join = 'JOIN stores_store s ON sc.store_id = s.id'
+            where_extra = 'AND s.slug = %s'
+            params.append(store_slug)
+
+        params.append(limit)
+
+        with connection.cursor() as cursor:
+            cursor.execute(f"""
+                SELECT
+                    sc.id::text,
+                    sc.total_orders AS cached_orders,
+                    sc.total_spent AS cached_spent,
+                    COUNT(so.id) AS real_orders,
+                    COALESCE(SUM(so.total), 0) AS real_spent,
+                    sc.phone, sc.email
+                FROM stores_storecustomer sc
+                {extra_join}
+                LEFT JOIN stores_storeorder so ON so.customer_id = sc.id
+                    AND so.status NOT IN ('cancelled', 'rejected')
+                WHERE TRUE {where_extra}
+                GROUP BY sc.id, sc.total_orders, sc.total_spent, sc.phone, sc.email
+                HAVING COUNT(so.id) != COALESCE(sc.total_orders, 0)
+                    OR COALESCE(SUM(so.total), 0) != COALESCE(sc.total_spent, 0)
+                ORDER BY ABS(COUNT(so.id) - COALESCE(sc.total_orders, 0)) DESC
+                LIMIT %s
+            """, params)
+            return cursor.fetchall()
+
+    try:
+        rows = await sync_to_async(_fetch)()
+    except Exception:
+        rows = []
+
+    result = [
+        {
+            'customer_id': r[0], 'cached_total_orders': r[1], 'cached_total_spent': str(r[2]),
+            'real_total_orders': r[3], 'real_total_spent': str(r[4]),
+            'phone': r[5], 'email': r[6], 'drift_detected': True,
+        }
+        for r in rows
+    ]
+    return _ok({
+        'drift_count': len(result),
+        'customers_with_drift': result,
+        'note': 'Apenas clientes com divergência são mostrados',
+    })
 
 
 async def _security_audit(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 7')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    sensitive_keywords = ('token', 'key', 'secret', 'password', 'api_key', 'access_token')
+
+    def _scan():
+        findings = []
+        for model in apps.get_models():
+            for f in model._meta.get_fields():
+                if not hasattr(f, 'column'):
+                    continue
+                fname_lower = f.name.lower()
+                if not any(kw in fname_lower for kw in sensitive_keywords):
+                    continue
+                if 'encrypted' in type(f).__name__.lower():
+                    continue
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(f"""
+                            SELECT COUNT(*) FROM "{model._meta.db_table}"
+                            WHERE "{f.column}" IS NOT NULL AND CAST("{f.column}" AS TEXT) != ''
+                        """)
+                        records_with_data = cursor.fetchone()[0]
+
+                    findings.append({
+                        'model': model.__name__, 'app': model._meta.app_label,
+                        'field': f.name, 'field_type': type(f).__name__,
+                        'records_with_data': records_with_data,
+                        'severity': 'CRITICAL' if records_with_data > 0 else 'INFO',
+                    })
+                except Exception:
+                    pass
+        return findings
+
+    findings = await sync_to_async(_scan)()
+    critical = [f for f in findings if f['severity'] == 'CRITICAL']
+    return _ok({
+        'plaintext_secrets': findings,
+        'critical_count': len(critical),
+        'recommendation': (
+            'Migrar campos CRITICAL para EncryptedCharField — ver apps/core/fields.py'
+            if critical else 'Nenhum campo crítico encontrado'
+        ),
+    })
 
 
 async def _pgvector_readiness(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 7')
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT version()")
+            pg_version_str = cursor.fetchone()[0]
+            pg_version = pg_version_str.split()[1] if pg_version_str else '?'
+
+            cursor.execute("SELECT 1 FROM pg_extension WHERE extname = 'vector'")
+            extension_installed = cursor.fetchone() is not None
+
+            existing_vector_columns = []
+            if extension_installed:
+                cursor.execute("""
+                    SELECT table_name, column_name
+                    FROM information_schema.columns
+                    WHERE udt_name = 'vector'
+                """)
+                existing_vector_columns = [{'table': r[0], 'column': r[1]} for r in cursor.fetchall()]
+
+        return pg_version, extension_installed, existing_vector_columns
+
+    pg_version, extension_installed, existing_vector_columns = await sync_to_async(_fetch)()
+
+    try:
+        import pgvector
+        django_package = f'pgvector instalado: {pgvector.__version__}'
+    except ImportError:
+        django_package = 'pgvector não instalado — pip install pgvector'
+
+    return _ok({
+        'extension_installed': extension_installed,
+        'pg_version': pg_version,
+        'install_command': 'CREATE EXTENSION IF NOT EXISTS vector;',
+        'existing_vector_columns': existing_vector_columns,
+        'django_package': django_package,
+        'ready': extension_installed and 'não instalado' not in django_package,
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════════════
