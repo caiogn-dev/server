@@ -1608,8 +1608,13 @@ async def _stats_drift_check(args: dict) -> list[TextContent]:
 
     try:
         rows = await sync_to_async(_fetch)()
-    except Exception:
-        rows = []
+    except Exception as exc:
+        return _ok({
+            'drift_count': 0,
+            'customers_with_drift': [],
+            'error': f'Consulta falhou: {exc}',
+            'note': 'Verifique se as migrations foram aplicadas e as tabelas existem',
+        })
 
     result = [
         {
