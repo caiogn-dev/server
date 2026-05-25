@@ -288,7 +288,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         try:
             wa_messages = WhatsAppMessage.objects.filter(
                 conversation_id=conversation.id
-            ).order_by('created_at')
+            ).select_related('account').order_by('created_at')
             for msg in wa_messages:
                 messages_list.append({
                     'id': str(msg.id),
@@ -319,7 +319,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         try:
             ig_messages = InstagramMessage.objects.filter(
                 conversation_id=conversation.id
-            ).order_by('created_at')
+            ).select_related('account').order_by('created_at')
             for msg in ig_messages:
                 messages_list.append({
                     'id': str(msg.id),
