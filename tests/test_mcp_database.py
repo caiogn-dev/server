@@ -14,7 +14,7 @@ import unittest
 
 
 def run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 class TestScaffold(unittest.TestCase):
@@ -23,6 +23,9 @@ class TestScaffold(unittest.TestCase):
         import mcp_database
         importlib.reload(mcp_database)
         self.mod = mcp_database
+
+    def tearDown(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
 
     def test_26_tools_registered(self):
         tools = run(self.mod.list_tools())
