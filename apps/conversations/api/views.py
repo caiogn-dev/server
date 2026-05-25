@@ -348,8 +348,37 @@ class ConversationViewSet(viewsets.ModelViewSet):
         
         # Sort messages by created_at
         messages_list.sort(key=lambda x: x['created_at'] or '')
-        
-        return Response(messages_list)
+
+        # Pagination
+        try:
+            limit = min(int(request.query_params.get('limit', 100)), 200)
+        except (ValueError, TypeError):
+            limit = 100
+
+        before_id = request.query_params.get('before_id')
+
+        if before_id:
+            # Find the message with this ID and return only messages before it
+            cutoff_index = None
+            for i, msg in enumerate(messages_list):
+                if msg['id'] == before_id:
+                    cutoff_index = i
+                    break
+            if cutoff_index is not None:
+                messages_list = messages_list[:cutoff_index]
+
+        # Apply limit (take last N for cursor-based pagination: newest at end)
+        has_more = len(messages_list) > limit
+        if has_more:
+            messages_list = messages_list[-limit:]
+
+        next_before_id = messages_list[0]['id'] if has_more and messages_list else None
+
+        return Response({
+            'results': messages_list,
+            'has_more': has_more,
+            'next_before_id': next_before_id,
+        })
 
     @extend_schema(
         summary="Get conversation statistics",
