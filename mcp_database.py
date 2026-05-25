@@ -56,6 +56,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import sys
 import traceback
 from typing import Any
@@ -592,6 +593,8 @@ async def _table_schema(args: dict) -> list[TextContent]:
                 {'name': r[0], 'pg_type': r[1], 'nullable': r[2] == 'YES', 'default': r[3]}
                 for r in cursor.fetchall()
             ]
+            if not columns:
+                return None, None, None, None  # signal not found
 
             cursor.execute("""
                 SELECT
@@ -642,6 +645,8 @@ async def _table_schema(args: dict) -> list[TextContent]:
         return columns, indexes, constraints, triggers
 
     columns, indexes, constraints, triggers = await sync_to_async(_fetch)()
+    if columns is None:
+        return _err(f'Tabela não encontrada: {table_name}')
 
     return _ok({
         'table': table_name,
@@ -703,12 +708,22 @@ async def _explain_query(args: dict) -> list[TextContent]:
     params = args.get('params', [])
     analyze = bool(args.get('analyze', False))
 
+    _EXPLAIN_BLOCKED = re.compile(
+        r'\b(INSERT|UPDATE|DELETE|DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|COPY|CALL)\b',
+        re.IGNORECASE,
+    )
+    if _EXPLAIN_BLOCKED.search(sql):
+        return _err('SQL contém statement não permitido em explain_query')
+
     def _fetch():
         with connection.cursor() as cursor:
             if analyze:
-                cursor.execute("SET LOCAL statement_timeout = '30s'")
+                cursor.execute("SET statement_timeout = '30s'")
             cursor.execute(f"EXPLAIN {'ANALYZE ' if analyze else ''}(FORMAT JSON) {sql}", params)
-            return cursor.fetchone()[0]
+            result = cursor.fetchone()[0]
+            if analyze:
+                cursor.execute("SET statement_timeout = DEFAULT")
+            return result
 
     plan = await sync_to_async(_fetch)()
 
@@ -824,7 +839,7 @@ async def _compare_model_vs_table(args: dict) -> list[TextContent]:
         'in_model_not_in_table': [c for c in model_cols if c not in db_cols],
         'in_table_not_in_model': [c for c in db_cols if c not in model_cols],
         'type_mismatches': mismatches,
-        'status': 'DIVERGE' if (set(model_cols) - set(db_cols) or set(db_cols) - set(model_cols)) else 'OK',
+        'status': 'DIVERGE' if (set(model_cols) - set(db_cols) or set(db_cols) - set(model_cols) or mismatches) else 'OK',
     })
 
 
