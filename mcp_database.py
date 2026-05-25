@@ -844,23 +844,185 @@ async def _compare_model_vs_table(args: dict) -> list[TextContent]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STUBS — Group 1: Schema Django
+#  Group 1: Schema Django
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _schema_overview(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 3')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    app_filter = args.get('app_filter', '')
+    result = {}
+
+    for model in apps.get_models():
+        app_label = model._meta.app_label
+        if app_filter and app_filter != app_label:
+            continue
+
+        def _count(m=model):
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute(f'SELECT COUNT(*) FROM "{m._meta.db_table}"')
+                    return cursor.fetchone()[0]
+            except Exception:
+                return '?'
+
+        row_count = await sync_to_async(_count)()
+
+        fields_summary = [
+            f'{f.name}: {type(f).__name__}'
+            for f in model._meta.get_fields() if hasattr(f, 'column')
+        ]
+        fks = [
+            f'{f.name} → {f.related_model.__name__}'
+            for f in model._meta.get_fields()
+            if hasattr(f, 'related_model') and f.related_model and hasattr(f, 'column')
+        ]
+
+        result.setdefault(app_label, []).append({
+            'model': model.__name__,
+            'db_table': model._meta.db_table,
+            'fields_count': len(fields_summary),
+            'fields': fields_summary,
+            'foreign_keys': fks,
+            'row_count': row_count,
+        })
+
+    return _ok(result)
 
 
 async def _model_detail(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 3')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    model_name = args['model_name']
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    fields = []
+    for f in model._meta.get_fields():
+        if not hasattr(f, 'column'):
+            continue
+        info = {
+            'name': f.name, 'column': f.column, 'type': type(f).__name__,
+            'null': getattr(f, 'null', False), 'blank': getattr(f, 'blank', False),
+            'unique': getattr(f, 'unique', False),
+        }
+        if getattr(f, 'max_length', None):
+            info['max_length'] = f.max_length
+        if getattr(f, 'related_model', None):
+            info['related_to'] = f.related_model.__name__
+            rf = getattr(f, 'remote_field', None)
+            info['on_delete'] = str(getattr(rf, 'on_delete', '')) if rf else ''
+        fields.append(info)
+
+    reverse_relations = [
+        {'from_model': rel.related_model.__name__, 'field': rel.field.name, 'on_delete': str(rel.on_delete)}
+        for rel in model._meta.related_objects
+    ]
+
+    def _fetch_count_and_sample():
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute(f'SELECT COUNT(*) FROM "{model._meta.db_table}"')
+                row_count = cursor.fetchone()[0]
+        except Exception:
+            row_count = '?'
+
+        sample = []
+        try:
+            for obj in model.objects.all()[:3]:
+                record = {
+                    f.name: getattr(obj, f.name, None)
+                    for f in model._meta.get_fields() if hasattr(f, 'column')
+                }
+                sample.append(_mask_sensitive(record))
+        except Exception as exc:
+            sample = [{'error': str(exc)}]
+
+        return row_count, sample
+
+    row_count, sample = await sync_to_async(_fetch_count_and_sample)()
+
+    return _ok({
+        'model': model_name, 'app': model._meta.app_label,
+        'db_table': model._meta.db_table, 'row_count': row_count,
+        'fields': fields, 'reverse_relations': reverse_relations,
+        'unique_together': [list(u) for u in model._meta.unique_together],
+        'indexes': [str(i) for i in model._meta.indexes],
+        'sample_records': sample,
+    })
 
 
 async def _find_field(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 3')
+    from django.apps import apps
+
+    field_name = args.get('field_name', '')
+    field_type = args.get('field_type', '')
+
+    if not field_name and not field_type:
+        return _err('Forneça field_name ou field_type (pelo menos um)')
+
+    result = []
+    for model in apps.get_models():
+        for f in model._meta.get_fields():
+            if not hasattr(f, 'column'):
+                continue
+            name_match = field_name and field_name.lower() == f.name.lower()
+            type_match = field_type and type(f).__name__ == field_type
+            if (field_name and not field_type and name_match) or \
+               (field_type and not field_name and type_match) or \
+               (field_name and field_type and (name_match or type_match)):
+                result.append({
+                    'app': model._meta.app_label, 'model': model.__name__,
+                    'field': f.name, 'type': type(f).__name__, 'column': f.column,
+                })
+
+    return _ok({'count': len(result), 'results': result})
 
 
 async def _relationship_graph(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 3')
+    from django.apps import apps
+
+    model_name = args['model_name']
+    depth = int(args.get('depth', 2))
+
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    lines = [model_name]
+
+    def _out(m, prefix, d):
+        if d > depth:
+            return
+        for f in m._meta.get_fields():
+            if hasattr(f, 'related_model') and f.related_model and hasattr(f, 'column'):
+                rf = getattr(f, 'remote_field', None)
+                on_del = str(getattr(rf, 'on_delete', '')) if rf else ''
+                lines.append(f'{prefix}→ {f.related_model.__name__} (FK, {on_del})')
+                if d < depth:
+                    _out(f.related_model, prefix + '  ', d + 1)
+
+    def _in(m, prefix):
+        for rel in m._meta.related_objects:
+            lines.append(f'{prefix}← {rel.related_model.__name__}.{rel.field.name} ({rel.on_delete})')
+
+    _out(model, '├── ', 1)
+    _in(model, '└── ')
+
+    return _ok({'graph': '\n'.join(lines)})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

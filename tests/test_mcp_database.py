@@ -156,5 +156,59 @@ class TestGroup0PostgreSQL(django.test.TestCase):
         self.assertIn('error', data)
 
 
+class TestGroup1DjangoSchema(django.test.TestCase):
+    def setUp(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+        import mcp_database
+        importlib.reload(mcp_database)
+        self.mod = mcp_database
+
+    def test_schema_overview_returns_apps(self):
+        result = run(self.mod.call_tool('schema_overview', {}))
+        data = json.loads(result[0].text)
+        self.assertIsInstance(data, dict)
+        self.assertIn('stores', data)
+
+    def test_schema_overview_filter(self):
+        result = run(self.mod.call_tool('schema_overview', {'app_filter': 'stores'}))
+        data = json.loads(result[0].text)
+        self.assertIn('stores', data)
+        self.assertNotIn('automation', data)
+
+    def test_model_detail_known_model(self):
+        result = run(self.mod.call_tool('model_detail', {'model_name': 'Store'}))
+        data = json.loads(result[0].text)
+        self.assertIn('fields', data)
+        self.assertIn('reverse_relations', data)
+        self.assertIn('row_count', data)
+
+    def test_model_detail_unknown(self):
+        result = run(self.mod.call_tool('model_detail', {'model_name': 'GhostModel99'}))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+    def test_find_field_by_name(self):
+        result = run(self.mod.call_tool('find_field', {'field_name': 'slug'}))
+        data = json.loads(result[0].text)
+        self.assertGreater(data['count'], 0)
+        self.assertTrue(all(r['field'] == 'slug' for r in data['results']))
+
+    def test_find_field_by_type(self):
+        result = run(self.mod.call_tool('find_field', {'field_type': 'JSONField'}))
+        data = json.loads(result[0].text)
+        self.assertGreater(data['count'], 0)
+
+    def test_find_field_requires_at_least_one(self):
+        result = run(self.mod.call_tool('find_field', {}))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+    def test_relationship_graph_stores(self):
+        result = run(self.mod.call_tool('relationship_graph', {'model_name': 'Store'}))
+        data = json.loads(result[0].text)
+        self.assertIn('graph', data)
+        self.assertIn('Store', data['graph'])
+
+
 if __name__ == '__main__':
     unittest.main()
