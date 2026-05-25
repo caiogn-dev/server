@@ -510,7 +510,10 @@ class CouponMinOrderTest(TestCase):
     def test_coupon_below_minimum_is_invalid(self):
         result = CheckoutService.validate_coupon(self.store, 'MIN50', Decimal('20.00'))
         self.assertFalse(result['valid'])
-        self.assertIn('minimo', result.get('error', '').lower())
+        import unicodedata
+        normalized = unicodedata.normalize('NFD', result.get('error', '').lower())
+        stripped = ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        self.assertIn('minimo', stripped)
 
     def test_coupon_at_minimum_is_valid(self):
         result = CheckoutService.validate_coupon(self.store, 'MIN50', Decimal('50.00'))

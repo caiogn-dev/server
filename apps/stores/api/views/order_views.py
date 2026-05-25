@@ -427,6 +427,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'today': queryset.filter(
                     payment_status='paid', created_at__gte=today
                 ).aggregate(total=Sum('total'))['total'] or 0,
+                'week': queryset.filter(
+                    payment_status='paid', created_at__gte=week_ago
+                ).aggregate(total=Sum('total'))['total'] or 0,
             }
         }
         
