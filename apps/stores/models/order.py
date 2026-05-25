@@ -147,6 +147,7 @@ class StoreOrder(BaseModel):
             models.Index(fields=['store', 'payment_status']),
             models.Index(fields=['customer_phone']),
             models.Index(fields=['customer_email']),
+            models.Index(fields=['store', '-created_at']),
         ]
 
     def __str__(self):
