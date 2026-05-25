@@ -124,6 +124,7 @@ class IntentDetector:
         ],
         IntentType.CANCEL_ORDER: [
             r'(cancelar pedido|quero cancelar|posso cancelar|preciso cancelar)',
+            r'^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais)\.?$',
         ],
         IntentType.MODIFY_ORDER: [
             r'(trocar|alterar pedido|mudar pedido|modificar|tirar|adicionar|remover)',

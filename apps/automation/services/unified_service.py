@@ -103,7 +103,6 @@ class UnifiedService:
 
     OUT_OF_HOURS_INTENTS = {
         IntentType.GREETING,
-        IntentType.MENU_REQUEST,
         IntentType.PRODUCT_INQUIRY,
         IntentType.PRODUCT_MENTION,
         IntentType.CREATE_ORDER,
@@ -735,7 +734,12 @@ class UnifiedService:
         # Checkout state has priority over intent detection/LLM.
         # Example: after asking for preparation notes, "nao" means "no notes",
         # not a general negative answer for the LLM to reinterpret.
-        if self._has_pending_delivery_address_session() or self._has_pending_notes_session():
+        # Exception: cancel commands must escape the checkout handler so they reach CANCEL_ORDER.
+        _early_cancel = bool(re.search(
+            r'(?i)^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais)\.?$',
+            normalized,
+        ))
+        if not _early_cancel and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
             from apps.whatsapp.intents.handlers import UnknownHandler
             try:
                 handler = UnknownHandler(self.account, self.conversation, self.company)

@@ -814,10 +814,15 @@ class LangchainService:
         }
         try:
             if store and store.operating_hours:
+                all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
                 hours_text = "\n⏰ HORÁRIO DE FUNCIONAMENTO:\n"
-                for day, hours in store.operating_hours.items():
-                    day_pt = _DAY_PT.get(day.lower(), day.capitalize())
-                    hours_text += f"• {day_pt}: {hours.get('open', '--:--')} às {hours.get('close', '--:--')}\n"
+                for day in all_days:
+                    day_pt = _DAY_PT.get(day, day.capitalize())
+                    day_hours = store.operating_hours.get(day)
+                    if day_hours:
+                        hours_text += f"• {day_pt}: {day_hours.get('open', '--:--')} às {day_hours.get('close', '--:--')}\n"
+                    else:
+                        hours_text += f"• {day_pt}: FECHADO\n"
                 context_parts.append(hours_text)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
