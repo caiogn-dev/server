@@ -17,6 +17,7 @@ class PublicStoreSerializer(serializers.ModelSerializer):
             'logo_url', 'primary_color', 'secondary_color',
             'phone', 'email', 'address', 'city', 'state',
             'operating_hours', 'is_open',
+            'template', 'tagline',
         ]
 
     def get_logo_url(self, obj):

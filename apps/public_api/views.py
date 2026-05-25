@@ -154,6 +154,29 @@ class _LeadThrottle(AnonRateThrottle):
     scope = 'lead_create'
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
+def store_by_domain(request):
+    """
+    Resolve a custom domain to a store config.
+    GET /api/v1/public/store-by-domain/?domain=cesaladas.com.br
+    Returns 400 if ?domain is missing, 404 if not found or inactive.
+    """
+    domain = request.query_params.get('domain', '').strip()
+    if not domain:
+        return Response({'detail': 'Parâmetro domain é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Strip port (e.g. cesaladas.com.br:3000 → cesaladas.com.br)
+    domain = domain.split(':')[0].strip()
+
+    store = Store.objects.filter(custom_domain=domain, status='active').first()
+    if not store:
+        return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+
+    return Response(PublicStoreSerializer(store, context={'request': request}).data)
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @throttle_classes([_LeadThrottle])
