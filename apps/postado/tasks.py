@@ -144,3 +144,49 @@ def generate_pack(self, pack_id: str):
     pack.generated_at = timezone.now()
     pack.save(update_fields=['status', 'generated_at'])
     logger.info(f"generate_pack: pack {pack_id} ready for review ({pack.posts.count()} posts)")
+
+
+@shared_task(name='apps.postado.tasks.regenerate_single_post', bind=True, max_retries=2)
+def regenerate_single_post(self, post_id: str):
+    from apps.postado.models import PostadoPost
+    try:
+        post = PostadoPost.objects.select_related('pack__client').get(id=post_id)
+    except PostadoPost.DoesNotExist:
+        return
+
+    post.status = 'pending'
+    post.save(update_fields=['status'])
+
+    copy_svc = CopyService()
+    img_svc = ImageService()
+    drive_svc = DriveService()
+    client_obj = post.pack.client
+
+    try:
+        copy_data = copy_svc.generate(post)
+        post.caption = copy_data.get('caption', '')
+        post.cta = copy_data.get('cta', '')
+        post.hashtags = copy_data.get('hashtags', '')
+        post.image_prompt = copy_data.get('image_prompt', '')
+        post.save(update_fields=['caption', 'cta', 'hashtags', 'image_prompt'])
+
+        base = img_svc.generate_base_image(post, post.caption)
+        feed = img_svc.composite_feed(base, client_obj.business_name, post.caption, post.cta)
+        stories = img_svc.to_stories(feed)
+
+        folder_id = client_obj.drive_folder_id or ''
+        filename = f"post_{post.post_number:02d}_regen.png"
+        _, feed_url = drive_svc.upload_image(img_svc.save_to_bytes(feed), filename, folder_id)
+        _, stories_url = drive_svc.upload_image(img_svc.save_to_bytes(stories), f"post_{post.post_number:02d}_stories_regen.png", folder_id)
+
+        post.feed_image_url = feed_url
+        post.stories_image_url = stories_url
+        post.status = 'generated'
+        post.save(update_fields=['feed_image_url', 'stories_image_url', 'status'])
+
+    except Exception as exc:
+        logger.error(f"regenerate_single_post: post {post_id} failed: {exc}")
+        post.status = 'rejected'
+        post.revision_notes = str(exc)
+        post.save(update_fields=['status', 'revision_notes'])
+        raise self.retry(exc=exc, countdown=30)
