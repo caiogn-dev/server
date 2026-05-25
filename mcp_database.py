@@ -527,31 +527,305 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STUBS — Group 0: PostgreSQL Tables
+#  Group 0: PostgreSQL Tables
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _list_tables(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 2')
+    from django.db import connection
+    from django.apps import apps
+    from asgiref.sync import sync_to_async
+
+    schema = args.get('schema', 'public')
+    filter_str = args.get('filter', '')
+
+    model_table_map = {
+        model._meta.db_table: f'{model._meta.app_label}.{model.__name__}'
+        for model in apps.get_models()
+    }
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    t.table_name,
+                    COALESCE(s.n_live_tup, 0) AS row_count,
+                    pg_size_pretty(pg_total_relation_size(quote_ident(t.table_name))) AS size_pretty
+                FROM information_schema.tables t
+                LEFT JOIN pg_stat_user_tables s ON s.relname = t.table_name
+                WHERE t.table_schema = %s AND t.table_type = 'BASE TABLE'
+                ORDER BY t.table_name
+            """, [schema])
+            return cursor.fetchall()
+
+    rows = await sync_to_async(_fetch)()
+
+    result = []
+    for table_name, row_count, size_pretty in rows:
+        if filter_str and filter_str not in table_name:
+            continue
+        result.append({
+            'table_name': table_name,
+            'row_count': row_count,
+            'size_pretty': size_pretty or '0 bytes',
+            'has_django_model': table_name in model_table_map,
+            'django_model': model_table_map.get(table_name),
+        })
+
+    return _ok(result)
 
 
 async def _table_schema(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 2')
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    table_name = args['table_name']
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s
+                ORDER BY ordinal_position
+            """, [table_name])
+            columns = [
+                {'name': r[0], 'pg_type': r[1], 'nullable': r[2] == 'YES', 'default': r[3]}
+                for r in cursor.fetchall()
+            ]
+
+            cursor.execute("""
+                SELECT
+                    i.relname,
+                    ARRAY_AGG(a.attname ORDER BY k.n) AS cols,
+                    ix.indisunique,
+                    pg_get_expr(ix.indpred, ix.indrelid)
+                FROM pg_class t
+                JOIN pg_index ix ON t.oid = ix.indrelid
+                JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, n) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND a.attnum > 0
+                WHERE t.relname = %s AND t.relkind = 'r'
+                GROUP BY i.relname, ix.indisunique, ix.indpred, ix.indrelid
+                ORDER BY i.relname
+            """, [table_name])
+            indexes = [
+                {'name': r[0], 'columns': r[1], 'unique': r[2], 'partial_where': r[3]}
+                for r in cursor.fetchall()
+            ]
+
+            cursor.execute("""
+                SELECT kcu.column_name, ccu.table_name, ccu.column_name, rc.delete_rule
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+                JOIN information_schema.referential_constraints rc
+                    ON tc.constraint_name = rc.constraint_name
+                JOIN information_schema.constraint_column_usage ccu
+                    ON rc.unique_constraint_name = ccu.constraint_name
+                WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = %s
+            """, [table_name])
+            constraints = [
+                {'type': 'FK', 'column': r[0], 'references': f'{r[1]}({r[2]})', 'on_delete': r[3]}
+                for r in cursor.fetchall()
+            ]
+
+            cursor.execute("""
+                SELECT trigger_name, event_manipulation, action_timing
+                FROM information_schema.triggers
+                WHERE event_object_table = %s
+            """, [table_name])
+            triggers = [
+                {'name': r[0], 'event': r[1], 'timing': r[2]}
+                for r in cursor.fetchall()
+            ]
+
+        return columns, indexes, constraints, triggers
+
+    columns, indexes, constraints, triggers = await sync_to_async(_fetch)()
+
+    return _ok({
+        'table': table_name,
+        'columns': columns,
+        'indexes': indexes,
+        'constraints': constraints,
+        'triggers': triggers,
+    })
 
 
 async def _table_stats(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 2')
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    table_name = args.get('table_name')
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            if table_name:
+                cursor.execute("""
+                    SELECT relname,
+                        n_live_tup,
+                        pg_size_pretty(pg_total_relation_size(quote_ident(relname))),
+                        pg_size_pretty(pg_indexes_size(quote_ident(relname))),
+                        seq_scan, idx_scan, last_vacuum, last_analyze
+                    FROM pg_stat_user_tables WHERE relname = %s
+                """, [table_name])
+            else:
+                cursor.execute("""
+                    SELECT relname,
+                        n_live_tup,
+                        pg_size_pretty(pg_total_relation_size(quote_ident(relname))),
+                        pg_size_pretty(pg_indexes_size(quote_ident(relname))),
+                        seq_scan, idx_scan, last_vacuum, last_analyze
+                    FROM pg_stat_user_tables
+                    ORDER BY pg_total_relation_size(quote_ident(relname)) DESC
+                    LIMIT 20
+                """)
+            return cursor.fetchall()
+
+    rows = await sync_to_async(_fetch)()
+
+    return _ok([
+        {
+            'table': r[0], 'rows_estimate': r[1] or 0,
+            'total_size': r[2] or '0 bytes', 'index_size': r[3] or '0 bytes',
+            'seq_scans': r[4] or 0, 'idx_scans': r[5] or 0,
+            'last_vacuum': r[6], 'last_analyze': r[7],
+        }
+        for r in rows
+    ])
 
 
 async def _explain_query(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 2')
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    sql = args['sql']
+    params = args.get('params', [])
+    analyze = bool(args.get('analyze', False))
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            if analyze:
+                cursor.execute("SET LOCAL statement_timeout = '30s'")
+            cursor.execute(f"EXPLAIN {'ANALYZE ' if analyze else ''}(FORMAT JSON) {sql}", params)
+            return cursor.fetchone()[0]
+
+    plan = await sync_to_async(_fetch)()
+
+    plan_text = json.dumps(plan, default=str)
+    warnings = []
+    if 'Seq Scan' in plan_text:
+        warnings.append('Seq Scan detectado — considere adicionar um index')
+
+    return _ok({'plan': plan, 'warnings': warnings, 'analyze_used': analyze})
 
 
 async def _table_indexes(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 2')
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    table_name = args['table_name']
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT i.relname,
+                    ARRAY_AGG(a.attname ORDER BY k.n) AS cols,
+                    am.amname,
+                    ix.indisunique,
+                    COALESCE(s.idx_scan, 0)
+                FROM pg_class t
+                JOIN pg_index ix ON t.oid = ix.indrelid
+                JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN pg_am am ON i.relam = am.oid
+                JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, n) ON TRUE
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum AND a.attnum > 0
+                LEFT JOIN pg_stat_user_indexes s ON s.indexrelname = i.relname
+                WHERE t.relname = %s AND t.relkind = 'r'
+                GROUP BY i.relname, am.amname, ix.indisunique, s.idx_scan
+                ORDER BY i.relname
+            """, [table_name])
+            indexes = [
+                {'name': r[0], 'columns': r[1], 'type': r[2], 'unique': r[3], 'usage_count': r[4]}
+                for r in cursor.fetchall()
+            ]
+
+            cursor.execute("""
+                SELECT kcu.column_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                    ON tc.constraint_name = kcu.constraint_name
+                WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = %s
+            """, [table_name])
+            fk_cols = {r[0] for r in cursor.fetchall()}
+
+        return indexes, fk_cols
+
+    indexes, fk_cols = await sync_to_async(_fetch)()
+
+    indexed_leading = {idx['columns'][0] for idx in indexes if idx['columns']}
+    missing_fk_indexes = [f'{col} — FK sem index!' for col in fk_cols if col not in indexed_leading]
+
+    return _ok({'table': table_name, 'indexes': indexes, 'missing_fk_indexes': missing_fk_indexes})
 
 
 async def _compare_model_vs_table(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 2')
+    from django.apps import apps
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
+    model_name = args['model_name']
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    model_cols = {f.column: f for f in model._meta.get_fields() if hasattr(f, 'column')}
+
+    def _fetch():
+        with connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = %s
+            """, [model._meta.db_table])
+            return {r[0]: r[1] for r in cursor.fetchall()}
+
+    db_cols = await sync_to_async(_fetch)()
+
+    _pg_map = {
+        'UUIDField': 'uuid', 'CharField': 'character varying', 'TextField': 'text',
+        'IntegerField': 'integer', 'BigIntegerField': 'bigint', 'BooleanField': 'boolean',
+        'DateTimeField': 'timestamp with time zone', 'DateField': 'date',
+        'DecimalField': 'numeric', 'FloatField': 'double precision',
+        'JSONField': 'jsonb', 'EmailField': 'character varying', 'URLField': 'character varying',
+        'PositiveSmallIntegerField': 'smallint', 'PositiveIntegerField': 'integer',
+        'AutoField': 'integer', 'BigAutoField': 'bigint',
+    }
+
+    mismatches = []
+    for col, field in model_cols.items():
+        if col in db_cols:
+            expected = _pg_map.get(type(field).__name__, '')
+            if expected and expected != db_cols[col]:
+                mismatches.append({
+                    'field': col,
+                    'model_type': type(field).__name__,
+                    'pg_type': db_cols[col],
+                    'expected_pg_type': expected,
+                })
+
+    return _ok({
+        'model': model_name,
+        'db_table': model._meta.db_table,
+        'in_model_not_in_table': [c for c in model_cols if c not in db_cols],
+        'in_table_not_in_model': [c for c in db_cols if c not in model_cols],
+        'type_mismatches': mismatches,
+        'status': 'DIVERGE' if (set(model_cols) - set(db_cols) or set(db_cols) - set(model_cols)) else 'OK',
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════════════

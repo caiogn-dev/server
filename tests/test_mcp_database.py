@@ -89,5 +89,72 @@ class TestScaffold(unittest.TestCase):
         self.assertIn('confirm', data['error'])
 
 
+import django.test
+
+
+class TestGroup0PostgreSQL(django.test.TestCase):
+    def setUp(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+        import mcp_database
+        importlib.reload(mcp_database)
+        self.mod = mcp_database
+
+    def tearDown(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+
+    def test_list_tables_returns_list(self):
+        result = run(self.mod.call_tool('list_tables', {}))
+        data = json.loads(result[0].text)
+        self.assertIsInstance(data, list)
+        self.assertGreater(len(data), 0)
+
+    def test_list_tables_has_expected_keys(self):
+        result = run(self.mod.call_tool('list_tables', {}))
+        data = json.loads(result[0].text)
+        first = data[0]
+        self.assertIn('table_name', first)
+        self.assertIn('row_count', first)
+        self.assertIn('has_django_model', first)
+
+    def test_list_tables_filter(self):
+        # Store.Meta.db_table = 'stores' in this project
+        result = run(self.mod.call_tool('list_tables', {'filter': 'stores'}))
+        data = json.loads(result[0].text)
+        # Every result contains the filter string
+        self.assertTrue(all('stores' in t['table_name'] for t in data))
+
+    def test_table_schema_returns_columns(self):
+        # Store.Meta.db_table = 'stores' in this project
+        result = run(self.mod.call_tool('table_schema', {'table_name': 'stores'}))
+        data = json.loads(result[0].text)
+        self.assertIn('columns', data)
+        self.assertIn('indexes', data)
+        self.assertIn('constraints', data)
+        self.assertGreater(len(data['columns']), 0)
+
+    def test_table_stats_top20(self):
+        result = run(self.mod.call_tool('table_stats', {}))
+        data = json.loads(result[0].text)
+        self.assertIsInstance(data, list)
+
+    def test_table_indexes_returns_structure(self):
+        # Store.Meta.db_table = 'stores' in this project
+        result = run(self.mod.call_tool('table_indexes', {'table_name': 'stores'}))
+        data = json.loads(result[0].text)
+        self.assertIn('indexes', data)
+        self.assertIn('missing_fk_indexes', data)
+
+    def test_compare_model_vs_table_known_model(self):
+        result = run(self.mod.call_tool('compare_model_vs_table', {'model_name': 'Store'}))
+        data = json.loads(result[0].text)
+        self.assertIn('in_model_not_in_table', data)
+        self.assertIn('in_table_not_in_model', data)
+
+    def test_compare_model_vs_table_unknown(self):
+        result = run(self.mod.call_tool('compare_model_vs_table', {'model_name': 'NonExistentModel99'}))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+
 if __name__ == '__main__':
     unittest.main()
