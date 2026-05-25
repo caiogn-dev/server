@@ -256,5 +256,71 @@ class TestGroup2Migrations(django.test.TestCase):
         self.assertIn('error', data)
 
 
+class TestGroup3Queries(django.test.TestCase):
+    def setUp(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+        import mcp_database
+        importlib.reload(mcp_database)
+        self.mod = mcp_database
+
+    def tearDown(self):
+        os.environ['MCP_DB_SAFE_MODE'] = 'true'
+
+    def test_count_records_stores(self):
+        result = run(self.mod.call_tool('count_records', {'model_name': 'Store'}))
+        data = json.loads(result[0].text)
+        self.assertIn('count', data)
+        self.assertIsInstance(data['count'], int)
+
+    def test_count_records_unknown_model(self):
+        result = run(self.mod.call_tool('count_records', {'model_name': 'GhostXYZ'}))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+    def test_sample_records_returns_list(self):
+        result = run(self.mod.call_tool('sample_records', {'model_name': 'Store', 'limit': 2}))
+        data = json.loads(result[0].text)
+        self.assertIn('records', data)
+        self.assertLessEqual(len(data['records']), 2)
+
+    def test_sample_records_masks_sensitive_fields(self):
+        from apps.agents.models import Agent
+        if Agent.objects.exists():
+            result = run(self.mod.call_tool('sample_records', {'model_name': 'Agent', 'limit': 1}))
+            data = json.loads(result[0].text)
+            for record in data['records']:
+                if 'api_key' in record:
+                    self.assertEqual(record['api_key'], '***REDACTED***')
+
+    def test_run_sql_select(self):
+        result = run(self.mod.call_tool('run_sql', {'sql': 'SELECT 1 AS n'}))
+        data = json.loads(result[0].text)
+        self.assertIn('rows', data)
+        self.assertEqual(data['rows'][0]['n'], 1)
+
+    def test_run_sql_write_requires_confirm(self):
+        result = run(self.mod.call_tool('run_sql', {
+            'sql': "UPDATE stores_store SET name='x' WHERE 1=0"
+        }))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+        self.assertIn('confirm', data['error'])
+
+    def test_run_sql_drop_always_blocked(self):
+        result = run(self.mod.call_tool('run_sql', {
+            'sql': 'DROP TABLE stores_store', 'confirm': True
+        }))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+        self.assertIn('bloqueado', data['error'])
+
+    def test_run_sql_truncate_always_blocked(self):
+        result = run(self.mod.call_tool('run_sql', {
+            'sql': 'TRUNCATE stores_store', 'confirm': True
+        }))
+        data = json.loads(result[0].text)
+        self.assertIn('error', data)
+
+
 if __name__ == '__main__':
     unittest.main()

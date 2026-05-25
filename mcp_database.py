@@ -1128,33 +1128,113 @@ async def _show_migration_sql(args: dict) -> list[TextContent]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STUBS — Group 3: Queries
+#  Group 3: Queries
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def _count_records(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 5')
+    from django.apps import apps
+    from asgiref.sync import sync_to_async
+
+    model_name = args['model_name']
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    filter_args = args.get('filter', {})
+
+    def _fetch():
+        qs = model.objects.all()
+        if filter_args:
+            qs = qs.filter(**filter_args)
+        return qs.count()
+
+    count = await sync_to_async(_fetch)()
+    return _ok({'model': model_name, 'count': count, 'filter_applied': filter_args})
 
 
 async def _sample_records(args: dict) -> list[TextContent]:
-    return _err('Not implemented yet — Task 5')
+    from django.apps import apps
+    from asgiref.sync import sync_to_async
+
+    model_name = args['model_name']
+    limit = int(args.get('limit', 5))
+    filter_args = args.get('filter', {})
+    order_by = args.get('order_by', '-pk')
+
+    model = next(
+        (m for m in apps.get_models()
+         if m.__name__ == model_name or f'{m._meta.app_label}.{m.__name__}' == model_name),
+        None
+    )
+    if not model:
+        return _err(f'Model não encontrado: {model_name}')
+
+    def _fetch():
+        qs = model.objects.all()
+        if filter_args:
+            qs = qs.filter(**filter_args)
+        try:
+            qs = qs.order_by(order_by)
+        except Exception:
+            pass
+        records = []
+        for obj in qs[:limit]:
+            record = {
+                f.name: getattr(obj, f.name, None)
+                for f in model._meta.get_fields() if hasattr(f, 'column')
+            }
+            records.append(_mask_sensitive(record))
+        return records
+
+    records = await sync_to_async(_fetch)()
+    return _ok({'model': model_name, 'count': len(records), 'records': records})
 
 
 async def _run_sql(args: dict) -> list[TextContent]:
+    from django.db import connection
+    from asgiref.sync import sync_to_async
+
     sql = args.get('sql', '')
+    params = args.get('params', [])
+    confirm = bool(args.get('confirm', False))
     sql_upper = sql.strip().upper()
     is_write = any(sql_upper.startswith(kw) for kw in ('INSERT', 'UPDATE', 'DELETE'))
+
     for blocked in _BLOCKED_STATEMENTS:
         if blocked in sql_upper:
-            return _err(
-                f'SQL bloqueado: {blocked} não é permitido. '
-                'Use migrations para mudanças de schema.'
-            )
-    if SAFE_MODE and is_write and not args.get('confirm'):
+            return _err(f'SQL bloqueado: {blocked} não é permitido. Use migrations para mudanças de schema.')
+
+    if SAFE_MODE and is_write and not confirm:
         return _err(
             f'SAFE_MODE ativo — escrita requer confirm=true. '
             f'SQL detectado como write (começa com {sql_upper.split()[0] if sql_upper else "?"}).'
         )
-    return _err('Not implemented yet — Task 5')
+
+    def _execute():
+        with connection.cursor() as cursor:
+            if is_write:
+                cursor.execute("SET statement_timeout = '30s'")
+            cursor.execute(sql, params)
+            if is_write:
+                cursor.execute("SET statement_timeout = DEFAULT")
+
+            if sql_upper.startswith('SELECT') or sql_upper.startswith('WITH'):
+                cols = [d[0] for d in cursor.description]
+                rows = [dict(zip(cols, row)) for row in cursor.fetchall()]
+                return {'rows': rows, 'count': len(rows)}
+            else:
+                return {'rows_affected': cursor.rowcount}
+
+    try:
+        result = await sync_to_async(_execute)()
+    except Exception as exc:
+        return _err(f'SQL falhou: {exc}')
+
+    return _ok(result)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
