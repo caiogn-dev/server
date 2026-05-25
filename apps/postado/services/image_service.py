@@ -57,8 +57,13 @@ class ImageService:
         style = NICHE_IMAGE_STYLE.get(client_obj.niche, 'professional photography')
         color = client_obj.brand_colors[0] if client_obj.brand_colors else '#333333'
 
+        desc = client_obj.description[:100] if client_obj.description else ''
+        products = ', '.join(client_obj.products[:3]) if client_obj.products else ''
+        context = f", {desc}" if desc else ''
+        context += f", featuring {products}" if products else ''
+
         prompt = (
-            f"{style}, {post.post_type} themed, brand color {color}, "
+            f"{style}, {post.post_type} themed, brand color {color}{context}, "
             f"Instagram post style, vibrant, high quality, no text overlay"
         )
 

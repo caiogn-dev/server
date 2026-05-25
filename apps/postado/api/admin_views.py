@@ -34,12 +34,28 @@ class AdminClientListView(APIView):
 
 class AdminClientDetailView(APIView):
     permission_classes = [IsPostadoAdmin]
+    EDITABLE_FIELDS = {
+        'business_name', 'niche', 'tone', 'brand_colors', 'logo_url',
+        'description', 'products', 'target_audience', 'instagram_handle',
+        'contact_info', 'reference_images', 'brand_guidelines', 'status',
+    }
 
     def get(self, request, client_id):
         try:
             client = PostadoClient.objects.prefetch_related('packs').get(id=client_id)
         except PostadoClient.DoesNotExist:
             return Response({'error': 'not found'}, status=404)
+        return Response(PostadoClientAdminSerializer(client).data)
+
+    def patch(self, request, client_id):
+        try:
+            client = PostadoClient.objects.get(id=client_id)
+        except PostadoClient.DoesNotExist:
+            return Response({'error': 'not found'}, status=404)
+        data = {k: v for k, v in request.data.items() if k in self.EDITABLE_FIELDS}
+        for field, value in data.items():
+            setattr(client, field, value)
+        client.save(update_fields=list(data.keys()))
         return Response(PostadoClientAdminSerializer(client).data)
 
 
@@ -82,6 +98,29 @@ class AdminPackApproveView(APIView):
         pack.approved_at = timezone.now()
         pack.save(update_fields=['status', 'approved_at'])
         return Response({'status': 'approved'})
+
+
+class AdminGeneratePackView(APIView):
+    permission_classes = [IsPostadoAdmin]
+
+    def post(self, request):
+        client_id = request.data.get('client_id')
+        month = request.data.get('month')
+        if not client_id or not month:
+            return Response({'error': 'client_id and month required'}, status=400)
+        try:
+            client = PostadoClient.objects.get(id=client_id)
+        except PostadoClient.DoesNotExist:
+            return Response({'error': 'client not found'}, status=404)
+        if PostadoPack.objects.filter(client=client, month=month).exists():
+            return Response({'error': f'Pack {month} já existe para este cliente'}, status=409)
+        pack = PostadoPack.objects.create(client=client, month=month)
+        from apps.postado.tasks import generate_pack
+        generate_pack.delay(str(pack.id))
+        return Response({
+            'status': 'generating',
+            'pack_id': str(pack.id),
+        }, status=201)
 
 
 class AdminPostRegenerateView(APIView):

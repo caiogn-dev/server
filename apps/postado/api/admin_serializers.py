@@ -76,4 +76,6 @@ class PostadoClientAdminSerializer(serializers.ModelSerializer):
             'id', 'business_name', 'niche', 'tone', 'brand_colors',
             'logo_url', 'email', 'whatsapp', 'drive_folder_id',
             'mp_subscription_id', 'status', 'created_at', 'pack_count', 'packs',
+            'description', 'products', 'target_audience', 'instagram_handle',
+            'contact_info', 'reference_images', 'brand_guidelines',
         ]

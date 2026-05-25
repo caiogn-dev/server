@@ -49,11 +49,33 @@ class CopyService:
         else:
             type_brief = POST_TYPE_BRIEF.get(post.post_type, '')
 
+        extras = []
+        if client_obj.description:
+            extras.append(f"Sobre o negócio: {client_obj.description}")
+        if client_obj.products:
+            extras.append(f"Produtos/serviços destaque: {', '.join(client_obj.products[:8])}")
+        if client_obj.target_audience:
+            extras.append(f"Público-alvo: {client_obj.target_audience}")
+        if client_obj.instagram_handle:
+            extras.append(f"Instagram: @{client_obj.instagram_handle.lstrip('@')}")
+        if client_obj.contact_info:
+            ci = client_obj.contact_info
+            if ci.get('phone'):
+                extras.append(f"Telefone: {ci['phone']}")
+            if ci.get('address'):
+                extras.append(f"Endereço: {ci['address']}")
+            if ci.get('delivery_link'):
+                extras.append(f"Link delivery: {ci['delivery_link']}")
+        if client_obj.brand_guidelines:
+            extras.append(f"Diretrizes de marca: {client_obj.brand_guidelines}")
+        extra_block = '\n'.join(extras)
+
         prompt = f"""Você é um copywriter especialista em redes sociais para {niche_ctx}.
 
 Negócio: {client_obj.business_name}
 Nicho: {niche_ctx}
 {tone_inst}
+{extra_block}
 
 Crie conteúdo para o seguinte post:
 Tipo: {type_brief}
