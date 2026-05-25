@@ -1272,13 +1272,14 @@ async def _integrity_report(args: dict) -> list[TextContent]:
             if not getattr(f, 'null', False):
                 continue
             try:
+                related_pk = f.related_model._meta.pk.column
                 with connection.cursor() as cursor:
                     cursor.execute(f"""
                         SELECT COUNT(*) FROM "{model._meta.db_table}" t
                         WHERE t."{f.column}" IS NOT NULL
                         AND NOT EXISTS (
                             SELECT 1 FROM "{f.related_model._meta.db_table}" r
-                            WHERE r.id = t."{f.column}"
+                            WHERE r."{related_pk}" = t."{f.column}"
                         )
                     """)
                     broken = cursor.fetchone()[0]
@@ -1348,11 +1349,12 @@ async def _find_orphans(args: dict) -> list[TextContent]:
 
     related_table = field.related_model._meta.db_table
     pk_col = field.related_model._meta.pk.column
+    pk_col_src = model._meta.pk.column
 
     def _fetch():
         with connection.cursor() as cursor:
             cursor.execute(f"""
-                SELECT COUNT(*), ARRAY_AGG(t.id::text)
+                SELECT COUNT(*), ARRAY_AGG(t."{pk_col_src}"::text)
                 FROM "{model._meta.db_table}" t
                 LEFT JOIN "{related_table}" r ON r.{pk_col} = t."{field.column}"
                 WHERE t."{field.column}" IS NOT NULL AND r.{pk_col} IS NULL
@@ -1385,13 +1387,17 @@ async def _find_duplicates(args: dict) -> list[TextContent]:
         return _err(f'Model não encontrado: {model_name}')
 
     field_map = {f.name: f.column for f in model._meta.get_fields() if hasattr(f, 'column')}
-    col_names = [field_map.get(fname, fname) for fname in fields]
+    unknown_fields = [fname for fname in fields if fname not in field_map]
+    if unknown_fields:
+        return _err(f'Campos desconhecidos em {model_name}: {unknown_fields}')
+    col_names = [field_map[fname] for fname in fields]
     cols_sql = ', '.join(f'"{c}"' for c in col_names)
+    pk_col = model._meta.pk.column
 
     def _fetch():
         with connection.cursor() as cursor:
             cursor.execute(f"""
-                SELECT {cols_sql}, COUNT(*) AS cnt, ARRAY_AGG(id::text) AS ids
+                SELECT {cols_sql}, COUNT(*) AS cnt, ARRAY_AGG("{pk_col}"::text) AS ids
                 FROM "{model._meta.db_table}"
                 GROUP BY {cols_sql}
                 HAVING COUNT(*) > 1
