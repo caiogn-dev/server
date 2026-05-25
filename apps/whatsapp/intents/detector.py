@@ -94,6 +94,7 @@ class IntentDetector:
             r'(card[áa]pio|menu|o que (tem|voc[êe]s t[êe]m)|op[çc][õo]es|opcoes|lista|cat[áa]logo|produtos)',
             r'(ver produtos|mostrar card[áa]pio|mostra o menu|tem o que|o que vende)',
             r'(quais s[ãa]o os produtos|o que tem dispon[íi]vel)',
+            r'(olhad[ao] no card[áa]pio|dar uma olhada|ver o card[áa]pio|quero ver o (menu|card[áa]pio))',
             r'^(saladas?|bebidas?|de saladas?|tem salada|quero ver saladas?)[\s!?.]*$',
         ],
         IntentType.TRACK_ORDER: [

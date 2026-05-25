@@ -343,6 +343,14 @@ def notify_order_status_change(self, order_id: str, new_status: str):
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
+    from django.core.cache import cache
+
+    # Idempotency: prevent duplicate notifications on task retry
+    idempotency_key = f"order_notify:{order_id}:{new_status}"
+    if cache.get(idempotency_key):
+        logger.info(f"Skipping duplicate notification for order {order_id} status {new_status}")
+        return
+    cache.set(idempotency_key, 1, timeout=3600)
 
     try:
         order = Order.objects.select_related('store').get(id=order_id)
