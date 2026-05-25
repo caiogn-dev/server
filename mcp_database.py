@@ -1161,7 +1161,7 @@ async def _sample_records(args: dict) -> list[TextContent]:
     from asgiref.sync import sync_to_async
 
     model_name = args['model_name']
-    limit = int(args.get('limit', 5))
+    limit = min(int(args.get('limit', 5)), 200)
     filter_args = args.get('filter', {})
     order_by = args.get('order_by', '-pk')
 
@@ -1204,9 +1204,20 @@ async def _run_sql(args: dict) -> list[TextContent]:
     sql_upper = sql.strip().upper()
     is_write = any(sql_upper.startswith(kw) for kw in ('INSERT', 'UPDATE', 'DELETE'))
 
-    for blocked in _BLOCKED_STATEMENTS:
-        if blocked in sql_upper:
-            return _err(f'SQL bloqueado: {blocked} não é permitido. Use migrations para mudanças de schema.')
+    _DDL_BLOCKED = re.compile(
+        r'\b(DROP|TRUNCATE|ALTER\s+TABLE)\b',
+        re.IGNORECASE,
+    )
+    if _DDL_BLOCKED.search(sql):
+        match = _DDL_BLOCKED.search(sql).group(0)
+        return _err(f'SQL bloqueado: {match} não é permitido. Use migrations para mudanças de schema.')
+
+    _RUN_SQL_DANGEROUS = re.compile(
+        r'\b(CREATE|GRANT|REVOKE|COPY|CALL)\b',
+        re.IGNORECASE,
+    )
+    if SAFE_MODE and _RUN_SQL_DANGEROUS.search(sql):
+        return _err('SQL contém statement não permitido em SAFE_MODE: CREATE/GRANT/REVOKE/COPY/CALL')
 
     if SAFE_MODE and is_write and not confirm:
         return _err(
@@ -1218,9 +1229,11 @@ async def _run_sql(args: dict) -> list[TextContent]:
         with connection.cursor() as cursor:
             if is_write:
                 cursor.execute("SET statement_timeout = '30s'")
-            cursor.execute(sql, params)
-            if is_write:
-                cursor.execute("SET statement_timeout = DEFAULT")
+            try:
+                cursor.execute(sql, params)
+            finally:
+                if is_write:
+                    cursor.execute("SET statement_timeout = DEFAULT")
 
             if sql_upper.startswith('SELECT') or sql_upper.startswith('WITH'):
                 cols = [d[0] for d in cursor.description]
