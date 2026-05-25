@@ -77,7 +77,7 @@ class StoreOrder(BaseModel):
         related_name='store_orders'
     )
     customer_name = models.CharField(max_length=255)
-    customer_email = models.EmailField()
+    customer_email = models.EmailField(blank=True)
     customer_phone = models.CharField(max_length=20)
 
     # Status

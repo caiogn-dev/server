@@ -77,7 +77,8 @@ def _build_user_data(order, request=None, tracking_data=None):
     user_data = {}
     tracking_data = tracking_data or {}
 
-    email_hash = _sha256(order.customer_email)
+    real_email = order.customer_email if order.customer_email and not any(order.customer_email.endswith(s) for s in ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')) else None
+    email_hash = _sha256(real_email)
     if email_hash:
         user_data['em'] = [email_hash]
 

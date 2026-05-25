@@ -94,6 +94,16 @@ app.conf.beat_schedule = {
     # NOTE: process_scheduled_messages is now unified in apps.automation.tasks.scheduled
     # The task 'process-scheduled-messages' above handles all scheduled messages
 
+    # StoreCart (storefront) abandoned cart reminders — distinct from CustomerSession carts
+    'check-abandoned-store-carts': {
+        'task': 'apps.whatsapp.tasks.check_abandoned_store_carts',
+        'schedule': 900.0,  # every 15 min
+    },
+    # StoreOrder PIX reminders (30min / 2h / 24h) for storefront orders
+    'check-store-pix-reminders': {
+        'task': 'apps.whatsapp.tasks.check_pending_payments',
+        'schedule': 600.0,  # every 10 min
+    },
     # Toca Delivery — poll active corridas for status updates every 60s
     'sync-toca-delivery-statuses': {
         'task': 'apps.stores.tasks.sync_toca_delivery_statuses',

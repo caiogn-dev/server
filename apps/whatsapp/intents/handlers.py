@@ -1564,6 +1564,14 @@ class HumanHandoffHandler(IntentHandler):
         except Exception as exc:
             logger.warning(f"[HumanHandoffHandler] switch_to_human failed: {exc}")
 
+        # Clear checkout state so bot doesn't intercept messages while human is handling
+        try:
+            session_manager = self._get_session_manager()
+            session_manager.set_waiting_for_address(False)
+            session_manager.set_waiting_for_notes(False)
+        except Exception as exc:
+            logger.warning("[HumanHandoffHandler] Failed to clear session state: %s", exc)
+
         return HandlerResult.text(
             f"👨‍💼 *Transferindo para atendimento humano...*\n\n"
             f"Um de nossos atendentes vai te atender em breve.\n"
@@ -1955,15 +1963,22 @@ class InteractiveReplyHandler(IntentHandler):
             addr_info.get('lat'), addr_info.get('lng'),
             customer_notes[:40] if customer_notes else '',
         )
-        result = self._finalize_order(
-            items,
-            delivery_method=delivery_method,
-            payment_method=payment_method,
-            delivery_address=delivery_address,
-            customer_notes=customer_notes,
-            delivery_fee_override=delivery_fee_override,
-            addr_info=addr_info,
-        )
+        try:
+            result = self._finalize_order(
+                items,
+                delivery_method=delivery_method,
+                payment_method=payment_method,
+                delivery_address=delivery_address,
+                customer_notes=customer_notes,
+                delivery_fee_override=delivery_fee_override,
+                addr_info=addr_info,
+            )
+        except Exception as exc:
+            logger.exception('[InteractiveReplyHandler] _finalize_order falhou')
+            result = HandlerResult.text("❌ Erro ao criar pedido. Por favor, tente novamente.")
+        finally:
+            if lock_key:
+                cache.delete(lock_key)
         if not (
             result.response_text
             and result.response_text.startswith(('❌ Erro ao criar pedido', '❌ Loja'))
@@ -1972,8 +1987,6 @@ class InteractiveReplyHandler(IntentHandler):
                 session_manager.clear_pending_order_items()
             except Exception as exc:
                 logger.warning('[InteractiveReplyHandler] Erro ao limpar itens pendentes: %s', exc)
-        if lock_key:
-            cache.delete(lock_key)
         return result
 
     def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:
@@ -2058,6 +2071,8 @@ HANDLER_MAP = {
     IntentType.DELIVERY_INFO: DeliveryInfoHandler,
     IntentType.TRACK_ORDER: TrackOrderHandler,
     IntentType.PAYMENT_STATUS: PaymentStatusHandler,
+    IntentType.CONFIRM_PAYMENT: PaymentStatusHandler,  # "paguei" / "comprovante" → check current payment state
+    IntentType.MODIFY_ORDER: UnknownHandler,           # route to LLM agent; no dedicated modify flow yet
     IntentType.VIEW_QR_CODE: ViewQRCodeHandler,
     IntentType.COPY_PIX: CopyPixHandler,
     IntentType.LOCATION: LocationHandler,

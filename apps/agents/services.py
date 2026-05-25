@@ -1103,15 +1103,83 @@ class LangchainService:
         # ── Cart tools (ordem completa sem intervenção humana) ─────────────────
 
         _cart_key = f"agent_cart:{self.agent.id}:{phone_number}"
+        _sm_cache: list = [None]  # lazy-init CustomerSession manager
+
+        def _session_manager():
+            """Lazy-initialise the session manager once per agent call."""
+            if _sm_cache[0] is None:
+                try:
+                    from apps.automation.services.session_manager import get_session_manager
+                    from apps.automation.models import CompanyProfile as _CP
+                    company = _CP.objects.filter(store=store).first()
+                    if company and phone_number:
+                        _sm_cache[0] = get_session_manager(company, phone_number)
+                except Exception:
+                    pass
+            return _sm_cache[0]
 
         def _get_cart() -> dict:
             import json
             raw = self.redis_client.get(_cart_key)
-            return json.loads(raw) if raw else {"items": []}
+            if raw:
+                return json.loads(raw)
+            # Fallback: seed from CustomerSession.pending_items (handler pipeline)
+            try:
+                sm = _session_manager()
+                if sm and sm.session and sm.session.cart_data:
+                    from apps.stores.models import StoreProduct as _SP
+                    pending = sm.session.cart_data.get('pending_items') or []
+                    items = []
+                    for it in pending:
+                        try:
+                            p = _SP.objects.get(id=it['product_id'])
+                            qty = int(it.get('quantity', 1))
+                            up = float(it.get('unit_price') or float(p.price))
+                            items.append({
+                                'product_id': str(p.id),
+                                'product_name': p.name,
+                                'quantity': qty,
+                                'unit_price': up,
+                                'total': round(up * qty, 2),
+                            })
+                        except Exception:
+                            pass
+                    if items:
+                        cart = {'items': items}
+                        _save_cart(cart)
+                        return cart
+            except Exception:
+                pass
+            return {"items": []}
 
         def _save_cart(cart: dict) -> None:
             import json
             self.redis_client.setex(_cart_key, 3600 * 6, json.dumps(cart))
+            # Sync back to CustomerSession so the handler pipeline stays in sync
+            try:
+                sm = _session_manager()
+                if sm and sm.session:
+                    data = dict(sm.session.cart_data or {})
+                    items = cart.get('items', [])
+                    if items:
+                        data['pending_items'] = [
+                            {
+                                'product_id': it['product_id'],
+                                'quantity': it['quantity'],
+                                'unit_price': it.get('unit_price', 0),
+                            }
+                            for it in items
+                        ]
+                    else:
+                        data.pop('pending_items', None)
+                    if cart.get('delivery_address'):
+                        data['delivery_address'] = cart['delivery_address']
+                    if cart.get('delivery_fee') is not None:
+                        data['delivery_fee_calculated'] = float(cart['delivery_fee'])
+                    sm.session.cart_data = data
+                    sm.session.save(update_fields=['cart_data', 'updated_at'])
+            except Exception:
+                pass
 
         @tool
         def adicionar_ao_carrinho(produto_nome: str, quantidade: int = 1) -> str:

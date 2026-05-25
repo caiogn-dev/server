@@ -67,12 +67,11 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
                 return
 
             # Create new profile for store
-            profile_data = {
-                'store': instance,
+            profile_defaults = {
                 '_company_name': instance.name,
                 '_description': instance.description or '',
             }
-            
+
             # If store has WhatsApp account, link it
             if instance.whatsapp_account:
                 # Check if the WhatsApp account already has a profile
@@ -86,9 +85,15 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
                     logger.info(f"Linked existing CompanyProfile {existing_profile.id} to Store {instance.slug}")
                     return
                 else:
-                    profile_data['account'] = instance.whatsapp_account
-            
-            profile = CompanyProfile.objects.create(**profile_data)
+                    profile_defaults['account'] = instance.whatsapp_account
+
+            profile, created = CompanyProfile.objects.get_or_create(
+                store=instance,
+                defaults=profile_defaults,
+            )
+            if not created:
+                logger.info(f"CompanyProfile already exists for Store {instance.slug} — skipping create")
+                return
             logger.info(f"Created CompanyProfile {profile.id} for Store {instance.slug}")
             
             # Create default auto messages for the new profile
@@ -142,17 +147,22 @@ def create_or_link_company_profile_for_account(sender, instance, created, **kwar
                     return
             
             # Create new profile for account
-            profile_data = {
-                'account': instance,
+            profile_defaults = {
                 '_company_name': instance.name,
             }
-            
+
             if store:
-                profile_data['store'] = store
-                profile_data['_company_name'] = store.name
-                profile_data['_description'] = store.description or ''
-            
-            profile = CompanyProfile.objects.create(**profile_data)
+                profile_defaults['store'] = store
+                profile_defaults['_company_name'] = store.name
+                profile_defaults['_description'] = store.description or ''
+
+            profile, created = CompanyProfile.objects.get_or_create(
+                account=instance,
+                defaults=profile_defaults,
+            )
+            if not created:
+                logger.info(f"CompanyProfile already exists for WhatsApp account {instance.id} — skipping create")
+                return
             logger.info(f"Created CompanyProfile {profile.id} for WhatsApp account {instance.id}")
         
     except Exception as e:
@@ -202,8 +212,16 @@ def sync_company_profile_ai_to_account(sender, instance, **kwargs):
 
 @receiver(pre_save, sender='stores.StoreOrder')
 def capture_order_previous_status(sender, instance, **kwargs):
-    """Capture previous order status before save for transition detection."""
+    """Capture previous order status before save for transition detection.
+
+    Uses instance._pre_save_status when stores.signals already ran the DB query,
+    avoiding a duplicate round-trip per save.
+    """
     if not instance.pk:
+        return
+
+    if hasattr(instance, '_pre_save_status'):
+        _ORDER_PREV_STATUS[instance.pk] = instance._pre_save_status
         return
 
     previous_status = (
@@ -212,6 +230,7 @@ def capture_order_previous_status(sender, instance, **kwargs):
         .values_list('status', flat=True)
         .first()
     )
+    instance._pre_save_status = previous_status
     _ORDER_PREV_STATUS[instance.pk] = previous_status
 
 

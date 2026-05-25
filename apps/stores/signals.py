@@ -59,7 +59,11 @@ def invalidate_catalog_on_combo_change(sender, instance, **kwargs):
 
 @receiver(pre_save, sender='stores.StoreOrder')
 def capture_order_previous_status(sender, instance, **kwargs):
-    """Capture previous status before save for transition detection."""
+    """Capture previous status before save for transition detection.
+
+    Sets instance._pre_save_status so the automation signals module can skip
+    its own duplicate DB query.
+    """
     if not instance.pk:
         return
 
@@ -73,6 +77,7 @@ def capture_order_previous_status(sender, instance, **kwargs):
         .values_list('status', flat=True)
         .first()
     )
+    instance._pre_save_status = previous_status
     _ORDER_PREV_STATUS[instance.pk] = previous_status
 
 
@@ -90,29 +95,21 @@ def on_order_created(sender, instance, created, **kwargs):
 
 
 @receiver(post_save, sender='stores.StoreOrder')
-def update_customer_stats_for_order(sender, instance, **kwargs):
-    """Keep customer dashboard numbers aligned with paid orders."""
+def update_customer_stats_for_order(sender, instance, update_fields, **kwargs):
+    """Keep customer dashboard numbers aligned with paid orders.
+
+    Only fires when payment_status transitions to 'paid'; delegates work to
+    a Celery task to avoid N+1 queries on the hot request path.
+    """
+    if instance.payment_status != 'paid':
+        return
+    # Skip if this save didn't touch payment_status at all
+    if update_fields is not None and 'payment_status' not in update_fields:
+        return
     try:
-        from apps.core.services.customer_identity import CustomerIdentityService
-        from apps.stores.models import StoreCustomer
-
-        phones = set(CustomerIdentityService.phone_candidates(instance.customer_phone))
-        qs = StoreCustomer.objects.filter(store=instance.store)
-        if instance.customer_id:
-            qs = qs.filter(user_id=instance.customer_id) | StoreCustomer.objects.filter(
-                store=instance.store,
-                phone__in=phones,
-            ) | StoreCustomer.objects.filter(
-                store=instance.store,
-                whatsapp__in=phones,
-            )
-        elif phones:
-            qs = qs.filter(Q(phone__in=phones) | Q(whatsapp__in=phones))
-        else:
-            qs = qs.none()
-
-        for customer in qs.distinct():
-            transaction.on_commit(lambda customer_id=customer.id: StoreCustomer.objects.get(id=customer_id).update_stats())
+        from apps.stores.tasks import update_customer_stats_on_payment
+        order_id = str(instance.id)
+        transaction.on_commit(lambda: update_customer_stats_on_payment.delay(order_id))
     except Exception as e:
         logger.error("update_customer_stats_for_order signal error: %s", e)
 

@@ -15,6 +15,14 @@ from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
 from apps.core.services.customer_identity import CustomerIdentityService
+
+_PLACEHOLDER_EMAIL_DOMAINS = ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')
+
+
+def is_placeholder_email(email: str) -> bool:
+    if not email:
+        return True
+    return any(email.endswith(d) for d in _PLACEHOLDER_EMAIL_DOMAINS)
 from apps.stores.models import (
     Store, StoreCart, StoreOrder, StoreOrderItem, StoreOrderComboItem,
     StoreProduct, StoreProductVariant, StoreIntegration,
@@ -107,12 +115,9 @@ def get_valid_email_for_payment(order: StoreOrder) -> str:
     Mercado Pago doesn't accept emails with .local domains.
     """
     email = order.customer_email
-    
-    # Check if email is valid for Mercado Pago
-    # Reject .local domains and obvious invalid emails
-    if email and re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', email):
+    if email and not is_placeholder_email(email):
         domain = email.split('@')[-1].lower()
-        if not domain.endswith('.local') and not domain.endswith('.test'):
+        if not domain.endswith('.local') and not domain.endswith('.test') and not domain.endswith('.invalid'):
             return email
     
     # Try to get email from store owner
@@ -135,10 +140,10 @@ def trigger_order_email_automation(order: StoreOrder, trigger_type: str, extra_c
         from apps.marketing.services.email_automation_service import email_automation_service
 
         metadata = order.metadata or {}
-        if metadata.get('source') == 'whatsapp' or str(order.customer_email or '').endswith('@whatsapp.bot'):
-            logger.debug(f"WhatsApp order {order.order_number}, skipping email automation")
+        if metadata.get('source') == 'whatsapp' or is_placeholder_email(order.customer_email):
+            logger.debug(f"Placeholder/WhatsApp email for order {order.order_number}, skipping email automation")
             return
-        
+
         if not order.customer_email:
             logger.debug(f"No customer email for order {order.order_number}, skipping automation")
             return
