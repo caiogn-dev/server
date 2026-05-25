@@ -484,6 +484,27 @@ class IntentHandler:
             address_components=address_components or {},
         )
 
+        # Se não há itens no carrinho, mostra preview da taxa e convida ao cardápio.
+        try:
+            pending = session_manager.get_pending_order_items()
+        except Exception:
+            pending = []
+
+        if not pending:
+            dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
+            time_text = f" (~{int(duration_minutes)} min)" if duration_minutes else ""
+            fee_fmt = f"R$ {fee:.2f}".replace('.', ',') if fee > 0 else "Grátis 🎉"
+            session_manager.set_waiting_for_notes(False)
+            return HandlerResult.buttons(
+                body=(
+                    f"✅ *Entregamos aí!*\n\n"
+                    f"📍 {formatted_address}\n"
+                    f"🛵 Taxa de entrega{dist_text}{time_text}: *{fee_fmt}*\n\n"
+                    f"Escolha um item no cardápio para montar seu pedido 👇"
+                ),
+                buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+            )
+
         return self._show_order_summary_and_ask_notes(
             delivery_method='delivery',
             delivery_address=formatted_address,
@@ -1653,20 +1674,21 @@ class UnknownHandler(IntentHandler):
         message = original_message.lower()
 
         # ── Mensagem de localização compartilhada via WhatsApp (tem prioridade) ──
+        # Clientes nunca enviam localização à toa — sempre calcular rota/taxa.
         location_data = intent_data.get('location')
         if location_data and location_data.get('lat') and location_data.get('lng'):
             try:
                 session_manager = self._get_session_manager()
-                if session_manager.is_waiting_for_address():
-                    logger.info(
-                        "[UnknownHandler] Localização recebida: lat=%s lng=%s",
-                        location_data['lat'], location_data['lng'],
-                    )
-                    return self._handle_location_input(
-                        lat=float(location_data['lat']),
-                        lng=float(location_data['lng']),
-                        address_hint=location_data.get('address') or location_data.get('name') or '',
-                    )
+                logger.info(
+                    "[UnknownHandler] Localização recebida: lat=%s lng=%s",
+                    location_data['lat'], location_data['lng'],
+                )
+                session_manager.set_waiting_for_address(True)
+                return self._handle_location_input(
+                    lat=float(location_data['lat']),
+                    lng=float(location_data['lng']),
+                    address_hint=location_data.get('address') or location_data.get('name') or '',
+                )
             except Exception as exc:
                 logger.warning("[UnknownHandler] Erro ao processar localização: %s", exc)
 
