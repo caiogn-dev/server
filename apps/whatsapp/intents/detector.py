@@ -108,6 +108,7 @@ class IntentDetector:
         IntentType.LOCATION: [
             r'(onde (fica|voc[êe]s (est[ãa]o|ficam))|endere[çc]o|localiza[çc][ãa]o|como chegar)',
             r'(qual o endere[çc]o|onde [ée] a loja|tem loja f[íi]sica)',
+            r'^(fica onde|onde voc[êe]s?|onde fica|de onde s[ãa]o|qual[ée] a cidade|s[ãa]o de onde)[\s?!.]*$',
         ],
         IntentType.CONTACT: [
             r'(telefone|whatsapp|contato|falar com|atendente|pessoa|humano|sac)',
@@ -122,6 +123,7 @@ class IntentDetector:
             r'(pode fazer pedido|aceita pedido|tem como pedir|pedido rápido)',
             r'(finalizar pedido|fechar pedido|concluir pedido|criar pedido)',
             r'(quero finalizar|confirmar compra|finalizar compra)',
+            r'^(como (fa[çz]o|fa[çz]er|pedir|comprar|realizar)|quero (comprar|pedir)|como (fa[çz]o pra|pedir))[^?]*[?!.]*$',
         ],
         IntentType.CANCEL_ORDER: [
             r'(cancelar pedido|quero cancelar|posso cancelar|preciso cancelar)',
@@ -419,4 +421,4 @@ Responda APENAS com o nome da intenção em inglês minúsculo."""),
 
 
 # Instância global para uso
-intent_detector = IntentDetector(use_llm_fallback=True)
+intent_detector = IntentDetector(use_llm_fallback=False)

@@ -830,15 +830,14 @@ class LangchainService:
         try:
             if store:
                 location_parts = []
-                if getattr(store, 'pickup_enabled', False):
-                    address = getattr(store, 'address', '') or ''
-                    city = getattr(store, 'city', '') or ''
-                    full_address = ', '.join(p for p in [address, city] if p)
-                    if full_address:
-                        location_parts.append(f"• Endereço para retirada: {full_address}")
+                address = getattr(store, 'address', '') or ''
+                city = getattr(store, 'city', '') or ''
+                full_address = ', '.join(p for p in [address, city] if p)
+                if full_address:
+                    location_parts.append(f"• Endereço da loja: {full_address}")
                 if getattr(store, 'delivery_enabled', False) and not getattr(store, 'pickup_enabled', False):
                     location_parts.append("• Apenas entrega (sem retirada no local)")
-                if not getattr(store, 'delivery_enabled', False) and getattr(store, 'pickup_enabled', False):
+                elif not getattr(store, 'delivery_enabled', False) and getattr(store, 'pickup_enabled', False):
                     location_parts.append("• Apenas retirada no local (sem entrega)")
                 if location_parts:
                     context_parts.append("\n📍 LOCALIZAÇÃO:\n" + "\n".join(location_parts))

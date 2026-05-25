@@ -1696,6 +1696,10 @@ class UnknownHandler(IntentHandler):
         try:
             session_manager = self._get_session_manager()
             if session_manager.is_waiting_for_address() and len(original_message) >= 5:
+                if intent_data.get('llm_available'):
+                    # LLM decides if this is a real address or a conversation turn
+                    logger.info("[UnknownHandler] Delegando address-waiting ao LLM: %s", original_message[:60])
+                    return HandlerResult.needs_llm()
                 logger.info("[UnknownHandler] Interceptando como endereço de entrega: %s", original_message[:60])
                 return self._handle_address_input(original_message)
             if session_manager.is_waiting_for_notes():

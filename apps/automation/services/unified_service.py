@@ -534,6 +534,13 @@ class UnifiedService:
                 conversation_id=str(self.conversation.id),
             )
             response_text = result.get('response', '').strip()
+            # Suppress LLM internal errors that leak to the user
+            _err_indicators = ('não foi possível encontrar', 'nao foi possivel encontrar',
+                               'função que atenda', 'funcao que atenda', 'ferramenta.*não encontrada')
+            import re as _re
+            if any(_re.search(p, response_text.lower()) for p in _err_indicators):
+                logger.warning('[unified] LLM leaked tool error — suppressing: %s', response_text[:120])
+                response_text = ''
             used_session_id = result.get('session_id', session_id)
 
             # Persiste/atualiza AgentConversation no DB para que o próximo turno

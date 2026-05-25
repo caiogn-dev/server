@@ -587,6 +587,9 @@ class WebhookService:
             if orchestrator_response.buttons or orchestrator_response.interactive_type:
                 try:
                     self._send_unified_interactive(event, message, orchestrator_response)
+                    if not message.processed_by_agent:
+                        message.processed_by_agent = True
+                        message.save(update_fields=['processed_by_agent'])
                     logger.info(
                         '[pipeline] Interactive response sent (%.0fms)', _orchestrator_ms,
                         extra={
@@ -1124,7 +1127,8 @@ class WebhookService:
         status_time = timezone.now()
         if timestamp:
             try:
-                status_time = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+                import datetime as _dt
+                status_time = _dt.datetime.fromtimestamp(int(timestamp), tz=_dt.timezone.utc)
             except (ValueError, TypeError):
                 pass
         
