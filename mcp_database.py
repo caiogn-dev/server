@@ -236,7 +236,7 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 'type': 'object',
                 'properties': {
-                    'field_name': {'type': 'string', 'description': 'Substring do nome do field (opcional)'},
+                    'field_name': {'type': 'string', 'description': 'Nome exato do campo (opcional)'},
                     'field_type': {'type': 'string', 'description': 'Tipo do field (ex: ForeignKey, JSONField) (opcional)'},
                 },
                 'required': [],
@@ -979,7 +979,7 @@ async def _find_field(args: dict) -> list[TextContent]:
             type_match = field_type and type(f).__name__ == field_type
             if (field_name and not field_type and name_match) or \
                (field_type and not field_name and type_match) or \
-               (field_name and field_type and (name_match or type_match)):
+               (field_name and field_type and name_match and type_match):
                 result.append({
                     'app': model._meta.app_label, 'model': model.__name__,
                     'field': f.name, 'type': type(f).__name__, 'column': f.column,
@@ -992,7 +992,7 @@ async def _relationship_graph(args: dict) -> list[TextContent]:
     from django.apps import apps
 
     model_name = args['model_name']
-    depth = int(args.get('depth', 2))
+    depth = min(int(args.get('depth', 2)), 5)
 
     model = next(
         (m for m in apps.get_models()
@@ -1004,16 +1004,19 @@ async def _relationship_graph(args: dict) -> list[TextContent]:
 
     lines = [model_name]
 
-    def _out(m, prefix, d):
-        if d > depth:
+    def _out(m, prefix, d, visited=None):
+        if visited is None:
+            visited = set()
+        if d > depth or m in visited:
             return
+        branch_visited = visited | {m}
         for f in m._meta.get_fields():
             if hasattr(f, 'related_model') and f.related_model and hasattr(f, 'column'):
                 rf = getattr(f, 'remote_field', None)
                 on_del = str(getattr(rf, 'on_delete', '')) if rf else ''
                 lines.append(f'{prefix}→ {f.related_model.__name__} (FK, {on_del})')
                 if d < depth:
-                    _out(f.related_model, prefix + '  ', d + 1)
+                    _out(f.related_model, prefix + '  ', d + 1, branch_visited)
 
     def _in(m, prefix):
         for rel in m._meta.related_objects:
