@@ -918,10 +918,16 @@ class LangchainService:
                             last_order_lines.append("Itens:\n" + "\n".join(item_lines))
                         session_parts.append("\n".join(last_order_lines))
 
-                    # Preferir StoreOrder como fonte de verdade do PIX
+                    # Só injeta PIX se o pagamento AINDA está pendente.
+                    # Quando payment_status=paid ou order.status em fase de preparo/entrega,
+                    # o LLM NÃO deve reenviar o código — já foi pago ou enviado antes.
                     _ctx_order = session.order if session.order_id else None
-                    _ctx_pix_code = (_ctx_order.pix_code if _ctx_order else None) or session.pix_code
-                    _ctx_pix_qr = (_ctx_order.pix_qr_code if _ctx_order else None) or session.pix_qr_code
+                    _order_paid = (
+                        (_ctx_order and _ctx_order.payment_status == 'paid')
+                        or session.status in ('payment_confirmed', 'completed', 'order_placed')
+                    )
+                    _ctx_pix_code = ((_ctx_order.pix_code if _ctx_order else None) or session.pix_code) if not _order_paid else None
+                    _ctx_pix_qr = ((_ctx_order.pix_qr_code if _ctx_order else None) or session.pix_qr_code) if not _order_paid else None
                     if _ctx_pix_code:
                         session_parts.append(
                             f"Status: pagamento PIX gerado, aguardando confirmação.\n"
@@ -962,6 +968,18 @@ class LangchainService:
                         f"Entrega: {recent_order.get_delivery_method_display()}",
                     ]
                     context_parts.append("\n🧾 ÚLTIMO PEDIDO DO CLIENTE:\n" + "\n".join(order_summary))
+
+                    # Guardrail: quando pedido está pronto/em entrega/entregue,
+                    # o LLM não deve perguntar confirmações nem reenviar PIX.
+                    _terminal_statuses = {'ready', 'out_for_delivery', 'delivered', 'completed', 'preparing'}
+                    if recent_order.status in _terminal_statuses or recent_order.payment_status == 'paid':
+                        context_parts.append(
+                            "\n⚠️ REGRA CRÍTICA: O pagamento já foi confirmado e o pedido está sendo processado/entregue. "
+                            "NUNCA peça confirmação de envio ao cliente. "
+                            "NUNCA reenvie o código PIX. "
+                            "Se o cliente disser 'ok', 'entendi', 'certo' ou algo parecido, "
+                            "responda brevemente (ex: 'Perfeito! 😊') e não inicie novo fluxo de pedido."
+                        )
             except Exception as e:
                 logger.error(f"[AGENT CONTEXT] Error loading recent order summary: {e}")
 

@@ -389,6 +389,12 @@ class WebhookService:
         from apps.automation.services import LLMOrchestratorService, UnifiedResponse
         from apps.automation.services.context_service import AutomationContextService
 
+        # Mensagens de áudio: sem transcrição disponível, silêncio é melhor que
+        # "não entendi" — o cliente sabe que mandou um áudio, não precisa de eco.
+        if message.message_type == Message.MessageType.AUDIO:
+            logger.info('[pipeline] Áudio ignorado (sem transcrição) message_id=%s', message.id)
+            return
+
         payload = event.payload
         contact_info = payload.get('contact', {})
 

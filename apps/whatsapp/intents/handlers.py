@@ -736,7 +736,7 @@ class IntentHandler:
 
 
 class GreetingHandler(IntentHandler):
-    """Handler para saudações — retorna boas-vindas com 1 botão 'Ver Opções'."""
+    """Handler para saudações — retorna boas-vindas com atalhos diretos (sem etapa intermediária)."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         company_name = (
@@ -749,13 +749,15 @@ class GreetingHandler(IntentHandler):
 
         body = (
             f"{greeting} Bem-vindo(a) à *{company_name}*! 🌿\n\n"
-            f"Toque no botão abaixo para ver o que temos para você."
+            f"O que posso fazer por você?"
         )
-        logger.info('[GreetingHandler] Saudação com botão Ver Opções para %s', customer_name)
+        logger.info('[GreetingHandler] Saudação com botões diretos para %s', customer_name)
         return HandlerResult.buttons(
             body=body,
             buttons=[
-                {'id': 'show_options', 'title': '📋 Ver Opções'},
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                {'id': 'montar_salada', 'title': '🥗 Montar Salada'},
+                {'id': 'contact_support', 'title': '👤 Atendente'},
             ],
         )
 
@@ -1483,11 +1485,12 @@ class PaymentStatusHandler(IntentHandler):
                     ]
                 )
 
-        # Fallback: busca último pedido pendente no banco
+        # Fallback: busca último pedido com PIX pendente no banco
         pending_order = Order.objects.filter(
             customer_phone=self.conversation.phone_number,
             **({"store": self.store} if self.store else {}),
-            status='pending_payment'
+            payment_status='pending',
+            pix_code__gt='',
         ).order_by('-created_at').first()
 
         if pending_order and pending_order.pix_code:
