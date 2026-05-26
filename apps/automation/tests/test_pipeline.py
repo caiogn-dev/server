@@ -239,11 +239,13 @@ class UnifiedServiceProcessMessageTestCase(TestCase):
         store.operating_hours = {}
         svc = _make_unified_service(store=store)
 
-        with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.MENU_REQUEST}), \
+        with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.CREATE_ORDER}), \
              patch.object(svc, '_run_handler') as mock_handler, \
              patch.object(svc, '_get_session_data', return_value={}), \
+             patch.object(svc, '_has_pending_delivery_address_session', return_value=False), \
+             patch.object(svc, '_has_pending_notes_session', return_value=False), \
              patch.object(svc, '_get_out_of_hours_response', return_value=UnifiedResponse(content='fora do horario', source=ResponseSource.TEMPLATE)):
-            resp = svc.process_message('cardapio')
+            resp = svc.process_message('quero pedir')
 
         self.assertEqual(resp.content, 'fora do horario')
         self.assertEqual(resp.source, ResponseSource.TEMPLATE)
@@ -259,6 +261,8 @@ class UnifiedServiceProcessMessageTestCase(TestCase):
         handler_response = UnifiedResponse(content='horario normal', source=ResponseSource.HANDLER)
 
         with patch.object(svc.detector, 'detect', return_value={'intent': IntentType.BUSINESS_HOURS}), \
+             patch.object(svc, '_has_pending_delivery_address_session', return_value=False), \
+             patch.object(svc, '_has_pending_notes_session', return_value=False), \
              patch.object(svc, '_run_handler', return_value=handler_response):
             resp = svc.process_message('que horas abre?')
 

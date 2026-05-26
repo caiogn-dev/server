@@ -77,7 +77,7 @@ def cache_user_query(cache_key: str, ttl: int = CACHE_TTL_USER):
 
 async def get_cached_conversation(conversation_id: str):
     """Get conversation with caching."""
-    from apps.whatsapp.models import Conversation
+    from apps.conversations.models import Conversation
     
     cache_key = f"ws:conversation:{conversation_id}"
     cached = cache.get(cache_key)
