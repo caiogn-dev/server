@@ -884,8 +884,11 @@ class CustomerSession(BaseModel):
     cart_updated_at = models.DateTimeField(null=True, blank=True)
     
     # Payment data
+    # DEPRECATED: PIX é fonte de verdade em StoreOrder.pix_code — manter enquanto migração em andamento
     pix_code = models.TextField(blank=True)
+    # DEPRECATED: PIX é fonte de verdade em StoreOrder.pix_qr_code — manter enquanto migração em andamento
     pix_qr_code = models.TextField(blank=True)
+    # DEPRECATED: PIX é fonte de verdade em StoreOrder.pix_expires_at — manter enquanto migração em andamento
     pix_expires_at = models.DateTimeField(null=True, blank=True)
     payment_id = models.CharField(max_length=100, blank=True)
     

@@ -624,19 +624,24 @@ class LangchainService:
                 session_qs = session_qs.filter(company_id__in=profile_ids)
 
             session = session_qs.order_by('-updated_at').first()
-            if session and session.pix_code:
-                if session.pix_expires_at and session.pix_expires_at <= timezone.now():
+            if session:
+                # Preferir StoreOrder como fonte de verdade quando disponível
+                _order = session.order if session.order_id else None
+                _pix_code = (_order.pix_code if _order else None) or session.pix_code
+                _pix_expires = (_order.pix_expires_at if _order else None) or session.pix_expires_at
+                if _pix_code:
+                    if _pix_expires and _pix_expires <= timezone.now():
+                        return {
+                            'found': False,
+                            'expired': True,
+                            'message': 'O PIX gerado expirou. Um novo pagamento precisa ser gerado.',
+                        }
                     return {
-                        'found': False,
-                        'expired': True,
-                        'message': 'O PIX gerado expirou. Um novo pagamento precisa ser gerado.',
+                        'found': True,
+                        'pix_code': _pix_code,
+                        'expires_at': _pix_expires,
+                        'source': 'store_order' if _order and _order.pix_code else 'customer_session',
                     }
-                return {
-                    'found': True,
-                    'pix_code': session.pix_code,
-                    'expires_at': session.pix_expires_at,
-                    'source': 'customer_session',
-                }
 
             order = StoreOrder.objects.filter(
                 customer_phone__in=phone_candidates,
@@ -913,13 +918,17 @@ class LangchainService:
                             last_order_lines.append("Itens:\n" + "\n".join(item_lines))
                         session_parts.append("\n".join(last_order_lines))
 
-                    if session.pix_code:
+                    # Preferir StoreOrder como fonte de verdade do PIX
+                    _ctx_order = session.order if session.order_id else None
+                    _ctx_pix_code = (_ctx_order.pix_code if _ctx_order else None) or session.pix_code
+                    _ctx_pix_qr = (_ctx_order.pix_qr_code if _ctx_order else None) or session.pix_qr_code
+                    if _ctx_pix_code:
                         session_parts.append(
                             f"Status: pagamento PIX gerado, aguardando confirmação.\n"
-                            f"Código PIX (copia e cola): {session.pix_code}"
+                            f"Código PIX (copia e cola): {_ctx_pix_code}"
                         )
-                        if session.pix_qr_code:
-                            session_parts.append(f"QR Code PIX (base64): {session.pix_qr_code[:50]}... [truncado]")
+                        if _ctx_pix_qr:
+                            session_parts.append(f"QR Code PIX (base64): {_ctx_pix_qr[:50]}... [truncado]")
 
                     if session_parts:
                         context_parts.append("\n🛒 ESTADO DO PEDIDO ATUAL:\n" + "\n".join(session_parts))

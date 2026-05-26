@@ -695,6 +695,14 @@ class AutomationService:
             session.pix_expires_at = payment_data.get('expires_at')
             session.payment_id = payment_data.get('payment_id', '')
             session.status = CustomerSession.SessionStatus.PAYMENT_PENDING
+            # Fonte de verdade: propagar PIX para StoreOrder quando disponível
+            if session.order_id:
+                from apps.stores.models import StoreOrder
+                StoreOrder.objects.filter(pk=session.order_id).update(
+                    pix_code=session.pix_code,
+                    pix_qr_code=session.pix_qr_code,
+                    pix_expires_at=session.pix_expires_at,
+                )
             session.save()
 
             # Send PIX notification

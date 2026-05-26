@@ -183,12 +183,13 @@ class SessionManager:
             session.save(update_fields=['last_activity_at'])
             logger.info(f"[SessionManager] Found existing session: {session.id}")
         else:
-            # Cria nova sessão
+            # Cria nova sessão com TTL de 24h para evitar checkout fantasma em recontato
             session = CustomerSession.objects.create(
                 company=self.company,
                 phone_number=self.phone_number,
                 session_id=f"whatsapp_{self.phone_number}_{timezone.now().strftime('%Y%m%d%H%M%S')}",
-                status=CustomerSession.SessionStatus.ACTIVE
+                status=CustomerSession.SessionStatus.ACTIVE,
+                expires_at=timezone.now() + timedelta(hours=24),
             )
             logger.info(f"[SessionManager] Created new session: {session.id}")
         
@@ -368,6 +369,7 @@ class SessionManager:
             data['delivery_lat'] = lat
             data['delivery_lng'] = lng
             data['waiting_for_address'] = False
+            data['waiting_for_notes'] = False
             if address_components:
                 data['delivery_address_components'] = address_components
             session.cart_data = data
@@ -417,8 +419,17 @@ class SessionManager:
             session.pix_code = pix_code
             session.pix_qr_code = pix_qr_code
             session.payment_id = payment_id
-            session.pix_expires_at = timezone.now() + timedelta(hours=24)
+            _pix_expires = timezone.now() + timedelta(hours=24)
+            session.pix_expires_at = _pix_expires
             session.status = CustomerSession.SessionStatus.PAYMENT_PENDING
+            # Fonte de verdade: propagar PIX para StoreOrder quando disponível
+            if session.order_id:
+                from apps.stores.models import StoreOrder
+                StoreOrder.objects.filter(pk=session.order_id).update(
+                    pix_code=pix_code,
+                    pix_qr_code=pix_qr_code,
+                    pix_expires_at=_pix_expires,
+                )
             session.save()
             logger.info(f"[SessionManager] Payment pending set for {self.phone_number}")
     
