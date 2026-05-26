@@ -213,3 +213,14 @@ def sync_toca_delivery_statuses():
 
     if updated:
         logger.info('sync_toca_delivery_statuses: updated %d orders', updated)
+
+
+@shared_task(name='apps.stores.tasks.cleanup_abandoned_carts')
+def cleanup_abandoned_carts():
+    from django.core.management import call_command
+    from io import StringIO
+    out = StringIO()
+    call_command('cleanup_carts', stdout=out)
+    result = out.getvalue()
+    logger.info('cleanup_abandoned_carts: %s', result.strip())
+    return result

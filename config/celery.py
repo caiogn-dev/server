@@ -119,6 +119,11 @@ app.conf.beat_schedule = {
         'task': 'apps.agents.tasks.decay_stale_knowledge',
         'schedule': 86400.0,
     },
+    # Cleanup de carrinhos abandonados — diário às 3h
+    'cleanup-abandoned-carts': {
+        'task': 'apps.stores.tasks.cleanup_abandoned_carts',
+        'schedule': 86400.0,  # Daily
+    },
 }
 
 
