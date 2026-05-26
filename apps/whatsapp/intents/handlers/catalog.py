@@ -79,9 +79,8 @@ class PriceCheckHandler(IntentHandler):
                     return HandlerResult.buttons(
                         body=response,
                         buttons=[
-                            {'id': f'add_{p.id}_1', 'title': '🛒 Adicionar'},
-                            {'id': f'details_{p.id}', 'title': 'ℹ️ Detalhes'},
-                            {'id': 'view_catalog', 'title': '📋 Ver mais'},
+                            {'id': f'add_{p.id}_1', 'title': '🛒 Adicionar ao pedido'},
+                            {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
                         ],
                     )
                 response = "💰 Encontrei esses produtos:\n\n"
@@ -132,18 +131,15 @@ class ProductMentionHandler(IntentHandler):
                     session.update_context('pending_product_price', float(p.price))
                 except Exception as exc:
                     logger.warning('[ProductMentionHandler] session context save failed: %s', exc)
+                body = f"🥗 *{p.name}*\n💰 R$ {p.price}"
+                if getattr(p, 'description', ''):
+                    body += f"\n\n_{p.description[:120]}_"
                 return HandlerResult.buttons(
-                    body=(
-                        f"🍽️ *{p.name}*\n"
-                        f"💰 R$ {p.price}\n\n"
-                        f"Quantas unidades você quer?"
-                    ),
+                    body=body,
                     buttons=[
-                        {'id': f'add_{p.id}_1', 'title': '1 unidade'},
-                        {'id': f'add_{p.id}_2', 'title': '2 unidades'},
-                        {'id': f'add_{p.id}_3', 'title': '3 unidades'},
+                        {'id': f'add_{p.id}_1', 'title': '🛒 Adicionar ao pedido'},
+                        {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
                     ],
-                    footer="Ou digite a quantidade desejada",
                 )
             product_list = "\n".join([f"{i+1}. {p.name} - R$ {p.price}" for i, p in enumerate(matched_products[:10])])
             return HandlerResult.text(

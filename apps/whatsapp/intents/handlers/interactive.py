@@ -231,27 +231,7 @@ class InteractiveReplyHandler(IntentHandler):
         except Exception as exc:
             logger.error('[InteractiveReplyHandler] Error fetching product %s: %s', product_uuid, exc)
             return HandlerResult.text("Erro ao buscar produto. Tente novamente.")
-        try:
-            session_manager = self._get_session_manager()
-            session = session_manager.get_or_create_session()
-            session.update_context('pending_product_id', str(product.id))
-            session.update_context('pending_product_name', product.name)
-            session.update_context('pending_product_price', float(product.price))
-        except Exception as exc:
-            logger.warning('[InteractiveReplyHandler] session context save failed: %s', exc)
-        return HandlerResult.buttons(
-            body=(
-                f"🍽️ *{product.name}*\n"
-                f"💰 R$ {product.price}\n\n"
-                f"Quantas unidades você quer?"
-            ),
-            buttons=[
-                {'id': f'add_{product.id}_1', 'title': '1 unidade'},
-                {'id': f'add_{product.id}_2', 'title': '2 unidades'},
-                {'id': f'add_{product.id}_3', 'title': '3 unidades'},
-            ],
-            footer="Ou digite a quantidade desejada",
-        )
+        return self._create_order_for_product(product, 1)
 
     def _handle_add_to_cart(self, reply_id: str) -> HandlerResult:
         parts = reply_id.split('_')
