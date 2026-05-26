@@ -16,6 +16,24 @@ from django.contrib.auth.models import AnonymousUser
 logger = logging.getLogger(__name__)
 
 
+def _get_client_ip(request) -> str:
+    """
+    Retorna o IP real do cliente de forma segura.
+
+    Prioriza CF-Connecting-IP (injetado pelo Cloudflare com o IP real do
+    cliente e não-falsificável por ele) sobre X-Forwarded-For, que é um
+    header controlável pelo cliente e pode ser usado para bypass de rate
+    limiting ou falsificação de logs.
+
+    Fallback para REMOTE_ADDR em ambientes sem Cloudflare (dev, Railway
+    sem CDN, conexões diretas).
+    """
+    cf_ip = request.META.get('HTTP_CF_CONNECTING_IP')
+    if cf_ip:
+        return cf_ip.strip()
+    return request.META.get('REMOTE_ADDR', '')
+
+
 # ============================================
 # WebSocket Token Authentication Middleware
 # ============================================
@@ -110,7 +128,7 @@ class RequestLoggingMiddleware:
         request_id = hashlib.md5(
             f"{time.time()}{request.path}{request.META.get('REMOTE_ADDR', '')}".encode()
         ).hexdigest()[:12]
-        
+
         request.request_id = request_id
 
         # Log auth status (not the actual token!) for debugging
@@ -125,7 +143,7 @@ class RequestLoggingMiddleware:
         response = self.get_response(request)
 
         duration = time.time() - start_time
-        
+
         log_data = {
             'request_id': request_id,
             'method': request.method,
@@ -148,10 +166,7 @@ class RequestLoggingMiddleware:
         return response
 
     def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', '')
+        return _get_client_ip(request)
 
 
 class RateLimitMiddleware:
@@ -209,10 +224,7 @@ class RateLimitMiddleware:
         return response
 
     def get_client_ip(self, request):
-        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
-        if x_forwarded_for:
-            return x_forwarded_for.split(',')[0].strip()
-        return request.META.get('REMOTE_ADDR', '')
+        return _get_client_ip(request)
 
 
 # ============================================
