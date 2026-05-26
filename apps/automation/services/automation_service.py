@@ -222,7 +222,8 @@ class AutomationService:
         """Return the default auto message templates."""
         menu_link = profile.get_menu_url() or profile.website_url or ''
         company_name = profile.company_name or 'nosso time'
-        cart_delay = max(60, profile.abandoned_cart_delay_minutes * 60)
+        _cfg = profile.store if profile.store_id else profile
+        cart_delay = max(60, _cfg.abandoned_cart_delay_minutes * 60)
 
         return [
             {
@@ -411,7 +412,10 @@ class AutomationService:
         Returns the response message or None if no auto-response.
         """
         profile = self.get_company_profile(account_id)
-        if not profile or not profile.auto_reply_enabled:
+        if not profile:
+            return None
+        _cfg = profile.store if profile.store_id else profile
+        if not _cfg.auto_reply_enabled:
             return None
 
         # Log the incoming message
@@ -440,7 +444,7 @@ class AutomationService:
             response = self._send_auto_message(profile, session, AutoMessage.EventType.WELCOME)
             
             # Also send menu if enabled
-            if profile.menu_auto_send and profile.menu_url:
+            if _cfg.menu_auto_send and profile.menu_url:
                 menu_response = self._send_auto_message(profile, session, AutoMessage.EventType.MENU)
                 if menu_response:
                     response = f"{response}\n\n{menu_response}" if response else menu_response
@@ -448,7 +452,7 @@ class AutomationService:
             return response
 
         # If AI Agent is enabled, use it for complex responses
-        if profile.use_ai_agent and profile.default_agent:
+        if _cfg.use_ai_agent and profile.default_agent:
             return self._process_with_agent(profile, session, message_text)
 
         # Default: no auto-response for regular messages
@@ -683,6 +687,7 @@ class AutomationService:
         profile = self._validate_api_key(api_key)
         if not profile:
             return False
+        _cfg = profile.store if profile.store_id else profile
 
         session = self.get_session_by_id(session_id)
         if not session:
@@ -706,7 +711,7 @@ class AutomationService:
             session.save()
 
             # Send PIX notification
-            if profile.pix_notification_enabled:
+            if _cfg.pix_notification_enabled:
                 self._send_notification(
                     profile,
                     session,
@@ -722,7 +727,7 @@ class AutomationService:
             session.save()
 
             # Send payment confirmation
-            if profile.payment_confirmation_enabled:
+            if _cfg.payment_confirmation_enabled:
                 self._send_notification(
                     profile,
                     session,
@@ -734,7 +739,7 @@ class AutomationService:
                 )
 
         elif event_type == 'payment_failed':
-            if profile.payment_confirmation_enabled:
+            if _cfg.payment_confirmation_enabled:
                 self._send_notification(
                     profile,
                     session,
@@ -765,6 +770,7 @@ class AutomationService:
         profile = self._validate_api_key(api_key)
         if not profile:
             return False
+        _cfg = profile.store if profile.store_id else profile
 
         session = self.get_session_by_id(session_id)
         if not session:
@@ -791,7 +797,7 @@ class AutomationService:
         session.save()
 
         # Send notification
-        if profile.order_status_notification_enabled and event_type in event_mapping:
+        if _cfg.order_status_notification_enabled and event_type in event_mapping:
             self._send_notification(
                 profile,
                 session,
@@ -909,8 +915,8 @@ class AutomationService:
             logger.warning(f"[handle_order_status_change] No automation profile found for store {store.slug}")
             return False
         
-        # Check if notifications are enabled
-        if not profile.order_status_notification_enabled:
+        # Check if notifications are enabled (store is source of truth)
+        if not store.order_status_notification_enabled:
             logger.info(f"[handle_order_status_change] Order status notifications disabled for store {store.slug}")
             return False
         
@@ -1138,8 +1144,9 @@ class AutomationService:
     ):
         """Schedule abandoned cart notification."""
         from ..tasks import send_abandoned_cart_notification
-        
-        delay_seconds = profile.abandoned_cart_delay_minutes * 60
+
+        _cfg = profile.store if profile.store_id else profile
+        delay_seconds = _cfg.abandoned_cart_delay_minutes * 60
         send_abandoned_cart_notification.apply_async(
             args=[str(session.id)],
             countdown=delay_seconds
