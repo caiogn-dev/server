@@ -60,7 +60,18 @@ class DeliveryInfoHandler(IntentHandler):
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         logger.info("[DeliveryInfoHandler] Respondendo entrega de forma determinística")
-        return HandlerResult.text(self._build_delivery_info_text(intent_data.get('original_message', '')))
+        text = self._build_delivery_info_text(intent_data.get('original_message', ''))
+        store = self.store
+        delivery_enabled = getattr(store, 'delivery_enabled', True) if store else True
+        pickup_enabled = getattr(store, 'pickup_enabled', True) if store else True
+        buttons = []
+        if delivery_enabled:
+            buttons.append({'id': 'view_menu', 'title': '📋 Ver Cardápio'})
+        if pickup_enabled and delivery_enabled:
+            buttons.append({'id': 'order_pickup', 'title': '🏪 Quero Retirar'})
+        if not buttons:
+            return HandlerResult.text(text)
+        return HandlerResult.buttons(body=text, buttons=buttons[:3])
 
 
 class LocationHandler(IntentHandler):

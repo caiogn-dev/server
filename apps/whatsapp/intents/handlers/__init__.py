@@ -1,6 +1,6 @@
 from typing import Optional
 
-from apps.whatsapp.intents.detector import IntentType
+from apps.whatsapp.intents.detector import IntentType  # noqa: F401 — re-exported
 
 from .base import HandlerResult, IntentHandler, _normalize_text, _parse_items_from_text_dynamic
 from .catalog import MenuRequestHandler, PriceCheckHandler, ProductMentionHandler, ProductNotFoundHandler
@@ -44,6 +44,7 @@ HANDLER_MAP = {
     IntentType.ADD_TO_CART: QuickOrderHandler,
     IntentType.CANCEL_ORDER: CancelOrderHandler,
     IntentType.HUMAN_HANDOFF: HumanHandoffHandler,
+    IntentType.FRUSTRATION: HumanHandoffHandler,
     IntentType.FAQ: FAQHandler,
     IntentType.UNKNOWN: UnknownHandler,
 }

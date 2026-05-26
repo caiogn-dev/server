@@ -57,7 +57,7 @@ class GreetingHandler(IntentHandler):
         except Exception as exc:
             logger.warning('[GreetingHandler] Erro ao checar sessão: %s', exc)
 
-        # Sem sessão ativa — boas-vindas completas para cliente novo
+        # Sem sessão ativa — boas-vindas completas para cliente novo/retornante
         company_name = (
             getattr(self.company, 'company_name', None)
             or (self.store.name if self.store else None)
@@ -65,6 +65,45 @@ class GreetingHandler(IntentHandler):
         )
         customer_name = self.get_customer_name()
         greeting = f"Olá, {customer_name}! 👋" if customer_name != 'Cliente' else "Olá! 👋"
+
+        # Verifica se tem pedido recente (últimos 7 dias) para oferecer repetição
+        recent_order = None
+        if self.store:
+            try:
+                from django.utils import timezone
+                from datetime import timedelta
+                from apps.stores.models import StoreOrder
+                cutoff = timezone.now() - timedelta(days=7)
+                phone = self.conversation.phone_number
+                recent_order = StoreOrder.objects.filter(
+                    store=self.store,
+                    customer_phone__endswith=phone[-8:],
+                    status__in=[
+                        StoreOrder.OrderStatus.DELIVERED,
+                        StoreOrder.OrderStatus.PICKED_UP,
+                        StoreOrder.OrderStatus.CONFIRMED,
+                        StoreOrder.OrderStatus.PAID,
+                    ],
+                    created_at__gte=cutoff,
+                ).order_by('-created_at').first()
+            except Exception as exc:
+                logger.warning('[GreetingHandler] Erro ao buscar pedido recente: %s', exc)
+
+        if recent_order:
+            body = (
+                f"{greeting} Que bom te ver por aqui! 😊\n\n"
+                f"Quer repetir seu último pedido (*#{recent_order.order_number}*)?"
+            )
+            logger.info('[GreetingHandler] Cliente retornante com pedido recente #%s', recent_order.order_number)
+            return HandlerResult.buttons(
+                body=body,
+                buttons=[
+                    {'id': 'repeat_order', 'title': '🔁 Repetir Pedido'},
+                    {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                    {'id': 'contact_support', 'title': '👤 Atendente'},
+                ],
+            )
+
         body = (
             f"{greeting} Bem-vindo(a) à *{company_name}*! 🌿\n\n"
             f"O que posso fazer por você?"

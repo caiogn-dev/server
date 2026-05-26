@@ -232,14 +232,36 @@ class IntentHandler:
                 "🚚 *Informações de entrega*\n\n"
                 "Não consegui carregar os dados da loja agora. Tente novamente em instantes."
             )
-        if not getattr(self.store, 'delivery_enabled', True):
-            return "🚫 No momento trabalhamos apenas com retirada."
+        delivery_enabled = getattr(self.store, 'delivery_enabled', True)
+        pickup_enabled = getattr(self.store, 'pickup_enabled', True)
+        if not delivery_enabled and pickup_enabled:
+            lines = ["🏪 *Retirada no local*", ""]
+            address_parts = [
+                getattr(self.store, 'address', ''),
+                getattr(self.store, 'city', ''),
+            ]
+            address = ", ".join(p for p in address_parts if p)
+            if address:
+                lines.append(f"📍 {address}")
+            lines.append("\nPara pedir, escolha os produtos no cardápio e selecione *Retirada* na finalização!")
+            return "\n".join(lines)
         lines = [
-            "🚚 *Informações de entrega*",
+            "🚚 *Entrega e Retirada*",
             "",
-            "A taxa varia de acordo com a localização.",
+            "🛵 *Entrega:* Taxa varia conforme a localização.",
             "Me envie sua localização pelo *alfinete do WhatsApp* para eu calcular certinho.",
         ]
+        if pickup_enabled:
+            address_parts = [
+                getattr(self.store, 'address', ''),
+                getattr(self.store, 'city', ''),
+            ]
+            address = ", ".join(p for p in address_parts if p)
+            lines.append("")
+            if address:
+                lines.append(f"🏪 *Retirada:* {address}")
+            else:
+                lines.append("🏪 *Retirada:* disponível em nossa loja!")
         if self.store.min_order_value:
             lines.extend(["", f"Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*"])
         return "\n".join(lines)
@@ -573,11 +595,19 @@ class IntentHandler:
         if pm == 'pix':
             if payment_data.get('success'):
                 return self._send_pix_confirmation(order, payment_data['pix_code'])
-            error_msg = payment_data.get('error', 'Tente novamente')
-            return HandlerResult.text(
-                f"✅ *Pedido #{order.order_number} criado!*\n\n"
-                f"💰 Total: R$ {float(order.total):.2f}\n"
-                f"⚠️ Erro ao gerar PIX: {error_msg}"
+            # PIX assíncrono: o código chega via webhook do MercadoPago em ~1 min.
+            # Mostramos confirmação do pedido e avisamos que o código vem a seguir.
+            return HandlerResult.buttons(
+                body=(
+                    f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
+                    f"💰 Total: *R$ {float(order.total):.2f}*\n\n"
+                    f"⏳ Estamos gerando seu código PIX, já te envio aqui em instantes!\n\n"
+                    f"Enquanto isso, pode acompanhar o status abaixo 👇"
+                ),
+                buttons=[
+                    {'id': f'track_{order.order_number}', 'title': '📦 Meu Pedido'},
+                    {'id': 'contact_support', 'title': '👤 Atendente'},
+                ],
             )
         if pm == 'card':
             if payment_data.get('success'):

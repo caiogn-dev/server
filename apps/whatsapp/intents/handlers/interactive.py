@@ -98,6 +98,9 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id == 'contact_support':
             return HumanHandoffHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
 
+        if reply_id == 'repeat_order':
+            return self._handle_repeat_order()
+
         logger.warning('[InteractiveReplyHandler] Unhandled reply_id=%s', reply_id)
         return HandlerResult.buttons(
             body=f"Você selecionou: {reply_title or reply_id}\n\nComo posso ajudar?",
@@ -266,4 +269,55 @@ class InteractiveReplyHandler(IntentHandler):
         if not self.store:
             return HandlerResult.text("Loja não disponível no momento. 😔")
         items = [{'product_id': str(product.id), 'quantity': quantity}]
+        return self._ask_delivery_method(items)
+
+    def _handle_repeat_order(self) -> HandlerResult:
+        if not self.store:
+            return HandlerResult.text("Loja não disponível no momento. 😔")
+        try:
+            from django.utils import timezone
+            from datetime import timedelta
+            from apps.stores.models import StoreOrder, StoreOrderItem, StoreProduct
+            cutoff = timezone.now() - timedelta(days=7)
+            phone = self.conversation.phone_number
+            last_order = StoreOrder.objects.filter(
+                store=self.store,
+                customer_phone__endswith=phone[-8:],
+                status__in=[
+                    StoreOrder.OrderStatus.DELIVERED,
+                    StoreOrder.OrderStatus.PICKED_UP,
+                    StoreOrder.OrderStatus.CONFIRMED,
+                    StoreOrder.OrderStatus.PAID,
+                ],
+                created_at__gte=cutoff,
+            ).order_by('-created_at').first()
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Erro ao buscar pedido para repetir: %s', exc)
+            last_order = None
+
+        if not last_order:
+            return HandlerResult.buttons(
+                body="😕 Não encontrei um pedido recente para repetir.\n\nQuer ver o cardápio?",
+                buttons=[
+                    {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                    {'id': 'contact_support', 'title': '👤 Atendente'},
+                ],
+            )
+
+        try:
+            order_items = StoreOrderItem.objects.filter(order=last_order).select_related('product')
+            items = []
+            for oi in order_items:
+                if oi.product and oi.product.is_active:
+                    items.append({'product_id': str(oi.product.id), 'quantity': oi.quantity})
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Erro ao carregar itens do pedido: %s', exc)
+            items = []
+
+        if not items:
+            return HandlerResult.buttons(
+                body="😕 Os produtos do seu último pedido não estão mais disponíveis.\n\nQuer ver o cardápio?",
+                buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+            )
+
         return self._ask_delivery_method(items)

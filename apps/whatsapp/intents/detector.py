@@ -57,6 +57,7 @@ class IntentType(Enum):
     # ===== Fallback =====
     UNKNOWN = "unknown"
     HUMAN_HANDOFF = "human_handoff"          # "Falar com atendente"
+    FRUSTRATION = "frustration"              # Expressões de frustração → handoff automático
 
 
 class IntentDetector:
@@ -162,6 +163,14 @@ class IntentDetector:
             r'(atendente|pessoa|humano|falar com algu[ée]m|n[ãa]o [ée] o que quero|errado|atendente humano)',
             r'(quero falar com pessoa|me passa pro atendente|chama algu[ée]m|quero ajuda humana)',
         ],
+        IntentType.FRUSTRATION: [
+            r'(p[eé]ssimo|horr[íi]vel|lixo|absurdo|rid[íi]culo|uma merda|um lixo|n[ãa]o presta)',
+            r'(que bot (horrível|inútil|idiota|lixo)|bot (inútil|horrível|lixo)|que atendimento)',
+            r'(inacreditável|incompetente|vergonhoso|que vergonha|que absurdo|que lixo)',
+            r'(estou com raiva|tô bravo|to bravo|fui enganado|me enganaram)',
+            r'(nunca mais|jamais|cancelar tudo|processarei|vou processar|chamar o procon)',
+            r'(n[ãa]o (adianta|funciona|resolve|entende nada|entende nada))',
+        ],
     }
     
     # ===== PALAVRAS QUE INDICAM NECESSIDADE DE LLM =====
@@ -196,6 +205,7 @@ class IntentDetector:
         
         # Ordena por prioridade (mais específicos primeiro)
         priority_order = [
+            IntentType.FRUSTRATION,
             IntentType.CREATE_ORDER,
             IntentType.CANCEL_ORDER,
             IntentType.TRACK_ORDER,

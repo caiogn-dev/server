@@ -1,11 +1,36 @@
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from apps.stores.models import StoreProduct
 
 from .base import HandlerResult, IntentHandler
 
 logger = logging.getLogger(__name__)
+
+
+def _build_price_list_text(store, intro: Optional[str] = None) -> str:
+    """Retorna lista de preços categorizada como texto."""
+    all_products = StoreProduct.objects.filter(
+        store=store, is_active=True
+    ).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
+        'category__sort_order', 'category__name', 'name'
+    )
+    if not all_products.exists():
+        return "Cardápio em atualização. Tente novamente em breve! 🔄"
+    by_cat: dict = {}
+    for p in all_products:
+        cat = p.category.name if p.category else 'Outros'
+        if ' - ' in cat:
+            cat = cat.split(' - ')[-1]
+        by_cat.setdefault(cat, []).append(p)
+    lines = [intro or "💰 *Tabela de preços:*", ""]
+    for cat, products in by_cat.items():
+        lines.append(f"*{cat}*")
+        for p in products:
+            lines.append(f"  • {p.name} — R$ {p.price}")
+        lines.append("")
+    lines.append("Para pedir, é só dizer o nome ou a quantidade. Ex: _2 rondelli de frango_ 😊")
+    return "\n".join(lines)
 
 
 class PriceCheckHandler(IntentHandler):
@@ -49,17 +74,9 @@ class PriceCheckHandler(IntentHandler):
                     response += f"• *{p.name}*: R$ {p.price}\n"
                 response += "\nQual você quer?"
                 return HandlerResult.text(response)
-            return HandlerResult.text(f"Não encontrei '{product_name}'. 😕\n\nQuer ver nosso cardápio completo?")
-        products = StoreProduct.objects.filter(
-            store=self.store, is_active=True
-        ).exclude(tags__contains=['ingrediente']).order_by('-created_at')[:5]
-        if products:
-            response = "💰 *Alguns dos nossos produtos:*\n\n"
-            for p in products:
-                response += f"• {p.name}: R$ {p.price}\n"
-            response += "\nQuer ver mais opções ou detalhes de algum?"
-            return HandlerResult.text(response)
-        return HandlerResult.text("Nosso cardápio está sendo atualizado! 🔄\nTente novamente em alguns minutos.")
+            intro = f"😕 Não encontrei *{product_name}* no cardápio.\n\nMas temos:"
+            return HandlerResult.text(_build_price_list_text(self.store, intro))
+        return HandlerResult.text(_build_price_list_text(self.store))
 
 
 class ProductMentionHandler(IntentHandler):
@@ -131,11 +148,8 @@ class ProductMentionHandler(IntentHandler):
                 f"🍝 *{search_term.title()}* - Temos esses:\n\n{product_list}\n\n"
                 f"Qual você quer? Digite o número ou o nome! 👇"
             )
-        available = all_products[:10]
-        if available:
-            product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in available])
-            return HandlerResult.text(f"Temos esses produtos:\n\n{product_list}\n\nQual você quer?")
-        return HandlerResult.text("Cardápio em atualização. Tente novamente em breve! 🔄")
+        intro = f"😕 Não encontrei *{search_term.title()}* no cardápio.\n\nMas temos:"
+        return HandlerResult.text(_build_price_list_text(self.store, intro))
 
 
 class MenuRequestHandler(IntentHandler):
