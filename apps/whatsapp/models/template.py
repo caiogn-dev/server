@@ -20,6 +20,7 @@ class MessageTemplate(models.Model):
         BASIC = 'basic', 'Basic'
         ADVANCED = 'advanced', 'Advanced'
 
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     account = models.ForeignKey(
         'whatsapp.WhatsAppAccount',
         on_delete=models.CASCADE,
@@ -42,6 +43,10 @@ class MessageTemplate(models.Model):
         choices=TemplateClass.choices,
         default=TemplateClass.BASIC,
     )
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         app_label = 'whatsapp'

@@ -409,6 +409,40 @@ class UnifiedService:
 
         return sessions.exists()
 
+    def _get_active_session(self) -> Optional[CustomerSession]:
+        """Return the active CustomerSession for this conversation, or None."""
+        if not self.conversation:
+            return None
+        phone_number = self.conversation.phone_number
+        sessions = CustomerSession.objects.filter(phone_number=phone_number)
+        if self.company:
+            sessions = sessions.filter(company=self.company)
+        return sessions.filter(
+            status__in=['active', 'cart_created', 'checkout', 'payment_pending']
+        ).order_by('-updated_at').first()
+
+    def _increment_dead_end(self) -> int:
+        """Increment consecutive-unresolved counter in session context. Returns new count."""
+        try:
+            session = self._get_active_session()
+            if not session:
+                return 0
+            count = (session.context or {}).get('_dead_end_count', 0) + 1
+            session.update_context('_dead_end_count', count)
+            return count
+        except Exception as exc:
+            logger.warning('[unified] dead_end increment failed: %s', exc)
+            return 0
+
+    def _reset_dead_end(self) -> None:
+        """Reset dead-end counter when a message resolves successfully."""
+        try:
+            session = self._get_active_session()
+            if session and (session.context or {}).get('_dead_end_count', 0) > 0:
+                session.update_context('_dead_end_count', 0)
+        except Exception as exc:
+            logger.warning('[unified] dead_end reset failed: %s', exc)
+
     def _is_human_mode_transactional_step(
         self,
         message_text: str,
@@ -829,6 +863,7 @@ class UnifiedService:
         # 1. Handler determinístico
         handler_response = self._run_handler(intent_data)
         if handler_response is not None:
+            self._reset_dead_end()
             _ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(
                 '[unified] handler response (%.0fms) intent=%s', _ms, intent.value,
@@ -854,6 +889,7 @@ class UnifiedService:
         )
         template = None if _skip_template else self._get_template_for_intent(intent)
         if template:
+            self._reset_dead_end()
             validated_buttons = _validate_buttons(template.buttons)
             _ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(
@@ -882,6 +918,7 @@ class UnifiedService:
             context_text = self._build_context(intent_data, session_data)
             llm_response = self._call_llm(normalized, context_text)
             if llm_response:
+                self._reset_dead_end()
                 _ms = round((time.monotonic() - _t0) * 1000, 1)
                 logger.info(
                     '[unified] llm response (%.0fms) intent=%s agent=%s',
@@ -900,7 +937,22 @@ class UnifiedService:
                     },
                 )
 
-        # 4. Fallback genérico
+        # 4. Fallback — detecta loop de dead-end: 3 msgs consecutivas sem resolução → handoff
+        if intent == IntentType.UNKNOWN:
+            dead_end_count = self._increment_dead_end()
+            if dead_end_count >= 3:
+                handoff_response = self._run_handler({'intent': IntentType.HUMAN_HANDOFF, 'original_message': normalized})
+                if handoff_response is not None:
+                    self._reset_dead_end()
+                    _ms = round((time.monotonic() - _t0) * 1000, 1)
+                    logger.info(
+                        '[unified] dead_end handoff triggered (%.0fms) count=%d',
+                        _ms, dead_end_count,
+                        extra={'unified.source': 'handler', 'unified.intent': 'dead_end_handoff',
+                               'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+                    )
+                    return handoff_response
+
         _ms = round((time.monotonic() - _t0) * 1000, 1)
         logger.warning(
             '[unified] fallback response (%.0fms) intent=%s — nenhum provider respondeu',
