@@ -740,7 +740,9 @@ class UnifiedService:
         # not a general negative answer for the LLM to reinterpret.
         # Exception: cancel commands must escape the checkout handler so they reach CANCEL_ORDER.
         _early_cancel = bool(re.search(
-            r'(?i)^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais)\.?$',
+            r'(?i)^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais'
+            r'|esquece|esquece isso|esquece a[ií]|deixa pra l[áa]|larga m[ãa]o|larga'
+            r'|desisti|desistir|n[ãa]o quero|pode cancelar|pode esquecer)\.?$',
             normalized,
         ))
         if not _early_cancel and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):

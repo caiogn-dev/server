@@ -129,6 +129,7 @@ class IntentDetector:
         IntentType.CANCEL_ORDER: [
             r'(cancelar pedido|quero cancelar|posso cancelar|preciso cancelar)',
             r'^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais)\.?$',
+            r'^(esquece|esquece isso|esquece a[ií]|deixa pra l[áa]|larga m[ãa]o|larga|desisti|desistir|n[ãa]o quero|pode cancelar|pode esquecer)\.?$',
         ],
         IntentType.MODIFY_ORDER: [
             r'(trocar|alterar pedido|mudar pedido|modificar|tirar|adicionar|remover)',
