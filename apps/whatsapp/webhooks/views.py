@@ -81,31 +81,36 @@ class WhatsAppWebhookView(APIView):
     def post(self, request):
         """Handle incoming webhook events from Meta."""
         try:
-            # Get raw body for signature verification
-            raw_body = request.body.decode('utf-8')
-            
-            # Parse JSON payload
+            # Keep raw bytes for HMAC signature verification — HMAC requires bytes,
+            # not a decoded string. Decoding first would still produce the same HMAC
+            # for valid UTF-8, but Python's hmac module rejects str arguments with TypeError.
+            raw_body_bytes = request.body
+
+            # Parse JSON payload (decode for JSON parsing only)
             try:
-                payload = json.loads(raw_body)
+                payload = json.loads(raw_body_bytes.decode('utf-8'))
             except json.JSONDecodeError as e:
                 logger.error(f"Invalid JSON payload: {e}")
                 return Response({'status': 'error', 'message': 'Invalid JSON'}, status=400)
-            
+
             # Get signature from headers
             signature = request.headers.get('X-Hub-Signature-256', '')
-            
+
             # Initialize service
             service = WebhookService()
-            
+
             # Log webhook details
             object_type = payload.get('object', 'unknown')
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
-            
-            # Validate signature using the raw body we captured earlier
-            if not service.validate_signature(raw_body, signature):
-                logger.warning("Invalid webhook signature - skipping validation in dev mode")
-                # Continue anyway for debugging
+
+            # Validate signature using the original bytes (required by hmac module)
+            if not service.validate_signature(raw_body_bytes, signature):
+                if settings.DEBUG:
+                    logger.warning("Assinatura de webhook inválida - continuando em modo DEBUG")
+                else:
+                    logger.warning("Assinatura de webhook inválida recebida - evento rejeitado")
+                    return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
             
             # Convert headers to simple dict
             headers = {}
