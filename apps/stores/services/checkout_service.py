@@ -728,20 +728,38 @@ class CheckoutService:
     
     @staticmethod
     def get_payment_credentials(store: Store) -> dict:
-        """Get payment credentials for a store."""
+        """Get payment credentials for a store.
+
+        Priority: StorePaymentGateway → StoreIntegration (legacy) → global settings.
+        """
+        from apps.stores.models import StorePaymentGateway
+        gateway = StorePaymentGateway.objects.filter(
+            store=store,
+            gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO,
+            is_enabled=True,
+        ).first()
+
+        if gateway and gateway.access_token:
+            return {
+                'provider': 'mercadopago',
+                'access_token': gateway.access_token,
+                'sandbox': gateway.is_sandbox,
+            }
+
+        # Legacy fallback: StoreIntegration
         integration = StoreIntegration.objects.filter(
             store=store,
             integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
             status=StoreIntegration.IntegrationStatus.ACTIVE
         ).first()
-        
+
         if integration and integration.access_token:
             return {
                 'provider': 'mercadopago',
                 'access_token': integration.access_token,
                 'sandbox': integration.settings.get('sandbox', False),
             }
-        
+
         # Fallback to global credentials
         access_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', None)
         if access_token:
@@ -750,7 +768,7 @@ class CheckoutService:
                 'access_token': access_token,
                 'sandbox': getattr(settings, 'MERCADO_PAGO_SANDBOX', False),
             }
-        
+
         return None
     
     @staticmethod
