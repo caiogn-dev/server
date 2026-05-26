@@ -34,6 +34,7 @@ HANDLER_MAP = {
     IntentType.TRACK_ORDER: TrackOrderHandler,
     IntentType.PAYMENT_STATUS: PaymentStatusHandler,
     IntentType.CONFIRM_PAYMENT: PaymentStatusHandler,
+    IntentType.REQUEST_PIX: PaymentStatusHandler,
     IntentType.MODIFY_ORDER: UnknownHandler,
     IntentType.VIEW_QR_CODE: ViewQRCodeHandler,
     IntentType.COPY_PIX: CopyPixHandler,
