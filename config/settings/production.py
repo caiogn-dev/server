@@ -42,6 +42,11 @@ if SECRET_KEY == 'your-secret-key-change-in-production':
 if not ALLOWED_HOSTS:
     raise ImproperlyConfigured('ALLOWED_HOSTS must be set in production.')
 
+if WHATSAPP_WEBHOOK_VERIFY_TOKEN in ('your-verify-token', '', None):
+    raise ImproperlyConfigured(
+        'WHATSAPP_WEBHOOK_VERIFY_TOKEN must be set to a secure, non-default value in production.'
+    )
+
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False
 

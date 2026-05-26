@@ -34,8 +34,16 @@ class TokenEncryption:
     """Encrypt and decrypt sensitive tokens."""
 
     def __init__(self):
-        key = settings.SECRET_KEY[:32].encode()
-        key = base64.urlsafe_b64encode(key.ljust(32)[:32])
+        enc_key = getattr(settings, 'ENCRYPTION_KEY', None)
+        if enc_key:
+            # Dedicated key — must be a valid Fernet 32-byte URL-safe base64 string.
+            # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+            key = enc_key.encode() if isinstance(enc_key, str) else enc_key
+        else:
+            # Fallback: derive from SECRET_KEY for backward compatibility with
+            # tokens already stored in the database.
+            raw = settings.SECRET_KEY[:32].encode()
+            key = base64.urlsafe_b64encode(raw.ljust(32)[:32])
         self.cipher = Fernet(key)
 
     def encrypt(self, token: str) -> str:

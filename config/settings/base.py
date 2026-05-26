@@ -10,6 +10,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'your-secret-key-change-in-production'))
 
+# Dedicated Fernet key for encrypting WhatsApp access tokens at rest.
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# If unset, falls back to a key derived from SECRET_KEY (backward compatible but less safe to rotate).
+ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY', '')
+
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() == 'true'
 
 # SECURITY: Don't allow wildcard by default - require explicit configuration
