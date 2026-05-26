@@ -7,6 +7,21 @@ from .base import HandlerResult, IntentHandler
 
 logger = logging.getLogger(__name__)
 
+_DRINK_KEYWORDS = ('bebida', 'drink', 'refresc', 'suco', 'refrigerante', 'beber')
+
+
+def _is_drink_category(cat_name: str) -> bool:
+    n = cat_name.lower()
+    return any(kw in n for kw in _DRINK_KEYWORDS)
+
+
+def _is_drink_product(product) -> bool:
+    cat = getattr(product, 'category', None)
+    if cat and _is_drink_category(cat.name):
+        return True
+    tags = list(product.tags or [])
+    return any(kw in ' '.join(tags).lower() for kw in _DRINK_KEYWORDS)
+
 
 def _build_price_list_text(store, intro: Optional[str] = None) -> str:
     """Retorna lista de preços categorizada como texto."""
@@ -170,15 +185,29 @@ class MenuRequestHandler(IntentHandler):
         if total_products == 0:
             logger.error("[MenuRequestHandler] Nenhum produto ativo encontrado!")
             return HandlerResult.text("Nenhum produto disponível no momento. 😔")
+        # Separa saladas de bebidas — bebidas entram no upsell, não no menu principal
         products_by_category = {}
+        has_drinks = False
         for product in all_products:
             cat_name = product.category.name if product.category else 'Outros'
             if ' - ' in cat_name:
                 cat_name = cat_name.split(' - ')[-1]
+            if _is_drink_category(cat_name):
+                has_drinks = True
+                continue  # bebidas ficam fora do menu principal
             if cat_name not in products_by_category:
                 products_by_category[cat_name] = []
             products_by_category[cat_name].append(product)
-        logger.info(f"[MenuRequestHandler] Categorias: {list(products_by_category.keys())}")
+
+        logger.info("[MenuRequestHandler] Categorias (sem bebidas): %s | has_drinks=%s",
+                    list(products_by_category.keys()), has_drinks)
+
+        drink_footer = "🥤 Bebidas disponíveis ao finalizar o pedido!" if has_drinks else None
+
+        if not products_by_category:
+            logger.error("[MenuRequestHandler] Nenhum produto de salada encontrado!")
+            return HandlerResult.text("Nenhum produto disponível no momento. 😔")
+
         sections = []
         total_rows = 0
         max_rows = 10
@@ -186,26 +215,27 @@ class MenuRequestHandler(IntentHandler):
             if total_rows >= max_rows:
                 break
             remaining_rows = max_rows - total_rows
-            products_to_show = products[:remaining_rows]
             rows = [
                 {'id': f'product_{p.id}', 'title': p.name[:24], 'description': f'R$ {p.price}'}
-                for p in products_to_show
+                for p in products[:remaining_rows]
             ]
             if total_rows + len(rows) > max_rows:
                 rows = rows[:max_rows - total_rows]
             if rows:
                 sections.append({'title': cat_name[:24], 'rows': rows})
                 total_rows += len(rows)
+
         if not sections:
             logger.warning("[MenuRequestHandler] Sem seções, usando fallback de texto")
-            if all_products.count() > 0:
-                products = all_products[:10]
-                product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in products])
-                return HandlerResult.text(
-                    f"📋 *Cardápio - {self.store.name}*\n\n{product_list}\n\n"
-                    f"Para pedir, digite quantos você quer!\nEx: *2 rondelli de frango*"
-                )
+            fallback = list(products_by_category.values())[0] if products_by_category else []
+            if fallback:
+                product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in fallback[:10]])
+                body = f"📋 *Cardápio - {self.store.name}*\n\n{product_list}\n\nPara pedir, é só dizer o nome e a quantidade!"
+                if drink_footer:
+                    body += f"\n\n{drink_footer}"
+                return HandlerResult.text(body)
             return HandlerResult.text("Nenhum produto disponível no momento. 😔")
+
         product_sections = []
         total_product_items = 0
         max_product_items = 30
@@ -218,19 +248,21 @@ class MenuRequestHandler(IntentHandler):
                 continue
             product_sections.append({'title': cat_name[:24], 'product_items': product_items})
             total_product_items += len(product_items)
+
         if product_sections:
-            logger.info("[MenuRequestHandler] Enviando catálogo WhatsApp com %s seções e %s produtos",
+            logger.info("[MenuRequestHandler] Catálogo WhatsApp: %s seções, %s produtos",
                         len(product_sections), total_product_items)
             return HandlerResult.product_list(
                 header=f"Cardápio - {self.store.name}",
-                body="Escolha seus itens pelo catálogo abaixo.",
-                footer="As imagens, preços e detalhes vêm do catálogo do WhatsApp.",
+                body="Escolha sua salada pelo catálogo abaixo. 🥗",
+                footer=drink_footer or "As imagens e preços vêm do catálogo do WhatsApp.",
                 sections=product_sections,
                 fallback_sections=sections,
             )
-        logger.info(f"[MenuRequestHandler] Enviando lista com {len(sections)} seções")
+
+        logger.info("[MenuRequestHandler] Enviando lista com %s seções", len(sections))
         return HandlerResult.list_message(
-            body=f"📋 *Cardápio - {self.store.name}*\n\nEscolha uma opção:",
+            body=f"🥗 *Cardápio - {self.store.name}*\n\nEscolha sua salada:",
             button="Ver opções",
             sections=sections,
         )
