@@ -58,7 +58,7 @@ class StorePrintAgent(BaseModel):
     printer_name = models.CharField(max_length=255, blank=True)
     printer_host = models.CharField(max_length=255, blank=True)
     printer_port = models.PositiveIntegerField(default=9100)
-    poll_interval_seconds = models.PositiveIntegerField(default=2)
+    poll_interval_seconds = models.PositiveIntegerField(default=10)
     max_retries = models.PositiveIntegerField(default=3)
     api_key_prefix = models.CharField(max_length=32, unique=True, db_index=True)
     api_key_hash = models.CharField(max_length=64)
@@ -118,6 +118,9 @@ class StorePrintAgent(BaseModel):
         return hmac.compare_digest(expected, self.api_key_hash)
 
     def mark_seen(self, *, ip_address: str = '', app_version: str = '', host_name: str = '') -> None:
+        # Debounce: only write to DB if last seen more than 30s ago
+        if self.last_seen_at and (timezone.now() - self.last_seen_at).total_seconds() < 30:
+            return
         self.last_seen_at = timezone.now()
         if ip_address:
             self.last_seen_ip = ip_address

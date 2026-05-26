@@ -238,6 +238,8 @@ CORS_ALLOWED_ORIGINS = [
     # ce-saladas dev server (openclaw tunnel + local)
     "https://openclaw.pastita.com.br",
     "http://localhost:3001",
+    # postado admin panel dev server
+    "http://localhost:3099",
     # Backend / API self-origin (health checks, swagger)
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",

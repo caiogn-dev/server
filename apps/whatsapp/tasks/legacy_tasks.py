@@ -7,7 +7,7 @@ package-based task layout under apps.whatsapp.tasks.
 import logging
 
 from celery import shared_task
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -63,13 +63,16 @@ def process_pending_webhook_events(batch_size: int = 100):
     from ..models import WebhookEvent
     from ..services.webhook_service import WebhookService
 
-    pending_events = WebhookEvent.objects.filter(
-        processing_status=WebhookEvent.ProcessingStatus.PENDING
-    ).order_by('created_at')[:batch_size]
-
     processed = 0
     failed = 0
     service = WebhookService()
+
+    with transaction.atomic():
+        pending_events = list(
+            WebhookEvent.objects.select_for_update(skip_locked=True).filter(
+                processing_status=WebhookEvent.ProcessingStatus.PENDING
+            ).order_by('created_at')[:batch_size]
+        )
 
     for event in pending_events:
         try:

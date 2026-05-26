@@ -1,9 +1,14 @@
 import json
 import logging
-from anthropic import Anthropic
+import os
+from openai import OpenAI
 from apps.postado.models import PostadoPost, PostadoClient
 
 logger = logging.getLogger(__name__)
+
+NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
+NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
+COPY_MODEL = os.environ.get('POSTADO_COPY_MODEL', 'moonshotai/kimi-k2.6')
 
 NICHE_CONTEXT = {
     'restaurant': 'restaurante, comida, gastronomia, delivery',
@@ -35,7 +40,7 @@ MONTH_NAMES_PT = {
 
 class CopyService:
     def __init__(self):
-        self.client = Anthropic()
+        self.client = OpenAI(base_url=NVIDIA_BASE_URL, api_key=NVIDIA_API_KEY)
 
     def generate(self, post: PostadoPost) -> dict:
         client_obj: PostadoClient = post.pack.client
@@ -84,12 +89,13 @@ Responda APENAS com JSON válido no formato:
 {{"caption": "legenda completa (máx 150 palavras)", "cta": "chamada para ação curta (máx 10 palavras)", "hashtags": "5-8 hashtags relevantes separadas por espaço"}}"""
 
         try:
-            response = self.client.messages.create(
-                model="claude-haiku-4-5-20251001",
+            response = self.client.chat.completions.create(
+                model=COPY_MODEL,
+                messages=[{"role": "user", "content": prompt}],
                 max_tokens=500,
-                messages=[{"role": "user", "content": prompt}]
+                temperature=0.7,
             )
-            raw = response.content[0].text.strip()
+            raw = response.choices[0].message.content.strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
