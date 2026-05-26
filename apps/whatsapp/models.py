@@ -257,6 +257,10 @@ class MessageTemplate(BaseModel):
         UTILITY = 'utility', 'Utility'
         AUTHENTICATION = 'authentication', 'Authentication'
 
+    class TemplateClass(models.TextChoices):
+        BASIC = 'basic', 'Basic'
+        ADVANCED = 'advanced', 'Advanced'
+
     account = models.ForeignKey(
         WhatsAppAccount,
         on_delete=models.CASCADE,
@@ -274,7 +278,12 @@ class MessageTemplate(BaseModel):
     )
     
     components = models.JSONField(default=list)
-    
+    template_class = models.CharField(
+        max_length=20,
+        choices=TemplateClass.choices,
+        default=TemplateClass.BASIC,
+    )
+
     class Meta:
         db_table = 'whatsapp_templates'
         verbose_name = 'Message Template'
