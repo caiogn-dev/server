@@ -29,6 +29,14 @@
 5. **PIX só em StoreOrder** — `CustomerSession` marcado como DEPRECATED (mantido como cache)
 6. **StoreCustomerAddress é canônica** — `StoreCustomer.addresses` JSON é DEPRECATED
 
+## O Que Foi Feito (2026-05-26 cont.)
+
+| # | Mudança | Resultado |
+|---|---|---|
+| A | `automation_service.py` config reads → `store.*` via `_cfg = profile.store or profile` | auto_reply, pix, payment, order, cart_delay — Store como fonte de verdade |
+| B | `automation/models.py` (1230 linhas, 11 classes) → `models/` package (6 sub-módulos) | profile.py, session.py, messaging.py, reporting.py, flows.py, logging.py — FK strings, app_label explícito |
+| C | `agents/services.py` (2116 linhas) → `services/` package | langchain_service.py (1780l), agent_service.py, langgraph_service.py — `__init__.py` re-exporta tudo |
+
 ## Sub-Projetos Pendentes (Planos Separados)
 
 | Sub-projeto | Complexidade | Prioridade |
@@ -39,7 +47,5 @@
 | Embeddings em `store_products`, `agent_knowledge_entries`, `whatsapp_messages` | Nova dependência: `pgvector` extension | |
 | **StoreDeliveryConfig** | Baixa | 🟢 Baixa |
 | Extrair config de delivery do `Store.metadata` para tabela própria | Não urgente, Store.metadata é legível | |
-| **Bot/Automation refactor** | Alta | 🔴 Alta |
-| Modularizar `apps/automation` — CustomerSession, CompanyProfile, AutoMessage, AgentFlow | Candidato a microserviço | |
 | **RemoveCustomerSession.pix_code** | Baixa — após teste de estabilidade | 🟢 Baixa |
 | Remover campos DEPRECATED do CustomerSession após confirmar que StoreOrder é usado | Aguardar 30 dias em produção | |

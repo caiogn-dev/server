@@ -731,7 +731,10 @@ class UnifiedService:
 
         if not message_text or not message_text.strip():
             logger.debug('[unified] Mensagem sem texto ignorada silenciosamente')
-            return None
+            return UnifiedResponse(
+                content="Não entendi sua mensagem. Como posso ajudar?",
+                source=ResponseSource.FALLBACK,
+            )
 
         normalized = message_text.strip()
 
