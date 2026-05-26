@@ -87,7 +87,13 @@ class InteractiveReplyHandler(IntentHandler):
             )
 
         if reply_id == 'montar_salada':
-            return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
+            return HandlerResult.text(
+                "🥗 *Monte sua salada personalizada pelo nosso site!*\n\n"
+                "Acesse o cardápio, escolha a base, proteína, toppings e molho do seu jeito:\n\n"
+                "👉 https://cesaladas.com.br/cardapio\n\n"
+                "Por lá você também faz o pedido completo, acompanha o status e paga com PIX ou cartão. 😊\n\n"
+                "🎁 Use o cupom *SALADA10* e ganhe *10% de desconto* no seu pedido!"
+            )
 
         if reply_id == 'contact_support':
             return HumanHandoffHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
