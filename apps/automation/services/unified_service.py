@@ -730,11 +730,8 @@ class UnifiedService:
                 logger.error('[unified] location handler failed: %s', exc, exc_info=True)
 
         if not message_text or not message_text.strip():
-            return UnifiedResponse(
-                content='Desculpe, nao entendi. Pode repetir?',
-                source=ResponseSource.FALLBACK,
-                metadata={'unified.source': 'fallback_empty'},
-            )
+            logger.debug('[unified] Mensagem sem texto ignorada silenciosamente')
+            return None
 
         normalized = message_text.strip()
 

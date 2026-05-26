@@ -177,6 +177,39 @@ class SessionManager:
                     self.store.id,
                 )
 
+        # Preservar contexto: se não há sessão ativa mas existe sessão recente em
+        # status terminal (pagamento confirmado, pedido entregue), reutilizá-la em
+        # vez de criar nova — evita saudação desnecessária e re-envio de PIX.
+        if not session:
+            _recent_cutoff = timezone.now() - timedelta(hours=24)
+            _terminal = [
+                CustomerSession.SessionStatus.PAYMENT_CONFIRMED,
+                CustomerSession.SessionStatus.COMPLETED,
+                CustomerSession.SessionStatus.ORDER_PLACED,
+            ]
+            session = CustomerSession.objects.filter(
+                company=self.company,
+                phone_number__in=self.phone_number_variants,
+                status__in=_terminal,
+                last_activity_at__gte=_recent_cutoff,
+            ).order_by('-last_activity_at').first()
+
+            if not session and self.store:
+                session = CustomerSession.objects.filter(
+                    company__store=self.store,
+                    phone_number__in=self.phone_number_variants,
+                    status__in=_terminal,
+                    last_activity_at__gte=_recent_cutoff,
+                ).order_by('-last_activity_at').first()
+                if session:
+                    self.company = session.company
+
+            if session:
+                logger.info(
+                    '[SessionManager] Reusing recent terminal session %s (status=%s) — preserving context',
+                    session.id, session.status,
+                )
+
         if session:
             # Atualiza última atividade
             session.last_activity_at = timezone.now()
