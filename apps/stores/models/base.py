@@ -189,6 +189,18 @@ class Store(BaseModel):
     menu_url = models.URLField(blank=True, help_text="Online menu URL")
     order_url = models.URLField(blank=True, help_text="Direct order link")
 
+    # Automation config — mirrors CompanyProfile for O(1) access
+    auto_reply_enabled = models.BooleanField(default=True)
+    welcome_message_enabled = models.BooleanField(default=True)
+    menu_auto_send = models.BooleanField(default=False)
+    abandoned_cart_notification = models.BooleanField(default=False)
+    abandoned_cart_delay_minutes = models.IntegerField(default=60)
+    pix_notification_enabled = models.BooleanField(default=True)
+    payment_confirmation_enabled = models.BooleanField(default=True)
+    order_status_notification_enabled = models.BooleanField(default=True)
+    delivery_notification_enabled = models.BooleanField(default=True)
+    use_ai_agent = models.BooleanField(default=False)
+
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)
 

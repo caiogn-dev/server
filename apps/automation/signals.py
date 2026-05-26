@@ -95,7 +95,37 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
                 logger.info(f"CompanyProfile already exists for Store {instance.slug} — skipping create")
                 return
             logger.info(f"Created CompanyProfile {profile.id} for Store {instance.slug}")
-            
+
+            # Sync automation flags from CompanyProfile defaults to Store.
+            # Only overwrite Store fields that are still at their model defaults
+            # so that values set explicitly at Store.create() are preserved.
+            _STORE_DEFAULTS = {
+                'auto_reply_enabled': True,
+                'welcome_message_enabled': True,
+                'menu_auto_send': False,
+                'abandoned_cart_notification': False,
+                'abandoned_cart_delay_minutes': 60,
+                'pix_notification_enabled': True,
+                'payment_confirmation_enabled': True,
+                'order_status_notification_enabled': True,
+                'delivery_notification_enabled': True,
+                'use_ai_agent': False,
+            }
+            try:
+                update_fields = []
+                for field, default_val in _STORE_DEFAULTS.items():
+                    store_val = getattr(instance, field)
+                    cp_val = getattr(profile, field, default_val)
+                    # Only copy when Store still holds the default AND CompanyProfile
+                    # has a non-default value (e.g., admin changed the profile).
+                    if store_val == default_val and cp_val != default_val:
+                        setattr(instance, field, cp_val)
+                        update_fields.append(field)
+                if update_fields:
+                    instance.save(update_fields=update_fields + ['updated_at'])
+            except Exception as sync_error:
+                logger.error(f"Error syncing automation fields to Store {instance.slug}: {sync_error}")
+
             # Create default auto messages for the new profile
             try:
                 from .services import AutomationService
