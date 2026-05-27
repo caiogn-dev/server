@@ -214,7 +214,9 @@ class GeoService:
 
             # Palmas' Plano Diretor addresses are often written as "404 Sul" or
             # "103 Norte", while reverse geocoding may return ARSE/ARNO aliases.
-            if re.search(r'\b\d{3}\s*(sul|norte)\b', normalized_text):
+            # 4-digit quadras (1001–1508) are in the expanded Plano Diretor and
+            # must also be accepted — e.g. "1302 Sul", "1101 Norte".
+            if re.search(r'\b\d{3,4}\s*(sul|norte)\b', normalized_text):
                 return True
 
             normalized_keywords = [self._normalize_text(kw) for kw in keywords if kw]
@@ -254,12 +256,14 @@ class GeoService:
             polygon.append({'lat': lat + dlat, 'lng': lng + dlng})
         return polygon
 
-    def geocode(self, address: str, country: str = "BRA", restrict_to_city: bool = True) -> Optional[Dict]:
+    def geocode(self, address: str, country: str = "BRA", restrict_to_city: bool = True, city_suffix: str | None = None) -> Optional[Dict]:
         query = address.strip()
         if restrict_to_city:
+            suffix = city_suffix or self.DEFAULT_CITY_SUFFIX
             lower_q = query.lower()
-            if 'palmas' not in lower_q and 'tocantins' not in lower_q:
-                query = f"{query}, {self.DEFAULT_CITY_SUFFIX}"
+            lower_suffix = suffix.lower().split(',')[0].strip()
+            if lower_suffix and lower_suffix not in lower_q:
+                query = f"{query}, {suffix}"
 
         cache_key = _make_cache_key("geocode", query.strip().lower(), country, restrict_to_city)
         cached = cache.get(cache_key)
@@ -311,11 +315,12 @@ class GeoService:
     def _resolve_destination(
         self,
         destination: Tuple[float, float] | str,
+        city_suffix: str | None = None,
     ) -> Tuple[float, float] | None:
         if isinstance(destination, tuple):
             return destination
 
-        geocoded = self.geocode(destination)
+        geocoded = self.geocode(destination, city_suffix=city_suffix)
         if not geocoded:
             return None
 
@@ -331,8 +336,9 @@ class GeoService:
         origin: Tuple[float, float],
         destination: Tuple[float, float] | str,
         transport_mode: str = "car",
+        city_suffix: str | None = None,
     ) -> Dict:
-        resolved_destination = self._resolve_destination(destination)
+        resolved_destination = self._resolve_destination(destination, city_suffix=city_suffix)
         if not resolved_destination:
             return self._fallback_route(origin, origin)
 
@@ -541,6 +547,11 @@ class GeoService:
             }
 
         address_text = customer_address_text or destination_address or ""
+        store_city = getattr(store, 'city', None) or address_data.get('city') or metadata.get('city')
+        store_state = getattr(store, 'state', None) or address_data.get('state') or metadata.get('state')
+        city_suffix = f"{store_city}, {store_state}, Brasil" if store_city and store_state else (
+            f"{store_city}, Brasil" if store_city else None
+        )
         customer_location_known = customer_lat is not None and customer_lng is not None
         if customer_location_known:
             route = self._get_route(
@@ -551,6 +562,7 @@ class GeoService:
             route = self._get_route(
                 (float(store_lat), float(store_lng)),
                 destination_address,
+                city_suffix=city_suffix,
             )
         else:
             route = None
