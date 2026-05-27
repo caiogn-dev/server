@@ -188,20 +188,6 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
                 if hasattr(store, 'staff') and user in store.staff.all():
                     logger.info(f"WebSocket access granted - store staff: {user.email}")
                     return True
-                
-                # Any authenticated user can access active stores (for dashboard)
-                if store.status == 'active':
-                    logger.info(f"WebSocket access granted - authenticated user on active store: {user.email}")
-                    return True
-                
-                # FALLBACK: Allow any authenticated user for now (dashboard needs this)
-                logger.info(f"WebSocket access granted - authenticated user fallback: {user.email}")
-                return True
-            
-            # Allow anonymous access to active stores for customer tracking
-            if store.status == 'active':
-                logger.info(f"WebSocket access granted - active store (anonymous)")
-                return True
             
             logger.warning(f"WebSocket access denied - store: {self.store_slug}, user: {user}")
             return False

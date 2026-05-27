@@ -72,6 +72,13 @@ class HandoverConsumer(AsyncWebsocketConsumer):
             # Cliente quer receber updates de uma conversa específica
             conversation_id = data.get('conversation_id')
             if conversation_id:
+                has_access = await self.check_conversation_access(conversation_id)
+                if not has_access:
+                    await self.send(text_data=json.dumps({
+                        'type': 'error',
+                        'message': 'Acesso negado à conversa'
+                    }))
+                    return
                 await self.channel_layer.group_add(
                     f"conversation_{conversation_id}",
                     self.channel_name
@@ -114,14 +121,28 @@ class HandoverConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_user_store_ids(self):
         """Retorna IDs das lojas que o usuário é membro."""
-        # Ajustar conforme seu modelo de Store
         try:
             from apps.stores.models import Store
             return list(Store.objects.filter(
                 members=self.user
             ).values_list('id', flat=True))
-        except:
+        except Exception:
             return []
+
+    @database_sync_to_async
+    def check_conversation_access(self, conversation_id):
+        """Verifica se o usuário tem acesso à conversa."""
+        try:
+            from apps.conversations.models import Conversation
+            user = self.user
+            if user.is_staff or user.is_superuser:
+                return Conversation.objects.filter(id=conversation_id).exists()
+            return Conversation.objects.filter(
+                id=conversation_id,
+                account__owner=user,
+            ).exists()
+        except Exception:
+            return False
 
 
 # Função para enviar notificações de handover
