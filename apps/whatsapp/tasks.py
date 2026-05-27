@@ -137,29 +137,46 @@ def process_webhook_event(event_id: str):
 def process_pending_webhook_events(batch_size: int = 100):
     """
     Process pending webhook events in batch.
-    
-    This task picks up any events that weren't processed immediately
-    (e.g., due to worker unavailability).
+
+    Uses select_for_update(skip_locked=True) so concurrent workers never
+    claim the same event, eliminating duplicate-message race conditions.
     """
+    from django.db import transaction
     from .models import WebhookEvent
     from .services.webhook_service import WebhookService
-    
-    pending_events = WebhookEvent.objects.filter(
-        processing_status=WebhookEvent.ProcessingStatus.PENDING
-    ).order_by('created_at')[:batch_size]
-    
+
     processed = 0
     failed = 0
     service = WebhookService()
-    
-    for event in pending_events:
+
+    # Fetch IDs first (cheap), then process each inside its own short transaction
+    pending_ids = list(
+        WebhookEvent.objects.filter(
+            processing_status=WebhookEvent.ProcessingStatus.PENDING
+        ).order_by('created_at').values_list('id', flat=True)[:batch_size]
+    )
+
+    for event_id in pending_ids:
         try:
-            service.process_event(event)
+            with transaction.atomic():
+                # Re-acquire with lock; skip if another worker already claimed it
+                event = (
+                    WebhookEvent.objects
+                    .select_for_update(skip_locked=True)
+                    .filter(
+                        id=event_id,
+                        processing_status=WebhookEvent.ProcessingStatus.PENDING,
+                    )
+                    .first()
+                )
+                if event is None:
+                    continue
+                service.process_event(event)
             processed += 1
         except Exception as e:
-            logger.error(f"Error processing event {event.id}: {e}")
+            logger.error(f"Error processing event {event_id}: {e}")
             failed += 1
-    
+
     logger.info(f"Batch processed {processed} events, {failed} failed")
     return {'processed': processed, 'failed': failed}
 
