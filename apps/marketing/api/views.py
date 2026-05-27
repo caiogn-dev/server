@@ -30,7 +30,11 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
     serializer_class = EmailTemplateSerializer
     
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            queryset = EmailTemplate.objects.all()
+        else:
+            queryset = EmailTemplate.objects.filter(store__owner=user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -94,7 +98,11 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
     serializer_class = EmailCampaignSerializer
     
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            queryset = EmailCampaign.objects.all()
+        else:
+            queryset = EmailCampaign.objects.filter(store__owner=user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -203,7 +211,11 @@ class SubscriberViewSet(viewsets.ModelViewSet):
     serializer_class = SubscriberSerializer
     
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            queryset = Subscriber.objects.all()
+        else:
+            queryset = Subscriber.objects.filter(store__owner=user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -611,7 +623,11 @@ class EmailAutomationViewSet(viewsets.ModelViewSet):
     serializer_class = EmailAutomationSerializer
     
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            queryset = EmailAutomation.objects.all()
+        else:
+            queryset = EmailAutomation.objects.filter(store__owner=user)
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)

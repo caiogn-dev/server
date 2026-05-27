@@ -29,28 +29,28 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Filtra por query params."""
+        user = self.request.user
         queryset = super().get_queryset()
-        
-        # Filtro por telefone
+
+        if not (user.is_superuser or user.is_staff):
+            return queryset.none()
+
         phone = self.request.query_params.get('phone')
         if phone:
             queryset = queryset.filter(phone_number__icontains=phone)
-        
-        # Filtro por email
+
         email = self.request.query_params.get('email')
         if email:
             queryset = queryset.filter(email__icontains=email)
-        
-        # Filtro por nome
+
         name = self.request.query_params.get('name')
         if name:
             queryset = queryset.filter(name__icontains=name)
-        
-        # Filtro: tem carrinho abandonado
+
         has_cart = self.request.query_params.get('has_abandoned_cart')
         if has_cart:
             queryset = queryset.filter(has_abandoned_cart=True)
-        
+
         return queryset
     
     @action(detail=True, methods=['get'])
@@ -115,14 +115,18 @@ class UnifiedUserActivityViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         """Filtra por usuário se especificado."""
+        user = self.request.user
         queryset = super().get_queryset()
-        
+
+        if not (user.is_superuser or user.is_staff):
+            return queryset.none()
+
         user_id = self.request.query_params.get('user_id')
         if user_id:
             queryset = queryset.filter(user_id=user_id)
-        
+
         activity_type = self.request.query_params.get('type')
         if activity_type:
             queryset = queryset.filter(activity_type=activity_type)
-        
+
         return queryset
