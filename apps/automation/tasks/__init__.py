@@ -5,7 +5,6 @@ Canonical task locations:
 - Mensagens agendadas / relatórios: apps.automation.tasks.scheduled
 - Carrinho abandonado / PIX / sessões: este módulo (tasks/__init__.py)
 
-unified_messaging_tasks.py foi DEPRECADO — não importar dali.
 """
 import logging
 from celery import shared_task
@@ -231,78 +230,3 @@ def cleanup_expired_sessions():
             CustomerSession.SessionStatus.CART_ABANDONED,
         ]
     ).update(status=CustomerSession.SessionStatus.EXPIRED)
-
-
-@shared_task(bind=True, max_retries=3)
-def process_incoming_message(self, account_id: str, from_number: str, message_text: str, message_type: str = 'text', message_data: dict = None):
-    """Process incoming message and send auto-response.
-
-    DELEGATOR: roteado para UnifiedService que é o pipeline canônico de resposta
-    a mensagens entrantes. AutomationService.handle_incoming_message() foi
-    substituído por este caminho.
-
-    # TODO P5: remover esta task assim que todos os callers forem migrados para
-    #          chamar o webhook/UnifiedService diretamente (sem passar por Celery).
-    """
-    logger.warning(
-        '[LEGACY] process_incoming_message fired — delegating to UnifiedService. '
-        'Caller should be updated.'
-    )
-    try:
-        from apps.whatsapp.models import WhatsAppAccount
-        from apps.conversations.models import Conversation
-        from apps.automation.services.context_service import AutomationContextService
-        from apps.automation.services.unified_service import UnifiedService
-
-        try:
-            account = WhatsAppAccount.objects.get(id=account_id, is_active=True)
-        except WhatsAppAccount.DoesNotExist:
-            logger.warning('[LEGACY] process_incoming_message: account %s not found, aborting.', account_id)
-            return None
-
-        conversation = Conversation.objects.filter(
-            account=account,
-            phone_number=from_number,
-        ).order_by('-updated_at').first()
-
-        if not conversation:
-            logger.warning(
-                '[LEGACY] process_incoming_message: no conversation found for %s — cannot delegate to UnifiedService.',
-                from_number,
-            )
-            return None
-
-        interactive_reply = None
-        if message_type == 'interactive' and message_data:
-            button_reply = message_data.get('button_reply') or {}
-            list_reply = message_data.get('list_reply') or {}
-            reply = button_reply or list_reply
-            if reply:
-                interactive_reply = {
-                    'type': 'button' if button_reply else 'list',
-                    'id': reply.get('id', ''),
-                    'title': reply.get('title', ''),
-                }
-
-        service = UnifiedService(account=account, conversation=conversation)
-        response = service.process_message(
-            message_text=message_text or '',
-            interactive_reply=interactive_reply,
-        )
-
-        if response:
-            from apps.whatsapp.services.message_service import MessageService
-            MessageService().send_text_message(
-                account_id=str(account.id),
-                to=from_number,
-                text=response.content,
-                metadata={'source': 'legacy_process_incoming_message_delegator'},
-            )
-            logger.info('[LEGACY] process_incoming_message: delegated response sent to %s', from_number)
-            return response.content
-
-        return None
-
-    except Exception as e:
-        logger.error(f"Error in process_incoming_message delegator: {str(e)}", exc_info=True)
-        raise self.retry(exc=e, countdown=30)

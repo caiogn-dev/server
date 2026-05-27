@@ -592,7 +592,8 @@ class CustomerOrderDetailView(APIView):
     - Authenticated user who owns the order, or is staff/superuser
     - Valid ?token=<access_token> query param (customer self-service post-checkout)
     """
-    authentication_classes = []
+    from rest_framework.authentication import TokenAuthentication, SessionAuthentication
+    authentication_classes = [TokenAuthentication, SessionAuthentication]
     permission_classes = []
 
     def get(self, request, order_id):
@@ -667,9 +668,13 @@ class CustomerOrderDetailView(APIView):
                     'image_url': '',
                 })
             
-            return Response({
+            def _ts(dt):
+                return dt.isoformat() if dt else None
+
+            response_data = {
                 'id': str(order.id),
                 'order_number': order.order_number,
+                'access_token': order.access_token,
                 'store': {
                     'name': order.store.name,
                     'slug': order.store.slug,
@@ -684,21 +689,40 @@ class CustomerOrderDetailView(APIView):
                 'payment_method': order.payment_method,
                 'subtotal': float(order.subtotal),
                 'discount': float(order.discount),
+                'tax': float(order.tax) if order.tax else 0,
                 'delivery_fee': float(order.delivery_fee),
                 'total': float(order.total),
                 'delivery_method': order.delivery_method,
                 'delivery_address': order.delivery_address,
                 'delivery_notes': order.delivery_notes,
                 'customer_notes': order.customer_notes,
+                'scheduled_date': _ts(order.scheduled_date),
+                'scheduled_time': order.scheduled_time or None,
                 'tracking_code': order.tracking_code,
-                'tracking_url': order.tracking_url,
+                'tracking_url': order.tracking_url or order.external_delivery_url,
+                'carrier': order.carrier or order.external_delivery_provider,
+                'delivery_quote': (order.metadata or {}).get('delivery_quote', {}),
+                'loyalty_reward': (order.metadata or {}).get('loyalty_reward', {}),
                 'items': items,
-                'created_at': order.created_at.isoformat(),
-                'updated_at': order.updated_at.isoformat(),
-                'paid_at': order.paid_at.isoformat() if order.paid_at else None,
-                'shipped_at': order.shipped_at.isoformat() if order.shipped_at else None,
-                'delivered_at': order.delivered_at.isoformat() if order.delivered_at else None,
-            })
+                'created_at': _ts(order.created_at),
+                'updated_at': _ts(order.updated_at),
+                'paid_at': _ts(order.paid_at),
+                'confirmed_at': _ts(order.confirmed_at),
+                'preparing_at': _ts(order.preparing_at),
+                'ready_at': _ts(order.ready_at),
+                'out_for_delivery_at': _ts(order.out_for_delivery_at),
+                'shipped_at': _ts(order.shipped_at),
+                'delivered_at': _ts(order.delivered_at),
+                'picked_up_at': _ts(order.picked_up_at),
+                'cancelled_at': _ts(order.cancelled_at),
+            }
+
+            if order.payment_method == 'pix':
+                response_data['pix_code'] = order.pix_code or ''
+                response_data['pix_qr_code'] = order.pix_qr_code or ''
+                response_data['pix_expires_at'] = _ts(order.pix_expires_at)
+
+            return Response(response_data)
         
         except StoreOrder.DoesNotExist:
             return Response(

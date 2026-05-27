@@ -60,6 +60,8 @@ class AgentViewSet(viewsets.ModelViewSet):
     filterset_fields = ['status', 'provider']
     
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Agent.objects.none()
         return _accessible_agents(self.request.user)
 
     def _enforce_account_scope(self, serializer):
@@ -244,6 +246,8 @@ class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = 'session_id'
     
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return AgentConversation.objects.none()
         agents_qs = _accessible_agents(self.request.user)
         return AgentConversation.objects.filter(
             agent__is_active=True,

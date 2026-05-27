@@ -90,6 +90,9 @@ urlpatterns = [
         # Public API (no auth — storefronts: pastita-3d, ce-saladas)
         path('public/', include('apps.public_api.urls')),
 
+        # Mobile API (Flutter) — clean stable paths, no admin conflict
+        path('mobile/', include('apps.mobile_api.urls', namespace='mobile_api')),
+
         # Marketing & Audit
         path('marketing/', include('apps.marketing.urls')),
         path('campaigns/', include('apps.campaigns.urls')),

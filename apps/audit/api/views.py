@@ -86,6 +86,8 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
     filterset_fields = ['export_type', 'export_format', 'status']
     
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return DataExportLog.objects.none()
         return DataExportLog.objects.filter(user=self.request.user)
     
     @extend_schema(
