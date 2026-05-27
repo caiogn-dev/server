@@ -502,4 +502,27 @@ class InteractiveReplyHandler(IntentHandler):
                 buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
             )
 
-        return self._ask_delivery_method(items)
+        try:
+            session_manager = self._get_session_manager()
+            session_manager.save_pending_order_items(items)
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao salvar itens do repeat: %s', exc)
+
+        # Verifica se algum item NÃO é bebida para disparar upsell de bebida
+        has_non_drink = any(
+            not _is_drink_product(StoreProduct.objects.filter(id=it['product_id']).first())
+            for it in items
+            if StoreProduct.objects.filter(id=it['product_id']).exists()
+        )
+        if has_non_drink:
+            drinks = self._get_drink_products()
+            if drinks:
+                buttons = [{'id': f'drink_{d.id}', 'title': d.name[:20]} for d in drinks[:2]]
+                buttons.append({'id': 'skip_upsell', 'title': '✅ Continuar sem bebida'})
+                return HandlerResult.buttons(
+                    body=f"🔁 *Pedido repetido!*\n\nQuer adicionar uma bebida gelada? 🥤",
+                    buttons=buttons,
+                )
+
+        sauce_upsell = self._show_sauce_upsell(items)
+        return sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
