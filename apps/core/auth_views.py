@@ -14,12 +14,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework import serializers
-from rest_framework.throttling import AnonRateThrottle
-
-
-class AuthRateThrottle(AnonRateThrottle):
-    """Stricter throttle for login/register endpoints (10 req/min per IP)."""
-    scope = 'auth'
+from apps.core.throttling import AuthRateThrottle
 from drf_spectacular.utils import extend_schema
 from .models import UserProfile
 from apps.notifications.services import email_service

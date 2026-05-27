@@ -46,8 +46,16 @@ def sync_message_statuses():
     return pending_messages
 
 
-@shared_task(name='apps.whatsapp.tasks.send_message_async')
-def send_message_async(account_id: str, to_number: str, message_type: str, content: dict):
+@shared_task(
+    name='apps.whatsapp.tasks.send_message_async',
+    bind=True,
+    max_retries=3,
+    default_retry_delay=10,
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_jitter=True,
+)
+def send_message_async(self, account_id: str, to_number: str, message_type: str, content: dict):
     """
     Send a WhatsApp message asynchronously.
     """
