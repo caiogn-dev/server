@@ -154,18 +154,30 @@ class StoreOrder(BaseModel):
 
     def save(self, *args, **kwargs):
         if not self.order_number:
-            self.order_number = self.generate_order_number()
+            self.order_number = self._unique_order_number()
         if not self.access_token:
             self.access_token = self.generate_access_token()
         super().save(*args, **kwargs)
 
-    def generate_order_number(self):
-        """Generate unique order number."""
-        import random
-        import string
+    def _unique_order_number(self, max_attempts: int = 10) -> str:
+        """Generate a unique order number, retrying on collision."""
+        for _ in range(max_attempts):
+            candidate = self.generate_order_number()
+            if not StoreOrder.objects.filter(order_number=candidate).exists():
+                return candidate
+        # Last resort: use 8 random digits for an astronomically unique number
+        import secrets
         prefix = self.store.slug[:3].upper() if self.store else 'ORD'
         timestamp = timezone.now().strftime('%y%m%d')
-        random_suffix = ''.join(random.choices(string.digits, k=4))
+        return f"{prefix}{timestamp}{secrets.token_hex(4).upper()}"
+
+    def generate_order_number(self):
+        """Generate an order number candidate (not guaranteed unique — use _unique_order_number)."""
+        import secrets
+        prefix = self.store.slug[:3].upper() if self.store else 'ORD'
+        timestamp = timezone.now().strftime('%y%m%d')
+        # 4 hex chars = 65 536 possibilities per store per day (much better than 4 decimal digits)
+        random_suffix = secrets.token_hex(2).upper()
         return f"{prefix}{timestamp}{random_suffix}"
 
     @staticmethod

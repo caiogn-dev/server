@@ -172,20 +172,35 @@ class PaymentService:
         external_id: str = '',
         gateway_response: Optional[Dict] = None,
     ) -> StorePayment:
-        """Confirm a payment as completed."""
-        payment = StorePayment.objects.select_related('order').get(id=payment_id)
+        """Confirm a payment as completed and sync the linked order to PAID."""
+        with transaction.atomic():
+            payment = StorePayment.objects.select_related('order').select_for_update().get(id=payment_id)
 
-        if not payment.can_confirm():
-            raise ValueError(f"Payment cannot be confirmed. Current status: {payment.status}")
+            if not payment.can_confirm():
+                raise ValueError(f"Payment cannot be confirmed. Current status: {payment.status}")
 
-        payment.status = StorePayment.PaymentStatus.COMPLETED
-        payment.external_id = external_id or payment.external_id
-        payment.paid_at = timezone.now()
-        
-        if gateway_response:
-            payment.gateway_response.update(gateway_response)
-        
-        payment.save()
+            payment.status = StorePayment.PaymentStatus.COMPLETED
+            payment.external_id = external_id or payment.external_id
+            payment.paid_at = timezone.now()
+
+            if gateway_response:
+                payment.gateway_response.update(gateway_response)
+
+            payment.save()
+
+            # Keep order status in sync so it always reflects the payment truth
+            order = payment.order
+            if order and order.payment_status != StoreOrder.PaymentStatus.PAID:
+                order.payment_status = StoreOrder.PaymentStatus.PAID
+                order.paid_at = payment.paid_at
+                if order.status not in (
+                    StoreOrder.OrderStatus.CANCELLED,
+                    StoreOrder.OrderStatus.REFUNDED,
+                    StoreOrder.OrderStatus.DELIVERED,
+                    StoreOrder.OrderStatus.COMPLETED,
+                ):
+                    order.status = StoreOrder.OrderStatus.PAID
+                order.save(update_fields=['status', 'payment_status', 'paid_at', 'updated_at'])
 
         self.logger.info(f"Payment {payment.payment_id} confirmed")
         return payment
