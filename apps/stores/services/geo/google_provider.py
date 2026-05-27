@@ -20,7 +20,13 @@ class GoogleMapsProvider:
     DEFAULT_CITY_SUFFIX = "Palmas, TO"
 
     def __init__(self, api_key: str | None = None):
-        self.api_key = api_key if api_key is not None else getattr(settings, 'GOOGLE_MAPS_KEY', '').strip()
+        # GOOGLE_MAPS_SERVER_KEY = chave sem restrição de HTTP referrer (para uso server-side).
+        # Se ausente, cai na GOOGLE_MAPS_KEY (que pode ser browser-only e retornar REQUEST_DENIED).
+        if api_key is not None:
+            self.api_key = api_key
+        else:
+            server_key = getattr(settings, 'GOOGLE_MAPS_SERVER_KEY', '').strip()
+            self.api_key = server_key or getattr(settings, 'GOOGLE_MAPS_KEY', '').strip()
 
     def _parse_address_components(self, result: Dict) -> Dict[str, str]:
         components: Dict[str, str] = {}

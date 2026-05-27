@@ -381,6 +381,9 @@ INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN'
 # Maps
 GEO_PROVIDER = os.environ.get('GEO_PROVIDER', 'google').strip().lower()
 GOOGLE_MAPS_KEY = os.environ.get('GOOGLE_MAPS_KEY', '').strip()
+# Chave server-side sem restrição de HTTP referrer (Directions, Geocoding, Routes).
+# Se ausente, usa GOOGLE_MAPS_KEY (que pode ter restrição de browser e causar REQUEST_DENIED).
+GOOGLE_MAPS_SERVER_KEY = os.environ.get('GOOGLE_MAPS_SERVER_KEY', '').strip()
 
 # Toca Delivery SaaS integration
 TOCA_DELIVERY_API_URL = os.environ.get('TOCA_DELIVERY_API_URL', 'https://api.tocadelivery.com.br').strip()
