@@ -389,6 +389,12 @@ class WebhookService:
         from apps.automation.services import LLMOrchestratorService, UnifiedResponse
         from apps.automation.services.context_service import AutomationContextService
 
+        # Mensagens de áudio: sem transcrição disponível, silêncio é melhor que
+        # "não entendi" — o cliente sabe que mandou um áudio, não precisa de eco.
+        if message.message_type == Message.MessageType.AUDIO:
+            logger.info('[pipeline] Áudio ignorado (sem transcrição) message_id=%s', message.id)
+            return
+
         payload = event.payload
         contact_info = payload.get('contact', {})
 
@@ -587,6 +593,9 @@ class WebhookService:
             if orchestrator_response.buttons or orchestrator_response.interactive_type:
                 try:
                     self._send_unified_interactive(event, message, orchestrator_response)
+                    if not message.processed_by_agent:
+                        message.processed_by_agent = True
+                        message.save(update_fields=['processed_by_agent'])
                     logger.info(
                         '[pipeline] Interactive response sent (%.0fms)', _orchestrator_ms,
                         extra={
@@ -1124,7 +1133,8 @@ class WebhookService:
         status_time = timezone.now()
         if timestamp:
             try:
-                status_time = datetime.fromtimestamp(int(timestamp), tz=timezone.utc)
+                import datetime as _dt
+                status_time = _dt.datetime.fromtimestamp(int(timestamp), tz=_dt.timezone.utc)
             except (ValueError, TypeError):
                 pass
         

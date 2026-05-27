@@ -463,19 +463,23 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
             'payment_method', 'payment_id', 'payment_preference_id',
-            'pix_code', 'pix_qr_code', 'pix_ticket_url',
+            'pix_code', 'pix_qr_code', 'pix_ticket_url', 'pix_expires_at',
             'delivery_method', 'delivery_method_display',
             'delivery_address', 'delivery_notes',
             'scheduled_date', 'scheduled_time',
             'tracking_code', 'tracking_url', 'carrier',
             'customer_notes', 'internal_notes',
-            'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at',
+            'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
+            'ready_at', 'out_for_delivery_at', 'shipped_at',
+            'delivered_at', 'picked_up_at', 'cancelled_at',
             'items', 'items_count', 'metadata',
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
             'id', 'order_number', 'access_token', 'created_at', 'updated_at',
-            'paid_at', 'shipped_at', 'delivered_at', 'cancelled_at'
+            'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
+            'ready_at', 'out_for_delivery_at', 'shipped_at',
+            'delivered_at', 'picked_up_at', 'cancelled_at',
         ]
     
     def get_items_count(self, obj):

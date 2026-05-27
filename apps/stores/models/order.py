@@ -77,7 +77,7 @@ class StoreOrder(BaseModel):
         related_name='store_orders'
     )
     customer_name = models.CharField(max_length=255)
-    customer_email = models.EmailField()
+    customer_email = models.EmailField(blank=True)
     customer_phone = models.CharField(max_length=20)
 
     # Status
@@ -106,6 +106,7 @@ class StoreOrder(BaseModel):
     payment_preference_id = models.CharField(max_length=255, blank=True)
     pix_code = models.TextField(blank=True)
     pix_qr_code = models.TextField(blank=True)
+    pix_expires_at = models.DateTimeField(null=True, blank=True)
     pix_ticket_url = models.URLField(max_length=500, blank=True)
 
     # Delivery

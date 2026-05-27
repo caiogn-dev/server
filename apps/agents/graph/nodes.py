@@ -102,6 +102,8 @@ Você é {atendente_name}, atendente d{article} {store_name} no WhatsApp.{store_
 • O CARDÁPIO abaixo contém todos os produtos e preços oficiais — USE-O diretamente nas respostas sem chamar buscar_produto
 • Para mostrar o menu ou responder preço de item listado: leia o CARDÁPIO abaixo e responda imediatamente
 • Só use buscar_produto se o cliente perguntar algo que NÃO está no CARDÁPIO abaixo
+• NUNCA chame buscar_produto com palavras de confirmação ou despedida ("sim", "ok", "pode", "isso", "obrigada", "obrigado", "tchau", "até mais", "valeu") — responda normalmente em texto
+• NUNCA chame ferramentas quando o cliente enviar apenas confirmação, agradecimento ou despedida — apenas responda de forma natural e acolhedora
 • NUNCA invente taxa de entrega — use informacoes_entrega ou peça o endereço
 • NUNCA forneça código PIX sem antes usar consultar_pagamento; o PIX vem de finalizar_pedido
 • Resultados de ferramentas são dados brutos — reformule sempre de forma humana; NUNCA copie direto
@@ -337,6 +339,24 @@ def agent_node(state: AgentState, *, agent, langchain_service) -> dict:
 _MAX_TOOL_ITERATIONS = 6
 
 
+_CONFIRMATION_WORDS = frozenset({
+    'sim', 'ok', 'okay', 'pode', 'isso', 'certo', 'claro', 'confirmado',
+    'obrigada', 'obrigado', 'valeu', 'vlw', 'tchau', 'ate mais', 'até mais',
+    'flw', 'falou', 'ótimo', 'otimo', 'perfeito', 'combinado', 'entendido',
+})
+
+_USER_SAFE_TOOL_ERRORS: dict = {
+    'buscar_produto': 'Não encontrei esse produto no momento.',
+    'adicionar_ao_carrinho': 'Não consegui adicionar ao carrinho agora.',
+    'ver_carrinho': 'Não consegui acessar seu carrinho agora.',
+    'finalizar_pedido': 'Não consegui finalizar o pedido agora. Tente novamente.',
+    'salvar_endereco_entrega': 'Não consegui salvar o endereço. Pode me passar novamente?',
+    'consultar_pagamento': 'Não consegui consultar o pagamento agora.',
+    'informacoes_entrega': 'Não consegui carregar as informações de entrega.',
+    'listar_cardapio': 'Não consegui carregar o cardápio agora.',
+}
+
+
 def execute_tools_node(state: AgentState) -> dict:
     """
     Executa os tool_calls do último AIMessage e injeta ToolMessages no estado.
@@ -350,11 +370,20 @@ def execute_tools_node(state: AgentState) -> dict:
     results = []
 
     for tc in last.tool_calls:
+        # Guardrail: never call buscar_produto with a confirmation/farewell word
+        if tc["name"] == "buscar_produto":
+            arg = (tc["args"].get("nome") or tc["args"].get("query") or "").strip().lower()
+            if arg in _CONFIRMATION_WORDS or (len(arg) <= 3 and not arg.isdigit()):
+                logger.warning("[AGENT TOOL] buscar_produto bloqueado com arg inválido: %r", arg)
+                results.append(ToolMessage(content="OK", tool_call_id=tc["id"]))
+                continue
+
         fn = tool_map.get(tc["name"])
         try:
             result = fn.invoke(tc["args"]) if fn else f"Ferramenta '{tc['name']}' não encontrada."
         except Exception as exc:
-            result = f"Erro em {tc['name']}: {exc}"
+            logger.exception("[AGENT TOOL] %s falhou", tc["name"])
+            result = _USER_SAFE_TOOL_ERRORS.get(tc["name"], "Não consegui completar essa ação agora.")
         logger.info("[AGENT TOOL] %s → %s", tc["name"], str(result)[:120])
         results.append(ToolMessage(content=str(result), tool_call_id=tc["id"]))
 

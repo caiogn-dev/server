@@ -548,11 +548,21 @@ class WhatsAppOrderService:
             session.cart_updated_at = timezone.now()
 
             if pix_data.get('success'):
-                session.pix_code = pix_data.get('pix_code', '')
-                session.pix_qr_code = pix_data.get('pix_qr_code', '')
+                _pix_code = pix_data.get('pix_code', '')
+                _pix_qr_code = pix_data.get('pix_qr_code', '')
+                _pix_expires = timezone.now() + timedelta(hours=24)
+                session.pix_code = _pix_code
+                session.pix_qr_code = _pix_qr_code
                 session.payment_id = str(order.id)
-                session.pix_expires_at = timezone.now() + timedelta(hours=24)
+                session.pix_expires_at = _pix_expires
                 session.status = type(session).SessionStatus.PAYMENT_PENDING
+                # Fonte de verdade: propagar PIX para StoreOrder
+                from apps.stores.models import StoreOrder
+                StoreOrder.objects.filter(pk=order.pk).update(
+                    pix_code=_pix_code,
+                    pix_qr_code=_pix_qr_code,
+                    pix_expires_at=_pix_expires,
+                )
                 logger.info(f"[_update_session] Sessão atualizada com PIX para {self.phone_number}")
             else:
                 session.status = type(session).SessionStatus.ORDER_PLACED

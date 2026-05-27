@@ -120,6 +120,42 @@ def dispatch_order_to_toca_delivery(self, order_id: str):
         raise self.retry(exc=exc)
 
 
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+def update_customer_stats_on_payment(self, order_id: str):
+    """Update StoreCustomer stats after an order is confirmed as paid."""
+    try:
+        from apps.stores.models import StoreOrder, StoreCustomer
+        from apps.core.services.customer_identity import CustomerIdentityService
+        from django.db.models import Q
+
+        try:
+            order = StoreOrder.objects.values(
+                'id', 'store_id', 'customer_phone', 'customer_id'
+            ).get(id=order_id)
+        except StoreOrder.DoesNotExist:
+            return
+
+        phones = set(CustomerIdentityService.phone_candidates(order['customer_phone']))
+        qs = StoreCustomer.objects.filter(store_id=order['store_id'])
+        if order['customer_id']:
+            qs = qs.filter(
+                Q(user_id=order['customer_id']) | Q(phone__in=phones) | Q(whatsapp__in=phones)
+            )
+        elif phones:
+            qs = qs.filter(Q(phone__in=phones) | Q(whatsapp__in=phones))
+        else:
+            return
+
+        for customer in qs.distinct().only('id'):
+            try:
+                StoreCustomer.objects.get(id=customer.id).update_stats()
+            except Exception:
+                logger.warning('update_customer_stats_on_payment: update_stats failed for customer %s', customer.id)
+    except Exception as exc:
+        logger.error('update_customer_stats_on_payment: %s', exc)
+        raise self.retry(exc=exc)
+
+
 @shared_task
 def sync_toca_delivery_statuses():
     """
@@ -177,3 +213,14 @@ def sync_toca_delivery_statuses():
 
     if updated:
         logger.info('sync_toca_delivery_statuses: updated %d orders', updated)
+
+
+@shared_task(name='apps.stores.tasks.cleanup_abandoned_carts')
+def cleanup_abandoned_carts():
+    from django.core.management import call_command
+    from io import StringIO
+    out = StringIO()
+    call_command('cleanup_carts', stdout=out)
+    result = out.getvalue()
+    logger.info('cleanup_abandoned_carts: %s', result.strip())
+    return result

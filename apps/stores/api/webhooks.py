@@ -82,16 +82,26 @@ class MercadoPagoWebhookView(APIView):
             return True
 
         try:
-            integration = StoreIntegration.objects.filter(
+            from apps.stores.models import StorePaymentGateway
+            gw = StorePaymentGateway.objects.filter(
                 store__slug=store_slug,
-                integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
-                status=StoreIntegration.IntegrationStatus.ACTIVE,
-            ).only('webhook_secret').first()
+                gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO,
+                is_enabled=True,
+            ).first()
+            webhook_secret = gw.webhook_secret if gw else None
+            if not webhook_secret:
+                # Legacy fallback
+                integration = StoreIntegration.objects.filter(
+                    store__slug=store_slug,
+                    integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+                    status=StoreIntegration.IntegrationStatus.ACTIVE,
+                ).only('webhook_secret').first()
+                webhook_secret = integration.webhook_secret if integration else None
         except Exception as e:
-            logger.error("Error fetching MP integration for signature check: %s", e)
+            logger.error("Error fetching payment gateway for signature check: %s", e)
             return True  # DB error — can't validate; allow and log
 
-        if not integration or not integration.webhook_secret:
+        if not webhook_secret:
             # No secret configured — skip validation (True = allow)
             return True
 
@@ -114,7 +124,7 @@ class MercadoPagoWebhookView(APIView):
         try:
             body = request.body.decode('utf-8')
             expected = hmac_mod.new(
-                integration.webhook_secret.encode('utf-8'),
+                webhook_secret.encode('utf-8'),
                 body.encode('utf-8'),
                 hashlib.sha256,
             ).hexdigest()
@@ -169,19 +179,26 @@ class MercadoPagoWebhookView(APIView):
         payment = payment_response['response']
         payment_status = payment.get('status')
         
+        # Idempotency: prevent double processing if MP resends the webhook
+        from django.core.cache import cache
+        idempotency_key = f"mp_webhook:{payment_id}:{payment_status}"
+        if not cache.add(idempotency_key, 1, timeout=3600):
+            logger.info("Duplicate MP webhook for payment %s status %s — skipped", payment_id, payment_status)
+            return Response({'status': 'duplicate'}, status=status.HTTP_200_OK)
+
         # Process payment status
         order = checkout_service.process_payment_webhook(str(payment_id), payment_status)
-        
+
         if order:
             logger.info(f"Order {order.order_number} updated to status: {order.status}")
-            
+
             # Send real-time notification via WebSocket
             self._notify_order_update(order)
-            
+
             # Send WhatsApp notification if payment is approved
             if payment_status == 'approved':
                 self._send_payment_confirmation_whatsapp(order)
-        
+
         return Response({'status': 'processed'}, status=status.HTTP_200_OK)
     
     def _handle_merchant_order(self, request, store_slug):
@@ -450,14 +467,23 @@ class OrderByTokenView(APIView):
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
                 'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+                'confirmed_at': order.confirmed_at.isoformat() if order.confirmed_at else None,
+                'preparing_at': order.preparing_at.isoformat() if order.preparing_at else None,
+                'ready_at': order.ready_at.isoformat() if order.ready_at else None,
+                'out_for_delivery_at': order.out_for_delivery_at.isoformat() if order.out_for_delivery_at else None,
                 'shipped_at': order.shipped_at.isoformat() if order.shipped_at else None,
                 'delivered_at': order.delivered_at.isoformat() if order.delivered_at else None,
+                'picked_up_at': order.picked_up_at.isoformat() if order.picked_up_at else None,
+                'cancelled_at': order.cancelled_at.isoformat() if order.cancelled_at else None,
+                'scheduled_date': order.scheduled_date.isoformat() if order.scheduled_date else None,
+                'scheduled_time': order.scheduled_time or None,
             }
-            
+
             # Include PIX data if available
             if order.payment_method == 'pix':
                 response_data['pix_code'] = order.pix_code or ''
                 response_data['pix_qr_code'] = order.pix_qr_code or ''
+                response_data['pix_expires_at'] = order.pix_expires_at.isoformat() if order.pix_expires_at else None
             
             return Response(response_data)
         
@@ -692,8 +718,8 @@ class OrderWhatsAppView(APIView):
     def get(self, request, order_id):
         """Get WhatsApp link for order confirmation."""
         try:
-            order = StoreOrder.objects.select_related('store').get(id=order_id)
-            
+            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
+
             # Get store WhatsApp number
             whatsapp_number = order.store.whatsapp_number or order.store.phone
             if not whatsapp_number:

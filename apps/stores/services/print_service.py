@@ -128,7 +128,7 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
         'customer': {
             'name': order.customer_name,
             'phone': order.customer_phone,
-            'email': order.customer_email,
+            'email': order.customer_email if order.customer_email and not any(order.customer_email.endswith(s) for s in ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')) else '',
         },
         'address_lines': _extract_address_lines(order),
         'items': items,

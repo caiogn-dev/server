@@ -15,26 +15,25 @@ logger = logging.getLogger(__name__)
 
 class WebhookService:
     """Service for managing and triggering store webhooks."""
-    
+
+    # Class-level singleton so multiple instances don't each create a new pool.
+    _executor = ThreadPoolExecutor(max_workers=5)
+
     def __init__(self):
-        self.executor = ThreadPoolExecutor(max_workers=5)
         self.timeout = 30
-    
+
     def trigger_webhooks(self, store, event: str, payload: Dict[str, Any]):
         """
         Trigger all webhooks for a store that are subscribed to the given event.
         Runs asynchronously to not block the main thread.
         """
         from apps.stores.models import StoreWebhook
-        
-        webhooks = StoreWebhook.objects.filter(
-            store=store,
-            is_active=True
-        )
-        
+
+        webhooks = StoreWebhook.objects.filter(store=store, is_active=True)
+
         for webhook in webhooks:
             if event in webhook.events or '*' in webhook.events:
-                self.executor.submit(self._send_webhook, webhook, event, payload)
+                self._executor.submit(self._send_webhook, webhook, event, payload)
     
     def _send_webhook(self, webhook, event: str, payload: Dict[str, Any]):
         """Send a single webhook request."""

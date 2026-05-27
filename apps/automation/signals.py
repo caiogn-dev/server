@@ -67,12 +67,11 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
                 return
 
             # Create new profile for store
-            profile_data = {
-                'store': instance,
+            profile_defaults = {
                 '_company_name': instance.name,
                 '_description': instance.description or '',
             }
-            
+
             # If store has WhatsApp account, link it
             if instance.whatsapp_account:
                 # Check if the WhatsApp account already has a profile
@@ -86,11 +85,47 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
                     logger.info(f"Linked existing CompanyProfile {existing_profile.id} to Store {instance.slug}")
                     return
                 else:
-                    profile_data['account'] = instance.whatsapp_account
-            
-            profile = CompanyProfile.objects.create(**profile_data)
+                    profile_defaults['account'] = instance.whatsapp_account
+
+            profile, created = CompanyProfile.objects.get_or_create(
+                store=instance,
+                defaults=profile_defaults,
+            )
+            if not created:
+                logger.info(f"CompanyProfile already exists for Store {instance.slug} — skipping create")
+                return
             logger.info(f"Created CompanyProfile {profile.id} for Store {instance.slug}")
-            
+
+            # Sync automation flags from CompanyProfile defaults to Store.
+            # Only overwrite Store fields that are still at their model defaults
+            # so that values set explicitly at Store.create() are preserved.
+            _STORE_DEFAULTS = {
+                'auto_reply_enabled': True,
+                'welcome_message_enabled': True,
+                'menu_auto_send': False,
+                'abandoned_cart_notification': False,
+                'abandoned_cart_delay_minutes': 60,
+                'pix_notification_enabled': True,
+                'payment_confirmation_enabled': True,
+                'order_status_notification_enabled': True,
+                'delivery_notification_enabled': True,
+                'use_ai_agent': False,
+            }
+            try:
+                update_fields = []
+                for field, default_val in _STORE_DEFAULTS.items():
+                    store_val = getattr(instance, field)
+                    cp_val = getattr(profile, field, default_val)
+                    # Only copy when Store still holds the default AND CompanyProfile
+                    # has a non-default value (e.g., admin changed the profile).
+                    if store_val == default_val and cp_val != default_val:
+                        setattr(instance, field, cp_val)
+                        update_fields.append(field)
+                if update_fields:
+                    instance.save(update_fields=update_fields + ['updated_at'])
+            except Exception as sync_error:
+                logger.error(f"Error syncing automation fields to Store {instance.slug}: {sync_error}")
+
             # Create default auto messages for the new profile
             try:
                 from .services import AutomationService
@@ -142,17 +177,22 @@ def create_or_link_company_profile_for_account(sender, instance, created, **kwar
                     return
             
             # Create new profile for account
-            profile_data = {
-                'account': instance,
+            profile_defaults = {
                 '_company_name': instance.name,
             }
-            
+
             if store:
-                profile_data['store'] = store
-                profile_data['_company_name'] = store.name
-                profile_data['_description'] = store.description or ''
-            
-            profile = CompanyProfile.objects.create(**profile_data)
+                profile_defaults['store'] = store
+                profile_defaults['_company_name'] = store.name
+                profile_defaults['_description'] = store.description or ''
+
+            profile, created = CompanyProfile.objects.get_or_create(
+                account=instance,
+                defaults=profile_defaults,
+            )
+            if not created:
+                logger.info(f"CompanyProfile already exists for WhatsApp account {instance.id} — skipping create")
+                return
             logger.info(f"Created CompanyProfile {profile.id} for WhatsApp account {instance.id}")
         
     except Exception as e:
@@ -202,8 +242,16 @@ def sync_company_profile_ai_to_account(sender, instance, **kwargs):
 
 @receiver(pre_save, sender='stores.StoreOrder')
 def capture_order_previous_status(sender, instance, **kwargs):
-    """Capture previous order status before save for transition detection."""
+    """Capture previous order status before save for transition detection.
+
+    Uses instance._pre_save_status when stores.signals already ran the DB query,
+    avoiding a duplicate round-trip per save.
+    """
     if not instance.pk:
+        return
+
+    if hasattr(instance, '_pre_save_status'):
+        _ORDER_PREV_STATUS[instance.pk] = instance._pre_save_status
         return
 
     previous_status = (
@@ -212,6 +260,7 @@ def capture_order_previous_status(sender, instance, **kwargs):
         .values_list('status', flat=True)
         .first()
     )
+    instance._pre_save_status = previous_status
     _ORDER_PREV_STATUS[instance.pk] = previous_status
 
 

@@ -189,6 +189,18 @@ class Store(BaseModel):
     menu_url = models.URLField(blank=True, help_text="Online menu URL")
     order_url = models.URLField(blank=True, help_text="Direct order link")
 
+    # Automation config — mirrors CompanyProfile for O(1) access
+    auto_reply_enabled = models.BooleanField(default=True)
+    welcome_message_enabled = models.BooleanField(default=True)
+    menu_auto_send = models.BooleanField(default=False)
+    abandoned_cart_notification = models.BooleanField(default=False)
+    abandoned_cart_delay_minutes = models.IntegerField(default=60)
+    pix_notification_enabled = models.BooleanField(default=True)
+    payment_confirmation_enabled = models.BooleanField(default=True)
+    order_status_notification_enabled = models.BooleanField(default=True)
+    delivery_notification_enabled = models.BooleanField(default=True)
+    use_ai_agent = models.BooleanField(default=False)
+
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)
 
@@ -218,24 +230,29 @@ class Store(BaseModel):
             return build_absolute_media_url(self.banner.url)
         return build_absolute_media_url(self.banner_url or '')
 
+    _WEEKDAY_NAMES = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+
     def is_open(self):
         """Check if store is currently open based on operating hours."""
         if not self.operating_hours:
             return True
 
         now = timezone.localtime()
-        day_name = now.strftime('%A').lower()
+        day_name = self._WEEKDAY_NAMES[now.weekday()]
         hours = self.operating_hours.get(day_name)
 
         if not hours:
             return False
 
-        current_time = now.strftime('%H:%M')
-        open_time = hours.get('open') or hours.get('start') or '00:00'
-        close_time = hours.get('close') or hours.get('end') or '23:59'
-        if not open_time or not close_time:
-            return False
-        return open_time <= current_time <= close_time
+        try:
+            from datetime import datetime as _dt
+            open_str = hours.get('open') or hours.get('start') or '00:00'
+            close_str = hours.get('close') or hours.get('end') or '23:59'
+            open_time = _dt.strptime(open_str, '%H:%M').time()
+            close_time = _dt.strptime(close_str, '%H:%M').time()
+            return open_time <= now.time() <= close_time
+        except (ValueError, TypeError):
+            return True
     
     def get_whatsapp_account(self):
         """

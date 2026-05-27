@@ -158,7 +158,24 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 {'error': f'Invalid status. Valid options: {valid_statuses}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        # Bloqueia avanço de pedidos PIX não pagos — previne entregas sem confirmação de pagamento
+        _paid_required = {'confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'completed'}
+        if (
+            new_status in _paid_required
+            and order.payment_method == 'pix'
+            and order.payment_status not in ('paid', 'completed')
+        ):
+            return Response(
+                {
+                    'error': 'Pagamento PIX não confirmado. Confirme o recebimento do pagamento antes de avançar o pedido.',
+                    'code': 'payment_not_confirmed',
+                    'payment_status': order.payment_status,
+                    'payment_method': order.payment_method,
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Use OrderService for proper status update with notifications
         order_service = OrderService()
         result = order_service.update_status(
@@ -409,6 +426,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 )['total'] or 0,
                 'today': queryset.filter(
                     payment_status='paid', created_at__gte=today
+                ).aggregate(total=Sum('total'))['total'] or 0,
+                'week': queryset.filter(
+                    payment_status='paid', created_at__gte=week_ago
                 ).aggregate(total=Sum('total'))['total'] or 0,
             }
         }

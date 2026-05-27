@@ -373,7 +373,8 @@ class WhatsAppSSEView(BaseSSEView):
     
     def get_event_stream(self, request, user, last_event_id=None):
         """Stream WhatsApp updates."""
-        from apps.whatsapp.models import Message, Conversation
+        from apps.whatsapp.models import Message
+        from apps.conversations.models import Conversation
         from django.utils import timezone
         from datetime import timedelta
         

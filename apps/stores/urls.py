@@ -45,6 +45,7 @@ from .api.export_views import (
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
+from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView
 
 # Main router for admin/management endpoints
 router = DefaultRouter()
@@ -115,6 +116,8 @@ store_frontend_patterns = [
     path('delivery-zones/', StoreDeliveryZonesView.as_view(), name='store-delivery-zones'),
     path('autosuggest/', StoreAutosuggestView.as_view(), name='store-autosuggest'),
     path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
+    path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
+    path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
 ]
 app_name = 'stores'
 

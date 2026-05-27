@@ -196,3 +196,17 @@ class StoreCustomer(BaseModel):
             self.last_order_at = last_order.created_at
 
         self.save(update_fields=['total_orders', 'total_spent', 'last_order_at', 'updated_at'])
+
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+
+
+@receiver(post_save, sender=StoreCustomerAddress)
+def enforce_single_default_address(sender, instance, **kwargs):
+    """Garante que apenas um endereço por cliente tem is_default=True."""
+    if instance.is_default:
+        StoreCustomerAddress.objects.filter(
+            customer=instance.customer,
+            is_default=True,
+        ).exclude(pk=instance.pk).update(is_default=False)

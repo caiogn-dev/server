@@ -4,16 +4,12 @@ Automation Service - Core business logic for message automation.
 """
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db import transaction
 
 from apps.core.exceptions import NotFoundError, ValidationError
-from apps.whatsapp.models import WhatsAppAccount, Message
+from apps.whatsapp.models import WhatsAppAccount
 from apps.whatsapp.services import MessageService as WhatsAppService
-from apps.conversations.models import Conversation
-from apps.agents.services import AgentService
-
 from ..models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog
 from .context_service import AutomationContextService
 
@@ -222,7 +218,8 @@ class AutomationService:
         """Return the default auto message templates."""
         menu_link = profile.get_menu_url() or profile.website_url or ''
         company_name = profile.company_name or 'nosso time'
-        cart_delay = max(60, profile.abandoned_cart_delay_minutes * 60)
+        _cfg = profile.store if profile.store_id else profile
+        cart_delay = max(60, _cfg.abandoned_cart_delay_minutes * 60)
 
         return [
             {
@@ -396,195 +393,6 @@ class AutomationService:
             },
         ]
 
-    # ==================== Message Handling ====================
-
-    def handle_incoming_message(
-        self,
-        account_id: str,
-        from_number: str,
-        message_text: str,
-        message_type: str = 'text',
-        message_data: Dict = None
-    ) -> Optional[str]:
-        """
-        Handle an incoming message and generate automatic response.
-        Returns the response message or None if no auto-response.
-        """
-        profile = self.get_company_profile(account_id)
-        if not profile or not profile.auto_reply_enabled:
-            return None
-
-        # Log the incoming message
-        self._log_action(
-            profile,
-            AutomationLog.ActionType.MESSAGE_RECEIVED,
-            f"Message received from {from_number}",
-            phone_number=from_number,
-            request_data={'text': message_text, 'type': message_type}
-        )
-
-        # Get or create customer session
-        session = self._get_or_create_session(profile, from_number)
-
-        # Check if it's a button response
-        if message_type == 'interactive' and message_data:
-            return self._handle_button_response(profile, session, message_data)
-
-        # Check business hours
-        if not self._is_within_business_hours(profile):
-            return self._send_auto_message(profile, session, AutoMessage.EventType.OUT_OF_HOURS)
-
-        # Check if this is first message (welcome)
-        conversation = self._get_conversation(account_id, from_number)
-        if conversation and self._is_first_message(conversation):
-            response = self._send_auto_message(profile, session, AutoMessage.EventType.WELCOME)
-            
-            # Also send menu if enabled
-            if profile.menu_auto_send and profile.menu_url:
-                menu_response = self._send_auto_message(profile, session, AutoMessage.EventType.MENU)
-                if menu_response:
-                    response = f"{response}\n\n{menu_response}" if response else menu_response
-            
-            return response
-
-        # If AI Agent is enabled, use it for complex responses
-        if profile.use_ai_agent and profile.default_agent:
-            return self._process_with_agent(profile, session, message_text)
-
-        # Default: no auto-response for regular messages
-        return None
-
-    def _handle_button_response(
-        self,
-        profile: CompanyProfile,
-        session: CustomerSession,
-        message_data: Dict
-    ) -> Optional[str]:
-        """Handle interactive button responses."""
-        button_id = message_data.get('button_reply', {}).get('id', '')
-        
-        if button_id == 'send_pix':
-            # Send PIX code
-            if session.pix_code:
-                return f"📱 *Código PIX Copia e Cola:*\n\n```{session.pix_code}```"
-            return "Desculpe, não encontrei um código PIX ativo. Por favor, gere um novo no site."
-        
-        elif button_id == 'new_pix':
-            return f"🔄 Para gerar um novo PIX, acesse:\n\n{profile.order_url or profile.website_url}"
-        
-        return None
-
-    def _is_within_business_hours(self, profile: CompanyProfile) -> bool:
-        """Check if current time is within business hours."""
-        if not profile.business_hours:
-            return True  # No hours defined = always open
-
-        now = timezone.localtime()
-        day_name = now.strftime('%A').lower()
-        short_day = day_name[:3]
-
-        day_hours = (
-            profile.business_hours.get(day_name, {})
-            or profile.business_hours.get(short_day, {})
-        )
-        if not day_hours or not day_hours.get('open'):
-            return False
-        
-        try:
-            open_value = day_hours.get('open') or day_hours.get('start') or '00:00'
-            close_value = day_hours.get('close') or day_hours.get('end') or '23:59'
-            open_time = datetime.strptime(open_value, '%H:%M').time()
-            close_time = datetime.strptime(close_value, '%H:%M').time()
-            return open_time <= now.time() <= close_time
-        except (ValueError, TypeError):
-            return True
-
-    def _is_first_message(self, conversation: Conversation) -> bool:
-        """Check if this is the first message in the conversation."""
-        return Message.objects.filter(
-            conversation=conversation,
-            direction='inbound'
-        ).count() <= 1
-
-    def _get_conversation(self, account_id: str, phone_number: str) -> Optional[Conversation]:
-        """Get conversation for a phone number."""
-        try:
-            return Conversation.objects.get(
-                account_id=account_id,
-                phone_number=phone_number,
-                is_active=True
-            )
-        except Conversation.DoesNotExist:
-            return None
-
-    def _process_with_agent(
-        self,
-        profile: CompanyProfile,
-        session: CustomerSession,
-        message_text: str
-    ) -> Optional[str]:
-        """Process message with AI Agent (Langchain)."""
-        try:
-            from apps.agents.services import LangchainService
-
-            agent = profile.default_agent
-            if not agent:
-                return None
-
-            # Do not process with an inactive agent
-            if not agent.is_active or agent.status != 'active':
-                logger.info(
-                    f"Agent {agent.id} is inactive (is_active={agent.is_active}, "
-                    f"status={agent.status}). Skipping AI processing."
-                )
-                return None
-
-            service = LangchainService(agent)
-            result = service.process_message(
-                message=message_text,
-                session_id=session.session_id,
-                phone_number=session.phone_number,
-                conversation_id=str(session.id) if hasattr(session, 'id') else None
-            )
-            return result.get('response')
-        except Exception as e:
-            logger.error(f"AI Agent error: {str(e)}")
-            return None
-
-    # ==================== Customer Sessions ====================
-
-    def _get_or_create_session(
-        self,
-        profile: CompanyProfile,
-        phone_number: str
-    ) -> CustomerSession:
-        """Get or create a customer session."""
-        import uuid
-        
-        session, created = CustomerSession.objects.get_or_create(
-            company=profile,
-            phone_number=phone_number,
-            status__in=[
-                CustomerSession.SessionStatus.ACTIVE,
-                CustomerSession.SessionStatus.CART_CREATED,
-                CustomerSession.SessionStatus.PAYMENT_PENDING,
-            ],
-            defaults={
-                'session_id': str(uuid.uuid4()),
-            }
-        )
-        
-        if created:
-            self._log_action(
-                profile,
-                AutomationLog.ActionType.SESSION_CREATED,
-                f"Session created for {phone_number}",
-                phone_number=phone_number,
-                session=session
-            )
-        
-        return session
-
     def get_session_by_id(self, session_id: str) -> Optional[CustomerSession]:
         """Get session by session ID."""
         try:
@@ -683,6 +491,7 @@ class AutomationService:
         profile = self._validate_api_key(api_key)
         if not profile:
             return False
+        _cfg = profile.store if profile.store_id else profile
 
         session = self.get_session_by_id(session_id)
         if not session:
@@ -695,10 +504,18 @@ class AutomationService:
             session.pix_expires_at = payment_data.get('expires_at')
             session.payment_id = payment_data.get('payment_id', '')
             session.status = CustomerSession.SessionStatus.PAYMENT_PENDING
+            # Fonte de verdade: propagar PIX para StoreOrder quando disponível
+            if session.order_id:
+                from apps.stores.models import StoreOrder
+                StoreOrder.objects.filter(pk=session.order_id).update(
+                    pix_code=session.pix_code,
+                    pix_qr_code=session.pix_qr_code,
+                    pix_expires_at=session.pix_expires_at,
+                )
             session.save()
 
             # Send PIX notification
-            if profile.pix_notification_enabled:
+            if _cfg.pix_notification_enabled:
                 self._send_notification(
                     profile,
                     session,
@@ -714,7 +531,7 @@ class AutomationService:
             session.save()
 
             # Send payment confirmation
-            if profile.payment_confirmation_enabled:
+            if _cfg.payment_confirmation_enabled:
                 self._send_notification(
                     profile,
                     session,
@@ -726,7 +543,7 @@ class AutomationService:
                 )
 
         elif event_type == 'payment_failed':
-            if profile.payment_confirmation_enabled:
+            if _cfg.payment_confirmation_enabled:
                 self._send_notification(
                     profile,
                     session,
@@ -757,6 +574,7 @@ class AutomationService:
         profile = self._validate_api_key(api_key)
         if not profile:
             return False
+        _cfg = profile.store if profile.store_id else profile
 
         session = self.get_session_by_id(session_id)
         if not session:
@@ -783,7 +601,7 @@ class AutomationService:
         session.save()
 
         # Send notification
-        if profile.order_status_notification_enabled and event_type in event_mapping:
+        if _cfg.order_status_notification_enabled and event_type in event_mapping:
             self._send_notification(
                 profile,
                 session,
@@ -807,171 +625,6 @@ class AutomationService:
         )
 
         return True
-
-    def handle_order_status_change(
-        self,
-        order,
-        old_status: str,
-        new_status: str
-    ) -> bool:
-        """
-        Handle order status change from internal StoreOrder.
-        This is called directly by OrderService to send WhatsApp notifications.
-        """
-        from apps.stores.models import Store
-        
-        logger.info(f"[handle_order_status_change] START - Order {order.order_number}, {old_status} -> {new_status}")
-        
-        # Map internal status to event type
-        status_to_event = {
-            'confirmed': 'order_confirmed',
-            'preparing': 'order_preparing',
-            'ready': 'order_ready',
-            'shipped': 'order_shipped',
-            'out_for_delivery': 'order_out_for_delivery',
-            'delivered': 'order_delivered',
-            'cancelled': 'order_cancelled',
-        }
-        
-        event_type = status_to_event.get(new_status)
-        if not event_type:
-            logger.debug(f"[handle_order_status_change] No notification needed for status: {new_status}")
-            return False
-        
-        # Get the store and its automation profile
-        store = order.store
-        if not store:
-            logger.warning(f"[handle_order_status_change] Order {order.order_number} has no store")
-            return False
-        
-        # Get company profile
-        profile = None
-        logger.info(f"[handle_order_status_change] Store: {store.slug}, whatsapp_account_id: {store.whatsapp_account_id}")
-        
-        # Try multiple ways to find the profile
-        from apps.automation.models import CompanyProfile
-        
-        # 1. Via store.automation_profile (OneToOne reverse)
-        if hasattr(store, 'automation_profile') and store.automation_profile:
-            profile = store.automation_profile
-            # Refresh from DB to get latest account_id
-            profile.refresh_from_db()
-            logger.info(f"[handle_order_status_change] ✓ Found profile via store.automation_profile: {profile.id}, account_id: {profile.account_id}")
-        
-        # 2. Via whatsapp_account.company_profile
-        if not profile and store.whatsapp_account_id:
-            try:
-                wa_account = store.whatsapp_account
-                if wa_account and hasattr(wa_account, 'company_profile') and wa_account.company_profile:
-                    profile = wa_account.company_profile
-                    profile.refresh_from_db()
-                    logger.info(f"[handle_order_status_change] ✓ Found profile via whatsapp_account: {profile.id}, account_id: {profile.account_id}")
-            except Exception as e:
-                logger.error(f"[handle_order_status_change] Error accessing whatsapp_account: {e}")
-        
-        # 3. Direct query by store
-        if not profile:
-            profile = CompanyProfile.objects.filter(store=store).first()
-            if profile:
-                logger.info(f"[handle_order_status_change] ✓ Found profile via direct store query: {profile.id}, account_id: {profile.account_id}")
-        
-        # 4. Direct query by account
-        if not profile and store.whatsapp_account_id:
-            profile = CompanyProfile.objects.filter(account_id=store.whatsapp_account_id).first()
-            if profile:
-                logger.info(f"[handle_order_status_change] ✓ Found profile via direct account query: {profile.id}, account_id: {profile.account_id}")
-        
-        # 5. Create profile if not found
-        if not profile:
-            logger.warning(f"[handle_order_status_change] No profile found, attempting to create one...")
-            try:
-                profile = CompanyProfile.objects.create(
-                    store=store,
-                    account_id=store.whatsapp_account_id,
-                    _company_name=store.name,
-                )
-                # Create default auto messages for the new profile
-                self.ensure_auto_messages(profile)
-                logger.info(f"[handle_order_status_change] ✓ Created new profile with default messages: {profile.id}")
-            except Exception as e:
-                logger.error(f"[handle_order_status_change] Failed to create profile: {e}")
-                return False
-        
-        if not profile:
-            logger.warning(f"[handle_order_status_change] No automation profile found for store {store.slug}")
-            return False
-        
-        # Check if notifications are enabled
-        if not profile.order_status_notification_enabled:
-            logger.info(f"[handle_order_status_change] Order status notifications disabled for store {store.slug}")
-            return False
-        
-        # Get or create customer session
-        phone_number = order.customer_phone
-        if not phone_number:
-            logger.warning(f"[handle_order_status_change] Order {order.order_number} has no customer phone")
-            return False
-        
-        # Normalize phone number
-        from apps.core.utils import normalize_phone_number
-        phone_number = normalize_phone_number(phone_number)
-        logger.info(f"[handle_order_status_change] Normalized phone: {phone_number}")
-        
-        # Find or create session
-        session = CustomerSession.objects.filter(
-            company=profile,
-            phone_number=phone_number
-        ).order_by('-updated_at').first()
-        
-        if not session:
-            session = CustomerSession.objects.create(
-                company=profile,
-                phone_number=phone_number,
-                customer_name=order.customer_name or 'Cliente',
-                customer_email=order.customer_email or '',
-            )
-            logger.info(f"[handle_order_status_change] Created new session: {session.id}")
-        else:
-            logger.info(f"[handle_order_status_change] Found existing session: {session.id}")
-        
-        # Map event types to AutoMessage.EventType
-        event_mapping = {
-            'order_confirmed': AutoMessage.EventType.ORDER_CONFIRMED,
-            'order_preparing': AutoMessage.EventType.ORDER_PREPARING,
-            'order_ready': AutoMessage.EventType.ORDER_READY,
-            'order_shipped': AutoMessage.EventType.ORDER_SHIPPED,
-            'order_out_for_delivery': AutoMessage.EventType.ORDER_OUT_FOR_DELIVERY,
-            'order_delivered': AutoMessage.EventType.ORDER_DELIVERED,
-            'order_cancelled': AutoMessage.EventType.ORDER_CANCELLED,
-        }
-        
-        auto_message_event_type = event_mapping.get(event_type)
-        if not auto_message_event_type:
-            logger.warning(f"[handle_order_status_change] No AutoMessage.EventType mapping for: {event_type}")
-            return False
-        
-        logger.info(f"[handle_order_status_change] Sending notification for event: {auto_message_event_type}")
-        
-        # Send notification
-        notification_sent = self._send_notification(
-            profile,
-            session,
-            auto_message_event_type,
-            {
-                'order_number': order.order_number,
-                'customer_name': order.customer_name or 'Cliente',
-                'order_total': f"{order.total:.2f}" if order.total else '0.00',
-                'order_status': new_status,
-                'old_status': old_status,
-            }
-        )
-        
-        if notification_sent:
-            logger.info(f"[handle_order_status_change] ✓ Notification sent for {order.order_number}: {new_status}")
-        else:
-            logger.info(f"[handle_order_status_change] ✗ Notification skipped for {order.order_number}: {new_status}")
-        
-        return notification_sent
 
     # ==================== Notifications ====================
 
@@ -1130,8 +783,9 @@ class AutomationService:
     ):
         """Schedule abandoned cart notification."""
         from ..tasks import send_abandoned_cart_notification
-        
-        delay_seconds = profile.abandoned_cart_delay_minutes * 60
+
+        _cfg = profile.store if profile.store_id else profile
+        delay_seconds = _cfg.abandoned_cart_delay_minutes * 60
         send_abandoned_cart_notification.apply_async(
             args=[str(session.id)],
             countdown=delay_seconds

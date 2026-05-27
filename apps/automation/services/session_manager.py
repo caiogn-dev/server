@@ -177,18 +177,52 @@ class SessionManager:
                     self.store.id,
                 )
 
+        # Preservar contexto: se não há sessão ativa mas existe sessão recente em
+        # status terminal (pagamento confirmado, pedido entregue), reutilizá-la em
+        # vez de criar nova — evita saudação desnecessária e re-envio de PIX.
+        if not session:
+            _recent_cutoff = timezone.now() - timedelta(hours=24)
+            _terminal = [
+                CustomerSession.SessionStatus.PAYMENT_CONFIRMED,
+                CustomerSession.SessionStatus.COMPLETED,
+                CustomerSession.SessionStatus.ORDER_PLACED,
+            ]
+            session = CustomerSession.objects.filter(
+                company=self.company,
+                phone_number__in=self.phone_number_variants,
+                status__in=_terminal,
+                last_activity_at__gte=_recent_cutoff,
+            ).order_by('-last_activity_at').first()
+
+            if not session and self.store:
+                session = CustomerSession.objects.filter(
+                    company__store=self.store,
+                    phone_number__in=self.phone_number_variants,
+                    status__in=_terminal,
+                    last_activity_at__gte=_recent_cutoff,
+                ).order_by('-last_activity_at').first()
+                if session:
+                    self.company = session.company
+
+            if session:
+                logger.info(
+                    '[SessionManager] Reusing recent terminal session %s (status=%s) — preserving context',
+                    session.id, session.status,
+                )
+
         if session:
             # Atualiza última atividade
             session.last_activity_at = timezone.now()
             session.save(update_fields=['last_activity_at'])
             logger.info(f"[SessionManager] Found existing session: {session.id}")
         else:
-            # Cria nova sessão
+            # Cria nova sessão com TTL de 24h para evitar checkout fantasma em recontato
             session = CustomerSession.objects.create(
                 company=self.company,
                 phone_number=self.phone_number,
                 session_id=f"whatsapp_{self.phone_number}_{timezone.now().strftime('%Y%m%d%H%M%S')}",
-                status=CustomerSession.SessionStatus.ACTIVE
+                status=CustomerSession.SessionStatus.ACTIVE,
+                expires_at=timezone.now() + timedelta(hours=24),
             )
             logger.info(f"[SessionManager] Created new session: {session.id}")
         
@@ -368,6 +402,7 @@ class SessionManager:
             data['delivery_lat'] = lat
             data['delivery_lng'] = lng
             data['waiting_for_address'] = False
+            data['waiting_for_notes'] = False
             if address_components:
                 data['delivery_address_components'] = address_components
             session.cart_data = data
@@ -417,8 +452,17 @@ class SessionManager:
             session.pix_code = pix_code
             session.pix_qr_code = pix_qr_code
             session.payment_id = payment_id
-            session.pix_expires_at = timezone.now() + timedelta(hours=24)
+            _pix_expires = timezone.now() + timedelta(hours=24)
+            session.pix_expires_at = _pix_expires
             session.status = CustomerSession.SessionStatus.PAYMENT_PENDING
+            # Fonte de verdade: propagar PIX para StoreOrder quando disponível
+            if session.order_id:
+                from apps.stores.models import StoreOrder
+                StoreOrder.objects.filter(pk=session.order_id).update(
+                    pix_code=pix_code,
+                    pix_qr_code=pix_qr_code,
+                    pix_expires_at=_pix_expires,
+                )
             session.save()
             logger.info(f"[SessionManager] Payment pending set for {self.phone_number}")
     

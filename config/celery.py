@@ -4,6 +4,7 @@ Celery configuration for WhatsApp Business Platform.
 import os
 import logging
 from celery import Celery
+from celery.schedules import crontab
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,26 @@ app.conf.beat_schedule = {
     # NOTE: process_scheduled_messages is now unified in apps.automation.tasks.scheduled
     # The task 'process-scheduled-messages' above handles all scheduled messages
 
+    # StoreCart (storefront) abandoned cart reminders — distinct from CustomerSession carts
+    'check-abandoned-store-carts': {
+        'task': 'apps.whatsapp.tasks.check_abandoned_store_carts',
+        'schedule': 900.0,  # every 15 min
+    },
+    # CustomerSession (WhatsApp bot) abandoned cart/checkout reminders — 5min / 20min / 2h
+    'check-abandoned-whatsapp-sessions': {
+        'task': 'apps.whatsapp.tasks.check_abandoned_whatsapp_sessions',
+        'schedule': 300.0,  # every 5 min
+    },
+    # Re-engajamento de clientes inativos (10-30 dias sem pedido) — diário às 11h
+    'check-inactive-customers': {
+        'task': 'apps.whatsapp.tasks.check_inactive_customers',
+        'schedule': crontab(hour=11, minute=0),
+    },
+    # StoreOrder PIX reminders (30min / 2h / 24h) for storefront orders
+    'check-store-pix-reminders': {
+        'task': 'apps.whatsapp.tasks.check_pending_payments',
+        'schedule': 600.0,  # every 10 min
+    },
     # Toca Delivery — poll active corridas for status updates every 60s
     'sync-toca-delivery-statuses': {
         'task': 'apps.stores.tasks.sync_toca_delivery_statuses',
@@ -108,6 +129,11 @@ app.conf.beat_schedule = {
     'agent-decay-stale-knowledge': {
         'task': 'apps.agents.tasks.decay_stale_knowledge',
         'schedule': 86400.0,
+    },
+    # Cleanup de carrinhos abandonados — diário às 3h
+    'cleanup-abandoned-carts': {
+        'task': 'apps.stores.tasks.cleanup_abandoned_carts',
+        'schedule': 86400.0,  # Daily
     },
 }
 

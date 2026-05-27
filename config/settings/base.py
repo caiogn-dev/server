@@ -68,6 +68,7 @@ INSTALLED_APPS = [
     'apps.users',  # Unified user management (NEW)
     'apps.public_api',  # Public read-only API for storefronts (no auth required)
     'apps.panel',  # Pastita Panel — Django-rendered admin UI at /panel/
+    'apps.postado',  # Postado — AI social media posts for small businesses
 ]
 
 MIDDLEWARE = [
@@ -212,6 +213,8 @@ REST_FRAMEWORK = {
         'checkout': '20/minute',
         # Auth: OTP brute-force protection — manter restritivo
         'auth': '10/minute',
+        # Lead capture form — low rate to prevent spam
+        'lead_create': '10/hour',
         # Webhooks de integrações externas — volume alto esperado
         'webhook': '10000/hour',
     },
@@ -235,6 +238,8 @@ CORS_ALLOWED_ORIGINS = [
     # ce-saladas dev server (openclaw tunnel + local)
     "https://openclaw.pastita.com.br",
     "http://localhost:3001",
+    # postado admin panel dev server
+    "http://localhost:3099",
     # Backend / API self-origin (health checks, swagger)
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",
@@ -350,6 +355,9 @@ DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL = os.environ.get(
     'DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL', os.environ.get('ADMIN_EMAIL', '')
 ).strip()
 DEFAULT_WHATSAPP_ACCOUNT_STATUS = os.environ.get('DEFAULT_WHATSAPP_ACCOUNT_STATUS', 'active').strip().lower()
+
+# WhatsApp phone (with country code, e.g. 5511999999999) that receives lead notifications from /cadastro
+OWNER_NOTIFICATION_PHONE = os.environ.get('OWNER_NOTIFICATION_PHONE', '').strip()
 DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE = os.environ.get(
     'DEFAULT_WHATSAPP_ACCOUNT_AUTO_CREATE', 'False'
 ).strip().lower() == 'true'
@@ -631,6 +639,11 @@ else:
 
 # ESTA LINHA É CRUCIAL: Impede o erro caso o arquivo de manifesto ainda não exista
 WHITENOISE_MANIFEST_STRICT = False
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Postado — AI social media posts admin
+# ─────────────────────────────────────────────────────────────────────────────
+POSTADO_ADMIN_TOKEN = os.environ.get('POSTADO_ADMIN_TOKEN', '')
 
 
 

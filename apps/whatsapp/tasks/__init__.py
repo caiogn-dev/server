@@ -359,6 +359,10 @@ from .automation_tasks import (
     notify_order_status_change,
     request_feedback,
     schedule_feedback_request,
+    send_session_cart_reminder,
+    check_abandoned_whatsapp_sessions,
+    send_reengagement_message,
+    check_inactive_customers,
 )
 
 

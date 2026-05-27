@@ -103,12 +103,10 @@ class UnifiedService:
 
     OUT_OF_HOURS_INTENTS = {
         IntentType.GREETING,
-        IntentType.MENU_REQUEST,
         IntentType.PRODUCT_INQUIRY,
         IntentType.PRODUCT_MENTION,
         IntentType.CREATE_ORDER,
         IntentType.ADD_TO_CART,
-        IntentType.DELIVERY_INFO,
         IntentType.PRICE_CHECK,
         IntentType.RECOMMENDATION,
     }
@@ -264,7 +262,8 @@ class UnifiedService:
         store_name = self.store.name
         hours = getattr(self.store, 'operating_hours', None) or {}
         now = timezone.localtime()
-        today = now.strftime('%A').lower()
+        _WEEKDAY = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        today = _WEEKDAY[now.weekday()]
         today_hours = hours.get(today) or {}
 
         lines = [f"{store_name} está fora do horário no momento."]
@@ -360,7 +359,17 @@ class UnifiedService:
         Transactional flows such as order creation, PIX, payment confirmation,
         and order tracking must stay centralized in handlers/templates.
         """
-        return self.use_llm and intent in self.CONSULTATIVE_INTENTS
+        if not (self.use_llm and intent in self.CONSULTATIVE_INTENTS):
+            return False
+        # Não chamar LLM quando há pagamento PIX pendente — o agente re-envia o código
+        # conversacionalmente, causando duplicidade de mensagens PIX na conversa.
+        try:
+            active = self._get_active_session()
+            if active and active.status == 'payment_pending' and active.pix_code:
+                return False
+        except Exception:
+            pass
+        return True
 
     def _has_pending_delivery_address_session(self) -> bool:
         """Return True when this customer has an order waiting for delivery address."""
@@ -409,6 +418,46 @@ class UnifiedService:
             sessions = sessions.filter(company__store=self.store)
 
         return sessions.exists()
+
+    def _get_active_session(self) -> Optional[CustomerSession]:
+        """Return the active CustomerSession for this conversation, or None."""
+        if not self.conversation:
+            return None
+        phone_number = self.conversation.phone_number
+        sessions = CustomerSession.objects.filter(phone_number=phone_number)
+        if self.company:
+            sessions = sessions.filter(company=self.company)
+        return sessions.filter(
+            status__in=['active', 'cart_created', 'checkout', 'payment_pending']
+        ).order_by('-updated_at').first()
+
+    def _increment_dead_end(self) -> int:
+        """Increment consecutive-unresolved counter in session cart_data. Returns new count."""
+        try:
+            session = self._get_active_session()
+            if not session:
+                return 0
+            count = (session.cart_data or {}).get('_dead_end_count', 0) + 1
+            data = dict(session.cart_data or {})
+            data['_dead_end_count'] = count
+            CustomerSession.objects.filter(pk=session.pk).update(cart_data=data)
+            return count
+        except Exception as exc:
+            logger.warning('[unified] dead_end increment failed: %s', exc)
+            return 0
+
+    def _reset_dead_end(self) -> None:
+        """Reset dead-end counter when a message resolves successfully."""
+        try:
+            session = self._get_active_session()
+            if not session:
+                return
+            if (session.cart_data or {}).get('_dead_end_count', 0) > 0:
+                data = dict(session.cart_data or {})
+                data['_dead_end_count'] = 0
+                CustomerSession.objects.filter(pk=session.pk).update(cart_data=data)
+        except Exception as exc:
+            logger.warning('[unified] dead_end reset failed: %s', exc)
 
     def _is_human_mode_transactional_step(
         self,
@@ -535,6 +584,13 @@ class UnifiedService:
                 conversation_id=str(self.conversation.id),
             )
             response_text = result.get('response', '').strip()
+            # Suppress LLM internal errors that leak to the user
+            _err_indicators = ('não foi possível encontrar', 'nao foi possivel encontrar',
+                               'função que atenda', 'funcao que atenda', 'ferramenta.*não encontrada')
+            import re as _re
+            if any(_re.search(p, response_text.lower()) for p in _err_indicators):
+                logger.warning('[unified] LLM leaked tool error — suppressing: %s', response_text[:120])
+                response_text = ''
             used_session_id = result.get('session_id', session_id)
 
             # Persiste/atualiza AgentConversation no DB para que o próximo turno
@@ -724,10 +780,10 @@ class UnifiedService:
                 logger.error('[unified] location handler failed: %s', exc, exc_info=True)
 
         if not message_text or not message_text.strip():
+            logger.debug('[unified] Mensagem sem texto ignorada silenciosamente')
             return UnifiedResponse(
-                content='Desculpe, nao entendi. Pode repetir?',
+                content="Não entendi sua mensagem. Como posso ajudar?",
                 source=ResponseSource.FALLBACK,
-                metadata={'unified.source': 'fallback_empty'},
             )
 
         normalized = message_text.strip()
@@ -735,7 +791,14 @@ class UnifiedService:
         # Checkout state has priority over intent detection/LLM.
         # Example: after asking for preparation notes, "nao" means "no notes",
         # not a general negative answer for the LLM to reinterpret.
-        if self._has_pending_delivery_address_session() or self._has_pending_notes_session():
+        # Exception: cancel commands must escape the checkout handler so they reach CANCEL_ORDER.
+        _early_cancel = bool(re.search(
+            r'(?i)^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais'
+            r'|esquece|esquece isso|esquece a[ií]|deixa pra l[áa]|larga m[ãa]o|larga'
+            r'|desisti|desistir|n[ãa]o quero|pode cancelar|pode esquecer)\.?$',
+            normalized,
+        ))
+        if not _early_cancel and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
             from apps.whatsapp.intents.handlers import UnknownHandler
             try:
                 handler = UnknownHandler(self.account, self.conversation, self.company)
@@ -816,6 +879,7 @@ class UnifiedService:
         # 1. Handler determinístico
         handler_response = self._run_handler(intent_data)
         if handler_response is not None:
+            self._reset_dead_end()
             _ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(
                 '[unified] handler response (%.0fms) intent=%s', _ms, intent.value,
@@ -841,6 +905,7 @@ class UnifiedService:
         )
         template = None if _skip_template else self._get_template_for_intent(intent)
         if template:
+            self._reset_dead_end()
             validated_buttons = _validate_buttons(template.buttons)
             _ms = round((time.monotonic() - _t0) * 1000, 1)
             logger.info(
@@ -869,6 +934,7 @@ class UnifiedService:
             context_text = self._build_context(intent_data, session_data)
             llm_response = self._call_llm(normalized, context_text)
             if llm_response:
+                self._reset_dead_end()
                 _ms = round((time.monotonic() - _t0) * 1000, 1)
                 logger.info(
                     '[unified] llm response (%.0fms) intent=%s agent=%s',
@@ -887,7 +953,22 @@ class UnifiedService:
                     },
                 )
 
-        # 4. Fallback genérico
+        # 4. Fallback — detecta loop de dead-end: 3 msgs consecutivas sem resolução → handoff
+        if intent == IntentType.UNKNOWN:
+            dead_end_count = self._increment_dead_end()
+            if dead_end_count >= 3:
+                handoff_response = self._run_handler({'intent': IntentType.HUMAN_HANDOFF, 'original_message': normalized})
+                if handoff_response is not None:
+                    self._reset_dead_end()
+                    _ms = round((time.monotonic() - _t0) * 1000, 1)
+                    logger.info(
+                        '[unified] dead_end handoff triggered (%.0fms) count=%d',
+                        _ms, dead_end_count,
+                        extra={'unified.source': 'handler', 'unified.intent': 'dead_end_handoff',
+                               'unified.duration_ms': _ms, 'unified.store_id': _store_id},
+                    )
+                    return handoff_response
+
         _ms = round((time.monotonic() - _t0) * 1000, 1)
         logger.warning(
             '[unified] fallback response (%.0fms) intent=%s — nenhum provider respondeu',

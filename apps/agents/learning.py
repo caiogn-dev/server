@@ -166,7 +166,7 @@ class AgentLearningService:
 
     def _process_conversation(self, conversation) -> str:
         """Extrai padrões de uma conversa. Retorna 'created', 'updated' ou 'skipped'."""
-        from apps.whatsapp.models import WhatsAppMessage
+        from apps.whatsapp.models import Message as WhatsAppMessage
 
         try:
             # Pega as mensagens da conversa (user + bot) em ordem

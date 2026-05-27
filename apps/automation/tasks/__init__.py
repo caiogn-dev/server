@@ -156,7 +156,7 @@ def send_pix_reminder(self, session_id: str):
         raise self.retry(exc=e, countdown=60)
 
 
-@shared_task
+@shared_task(name='apps.automation.tasks.check_abandoned_sessions')
 def check_abandoned_carts():
     """
     Periodic task to check for abandoned carts.

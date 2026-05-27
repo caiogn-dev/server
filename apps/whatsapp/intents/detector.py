@@ -54,9 +54,13 @@ class IntentType(Enum):
     COMPLAINT = "complaint"                  # Reclamações complexas
     GENERAL_QUESTION = "general_question"    # Outras dúvidas
     
+    # ===== Confirmação contextual =====
+    AFFIRMATIVE = "affirmative"              # "Sim", "Ok", "Pode ser" — interpretado pelo contexto de sessão
+
     # ===== Fallback =====
     UNKNOWN = "unknown"
     HUMAN_HANDOFF = "human_handoff"          # "Falar com atendente"
+    FRUSTRATION = "frustration"              # Expressões de frustração → handoff automático
 
 
 class IntentDetector:
@@ -94,6 +98,8 @@ class IntentDetector:
             r'(card[áa]pio|menu|o que (tem|voc[êe]s t[êe]m)|op[çc][õo]es|opcoes|lista|cat[áa]logo|produtos)',
             r'(ver produtos|mostrar card[áa]pio|mostra o menu|tem o que|o que vende)',
             r'(quais s[ãa]o os produtos|o que tem dispon[íi]vel)',
+            r'(olhad[ao] no card[áa]pio|dar uma olhada|ver o card[áa]pio|quero ver o (menu|card[áa]pio))',
+            r'^(saladas?|bebidas?|de saladas?|tem salada|quero ver saladas?)[\s!?.]*$',
         ],
         IntentType.TRACK_ORDER: [
             r'(rastrear|rastreio|status (do )?pedido|onde est[áa] (meu )?pedido|n[úu]mero do pedido|acompanhar)',
@@ -107,6 +113,7 @@ class IntentDetector:
         IntentType.LOCATION: [
             r'(onde (fica|voc[êe]s (est[ãa]o|ficam))|endere[çc]o|localiza[çc][ãa]o|como chegar)',
             r'(qual o endere[çc]o|onde [ée] a loja|tem loja f[íi]sica)',
+            r'^(fica onde|onde voc[êe]s?|onde fica|de onde s[ãa]o|qual[ée] a cidade|s[ãa]o de onde)[\s?!.]*$',
         ],
         IntentType.CONTACT: [
             r'(telefone|whatsapp|contato|falar com|atendente|pessoa|humano|sac)',
@@ -121,9 +128,12 @@ class IntentDetector:
             r'(pode fazer pedido|aceita pedido|tem como pedir|pedido rápido)',
             r'(finalizar pedido|fechar pedido|concluir pedido|criar pedido)',
             r'(quero finalizar|confirmar compra|finalizar compra)',
+            r'^(como (fa[çz]o|fa[çz]er|pedir|comprar|realizar)|quero (comprar|pedir)|como (fa[çz]o pra|pedir))[^?]*[?!.]*$',
         ],
         IntentType.CANCEL_ORDER: [
             r'(cancelar pedido|quero cancelar|posso cancelar|preciso cancelar)',
+            r'^(cancela|cancelo|cancelar|cancele|não quero mais|nao quero mais)\.?$',
+            r'^(esquece|esquece isso|esquece a[ií]|deixa pra l[áa]|larga m[ãa]o|larga|desisti|desistir|n[ãa]o quero|pode cancelar|pode esquecer)\.?$',
         ],
         IntentType.MODIFY_ORDER: [
             r'(trocar|alterar pedido|mudar pedido|modificar|tirar|adicionar|remover)',
@@ -155,6 +165,18 @@ class IntentDetector:
         IntentType.HUMAN_HANDOFF: [
             r'(atendente|pessoa|humano|falar com algu[ée]m|n[ãa]o [ée] o que quero|errado|atendente humano)',
             r'(quero falar com pessoa|me passa pro atendente|chama algu[ée]m|quero ajuda humana)',
+        ],
+        IntentType.AFFIRMATIVE: [
+            r'^(sim|s[ií]m|s|ok|okay|tá|ta|tá bom|ta bom|certo|pode ser|pode|claro|é isso|isso|ótimo|otimo|perfeito|combinado|fechado|fechou|vai|vamo|vamos|tô dentro|to dentro)[!.\s]*$',
+            r'^(tudo (bem|certo|ok)|beleza|top|show|bora|pode|pode sim|com certeza|afirmativo)[!.\s]*$',
+        ],
+        IntentType.FRUSTRATION: [
+            r'(p[eé]ssimo|horr[íi]vel|lixo|absurdo|rid[íi]culo|uma merda|um lixo|n[ãa]o presta)',
+            r'(que bot (horrível|inútil|idiota|lixo)|bot (inútil|horrível|lixo)|que atendimento)',
+            r'(inacreditável|incompetente|vergonhoso|que vergonha|que absurdo|que lixo)',
+            r'(estou com raiva|tô bravo|to bravo|fui enganado|me enganaram)',
+            r'(nunca mais|jamais|cancelar tudo|processarei|vou processar|chamar o procon)',
+            r'(n[ãa]o (adianta|funciona|resolve|entende nada|entende nada))',
         ],
     }
     
@@ -190,6 +212,7 @@ class IntentDetector:
         
         # Ordena por prioridade (mais específicos primeiro)
         priority_order = [
+            IntentType.FRUSTRATION,
             IntentType.CREATE_ORDER,
             IntentType.CANCEL_ORDER,
             IntentType.TRACK_ORDER,
@@ -207,6 +230,7 @@ class IntentDetector:
             IntentType.CONTACT,
             IntentType.FAQ,
             IntentType.GREETING,
+            IntentType.AFFIRMATIVE,
         ]
         
         for intent in priority_order:
@@ -417,4 +441,4 @@ Responda APENAS com o nome da intenção em inglês minúsculo."""),
 
 
 # Instância global para uso
-intent_detector = IntentDetector(use_llm_fallback=True)
+intent_detector = IntentDetector(use_llm_fallback=False)

@@ -17,7 +17,7 @@ from langchain_core.tools import tool
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from apps.core.exceptions import BaseAPIException
-from .models import Agent, AgentConversation, AgentMessage
+from ..models import Agent, AgentConversation, AgentMessage
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ def remove_accents(text):
 
 class LangchainService:
     """Service for managing Langchain agents."""
-    
+
     def __init__(self, agent: Agent):
         self.agent = agent
         self.llm = self._create_llm()
@@ -44,7 +44,7 @@ class LangchainService:
         import redis
         redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
         return redis.from_url(redis_url, decode_responses=True)
-    
+
     def _create_llm(self):
         """Create Langchain LLM instance based on provider."""
         provider = self.agent.provider
@@ -161,12 +161,12 @@ class LangchainService:
             )
         else:
             raise BaseAPIException(f"Provedor não suportado: {provider}")
-    
+
     def _get_memory(self, session_id: str) -> Optional[RedisChatMessageHistory]:
         """Get conversation memory from Redis."""
         if not self.agent.use_memory:
             return None
-        
+
         try:
             redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
             history = RedisChatMessageHistory(
@@ -178,7 +178,7 @@ class LangchainService:
         except Exception as e:
             logger.error(f"Error creating memory: {e}")
             return None
-    
+
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
         return str(uuid.uuid4())
@@ -624,19 +624,24 @@ class LangchainService:
                 session_qs = session_qs.filter(company_id__in=profile_ids)
 
             session = session_qs.order_by('-updated_at').first()
-            if session and session.pix_code:
-                if session.pix_expires_at and session.pix_expires_at <= timezone.now():
+            if session:
+                # Preferir StoreOrder como fonte de verdade quando disponível
+                _order = session.order if session.order_id else None
+                _pix_code = (_order.pix_code if _order else None) or session.pix_code
+                _pix_expires = (_order.pix_expires_at if _order else None) or session.pix_expires_at
+                if _pix_code:
+                    if _pix_expires and _pix_expires <= timezone.now():
+                        return {
+                            'found': False,
+                            'expired': True,
+                            'message': 'O PIX gerado expirou. Um novo pagamento precisa ser gerado.',
+                        }
                     return {
-                        'found': False,
-                        'expired': True,
-                        'message': 'O PIX gerado expirou. Um novo pagamento precisa ser gerado.',
+                        'found': True,
+                        'pix_code': _pix_code,
+                        'expires_at': _pix_expires,
+                        'source': 'store_order' if _order and _order.pix_code else 'customer_session',
                     }
-                return {
-                    'found': True,
-                    'pix_code': session.pix_code,
-                    'expires_at': session.pix_expires_at,
-                    'source': 'customer_session',
-                }
 
             order = StoreOrder.objects.filter(
                 customer_phone__in=phone_candidates,
@@ -657,7 +662,7 @@ class LangchainService:
             }
         except Exception as exc:
             return {'found': False, 'message': f'Erro ao consultar pagamento: {exc}'}
-    
+
     def _build_dynamic_context(self, phone_number: str, conversation_id: Optional[str] = None) -> str:
         """
         Build dynamic context with store data for the current conversation.
@@ -665,13 +670,13 @@ class LangchainService:
         """
         # DEBUG: Log início da construção do contexto
         logger.info(f"[AGENT CONTEXT] Building context for phone: {phone_number}, conversation: {conversation_id}")
-        
+
         context_parts = []
-        
+
         # Add agent's static context prompt
         if self.agent.context_prompt:
             context_parts.append(self.agent.context_prompt)
-        
+
         # 1. Load customer identity/order context.
         # Keep this factual and guarded: history is useful for CRM answers, but
         # must never become the current cart without explicit confirmation.
@@ -685,12 +690,12 @@ class LangchainService:
                 context_parts.append(customer_context)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading customer/order data: {e}")
-        
+
         # 2. Load store menu/catalog
         try:
             # Try to get store from the canonical automation context first.
             store = None
-            
+
             if conversation_id:
                 try:
                     from apps.conversations.models import Conversation
@@ -735,7 +740,7 @@ class LangchainService:
                         if not part.startswith("👤 CONTEXTO DO CLIENTE")
                     ]
                     context_parts.append(scoped_customer_context)
-            
+
             # Add operational guidance scoped to the current store context.
             if store:
                 context_parts.append(
@@ -803,10 +808,10 @@ class LangchainService:
 
                 except Exception as e:
                     logger.error(f"[AGENT CONTEXT] Error loading store products: {e}")
-            
+
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading store menu: {e}")
-        
+
         # 3. Load business hours + pickup address
         _DAY_PT = {
             'monday': 'Segunda', 'tuesday': 'Terça', 'wednesday': 'Quarta',
@@ -814,10 +819,15 @@ class LangchainService:
         }
         try:
             if store and store.operating_hours:
+                all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
                 hours_text = "\n⏰ HORÁRIO DE FUNCIONAMENTO:\n"
-                for day, hours in store.operating_hours.items():
-                    day_pt = _DAY_PT.get(day.lower(), day.capitalize())
-                    hours_text += f"• {day_pt}: {hours.get('open', '--:--')} às {hours.get('close', '--:--')}\n"
+                for day in all_days:
+                    day_pt = _DAY_PT.get(day, day.capitalize())
+                    day_hours = store.operating_hours.get(day)
+                    if day_hours:
+                        hours_text += f"• {day_pt}: {day_hours.get('open', '--:--')} às {day_hours.get('close', '--:--')}\n"
+                    else:
+                        hours_text += f"• {day_pt}: FECHADO\n"
                 context_parts.append(hours_text)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
@@ -825,15 +835,14 @@ class LangchainService:
         try:
             if store:
                 location_parts = []
-                if getattr(store, 'pickup_enabled', False):
-                    address = getattr(store, 'address', '') or ''
-                    city = getattr(store, 'city', '') or ''
-                    full_address = ', '.join(p for p in [address, city] if p)
-                    if full_address:
-                        location_parts.append(f"• Endereço para retirada: {full_address}")
+                address = getattr(store, 'address', '') or ''
+                city = getattr(store, 'city', '') or ''
+                full_address = ', '.join(p for p in [address, city] if p)
+                if full_address:
+                    location_parts.append(f"• Endereço da loja: {full_address}")
                 if getattr(store, 'delivery_enabled', False) and not getattr(store, 'pickup_enabled', False):
                     location_parts.append("• Apenas entrega (sem retirada no local)")
-                if not getattr(store, 'delivery_enabled', False) and getattr(store, 'pickup_enabled', False):
+                elif not getattr(store, 'delivery_enabled', False) and getattr(store, 'pickup_enabled', False):
                     location_parts.append("• Apenas retirada no local (sem entrega)")
                 if location_parts:
                     context_parts.append("\n📍 LOCALIZAÇÃO:\n" + "\n".join(location_parts))
@@ -909,13 +918,23 @@ class LangchainService:
                             last_order_lines.append("Itens:\n" + "\n".join(item_lines))
                         session_parts.append("\n".join(last_order_lines))
 
-                    if session.pix_code:
+                    # Só injeta PIX se o pagamento AINDA está pendente.
+                    # Quando payment_status=paid ou order.status em fase de preparo/entrega,
+                    # o LLM NÃO deve reenviar o código — já foi pago ou enviado antes.
+                    _ctx_order = session.order if session.order_id else None
+                    _order_paid = (
+                        (_ctx_order and _ctx_order.payment_status == 'paid')
+                        or session.status in ('payment_confirmed', 'completed', 'order_placed')
+                    )
+                    _ctx_pix_code = ((_ctx_order.pix_code if _ctx_order else None) or session.pix_code) if not _order_paid else None
+                    _ctx_pix_qr = ((_ctx_order.pix_qr_code if _ctx_order else None) or session.pix_qr_code) if not _order_paid else None
+                    if _ctx_pix_code:
                         session_parts.append(
                             f"Status: pagamento PIX gerado, aguardando confirmação.\n"
-                            f"Código PIX (copia e cola): {session.pix_code}"
+                            f"Código PIX (copia e cola): {_ctx_pix_code}"
                         )
-                        if session.pix_qr_code:
-                            session_parts.append(f"QR Code PIX (base64): {session.pix_qr_code[:50]}... [truncado]")
+                        if _ctx_pix_qr:
+                            session_parts.append(f"QR Code PIX (base64): {_ctx_pix_qr[:50]}... [truncado]")
 
                     if session_parts:
                         context_parts.append("\n🛒 ESTADO DO PEDIDO ATUAL:\n" + "\n".join(session_parts))
@@ -949,6 +968,18 @@ class LangchainService:
                         f"Entrega: {recent_order.get_delivery_method_display()}",
                     ]
                     context_parts.append("\n🧾 ÚLTIMO PEDIDO DO CLIENTE:\n" + "\n".join(order_summary))
+
+                    # Guardrail: quando pedido está pronto/em entrega/entregue,
+                    # o LLM não deve perguntar confirmações nem reenviar PIX.
+                    _terminal_statuses = {'ready', 'out_for_delivery', 'delivered', 'completed', 'preparing'}
+                    if recent_order.status in _terminal_statuses or recent_order.payment_status == 'paid':
+                        context_parts.append(
+                            "\n⚠️ REGRA CRÍTICA: O pagamento já foi confirmado e o pedido está sendo processado/entregue. "
+                            "NUNCA peça confirmação de envio ao cliente. "
+                            "NUNCA reenvie o código PIX. "
+                            "Se o cliente disser 'ok', 'entendi', 'certo' ou algo parecido, "
+                            "responda brevemente (ex: 'Perfeito! 😊') e não inicie novo fluxo de pedido."
+                        )
             except Exception as e:
                 logger.error(f"[AGENT CONTEXT] Error loading recent order summary: {e}")
 
@@ -1099,15 +1130,83 @@ class LangchainService:
         # ── Cart tools (ordem completa sem intervenção humana) ─────────────────
 
         _cart_key = f"agent_cart:{self.agent.id}:{phone_number}"
+        _sm_cache: list = [None]  # lazy-init CustomerSession manager
+
+        def _session_manager():
+            """Lazy-initialise the session manager once per agent call."""
+            if _sm_cache[0] is None:
+                try:
+                    from apps.automation.services.session_manager import get_session_manager
+                    from apps.automation.models import CompanyProfile as _CP
+                    company = _CP.objects.filter(store=store).first()
+                    if company and phone_number:
+                        _sm_cache[0] = get_session_manager(company, phone_number)
+                except Exception:
+                    pass
+            return _sm_cache[0]
 
         def _get_cart() -> dict:
             import json
             raw = self.redis_client.get(_cart_key)
-            return json.loads(raw) if raw else {"items": []}
+            if raw:
+                return json.loads(raw)
+            # Fallback: seed from CustomerSession.pending_items (handler pipeline)
+            try:
+                sm = _session_manager()
+                if sm and sm.session and sm.session.cart_data:
+                    from apps.stores.models import StoreProduct as _SP
+                    pending = sm.session.cart_data.get('pending_items') or []
+                    items = []
+                    for it in pending:
+                        try:
+                            p = _SP.objects.get(id=it['product_id'])
+                            qty = int(it.get('quantity', 1))
+                            up = float(it.get('unit_price') or float(p.price))
+                            items.append({
+                                'product_id': str(p.id),
+                                'product_name': p.name,
+                                'quantity': qty,
+                                'unit_price': up,
+                                'total': round(up * qty, 2),
+                            })
+                        except Exception:
+                            pass
+                    if items:
+                        cart = {'items': items}
+                        _save_cart(cart)
+                        return cart
+            except Exception:
+                pass
+            return {"items": []}
 
         def _save_cart(cart: dict) -> None:
             import json
             self.redis_client.setex(_cart_key, 3600 * 6, json.dumps(cart))
+            # Sync back to CustomerSession so the handler pipeline stays in sync
+            try:
+                sm = _session_manager()
+                if sm and sm.session:
+                    data = dict(sm.session.cart_data or {})
+                    items = cart.get('items', [])
+                    if items:
+                        data['pending_items'] = [
+                            {
+                                'product_id': it['product_id'],
+                                'quantity': it['quantity'],
+                                'unit_price': it.get('unit_price', 0),
+                            }
+                            for it in items
+                        ]
+                    else:
+                        data.pop('pending_items', None)
+                    if cart.get('delivery_address'):
+                        data['delivery_address'] = cart['delivery_address']
+                    if cart.get('delivery_fee') is not None:
+                        data['delivery_fee_calculated'] = float(cart['delivery_fee'])
+                    sm.session.cart_data = data
+                    sm.session.save(update_fields=['cart_data', 'updated_at'])
+            except Exception:
+                pass
 
         @tool
         def adicionar_ao_carrinho(produto_nome: str, quantidade: int = 1) -> str:
@@ -1358,25 +1457,25 @@ class LangchainService:
     ) -> Dict[str, Any]:
         """
         Process a message through the agent.
-        
+
         Args:
             message: The user's message
             session_id: Optional session ID for memory
             phone_number: Optional phone number for context
             conversation_id: Optional conversation ID for context
-            
+
         Returns:
             Dict with response text and metadata
         """
         start_time = time.time()
-        
+
         # Generate or use session ID
         if not session_id:
             session_id = self._generate_session_id()
-        
+
         # Get memory
         memory = self._get_memory(session_id)
-        
+
         # Build dynamic context - ALWAYS build to ensure store data is loaded
         dynamic_context = self._build_dynamic_context(phone_number or "", conversation_id)
 
@@ -1407,7 +1506,7 @@ class LangchainService:
 
         # Add user message
         messages.append(HumanMessage(content=_sanitize(message)))
-        
+
         # Build tools and bind to LLM (tool calling).
         # Kimi doesn't handle tool loops reliably.  NVIDIA (Llama 70b+), OpenAI,
         # and Anthropic support function calling correctly.
@@ -1643,7 +1742,7 @@ class LangchainService:
         except Exception as e:
             logger.error(f"Error clearing memory for session {session_id}: {e}")
             return False
-    
+
     def process_message_stream(
         self,
         message: str,
@@ -1653,32 +1752,32 @@ class LangchainService:
     ):
         """
         Process a message with streaming response.
-        
+
         Yields chunks of the response as they arrive.
         """
         start_time = time.time()
-        
+
         # Generate or use session ID
         if not session_id:
             session_id = self._generate_session_id()
-        
+
         # Get memory
         memory = self._get_memory(session_id)
-        
+
         # Build dynamic context
         dynamic_context = ""
         if phone_number or conversation_id:
             dynamic_context = self._build_dynamic_context(phone_number, conversation_id)
-        
+
         # Prepare messages
         messages = []
-        
+
         # Add system prompt with dynamic context
         system_prompt = self.agent.system_prompt or "Você é um assistente virtual. Responda em português."
         if dynamic_context:
             system_prompt = f"{system_prompt}\n\n{dynamic_context}"
         messages.append(SystemMessage(content=system_prompt))
-        
+
         # Add memory/context if available
         if memory:
             try:
@@ -1686,10 +1785,10 @@ class LangchainService:
                 messages.extend(history[-self.agent.max_context_messages:])
             except Exception as e:
                 logger.warning(f"Error loading memory: {e}")
-        
+
         # Add user message
         messages.append(HumanMessage(content=message))
-        
+
         try:
             # Call LLM with streaming
             full_response = ""
@@ -1701,7 +1800,7 @@ class LangchainService:
                         'content': chunk.content,
                         'session_id': session_id,
                     }
-            
+
             # Save to memory if enabled
             if memory:
                 try:
@@ -1709,10 +1808,10 @@ class LangchainService:
                     memory.add_ai_message(full_response)
                 except Exception as e:
                     logger.warning(f"Error saving to memory: {e}")
-            
+
             # Calculate processing time
             processing_time = time.time() - start_time
-            
+
             # Yield final message
             yield {
                 'type': 'final',
@@ -1721,7 +1820,7 @@ class LangchainService:
                 'processing_time': processing_time,
                 'model': self.agent.model_name,
             }
-            
+
         except Exception as e:
             logger.error(f"Error processing message stream: {e}")
             yield {
@@ -1729,307 +1828,3 @@ class LangchainService:
                 'error': str(e),
                 'session_id': session_id,
             }
-
-
-class AgentService:
-    """Service for agent management operations."""
-    
-    @staticmethod
-    def get_agent_response(
-        agent_id: str,
-        message: str,
-        session_id: Optional[str] = None,
-        phone_number: Optional[str] = None,
-        conversation_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Get response from an agent.
-        
-        This is the main entry point for agent interactions.
-        """
-        try:
-            agent = Agent.objects.get(id=agent_id, is_active=True, status=Agent.AgentStatus.ACTIVE)
-        except Agent.DoesNotExist:
-            raise BaseAPIException("Agente não encontrado ou inativo")
-        
-        service = LangchainService(agent)
-        return service.process_message(
-            message=message,
-            session_id=session_id,
-            phone_number=phone_number,
-            conversation_id=conversation_id
-        )
-    
-    @staticmethod
-    def create_conversation(
-        agent_id: str,
-        user_id: Optional[str] = None,
-        metadata: Optional[Dict] = None
-    ) -> AgentConversation:
-        """Create a new conversation with an agent."""
-        agent = Agent.objects.get(id=agent_id)
-        
-        conversation = AgentConversation.objects.create(
-            agent=agent,
-            user_id=user_id,
-            session_id=str(uuid.uuid4()),
-            metadata=metadata or {}
-        )
-        
-        return conversation
-    
-    @staticmethod
-    def add_message(
-        conversation_id: str,
-        role: str,
-        content: str,
-        metadata: Optional[Dict] = None
-    ) -> AgentMessage:
-        """Add a message to a conversation."""
-        conversation = AgentConversation.objects.get(id=conversation_id)
-        
-        message = AgentMessage.objects.create(
-            conversation=conversation,
-            role=role,
-            content=content,
-            metadata=metadata or {}
-        )
-        
-        # Update conversation timestamp
-        conversation.save()
-        
-        return message
-
-    @staticmethod
-    def create_order_from_conversation(
-        phone_number: str,
-        items: List[Dict[str, Any]],
-        customer_name: str = '',
-        delivery_address: str = '',
-        payment_method: str = 'dinheiro',
-        notes: str = '',
-        store=None,
-        store_slug: str = '',
-        conversation_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Create an order from WhatsApp conversation.
-        
-        Args:
-            phone_number: Customer phone number
-            items: List of {'product_id': str, 'quantity': int, 'variant_id': str (optional)}
-            customer_name: Customer name
-            delivery_address: Delivery address
-            payment_method: Payment method (dinheiro, pix, cartao)
-            notes: Additional notes
-            
-        Returns:
-            Dict with order details or error
-        """
-        from apps.stores.models import Store, StoreProduct, StoreCart
-        from apps.stores.services.cart_service import cart_service
-        from apps.stores.services.checkout_service import CheckoutService
-        from apps.users.models import UnifiedUser
-        
-        try:
-            # Resolve store from explicit arg > slug > conversation.
-            if store is None and store_slug:
-                store = Store.objects.filter(slug=store_slug).first()
-            if store is None and conversation_id:
-                try:
-                    from apps.conversations.models import Conversation
-                    from apps.automation.services.context_service import AutomationContextService
-                    conversation = Conversation.objects.select_related('account').get(id=conversation_id)
-                    store = AutomationContextService.resolve(conversation=conversation).store
-                except Exception:
-                    store = None
-            if not store:
-                return {'success': False, 'error': 'Loja não encontrada'}
-            
-            # UnifiedUser is useful for identity metadata, but StoreCart.user expects
-            # the Django auth user model, not UnifiedUser.
-            unified_user = UnifiedUser.objects.filter(phone_number=phone_number).first()
-            
-            # Create cart
-            cart = StoreCart.objects.create(
-                store=store,
-                user=None,
-                session_key=str(uuid.uuid4()),
-                metadata={
-                    'source': 'whatsapp_agent',
-                    'phone_number': phone_number,
-                },
-            )
-            
-            # Add items to cart
-            for item_data in items:
-                product_id = item_data.get('product_id')
-                quantity = item_data.get('quantity', 1)
-                variant_id = item_data.get('variant_id')
-                
-                try:
-                    product = StoreProduct.objects.get(id=product_id, store=store)
-                    cart_service.add_item(
-                        cart=cart,
-                        product_id=str(product.id),
-                        variant_id=variant_id,
-                        quantity=quantity
-                    )
-                except StoreProduct.DoesNotExist:
-                    logger.warning(f"Product {product_id} not found")
-                    continue
-            
-            if cart.items.count() == 0:
-                cart.delete()
-                return {'success': False, 'error': 'Nenhum produto válido no pedido'}
-            
-            # Prepare customer data
-            customer_data = {
-                'name': customer_name or (unified_user.name if unified_user else 'Cliente WhatsApp'),
-                'phone': phone_number,
-                'email': unified_user.email if unified_user and unified_user.email else f"cliente@{store.slug}.com.br"
-            }
-            
-            # Prepare delivery data
-            delivery_data = None
-            if delivery_address:
-                delivery_data = {
-                    'method': 'delivery',
-                    'address': {'raw': delivery_address},
-                    'notes': notes
-                }
-            else:
-                delivery_data = {'method': 'pickup'}
-            
-            # Create order
-            order = CheckoutService.create_order(
-                cart=cart,
-                customer_data=customer_data,
-                delivery_data=delivery_data,
-                notes=notes
-            )
-            
-            # Clear cart after order creation
-            cart.delete()
-            
-            return {
-                'success': True,
-                'order_id': str(order.id),
-                'order_number': order.order_number,
-                'total': float(order.total),
-                'status': order.status,
-                'payment_status': order.payment_status
-            }
-            
-        except Exception as e:
-            logger.error(f"Error creating order: {e}")
-            return {'success': False, 'error': str(e)}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LangGraphService — substitui o agentic loop manual do LangchainService
-# ─────────────────────────────────────────────────────────────────────────────
-
-class LangGraphService:
-    """
-    Agente baseado em LangGraph.
-
-    Substitui o while-loop manual de tool calling do LangchainService por um
-    StateGraph explícito.  Reutiliza _create_llm(), _build_tools() e
-    _build_customer_context() do LangchainService — sem duplicar lógica.
-
-    Interface idêntica a LangchainService.process_message() para troca
-    transparente no webhook_service.
-    """
-
-    def __init__(self, agent: Agent):
-        self.agent = agent
-        self._lc = LangchainService(agent)   # reusa LLM + tools + contexto
-        self._graph = None
-
-    def _get_graph(self):
-        """Compila o grafo uma vez e armazena em cache na instância."""
-        if self._graph is None:
-            from .graph import build_agent_graph
-            self._graph = build_agent_graph(self.agent, self._lc)
-        return self._graph
-
-    def process_message(
-        self,
-        message: str,
-        session_id: Optional[str] = None,
-        phone_number: Optional[str] = None,
-        conversation_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """
-        Processa uma mensagem pelo grafo LangGraph.
-
-        Carrega histórico do Redis antes de invocar e salva ao terminar,
-        mantendo compatibilidade com a memória existente.
-        """
-        start = time.time()
-        session_id = session_id or self._lc._generate_session_id()
-
-        # ── Carrega histórico do Redis ─────────────────────────────────────
-        from langchain_core.messages import HumanMessage as HM
-        history_messages = []
-        memory = self._lc._get_memory(session_id)
-        if memory:
-            try:
-                history_messages = list(memory.messages[-self.agent.max_context_messages:])
-            except Exception as exc:
-                logger.warning("[LANGGRAPH] Falha ao carregar memória: %s", exc)
-
-        # ── Invoca o grafo ─────────────────────────────────────────────────
-        initial_state: dict = {
-            "messages": history_messages + [HM(content=message)],
-            "phone_number": phone_number or "",
-            "conversation_id": conversation_id or "",
-            "session_id": session_id,
-            "store": None,
-            "tools": [],
-            "customer_context": "",
-            "store_context": "",
-            "delivery_info": "",
-            "response": "",
-        }
-
-        try:
-            final_state = self._get_graph().invoke(initial_state)
-        except Exception:
-            logger.exception("[LANGGRAPH] Erro na execução do grafo")
-            return {
-                "response": "Desculpa, tive um problema. Pode repetir?",
-                "session_id": session_id,
-                "processing_time": time.time() - start,
-                "model": self.agent.model_name,
-                "tokens_used": 0,
-                "order_created": None,
-            }
-
-        response_text = final_state.get("response", "")
-
-        # ── Salva turno no Redis ───────────────────────────────────────────
-        if memory and response_text:
-            try:
-                memory.add_user_message(message)
-                memory.add_ai_message(response_text)
-            except Exception as exc:
-                logger.warning("[LANGGRAPH] Falha ao salvar memória: %s", exc)
-
-        logger.info("[LANGGRAPH] Resposta: %r", response_text[:120])
-
-        return {
-            "response": response_text,
-            "session_id": session_id,
-            "processing_time": time.time() - start,
-            "model": self.agent.model_name,
-            "tokens_used": 0,
-            "order_created": None,
-        }
-
-    def get_conversation_history(self, session_id: str, limit: int = 50) -> list:
-        return self._lc.get_conversation_history(session_id, limit)
-
-    def clear_memory(self, session_id: str) -> bool:
-        return self._lc.clear_memory(session_id)

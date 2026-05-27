@@ -62,7 +62,10 @@ class FirstMessageAuthMixin:
         await asyncio.sleep(self.AUTH_TIMEOUT)
         if not self._authenticated:
             logger.warning("WS auth timeout on %s", self.scope.get('path', ''))
-            await self.close(code=4001)
+            try:
+                await self.close(code=4001)
+            except RuntimeError:
+                pass  # Already closed by client or handshake failure
 
     async def receive_json(self, content):
         if not self._authenticated:

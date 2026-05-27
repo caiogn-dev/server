@@ -2,7 +2,13 @@
 Public API serializers — read-only, no sensitive data exposed.
 """
 from rest_framework import serializers
-from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo
+from apps.stores.models import (
+    Store,
+    StoreCategory,
+    StoreProduct,
+    StoreCombo,
+)
+from .models import Lead
 
 
 class PublicStoreSerializer(serializers.ModelSerializer):
@@ -17,6 +23,7 @@ class PublicStoreSerializer(serializers.ModelSerializer):
             'template', 'tagline',
             'phone', 'email', 'address', 'city', 'state',
             'operating_hours', 'is_open',
+            'template', 'tagline',
         ]
 
     def get_logo_url(self, obj):
@@ -50,6 +57,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
     category_slug = serializers.CharField(source='category.slug', read_only=True)
     image_url = serializers.SerializerMethodField()
     is_available = serializers.SerializerMethodField()
+    variants = serializers.SerializerMethodField()
 
     class Meta:
         model = StoreProduct
@@ -58,6 +66,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
             'price', 'compare_at_price',
             'image_url', 'category_name', 'category_slug',
             'is_available', 'sort_order',
+            'attributes', 'tags', 'variants',
         ]
 
     def get_image_url(self, obj):
@@ -69,6 +78,29 @@ class PublicProductSerializer(serializers.ModelSerializer):
 
     def get_is_available(self, obj):
         return obj.status == 'active'
+
+    def get_variants(self, obj):
+        request = self.context.get('request')
+        variants = obj.variants.filter(is_active=True).order_by('sort_order', 'name')
+        data = []
+        for variant in variants:
+            image_url = None
+            if variant.image:
+                image_url = request.build_absolute_uri(variant.image.url) if request else variant.image.url
+            elif variant.image_url:
+                image_url = variant.image_url
+
+            data.append({
+                'id': str(variant.id),
+                'name': variant.name,
+                'price': variant.price,
+                'compare_at_price': variant.compare_at_price,
+                'image_url': image_url,
+                'is_active': variant.is_active,
+                'sort_order': variant.sort_order,
+                'options': variant.options,
+            })
+        return data
 
 
 class PublicComboSerializer(serializers.ModelSerializer):
@@ -84,3 +116,15 @@ class PublicComboSerializer(serializers.ModelSerializer):
             url = obj.image.url
             return request.build_absolute_uri(url) if request else url
         return None
+
+
+class LeadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lead
+        fields = ['name', 'phone', 'email', 'city', 'business_type', 'message']
+
+    def validate_phone(self, value):
+        digits = ''.join(c for c in value if c.isdigit())
+        if len(digits) < 10:
+            raise serializers.ValidationError('Número de telefone inválido.')
+        return value

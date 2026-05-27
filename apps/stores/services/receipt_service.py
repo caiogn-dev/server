@@ -18,6 +18,12 @@ from django.utils.formats import date_format
 
 logger = logging.getLogger(__name__)
 
+_PLACEHOLDER_EMAIL_SUFFIXES = ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')
+
+
+def _is_placeholder(email: str) -> bool:
+    return not email or any(email.endswith(s) for s in _PLACEHOLDER_EMAIL_SUFFIXES)
+
 if TYPE_CHECKING:
     from apps.stores.models import StoreOrder
 
@@ -133,7 +139,7 @@ def generate_order_receipt_pdf(order: "StoreOrder") -> bytes:
     cust_rows = [
         ["Nome", order.customer_name or "-"],
         ["Telefone", order.customer_phone or "-"],
-        ["E-mail", order.customer_email or "-"],
+        ["E-mail", (order.customer_email if order.customer_email and not _is_placeholder(order.customer_email) else None) or "-"],
     ]
     if order.delivery_method == "delivery" and order.delivery_address:
         addr = order.delivery_address

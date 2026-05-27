@@ -54,6 +54,7 @@ class CartService:
         product_id,
         quantity: int = 1,
         variant_id=None,
+        options: dict = None,
         notes: str = ''
     ) -> StoreCartItem:
         """Add an item to the cart by product_id."""
@@ -61,7 +62,7 @@ class CartService:
         variant = None
         if variant_id:
             variant = StoreProductVariant.objects.get(id=variant_id, product=product)
-        return CartService.add_product(cart, product, quantity, variant, notes=notes)
+        return CartService.add_product(cart, product, quantity, variant, options=options, notes=notes)
     
     @staticmethod
     @transaction.atomic

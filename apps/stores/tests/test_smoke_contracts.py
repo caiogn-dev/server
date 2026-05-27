@@ -164,9 +164,9 @@ class StorefrontSmokeContractTests(APITestCase):
         self.assertEqual(payload['id'], str(order.id))
         self.assertEqual(payload['items'][0]['product_name'], self.product.name)
 
-    @patch('apps.stores.api.views.storefront_views.checkout_service.calculate_delivery_fee')
-    def test_delivery_fee_contract_normalizes_backend_quote(self, calculate_delivery_fee):
-        calculate_delivery_fee.return_value = {
+    @patch('apps.stores.api.views.storefront_views.delivery_quote_service.normalize')
+    def test_delivery_fee_contract_normalizes_backend_quote(self, mock_normalize):
+        mock_normalize.return_value = {
             'available': True,
             'fee': Decimal('9.50'),
             'distance_km': Decimal('4.2'),

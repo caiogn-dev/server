@@ -45,12 +45,18 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
+    from django.core.cache import cache
+
+    idempotency_key = f"pix_reminder:{order_id}:{reminder_type}"
+    if not cache.add(idempotency_key, 1, timeout=3600):
+        logger.info("Duplicate pix_reminder task for order %s type %s — skipped", order_id, reminder_type)
+        return
 
     try:
         order = Order.objects.select_related('store').get(id=order_id)
 
-        if order.status != 'pending_payment':
-            logger.info(f"Order {order_id} is not pending payment, skipping reminder")
+        if order.payment_status not in ('pending', 'processing'):
+            logger.info(f"Order {order_id} payment_status={order.payment_status}, skipping reminder")
             return
 
         profile = _get_store_profile(order.store)
@@ -106,64 +112,70 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
 @shared_task
 def check_pending_payments():
     """
-    Verifica pagamentos pendentes e agenda lembretes
-    Executado a cada 10 minutos
+    Verifica pagamentos PIX pendentes e agenda lembretes (StoreOrder).
+    Executado a cada 10 minutos.
+
+    Exclui pedidos que já têm CustomerSession com PIX ativo — esses são
+    cobertos pelo check_pending_pix_payments do apps.automation.tasks
+    (evita lembrete duplicado em pedidos criados pelo WhatsApp bot).
     """
     from apps.stores.models.order import StoreOrder as Order
+    from apps.automation.models import CustomerSession
 
     now = timezone.now()
-
-    # Lembrete 1: PIX gerado há 30 minutos
-    pending_30min = Order.objects.filter(
-        status='pending_payment',
+    # IDs de orders já cobertos pela fila CustomerSession
+    whatsapp_order_ids = set(
+        CustomerSession.objects.filter(
+            order__isnull=False,
+            pix_code__gt='',
+        ).values_list('order_id', flat=True)
+    )
+    base_qs = Order.objects.filter(
+        payment_status='pending',
         payment_method='pix',
-        pix_generated_at__lte=now - timedelta(minutes=30),
-        pix_generated_at__gt=now - timedelta(minutes=35),
-    ).exclude(
-        metadata__has_key='payment_reminder_first_sent'
+    ).exclude(id__in=whatsapp_order_ids)
+
+    # Lembrete 1: criado há 30-35 min
+    first_30 = list(
+        base_qs.filter(
+            created_at__lte=now - timedelta(minutes=30),
+            created_at__gt=now - timedelta(minutes=35),
+        ).exclude(metadata__has_key='payment_reminder_first_sent')
+        .values_list('id', flat=True)
     )
+    for oid in first_30:
+        send_payment_reminder.delay(str(oid), 'first')
+    if first_30:
+        logger.info("Scheduled first PIX reminders for %d orders", len(first_30))
 
-    for order in pending_30min:
-        send_payment_reminder.delay(str(order.id), 'first')
-        logger.info(f"Scheduled first payment reminder for order {order.id}")
-
-    # Lembrete 2: PIX gerado há 2 horas
-    pending_2h = Order.objects.filter(
-        status='pending_payment',
-        payment_method='pix',
-        pix_generated_at__lte=now - timedelta(hours=2),
-        pix_generated_at__gt=now - timedelta(hours=2, minutes=5),
-    ).exclude(
-        metadata__has_key='payment_reminder_second_sent'
+    # Lembrete 2: criado há 2h-2h05
+    second_2h = list(
+        base_qs.filter(
+            created_at__lte=now - timedelta(hours=2),
+            created_at__gt=now - timedelta(hours=2, minutes=5),
+        ).exclude(metadata__has_key='payment_reminder_second_sent')
+        .values_list('id', flat=True)
     )
+    for oid in second_2h:
+        send_payment_reminder.delay(str(oid), 'second')
+    if second_2h:
+        logger.info("Scheduled second PIX reminders for %d orders", len(second_2h))
 
-    for order in pending_2h:
-        send_payment_reminder.delay(str(order.id), 'second')
-        logger.info(f"Scheduled second payment reminder for order {order.id}")
-
-    # Notificação final: PIX expirado (24h)
-    expired_pix = Order.objects.filter(
-        status='pending_payment',
-        payment_method='pix',
-        pix_generated_at__lte=now - timedelta(hours=24),
-    ).exclude(
-        metadata__has_key='payment_expired_notified'
+    # Expirado: criado há mais de 24h
+    expired = list(
+        base_qs.filter(
+            created_at__lte=now - timedelta(hours=24),
+        ).exclude(metadata__has_key='payment_expired_notified')
+        .values_list('id', flat=True)
     )
-
-    for order in expired_pix:
-        send_payment_reminder.delay(str(order.id), 'final')
-        if not order.metadata:
-            order.metadata = {}
-        order.metadata['cancellation_reason'] = 'pix_expired'
-        order.metadata['payment_expired_notified'] = now.isoformat()
-        order.status = 'cancelled'
-        order.save(update_fields=['status', 'metadata'])
-        logger.info(f"Order {order.id} cancelled due to PIX expiration")
-
-    logger.info(
-        f"Checked pending payments: {pending_30min.count()} first reminders, "
-        f"{pending_2h.count()} second reminders, {expired_pix.count()} expired"
-    )
+    for oid in expired:
+        send_payment_reminder.delay(str(oid), 'final')
+        Order.objects.filter(id=oid).update(
+            status='cancelled',
+            payment_status='failed',
+        )
+    if expired:
+        logger.info("Cancelled %d PIX-expired orders", len(expired))
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=30)
@@ -178,6 +190,12 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
     from apps.stores.models.cart import StoreCart as Cart
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
+    from django.core.cache import cache
+
+    idempotency_key = f"cart_reminder:{cart_id}:{reminder_type}"
+    if not cache.add(idempotency_key, 1, timeout=3600):
+        logger.info("Duplicate cart_reminder task for cart %s type %s — skipped", cart_id, reminder_type)
+        return
 
     try:
         cart = Cart.objects.select_related('store').get(id=cart_id)
@@ -267,10 +285,10 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         raise self.retry(exc=e)
 
 
-@shared_task
+@shared_task(name='apps.whatsapp.tasks.check_abandoned_store_carts')
 def check_abandoned_carts():
     """
-    Verifica carrinhos abandonados
+    Verifica carrinhos abandonados (StoreCart)
     Executado a cada 15 minutos
     """
     from apps.stores.models.cart import StoreCart as Cart
@@ -343,6 +361,13 @@ def notify_order_status_change(self, order_id: str, new_status: str):
     from apps.stores.models.order import StoreOrder as Order
     from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
+    from django.core.cache import cache
+
+    # Atomic idempotency: cache.add returns False if key already exists
+    idempotency_key = f"order_notify:{order_id}:{new_status}"
+    if not cache.add(idempotency_key, 1, timeout=3600):
+        logger.info("Skipping duplicate notification for order %s status %s", order_id, new_status)
+        return
 
     try:
         order = Order.objects.select_related('store').get(id=order_id)
@@ -494,3 +519,229 @@ def schedule_feedback_request(order_id: str):
     )
 
     logger.info(f"Scheduled feedback request for order {order_id} in 30 minutes")
+
+
+@shared_task(bind=True, max_retries=2)
+def send_session_cart_reminder(self, session_id: str, reminder_type: str):
+    """
+    Envia lembrete de carrinho abandonado para CustomerSessions criadas pelo bot WhatsApp.
+    Diferente de send_cart_reminder que usa StoreCart do site.
+    """
+    from apps.automation.models import CustomerSession
+    from django.core.cache import cache
+
+    idempotency_key = f"session_reminder:{session_id}:{reminder_type}"
+    if not cache.add(idempotency_key, 1, timeout=3600):
+        logger.info("Duplicate session_reminder for session %s type %s — skipped", session_id, reminder_type)
+        return
+
+    try:
+        session = CustomerSession.objects.select_related('company').get(id=session_id)
+
+        if session.status not in ('active', 'cart_created', 'checkout'):
+            logger.info("Session %s status=%s — skipping reminder", session_id, session.status)
+            return
+
+        notification_key = f'session_cart_reminder_{reminder_type}'
+        if session.was_notification_sent(notification_key):
+            return
+
+        phone_number = session.phone_number
+        if not phone_number:
+            return
+
+        account = _get_account_for_profile(session.company)
+        if not account:
+            logger.warning("No WhatsApp account for company %s", session.company_id)
+            return
+
+        first_name = (session.customer_name or '').split()[0] or 'você'
+
+        if reminder_type == '5min':
+            body = (
+                f"Oi, {first_name}! 👋 Parece que você estava finalizando um pedido.\n\n"
+                f"Ainda quer continuar? Estou aqui pra ajudar! 😊"
+            )
+        elif reminder_type == '20min':
+            body = (
+                f"Oi, {first_name}! 👋 Você deixou itens no carrinho.\n\n"
+                f"Quer continuar seu pedido? 😊"
+            )
+        else:
+            body = (
+                f"Ei, {first_name}! 🥗 Seu carrinho ainda está te esperando.\n\n"
+                f"Posso te ajudar a finalizar o pedido?"
+            )
+
+        from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+        WhatsAppAPIService(account).send_interactive_buttons(
+            to=phone_number,
+            body_text=body,
+            buttons=[
+                {'id': 'continue_checkout', 'title': '✅ Continuar Pedido'},
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+            ],
+        )
+        session.add_notification(notification_key)
+        logger.info("Session cart reminder (%s) sent to %s", reminder_type, phone_number)
+
+    except CustomerSession.DoesNotExist:
+        logger.error("CustomerSession %s not found", session_id)
+    except Exception as exc:
+        logger.error("Error sending session cart reminder: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.whatsapp.tasks.check_abandoned_whatsapp_sessions')
+def check_abandoned_whatsapp_sessions():
+    """
+    Verifica CustomerSessions WhatsApp com carrinho/checkout abandonado.
+    Executado a cada 5 minutos via Celery Beat.
+
+    Buckets:
+    - checkout 5min  → exit intent urgente (estava na hora de pagar)
+    - cart   20min  → primeiro lembrete de carrinho
+    - any     2h    → segundo lembrete
+    """
+    from apps.automation.models import CustomerSession
+
+    now = timezone.now()
+
+    # 5 minutos idle em checkout → exit intent (maior urgência)
+    exit_intent = CustomerSession.objects.filter(
+        status='checkout',
+        last_activity_at__lte=now - timedelta(minutes=5),
+        last_activity_at__gt=now - timedelta(minutes=10),
+        cart_items_count__gt=0,
+    ).exclude(
+        notifications_sent__contains=[{'type': 'session_cart_reminder_5min'}]
+    )
+
+    count_5 = 0
+    for session in exit_intent:
+        send_session_cart_reminder.delay(str(session.id), '5min')
+        count_5 += 1
+
+    # 20 minutos idle → primeiro lembrete de carrinho
+    idle_20min = CustomerSession.objects.filter(
+        status__in=['active', 'cart_created', 'checkout'],
+        last_activity_at__lte=now - timedelta(minutes=20),
+        last_activity_at__gt=now - timedelta(minutes=25),
+        cart_items_count__gt=0,
+    ).exclude(
+        notifications_sent__contains=[{'type': 'session_cart_reminder_20min'}]
+    )
+
+    count_20 = 0
+    for session in idle_20min:
+        send_session_cart_reminder.delay(str(session.id), '20min')
+        count_20 += 1
+
+    # 2 horas idle → segundo lembrete
+    idle_2h = CustomerSession.objects.filter(
+        status__in=['active', 'cart_created', 'checkout'],
+        last_activity_at__lte=now - timedelta(hours=2),
+        last_activity_at__gt=now - timedelta(hours=2, minutes=5),
+        cart_items_count__gt=0,
+    ).exclude(
+        notifications_sent__contains=[{'type': 'session_cart_reminder_2h'}]
+    )
+
+    count_2h = 0
+    for session in idle_2h:
+        send_session_cart_reminder.delay(str(session.id), '2h')
+        count_2h += 1
+
+    logger.info(
+        "Checked abandoned WhatsApp sessions: %d (5min checkout), %d (20min), %d (2h)",
+        count_5, count_20, count_2h,
+    )
+
+
+@shared_task(bind=True, max_retries=2)
+def send_reengagement_message(self, phone_number: str, store_id: str):
+    """
+    Envia mensagem de re-engajamento para clientes inativos (10-30 dias sem pedido).
+    """
+    from apps.stores.models import Store
+    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+    from django.core.cache import cache
+
+    idempotency_key = f"reengagement:{store_id}:{phone_number}"
+    if not cache.add(idempotency_key, 1, timeout=86400):  # 24h
+        return
+
+    try:
+        store = Store.objects.get(id=store_id)
+        profile = _get_store_profile(store)
+        if not profile:
+            return
+        account = _get_account_for_profile(profile)
+        if not account:
+            return
+
+        WhatsAppAPIService(account).send_interactive_buttons(
+            to=phone_number,
+            body_text=(
+                f"Sentimos sua falta! 🥗\n\n"
+                f"Que tal uma salada hoje? Temos novidades no cardápio esperando por você 😊"
+            ),
+            buttons=[
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                {'id': 'montar_salada', 'title': '🥗 Montar Salada'},
+            ],
+        )
+        logger.info("Re-engagement sent to %s for store %s", phone_number, store_id)
+
+    except Store.DoesNotExist:
+        logger.error("Store %s not found for re-engagement", store_id)
+    except Exception as exc:
+        logger.error("Error sending re-engagement: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.whatsapp.tasks.check_inactive_customers')
+def check_inactive_customers():
+    """
+    Identifica clientes com pedido entre 10 e 30 dias atrás (sem pedido nos últimos 10 dias)
+    e dispara re-engajamento. Executado diariamente às 11h.
+    """
+    from apps.stores.models import StoreOrder
+
+    now = timezone.now()
+    window_start = now - timedelta(days=30)
+    window_end = now - timedelta(days=10)
+
+    # Clientes que tiveram pedido confirmado há 10-30 dias
+    recent_orders = (
+        StoreOrder.objects
+        .filter(
+            created_at__gte=window_start,
+            created_at__lte=window_end,
+            status__in=['delivered', 'completed', 'paid', 'confirmed'],
+        )
+        .values('customer_phone', 'store_id')
+        .distinct()
+    )
+
+    # Filtra quem voltou a pedir nos últimos 10 dias (não precisa de re-engajamento)
+    active_phones = set(
+        StoreOrder.objects
+        .filter(created_at__gte=window_end)
+        .values_list('customer_phone', flat=True)
+        .distinct()
+    )
+
+    count = 0
+    seen = set()
+    for row in recent_orders:
+        phone = row['customer_phone']
+        store_id = str(row['store_id'])
+        key = (phone, store_id)
+        if not phone or key in seen or phone in active_phones:
+            continue
+        seen.add(key)
+        send_reengagement_message.delay(phone, store_id)
+        count += 1
+
+    logger.info("Re-engagement: %d customers targeted", count)
