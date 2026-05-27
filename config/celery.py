@@ -99,6 +99,11 @@ app.conf.beat_schedule = {
         'task': 'apps.whatsapp.tasks.check_abandoned_store_carts',
         'schedule': 900.0,  # every 15 min
     },
+    # CustomerSession (WhatsApp bot) abandoned cart reminders — 20min + 2h
+    'check-abandoned-whatsapp-sessions': {
+        'task': 'apps.whatsapp.tasks.check_abandoned_whatsapp_sessions',
+        'schedule': 600.0,  # every 10 min
+    },
     # StoreOrder PIX reminders (30min / 2h / 24h) for storefront orders
     'check-store-pix-reminders': {
         'task': 'apps.whatsapp.tasks.check_pending_payments',

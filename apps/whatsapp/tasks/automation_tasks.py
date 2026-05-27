@@ -519,3 +519,115 @@ def schedule_feedback_request(order_id: str):
     )
 
     logger.info(f"Scheduled feedback request for order {order_id} in 30 minutes")
+
+
+@shared_task(bind=True, max_retries=2)
+def send_session_cart_reminder(self, session_id: str, reminder_type: str):
+    """
+    Envia lembrete de carrinho abandonado para CustomerSessions criadas pelo bot WhatsApp.
+    Diferente de send_cart_reminder que usa StoreCart do site.
+    """
+    from apps.automation.models import CustomerSession
+    from django.core.cache import cache
+
+    idempotency_key = f"session_reminder:{session_id}:{reminder_type}"
+    if not cache.add(idempotency_key, 1, timeout=3600):
+        logger.info("Duplicate session_reminder for session %s type %s — skipped", session_id, reminder_type)
+        return
+
+    try:
+        session = CustomerSession.objects.select_related('company').get(id=session_id)
+
+        if session.status not in ('active', 'cart_created', 'checkout'):
+            logger.info("Session %s status=%s — skipping reminder", session_id, session.status)
+            return
+
+        notification_key = f'session_cart_reminder_{reminder_type}'
+        if session.was_notification_sent(notification_key):
+            return
+
+        phone_number = session.phone_number
+        if not phone_number:
+            return
+
+        account = _get_account_for_profile(session.company)
+        if not account:
+            logger.warning("No WhatsApp account for company %s", session.company_id)
+            return
+
+        first_name = (session.customer_name or '').split()[0] or 'você'
+
+        if reminder_type == '20min':
+            body = (
+                f"Oi, {first_name}! 👋 Você deixou itens no carrinho.\n\n"
+                f"Quer continuar seu pedido? 😊"
+            )
+        else:
+            body = (
+                f"Ei, {first_name}! 🥗 Seu carrinho ainda está te esperando.\n\n"
+                f"Posso te ajudar a finalizar o pedido?"
+            )
+
+        from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+        WhatsAppAPIService(account).send_interactive_buttons(
+            to=phone_number,
+            body_text=body,
+            buttons=[
+                {'id': 'continue_checkout', 'title': '✅ Continuar Pedido'},
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+            ],
+        )
+        session.add_notification(notification_key)
+        logger.info("Session cart reminder (%s) sent to %s", reminder_type, phone_number)
+
+    except CustomerSession.DoesNotExist:
+        logger.error("CustomerSession %s not found", session_id)
+    except Exception as exc:
+        logger.error("Error sending session cart reminder: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.whatsapp.tasks.check_abandoned_whatsapp_sessions')
+def check_abandoned_whatsapp_sessions():
+    """
+    Verifica CustomerSessions WhatsApp com carrinho abandonado.
+    Executado a cada 10 minutos via Celery Beat.
+    """
+    from apps.automation.models import CustomerSession
+
+    now = timezone.now()
+
+    # 20 minutos idle → primeiro lembrete
+    idle_20min = CustomerSession.objects.filter(
+        status__in=['active', 'cart_created', 'checkout'],
+        last_activity_at__lte=now - timedelta(minutes=20),
+        last_activity_at__gt=now - timedelta(minutes=25),
+        cart_items_count__gt=0,
+    ).exclude(
+        notifications_sent__contains=[{'type': 'session_cart_reminder_20min'}]
+    )
+
+    count_20 = 0
+    for session in idle_20min:
+        send_session_cart_reminder.delay(str(session.id), '20min')
+        count_20 += 1
+
+    # 2 horas idle → segundo lembrete
+    idle_2h = CustomerSession.objects.filter(
+        status__in=['active', 'cart_created', 'checkout'],
+        last_activity_at__lte=now - timedelta(hours=2),
+        last_activity_at__gt=now - timedelta(hours=2, minutes=5),
+        cart_items_count__gt=0,
+    ).exclude(
+        notifications_sent__contains=[{'type': 'session_cart_reminder_2h'}]
+    )
+
+    count_2h = 0
+    for session in idle_2h:
+        send_session_cart_reminder.delay(str(session.id), '2h')
+        count_2h += 1
+
+    logger.info(
+        "Checked abandoned WhatsApp sessions: %d (20min), %d (2h)",
+        count_20, count_2h,
+    )

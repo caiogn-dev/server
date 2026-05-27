@@ -422,13 +422,15 @@ class UnifiedService:
         ).order_by('-updated_at').first()
 
     def _increment_dead_end(self) -> int:
-        """Increment consecutive-unresolved counter in session context. Returns new count."""
+        """Increment consecutive-unresolved counter in session cart_data. Returns new count."""
         try:
             session = self._get_active_session()
             if not session:
                 return 0
-            count = (session.context or {}).get('_dead_end_count', 0) + 1
-            session.update_context('_dead_end_count', count)
+            count = (session.cart_data or {}).get('_dead_end_count', 0) + 1
+            data = dict(session.cart_data or {})
+            data['_dead_end_count'] = count
+            CustomerSession.objects.filter(pk=session.pk).update(cart_data=data)
             return count
         except Exception as exc:
             logger.warning('[unified] dead_end increment failed: %s', exc)
@@ -438,8 +440,12 @@ class UnifiedService:
         """Reset dead-end counter when a message resolves successfully."""
         try:
             session = self._get_active_session()
-            if session and (session.context or {}).get('_dead_end_count', 0) > 0:
-                session.update_context('_dead_end_count', 0)
+            if not session:
+                return
+            if (session.cart_data or {}).get('_dead_end_count', 0) > 0:
+                data = dict(session.cart_data or {})
+                data['_dead_end_count'] = 0
+                CustomerSession.objects.filter(pk=session.pk).update(cart_data=data)
         except Exception as exc:
             logger.warning('[unified] dead_end reset failed: %s', exc)
 
