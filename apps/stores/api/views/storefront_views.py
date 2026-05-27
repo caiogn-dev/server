@@ -169,9 +169,14 @@ def build_store_customer_profile(store, user):
     store_customer, _ = StoreCustomer.objects.get_or_create(store=store, user=user)
 
     addr_records = list(store_customer.address_list.values(
-        'street', 'number', 'complement', 'neighborhood',
+        'id', 'label', 'street', 'number', 'complement', 'neighborhood',
         'city', 'state', 'zip_code', 'reference', 'formatted', 'is_default',
     ))
+    for addr in addr_records:
+        label = addr.get('label') or ''
+        addr['tag'] = label
+        addr['name'] = label
+        addr['address'] = addr.get('formatted') or addr.get('street') or ''
     default_address = next((a for a in addr_records if a['is_default']), addr_records[0] if addr_records else None)
     default_index = 0
 
@@ -415,11 +420,18 @@ class StoreCustomerProfileView(APIView):
 
         store_customer = customer_record.get('store_customer')
         if store_customer:
-            if isinstance(addresses, list) and addresses:
-                for i, addr_dict in enumerate(addresses):
+            if isinstance(addresses, list):
+                requested_default = data.get('default_address_index', 0)
+                try:
+                    requested_default = int(requested_default)
+                except (TypeError, ValueError):
+                    requested_default = 0
+
+                normalized_addresses = []
+                for addr_dict in addresses:
                     if not isinstance(addr_dict, dict):
                         continue
-                    formatted = addr_dict.get('formatted', '')
+                    formatted = addr_dict.get('formatted') or addr_dict.get('address') or ''
                     if not formatted:
                         parts = [
                             addr_dict.get('street', ''), addr_dict.get('number', ''),
@@ -427,30 +439,49 @@ class StoreCustomerProfileView(APIView):
                         ]
                         formatted = ', '.join(p for p in parts if p)
                     if not formatted and not any([
-                        addr_dict.get('street'), addr_dict.get('number'),
-                        addr_dict.get('city'),
+                        addr_dict.get('street'), addr_dict.get('address'), addr_dict.get('title'),
+                        addr_dict.get('number'), addr_dict.get('city'),
                     ]):
                         continue  # skip entirely-blank address dicts
-                    already = store_customer.address_list.filter(formatted=formatted).first() if formatted else None
-                    if not already:
-                        if i == 0:
-                            store_customer.address_list.filter(is_default=True).update(is_default=False)
+
+                    normalized_addresses.append({
+                        'label': addr_dict.get('label') or addr_dict.get('tag') or addr_dict.get('name') or '',
+                        'street': addr_dict.get('street') or addr_dict.get('address') or addr_dict.get('title') or formatted,
+                        'number': addr_dict.get('number', ''),
+                        'complement': addr_dict.get('complement', ''),
+                        'neighborhood': addr_dict.get('neighborhood', ''),
+                        'city': addr_dict.get('city', ''),
+                        'state': addr_dict.get('state') or addr_dict.get('state_code') or '',
+                        'zip_code': addr_dict.get('zip_code') or addr_dict.get('postal_code') or '',
+                        'reference': addr_dict.get('reference', ''),
+                        'formatted': formatted,
+                    })
+
+                store_customer.address_list.all().delete()
+                if normalized_addresses:
+                    default_index = min(
+                        max(requested_default, 0),
+                        len(normalized_addresses) - 1,
+                    )
+                    for i, addr_dict in enumerate(normalized_addresses):
                         StoreCustomerAddress.objects.create(
                             customer=store_customer,
-                            street=addr_dict.get('street', ''),
-                            number=addr_dict.get('number', ''),
-                            complement=addr_dict.get('complement', ''),
-                            neighborhood=addr_dict.get('neighborhood', ''),
-                            city=addr_dict.get('city', ''),
-                            state=addr_dict.get('state', ''),
-                            zip_code=addr_dict.get('zip_code', ''),
-                            reference=addr_dict.get('reference', ''),
-                            formatted=formatted,
-                            is_default=(i == 0),
+                            is_default=(i == default_index),
+                            **addr_dict,
                         )
-                    elif i == 0 and not already.is_default:
-                        store_customer.address_list.filter(is_default=True).exclude(pk=already.pk).update(is_default=False)
-                        already.set_as_default()
+                    store_customer.default_address_index = default_index
+                else:
+                    store_customer.default_address_index = 0
+            elif 'default_address_index' in data:
+                try:
+                    default_index = int(data.get('default_address_index', 0))
+                except (TypeError, ValueError):
+                    default_index = 0
+                current_addresses = list(store_customer.address_list.all())
+                if current_addresses:
+                    default_index = min(max(default_index, 0), len(current_addresses) - 1)
+                    current_addresses[default_index].set_as_default()
+                    store_customer.default_address_index = default_index
             if 'accepts_marketing' in data:
                 store_customer.accepts_marketing = bool(data.get('accepts_marketing'))
             store_customer.save()
@@ -551,7 +582,8 @@ class StoreCartViewSet(viewsets.ViewSet):
             else:
                 # Product
                 variant_id = request.data.get('variant_id')
-                cart_service.add_item(cart, product_id, quantity, variant_id, notes)
+                options = request.data.get('options', {})
+                cart_service.add_item(cart, product_id, quantity, variant_id, options, notes)
 
             return Response(StoreCartSerializer(cart).data)
         except StoreCombo.DoesNotExist:
@@ -737,6 +769,7 @@ class StoreCheckoutView(APIView):
                     response_data['pix_code'] = payment_result.get('pix_code', '')
                     response_data['pix_qr_code'] = payment_result.get('pix_qr_code', '')
                     response_data['pix_ticket_url'] = payment_result.get('ticket_url', '')
+                    response_data['pix_expiration'] = payment_result.get('expiration', '')
                     response_data['init_point'] = payment_result.get('init_point', '')
                     response_data['sandbox_init_point'] = payment_result.get('sandbox_init_point', '')
                 else:

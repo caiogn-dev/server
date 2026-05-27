@@ -1,7 +1,7 @@
 #!/bin/bash
 # Script para rodar o servidor Django localmente na porta 3010
 
-cd /home/graco/WORK/server
+cd /home/graco/WORK/server2
 
 # Exportar variáveis de ambiente para desenvolvimento
 export DEBUG=True

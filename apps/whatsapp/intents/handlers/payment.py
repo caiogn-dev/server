@@ -25,6 +25,7 @@ class PaymentStatusHandler(IntentHandler):
                         {'id': 'cancel_order', 'title': '❌ Cancelar'},
                     ],
                 )
+        # Busca pedido pendente com PIX já gerado
         pending_order = Order.objects.filter(
             customer_phone=self.conversation.phone_number,
             **({"store": self.store} if self.store else {}),
@@ -44,6 +45,21 @@ class PaymentStatusHandler(IntentHandler):
                     {'id': 'cancel_order', 'title': '❌ Cancelar'},
                 ],
             )
+        # Race condition: pedido criado mas PIX ainda sendo gerado (async)
+        order_without_pix = Order.objects.filter(
+            customer_phone=self.conversation.phone_number,
+            **({"store": self.store} if self.store else {}),
+            payment_status='pending',
+        ).exclude(pix_code__gt='').order_by('-created_at').first()
+        if order_without_pix:
+            from django.utils import timezone
+            from datetime import timedelta
+            age_seconds = (timezone.now() - order_without_pix.created_at).total_seconds()
+            if age_seconds < 120:
+                return HandlerResult.text(
+                    "⏳ Estou gerando seu código PIX agora...\n\n"
+                    "Por favor, aguarde alguns segundos e toque em *PIX* novamente. 🙏"
+                )
         return HandlerResult.text("Não encontrei pagamentos pendentes. ✅\n\nQuer fazer um pedido novo?")
 
 

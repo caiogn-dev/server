@@ -54,6 +54,9 @@ class IntentType(Enum):
     COMPLAINT = "complaint"                  # Reclamações complexas
     GENERAL_QUESTION = "general_question"    # Outras dúvidas
     
+    # ===== Confirmação contextual =====
+    AFFIRMATIVE = "affirmative"              # "Sim", "Ok", "Pode ser" — interpretado pelo contexto de sessão
+
     # ===== Fallback =====
     UNKNOWN = "unknown"
     HUMAN_HANDOFF = "human_handoff"          # "Falar com atendente"
@@ -163,6 +166,10 @@ class IntentDetector:
             r'(atendente|pessoa|humano|falar com algu[ée]m|n[ãa]o [ée] o que quero|errado|atendente humano)',
             r'(quero falar com pessoa|me passa pro atendente|chama algu[ée]m|quero ajuda humana)',
         ],
+        IntentType.AFFIRMATIVE: [
+            r'^(sim|s[ií]m|s|ok|okay|tá|ta|tá bom|ta bom|certo|pode ser|pode|claro|é isso|isso|ótimo|otimo|perfeito|combinado|fechado|fechou|vai|vamo|vamos|tô dentro|to dentro)[!.\s]*$',
+            r'^(tudo (bem|certo|ok)|beleza|top|show|bora|pode|pode sim|com certeza|afirmativo)[!.\s]*$',
+        ],
         IntentType.FRUSTRATION: [
             r'(p[eé]ssimo|horr[íi]vel|lixo|absurdo|rid[íi]culo|uma merda|um lixo|n[ãa]o presta)',
             r'(que bot (horrível|inútil|idiota|lixo)|bot (inútil|horrível|lixo)|que atendimento)',
@@ -223,6 +230,7 @@ class IntentDetector:
             IntentType.CONTACT,
             IntentType.FAQ,
             IntentType.GREETING,
+            IntentType.AFFIRMATIVE,
         ]
         
         for intent in priority_order:

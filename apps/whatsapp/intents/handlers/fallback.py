@@ -30,6 +30,63 @@ class HumanHandoffHandler(IntentHandler):
         )
 
 
+class AffirmativeHandler(IntentHandler):
+    """
+    Handler para mensagens afirmativas ("Sim", "Ok", "Pode ser") sem contexto de botão.
+    Interpreta a resposta com base no estado atual da sessão para evitar cair no LLM
+    e causar busca de produto com o texto literal da confirmação.
+    """
+
+    def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        logger.info('[AffirmativeHandler] Afirmativo recebido — verificando contexto de sessão')
+        try:
+            session_manager = self._get_session_manager()
+
+            # Esperando observações → "Sim" = sem observações, prosseguir
+            if session_manager.is_waiting_for_notes():
+                logger.info('[AffirmativeHandler] Sessão waiting_for_notes — tratando como sem obs.')
+                return self._handle_notes_input('')
+
+            # Esperando endereço → "Sim" ambíguo, pedir endereço de novo
+            if session_manager.is_waiting_for_address():
+                return HandlerResult.text(
+                    "📍 Por favor, me informe seu endereço de entrega ou compartilhe sua localização. 🙏"
+                )
+
+            session = session_manager.get_or_create_session()
+            if session:
+                from apps.automation.models import CustomerSession
+                if session.status == CustomerSession.SessionStatus.PAYMENT_PENDING:
+                    from .payment import PaymentStatusHandler
+                    return PaymentStatusHandler(
+                        self.account, self.conversation, self.company_profile
+                    ).handle(intent_data)
+
+                if session.status in (
+                    CustomerSession.SessionStatus.CART_CREATED,
+                    CustomerSession.SessionStatus.CHECKOUT,
+                ):
+                    return HandlerResult.buttons(
+                        body="Quer continuar seu pedido ou ver o cardápio?",
+                        buttons=[
+                            {'id': 'continue_checkout', 'title': '✅ Continuar pedido'},
+                            {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                        ],
+                    )
+        except Exception as exc:
+            logger.warning('[AffirmativeHandler] Erro ao verificar sessão: %s', exc)
+
+        # Sem contexto claro — mostrar menu
+        return HandlerResult.buttons(
+            body="Claro! O que você gostaria de fazer? 😊",
+            buttons=[
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
+                {'id': 'contact_support', 'title': '👤 Atendente'},
+            ],
+        )
+
+
 class UnknownHandler(IntentHandler):
     """Handler para intenções desconhecidas."""
 

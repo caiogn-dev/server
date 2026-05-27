@@ -359,7 +359,17 @@ class UnifiedService:
         Transactional flows such as order creation, PIX, payment confirmation,
         and order tracking must stay centralized in handlers/templates.
         """
-        return self.use_llm and intent in self.CONSULTATIVE_INTENTS
+        if not (self.use_llm and intent in self.CONSULTATIVE_INTENTS):
+            return False
+        # Não chamar LLM quando há pagamento PIX pendente — o agente re-envia o código
+        # conversacionalmente, causando duplicidade de mensagens PIX na conversa.
+        try:
+            active = self._get_active_session()
+            if active and active.status == 'payment_pending' and active.pix_code:
+                return False
+        except Exception:
+            pass
+        return True
 
     def _has_pending_delivery_address_session(self) -> bool:
         """Return True when this customer has an order waiting for delivery address."""

@@ -467,14 +467,23 @@ class OrderByTokenView(APIView):
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
                 'paid_at': order.paid_at.isoformat() if order.paid_at else None,
+                'confirmed_at': order.confirmed_at.isoformat() if order.confirmed_at else None,
+                'preparing_at': order.preparing_at.isoformat() if order.preparing_at else None,
+                'ready_at': order.ready_at.isoformat() if order.ready_at else None,
+                'out_for_delivery_at': order.out_for_delivery_at.isoformat() if order.out_for_delivery_at else None,
                 'shipped_at': order.shipped_at.isoformat() if order.shipped_at else None,
                 'delivered_at': order.delivered_at.isoformat() if order.delivered_at else None,
+                'picked_up_at': order.picked_up_at.isoformat() if order.picked_up_at else None,
+                'cancelled_at': order.cancelled_at.isoformat() if order.cancelled_at else None,
+                'scheduled_date': order.scheduled_date.isoformat() if order.scheduled_date else None,
+                'scheduled_time': order.scheduled_time or None,
             }
-            
+
             # Include PIX data if available
             if order.payment_method == 'pix':
                 response_data['pix_code'] = order.pix_code or ''
                 response_data['pix_qr_code'] = order.pix_qr_code or ''
+                response_data['pix_expires_at'] = order.pix_expires_at.isoformat() if order.pix_expires_at else None
             
             return Response(response_data)
         

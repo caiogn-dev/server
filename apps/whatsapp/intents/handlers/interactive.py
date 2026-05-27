@@ -174,15 +174,28 @@ class InteractiveReplyHandler(IntentHandler):
             delivery_method = 'delivery'
             addr_info = {}
             customer_notes = ''
-        if not items:
-            try:
-                session_data = session_manager.get_session_data() if session_manager else {}
-            except Exception:
-                session_data = {}
+        try:
+            session_data = session_manager.get_session_data() if session_manager else {}
+        except Exception:
+            session_data = {}
+
+        # Idempotência: se já existe pix_code na sessão, não criar novo pedido/PIX
+        if session_data.get('pix_code'):
             if lock_key:
                 cache.delete(lock_key)
-            if session_data.get('pix_code'):
-                return HandlerResult.text(session_data['pix_code'])
+            logger.info('[InteractiveReplyHandler] PIX já existe na sessão — retornando código existente')
+            return HandlerResult.buttons(
+                body=session_data['pix_code'],
+                buttons=[
+                    {'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'},
+                    {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
+                    {'id': 'cancel_order', 'title': '❌ Cancelar'},
+                ],
+            )
+
+        if not items:
+            if lock_key:
+                cache.delete(lock_key)
             return HandlerResult.text(
                 "❌ Não encontrei itens no seu pedido.\n\n"
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
