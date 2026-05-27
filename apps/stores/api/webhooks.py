@@ -43,9 +43,8 @@ class MercadoPagoWebhookView(APIView):
             
             # Validate webhook signature if secret is configured
             if not self._validate_signature(request, store_slug):
-                logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+                logger.warning("Webhook signature validation failed — rejecting request")
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_400_BAD_REQUEST)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
