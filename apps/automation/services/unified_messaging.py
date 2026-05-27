@@ -13,8 +13,8 @@ Usage:
     # Schedule a message
     UnifiedMessagingService.schedule_message(account, to_number, message_data, scheduled_at)
     
-    # Process scheduled messages (called by Celery)
-    UnifiedMessagingService.process_due_messages()
+    # Schedule campaign messages
+    UnifiedMessagingService.schedule_campaign_messages(campaign_id, messages_per_minute)
 """
 
 import logging
@@ -176,52 +176,7 @@ class UnifiedMessagingService:
         
         logger.info(f"Campaign {campaign.id}: {scheduled_count} messages scheduled")
         return scheduled_count
-    
-    @classmethod
-    def process_due_messages(cls, batch_size: int = 100) -> Dict[str, int]:
-        """
-        Process all due scheduled messages.
-        Called by Celery beat task.
-        
-        Args:
-            batch_size: Maximum number of messages to process
-            
-        Returns:
-            Dict with counts: {'processed': int, 'sent': int, 'failed': int}
-        """
-        now = timezone.now()
-        
-        # Get due messages
-        due_messages = ScheduledMessage.objects.filter(
-            status=ScheduledMessage.Status.PENDING,
-            scheduled_at__lte=now
-        ).select_related('account')[:batch_size]
-        
-        results = {'processed': 0, 'sent': 0, 'failed': 0}
-        
-        for scheduled in due_messages:
-            try:
-                results['processed'] += 1
-                cls._send_scheduled_message(scheduled)
-                results['sent'] += 1
-            except Exception as e:
-                logger.error(f"Failed to send scheduled message {scheduled.id}: {e}")
-                scheduled.status = ScheduledMessage.Status.FAILED
-                scheduled.error_message = str(e)
-                scheduled.save(update_fields=['status', 'error_message'])
-                results['failed'] += 1
-                
-                # Update campaign recipient if applicable
-                if scheduled.campaign_id:
-                    cls._update_campaign_recipient_status(
-                        scheduled.campaign_id,
-                        scheduled.to_number,
-                        CampaignRecipient.RecipientStatus.FAILED,
-                        error=str(e)
-                    )
-        
-        return results
-    
+
     @classmethod
     def _send_scheduled_message(cls, scheduled: ScheduledMessage) -> Message:
         """

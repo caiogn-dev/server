@@ -2,7 +2,7 @@
 Testes: unificação de cálculo de taxa de entrega e correção de StoreValidateDeliveryView.
 
 Cobertura:
-1. HereMapsService.calculate_delivery_fee delega a CheckoutService._calculate_dynamic_fee
+1. GeoService.calculate_delivery_fee delega a CheckoutService._calculate_dynamic_fee
 2. Ambos produzem a mesma taxa para distância idêntica (não divergem)
 3. StoreValidateDeliveryView.post() usa store.latitude/longitude/metadata (não variáveis locais)
 4. StoreValidateDeliveryView.post() usa o geo service unificado para respeitar zonas fixas
@@ -216,11 +216,11 @@ class DynamicDeliveryAreaPolicyTest(TestCase):
         self.assertEqual(result['reason'], 'outside_dynamic_delivery_area')
 
 
-# ─── Testes: HereMapsService delega a CheckoutService ────────────────────────
+# ─── Testes: GeoService delega a CheckoutService ─────────────────────────────
 
-class HereMapsServiceDelegatesTest(TestCase):
+class GeoServiceDelegatesTest(TestCase):
     """
-    Garante que calculate_delivery_fee chama CheckoutService._calculate_dynamic_fee
+    Garante que GeoService.calculate_delivery_fee chama CheckoutService._calculate_dynamic_fee
     ao invés de recalcular inline — prevenindo divergência de valores.
     """
 
@@ -229,7 +229,7 @@ class HereMapsServiceDelegatesTest(TestCase):
         self.store = _make_store(owner, slug='maps-delegate-store', lat='-10.18', lng='-48.33')
 
     def test_calculate_delivery_fee_delegates_to_checkout_service(self):
-        from apps.stores.services.here_maps_service import HereMapsService
+        from apps.stores.services.geo.service import GeoService
 
         mock_route = {
             'distance_km': 5.0,
@@ -238,12 +238,12 @@ class HereMapsServiceDelegatesTest(TestCase):
         }
 
         with patch.object(
-            HereMapsService, '_get_route', return_value=mock_route
+            GeoService, '_get_route', return_value=mock_route
         ), patch(
             'apps.stores.services.checkout_service.CheckoutService._calculate_dynamic_fee',
             return_value={'fee': Decimal('9.00'), 'zone_name': 'Padrao', 'estimated_minutes': 20, 'estimated_days': 0},
         ) as mock_calc:
-            svc = HereMapsService()
+            svc = GeoService()
             result = svc.calculate_delivery_fee(
                 store=self.store,
                 destination_address='Rua Teste, 10',
@@ -252,7 +252,7 @@ class HereMapsServiceDelegatesTest(TestCase):
         mock_calc.assert_called_once()
         self.assertEqual(result['fee'], Decimal('9.00'))
 
-    def test_here_and_checkout_produce_same_fee_for_same_distance(self):
+    def test_geo_and_checkout_produce_same_fee_for_same_distance(self):
         """
         Integração: ambos os serviços calculam a mesma taxa para distância idêntica.
         Evita regressão onde fórmulas divergentes geram valores diferentes.
@@ -275,14 +275,14 @@ class HereMapsServiceDelegatesTest(TestCase):
             'apps.stores.services.geo.service.GeoService._get_route',
             return_value=mock_route,
         ):
-            from apps.stores.services.here_maps_service import HereMapsService
-            here_result = HereMapsService().calculate_delivery_fee(
+            from apps.stores.services.geo.service import GeoService
+            geo_result = GeoService().calculate_delivery_fee(
                 store=store, destination_address='Rua Teste, 1'
             )
 
-        here_fee = Decimal(str(here_result['fee'])).quantize(Decimal('0.01'))
-        self.assertEqual(checkout_fee, here_fee,
-                         f"Fee divergence: CheckoutService={checkout_fee}, HereMapsService={here_fee}")
+        geo_fee = Decimal(str(geo_result['fee'])).quantize(Decimal('0.01'))
+        self.assertEqual(checkout_fee, geo_fee,
+                         f"Fee divergence: CheckoutService={checkout_fee}, GeoService={geo_fee}")
 
 
 # ─── Testes: StoreValidateDeliveryView ───────────────────────────────────────
