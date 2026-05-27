@@ -557,7 +557,12 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
 
         first_name = (session.customer_name or '').split()[0] or 'você'
 
-        if reminder_type == '20min':
+        if reminder_type == '5min':
+            body = (
+                f"Oi, {first_name}! 👋 Parece que você estava finalizando um pedido.\n\n"
+                f"Ainda quer continuar? Estou aqui pra ajudar! 😊"
+            )
+        elif reminder_type == '20min':
             body = (
                 f"Oi, {first_name}! 👋 Você deixou itens no carrinho.\n\n"
                 f"Quer continuar seu pedido? 😊"
@@ -590,14 +595,34 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
 @shared_task(name='apps.whatsapp.tasks.check_abandoned_whatsapp_sessions')
 def check_abandoned_whatsapp_sessions():
     """
-    Verifica CustomerSessions WhatsApp com carrinho abandonado.
-    Executado a cada 10 minutos via Celery Beat.
+    Verifica CustomerSessions WhatsApp com carrinho/checkout abandonado.
+    Executado a cada 5 minutos via Celery Beat.
+
+    Buckets:
+    - checkout 5min  → exit intent urgente (estava na hora de pagar)
+    - cart   20min  → primeiro lembrete de carrinho
+    - any     2h    → segundo lembrete
     """
     from apps.automation.models import CustomerSession
 
     now = timezone.now()
 
-    # 20 minutos idle → primeiro lembrete
+    # 5 minutos idle em checkout → exit intent (maior urgência)
+    exit_intent = CustomerSession.objects.filter(
+        status='checkout',
+        last_activity_at__lte=now - timedelta(minutes=5),
+        last_activity_at__gt=now - timedelta(minutes=10),
+        cart_items_count__gt=0,
+    ).exclude(
+        notifications_sent__contains=[{'type': 'session_cart_reminder_5min'}]
+    )
+
+    count_5 = 0
+    for session in exit_intent:
+        send_session_cart_reminder.delay(str(session.id), '5min')
+        count_5 += 1
+
+    # 20 minutos idle → primeiro lembrete de carrinho
     idle_20min = CustomerSession.objects.filter(
         status__in=['active', 'cart_created', 'checkout'],
         last_activity_at__lte=now - timedelta(minutes=20),
@@ -628,6 +653,95 @@ def check_abandoned_whatsapp_sessions():
         count_2h += 1
 
     logger.info(
-        "Checked abandoned WhatsApp sessions: %d (20min), %d (2h)",
-        count_20, count_2h,
+        "Checked abandoned WhatsApp sessions: %d (5min checkout), %d (20min), %d (2h)",
+        count_5, count_20, count_2h,
     )
+
+
+@shared_task(bind=True, max_retries=2)
+def send_reengagement_message(self, phone_number: str, store_id: str):
+    """
+    Envia mensagem de re-engajamento para clientes inativos (10-30 dias sem pedido).
+    """
+    from apps.stores.models import Store
+    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+    from django.core.cache import cache
+
+    idempotency_key = f"reengagement:{store_id}:{phone_number}"
+    if not cache.add(idempotency_key, 1, timeout=86400):  # 24h
+        return
+
+    try:
+        store = Store.objects.get(id=store_id)
+        profile = _get_store_profile(store)
+        if not profile:
+            return
+        account = _get_account_for_profile(profile)
+        if not account:
+            return
+
+        WhatsAppAPIService(account).send_interactive_buttons(
+            to=phone_number,
+            body_text=(
+                f"Sentimos sua falta! 🥗\n\n"
+                f"Que tal uma salada hoje? Temos novidades no cardápio esperando por você 😊"
+            ),
+            buttons=[
+                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                {'id': 'montar_salada', 'title': '🥗 Montar Salada'},
+            ],
+        )
+        logger.info("Re-engagement sent to %s for store %s", phone_number, store_id)
+
+    except Store.DoesNotExist:
+        logger.error("Store %s not found for re-engagement", store_id)
+    except Exception as exc:
+        logger.error("Error sending re-engagement: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.whatsapp.tasks.check_inactive_customers')
+def check_inactive_customers():
+    """
+    Identifica clientes com pedido entre 10 e 30 dias atrás (sem pedido nos últimos 10 dias)
+    e dispara re-engajamento. Executado diariamente às 11h.
+    """
+    from apps.stores.models import StoreOrder
+
+    now = timezone.now()
+    window_start = now - timedelta(days=30)
+    window_end = now - timedelta(days=10)
+
+    # Clientes que tiveram pedido confirmado há 10-30 dias
+    recent_orders = (
+        StoreOrder.objects
+        .filter(
+            created_at__gte=window_start,
+            created_at__lte=window_end,
+            status__in=['delivered', 'completed', 'paid', 'confirmed'],
+        )
+        .values('customer_phone', 'store_id')
+        .distinct()
+    )
+
+    # Filtra quem voltou a pedir nos últimos 10 dias (não precisa de re-engajamento)
+    active_phones = set(
+        StoreOrder.objects
+        .filter(created_at__gte=window_end)
+        .values_list('customer_phone', flat=True)
+        .distinct()
+    )
+
+    count = 0
+    seen = set()
+    for row in recent_orders:
+        phone = row['customer_phone']
+        store_id = str(row['store_id'])
+        key = (phone, store_id)
+        if not phone or key in seen or phone in active_phones:
+            continue
+        seen.add(key)
+        send_reengagement_message.delay(phone, store_id)
+        count += 1
+
+    logger.info("Re-engagement: %d customers targeted", count)

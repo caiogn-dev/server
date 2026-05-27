@@ -4,6 +4,7 @@ Celery configuration for WhatsApp Business Platform.
 import os
 import logging
 from celery import Celery
+from celery.schedules import crontab
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +100,15 @@ app.conf.beat_schedule = {
         'task': 'apps.whatsapp.tasks.check_abandoned_store_carts',
         'schedule': 900.0,  # every 15 min
     },
-    # CustomerSession (WhatsApp bot) abandoned cart reminders — 20min + 2h
+    # CustomerSession (WhatsApp bot) abandoned cart/checkout reminders — 5min / 20min / 2h
     'check-abandoned-whatsapp-sessions': {
         'task': 'apps.whatsapp.tasks.check_abandoned_whatsapp_sessions',
-        'schedule': 600.0,  # every 10 min
+        'schedule': 300.0,  # every 5 min
+    },
+    # Re-engajamento de clientes inativos (10-30 dias sem pedido) — diário às 11h
+    'check-inactive-customers': {
+        'task': 'apps.whatsapp.tasks.check_inactive_customers',
+        'schedule': crontab(hour=11, minute=0),
     },
     # StoreOrder PIX reminders (30min / 2h / 24h) for storefront orders
     'check-store-pix-reminders': {

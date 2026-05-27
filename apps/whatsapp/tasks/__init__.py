@@ -361,6 +361,8 @@ from .automation_tasks import (
     schedule_feedback_request,
     send_session_cart_reminder,
     check_abandoned_whatsapp_sessions,
+    send_reengagement_message,
+    check_inactive_customers,
 )
 
 
