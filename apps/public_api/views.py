@@ -107,6 +107,7 @@ def public_store_products(request, slug):
         StoreProduct.objects
         .filter(store=store, status='active')
         .select_related('category')
+        .prefetch_related('variants')
         .order_by('sort_order', 'name')
     )
 

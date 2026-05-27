@@ -718,8 +718,8 @@ class OrderWhatsAppView(APIView):
     def get(self, request, order_id):
         """Get WhatsApp link for order confirmation."""
         try:
-            order = StoreOrder.objects.select_related('store').get(id=order_id)
-            
+            order = StoreOrder.objects.select_related('store').prefetch_related('items').get(id=order_id)
+
             # Get store WhatsApp number
             whatsapp_number = order.store.whatsapp_number or order.store.phone
             if not whatsapp_number:
