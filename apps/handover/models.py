@@ -295,31 +295,41 @@ class HandoverLog(models.Model):
 def notify_handover_update(handover):
     """
     Notifica via WebSocket sobre atualização de handover.
+    Silently skips if the channel layer is unavailable (e.g. no Redis in dev).
     """
+    import logging
+    _logger = logging.getLogger(__name__)
+
     channel_layer = get_channel_layer()
-    
-    # Notificar no grupo da conversa
-    async_to_sync(channel_layer.group_send)(
-        f"conversation_{handover.conversation.id}",
-        {
-            "type": "handover_updated",
-            "conversation_id": str(handover.conversation.id),
-            "handover_status": handover.status,
-            "assigned_to": str(handover.assigned_to.id) if handover.assigned_to else None,
-            "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
-            "timestamp": handover.last_transfer_at.isoformat() if handover.last_transfer_at else None,
-        }
-    )
-    
-    # Notificar no grupo da loja (para operadores)
-    if hasattr(handover.conversation, 'store') and handover.conversation.store:
+    if channel_layer is None:
+        _logger.debug("notify_handover_update: channel layer not configured, skipping")
+        return
+
+    payload = {
+        "type": "handover_updated",
+        "conversation_id": str(handover.conversation.id),
+        "handover_status": handover.status,
+        "assigned_to": str(handover.assigned_to.id) if handover.assigned_to else None,
+        "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
+        "timestamp": handover.last_transfer_at.isoformat() if handover.last_transfer_at else None,
+    }
+
+    try:
         async_to_sync(channel_layer.group_send)(
-            f"store_{handover.conversation.store.id}_operators",
-            {
-                "type": "handover_updated",
-                "conversation_id": str(handover.conversation.id),
-                "handover_status": handover.status,
-                "assigned_to": str(handover.assigned_to.id) if handover.assigned_to else None,
-                "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
-            }
+            f"conversation_{handover.conversation.id}",
+            payload,
         )
+    except Exception as exc:
+        _logger.warning(f"notify_handover_update: failed to notify conversation group: {exc}")
+
+    # Notificar no grupo da loja (para operadores)
+    try:
+        if hasattr(handover.conversation, 'store') and handover.conversation.store:
+            store_payload = {**payload}
+            store_payload.pop("timestamp", None)
+            async_to_sync(channel_layer.group_send)(
+                f"store_{handover.conversation.store.id}_operators",
+                store_payload,
+            )
+    except Exception as exc:
+        _logger.warning(f"notify_handover_update: failed to notify store operators group: {exc}")
