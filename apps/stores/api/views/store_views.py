@@ -115,16 +115,18 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk')
-        if store_id:
-            return StoreIntegration.objects.filter(store_id=store_id)
-        
         user = self.request.user
         if user.is_staff:
-            return StoreIntegration.objects.all()
-        return StoreIntegration.objects.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+            qs = StoreIntegration.objects.all()
+        else:
+            qs = StoreIntegration.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
+        store_id = self.kwargs.get('store_pk')
+        if store_id:
+            qs = qs.filter(store_id=store_id)
+        return qs
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -154,16 +156,18 @@ class StoreWebhookViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_id = self.kwargs.get('store_pk')
-        if store_id:
-            return StoreWebhook.objects.filter(store_id=store_id)
-        
         user = self.request.user
         if user.is_staff:
-            return StoreWebhook.objects.all()
-        return StoreWebhook.objects.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct()
+            qs = StoreWebhook.objects.all()
+        else:
+            qs = StoreWebhook.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
+        store_id = self.kwargs.get('store_pk')
+        if store_id:
+            qs = qs.filter(store_id=store_id)
+        return qs
     
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):
