@@ -46,6 +46,12 @@ from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
 from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView
+from .api.views.crm_views import (
+    CustomerSearchView,
+    CustomerAddressViewSet,
+    TeamMemberViewSet,
+    places_search_view,
+)
 
 # Main router for admin/management endpoints
 router = DefaultRouter()
@@ -118,6 +124,31 @@ store_frontend_patterns = [
     path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
+
+    # CRM
+    path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),
+    path('crm/customers/<uuid:user_id>/addresses/', CustomerAddressViewSet.as_view({
+        'get': 'list',
+        'post': 'create',
+    }), name='store-crm-customer-addresses'),
+    path('crm/customers/<uuid:user_id>/addresses/<uuid:pk>/', CustomerAddressViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+        'put': 'update',
+        'delete': 'destroy',
+    }), name='store-crm-customer-address-detail'),
+
+    # Team
+    path('team/', TeamMemberViewSet.as_view({
+        'get': 'list',
+        'post': 'create',
+    }), name='store-team-list'),
+    path('team/<uuid:pk>/', TeamMemberViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+        'put': 'update',
+        'delete': 'destroy',
+    }), name='store-team-detail'),
 ]
 app_name = 'stores'
 
@@ -207,6 +238,11 @@ urlpatterns = [
     path('print/agent/claim-next/', PrintAgentClaimNextJobView.as_view(), name='print-agent-claim-next'),
     path('print/jobs/<uuid:job_id>/complete/', PrintAgentCompleteJobView.as_view(), name='print-job-complete'),
     path('print/jobs/<uuid:job_id>/fail/', PrintAgentFailJobView.as_view(), name='print-job-fail'),
+
+    # ==========================================================================
+    # ADMIN UTILITY ENDPOINTS
+    # ==========================================================================
+    path('admin/places-search/', places_search_view, name='admin-places-search'),
 
     # ==========================================================================
     # PUBLIC STOREFRONT ENDPOINTS (by store slug)

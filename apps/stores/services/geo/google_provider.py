@@ -469,3 +469,45 @@ class GoogleMapsProvider:
         if suggestions:
             return suggestions
         return self._fallback_autosuggest(query)
+
+    # ------------------------------------------------------------------
+    # Places Text Search (admin: busca de estabelecimentos)
+    # ------------------------------------------------------------------
+
+    GOOGLE_PLACES_TEXT_SEARCH_URL = "https://maps.googleapis.com/maps/api/place/textsearch/json"
+
+    def search_places(self, query: str, *, place_type: str = "establishment") -> List[Dict]:
+        """
+        Text search for businesses — usado no admin para configurar uma nova loja.
+
+        Retorna até 5 resultados com place_id, nome, endereço formatado e coordenadas.
+        """
+        if not self.api_key or not query or len(query.strip()) < 3:
+            return []
+        try:
+            response = requests.get(
+                self.GOOGLE_PLACES_TEXT_SEARCH_URL,
+                params={
+                    'query': query,
+                    'key': self.api_key,
+                    'language': 'pt-BR',
+                    'region': 'br',
+                    'type': place_type,
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            results = []
+            for place in response.json().get('results', [])[:5]:
+                loc = place.get('geometry', {}).get('location', {})
+                results.append({
+                    'place_id':          place.get('place_id'),
+                    'name':              place.get('name'),
+                    'formatted_address': place.get('formatted_address'),
+                    'lat':               loc.get('lat'),
+                    'lng':               loc.get('lng'),
+                })
+            return results
+        except Exception as exc:
+            logger.warning("search_places error: %s", exc)
+            return []
