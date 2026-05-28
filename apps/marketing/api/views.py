@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
+from django.db.models import Q
 
 from apps.marketing.models import (
     EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
@@ -30,7 +31,14 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
     serializer_class = EmailTemplateSerializer
     
     def get_queryset(self):
-        queryset = EmailTemplate.objects.all()
+        user = self.request.user
+        is_admin = user.is_staff or user.is_superuser
+        if is_admin:
+            queryset = EmailTemplate.objects.all()
+        else:
+            queryset = EmailTemplate.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -94,7 +102,14 @@ class EmailCampaignViewSet(viewsets.ModelViewSet):
     serializer_class = EmailCampaignSerializer
     
     def get_queryset(self):
-        queryset = EmailCampaign.objects.all()
+        user = self.request.user
+        is_admin = user.is_staff or user.is_superuser
+        if is_admin:
+            queryset = EmailCampaign.objects.all()
+        else:
+            queryset = EmailCampaign.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -203,7 +218,14 @@ class SubscriberViewSet(viewsets.ModelViewSet):
     serializer_class = SubscriberSerializer
     
     def get_queryset(self):
-        queryset = Subscriber.objects.all()
+        user = self.request.user
+        is_admin = user.is_staff or user.is_superuser
+        if is_admin:
+            queryset = Subscriber.objects.all()
+        else:
+            queryset = Subscriber.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -297,11 +319,16 @@ class CustomersViewSet(viewsets.ViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Get store to find associated WhatsApp account
+        # Get store and verify ownership
+        user = request.user
+        is_admin = user.is_staff or user.is_superuser
         try:
             store = Store.objects.get(id=store_id)
         except Store.DoesNotExist:
             return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+        if not is_admin:
+            if store.owner_id != user.pk and not store.staff.filter(pk=user.pk).exists():
+                return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
         
         # Dictionary to aggregate customers by email
         customers_dict = {}
@@ -463,7 +490,11 @@ class CustomersViewSet(viewsets.ViewSet):
         
         # Count unique order emails
         try:
-            Store.objects.get(id=store_id)
+            store = Store.objects.get(id=store_id)
+            _user = request.user
+            if not (_user.is_staff or _user.is_superuser):
+                if store.owner_id != _user.pk and not store.staff.filter(pk=_user.pk).exists():
+                    return Response({'count': 0})
             order_emails = StoreOrder.objects.filter(
                 store_id=store_id,
                 customer_email__isnull=False
@@ -507,7 +538,11 @@ class CustomersViewSet(viewsets.ViewSet):
         order_count = 0
         if store_id:
             try:
-                Store.objects.get(id=store_id)
+                store = Store.objects.get(id=store_id)
+                _user = request.user
+                if not (_user.is_staff or _user.is_superuser):
+                    if store.owner_id != _user.pk and not store.staff.filter(pk=_user.pk).exists():
+                        return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
                 order_count = StoreOrder.objects.filter(
                     store_id=store_id,
                     customer_email__isnull=False
@@ -611,7 +646,14 @@ class EmailAutomationViewSet(viewsets.ModelViewSet):
     serializer_class = EmailAutomationSerializer
     
     def get_queryset(self):
-        queryset = EmailAutomation.objects.all()
+        user = self.request.user
+        is_admin = user.is_staff or user.is_superuser
+        if is_admin:
+            queryset = EmailAutomation.objects.all()
+        else:
+            queryset = EmailAutomation.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
         store_id = self.request.query_params.get('store')
         if store_id:
             queryset = queryset.filter(store_id=store_id)
@@ -689,7 +731,7 @@ class EmailAutomationViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            automation = EmailAutomation.objects.get(id=automation_id)
+            automation = self.get_queryset().get(id=automation_id)
         except EmailAutomation.DoesNotExist:
             return Response(
                 {'error': 'Automation not found'},
@@ -784,9 +826,14 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
         store_url = 'https://loja.com.br'
         if store_id:
             try:
-                store = Store.objects.get(id=store_id)
-                store_name = store.name
-                store_url = store.website_url or f'https://{store.slug}.com.br'
+                _store = Store.objects.get(id=store_id)
+                _user = request.user
+                if not (_user.is_staff or _user.is_superuser):
+                    if _store.owner_id != _user.pk and not _store.staff.filter(pk=_user.pk).exists():
+                        _store = None
+                if _store:
+                    store_name = _store.name
+                    store_url = _store.website_url or f'https://{_store.slug}.com.br'
             except Store.DoesNotExist:
                 pass
         
