@@ -3,6 +3,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import Campaign, Template, Automation, ScheduledMessage
@@ -13,6 +14,13 @@ from .serializers import (
 from .tasks import execute_automation, process_scheduled_messages
 
 
+def _store_q(user):
+    """Q filter scoping store-based models to the requesting user's stores."""
+    if user.is_staff or user.is_superuser:
+        return Q()
+    return Q(store__owner=user) | Q(store__staff=user)
+
+
 class CampaignViewSet(viewsets.ModelViewSet):
     """Gerenciar campanhas de marketing."""
     queryset = Campaign.objects.all()
@@ -20,6 +28,9 @@ class CampaignViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'channel', 'store']
+
+    def get_queryset(self):
+        return Campaign.objects.filter(_store_q(self.request.user))
 
     @action(detail=True, methods=['post'])
     def schedule(self, request, pk=None):
@@ -48,6 +59,9 @@ class TemplateViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['channel', 'whatsapp_status']
 
+    def get_queryset(self):
+        return Template.objects.filter(_store_q(self.request.user))
+
 
 class AutomationViewSet(viewsets.ModelViewSet):
     """Gerenciar automações."""
@@ -56,6 +70,9 @@ class AutomationViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['trigger', 'is_active']
+
+    def get_queryset(self):
+        return Automation.objects.filter(_store_q(self.request.user))
 
     @action(detail=True, methods=['post'])
     def trigger(self, request, pk=None):
@@ -80,6 +97,9 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'channel', 'store']
+
+    def get_queryset(self):
+        return ScheduledMessage.objects.filter(_store_q(self.request.user))
 
     @action(detail=False, methods=['post'])
     def process_pending(self, request):
