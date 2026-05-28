@@ -3,6 +3,7 @@ WhatsApp Celery tasks.
 """
 import logging
 import time
+import datetime as _dt
 from celery import shared_task
 from django.utils import timezone
 from django.conf import settings
@@ -302,9 +303,9 @@ def _process_status_event(event, message_service):
     timestamp = None
     if timestamp_str:
         try:
-            timestamp = timezone.datetime.fromtimestamp(
+            timestamp = _dt.datetime.fromtimestamp(
                 int(timestamp_str),
-                tz=timezone.utc
+                tz=_dt.timezone.utc
             )
         except (ValueError, TypeError):
             pass
