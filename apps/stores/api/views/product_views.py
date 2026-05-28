@@ -27,18 +27,19 @@ class StoreCategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
-        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreCategory.objects.all()
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if filtered:
-            return queryset.order_by('sort_order', 'name')
-        
         user = self.request.user
         if user.is_staff:
-            return queryset.order_by('sort_order', 'name')
-        return queryset.filter(
-            Q(store__owner=user) | Q(store__staff=user)
-        ).distinct().order_by('sort_order', 'name')
+            queryset = StoreCategory.objects.all()
+        else:
+            queryset = StoreCategory.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        if store_param:
+            queryset, _ = filter_by_store(queryset, store_param)
+
+        return queryset.order_by('sort_order', 'name')
 
 
 class StoreProductViewSet(viewsets.ModelViewSet):
@@ -47,16 +48,17 @@ class StoreProductViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            queryset = StoreProduct.objects.all()
+        else:
+            queryset = StoreProduct.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreProduct.objects.all()
-        
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if not filtered:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
+        if store_param:
+            queryset, _ = filter_by_store(queryset, store_param)
         
         # Filters
         category = self.request.query_params.get('category')

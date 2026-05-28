@@ -29,21 +29,21 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            queryset = StoreOrder.objects.all()
+        else:
+            queryset = StoreOrder.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreOrder.objects.all()
-        
         if store_param:
             try:
                 uuid_module.UUID(store_param)
                 queryset = queryset.filter(store_id=store_param)
             except (ValueError, AttributeError):
                 queryset = queryset.filter(store__slug=store_param)
-        else:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
         
         # Filters
         status_filter = self.request.query_params.get('status')
@@ -355,16 +355,17 @@ class StoreCustomerViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            queryset = StoreCustomer.objects.all()
+        else:
+            queryset = StoreCustomer.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            ).distinct()
+
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        queryset = StoreCustomer.objects.all()
-        
-        queryset, filtered = filter_by_store(queryset, store_param)
-        if not filtered:
-            user = self.request.user
-            if not user.is_staff:
-                queryset = queryset.filter(
-                    Q(store__owner=user) | Q(store__staff=user)
-                ).distinct()
+        if store_param:
+            queryset, _ = filter_by_store(queryset, store_param)
         
         search = self.request.query_params.get('search')
         if search:
