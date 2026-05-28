@@ -333,10 +333,15 @@ class StoreOrder(BaseModel):
 
         status_message_map = {**default_message_map}
         template_key_map = {
+            self.OrderStatus.PROCESSING: 'processing',
             self.OrderStatus.CONFIRMED: 'confirmed',
+            self.OrderStatus.PAID: 'paid',
             self.OrderStatus.PREPARING: 'preparing',
+            self.OrderStatus.READY: 'ready',
             self.OrderStatus.OUT_FOR_DELIVERY: 'out_for_delivery',
             self.OrderStatus.DELIVERED: 'delivered',
+            self.OrderStatus.COMPLETED: 'completed',
+            self.OrderStatus.CANCELLED: 'cancelled',
         }
         for status_val, tpl_key in template_key_map.items():
             if custom_templates.get(tpl_key, '').strip():

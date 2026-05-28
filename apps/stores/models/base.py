@@ -89,6 +89,8 @@ class Store(BaseModel):
         FRESH = 'fresh', 'Fresh'
         BOLD = 'bold', 'Bold'
         CLASSIC = 'classic', 'Classic'
+        MINIMAL = 'minimal', 'Minimal'
+        DARK = 'dark', 'Dark'
 
     # Basic Info
     name = models.CharField(max_length=255)
