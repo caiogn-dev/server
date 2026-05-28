@@ -51,11 +51,15 @@ class IntentStatsViewSet(viewsets.ViewSet):
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
         # Query base
+        _user = request.user
+        _is_admin = _user.is_staff or _user.is_superuser
         queryset = IntentLog.objects.filter(
             created_at__gte=start_date,
             created_at__lte=end_date
         )
-        
+        if not _is_admin:
+            queryset = queryset.filter(account__owner=_user)
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         
@@ -137,8 +141,10 @@ class IntentLogViewSet(viewsets.ViewSet):
         phone_number = request.query_params.get('phone_number')
         
         # Query base
-        queryset = IntentLog.objects.all()
-        
+        _user = request.user
+        _is_admin = _user.is_staff or _user.is_superuser
+        queryset = IntentLog.objects.all() if _is_admin else IntentLog.objects.filter(account__owner=_user)
+
         # Filtros
         if account_id:
             queryset = queryset.filter(account_id=account_id)
@@ -188,7 +194,10 @@ class IntentLogViewSet(viewsets.ViewSet):
     def retrieve(self, request, pk=None):
         """Retorna um log específico."""
         try:
-            log = IntentLog.objects.get(id=pk)
+            _user = request.user
+            _is_admin = _user.is_staff or _user.is_superuser
+            _qs = IntentLog.objects.all() if _is_admin else IntentLog.objects.filter(account__owner=_user)
+            log = _qs.get(id=pk)
             return Response({
                 'id': str(log.id),
                 'message_id': str(log.message_id) if log.message else None,
@@ -228,8 +237,10 @@ class IntentLogViewSet(viewsets.ViewSet):
         account_id = request.query_params.get('account_id')
         
         # Query base
-        queryset = IntentLog.objects.all()
-        
+        _user = request.user
+        _is_admin = _user.is_staff or _user.is_superuser
+        queryset = IntentLog.objects.all() if _is_admin else IntentLog.objects.filter(account__owner=_user)
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         if start_date_str:
@@ -238,7 +249,7 @@ class IntentLogViewSet(viewsets.ViewSet):
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
             queryset = queryset.filter(created_at__lte=end_date)
-        
+
         queryset = queryset.order_by('-created_at')
         
         if export_format == 'csv':
