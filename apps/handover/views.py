@@ -51,10 +51,16 @@ class HandoverViewSet(viewsets.ViewSet):
     ViewSet para gerenciar handover de conversas.
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_conversation(self, pk):
-        """Obtém a conversa pelo ID."""
-        return get_object_or_404(Conversation, pk=pk)
+        """Obtém a conversa pelo ID, verificando pertencimento ao tenant."""
+        conversation = get_object_or_404(Conversation, pk=pk)
+        user = self.request.user
+        if not (user.is_staff or user.is_superuser):
+            if conversation.account.owner_id != user.pk:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied()
+        return conversation
     
     def get_or_create_handover(self, conversation):
         """Obtém ou cria o registro de handover."""
