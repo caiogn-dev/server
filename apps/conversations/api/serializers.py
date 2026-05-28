@@ -10,6 +10,7 @@ class ConversationSerializer(serializers.ModelSerializer):
     """Serializer for Conversation."""
     account_name = serializers.CharField(source='account.name', read_only=True)
     profile_picture = serializers.SerializerMethodField()
+    unified_user_id = serializers.SerializerMethodField()
     assigned_agent_name = serializers.CharField(
         source='assigned_agent.username',
         read_only=True,
@@ -39,13 +40,21 @@ class ConversationSerializer(serializers.ModelSerializer):
             'handover_status', 'handover_assigned_to', 'handover_assigned_to_name',
             'last_customer_message_at', 'last_agent_message_at',
             'closed_at', 'resolved_at', 'message_count',
-            'created_at', 'updated_at', 'is_active'
+            'created_at', 'updated_at', 'is_active',
+            'unified_user_id',
         ]
         read_only_fields = [
             'id', 'last_message_at', 'last_customer_message_at',
             'last_agent_message_at', 'closed_at', 'resolved_at',
             'created_at', 'updated_at'
         ]
+
+    def get_unified_user_id(self, obj):
+        from apps.users.models import UnifiedUser
+        if not obj.phone_number:
+            return None
+        result = UnifiedUser.objects.filter(phone_number=obj.phone_number).values('id').first()
+        return str(result['id']) if result else None
 
     def get_profile_picture(self, obj):
         if obj.profile_picture_file:
