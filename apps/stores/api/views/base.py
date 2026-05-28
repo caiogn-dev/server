@@ -48,7 +48,12 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
         store_pk = view.kwargs.get('store_pk')
         if store_pk:
             try:
-                store = Store.objects.get(pk=store_pk)
+                # Try UUID first, then slug
+                try:
+                    uuid_module.UUID(str(store_pk))
+                    store = Store.objects.get(pk=store_pk)
+                except ValueError:
+                    store = Store.objects.get(slug=store_pk)
             except Store.DoesNotExist:
                 return False
             return self._user_can_access_store(request.user, store)
