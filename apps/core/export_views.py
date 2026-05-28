@@ -128,9 +128,13 @@ def export_messages(request):
     direction = request.query_params.get('direction')
     message_status = request.query_params.get('status')
     
-    # Build queryset
-    queryset = Message.objects.select_related('account').all()
-    
+    # Build queryset — scope to requesting user's accounts
+    user = request.user
+    if user.is_staff or user.is_superuser:
+        queryset = Message.objects.select_related('account').all()
+    else:
+        queryset = Message.objects.select_related('account').filter(account__owner=user)
+
     if account_id:
         queryset = queryset.filter(account_id=account_id)
     
@@ -211,8 +215,15 @@ def export_orders(request):
     export_format = request.query_params.get('format', 'csv')
     order_status = request.query_params.get('status')
     
-    # Build queryset
-    queryset = StoreOrder.objects.select_related('store').all()
+    # Build queryset — scope to requesting user's stores
+    from django.db.models import Q as _Q
+    user = request.user
+    if user.is_staff or user.is_superuser:
+        queryset = StoreOrder.objects.select_related('store').all()
+    else:
+        queryset = StoreOrder.objects.select_related('store').filter(
+            _Q(store__owner=user) | _Q(store__staff=user)
+        )
     if store_param:
         try:
             import uuid as uuid_module
@@ -302,9 +313,15 @@ def export_sessions(request):
     export_format = request.query_params.get('format', 'csv')
     session_status = request.query_params.get('status')
     
-    # Build queryset
-    queryset = CustomerSession.objects.select_related('company', 'company__store').all()
-    
+    # Build queryset — scope to requesting user's stores
+    user = request.user
+    if user.is_staff or user.is_superuser:
+        queryset = CustomerSession.objects.select_related('company', 'company__store').all()
+    else:
+        queryset = CustomerSession.objects.select_related('company', 'company__store').filter(
+            company__store__owner=user
+        )
+
     if store_id:
         queryset = queryset.filter(company__store_id=store_id)
     elif company_id:
@@ -383,9 +400,15 @@ def export_automation_logs(request):
     action_type = request.query_params.get('action_type')
     is_error = request.query_params.get('is_error')
     
-    # Build queryset
-    queryset = AutomationLog.objects.select_related('company', 'company__store').all()
-    
+    # Build queryset — scope to requesting user's stores
+    user = request.user
+    if user.is_staff or user.is_superuser:
+        queryset = AutomationLog.objects.select_related('company', 'company__store').all()
+    else:
+        queryset = AutomationLog.objects.select_related('company', 'company__store').filter(
+            company__store__owner=user
+        )
+
     if store_id:
         queryset = queryset.filter(company__store_id=store_id)
     elif company_id:
@@ -462,9 +485,13 @@ def export_conversations(request):
     conv_status = request.query_params.get('status')
     mode = request.query_params.get('mode')
     
-    # Build queryset
-    queryset = Conversation.objects.select_related('account').all()
-    
+    # Build queryset — scope to requesting user's accounts
+    user = request.user
+    if user.is_staff or user.is_superuser:
+        queryset = Conversation.objects.select_related('account').all()
+    else:
+        queryset = Conversation.objects.select_related('account').filter(account__owner=user)
+
     if account_id:
         queryset = queryset.filter(account_id=account_id)
     
