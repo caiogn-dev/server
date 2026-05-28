@@ -50,15 +50,20 @@ class IntentStatsViewSet(viewsets.ViewSet):
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
-        # Query base
-        queryset = IntentLog.objects.filter(
+        # Query base — scoped to the requesting user's accounts
+        user = request.user
+        base_filter = (
+            IntentLog.objects.all() if (user.is_staff or user.is_superuser)
+            else IntentLog.objects.filter(account__owner=user)
+        )
+        queryset = base_filter.filter(
             created_at__gte=start_date,
             created_at__lte=end_date
         )
-        
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        
+
         # Estatísticas agregadas
         total_detected = queryset.count()
         
@@ -136,9 +141,13 @@ class IntentLogViewSet(viewsets.ViewSet):
         account_id = request.query_params.get('account_id')
         phone_number = request.query_params.get('phone_number')
         
-        # Query base
-        queryset = IntentLog.objects.all()
-        
+        # Query base — scoped to the requesting user's accounts
+        user = request.user
+        queryset = (
+            IntentLog.objects.all() if (user.is_staff or user.is_superuser)
+            else IntentLog.objects.filter(account__owner=user)
+        )
+
         # Filtros
         if account_id:
             queryset = queryset.filter(account_id=account_id)
@@ -227,9 +236,13 @@ class IntentLogViewSet(viewsets.ViewSet):
         end_date_str = request.query_params.get('end_date')
         account_id = request.query_params.get('account_id')
         
-        # Query base
-        queryset = IntentLog.objects.all()
-        
+        # Query base — scoped to the requesting user's accounts
+        user = request.user
+        queryset = (
+            IntentLog.objects.all() if (user.is_staff or user.is_superuser)
+            else IntentLog.objects.filter(account__owner=user)
+        )
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         if start_date_str:
@@ -238,7 +251,7 @@ class IntentLogViewSet(viewsets.ViewSet):
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
             queryset = queryset.filter(created_at__lte=end_date)
-        
+
         queryset = queryset.order_by('-created_at')
         
         if export_format == 'csv':
@@ -320,12 +333,17 @@ class AutomationDashboardViewSet(viewsets.ViewSet):
         if end_date_str:
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d')
         
-        # Query base de logs
-        queryset = IntentLog.objects.filter(
+        # Query base de logs — scoped to the requesting user's accounts
+        user = request.user
+        base_filter = (
+            IntentLog.objects.all() if (user.is_staff or user.is_superuser)
+            else IntentLog.objects.filter(account__owner=user)
+        )
+        queryset = base_filter.filter(
             created_at__gte=start_date,
             created_at__lte=end_date
         )
-        
+
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         
