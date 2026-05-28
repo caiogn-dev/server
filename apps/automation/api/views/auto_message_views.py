@@ -213,12 +213,12 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
                 continue
             
             try:
-                auto_message = AutoMessage.objects.get(id=message_id)
-                
+                auto_message = self.get_queryset().get(id=message_id)
+
                 for field in ['is_active', 'priority', 'message_text', 'delay_seconds']:
                     if field in update:
                         setattr(auto_message, field, update[field])
-                
+
                 auto_message.save()
                 updated_count += 1
             except AutoMessage.DoesNotExist:
