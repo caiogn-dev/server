@@ -481,6 +481,46 @@ class WebhookService:
                     extra={'message_id': str(message.id)},
                 )
 
+        # Imagem enviada por cliente com sessão PAYMENT_PENDING → tratar como comprovante
+        if (
+            message.message_type == 'image'
+            and not message.text_body
+            and not _interactive_reply
+        ):
+            from apps.automation.models import CustomerSession
+            _phone = message.from_number or ''
+            _digits = ''.join(filter(str.isdigit, _phone))
+            _phone_candidates = list(dict.fromkeys(v for v in [_phone, _digits, f'+{_digits}'] if v))
+            _pix_session_qs = CustomerSession.objects.filter(
+                phone_number__in=_phone_candidates,
+                status='payment_pending',
+            )
+            if context.profile:
+                _pix_session_qs = _pix_session_qs.filter(company=context.profile)
+            if _pix_session_qs.exists():
+                try:
+                    from .message_service import MessageService
+                    MessageService().send_text_message(
+                        account_id=str(event.account.id),
+                        to=message.from_number,
+                        text=(
+                            "✅ *Comprovante recebido!*\n\n"
+                            "Vou verificar seu pagamento e confirmar o pedido em breve. 🙏\n\n"
+                            "Caso precise de ajuda, é só chamar!"
+                        ),
+                        reply_to=str(message.whatsapp_message_id),
+                    )
+                    if not message.processed_by_agent:
+                        message.processed_by_agent = True
+                        message.save(update_fields=['processed_by_agent'])
+                    logger.info(
+                        '[pipeline] Payment proof image acknowledged for payment_pending session',
+                        extra={'message_id': str(message.id)},
+                    )
+                    return
+                except Exception as exc:
+                    logger.warning('[pipeline] Failed to ack payment proof image: %s', exc)
+
         catalog_order_response = self._build_catalog_order_response(
             event=event,
             message=message,
@@ -976,6 +1016,16 @@ class WebhookService:
             content = {'location': location}
             location_label = location.get('name') or location.get('address') or 'Localizacao'
             text_body = f"\U0001f4cd {location_label}"
+            # Salvar pin como UserAddress do cliente (sem bloquear o fluxo)
+            _lat = location.get('latitude')
+            _lng = location.get('longitude')
+            if _lat is not None and _lng is not None:
+                self._save_whatsapp_location_as_address(
+                    phone=from_number,
+                    account=event.account,
+                    lat=float(_lat),
+                    lng=float(_lng),
+                )
         elif message_type == 'contacts':
             contacts = message_data.get('contacts', [])
             content = {'contacts': contacts}
@@ -1082,6 +1132,73 @@ class WebhookService:
         
         logger.info(f"Processed inbound message: {message.id} from {from_number}")
         return message
+
+    @staticmethod
+    def _save_whatsapp_location_as_address(phone: str, account, lat: float, lng: float) -> None:
+        """
+        Salva o pin de localização do WhatsApp como UserAddress do cliente.
+
+        Faz reverse geocode via GoogleMapsProvider e cria/atualiza o registro.
+        Falhas são silenciosas para não bloquear o pipeline principal.
+        """
+        try:
+            from apps.users.models import UnifiedUser, UserAddress
+            from apps.stores.models import Store
+            from apps.stores.services.geo.google_provider import GoogleMapsProvider
+
+            unified_user = UnifiedUser.objects.filter(phone_number=phone).first()
+            if not unified_user:
+                logger.debug("_save_whatsapp_location_as_address: UnifiedUser not found for %s", phone)
+                return
+
+            # Descobrir a loja vinculada ao account
+            store = Store.objects.filter(whatsapp_account=account).first()
+            if not store:
+                logger.debug("_save_whatsapp_location_as_address: no Store for account %s", account.id)
+                return
+
+            # Reverse geocode
+            address_data: dict = {}
+            try:
+                geo = GoogleMapsProvider()
+                result = geo.reverse_geocode(lat, lng)
+                if result:
+                    address_data = result
+            except Exception as geo_exc:
+                logger.warning("_save_whatsapp_location_as_address: reverse_geocode failed: %s", geo_exc)
+
+            # reverse_geocode retorna address_components como dict aninhado
+            components = address_data.get('address_components') or {}
+            if isinstance(components, dict):
+                street       = components.get('street', '')
+                number       = components.get('number', '')
+                neighborhood = components.get('neighborhood', '')
+                city         = components.get('city', '')
+                state        = components.get('state_code') or components.get('state', '')
+            else:
+                street = number = neighborhood = city = state = ''
+
+            UserAddress.objects.update_or_create(
+                unified_user=unified_user,
+                tenant=store,
+                label='WhatsApp',
+                defaults={
+                    'street':       street,
+                    'number':       number,
+                    'neighborhood': neighborhood,
+                    'city':         city,
+                    'state':        state,
+                    'lat':          lat,
+                    'lng':          lng,
+                },
+            )
+            logger.info(
+                "_save_whatsapp_location_as_address: saved address for user=%s store=%s",
+                unified_user.id,
+                store.slug,
+            )
+        except Exception as exc:
+            logger.warning("_save_whatsapp_location_as_address: unexpected error: %s", exc, exc_info=True)
 
     def _process_status_update(self, event: WebhookEvent) -> Optional[Message]:
         """Process a message status update event."""
