@@ -25,9 +25,24 @@ logger = logging.getLogger(__name__)
 
 class StoreOrderViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store orders."""
-    
+
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
-    
+
+    def initialize_request(self, request, *args, **kwargs):
+        """Resolve store slug to UUID if needed for nested router."""
+        store_pk = self.kwargs.get('store_pk')
+        if store_pk:
+            try:
+                uuid_module.UUID(str(store_pk))
+            except (ValueError, AttributeError):
+                # It's a slug, resolve to UUID
+                try:
+                    store = Store.objects.get(slug=store_pk)
+                    self.kwargs['store_pk'] = str(store.id)
+                except Store.DoesNotExist:
+                    pass
+        return super().initialize_request(request, *args, **kwargs)
+
     def get_queryset(self):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         queryset = StoreOrder.objects.all()
