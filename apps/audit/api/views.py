@@ -7,6 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from apps.whatsapp.models import Message
@@ -104,9 +105,15 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
         export_service = ExportService()
         audit_service = AuditService()
         
+        user = request.user
+        is_admin = user.is_staff or user.is_superuser
+
         # Get queryset based on export type
         if export_type == 'messages':
-            queryset = Message.objects.all()
+            if is_admin:
+                queryset = Message.objects.all()
+            else:
+                queryset = Message.objects.filter(account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
@@ -114,9 +121,14 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('direction'):
                 queryset = queryset.filter(direction=filters['direction'])
             response = export_service.export_messages(queryset, export_format, request.user)
-            
+
         elif export_type == 'orders':
-            queryset = StoreOrder.objects.filter(is_active=True)
+            if is_admin:
+                queryset = StoreOrder.objects.filter(is_active=True)
+            else:
+                queryset = StoreOrder.objects.filter(is_active=True).filter(
+                    Q(store__owner=user) | Q(store__staff=user)
+                )
             store_filter = filters.get('store') or filters.get('store_id')
             if store_filter:
                 try:
@@ -128,9 +140,12 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
             response = export_service.export_orders(queryset, export_format, request.user)
-            
+
         elif export_type == 'conversations':
-            queryset = Conversation.objects.filter(is_active=True)
+            if is_admin:
+                queryset = Conversation.objects.filter(is_active=True)
+            else:
+                queryset = Conversation.objects.filter(is_active=True, account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):

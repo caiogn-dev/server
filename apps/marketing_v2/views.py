@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db.models import Q
 
 from .models import Campaign, Template, Automation, ScheduledMessage
 from .serializers import (
@@ -15,11 +16,18 @@ from .tasks import execute_automation, process_scheduled_messages
 
 class CampaignViewSet(viewsets.ModelViewSet):
     """Gerenciar campanhas de marketing."""
-    queryset = Campaign.objects.all()
     serializer_class = CampaignSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'channel', 'store']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return Campaign.objects.all()
+        return Campaign.objects.filter(
+            Q(store__owner=user) | Q(store__staff=user)
+        ).distinct()
 
     @action(detail=True, methods=['post'])
     def schedule(self, request, pk=None):
@@ -42,20 +50,34 @@ class CampaignViewSet(viewsets.ModelViewSet):
 
 class TemplateViewSet(viewsets.ModelViewSet):
     """Gerenciar templates."""
-    queryset = Template.objects.all()
     serializer_class = TemplateSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['channel', 'whatsapp_status']
 
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return Template.objects.all()
+        return Template.objects.filter(
+            Q(store__owner=user) | Q(store__staff=user)
+        ).distinct()
+
 
 class AutomationViewSet(viewsets.ModelViewSet):
     """Gerenciar automações."""
-    queryset = Automation.objects.all()
     serializer_class = AutomationSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['trigger', 'is_active']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return Automation.objects.all()
+        return Automation.objects.filter(
+            Q(store__owner=user) | Q(store__staff=user)
+        ).distinct()
 
     @action(detail=True, methods=['post'])
     def trigger(self, request, pk=None):
@@ -75,11 +97,18 @@ class AutomationViewSet(viewsets.ModelViewSet):
 
 class ScheduledMessageViewSet(viewsets.ModelViewSet):
     """Gerenciar mensagens agendadas."""
-    queryset = ScheduledMessage.objects.all()
     serializer_class = ScheduledMessageSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['status', 'channel', 'store']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return ScheduledMessage.objects.all()
+        return ScheduledMessage.objects.filter(
+            Q(store__owner=user) | Q(store__staff=user)
+        ).distinct()
 
     @action(detail=False, methods=['post'])
     def process_pending(self, request):
