@@ -39,16 +39,25 @@ class DashboardOverviewView(APIView):
         week_start = today_start - timedelta(days=7)
         month_start = today_start - timedelta(days=30)
 
-        # Base querysets
+        # Base querysets — scoped to the requesting user's tenant
+        user = request.user
+        is_admin = user.is_staff or user.is_superuser
         accounts_qs = WhatsAppAccount.objects.filter(is_active=True)
+        if not is_admin:
+            accounts_qs = accounts_qs.filter(owner=user)
         if account_id:
             accounts_qs = accounts_qs.filter(id=account_id)
-        
+
         account_ids = list(accounts_qs.values_list('id', flat=True))
-        
+
         messages_qs = Message.objects.filter(account_id__in=account_ids)
         conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
-        orders_qs = StoreOrder.objects.filter(is_active=True)
+        if is_admin:
+            orders_qs = StoreOrder.objects.filter(is_active=True)
+        else:
+            orders_qs = StoreOrder.objects.filter(is_active=True).filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            )
         store_param = request.query_params.get('store')
         if store_param:
             try:
@@ -210,6 +219,11 @@ class DashboardStatsView(APIView):
         if not store:
             return Response({'detail': 'Store not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+        user = request.user
+        if not (user.is_staff or user.is_superuser):
+            if store.owner_id != user.pk and not store.staff.filter(pk=user.pk).exists():
+                return Response({'detail': 'Store not found.'}, status=status.HTTP_404_NOT_FOUND)
+
         payload = DashboardStatsAggregator(store).build_payload()
         return Response(payload)
 
@@ -233,14 +247,23 @@ class DashboardActivityView(APIView):
     def get(self, request):
         account_id = request.query_params.get('account_id')
         limit = int(request.query_params.get('limit', 20))
-        
+
+        user = request.user
+        is_admin = user.is_staff or user.is_superuser
         accounts_qs = WhatsAppAccount.objects.filter(is_active=True)
+        if not is_admin:
+            accounts_qs = accounts_qs.filter(owner=user)
         if account_id:
             accounts_qs = accounts_qs.filter(id=account_id)
-        
+
         account_ids = list(accounts_qs.values_list('id', flat=True))
 
-        orders_qs = StoreOrder.objects.filter(is_active=True)
+        if is_admin:
+            orders_qs = StoreOrder.objects.filter(is_active=True)
+        else:
+            orders_qs = StoreOrder.objects.filter(is_active=True).filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            )
         store_param = request.query_params.get('store')
         if store_param:
             try:
@@ -322,13 +345,22 @@ class DashboardChartsView(APIView):
     def get(self, request):
         account_id = request.query_params.get('account_id')
         days = int(request.query_params.get('days', 7))
-        
+
+        user = request.user
+        is_admin = user.is_staff or user.is_superuser
         accounts_qs = WhatsAppAccount.objects.filter(is_active=True)
+        if not is_admin:
+            accounts_qs = accounts_qs.filter(owner=user)
         if account_id:
             accounts_qs = accounts_qs.filter(id=account_id)
-        
+
         account_ids = list(accounts_qs.values_list('id', flat=True))
-        orders_qs = StoreOrder.objects.filter(is_active=True)
+        if is_admin:
+            orders_qs = StoreOrder.objects.filter(is_active=True)
+        else:
+            orders_qs = StoreOrder.objects.filter(is_active=True).filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            )
         store_param = request.query_params.get('store')
         if store_param:
             try:
