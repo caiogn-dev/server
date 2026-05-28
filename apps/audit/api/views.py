@@ -104,9 +104,12 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
         export_service = ExportService()
         audit_service = AuditService()
         
-        # Get queryset based on export type
+        # Get queryset based on export type — always scoped to the requesting user's tenant
+        user = request.user
+        is_admin = user.is_staff or user.is_superuser
+
         if export_type == 'messages':
-            queryset = Message.objects.all()
+            queryset = Message.objects.all() if is_admin else Message.objects.filter(account__owner=user)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
@@ -114,9 +117,16 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('direction'):
                 queryset = queryset.filter(direction=filters['direction'])
             response = export_service.export_messages(queryset, export_format, request.user)
-            
+
         elif export_type == 'orders':
-            queryset = StoreOrder.objects.filter(is_active=True)
+            from django.db.models import Q as _Q
+            base_filter = (
+                StoreOrder.objects.filter(is_active=True) if is_admin
+                else StoreOrder.objects.filter(is_active=True).filter(
+                    _Q(store__owner=user) | _Q(store__staff=user)
+                )
+            )
+            queryset = base_filter
             store_filter = filters.get('store') or filters.get('store_id')
             if store_filter:
                 try:
@@ -128,9 +138,12 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             if filters.get('status'):
                 queryset = queryset.filter(status=filters['status'])
             response = export_service.export_orders(queryset, export_format, request.user)
-            
+
         elif export_type == 'conversations':
-            queryset = Conversation.objects.filter(is_active=True)
+            queryset = (
+                Conversation.objects.filter(is_active=True) if is_admin
+                else Conversation.objects.filter(is_active=True, account__owner=user)
+            )
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
             if filters.get('status'):
