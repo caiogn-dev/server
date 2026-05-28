@@ -1,5 +1,6 @@
 # Django
 Django>=5.2,<6.0
+django-unfold>=0.40.0
 djangorestframework>=3.14.0
 django-cors-headers>=4.3.0
 django-filter>=23.5

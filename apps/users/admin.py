@@ -1,13 +1,18 @@
 """
-Admin for UnifiedUser and UnifiedUserActivity.
+Admin for UnifiedUser, UnifiedUserActivity e Django auth User.
 """
 from django.contrib import admin
+from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
+from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline
 
 from .models import UnifiedUser, UnifiedUserActivity
 
+User = get_user_model()
 
-class UnifiedUserActivityInline(admin.TabularInline):
+
+class UnifiedUserActivityInline(TabularInline):
     model = UnifiedUserActivity
     extra = 0
     readonly_fields = ('activity_type', 'description', 'metadata', 'created_at')
@@ -17,7 +22,7 @@ class UnifiedUserActivityInline(admin.TabularInline):
 
 
 @admin.register(UnifiedUser)
-class UnifiedUserAdmin(admin.ModelAdmin):
+class UnifiedUserAdmin(UnfoldModelAdmin):
     list_display = (
         'name', 'phone_number', 'email', 'total_orders',
         'total_spent_display', 'has_abandoned_cart', 'is_active', 'last_seen_at',
@@ -53,9 +58,29 @@ class UnifiedUserAdmin(admin.ModelAdmin):
 
 
 @admin.register(UnifiedUserActivity)
-class UnifiedUserActivityAdmin(admin.ModelAdmin):
+class UnifiedUserActivityAdmin(UnfoldModelAdmin):
     list_display = ('user', 'activity_type', 'description', 'created_at')
     list_filter = ('activity_type',)
     search_fields = ('user__name', 'user__phone_number', 'description')
     readonly_fields = ('created_at',)
     ordering = ('-created_at',)
+
+
+class StoreTeamMemberUserInline(TabularInline):
+    """Inline de StoreTeamMember no UserAdmin (por user FK)."""
+    from apps.stores.models import StoreTeamMember as _StoreTeamMember
+    model = _StoreTeamMember
+    fk_name = 'user'
+    extra = 0
+    fields = ('tenant', 'role', 'is_active')
+    verbose_name = 'Loja'
+    verbose_name_plural = 'Lojas'
+
+
+# Django registra auth.User com o UserAdmin padrão — precisamos substituir
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class CustomUserAdmin(UnfoldModelAdmin, BaseUserAdmin):
+    inlines = list(BaseUserAdmin.inlines or []) + [StoreTeamMemberUserInline]

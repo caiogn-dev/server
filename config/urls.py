@@ -50,8 +50,10 @@ def whatsapp_verification_view(request):
     
     return HttpResponse("Method not allowed", status=405)
 
+_ADMIN_URL = getattr(settings, 'ADMIN_URL', 'django-admin/')
+
 urlpatterns = [
-    path('admin/', admin.site.urls),
+    path(_ADMIN_URL, admin.site.urls),
 
     # Pastita Panel — custom Django-rendered admin UI (multi-tenant)
     path('panel/', include('apps.panel.urls')),

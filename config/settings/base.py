@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from datetime import timedelta
 from urllib.parse import parse_qs, unquote, urlparse
+from django.templatetags.static import static
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -34,6 +35,9 @@ ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] 
 
 INSTALLED_APPS = [
     'daphne',
+    'unfold',
+    'unfold.contrib.filters',
+    'unfold.contrib.inlines',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -647,6 +651,86 @@ WHITENOISE_MANIFEST_STRICT = False
 # Postado — AI social media posts admin
 # ─────────────────────────────────────────────────────────────────────────────
 POSTADO_ADMIN_TOKEN = os.environ.get('POSTADO_ADMIN_TOKEN', '')
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Admin URL — configurável via env var para segurança
+# ─────────────────────────────────────────────────────────────────────────────
+ADMIN_URL = os.environ.get('DJANGO_ADMIN_URL', 'django-admin') + '/'
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Django Unfold — admin UI moderno
+# ─────────────────────────────────────────────────────────────────────────────
+UNFOLD = {
+    "SITE_TITLE": "Cardapidex Admin",
+    "SITE_HEADER": "Cardapidex",
+    "SITE_URL": "/",
+    "SITE_LOGO": lambda request: static("img/cardapidex-logo.svg"),
+    "COLORS": {
+        "font": {
+            "subtle-light": "107 114 128",
+            "subtle-dark": "156 163 175",
+            "default-light": "75 85 99",
+            "default-dark": "209 213 219",
+            "important-light": "17 24 39",
+            "important-dark": "243 244 246",
+        },
+        "primary": {
+            "50": "236 253 245",
+            "100": "209 250 229",
+            "200": "167 243 208",
+            "300": "110 231 183",
+            "400": "52 211 153",
+            "500": "16 185 129",
+            "600": "5 150 105",
+            "700": "4 120 87",
+            "800": "6 95 70",
+            "900": "4 78 56",
+            "950": "2 44 34",
+        },
+    },
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Lojas",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Lojas",
+                        "icon": "store",
+                        "link": "/django-admin/stores/store/",
+                    },
+                    {
+                        "title": "Equipe",
+                        "icon": "group",
+                        "link": "/django-admin/stores/storeteammember/",
+                    },
+                ],
+            },
+            {
+                "title": "Usuários",
+                "items": [
+                    {
+                        "title": "Usuários Django",
+                        "icon": "person",
+                        "link": "/django-admin/auth/user/",
+                    },
+                ],
+            },
+            {
+                "title": "Pedidos",
+                "items": [
+                    {
+                        "title": "Todos os Pedidos",
+                        "icon": "shopping_bag",
+                        "link": "/django-admin/stores/storeorder/",
+                    },
+                ],
+            },
+        ],
+    },
+}
 
 
 
