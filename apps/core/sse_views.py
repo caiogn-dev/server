@@ -200,18 +200,29 @@ class OrderSSEView(BaseSSEView):
     def get_event_stream(self, request, user, last_event_id=None):
         """Stream order updates."""
         from apps.stores.models import StoreOrder
-        
+        from django.db.models import Q
+
         store_id = request.GET.get('store_id')
         order_id = request.GET.get('order_id')
-        
+
+        is_admin = user.is_staff or user.is_superuser
+
+        # Base queryset scoped to the user's stores
+        def _base_qs():
+            if is_admin:
+                return StoreOrder.objects.all()
+            return StoreOrder.objects.filter(
+                Q(store__owner=user) | Q(store__staff=user)
+            )
+
         # Track last check time
         last_check = time.time()
-        
+
         # Get initial state
         if order_id:
-            # Single order tracking
+            # Single order tracking — verify ownership before subscribing
             try:
-                order = StoreOrder.objects.get(id=order_id)
+                order = _base_qs().get(id=order_id)
                 last_status = order.status
             except StoreOrder.DoesNotExist:
                 yield SSEEvent(
@@ -220,12 +231,12 @@ class OrderSSEView(BaseSSEView):
                 )
                 return
         elif store_id:
-            # Store orders
+            # Store orders — filter within user's allowed stores
             try:
                 uuid_module.UUID(str(store_id))
-                last_count = StoreOrder.objects.filter(store_id=store_id).count()
+                last_count = _base_qs().filter(store_id=store_id).count()
             except (ValueError, AttributeError):
-                last_count = StoreOrder.objects.filter(store__slug=store_id).count()
+                last_count = _base_qs().filter(store__slug=store_id).count()
             last_order_id = None
         else:
             # All orders user has access to
@@ -238,7 +249,7 @@ class OrderSSEView(BaseSSEView):
             if order_id:
                 # Check single order status
                 try:
-                    order = StoreOrder.objects.get(id=order_id)
+                    order = _base_qs().get(id=order_id)
                     if order.status != last_status:
                         yield SSEEvent(
                             event_type='order_updated',
@@ -261,7 +272,7 @@ class OrderSSEView(BaseSSEView):
                     break
             else:
                 # Check for new orders
-                query = StoreOrder.objects.all()
+                query = _base_qs()
                 if store_id:
                     try:
                         uuid_module.UUID(str(store_id))
