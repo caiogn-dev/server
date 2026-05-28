@@ -20,21 +20,28 @@ from .views import IsStoreOwnerOrStaff
 
 class BaseExportView(APIView):
     """Base class for export views."""
-    
+
     permission_classes = [IsAuthenticated, IsStoreOwnerOrStaff]
-    
+
     def get_store(self, request):
-        """Get store from query params."""
+        """Get store from query params, scoped to the requesting user's stores."""
         store_param = request.query_params.get('store')
         if not store_param:
             return None
-        
+
+        user = request.user
         try:
-            import uuid
-            uuid.UUID(store_param)
-            return Store.objects.get(id=store_param)
+            import uuid as _uuid
+            _uuid.UUID(store_param)
+            qs = Store.objects.filter(id=store_param)
         except (ValueError, AttributeError):
-            return Store.objects.filter(slug=store_param).first()
+            qs = Store.objects.filter(slug=store_param)
+
+        if not (user.is_staff or user.is_superuser):
+            from django.db.models import Q
+            qs = qs.filter(Q(owner=user) | Q(staff=user))
+
+        return qs.first()
     
     def get_date_range(self, request):
         """Get date range from query params."""
