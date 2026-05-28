@@ -4,6 +4,7 @@ Store order models - StoreOrder, StoreOrderItem, StoreOrderComboItem.
 import uuid
 import logging
 from decimal import Decimal
+from django.conf import settings
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -147,6 +148,45 @@ class StoreOrder(BaseModel):
     delivered_at = models.DateTimeField(null=True, blank=True)
     picked_up_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    # PDV: desconto manual e acréscimo
+    manual_discount_type = models.CharField(
+        max_length=10,
+        choices=[('percent', '%'), ('fixed', 'R$')],
+        null=True,
+        blank=True,
+        verbose_name='Tipo de Desconto Manual',
+    )
+    manual_discount_value = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=0,
+        verbose_name='Valor do Desconto Manual',
+    )
+    manual_discount_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name='Motivo do Desconto',
+    )
+    surcharge_value = models.DecimalField(
+        max_digits=8,
+        decimal_places=2,
+        default=0,
+        verbose_name='Valor do Acréscimo',
+    )
+    surcharge_reason = models.CharField(
+        max_length=255,
+        blank=True,
+        verbose_name='Motivo do Acréscimo',
+    )
+    created_by_staff = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='created_orders',
+        verbose_name='Criado por (staff)',
+    )
 
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)

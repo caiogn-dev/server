@@ -7,6 +7,7 @@ Conecta WhatsApp, site e checkout em um único registro sem duplicatas.
 import uuid
 from django.conf import settings
 from django.db import models, transaction
+from apps.core.models import TenantModel
 
 
 class UnifiedUser(models.Model):
@@ -299,3 +300,55 @@ class UnifiedUserActivity(models.Model):
         verbose_name = 'Atividade'
         verbose_name_plural = 'Atividades'
         ordering = ['-created_at']
+
+
+class UserAddress(TenantModel):
+    """
+    Endereço salvo de um UnifiedUser para uma loja específica.
+
+    Criado automaticamente quando o cliente envia um pin no WhatsApp
+    ou ao salvar manualmente no PDV/dashboard.
+    """
+
+    unified_user = models.ForeignKey(
+        'users.UnifiedUser',
+        on_delete=models.CASCADE,
+        related_name='addresses',
+        verbose_name='Usuário',
+    )
+    label = models.CharField(
+        max_length=50,
+        default='Casa',
+        verbose_name='Rótulo',
+    )
+    street = models.CharField(max_length=255, blank=True, verbose_name='Rua')
+    number = models.CharField(max_length=20, blank=True, verbose_name='Número')
+    neighborhood = models.CharField(max_length=100, blank=True, verbose_name='Bairro')
+    city = models.CharField(max_length=100, verbose_name='Cidade')
+    state = models.CharField(max_length=2, verbose_name='Estado')
+    zip_code = models.CharField(max_length=10, blank=True, verbose_name='CEP')
+    lat = models.DecimalField(
+        max_digits=9, decimal_places=6,
+        null=True, blank=True,
+        verbose_name='Latitude',
+    )
+    lng = models.DecimalField(
+        max_digits=9, decimal_places=6,
+        null=True, blank=True,
+        verbose_name='Longitude',
+    )
+    is_default = models.BooleanField(default=False, verbose_name='Padrão')
+
+    class Meta:
+        db_table = 'user_addresses'
+        verbose_name = 'Endereço do Usuário'
+        verbose_name_plural = 'Endereços dos Usuários'
+        ordering = ['-is_default', '-created_at']
+        indexes = [
+            models.Index(fields=['unified_user', 'tenant']),
+            models.Index(fields=['unified_user', 'is_default']),
+        ]
+
+    def __str__(self):
+        parts = [self.street, self.number, self.neighborhood, self.city, self.state]
+        return ', '.join(p for p in parts if p)

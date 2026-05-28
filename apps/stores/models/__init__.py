@@ -49,6 +49,9 @@ from .printing import (
     StorePrintJob,
 )
 
+# Team
+from .team import StoreTeamMember
+
 
 __all__ = [
     # Base
@@ -87,4 +90,6 @@ __all__ = [
     # Printing
     'StorePrintAgent',
     'StorePrintJob',
+    # Team
+    'StoreTeamMember',
 ]
