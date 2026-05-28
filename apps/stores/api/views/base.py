@@ -28,12 +28,15 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
     """
 
     def _user_can_access_store(self, user, store):
-        return (
-            store.owner == user or
-            user in store.staff.all() or
-            user.is_staff or
-            user.is_superuser
-        )
+        if user.is_staff or user.is_superuser:
+            return True
+        if store.owner == user or user in store.staff.all():
+            return True
+        # Fallback: checar StoreTeamMember com o novo sistema de roles
+        from apps.stores.permissions import get_member_role
+        if get_member_role(user, store) is not None:
+            return True
+        return False
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
