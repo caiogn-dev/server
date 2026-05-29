@@ -633,6 +633,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store_param and request:
             # Try multiple path sources
             path = getattr(request, 'path', '') or str(request.build_absolute_uri())
+            # Extract store slug from URL patterns like /api/v1/stores/{slug}/orders/
+            match = re.search(r'/stores/([^/]+?)(?:/|$)', path)
+            if match:
+                store_param = match.group(1)
 
         if not store_param:
             raise serializers.ValidationError({'store': 'store is required'})

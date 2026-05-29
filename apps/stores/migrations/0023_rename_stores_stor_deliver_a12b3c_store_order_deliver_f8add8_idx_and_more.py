@@ -21,7 +21,7 @@ class AddFieldIfMissing(migrations.AddField):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stores', '0022_merge_status_timestamps_uber_delivery'),
+        ('stores', '0021_add_uber_delivery_fields'),
     ]
 
     operations = [
