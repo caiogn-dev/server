@@ -134,6 +134,9 @@ services:
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media
+      - ${PWD}/../ftp-data/kerokero/generated:/seed/kero-kero:ro
+      - ${PWD}/../ftp-data/cardapio-cesaladas/ce-saladas:/seed/ce-saladas:ro
+      - ${PWD}/../ftp-data/cardapio-cesaladas/pastita:/seed/pastita:ro
     depends_on:
       db:
         condition: service_healthy
