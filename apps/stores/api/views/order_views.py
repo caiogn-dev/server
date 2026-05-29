@@ -28,19 +28,28 @@ class StoreOrderViewSet(viewsets.ModelViewSet):
 
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
 
+    def _resolve_store_pk(self, store_pk):
+        """Resolve store_pk from UUID or slug to UUID."""
+        if not store_pk:
+            return None
+        try:
+            uuid_module.UUID(str(store_pk))
+            return store_pk
+        except (ValueError, AttributeError):
+            # It's a slug, resolve to UUID
+            try:
+                store = Store.objects.get(slug=store_pk)
+                return str(store.id)
+            except Store.DoesNotExist:
+                return None
+
     def initialize_request(self, request, *args, **kwargs):
         """Resolve store slug to UUID if needed for nested router."""
         store_pk = self.kwargs.get('store_pk')
         if store_pk:
-            try:
-                uuid_module.UUID(str(store_pk))
-            except (ValueError, AttributeError):
-                # It's a slug, resolve to UUID
-                try:
-                    store = Store.objects.get(slug=store_pk)
-                    self.kwargs['store_pk'] = str(store.id)
-                except Store.DoesNotExist:
-                    pass
+            resolved = self._resolve_store_pk(store_pk)
+            if resolved:
+                self.kwargs['store_pk'] = resolved
         return super().initialize_request(request, *args, **kwargs)
 
     def get_queryset(self):
