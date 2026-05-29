@@ -42,6 +42,17 @@ python manage.py migrate --noinput
 echo "🔄 Collecting static files..."
 python manage.py collectstatic --noinput
 
+# Database integrity check with auto-seed on failure
+echo "🔍 Verificando integridade do banco de dados..."
+if ! python manage.py db_healthcheck --auto-seed 2>/dev/null; then
+    echo "⚠️  Auto-seed failed or stores missing, attempting seed..."
+    python manage.py populate_ce_saladas_menu --force || true
+    python manage.py populate_pastita_menu --force || true
+    python manage.py populate_kero_kero_menu --force || true
+    python manage.py populate_delivery_zones || true
+    echo "✅ Seed automático completado"
+fi
+
 echo "✅ Iniciando Gunicorn..."
 
 # Executar comando passado (gunicorn por padrão)

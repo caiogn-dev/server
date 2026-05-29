@@ -138,6 +138,7 @@ services:
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media
+      - backups:/app/backups
       - ${PWD}/../ftp-data/kerokero/generated:/seed/kero-kero:ro
       - ${PWD}/../ftp-data/cardapio-cesaladas/ce-saladas:/seed/ce-saladas:ro
       - ${PWD}/../ftp-data/cardapio-cesaladas/pastita:/seed/pastita:ro
@@ -147,9 +148,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      sh -c "python manage.py migrate &&
-             python manage.py collectstatic --noinput &&
-             gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2"
+      gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/sse/health/"]
       interval: 30s
@@ -236,6 +235,7 @@ volumes:
   redis_data:
   static_files:
   media_files:
+  backups:
 
 networks:
   default:

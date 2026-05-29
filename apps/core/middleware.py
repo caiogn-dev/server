@@ -17,6 +17,28 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================
+# CSRF Exemption for Token Authentication
+# ============================================
+
+class CSRFExemptMiddleware:
+    """
+    Exempts API endpoints with Token authentication from CSRF check.
+    Token authentication is sufficient protection; CSRF tokens are not needed.
+    """
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # If request has Authorization header with Token, mark as CSRF-safe
+        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+        if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
+            # Mark this request as CSRF-exempt
+            request._dont_enforce_csrf_checks = True
+
+        return self.get_response(request)
+
+
+# ============================================
 # WebSocket Token Authentication Middleware
 # ============================================
 

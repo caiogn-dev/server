@@ -39,13 +39,30 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
         return False
 
     def has_permission(self, request, view):
+        import logging
+        import sys
+        logger = logging.getLogger(__name__)
+
+        # Force print to stderr for debugging
+        print(f"[PERM_DEBUG] has_permission called", file=sys.stderr)
+
         if not (request.user and request.user.is_authenticated):
+            logger.warning(f"[IsStoreOwnerOrStaff] User not authenticated: {request.user}")
+            print(f"[PERM_DEBUG] User not authenticated", file=sys.stderr)
             return False
+
+        logger.info(f"[IsStoreOwnerOrStaff] User authenticated: {request.user.email}, is_staff={request.user.is_staff}, is_superuser={request.user.is_superuser}")
+        print(f"[PERM_DEBUG] User authenticated: {request.user.email}, is_staff={request.user.is_staff}", file=sys.stderr)
+
         # Superusers and Django staff bypass store ownership check
         if request.user.is_staff or request.user.is_superuser:
+            logger.info(f"[IsStoreOwnerOrStaff] User is staff/superuser, ALLOWING access")
             return True
+
         # When accessing via nested router (stores/{store_pk}/...), verify ownership
         store_pk = view.kwargs.get('store_pk')
+        logger.info(f"[IsStoreOwnerOrStaff] store_pk={store_pk}, view.kwargs={view.kwargs}")
+
         if store_pk:
             try:
                 # Try UUID first, then slug
@@ -55,8 +72,14 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
                 except ValueError:
                     store = Store.objects.get(slug=store_pk)
             except Store.DoesNotExist:
+                logger.warning(f"[IsStoreOwnerOrStaff] Store not found: {store_pk}")
                 return False
-            return self._user_can_access_store(request.user, store)
+
+            can_access = self._user_can_access_store(request.user, store)
+            logger.info(f"[IsStoreOwnerOrStaff] Store {store_pk} access check: {can_access}")
+            return can_access
+
+        logger.info(f"[IsStoreOwnerOrStaff] No store_pk, ALLOWING access")
         return True
 
     def has_object_permission(self, request, view, obj):

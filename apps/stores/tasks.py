@@ -224,3 +224,52 @@ def cleanup_abandoned_carts():
     result = out.getvalue()
     logger.info('cleanup_abandoned_carts: %s', result.strip())
     return result
+
+
+@shared_task(name='apps.stores.tasks.daily_database_backup')
+def daily_database_backup():
+    """
+    Daily backup task (Celery Beat, every 24h at 02:00 AM).
+
+    Creates a compressed PostgreSQL dump and validates database integrity.
+    Keeps backups for the last 30 days.
+    """
+    import subprocess
+    from pathlib import Path
+    from django.conf import settings
+    from django.core.management import call_command
+    from io import StringIO
+
+    try:
+        # Run healthcheck with backup flag
+        out = StringIO()
+        call_command('db_healthcheck', '--backup', stdout=out)
+        result = out.getvalue()
+        logger.info('daily_database_backup: completed successfully\n%s', result)
+        return 'success'
+    except Exception as exc:
+        logger.error('daily_database_backup: failed: %s', exc)
+        raise
+
+
+@shared_task(name='apps.stores.tasks.database_integrity_check')
+def database_integrity_check():
+    """
+    Periodic task (Celery Beat, every 6h) that validates database integrity.
+
+    Checks if all required stores exist and have minimum required data.
+    Auto-seeds if any store is missing.
+    """
+    from django.core.management import call_command
+    from io import StringIO
+
+    try:
+        out = StringIO()
+        call_command('db_healthcheck', '--auto-seed', stdout=out)
+        result = out.getvalue()
+        logger.info('database_integrity_check: %s', result)
+        return 'ok'
+    except Exception as exc:
+        logger.error('database_integrity_check: failed: %s', exc)
+        # Don't retry on failure, just log it
+        return f'failed: {exc}'

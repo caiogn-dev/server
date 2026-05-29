@@ -135,6 +135,16 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.cleanup_abandoned_carts',
         'schedule': 86400.0,  # Daily
     },
+    # Database backup — diário às 2h
+    'daily-database-backup': {
+        'task': 'apps.stores.tasks.daily_database_backup',
+        'schedule': crontab(hour=2, minute=0),
+    },
+    # Database integrity check — a cada 6h
+    'database-integrity-check': {
+        'task': 'apps.stores.tasks.database_integrity_check',
+        'schedule': 21600.0,  # Every 6 hours
+    },
 }
 
 
