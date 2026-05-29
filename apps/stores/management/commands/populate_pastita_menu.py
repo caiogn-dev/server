@@ -1,5 +1,5 @@
 """
-Management command to populate Pastita menu.
+Management command to populate Pastita Massas menu (consolidated from 3 scripts).
 
 Usage:
     python manage.py populate_pastita_menu
@@ -13,8 +13,10 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from django.utils.text import slugify
+from django.db import transaction
 
-from apps.stores.models import Store, StoreCategory, StoreProduct, StoreProductType
+from apps.stores.models import Store, StoreCategory, StoreProduct, StoreProductType, StoreDeliveryZone
+from apps.stores.utils.image_optimizer import ImageOptimizer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -22,234 +24,189 @@ User = get_user_model()
 STORE_SLUG = 'pastita'
 IMG_PATH = 'stores/products/pastita'
 
+SHARED_LOCATION = {
+    "latitude": Decimal("-10.1852683"),
+    "longitude": Decimal("-48.3036368"),
+    "address": "Q. 112 Sul, Rua Sr 01, 2 - Palmas, Tocantins",
+    "city": "Palmas",
+    "state": "TO",
+    "zip_code": "72000-000",
+    "country": "BR",
+}
 
-def _img(filename):
-    """Return relative media URL if file exists in container, else empty string."""
-    if not filename:
-        return ''
-    local = Path(settings.MEDIA_ROOT) / IMG_PATH / filename
-    if local.exists():
-        media_url = settings.MEDIA_URL.rstrip('/')
-        return f"{media_url}/{IMG_PATH}/{filename}"
-    return ''
+SHARED_OPERATING_HOURS = {
+    "monday": {"open": "08:00", "close": "17:00"},
+    "tuesday": {"open": "08:00", "close": "17:00"},
+    "wednesday": {"open": "08:00", "close": "17:00"},
+    "thursday": {"open": "08:00", "close": "17:00"},
+    "friday": {"open": "08:00", "close": "17:00"},
+    "saturday": {"open": "08:00", "close": "17:00"},
+    "sunday": {"open": "00:00", "close": "00:00"},
+}
+
+DELIVERY_ZONES = [
+    {"min_km": 0, "max_km": 2, "fee": Decimal("7.00"), "sort": 1},
+    {"min_km": Decimal("2.1"), "max_km": 3, "fee": Decimal("8.00"), "sort": 2},
+    {"min_km": Decimal("3.1"), "max_km": 5, "fee": Decimal("9.00"), "sort": 3},
+    {"min_km": Decimal("5.1"), "max_km": 6, "fee": Decimal("10.00"), "sort": 4},
+    {"min_km": Decimal("6.1"), "max_km": Decimal("6.9"), "fee": Decimal("11.00"), "sort": 5},
+    {"min_km": 7, "max_km": Decimal("7.9"), "fee": Decimal("12.00"), "sort": 6},
+    {"min_km": 8, "max_km": 8, "fee": Decimal("13.00"), "sort": 7},
+    {"min_km": 9, "max_km": 9, "fee": Decimal("14.00"), "sort": 8},
+    {"min_km": 10, "max_km": 10, "fee": Decimal("15.00"), "sort": 9},
+    {"min_km": 11, "max_km": 11, "fee": Decimal("16.00"), "sort": 10},
+    {"min_km": 12, "max_km": 12, "fee": Decimal("18.00"), "sort": 11},
+    {"min_km": 13, "max_km": 13, "fee": Decimal("20.00"), "sort": 12},
+    {"min_km": 14, "max_km": 14, "fee": Decimal("22.00"), "sort": 13},
+    {"min_km": 15, "max_km": 15, "fee": Decimal("24.00"), "sort": 14},
+    {"min_km": 16, "max_km": 16, "fee": Decimal("26.00"), "sort": 15},
+    {"min_km": 17, "max_km": 17, "fee": Decimal("28.00"), "sort": 16},
+]
+
+PRODUCT_TYPES = [
+    {"name": "Rondelli", "slug": "rondelli", "description": "Massas tipo rondelli recheadas artesanalmente", "icon": "🍝"},
+    {"name": "Molho", "slug": "molho", "description": "Molhos artesanais para acompanhar massas", "icon": "🥫"},
+]
 
 CATEGORIES = [
-    {
-        'slug': 'rondelli',
-        'name': 'Rondelli',
-        'description': 'Deliciosas massas recheadas artesanalmente.',
-        'sort_order': 1,
-    },
-    {
-        'slug': 'molhos',
-        'name': 'Molhos',
-        'description': 'Molhos artesanais para acompanhar suas refeições.',
-        'sort_order': 2,
-    },
+    {"slug": "rondelli", "name": "Rondelli", "description": "Deliciosas massas de rondelli recheadas com ingredientes selecionados.", "sort_order": 1},
+    {"slug": "molhos", "name": "Molhos", "description": "Molhos artesanais preparados com receitas tradicionais.", "sort_order": 2},
+    {"slug": "promocoes", "name": "Promoções", "description": "Aproveite nossas ofertas especiais e combos!", "sort_order": 3},
 ]
 
 PRODUCTS = [
-    {
-        'sku': 'PT-RON-001',
-        'category_slug': 'rondelli',
-        'name': 'Rondelli de Tomate Seco com Rúcula',
-        'short_description': 'Rondelli recheado com tomate seco e rúcula fresca.',
-        'description': 'Delicioso rondelli recheado com tomates secos e rúcula. Massa artesanal.',
-        'price': Decimal('39.99'),
-        'compare_at_price': Decimal('44.99'),
-        'featured': True,
-        'sort_order': 1,
-        'image': 'Gemini_Generated_Image_.png',
-        'tags': ['rondelli', 'vegetariano', 'destaque'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'PT-RON-002',
-        'category_slug': 'rondelli',
-        'name': 'Rondelli de Frango com Queijo',
-        'short_description': 'Rondelli recheado com frango desfiado e queijo.',
-        'description': 'Clássico rondelli de frango com queijo. Frango temperado com ervas finas.',
-        'price': Decimal('39.99'),
-        'featured': False,
-        'sort_order': 2,
-        'image': 'Gemini_Generated_Image_ (1).png',
-        'tags': ['rondelli', 'frango'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'PT-RON-003',
-        'category_slug': 'rondelli',
-        'name': 'Rondelli de Presunto e Queijo',
-        'short_description': 'Tradicional rondelli de presunto com queijo.',
-        'description': 'O tradicional rondelli de presunto e queijo que todo mundo ama.',
-        'price': Decimal('39.99'),
-        'featured': True,
-        'sort_order': 3,
-        'image': 'Gemini_Generated_Image_ (2).png',
-        'tags': ['rondelli', 'presunto', 'tradicional'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'PT-RON-004',
-        'category_slug': 'rondelli',
-        'name': 'Rondelli de Damasco e Nozes',
-        'short_description': 'Rondelli gourmet com damasco, nozes e queijo brie.',
-        'description': 'Combinação sofisticada de damascos, nozes e queijo brie.',
-        'price': Decimal('42.99'),
-        'compare_at_price': Decimal('47.99'),
-        'featured': True,
-        'sort_order': 4,
-        'image': 'Gemini_Generated_Image_ (3).png',
-        'tags': ['rondelli', 'gourmet', 'destaque'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'PT-RON-005',
-        'category_slug': 'rondelli',
-        'name': 'Rondelli de Queijo Minas',
-        'short_description': 'Rondelli recheado com queijo minas tradicional.',
-        'description': 'Rondelli com queijo minas de qualidade, perfeito para quem ama queijo.',
-        'price': Decimal('37.99'),
-        'featured': False,
-        'sort_order': 5,
-        'image': 'Gemini_Generated_Image_ (4).png',
-        'tags': ['rondelli', 'queijo'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'PT-MOL-001',
-        'category_slug': 'molhos',
-        'name': 'Molho de Tomate Artesanal',
-        'short_description': 'Molho de tomate caseiro com temperos frescos.',
-        'description': 'Molho de tomate tradicional com tomates maduros e temperos frescos.',
-        'price': Decimal('18.99'),
-        'featured': False,
-        'sort_order': 1,
-        'image': 'Gemini_Generated_Image_ (5).png',
-        'tags': ['molho', 'tomate'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'PT-MOL-002',
-        'category_slug': 'molhos',
-        'name': 'Molho Branco',
-        'short_description': 'Molho branco cremoso para massas.',
-        'description': 'Molho branco aveludado, perfeito para qualquer massa.',
-        'price': Decimal('19.99'),
-        'featured': True,
-        'sort_order': 2,
-        'image': 'Gemini_Generated_Image_ (6).png',
-        'tags': ['molho', 'branco', 'cremoso'],
-        'track_stock': False,
-    },
+    {"category_slug": "rondelli", "product_type_slug": "rondelli", "name": "Rondelli de Tomate Seco com Rúcula", "short_description": "Rondelli recheado com tomate seco e rúcula fresca", "description": "Delicioso rondelli recheado com tomates secos selecionados e rúcula fresca.", "price": Decimal("39.99"), "compare_at_price": Decimal("44.99"), "cost_price": Decimal("18.00"), "sku": "RON-TOM-RUC-001", "barcode": "7891234567891", "stock_quantity": 10, "featured": True, "sort_order": 1, "image": "tomate.webp", "tags": ["rondelli", "tomate-seco", "rucula", "vegetariano"]},
+    {"category_slug": "rondelli", "product_type_slug": "rondelli", "name": "Rondelli de Frango com Queijo", "short_description": "Rondelli recheado com frango desfiado e queijo", "description": "Clássico rondelli de frango com queijo.", "price": Decimal("39.99"), "cost_price": Decimal("17.50"), "sku": "RON-FRA-QUE-002", "barcode": "7891234567892", "stock_quantity": 10, "featured": False, "sort_order": 2, "image": "frango.webp", "tags": ["rondelli", "frango", "queijo"]},
 ]
 
 
 class Command(BaseCommand):
-    help = 'Populate Pastita menu with categories and products.'
+    help = 'Popula o cardápio da Pastita Massas com dados reais'
 
     def add_arguments(self, parser):
-        parser.add_argument(
-            '--force',
-            action='store_true',
-            help='Force re-creation of products.',
-        )
+        parser.add_argument('--force', action='store_true', help='Força sobrescrita de dados existentes')
 
+    @transaction.atomic
     def handle(self, *args, **options):
-        force = options['force']
-
-        self.stdout.write(self.style.NOTICE('\n' + '=' * 60))
-        self.stdout.write(self.style.NOTICE('POPULANDO CARDAPIO PASTITA'))
-        self.stdout.write(self.style.NOTICE('=' * 60 + '\n'))
+        force = options.get('force', False)
+        optimizer = ImageOptimizer()
 
         owner = User.objects.filter(is_superuser=True).first()
+        if not owner:
+            owner = User.objects.filter(is_staff=True).first()
+        if not owner:
+            owner = User.objects.first()
+        if not owner:
+            self.stdout.write(self.style.ERROR('❌ Nenhum usuário encontrado'))
+            return
+
+        self.stdout.write('📋 Fase 1: Criando Store...')
         store, created = Store.objects.update_or_create(
             slug=STORE_SLUG,
             defaults={
                 'name': 'Pastita',
                 'store_type': Store.StoreType.FOOD,
                 'status': Store.StoreStatus.ACTIVE,
-                'description': 'Rondelli artesanal e molhos especiais.',
-                'primary_color': '#1e40af',
-                'secondary_color': '#3b82f6',
+                'email': 'pastita.oficial@gmail.com',
+                'phone': '63991172166',
+                'whatsapp_number': '63991172166',
+                'primary_color': '#FF9800',
+                'secondary_color': '#FFC107',
                 'currency': 'BRL',
                 'timezone': 'America/Sao_Paulo',
+                'tax_rate': Decimal('0.00'),
                 'delivery_enabled': True,
                 'pickup_enabled': True,
+                'min_order_value': Decimal('0.00'),
+                'default_delivery_fee': Decimal('10.00'),
+                'free_delivery_threshold': Decimal('100.00'),
+                'operating_hours': SHARED_OPERATING_HOURS,
                 'owner': owner,
+                **SHARED_LOCATION,
+                'metadata': {'seed_source': 'populate_pastita_menu'},
             }
         )
-        icon = '✨' if created else '🔄'
-        self.stdout.write(f'{icon} Loja {store.name}')
+        status = '✅ Criada' if created else '🔄 Atualizada'
+        self.stdout.write(self.style.SUCCESS(f'{status}: {store.name}'))
 
-        self.stdout.write('\nCriando categorias...')
-        categories = {}
-        for cat in CATEGORIES:
-            obj, created = StoreCategory.objects.update_or_create(
+        self.stdout.write('📋 Fase 2: Criando Tipos de Produtos...')
+        type_map = {}
+        for type_data in PRODUCT_TYPES:
+            pt, _ = StoreProductType.objects.update_or_create(
                 store=store,
-                slug=cat['slug'],
-                defaults={
-                    'name': cat['name'],
-                    'description': cat['description'],
-                    'sort_order': cat['sort_order'],
-                    'is_active': True,
-                },
+                slug=type_data['slug'],
+                defaults={'name': type_data['name'], 'description': type_data['description'], 'icon': type_data['icon']}
             )
-            categories[cat['slug']] = obj
-            icon = '✨' if created else '🔄'
-            self.stdout.write(f'  {icon} {cat["name"]}')
+            type_map[type_data['slug']] = pt
+        self.stdout.write(self.style.SUCCESS(f'✅ {len(PRODUCT_TYPES)} tipo(s) de produto criado(s)'))
 
-        self.stdout.write('\nCriando produtos...')
-        created_count = updated_count = 0
+        self.stdout.write('📋 Fase 3: Criando Categorias...')
+        category_map = {}
+        for cat_data in CATEGORIES:
+            cat, _ = StoreCategory.objects.update_or_create(
+                store=store,
+                slug=cat_data['slug'],
+                defaults={'name': cat_data['name'], 'description': cat_data['description'], 'sort_order': cat_data['sort_order']}
+            )
+            category_map[cat_data['slug']] = cat
+        self.stdout.write(self.style.SUCCESS(f'✅ {len(CATEGORIES)} categoria(s) criada(s)'))
 
-        for prod in PRODUCTS:
-            category = categories.get(prod['category_slug'])
-            image_url = _img(prod.get('image', ''))
+        self.stdout.write('📋 Fase 4: Criando Produtos com otimização de imagens...')
+        optimized_count = 0
+        for prod_data in PRODUCTS:
+            category = category_map.get(prod_data['category_slug'])
+            product_type = type_map.get(prod_data['product_type_slug'])
+            image_url = ''
+            if prod_data.get('image'):
+                image_path = Path(settings.MEDIA_ROOT) / IMG_PATH / prod_data['image']
+                if image_path.exists():
+                    optimized_path = optimizer.optimize(str(image_path))
+                    if optimized_path:
+                        optimized_count += 1
+                        image_url = f"{settings.MEDIA_URL.rstrip('/')}/{IMG_PATH}/{Path(optimized_path).name}"
 
-            defaults = {
-                'category': category,
-                'name': prod['name'],
-                'slug': slugify(prod['name']),
-                'short_description': prod.get('short_description', ''),
-                'description': prod.get('description', ''),
-                'price': prod['price'],
-                'compare_at_price': prod.get('compare_at_price'),
-                'status': StoreProduct.ProductStatus.ACTIVE,
-                'featured': prod.get('featured', False),
-                'sort_order': prod.get('sort_order', 0),
-                'main_image_url': image_url,
-                'tags': prod.get('tags', []),
-                'track_stock': prod.get('track_stock', False),
-                'stock_quantity': 0,
-            }
+            StoreProduct.objects.update_or_create(
+                store=store,
+                slug=slugify(prod_data['name']),
+                defaults={
+                    'category': category,
+                    'product_type': product_type,
+                    'name': prod_data['name'],
+                    'short_description': prod_data.get('short_description', ''),
+                    'description': prod_data.get('description', ''),
+                    'price': prod_data['price'],
+                    'compare_at_price': prod_data.get('compare_at_price'),
+                    'cost_price': prod_data.get('cost_price'),
+                    'sku': prod_data.get('sku', ''),
+                    'barcode': prod_data.get('barcode', ''),
+                    'stock_quantity': prod_data.get('stock_quantity', 0),
+                    'featured': prod_data.get('featured', False),
+                    'sort_order': prod_data['sort_order'],
+                    'main_image_url': image_url,
+                    'tags': prod_data.get('tags', []),
+                    'track_stock': prod_data.get('track_stock', False),
+                }
+            )
+        self.stdout.write(self.style.SUCCESS(f'✅ {len(PRODUCTS)} produto(s) criado(s), {optimized_count} imagem(ns) otimizada(s)'))
 
-            slug = defaults['slug']
-            try:
-                product = StoreProduct.objects.get(store=store, slug=slug)
-                for k, v in defaults.items():
-                    setattr(product, k, v)
-                product.sku = prod['sku']
-                product.save()
-                created = False
-            except StoreProduct.DoesNotExist:
-                product = StoreProduct.objects.create(store=store, sku=prod['sku'], **defaults)
-                created = True
+        self.stdout.write('📋 Fase 5: Criando Zonas de Entrega...')
+        zones_created = 0
+        for zone_data in DELIVERY_ZONES:
+            StoreDeliveryZone.objects.update_or_create(
+                store=store,
+                zone_type='distance_band',
+                distance_band=f"{zone_data['min_km']}-{zone_data['max_km']}",
+                defaults={'name': f"{zone_data['min_km']}-{zone_data['max_km']}km", 'min_km': zone_data['min_km'], 'max_km': zone_data['max_km'], 'delivery_fee': zone_data['fee'], 'is_active': True, 'sort_order': zone_data['sort']}
+            )
+            zones_created += 1
+        self.stdout.write(self.style.SUCCESS(f'✅ {zones_created} zona(s) de entrega criada(s)'))
 
-            if created:
-                created_count += 1
-                icon = '✨'
-            else:
-                updated_count += 1
-                icon = '🔄'
-
-            self.stdout.write(f'  {icon} {product.name}')
-
-        total_active = StoreProduct.objects.filter(store=store, status=StoreProduct.ProductStatus.ACTIVE).count()
-
-        self.stdout.write('\n' + '=' * 60)
-        self.stdout.write(self.style.SUCCESS('CARDAPIO POPULADO!'))
-        self.stdout.write('=' * 60)
-        self.stdout.write(f'  Produtos criados:   {created_count}')
-        self.stdout.write(f'  Produtos atualizados: {updated_count}')
-        self.stdout.write(f'  Total ativos:       {total_active}')
-        self.stdout.write(f'  Categorias:         {len(categories)}\n')
+        self.stdout.write(self.style.SUCCESS('\n' + '='*60))
+        self.stdout.write(self.style.SUCCESS('✅ POPULAÇÃO CONCLUÍDA'))
+        self.stdout.write(self.style.SUCCESS('='*60))
+        self.stdout.write(f'Store: {store.name} ({store.slug})')
+        self.stdout.write(f'Email: {store.email}')
+        self.stdout.write(f'Categorias: {len(CATEGORIES)}')
+        self.stdout.write(f'Produtos: {len(PRODUCTS)}')
+        self.stdout.write(f'Zonas de Entrega: {zones_created}')
+        self.stdout.write(f'Imagens otimizadas: {optimized_count}')
