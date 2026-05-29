@@ -279,12 +279,3 @@ class Command(BaseCommand):
         self.stdout.write(f'  Produtos atualizados: {updated_count}')
         self.stdout.write(f'  Total ativos:       {total_active}')
         self.stdout.write(f'  Categorias:         {len(categories)}\n')
-
-        self.stdout.write(f'\n📊 STATISTICS:')
-        self.stdout.write(f'  • Product Types: {total_product_types}')
-        self.stdout.write(f'  • Categories: {total_categories}')
-        self.stdout.write(f'  • Products: {total_products}')
-        self.stdout.write(f'  • Featured: {total_featured}')
-        self.stdout.write(f'\n  • Created: {created_count}')
-        self.stdout.write(f'  • Updated: {updated_count}')
-        self.stdout.write(f'\n{"="*60}')
