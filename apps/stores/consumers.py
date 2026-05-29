@@ -219,7 +219,6 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         })
     
     @database_sync_to_async
-    @database_sync_to_async
     def check_store_access(self):
         """Check if user has access to store orders."""
         try:

@@ -418,6 +418,16 @@ class Migration(migrations.Migration):
                 ),
             ],
         ),
+        migrations.RunSQL(
+            sql="""
+                ALTER TABLE company_profiles ADD COLUMN IF NOT EXISTS business_hours jsonb NOT NULL DEFAULT '{}'::jsonb;
+                ALTER TABLE company_profiles ADD COLUMN IF NOT EXISTS company_name varchar(255) NOT NULL DEFAULT '';
+            """,
+            reverse_sql="""
+                ALTER TABLE company_profiles DROP COLUMN IF EXISTS company_name;
+                ALTER TABLE company_profiles DROP COLUMN IF EXISTS business_hours;
+            """,
+        ),
         migrations.RunPython(normalize_company_profile_business_hours, migrations.RunPython.noop),
         AddFieldIfMissing(
             model_name='automessage',
@@ -586,10 +596,20 @@ class Migration(migrations.Migration):
             name='is_active',
             field=models.BooleanField(db_index=True, default=True),
         ),
-        migrations.AlterField(
-            model_name='intentlog',
-            name='is_active',
-            field=models.BooleanField(db_index=True, default=True),
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunSQL(
+                    sql='CREATE INDEX IF NOT EXISTS intent_logs_is_active_4badb49b ON intent_logs (is_active);',
+                    reverse_sql='DROP INDEX IF EXISTS intent_logs_is_active_4badb49b;',
+                ),
+            ],
+            state_operations=[
+                migrations.AlterField(
+                    model_name='intentlog',
+                    name='is_active',
+                    field=models.BooleanField(db_index=True, default=True),
+                ),
+            ],
         ),
         migrations.AlterUniqueTogether(
             name='automessage',
