@@ -14,7 +14,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stores', '0002_add_status_timestamps'),
+        ('stores', '0001_initial'),
     ]
 
     operations = [
