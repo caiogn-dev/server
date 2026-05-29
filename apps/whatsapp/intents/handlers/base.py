@@ -7,8 +7,8 @@ import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
+from decimal import Decimal
 from apps.stores.models import StoreProduct
-from apps.stores.services.delivery_quote_service import delivery_quote_service
 
 logger = logging.getLogger(__name__)
 
@@ -390,26 +390,22 @@ class IntentHandler:
         formatted_address: str,
         address_components: dict = None,
     ) -> 'HandlerResult':
-        fee_result = delivery_quote_service.normalize(
-            delivery_quote_service.calculate_for_payload(
-                self.store,
-                {
-                    'method': 'delivery',
-                    'address': {
-                        'raw_address': formatted_address,
-                        'lat': lat,
-                        'lng': lng,
-                        **(address_components or {}),
-                    },
-                },
-            )
+        from apps.stores.services.unified_delivery_service import UnifiedDeliveryService
+
+        fee_result = UnifiedDeliveryService.calculate_delivery_fee(
+            store=self.store,
+            delivery_method='delivery',
+            lat=lat,
+            lng=lng,
         )
-        if not fee_result.get('is_valid', fee_result.get('is_within_area', True)):
+
+        if not fee_result.get('success'):
             return HandlerResult.text(
                 "😔 Infelizmente seu endereço está fora da nossa área de entrega.\n\n"
                 "Você pode retirar o pedido em nossa loja! Digite *retirada* para continuar."
             )
-        fee = fee_result['fee']
+
+        fee = Decimal(str(fee_result.get('fee', 0)))
         distance_km = fee_result.get('distance_km')
         duration_minutes = fee_result.get('duration_minutes')
         session_manager.save_delivery_address_info(

@@ -276,10 +276,30 @@ class CheckoutService:
     def calculate_delivery_fee_for_payload(store: Store, delivery_payload: dict) -> dict:
         """Resolve a delivery fee from distance, coordinates, or address text.
 
-        Checkout must not silently fall back to the base fee when the storefront
-        loses the pre-calculated distance. That undercharges longer routes.
+        Delegated to UnifiedDeliveryService — single source of truth for all delivery fees.
         """
-        return DeliveryQuoteService.calculate_for_payload(store, delivery_payload)
+        from apps.stores.services.unified_delivery_service import UnifiedDeliveryService
+
+        payload = delivery_payload or {}
+        result = UnifiedDeliveryService.calculate_delivery_fee(
+            store=store,
+            delivery_method=payload.get('method', 'delivery'),
+            address_text=payload.get('address'),
+            lat=payload.get('lat'),
+            lng=payload.get('lng'),
+            rain_surcharge=payload.get('rain_surcharge', False),
+        )
+
+        # Normalize to DeliveryQuoteService contract for backwards compatibility
+        return {
+            'fee': result.get('fee'),
+            'distance_km': result.get('distance_km'),
+            'duration_minutes': result.get('duration_minutes'),
+            'is_valid': result.get('success', False),
+            'available': result.get('success', False),
+            'message': result.get('reason', 'OK' if result.get('success') else 'Erro'),
+            'zone_name': result.get('zone_name', 'Dinâmica'),
+        }
 
     @staticmethod
     def normalize_custom_salad_payload(customizations: dict, combo_name: str, unit_price=None) -> dict:

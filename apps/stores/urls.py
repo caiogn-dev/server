@@ -128,6 +128,18 @@ store_frontend_patterns = [
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
 
+    # Orders CRUD (for slug-based access)
+    path('orders/', StoreOrderViewSet.as_view({
+        'get': 'list',
+        'post': 'create',
+    }), name='store-orders-list'),
+    path('orders/<uuid:pk>/', StoreOrderViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+        'put': 'update',
+        'delete': 'destroy',
+    }), name='store-order-detail'),
+
     # CRM
     path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),
     path('crm/customers/<uuid:user_id>/addresses/', CustomerAddressViewSet.as_view({
