@@ -8,6 +8,7 @@ from typing import Optional
 from django.conf import settings
 from cryptography.fernet import Fernet
 import base64
+import os
 
 
 def generate_token(length: int = 32) -> str:
@@ -30,13 +31,33 @@ def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> boo
     return hmac.compare_digest(f"sha256={expected_signature}", signature)
 
 
+def _derive_fernet_key() -> bytes:
+    """Derive a Fernet-compatible 32-byte key.
+
+    Priority:
+    1. FERNET_ENCRYPTION_KEY env var — a pre-generated Fernet key (run
+       `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
+    2. Full SECRET_KEY hashed via SHA-256 — uses the entire key entropy instead
+       of a fragile [:32] slice.
+
+    Rotating: set FERNET_ENCRYPTION_KEY and re-encrypt stored tokens via a
+    management command before deploying the new key.
+    """
+    dedicated = os.environ.get('FERNET_ENCRYPTION_KEY', '').strip()
+    if dedicated:
+        return dedicated.encode()
+
+    # Derive from full SECRET_KEY using SHA-256 so all 256 bits of entropy
+    # contribute to the cipher key (previous [:32] slice used ≤32 chars).
+    raw = hashlib.sha256(settings.SECRET_KEY.encode('utf-8')).digest()
+    return base64.urlsafe_b64encode(raw)
+
+
 class TokenEncryption:
     """Encrypt and decrypt sensitive tokens."""
 
     def __init__(self):
-        key = settings.SECRET_KEY[:32].encode()
-        key = base64.urlsafe_b64encode(key.ljust(32)[:32])
-        self.cipher = Fernet(key)
+        self.cipher = Fernet(_derive_fernet_key())
 
     def encrypt(self, token: str) -> str:
         """Encrypt a token."""

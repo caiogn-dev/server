@@ -49,22 +49,29 @@ class WebhookService:
         raise WebhookValidationError(message="Webhook verification failed")
 
     def validate_signature(self, payload: bytes, signature: str) -> bool:
-        """Validate webhook signature."""
-        app_secret = settings.WHATSAPP_APP_SECRET
-        
+        """Validate webhook signature.
+
+        Returns False (fail-closed) when WHATSAPP_APP_SECRET is not configured
+        in production so that unauthenticated payloads are never accepted.
+        """
+        app_secret = getattr(settings, 'WHATSAPP_APP_SECRET', None)
+
         if not app_secret:
-            logger.warning("WHATSAPP_APP_SECRET not configured, skipping signature validation")
-            return True
-        
+            if settings.DEBUG:
+                logger.warning("WHATSAPP_APP_SECRET not configured — skipping validation in DEBUG mode")
+                return True
+            logger.error("WHATSAPP_APP_SECRET not configured in production — rejecting webhook (fail-closed)")
+            return False
+
         if not signature:
             logger.warning("No signature provided in webhook request")
             return False
-        
+
         is_valid = verify_webhook_signature(payload, signature, app_secret)
-        
+
         if not is_valid:
             logger.warning("Invalid webhook signature")
-        
+
         return is_valid
 
     def process_webhook(

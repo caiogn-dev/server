@@ -6,18 +6,51 @@ Includes:
 - Dead Letter Queue (DLQ) management
 - Webhook delivery with retries
 """
+import ipaddress
 import logging
 import json
 import requests
 import hmac
 import hashlib
 from datetime import timedelta
+from urllib.parse import urlparse
 from celery import shared_task
 from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+# Private/loopback CIDR ranges that must not be reachable via user-configured webhook URLs.
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network('127.0.0.0/8'),
+    ipaddress.ip_network('10.0.0.0/8'),
+    ipaddress.ip_network('172.16.0.0/12'),
+    ipaddress.ip_network('192.168.0.0/16'),
+    ipaddress.ip_network('169.254.0.0/16'),   # link-local / cloud metadata
+    ipaddress.ip_network('::1/128'),
+    ipaddress.ip_network('fc00::/7'),
+]
+
+
+def _is_safe_webhook_url(url: str) -> bool:
+    """Return False when *url* points to a private/loopback address (SSRF guard)."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        host = parsed.hostname or ''
+        if not host:
+            return False
+        addr = ipaddress.ip_address(host)
+        for blocked in _BLOCKED_NETWORKS:
+            if addr in blocked:
+                return False
+        return True
+    except ValueError:
+        # hostname is a domain name, not a literal IP — allow it.
+        # DNS rebinding is a separate concern handled at the network layer.
+        return True
 
 
 # =============================================================================
@@ -94,7 +127,14 @@ def process_outbox_entry(self, entry_id: str):
             return {'status': 'deduplicated'}
     
     entry.mark_processing()
-    
+
+    # SSRF guard: reject requests to private/loopback addresses.
+    if not _is_safe_webhook_url(entry.endpoint_url):
+        error_msg = f"Blocked SSRF attempt: endpoint_url points to a private/loopback address: {entry.endpoint_url}"
+        logger.error(error_msg)
+        entry.mark_failed(error_msg, schedule_retry=False)
+        return {'status': 'blocked_ssrf', 'endpoint_url': entry.endpoint_url}
+
     try:
         # Prepare headers
         headers = {
@@ -104,14 +144,14 @@ def process_outbox_entry(self, entry_id: str):
             'X-Webhook-Event': entry.event_type,
             'X-Webhook-Attempt': str(entry.retry_count + 1),
         }
-        
+
         # Add signature if secret is configured
         if entry.secret:
             headers['X-Webhook-Signature'] = entry.generate_signature()
-        
+
         # Merge with custom headers
         headers.update(entry.headers)
-        
+
         # Send webhook
         response = requests.post(
             entry.endpoint_url,

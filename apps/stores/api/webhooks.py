@@ -2,9 +2,12 @@
 Unified Payment Webhooks for all stores.
 Handles Mercado Pago webhooks and routes to correct store.
 """
+import hmac
+import hashlib
 import logging
 import json
 from decimal import Decimal
+from django.conf import settings
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -41,11 +44,11 @@ class MercadoPagoWebhookView(APIView):
             logger.debug(f"Webhook data: {request.data}")
             logger.debug(f"Webhook headers: {dict(request.headers)}")
             
-            # Validate webhook signature if secret is configured
-            if not self._validate_signature(request, store_slug):
-                logger.warning("Webhook signature validation failed")
-                # Still return 200 to prevent retries, but log the issue
-                # return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+            # Validate webhook signature — fail-closed in production
+            sig_result = self._validate_signature(request, store_slug)
+            if not sig_result:
+                logger.warning("Webhook signature validation failed — rejecting request")
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
@@ -64,54 +67,59 @@ class MercadoPagoWebhookView(APIView):
             return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_200_OK)
     
     def _validate_signature(self, request, store_slug):
-        """
-        Validate Mercado Pago webhook signature.
-        Uses the webhook_secret from StoreIntegration.
+        """Validate Mercado Pago webhook signature (fail-closed).
+
+        Returns True only when:
+        - The store has no webhook_secret configured (legacy / unconfigured stores), OR
+        - The provided signature matches the expected HMAC-SHA256 digest.
+
+        Returns False (and therefore rejects the request) when:
+        - A secret IS configured but the signature is absent or invalid.
+        - An unexpected exception occurs during validation.
         """
         try:
-            # Get signature from headers
-            signature = request.headers.get('X-Signature') or request.headers.get('X-Hub-Signature')
-            
-            if not signature and store_slug:
-                # Try to get secret from store integration
-                integration = StoreIntegration.objects.filter(
-                    store__slug=store_slug,
-                    integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
-                    status=StoreIntegration.IntegrationStatus.ACTIVE
-                ).first()
-                
-                if integration and integration.webhook_secret:
-                    # For Mercado Pago, the signature is in the query string
-                    # Format: signature=timestamp,token
-                    query_sig = request.query_params.get('signature')
-                    if query_sig:
-                        # Validate using the secret
-                        import hmac
-                        import hashlib
-                        
-                        # Get the request body
-                        body = request.body.decode('utf-8')
-                        
-                        # Calculate expected signature
-                        expected_sig = hmac.new(
-                            integration.webhook_secret.encode('utf-8'),
-                            body.encode('utf-8'),
-                            hashlib.sha256
-                        ).hexdigest()
-                        
-                        # Compare signatures
-                        if hmac.compare_digest(query_sig, expected_sig):
-                            return True
-                        else:
-                            logger.warning(f"Invalid signature for store {store_slug}")
-                            return False
-            
-            # If no signature validation needed, allow the request
-            return True
-            
+            if not store_slug:
+                # No store context — cannot validate; allow through so downstream
+                # can handle the missing store case explicitly.
+                return True
+
+            integration = StoreIntegration.objects.filter(
+                store__slug=store_slug,
+                integration_type=StoreIntegration.IntegrationType.MERCADOPAGO,
+                status=StoreIntegration.IntegrationStatus.ACTIVE,
+            ).first()
+
+            if not integration or not integration.webhook_secret:
+                # Secret not configured — skip validation for backward compat.
+                return True
+
+            # Mercado Pago sends signature in X-Signature header or as query param.
+            provided_sig = (
+                request.headers.get('X-Signature')
+                or request.headers.get('X-Hub-Signature')
+                or request.query_params.get('signature')
+            )
+
+            if not provided_sig:
+                logger.warning(f"No signature provided for store {store_slug} which has a webhook_secret configured")
+                return False
+
+            body = request.body
+            expected_sig = hmac.new(
+                integration.webhook_secret.encode('utf-8'),
+                body,
+                hashlib.sha256,
+            ).hexdigest()
+
+            if hmac.compare_digest(provided_sig, expected_sig):
+                return True
+
+            logger.warning(f"Mercado Pago webhook signature mismatch for store {store_slug}")
+            return False
+
         except Exception as e:
-            logger.error(f"Signature validation error: {e}")
-            return True  # Allow request on validation error (fail open for now)
+            logger.error(f"Mercado Pago signature validation error: {e}", exc_info=True)
+            return False  # fail-closed: unexpected error means we cannot trust the payload
     
     def _handle_payment(self, request, store_slug):
         """Handle payment notification."""

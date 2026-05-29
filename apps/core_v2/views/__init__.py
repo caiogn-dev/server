@@ -3,6 +3,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework.authtoken.models import Token
 from django.contrib.auth import authenticate, get_user_model
@@ -10,6 +11,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 
 User = get_user_model()
+
+
+class LoginRateThrottle(AnonRateThrottle):
+    """Strict per-IP rate limit for login attempts (maps to 'auth' in DEFAULT_THROTTLE_RATES)."""
+    scope = 'auth'
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -47,9 +53,11 @@ class LoginView(APIView):
     """
     Login view that returns DRF Token.
     CSRF exempt for cross-origin frontend support.
+    Rate limited to 10 attempts per minute per IP (LoginRateThrottle).
     """
     permission_classes = []
     authentication_classes = []
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request):
         username = request.data.get('username')
