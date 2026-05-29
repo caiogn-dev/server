@@ -28,6 +28,22 @@ from .api.views import (
     PrintAgentHeartbeatView, PrintAgentClaimNextJobView,
     PrintAgentCompleteJobView, PrintAgentFailJobView,
 )
+
+# Wrapper functions to pass store_slug to viewset kwargs
+def store_orders_list(request, store_slug):
+    """Wrapper to inject store_slug as store_pk for order list/create."""
+    view = StoreOrderViewSet.as_view({'get': 'list', 'post': 'create'})
+    return view(request, store_pk=store_slug)
+
+def store_order_detail(request, store_slug, pk):
+    """Wrapper to inject store_slug as store_pk for order detail."""
+    view = StoreOrderViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+        'put': 'update',
+        'delete': 'destroy',
+    })
+    return view(request, store_pk=store_slug, pk=pk)
 from .api.webhooks import (
     MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
     CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView,
@@ -129,16 +145,9 @@ store_frontend_patterns = [
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
 
     # Orders CRUD (for slug-based access)
-    path('orders/', StoreOrderViewSet.as_view({
-        'get': 'list',
-        'post': 'create',
-    }), name='store-orders-list'),
-    path('orders/<uuid:pk>/', StoreOrderViewSet.as_view({
-        'get': 'retrieve',
-        'patch': 'partial_update',
-        'put': 'update',
-        'delete': 'destroy',
-    }), name='store-order-detail'),
+    # Wrapper injects store_slug as store_pk for viewset kwargs
+    path('orders/', store_orders_list, name='store-orders-list'),
+    path('orders/<uuid:pk>/', store_order_detail, name='store-order-detail'),
 
     # CRM
     path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),
