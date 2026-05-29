@@ -15,15 +15,15 @@ DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower()
 # SECURITY: Don't allow wildcard by default - require explicit configuration
 _allowed_hosts_env = os.environ.get('DJANGO_ALLOWED_HOSTS', '')
 ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] if _allowed_hosts_env else ['localhost', '127.0.0.1']
-# Add tunnel domains
+# Production hostnames included in base so they work even without DJANGO_ALLOWED_HOSTS.
+# Development-only entries (localhost:XXXX) are excluded — Django ALLOWED_HOSTS
+# does not support host:port syntax; the port check is irrelevant at this layer.
 ALLOWED_HOSTS.extend([
     'backend.pastita.com.br',
     'painel.pastita.com.br',
     'pastita.com.br',
     'dev.painel.pastita.com.br',
     'dev.pastita.com.br',
-    'localhost:3010',
-    '127.0.0.1:3010',
 ])
 
 INSTALLED_APPS = [
