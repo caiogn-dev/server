@@ -631,9 +631,13 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
         # Fallback: extract store slug from URL path /stores/{slug}/orders/
         if not store_param and request:
-            match = re.search(r'/stores/([^/]+)/', request.path)
+            import sys
+            path = request.path
+            print(f"DEBUG: request.path = {path}", file=sys.stderr)
+            match = re.search(r'/stores/([^/]+)/', path)
             if match:
                 store_param = match.group(1)
+                print(f"DEBUG: extracted store_param = {store_param}", file=sys.stderr)
 
         if not store_param:
             raise serializers.ValidationError({'store': 'store is required'})
