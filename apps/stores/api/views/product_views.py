@@ -36,6 +36,21 @@ class StoreCategoryViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
 
+    def initialize_request(self, request, *args, **kwargs):
+        """Override to resolve store slug to UUID if needed."""
+        store_pk = self.kwargs.get('store_pk')
+        if store_pk:
+            try:
+                uuid_module.UUID(str(store_pk))
+            except (ValueError, AttributeError):
+                from apps.stores.models import Store
+                try:
+                    store = Store.objects.get(slug=store_pk)
+                    self.kwargs['store_pk'] = str(store.id)
+                except Store.DoesNotExist:
+                    pass
+        return super().initialize_request(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
@@ -51,6 +66,22 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     pagination_class = StoreCatalogPagination
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
+
+    def initialize_request(self, request, *args, **kwargs):
+        """Override to resolve store slug to UUID if needed."""
+        store_pk = self.kwargs.get('store_pk')
+        if store_pk:
+            try:
+                uuid_module.UUID(str(store_pk))
+            except (ValueError, AttributeError):
+                # It's a slug, resolve to UUID
+                from apps.stores.models import Store
+                try:
+                    store = Store.objects.get(slug=store_pk)
+                    self.kwargs['store_pk'] = str(store.id)
+                except Store.DoesNotExist:
+                    pass
+        return super().initialize_request(request, *args, **kwargs)
 
     def get_queryset(self):
         qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping

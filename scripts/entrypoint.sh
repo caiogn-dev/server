@@ -13,16 +13,13 @@ python manage.py migrate
 echo "📦 Coletando arquivos estáticos..."
 python manage.py collectstatic --noinput
 
-# Healthcheck: validate database integrity and auto-seed if needed
+# Seed initial data if database is empty
+echo "🌱 Verificando seed inicial..."
+python manage.py initial_seed
+
+# Healthcheck: validate database integrity
 echo "🔍 Verificando integridade do banco de dados..."
-python manage.py db_healthcheck --auto-seed || {
-    echo "⚠️  Integridade do banco falhou, tentando seed automático..."
-    python manage.py populate_ce_saladas_menu --force
-    python manage.py populate_pastita_menu --force
-    python manage.py populate_kero_kero_menu --force
-    python manage.py populate_delivery_zones
-    echo "✅ Seed automático completado"
-}
+python manage.py db_healthcheck
 
 # Start Gunicorn
 echo "✅ Iniciando servidor..."

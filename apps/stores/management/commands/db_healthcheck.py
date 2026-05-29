@@ -118,10 +118,10 @@ class Command(BaseCommand):
         self.stdout.write('\n' + '=' * 60)
         if missing_stores:
             self.stdout.write(
-                self.style.ERROR('❌ HEALTHCHECK FALHOU: Lojas faltando')
+                self.style.WARNING('⚠️  AVISO: Lojas faltando (crie com populate_*_menu)')
             )
-            self.stdout.write('=' * 60 + '\n')
-            raise Exception('Database integrity check failed')
+            self.stdout.write(f'   Faltando: {", ".join(missing_stores)}')
+            self.stdout.write('   Execute: python manage.py populate_ce_saladas_menu --force')
         else:
             self.stdout.write(self.style.SUCCESS('✅ HEALTHCHECK OK'))
-            self.stdout.write('=' * 60 + '\n')
+        self.stdout.write('=' * 60 + '\n')

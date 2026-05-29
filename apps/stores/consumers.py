@@ -122,8 +122,16 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             while True:
                 await asyncio.sleep(30)  # Server heartbeat every 30s
                 try:
+                    if self.channel_layer is None:
+                        break
                     await self.send_json({'type': 'pong'})
                     logger.debug(f"WebSocket heartbeat sent: store={self.store_slug}")
+                except RuntimeError as e:
+                    if "WebSocket is closed" in str(e) or "already closed" in str(e):
+                        logger.info(f"WebSocket closed during heartbeat: store={self.store_slug}")
+                        break
+                    logger.error(f"WebSocket heartbeat send failed: {e}")
+                    break
                 except Exception as e:
                     logger.error(f"WebSocket heartbeat send failed: {e}")
                     break
@@ -135,20 +143,23 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
         logger.info(f"WebSocket disconnected: store={self.store_slug}, code={close_code}")
-        
-        # Cancel heartbeat task
-        if self.heartbeat_task:
+
+        # Cancel heartbeat task IMMEDIATELY
+        if self.heartbeat_task and not self.heartbeat_task.done():
             self.heartbeat_task.cancel()
             try:
-                await self.heartbeat_task
-            except asyncio.CancelledError:
+                await asyncio.wait_for(self.heartbeat_task, timeout=1.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
-        
+
         # Leave room group
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name
-        )
+        try:
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name
+            )
+        except Exception as e:
+            logger.error(f"Error during group_discard: {e}")
 
     async def handle_message(self, content):
         message_type = content.get('type')
