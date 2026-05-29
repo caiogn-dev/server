@@ -55,12 +55,19 @@ class StoreSerializer(serializers.ModelSerializer):
         return obj.is_open()
     
     def get_integrations_count(self, obj):
+        # Use pre-annotated value when available (avoids N+1 on list views).
+        if hasattr(obj, 'integrations_count'):
+            return obj.integrations_count
         return obj.integrations.filter(is_active=True).count()
-    
+
     def get_products_count(self, obj):
+        if hasattr(obj, 'products_count'):
+            return obj.products_count
         return obj.products.filter(status='active').count()
-    
+
     def get_orders_count(self, obj):
+        if hasattr(obj, 'orders_count'):
+            return obj.orders_count
         return obj.orders.count()
 
 

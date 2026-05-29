@@ -7,7 +7,7 @@ from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from django.db.models import Count, Q
 
 from apps.stores.models import Store, StoreIntegration, StoreWebhook
 from apps.stores.services import store_service, webhook_service
@@ -30,10 +30,13 @@ class StoreViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
-            return Store.objects.all()
-        return Store.objects.filter(
+        base_qs = Store.objects if user.is_staff else Store.objects.filter(
             Q(owner=user) | Q(staff=user)
+        )
+        return base_qs.annotate(
+            products_count=Count('products', filter=Q(products__status='active'), distinct=True),
+            orders_count=Count('orders', distinct=True),
+            integrations_count=Count('integrations', filter=Q(integrations__is_active=True), distinct=True),
         ).distinct()
     
     def get_object(self):
