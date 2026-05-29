@@ -198,16 +198,16 @@ class UnifiedDeliveryService:
             try:
                 geo = GeoService()
                 result = geo.geocode(address_text)
-                if result['success']:
+                if result and isinstance(result, dict) and result.get('lat') and result.get('lng'):
                     return {
                         'success': True,
-                        'lat': result['lat'],
-                        'lng': result['lng'],
+                        'lat': result.get('lat'),
+                        'lng': result.get('lng'),
                         'formatted_address': result.get('formatted_address', ''),
                         'address_components': result.get('address_components', {}),
                     }
             except Exception as e:
-                logger.error(f"[UnifiedDeliveryService] Geocoding error: {e}")
+                logger.error(f"[UnifiedDeliveryService] Geocoding error: {e}", exc_info=True)
 
         return {
             'success': False,
@@ -225,21 +225,19 @@ class UnifiedDeliveryService:
 
         try:
             geo = GeoService()
-            result = geo.get_route(
-                origin_lat=store.latitude,
-                origin_lng=store.longitude,
-                dest_lat=dest_lat,
-                dest_lng=dest_lng,
+            result = geo.calculate_route(
+                origin=(store.latitude, store.longitude),
+                destination=(dest_lat, dest_lng),
             )
 
-            if result['success']:
+            if result and isinstance(result, dict) and result.get('distance_km'):
                 return {
                     'success': True,
                     'distance_km': result.get('distance_km', 0),
                     'duration_minutes': result.get('duration_minutes', 0),
                 }
         except Exception as e:
-            logger.error(f"[UnifiedDeliveryService] Route calculation error: {e}")
+            logger.error(f"[UnifiedDeliveryService] Route calculation error: {e}", exc_info=True)
 
         return {
             'success': False,
