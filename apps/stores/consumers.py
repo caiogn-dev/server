@@ -163,74 +163,47 @@ class StoreOrdersConsumer(AsyncJsonWebsocketConsumer):
     
     @database_sync_to_async
     def check_store_access(self):
-        """Check if user has access to store orders."""
+        """Check if the authenticated user has permission to receive order events for this store.
+
+        Access rules (multi-tenancy enforcement):
+        - Unauthenticated users are always denied — this is the *dashboard* WebSocket.
+          Customer-facing tracking uses CustomerOrderConsumer instead.
+        - Platform staff / superusers can see any store.
+        - The store owner can see their own store.
+        - Members of store.staff can see their own store.
+        - All other authenticated users are denied, regardless of store status.
+        """
         from apps.stores.models import Store
-        
+
+        user = self.scope.get('user')
+
+        if not user or not user.is_authenticated:
+            logger.warning(f"WebSocket access denied — unauthenticated (store={self.store_slug})")
+            return False
+
         try:
             store = Store.objects.get(slug=self.store_slug)
-            user = self.scope.get('user')
-            
-            logger.info(f"WebSocket access check - store: {self.store_slug}, user: {user}, authenticated: {user.is_authenticated if user else False}")
-            
-            # Check if user is authenticated and has access
-            if user and user.is_authenticated:
-                # Staff users have access to all stores
-                if user.is_staff or user.is_superuser:
-                    logger.info(f"WebSocket access granted - staff user: {user.email}")
-                    return True
-                
-                # Store owner has access
-                if store.owner == user:
-                    logger.info(f"WebSocket access granted - store owner: {user.email}")
-                    return True
-                
-                # Store staff has access
-                if hasattr(store, 'staff') and user in store.staff.all():
-                    logger.info(f"WebSocket access granted - store staff: {user.email}")
-                    return True
-                
-                # Any authenticated user can access active stores (for dashboard)
-                if store.status == 'active':
-                    logger.info(f"WebSocket access granted - authenticated user on active store: {user.email}")
-                    return True
-                
-                # FALLBACK: Allow any authenticated user for now (dashboard needs this)
-                logger.info(f"WebSocket access granted - authenticated user fallback: {user.email}")
-                return True
-            
-            # Allow anonymous access to active stores for customer tracking
-            if store.status == 'active':
-                logger.info(f"WebSocket access granted - active store (anonymous)")
-                return True
-            
-            logger.warning(f"WebSocket access denied - store: {self.store_slug}, user: {user}")
-            return False
-        
         except Store.DoesNotExist:
-            logger.error(f"WebSocket access denied - store not found: {self.store_slug}")
-            # Try to create default store if it's 'pastita'
-            if self.store_slug == 'pastita':
-                logger.info("Attempting to create default pastita store...")
-                try:
-                    from django.contrib.auth import get_user_model
-                    User = get_user_model()
-                    # Get first superuser or staff
-                    owner = User.objects.filter(is_superuser=True).first() or User.objects.filter(is_staff=True).first()
-                    if owner:
-                        Store.objects.create(
-                            name='Pastita',
-                            slug='pastita',
-                            status='active',
-                            owner=owner
-                        )
-                        logger.info("Created default pastita store")
-                        return True
-                except Exception as create_error:
-                    logger.error(f"Failed to create default store: {create_error}")
+            logger.error(f"WebSocket access denied — store not found: {self.store_slug}")
             return False
         except Exception as e:
             logger.error(f"WebSocket access check error: {e}")
             return False
+
+        if user.is_staff or user.is_superuser:
+            logger.info(f"WebSocket access granted — staff user {user.email} → store={self.store_slug}")
+            return True
+
+        if store.owner_id == user.pk:
+            logger.info(f"WebSocket access granted — owner {user.email} → store={self.store_slug}")
+            return True
+
+        if hasattr(store, 'staff') and store.staff.filter(pk=user.pk).exists():
+            logger.info(f"WebSocket access granted — store staff {user.email} → store={self.store_slug}")
+            return True
+
+        logger.warning(f"WebSocket access denied — user {user.email} does not belong to store={self.store_slug}")
+        return False
 
 
 class CustomerOrderConsumer(AsyncJsonWebsocketConsumer):
