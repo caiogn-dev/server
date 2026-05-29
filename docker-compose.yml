@@ -85,6 +85,10 @@ x-django-env: &django-env
   AWS_S3_REGION_NAME: ${AWS_S3_REGION_NAME:-sa-east-1}
   # Postado admin
   POSTADO_ADMIN_TOKEN: ${POSTADO_ADMIN_TOKEN:-}
+  # Uber Delivery
+  UBER_API_KEY: ${UBER_API_KEY}
+  UBER_API_BASE_URL: ${UBER_API_BASE_URL}
+  UBER_CUSTOMER_ID: ${UBER_CUSTOMER_ID}
 
 services:
   db:
