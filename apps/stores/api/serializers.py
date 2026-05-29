@@ -629,15 +629,18 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store_param and request:
             store_param = request.query_params.get('store')
 
-        # Fallback 1: check if store_slug was injected into request by wrapper
-        if not store_param and request and hasattr(request, 'store_slug'):
-            store_param = request.store_slug
-
-        # Fallback 2: extract store slug from URL path /stores/{slug}/
+        # Fallback: extract store slug from request path/URL
         if not store_param and request:
-            match = re.search(r'/stores/([^/]+)/', request.path)
+            # Try multiple path sources
+            path = getattr(request, 'path', '') or str(request.build_absolute_uri())
+            # DEBUG
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Extracting store from path: {path}")
+            match = re.search(r'/stores/([^/]+)/', path)
             if match:
                 store_param = match.group(1)
+                logger.warning(f"Extracted store_param: {store_param}")
 
         if not store_param:
             raise serializers.ValidationError({'store': 'store is required'})
