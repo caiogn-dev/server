@@ -97,6 +97,22 @@ class CustomerSession(BaseModel):
         related_name='customer_sessions'
     )
 
+    delivery_method = models.CharField(
+        max_length=20,
+        default='delivery',
+        help_text="Método de entrega: 'delivery' ou 'pickup'"
+    )
+    delivery_address = models.TextField(
+        blank=True,
+        default='',
+        help_text="Endereço de entrega"
+    )
+    payment_method = models.CharField(
+        max_length=20,
+        default='pix',
+        help_text="Método de pagamento: 'pix', 'card', 'cash'"
+    )
+
     notifications_sent = models.JSONField(
         default=list,
         blank=True,

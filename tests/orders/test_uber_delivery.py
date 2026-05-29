@@ -1,11 +1,12 @@
 import pytest
 from unittest.mock import patch, MagicMock
 from django.test import TestCase
+from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 
-from apps.orders.models import StoreOrder, Store
-from apps.stores.models import StoreCustomer
+from apps.orders.models import StoreOrder
+from apps.stores.models import Store, StoreCustomer
 from apps.orders.services.uber_delivery import UberDeliveryClient
 
 
@@ -107,7 +108,13 @@ class TestOrderDeliveryAPI(TestCase):
 
     def setUp(self):
         self.client = APIClient()
+        self.owner = User.objects.create_user(
+            username='owner@test.com',
+            email='owner@test.com',
+            password='testpass123'
+        )
         self.store = Store.objects.create(
+            owner=self.owner,
             name='Ce Saladas',
             slug='ce-saladas',
         )
@@ -115,7 +122,8 @@ class TestOrderDeliveryAPI(TestCase):
             store=self.store,
             order_number='ORD001',
             status='confirmado',
-            total_price=99.90,
+            subtotal=99.90,
+            total=99.90,
         )
 
     @patch('apps.orders.services.uber_delivery.UberDeliveryClient.create_delivery_request')
