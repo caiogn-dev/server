@@ -107,30 +107,32 @@ class DeliveryQuoteService:
     def calculate_for_distance(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
         if distance_km is not None:
             logger.info("Calculating delivery fee for distance: %s km", distance_km)
+            distance = Decimal(str(distance_km))
+
             zones = StoreDeliveryZone.objects.filter(
                 store=store,
                 is_active=True,
-                zone_type='custom_distance',
-                min_km__isnull=False,
-                max_km__isnull=False,
+                zone_type='distance_band',
             ).order_by('min_km')
 
             for zone in zones:
-                if zone.min_km <= distance_km < zone.max_km:
-                    fee = zone.delivery_fee
-                    if zone.fee_per_km:
-                        fee += zone.fee_per_km * distance_km
-                    return {
-                        'fee': float(fee),
-                        'delivery_fee': float(fee),
-                        'is_valid': True,
-                        'available': True,
-                        'zone_id': str(zone.id),
-                        'zone_name': zone.name,
-                        'estimated_minutes': zone.estimated_minutes,
-                        'estimated_days': zone.estimated_days,
-                        'distance_km': float(distance_km),
-                    }
+                if zone.min_km is not None and zone.max_km is not None:
+                    if zone.min_km <= distance < zone.max_km:
+                        fee = Decimal(str(zone.delivery_fee or 0))
+                        logger.info("Zone matched: %s (min=%s, max=%s) → fee R$%.2f",
+                                    zone.name, zone.min_km, zone.max_km, fee)
+                        return {
+                            'fee': float(fee),
+                            'delivery_fee': float(fee),
+                            'is_valid': True,
+                            'available': True,
+                            'zone_id': str(zone.id),
+                            'zone_name': zone.name,
+                            'estimated_minutes': zone.estimated_minutes or 30,
+                            'estimated_days': zone.estimated_days or 0,
+                            'distance_km': float(distance),
+                            'calculation': 'zone_based',
+                        }
 
         return DeliveryQuoteService.calculate_dynamic_fee(store, distance_km)
 
