@@ -170,7 +170,11 @@ class MenuRequestHandler(IntentHandler):
         logger.info(f"[MenuRequestHandler] Store: {self.store}")
         if not self.store:
             logger.error("[MenuRequestHandler] Sem store!")
-            return HandlerResult.text("Cardápio não disponível no momento. 😔")
+            return HandlerResult.text(
+                "🌿 Veja nosso cardápio completo aqui:\n"
+                "https://cesaladas.com.br/cardapio\n\n"
+                "Lá você consegue montar sua salada perfeita e fazer o pedido! 🥗"
+            )
         all_products = StoreProduct.objects.filter(
             store=self.store, is_active=True
         ).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
