@@ -46,7 +46,8 @@ from apps.stores.services.realtime_service import broadcast_order_event
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
-    CatalogProductTypeSerializer, StoreWishlistSerializer, WishlistAddRemoveSerializer
+    CatalogProductTypeSerializer, StoreWishlistSerializer, WishlistAddRemoveSerializer,
+    CheckoutSerializer
 )
 
 logger = logging.getLogger(__name__)
@@ -676,7 +677,23 @@ class StoreCheckoutView(APIView):
         request_origin_base = get_request_origin_base(request)
         if request_origin_base:
             payment_payload['redirect_base_url'] = request_origin_base
-        
+
+        # Validate checkout data
+        checkout_data = {
+            'customer_name': customer_data['name'],
+            'customer_email': customer_data['email'],
+            'customer_phone': customer_data['phone'],
+            'delivery_method': delivery_method,
+            'payment_method': payment_method,
+        }
+        checkout_serializer = CheckoutSerializer(data=checkout_data)
+        if not checkout_serializer.is_valid():
+            logger.error(f'Checkout validation failed: {checkout_serializer.errors}')
+            return Response(
+                {'error': 'Dados de checkout inválidos', 'details': checkout_serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         try:
             order = checkout_service.create_order(
                 cart=cart,
