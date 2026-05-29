@@ -120,8 +120,13 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         """Send periodic heartbeat to keep connection alive."""
         try:
             while True:
-                await asyncio.sleep(45)  # Server heartbeat every 45s
-                logger.debug(f"WebSocket heartbeat: store={self.store_slug}")
+                await asyncio.sleep(30)  # Server heartbeat every 30s
+                try:
+                    await self.send_json({'type': 'pong'})
+                    logger.debug(f"WebSocket heartbeat sent: store={self.store_slug}")
+                except Exception as e:
+                    logger.error(f"WebSocket heartbeat send failed: {e}")
+                    break
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -213,6 +218,7 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             'reason': event.get('reason'),
         })
     
+    @database_sync_to_async
     @database_sync_to_async
     def check_store_access(self):
         """Check if user has access to store orders."""
