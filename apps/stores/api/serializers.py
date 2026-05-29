@@ -633,14 +633,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store_param and request:
             # Try multiple path sources
             path = getattr(request, 'path', '') or str(request.build_absolute_uri())
-            # DEBUG
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.warning(f"Extracting store from path: {path}")
-            match = re.search(r'/stores/([^/]+)/', path)
-            if match:
-                store_param = match.group(1)
-                logger.warning(f"Extracted store_param: {store_param}")
+            raise serializers.ValidationError(f"DEBUG: path={path}, store_param={store_param}")
 
         if not store_param:
             raise serializers.ValidationError({'store': 'store is required'})
