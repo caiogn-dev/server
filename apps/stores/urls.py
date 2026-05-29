@@ -53,6 +53,9 @@ from .api.views.crm_views import (
     places_search_view,
 )
 
+# Orders delivery app
+from apps.orders.urls import router as orders_router
+
 # Main router for admin/management endpoints
 router = DefaultRouter()
 router.register(r'stores', StoreViewSet, basename='store')
@@ -159,6 +162,9 @@ urlpatterns = [
     path('', include(router.urls)),
     path('', include(stores_router.urls)),
     path('', include(products_router.urls)),
+
+    # Orders delivery (Uber integration)
+    path('', include(orders_router.urls)),
 
     # ==========================================================================
     # GEO/MAPS ENDPOINTS
