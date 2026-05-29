@@ -619,6 +619,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
     def _resolve_store(self, validated_data):
         """Resolve store from payload, query params, or nested router kwargs."""
+        import re
         request = self.context.get('request')
         view = self.context.get('view')
 
@@ -627,6 +628,12 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             store_param = view.kwargs.get('store_pk')
         if not store_param and request:
             store_param = request.query_params.get('store')
+
+        # Fallback: extract store slug from URL path /stores/{slug}/orders/
+        if not store_param and request:
+            match = re.search(r'/stores/([^/]+)/', request.path)
+            if match:
+                store_param = match.group(1)
 
         if not store_param:
             raise serializers.ValidationError({'store': 'store is required'})
