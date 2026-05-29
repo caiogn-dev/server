@@ -1,351 +1,284 @@
 """
-Management command to populate Pastita menu (products, categories, combos).
-
-This combines store setup with product population for a complete setup.
+Management command to populate Pastita menu.
 
 Usage:
     python manage.py populate_pastita_menu
     python manage.py populate_pastita_menu --force
 """
 import logging
-import sys
-import os
 from decimal import Decimal
 from pathlib import Path
+
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.contrib.auth import get_user_model
 from django.utils.text import slugify
 
-from apps.stores.models import (
-    Store, StoreCategory, StoreProduct, StoreProductType, StoreCombo
-)
-from apps.core.utils import build_absolute_media_url
+from apps.stores.models import Store, StoreCategory, StoreProduct, StoreProductType
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
-# Configuração de URLs
-def build_seed_media_url(folder: str, filename: str) -> str:
-    """Resolve menu seed images from local media or an explicit base URL."""
+STORE_SLUG = 'pastita'
+IMG_PATH = 'stores/products/pastita'
+
+
+def _img(filename):
+    """Return relative media URL if file exists in container, else empty string."""
     if not filename:
         return ''
-
-    explicit_base = os.environ.get('STORE_SEED_MEDIA_BASE_URL', '').strip().rstrip('/')
-    if explicit_base:
-        return f"{explicit_base}/{folder}/{filename}"
-
-    relative_path = Path('seeds') / folder / filename
-    local_file = Path(settings.MEDIA_ROOT) / relative_path
-    if local_file.exists():
-        return build_absolute_media_url(
-            f"{settings.MEDIA_URL.rstrip('/')}/{relative_path.as_posix()}"
-        )
-
+    local = Path(settings.MEDIA_ROOT) / IMG_PATH / filename
+    if local.exists():
+        media_url = settings.MEDIA_URL.rstrip('/')
+        return f"{media_url}/{IMG_PATH}/{filename}"
     return ''
 
-# Product types
-PRODUCT_TYPES = [
-    {
-        "name": "Rondelli",
-        "slug": "rondelli",
-        "description": "Massas tipo rondelli recheadas artesanalmente",
-        "icon": "🍝",
-    },
-    {
-        "name": "Molho",
-        "slug": "molho",
-        "description": "Molhos artesanais para acompanhar massas",
-        "icon": "🥫",
-    },
-]
-
-# Categories
 CATEGORIES = [
     {
-        "name": "Rondelli",
-        "slug": "rondelli",
-        "description": "Deliciosas massas de rondelli recheadas com ingredientes selecionados.",
-        "sort_order": 1,
-        "image": "rondelli.webp",
+        'slug': 'rondelli',
+        'name': 'Rondelli',
+        'description': 'Deliciosas massas recheadas artesanalmente.',
+        'sort_order': 1,
     },
     {
-        "name": "Molhos",
-        "slug": "molhos",
-        "description": "Molhos artesanais preparados com receitas tradicionais.",
-        "sort_order": 2,
-        "image": "molhos.webp",
-    },
-    {
-        "name": "Promoções",
-        "slug": "promocoes",
-        "description": "Aproveite nossas ofertas especiais e combos!",
-        "sort_order": 3,
-        "image": "promocoes.webp",
+        'slug': 'molhos',
+        'name': 'Molhos',
+        'description': 'Molhos artesanais para acompanhar suas refeições.',
+        'sort_order': 2,
     },
 ]
 
-# Products
 PRODUCTS = [
-    # Rondelli
     {
-        "category_slug": "rondelli",
-        "product_type_slug": "rondelli",
-        "name": "Rondelli de Tomate Seco com Rúcula",
-        "short_description": "Rondelli recheado com tomate seco e rúcula fresca",
-        "description": "Delicioso rondelli recheado com tomates secos selecionados e rúcula fresca. Massa artesanal feita diariamente.",
-        "price": Decimal("39.99"),
-        "compare_at_price": Decimal("44.99"),
-        "image": "tomate.webp",
-        "sku": "RON-TOM-RUC-001",
-        "stock_quantity": 10,
-        "featured": True,
-        "sort_order": 1,
-        "tags": ["rondelli", "vegetariano", "destaque"],
+        'sku': 'PT-RON-001',
+        'category_slug': 'rondelli',
+        'name': 'Rondelli de Tomate Seco com Rúcula',
+        'short_description': 'Rondelli recheado com tomate seco e rúcula fresca.',
+        'description': 'Delicioso rondelli recheado com tomates secos e rúcula. Massa artesanal.',
+        'price': Decimal('39.99'),
+        'compare_at_price': Decimal('44.99'),
+        'featured': True,
+        'sort_order': 1,
+        'image': 'rondelli-tomate.png',
+        'tags': ['rondelli', 'vegetariano', 'destaque'],
+        'track_stock': False,
     },
     {
-        "category_slug": "rondelli",
-        "product_type_slug": "rondelli",
-        "name": "Rondelli de Frango com Queijo",
-        "short_description": "Rondelli recheado com frango desfiado e queijo",
-        "description": "Clássico rondelli de frango com queijo. Frango desfiado temperado com ervas finas.",
-        "price": Decimal("39.99"),
-        "image": "frango.webp",
-        "sku": "RON-FRA-QUE-002",
-        "stock_quantity": 10,
-        "featured": False,
-        "sort_order": 2,
-        "tags": ["rondelli", "frango", "classico"],
+        'sku': 'PT-RON-002',
+        'category_slug': 'rondelli',
+        'name': 'Rondelli de Frango com Queijo',
+        'short_description': 'Rondelli recheado com frango desfiado e queijo.',
+        'description': 'Clássico rondelli de frango com queijo. Frango temperado com ervas finas.',
+        'price': Decimal('39.99'),
+        'featured': False,
+        'sort_order': 2,
+        'image': 'rondelli-frango.png',
+        'tags': ['rondelli', 'frango'],
+        'track_stock': False,
     },
     {
-        "category_slug": "rondelli",
-        "product_type_slug": "rondelli",
-        "name": "Rondelli de Presunto e Queijo",
-        "short_description": "Tradicional rondelli de presunto com queijo",
-        "description": "O tradicional rondelli de presunto e queijo que todo mundo ama.",
-        "price": Decimal("39.99"),
-        "image": "presunto-queijo.webp",
-        "sku": "RON-PRE-QUE-003",
-        "stock_quantity": 10,
-        "featured": True,
-        "sort_order": 3,
-        "tags": ["rondelli", "presunto", "tradicional", "destaque"],
+        'sku': 'PT-RON-003',
+        'category_slug': 'rondelli',
+        'name': 'Rondelli de Presunto e Queijo',
+        'short_description': 'Tradicional rondelli de presunto com queijo.',
+        'description': 'O tradicional rondelli de presunto e queijo que todo mundo ama.',
+        'price': Decimal('39.99'),
+        'featured': True,
+        'sort_order': 3,
+        'image': 'rondelli-presunto.png',
+        'tags': ['rondelli', 'presunto', 'tradicional'],
+        'track_stock': False,
     },
     {
-        "category_slug": "rondelli",
-        "product_type_slug": "rondelli",
-        "name": "Rondelli de Damasco e Nozes",
-        "short_description": "Rondelli gourmet com damasco, nozes e queijo brie",
-        "description": "Combinação sofisticada de damascos, nozes e queijo brie.",
-        "price": Decimal("42.99"),
-        "compare_at_price": Decimal("47.99"),
-        "image": "damasco.webp",
-        "sku": "RON-DAM-NOZ-004",
-        "stock_quantity": 5,
-        "featured": True,
-        "sort_order": 4,
-        "tags": ["rondelli", "gourmet", "destaque"],
+        'sku': 'PT-RON-004',
+        'category_slug': 'rondelli',
+        'name': 'Rondelli de Damasco e Nozes',
+        'short_description': 'Rondelli gourmet com damasco, nozes e queijo brie.',
+        'description': 'Combinação sofisticada de damascos, nozes e queijo brie.',
+        'price': Decimal('42.99'),
+        'compare_at_price': Decimal('47.99'),
+        'featured': True,
+        'sort_order': 4,
+        'image': 'rondelli-damasco.png',
+        'tags': ['rondelli', 'gourmet', 'destaque'],
+        'track_stock': False,
     },
     {
-        "category_slug": "rondelli",
-        "product_type_slug": "rondelli",
-        "name": "Rondelli de Queijo Minas",
-        "short_description": "Rondelli recheado com queijo minas tradicional",
-        "description": "Rondelli com queijo minas de qualidade, perfeito para quem ama queijo.",
-        "price": Decimal("37.99"),
-        "image": "queijo-minas.webp",
-        "sku": "RON-QUE-MIN-005",
-        "stock_quantity": 10,
-        "featured": False,
-        "sort_order": 5,
-        "tags": ["rondelli", "queijo", "tradicional"],
-    },
-    # Molhos
-    {
-        "category_slug": "molhos",
-        "product_type_slug": "molho",
-        "name": "Molho de Tomate Artesanal",
-        "short_description": "Molho de tomate caseiro com temperos frescos",
-        "description": "Molho de tomate tradicional feito com tomates maduros e temperos frescos.",
-        "price": Decimal("18.99"),
-        "image": "molho-tomate.webp",
-        "sku": "MOL-TOM-001",
-        "stock_quantity": 20,
-        "featured": False,
-        "sort_order": 1,
-        "tags": ["molho", "tomate", "tradicional"],
+        'sku': 'PT-RON-005',
+        'category_slug': 'rondelli',
+        'name': 'Rondelli de Queijo Minas',
+        'short_description': 'Rondelli recheado com queijo minas tradicional.',
+        'description': 'Rondelli com queijo minas de qualidade, perfeito para quem ama queijo.',
+        'price': Decimal('37.99'),
+        'featured': False,
+        'sort_order': 5,
+        'image': 'rondelli-queijo-minas.png',
+        'tags': ['rondelli', 'queijo'],
+        'track_stock': False,
     },
     {
-        "category_slug": "molhos",
-        "product_type_slug": "molho",
-        "name": "Molho Branco",
-        "short_description": "Molho branco cremoso para massas",
-        "description": "Molho branco aveludado, perfeito para acompanhar qualquer massa.",
-        "price": Decimal("19.99"),
-        "image": "molho-branco.webp",
-        "sku": "MOL-BRA-002",
-        "stock_quantity": 15,
-        "featured": True,
-        "sort_order": 2,
-        "tags": ["molho", "branco", "cremoso", "destaque"],
+        'sku': 'PT-MOL-001',
+        'category_slug': 'molhos',
+        'name': 'Molho de Tomate Artesanal',
+        'short_description': 'Molho de tomate caseiro com temperos frescos.',
+        'description': 'Molho de tomate tradicional com tomates maduros e temperos frescos.',
+        'price': Decimal('18.99'),
+        'featured': False,
+        'sort_order': 1,
+        'image': 'molho-tomate.png',
+        'tags': ['molho', 'tomate'],
+        'track_stock': False,
     },
     {
-        "category_slug": "molhos",
-        "product_type_slug": "molho",
-        "name": "Molho 4 Queijos",
-        "short_description": "Molho especial com 4 tipos de queijo",
-        "description": "Molho cremoso com gorgonzola, parmesão, provolone e mussarela.",
-        "price": Decimal("24.99"),
-        "image": "molho-4queijos.webp",
-        "sku": "MOL-4QU-003",
-        "stock_quantity": 10,
-        "featured": True,
-        "sort_order": 3,
-        "tags": ["molho", "queijo", "gourmet", "destaque"],
+        'sku': 'PT-MOL-002',
+        'category_slug': 'molhos',
+        'name': 'Molho Branco',
+        'short_description': 'Molho branco cremoso para massas.',
+        'description': 'Molho branco aveludado, perfeito para qualquer massa.',
+        'price': Decimal('19.99'),
+        'featured': True,
+        'sort_order': 2,
+        'image': 'molho-branco.png',
+        'tags': ['molho', 'branco', 'cremoso'],
+        'track_stock': False,
     },
     {
-        "category_slug": "molhos",
-        "product_type_slug": "molho",
-        "name": "Molho Bolonhesa",
-        "short_description": "Molho bolonhesa tradicional com carne",
-        "description": "Molho bolonhesa tradicional italiano com carne moída especial.",
-        "price": Decimal("22.99"),
-        "image": "molho-bolonhesa.webp",
-        "sku": "MOL-BOL-004",
-        "stock_quantity": 12,
-        "featured": False,
-        "sort_order": 4,
-        "tags": ["molho", "carne", "bolonhesa"],
+        'sku': 'PT-MOL-003',
+        'category_slug': 'molhos',
+        'name': 'Molho 4 Queijos',
+        'short_description': 'Molho especial com 4 tipos de queijo.',
+        'description': 'Molho cremoso com gorgonzola, parmesão, provolone e mussarela.',
+        'price': Decimal('24.99'),
+        'featured': True,
+        'sort_order': 3,
+        'image': 'molho-4-queijos.png',
+        'tags': ['molho', 'queijo', 'gourmet'],
+        'track_stock': False,
+    },
+    {
+        'sku': 'PT-MOL-004',
+        'category_slug': 'molhos',
+        'name': 'Molho Bolonhesa',
+        'short_description': 'Molho bolonhesa tradicional com carne.',
+        'description': 'Molho bolonhesa italiano com carne moída temperada.',
+        'price': Decimal('22.99'),
+        'featured': False,
+        'sort_order': 4,
+        'image': 'molho-bolonhesa.png',
+        'tags': ['molho', 'carne'],
+        'track_stock': False,
     },
 ]
 
 
 class Command(BaseCommand):
-    help = 'Populate Pastita menu with products, categories, and product types'
+    help = 'Populate Pastita menu with categories and products.'
 
     def add_arguments(self, parser):
         parser.add_argument(
             '--force',
             action='store_true',
-            help='Force update existing products'
-        )
-        parser.add_argument(
-            '--store-slug',
-            type=str,
-            default='pastita',
-            help='Store slug to populate (default: pastita)'
+            help='Force re-creation of products.',
         )
 
     def handle(self, *args, **options):
         force = options['force']
-        store_slug = options['store_slug']
 
-        self.stdout.write(self.style.NOTICE(f'\n{"="*60}'))
-        self.stdout.write(self.style.NOTICE('POPULATING PASTITA MENU'))
-        self.stdout.write(self.style.NOTICE(f'{"="*60}\n'))
+        self.stdout.write(self.style.NOTICE('\n' + '=' * 60))
+        self.stdout.write(self.style.NOTICE('POPULANDO CARDAPIO PASTITA'))
+        self.stdout.write(self.style.NOTICE('=' * 60 + '\n'))
 
-        # Get the store
-        try:
-            store = Store.objects.get(slug=store_slug)
-            self.stdout.write(f'📦 Found store: {store.name} (ID: {store.id})')
-        except Store.DoesNotExist:
-            self.stdout.write(self.style.ERROR(f'❌ Store "{store_slug}" not found!'))
-            self.stdout.write(self.style.WARNING('Run "python manage.py setup_pastita_store" first.'))
-            return
+        owner = User.objects.filter(is_superuser=True).first()
+        store, created = Store.objects.update_or_create(
+            slug=STORE_SLUG,
+            defaults={
+                'name': 'Pastita',
+                'store_type': Store.StoreType.FOOD,
+                'status': Store.StoreStatus.ACTIVE,
+                'description': 'Rondelli artesanal e molhos especiais.',
+                'primary_color': '#1e40af',
+                'secondary_color': '#3b82f6',
+                'currency': 'BRL',
+                'timezone': 'America/Sao_Paulo',
+                'delivery_enabled': True,
+                'pickup_enabled': True,
+                'owner': owner,
+            }
+        )
+        icon = '✨' if created else '🔄'
+        self.stdout.write(f'{icon} Loja {store.name}')
 
-        # Create Product Types
-        self.stdout.write('\n📋 Creating Product Types...')
-        product_types = {}
-        for type_data in PRODUCT_TYPES:
-            product_type, created = StoreProductType.objects.update_or_create(
-                store=store,
-                slug=type_data["slug"],
-                defaults={
-                    "name": type_data["name"],
-                    "description": type_data["description"],
-                    "icon": type_data["icon"],
-                    "is_active": True,
-                    "show_in_menu": True,
-                }
-            )
-            product_types[type_data["slug"]] = product_type
-            icon = "✨" if created else "🔄"
-            self.stdout.write(f'  {icon} {product_type.name}')
-
-        # Create Categories
-        self.stdout.write('\n📁 Creating Categories...')
+        self.stdout.write('\nCriando categorias...')
         categories = {}
-        for cat_data in CATEGORIES:
-            image_url = build_seed_media_url('categories', cat_data.get('image', ''))
-            category, created = StoreCategory.objects.update_or_create(
+        for cat in CATEGORIES:
+            obj, created = StoreCategory.objects.update_or_create(
                 store=store,
-                slug=cat_data["slug"],
+                slug=cat['slug'],
                 defaults={
-                    "name": cat_data["name"],
-                    "description": cat_data["description"],
-                    "image_url": image_url,
-                    "sort_order": cat_data["sort_order"],
-                    "is_active": True,
-                }
+                    'name': cat['name'],
+                    'description': cat['description'],
+                    'sort_order': cat['sort_order'],
+                    'is_active': True,
+                },
             )
-            categories[cat_data["slug"]] = category
-            icon = "✨" if created else "🔄"
-            self.stdout.write(f'  {icon} {category.name}')
+            categories[cat['slug']] = obj
+            icon = '✨' if created else '🔄'
+            self.stdout.write(f'  {icon} {cat["name"]}')
 
-        # Create Products
-        self.stdout.write('\n🍝 Creating Products...')
-        created_count = 0
-        updated_count = 0
+        self.stdout.write('\nCriando produtos...')
+        created_count = updated_count = 0
 
-        for prod_data in PRODUCTS:
-            category = categories.get(prod_data["category_slug"])
-            product_type = product_types.get(prod_data["product_type_slug"])
-            slug = slugify(prod_data["name"])
-            image_url = build_seed_media_url('products', prod_data.get('image', ''))
+        for prod in PRODUCTS:
+            category = categories.get(prod['category_slug'])
+            image_url = _img(prod.get('image', ''))
 
             defaults = {
-                "category": category,
-                "product_type": product_type,
-                "name": prod_data["name"],
-                "slug": slug,
-                "description": prod_data["description"],
-                "short_description": prod_data["short_description"],
-                "sku": prod_data["sku"],
-                "price": prod_data["price"],
-                "compare_at_price": prod_data.get("compare_at_price"),
-                "stock_quantity": prod_data.get("stock_quantity", 10),
-                "status": StoreProduct.ProductStatus.ACTIVE,
-                "featured": prod_data.get("featured", False),
-                "sort_order": prod_data.get("sort_order", 0),
-                "main_image_url": image_url,
-                "tags": prod_data.get("tags", []),
+                'category': category,
+                'name': prod['name'],
+                'slug': slugify(prod['name']),
+                'short_description': prod.get('short_description', ''),
+                'description': prod.get('description', ''),
+                'price': prod['price'],
+                'compare_at_price': prod.get('compare_at_price'),
+                'status': StoreProduct.ProductStatus.ACTIVE,
+                'featured': prod.get('featured', False),
+                'sort_order': prod.get('sort_order', 0),
+                'main_image_url': image_url,
+                'tags': prod.get('tags', []),
+                'track_stock': prod.get('track_stock', False),
+                'stock_quantity': 0,
             }
 
-            # Try to find existing by SKU
-            product, created = StoreProduct.objects.update_or_create(
-                store=store,
-                sku=prod_data["sku"],
-                defaults=defaults
-            )
+            slug = defaults['slug']
+            try:
+                product = StoreProduct.objects.get(store=store, slug=slug)
+                for k, v in defaults.items():
+                    setattr(product, k, v)
+                product.sku = prod['sku']
+                product.save()
+                created = False
+            except StoreProduct.DoesNotExist:
+                product = StoreProduct.objects.create(store=store, sku=prod['sku'], **defaults)
+                created = True
 
             if created:
                 created_count += 1
-                icon = "✨"
+                icon = '✨'
             else:
                 updated_count += 1
-                icon = "🔄"
+                icon = '🔄'
 
-            promo = "🏷️ PROMO" if product.compare_at_price else ""
-            featured = "⭐" if product.featured else ""
-            self.stdout.write(f'  {icon} {product.name} - R$ {product.price} {promo} {featured}')
+            self.stdout.write(f'  {icon} {product.name}')
 
-        # Summary
-        self.stdout.write(f'\n{"="*60}')
-        self.stdout.write(self.style.SUCCESS('✅ MENU POPULATED SUCCESSFULLY!'))
-        self.stdout.write(f'{"="*60}')
+        total_active = StoreProduct.objects.filter(store=store, status=StoreProduct.ProductStatus.ACTIVE).count()
 
-        total_product_types = StoreProductType.objects.filter(store=store).count()
-        total_categories = StoreCategory.objects.filter(store=store).count()
-        total_products = StoreProduct.objects.filter(store=store).count()
-        total_featured = StoreProduct.objects.filter(store=store, featured=True).count()
+        self.stdout.write('\n' + '=' * 60)
+        self.stdout.write(self.style.SUCCESS('CARDAPIO POPULADO!'))
+        self.stdout.write('=' * 60)
+        self.stdout.write(f'  Produtos criados:   {created_count}')
+        self.stdout.write(f'  Produtos atualizados: {updated_count}')
+        self.stdout.write(f'  Total ativos:       {total_active}')
+        self.stdout.write(f'  Categorias:         {len(categories)}\n')
 
         self.stdout.write(f'\n📊 STATISTICS:')
         self.stdout.write(f'  • Product Types: {total_product_types}')
