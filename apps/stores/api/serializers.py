@@ -623,6 +623,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         request = self.context.get('request')
         view = self.context.get('view')
 
+        raise serializers.ValidationError(f"DEBUG0: request={request}, view={view}")
+
         store_param = validated_data.get('store')
         if not store_param and view:
             store_param = view.kwargs.get('store_pk')
@@ -633,7 +635,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store_param and request:
             # Try multiple path sources
             path = getattr(request, 'path', '') or str(request.build_absolute_uri())
-            raise serializers.ValidationError(f"DEBUG: path={path}, store_param={store_param}")
+            raise serializers.ValidationError(f"DEBUG1: path={path}, store_param={store_param}")
 
         if not store_param:
             raise serializers.ValidationError({'store': 'store is required'})
