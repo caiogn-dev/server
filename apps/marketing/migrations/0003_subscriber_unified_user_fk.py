@@ -4,6 +4,21 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
+class AddFieldIfMissing(migrations.AddField):
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        model = to_state.apps.get_model(app_label, self.model_name)
+        table_name = model._meta.db_table
+        with schema_editor.connection.cursor() as cursor:
+            columns = {
+                column.name
+                for column in schema_editor.connection.introspection.get_table_description(cursor, table_name)
+            }
+        field = model._meta.get_field(self.name)
+        if field.column in columns:
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -12,7 +27,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='subscriber',
             name='unified_user',
             field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='marketing_subscriptions', to='users.unifieduser', verbose_name='Identidade Universal'),

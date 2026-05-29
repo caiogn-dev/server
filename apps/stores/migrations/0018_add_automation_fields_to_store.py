@@ -3,6 +3,21 @@
 from django.db import migrations, models
 
 
+class AddFieldIfMissing(migrations.AddField):
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        model = to_state.apps.get_model(app_label, self.model_name)
+        table_name = model._meta.db_table
+        with schema_editor.connection.cursor() as cursor:
+            columns = {
+                column.name
+                for column in schema_editor.connection.introspection.get_table_description(cursor, table_name)
+            }
+        field = model._meta.get_field(self.name)
+        if field.column in columns:
+            return
+        super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -10,52 +25,52 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='abandoned_cart_delay_minutes',
             field=models.IntegerField(default=60),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='abandoned_cart_notification',
             field=models.BooleanField(default=False),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='auto_reply_enabled',
             field=models.BooleanField(default=True),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='delivery_notification_enabled',
             field=models.BooleanField(default=True),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='menu_auto_send',
             field=models.BooleanField(default=False),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='order_status_notification_enabled',
             field=models.BooleanField(default=True),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='payment_confirmation_enabled',
             field=models.BooleanField(default=True),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='pix_notification_enabled',
             field=models.BooleanField(default=True),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='use_ai_agent',
             field=models.BooleanField(default=False),
         ),
-        migrations.AddField(
+        AddFieldIfMissing(
             model_name='store',
             name='welcome_message_enabled',
             field=models.BooleanField(default=True),
