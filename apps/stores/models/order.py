@@ -191,6 +191,56 @@ class StoreOrder(BaseModel):
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)
 
+    # Delivery provider tracking
+    DELIVERY_PROVIDER_CHOICES = [
+        ('none', 'None'),
+        ('toca', 'Toca Delivery'),
+        ('uber', 'Uber Eats'),
+    ]
+    delivery_provider = models.CharField(
+        max_length=10,
+        choices=DELIVERY_PROVIDER_CHOICES,
+        default='none',
+        db_index=True,
+    )
+
+    # Uber delivery fields
+    uber_delivery_request_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Uber's delivery request ID",
+    )
+    uber_driver_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+    )
+    uber_driver_name = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+    uber_driver_phone = models.CharField(
+        max_length=20,
+        blank=True,
+    )
+    uber_vehicle_info = models.CharField(
+        max_length=255,
+        blank=True,
+    )
+    uber_eta_minutes = models.IntegerField(
+        blank=True,
+        null=True,
+    )
+    uber_pickup_instructions = models.TextField(
+        blank=True,
+    )
+    uber_created_at = models.DateTimeField(
+        blank=True,
+        null=True,
+    )
+
     class Meta:
         db_table = 'store_orders'
         verbose_name = 'Store Order'
@@ -203,6 +253,8 @@ class StoreOrder(BaseModel):
             models.Index(fields=['customer_email']),
             models.Index(fields=['customer', 'store'], name='order_customer_store_idx'),
             models.Index(fields=['store', 'created_at'], name='order_store_created_idx'),
+            models.Index(fields=['delivery_provider']),
+            models.Index(fields=['uber_delivery_request_id']),
         ]
         constraints = [
             models.CheckConstraint(check=models.Q(subtotal__gte=0), name='order_subtotal_gte_0'),
