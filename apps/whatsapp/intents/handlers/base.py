@@ -595,19 +595,12 @@ class IntentHandler:
         if pm == 'pix':
             if payment_data.get('success'):
                 return self._send_pix_confirmation(order, payment_data['pix_code'])
-            # PIX assíncrono: o código chega via webhook do MercadoPago em ~1 min.
-            # Mostramos confirmação do pedido e avisamos que o código vem a seguir.
-            return HandlerResult.buttons(
-                body=(
-                    f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
-                    f"💰 Total: *R$ {float(order.total):.2f}*\n\n"
-                    f"⏳ Estamos gerando seu código PIX, já te envio aqui em instantes!\n\n"
-                    f"Enquanto isso, pode acompanhar o status abaixo 👇"
-                ),
-                buttons=[
-                    {'id': f'track_{order.order_number}', 'title': '📦 Meu Pedido'},
-                    {'id': 'contact_support', 'title': '👤 Atendente'},
-                ],
+            error_msg = payment_data.get('error', 'Tente novamente em instantes')
+            return HandlerResult.text(
+                f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                f"💰 Total: R$ {float(order.total):.2f}\n\n"
+                f"⚠️ Erro ao gerar PIX: {error_msg}\n\n"
+                f"Por favor, tente novamente ou fale com um atendente."
             )
         if pm == 'card':
             if payment_data.get('success'):

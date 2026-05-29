@@ -225,18 +225,13 @@ class WhatsAppOrderService:
         delivery_fee_override: float = None,
         addr_info: dict = None,
     ) -> Optional[Dict[str, Any]]:
-        """Create simple WhatsApp carts through the canonical CheckoutService.
+        """Create WhatsApp carts through the canonical CheckoutService.
 
-        Returns None when the payload uses legacy-only features that CheckoutService
-        cannot represent yet, such as WhatsApp catalog price overrides.
+        Returns None only on validation errors, never on price_source type.
+        price_source is metadata for audit only and must not block the flow.
         """
         if not items:
             return {'success': False, 'error': 'Nenhum item válido no carrinho'}
-
-        # Catalog orders carry custom unit prices that StoreCartItem cannot store.
-        # Fall back to the fast path which respects price_source=whatsapp_catalog.
-        if any(i.get('price_source') == 'whatsapp_catalog' for i in items):
-            return None
 
         try:
             product_quantities = {}
@@ -392,21 +387,8 @@ class WhatsAppOrderService:
     def _generate_pix(self, order: StoreOrder) -> Dict[str, Any]:
         """Gera PIX para o pedido usando Mercado Pago"""
         logger.info(f"[_generate_pix] Iniciando geração de PIX para pedido {order.order_number}")
-        
+
         try:
-            # Verifica credenciais antes de chamar
-            from django.conf import settings
-            mp_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', None)
-            
-            if not mp_token:
-                logger.error("[_generate_pix] MERCADO_PAGO_ACCESS_TOKEN não configurado!")
-                return {
-                    'success': False,
-                    'error': 'Token do Mercado Pago não configurado'
-                }
-            
-            logger.info(f"[_generate_pix] Token MP encontrado: {mp_token[:20]}...")
-            
             result = CheckoutService.create_payment(
                 order=order,
                 payment_method='pix'

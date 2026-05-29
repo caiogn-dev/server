@@ -649,9 +649,9 @@ class GeoService:
                 'message': f'Entrega dinâmica disponível apenas para {area_label}.',
             }
 
-        # ── 4. StoreDeliveryZone configuradas no banco ────────────────────────
+        # ── 4. StoreDeliveryZone configuradas no banco (apenas distance_band) ────
         delivery_zones = StoreDeliveryZone.objects.filter(
-            store=store, is_active=True,
+            store=store, is_active=True, zone_type='distance_band',
         ).order_by('min_km')
 
         if delivery_zones.exists():

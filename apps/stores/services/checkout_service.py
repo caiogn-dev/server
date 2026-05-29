@@ -800,14 +800,15 @@ class CheckoutService:
         payment_payload = payment_data or {}
 
         if payment_method == 'pix':
+            name = order.customer_name or 'Cliente'
             pix_payment_data = {
                 "transaction_amount": float(order.total),
                 "description": f"Pedido #{order.order_number} - {order.store.name}",
                 "payment_method_id": "pix",
                 "payer": {
                     "email": payer_email,
-                    "first_name": order.customer_name.split()[0] if order.customer_name else "Cliente",
-                    "last_name": " ".join(order.customer_name.split()[1:]) if order.customer_name else "",
+                    "first_name": name.split()[0],
+                    "last_name": " ".join(name.split()[1:]) if len(name.split()) > 1 else "",
                 },
                 "external_reference": str(order.id),
                 "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
@@ -826,6 +827,7 @@ class CheckoutService:
                 order.pix_qr_code = pix_data.get("qr_code_base64", "")
                 ticket_url = pix_data.get("ticket_url", "")
                 order.pix_ticket_url = ticket_url
+                order.pix_expires_at = timezone.now() + timedelta(hours=24)
                 order.save(update_fields=[
                     'payment_id',
                     'payment_method',
@@ -833,6 +835,7 @@ class CheckoutService:
                     'pix_code',
                     'pix_qr_code',
                     'pix_ticket_url',
+                    'pix_expires_at',
                     'updated_at',
                 ])
 

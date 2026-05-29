@@ -53,8 +53,9 @@ from .api.views.crm_views import (
     places_search_view,
 )
 
-# Orders delivery app
-from apps.orders.urls import router as orders_router
+# Orders app routes (Uber delivery integration)
+from apps.orders.urls import urlpatterns as orders_urlpatterns
+
 
 # Main router for admin/management endpoints
 router = DefaultRouter()
@@ -97,7 +98,6 @@ stores_router.register(r'print-agents', StorePrintAgentViewSet, basename='store-
 stores_router.register(r'print-jobs', StorePrintJobViewSet, basename='store-print-jobs')
 
 # Nested router for product variants
-
 products_router = nested_routers.NestedDefaultRouter(router, r'products', lookup='product')
 products_router.register(r'variants', StoreProductVariantViewSet, basename='product-variants')
 
@@ -164,7 +164,7 @@ urlpatterns = [
     path('', include(products_router.urls)),
 
     # Orders delivery (Uber integration)
-    path('', include(orders_router.urls)),
+    *orders_urlpatterns,
 
     # ==========================================================================
     # GEO/MAPS ENDPOINTS
