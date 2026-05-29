@@ -32,11 +32,19 @@ from .api.views import (
 # Wrapper functions to pass store_slug to viewset kwargs
 def store_orders_list(request, store_slug):
     """Wrapper to inject store_slug as store_pk for order list/create."""
+    # Inject into resolver_match.kwargs so viewset can access it
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_pk'] = store_slug
+
     view = StoreOrderViewSet.as_view({'get': 'list', 'post': 'create'})
     return view(request, store_pk=store_slug)
 
 def store_order_detail(request, store_slug, pk):
     """Wrapper to inject store_slug as store_pk for order detail."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_pk'] = store_slug
+        request.resolver_match.kwargs['pk'] = pk
+
     view = StoreOrderViewSet.as_view({
         'get': 'retrieve',
         'patch': 'partial_update',
