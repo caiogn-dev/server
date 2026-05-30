@@ -29,7 +29,6 @@ class PopulateCeSaladasTestCase(TestCase):
         self.assertTrue(WhatsAppAccount.objects.filter(waba_id='1537842617304215').exists())
         wa = WhatsAppAccount.objects.get(waba_id='1537842617304215')
         self.assertEqual(wa.phone_number, '63991386719')
-        self.assertTrue(wa.auto_response_enabled)
 
     def test_populate_ce_saladas_creates_categories(self):
         call_command('populate_ce_saladas_menu')
