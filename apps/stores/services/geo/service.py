@@ -23,8 +23,8 @@ def _round_coords(lat: float, lng: float, precision: int = 4) -> Tuple[float, fl
 
 
 def _haversine_km(origin: Tuple[float, float], destination: Tuple[float, float]) -> float:
-    lat1, lon1 = origin
-    lat2, lon2 = destination
+    lat1, lon1 = float(origin[0]), float(origin[1])
+    lat2, lon2 = float(destination[0]), float(destination[1])
     r = 6371.0
     phi1 = math.radians(lat1)
     phi2 = math.radians(lat2)

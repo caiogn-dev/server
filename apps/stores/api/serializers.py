@@ -473,13 +473,20 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
             'items', 'items_count', 'metadata',
-            'created_at', 'updated_at', 'is_active'
+            'created_at', 'updated_at', 'is_active',
+            'delivery_provider',
+            'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
+            'uber_driver_phone', 'uber_vehicle_info', 'uber_eta_minutes',
+            'uber_pickup_instructions', 'uber_created_at',
         ]
         read_only_fields = [
             'id', 'order_number', 'access_token', 'created_at', 'updated_at',
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
+            'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
+            'uber_driver_phone', 'uber_vehicle_info', 'uber_eta_minutes',
+            'uber_pickup_instructions', 'uber_created_at',
         ]
     
     def get_items_count(self, obj):

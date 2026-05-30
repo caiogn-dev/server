@@ -36,7 +36,7 @@ class CreateDeliveryRequestView(APIView):
                 )
 
             # Queue Celery task for Uber delivery
-            create_uber_delivery_request.delay(order.id)
+            create_uber_delivery_request.delay(order.id, order.store_id)
 
             logger.info(f'Queued Uber delivery request for order {order.id}')
 
@@ -105,7 +105,12 @@ class CancelDeliveryRequestView(APIView):
 
             # Update order
             order.uber_delivery_request_id = None
-            order.delivery_provider = None
+            order.delivery_provider = 'none'
+            order.uber_driver_id = None
+            order.uber_driver_name = ''
+            order.uber_driver_phone = ''
+            order.uber_vehicle_info = ''
+            order.uber_eta_minutes = None
             order.save()
 
             logger.info(f'Cancelled Uber delivery request for order {order.id}')

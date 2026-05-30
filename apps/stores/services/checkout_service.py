@@ -5,6 +5,7 @@ Handles order creation, payment processing, and stock management.
 import logging
 import re
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import urlparse
 from django.db import models, transaction
@@ -279,8 +280,11 @@ class CheckoutService:
         Delegated to UnifiedDeliveryService — single source of truth for all delivery fees.
         """
         from apps.stores.services.unified_delivery_service import UnifiedDeliveryService
+        import logging
+        logger = logging.getLogger(__name__)
 
         payload = delivery_payload or {}
+        logger.info(f"calculate_delivery_fee_for_payload received: lat={payload.get('lat')}, lng={payload.get('lng')}, delivery_address={payload.get('address')}")
         result = UnifiedDeliveryService.calculate_delivery_fee(
             store=store,
             delivery_method=payload.get('method', 'delivery'),
