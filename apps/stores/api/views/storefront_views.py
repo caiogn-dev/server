@@ -668,8 +668,8 @@ class StoreCheckoutView(APIView):
             'address': request.data.get('delivery_address', {}),
             'notes': request.data.get('delivery_notes', ''),
             'zip_code': request.data.get('delivery_zip_code'),
-            'lat': request.data.get('delivery_lat'),
-            'lng': request.data.get('delivery_lng'),
+            'lat': request.data.get('lat') or request.data.get('delivery_lat'),
+            'lng': request.data.get('lng') or request.data.get('delivery_lng'),
         }
         
         coupon_code = request.data.get('coupon_code', '')
