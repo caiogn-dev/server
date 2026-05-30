@@ -1,6 +1,4 @@
-"""
-WhatsApp Webhook views.
-"""
+"""\nWhatsApp Webhook views.\n"""
 import logging
 import json
 from django.conf import settings
@@ -137,8 +135,8 @@ class WhatsAppWebhookView(APIView):
             
         except Exception as e:
             logger.error(f"Webhook POST error: {str(e)}", exc_info=True)
-            # Still return 200 to avoid Meta retrying
-            return Response({'status': 'error', 'message': str(e)})
+            # Return 200 to avoid Meta retrying indefinitely — details logged above
+            return Response({'status': 'error'})
 
 
 class WebhookDebugView(APIView):
