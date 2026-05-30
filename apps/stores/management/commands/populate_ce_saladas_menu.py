@@ -1,5 +1,5 @@
 """
-Management command to populate Cê Saladas menu.
+Management command to populate Cê Saladas menu (salads restaurant).
 
 Usage:
     python manage.py populate_ce_saladas_menu
@@ -25,19 +25,6 @@ User = get_user_model()
 STORE_SLUG = 'ce-saladas'
 IMG_PATH = 'stores/products/ce-saladas'
 
-
-def _img(filename):
-    """Return relative media URL if file exists in container, else empty string."""
-    if not filename:
-        return ''
-    local = Path(settings.MEDIA_ROOT) / IMG_PATH / filename
-    if local.exists():
-        media_url = settings.MEDIA_URL.rstrip('/')
-        return f"{media_url}/{IMG_PATH}/{filename}"
-    return ''
-
-
-# Shared location data
 SHARED_LOCATION = {
     "latitude": Decimal("-10.1852683"),
     "longitude": Decimal("-48.3036368"),
@@ -48,7 +35,6 @@ SHARED_LOCATION = {
     "country": "BR",
 }
 
-# Shared operating hours
 SHARED_OPERATING_HOURS = {
     "monday": {"open": "08:00", "close": "17:00"},
     "tuesday": {"open": "08:00", "close": "17:00"},
@@ -59,7 +45,6 @@ SHARED_OPERATING_HOURS = {
     "sunday": {"open": "00:00", "close": "00:00"},
 }
 
-# Delivery zones (0-17km)
 DELIVERY_ZONES = [
     {"min_km": 0, "max_km": 2, "fee": Decimal("7.00"), "sort": 1},
     {"min_km": Decimal("2.1"), "max_km": 3, "fee": Decimal("8.00"), "sort": 2},
@@ -102,89 +87,11 @@ PRODUCTS = [
         'tags': ['salada', 'peixe'],
         'track_stock': False,
     },
-    {
-        'sku': 'CS-FRA',
-        'category_slug': 'saladas',
-        'name': 'Especial Filé de Frango',
-        'short_description': 'Salada com filé de frango grelhado.',
-        'description': 'Salada com filé de frango suculento.',
-        'price': Decimal('38.90'),
-        'featured': True,
-        'sort_order': 2,
-        'image': 'especial-frango.png',
-        'tags': ['salada', 'frango'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'CS-LOM',
-        'category_slug': 'saladas',
-        'name': 'Basic Lombo',
-        'short_description': 'Salada leve com lombo grelhado.',
-        'description': 'Salada simples e nutritiva com lombo grelhado.',
-        'price': Decimal('36.90'),
-        'featured': False,
-        'sort_order': 3,
-        'image': 'basic-lombo.png',
-        'tags': ['salada', 'carne'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'CS-SAL',
-        'category_slug': 'saladas',
-        'name': 'Salmão Sublime',
-        'short_description': 'Salada com salmão grelhado e ervas.',
-        'description': 'Salada sofisticada com salmão grelhado ao ponto.',
-        'price': Decimal('45.90'),
-        'featured': True,
-        'sort_order': 4,
-        'image': 'salmao.png',
-        'tags': ['salada', 'peixe', 'premium'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'CS-ALM',
-        'category_slug': 'saladas',
-        'name': 'Almôndega Premium',
-        'short_description': 'Salada com almôndegas caseiras.',
-        'description': 'Salada com almôndegas preparadas artesanalmente.',
-        'price': Decimal('39.90'),
-        'featured': False,
-        'sort_order': 5,
-        'image': 'almondegas.png',
-        'tags': ['salada', 'carne'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'CS-QUE',
-        'category_slug': 'saladas',
-        'name': 'Queridinha',
-        'short_description': 'A salada mais popular da Cê Saladas.',
-        'description': 'A salada mais pedida com blend especial de proteínas.',
-        'price': Decimal('41.90'),
-        'featured': True,
-        'sort_order': 6,
-        'image': 'queridinha.png',
-        'tags': ['salada', 'destaque'],
-        'track_stock': False,
-    },
-    {
-        'sku': 'CS-CAM',
-        'category_slug': 'saladas',
-        'name': 'Magnifico Camarão',
-        'short_description': 'Salada com camarão grelhado.',
-        'description': 'Salada sofisticada com camarão fresco grelhado.',
-        'price': Decimal('48.90'),
-        'featured': True,
-        'sort_order': 7,
-        'image': 'camarao.png',
-        'tags': ['salada', 'frutos-do-mar', 'premium'],
-        'track_stock': False,
-    },
 ]
 
 
 class Command(BaseCommand):
-    help = 'Popula o cardápio da Cê Saladas com dados reais e WhatsApp integration'
+    help = 'Popula o cardápio da Cê Saladas com dados reais'
 
     def add_arguments(self, parser):
         parser.add_argument('--force', action='store_true', help='Força sobrescrita de dados existentes')
@@ -203,7 +110,6 @@ class Command(BaseCommand):
             self.stdout.write(self.style.ERROR('❌ Nenhum usuário encontrado'))
             return
 
-        # FASE 1: Create Store
         self.stdout.write('📋 Fase 1: Criando Store...')
         store, created = Store.objects.update_or_create(
             slug=STORE_SLUG,
@@ -233,7 +139,6 @@ class Command(BaseCommand):
         status = '✅ Criada' if created else '🔄 Atualizada'
         self.stdout.write(self.style.SUCCESS(f'{status}: {store.name}'))
 
-        # FASE 2: Create WhatsApp Account
         self.stdout.write('📋 Fase 2: Criando WhatsAppAccount...')
         wa_account, wa_created = WhatsAppAccount.objects.update_or_create(
             phone_number_id='941408229062882',
@@ -253,7 +158,6 @@ class Command(BaseCommand):
         wa_status = '✅ Criada' if wa_created else '🔄 Atualizada'
         self.stdout.write(self.style.SUCCESS(f'{wa_status}: WABA {wa_account.waba_id}'))
 
-        # FASE 3: Create Categories
         self.stdout.write('📋 Fase 3: Criando Categorias...')
         category_map = {}
         for cat_data in CATEGORIES:
@@ -269,7 +173,6 @@ class Command(BaseCommand):
             category_map[cat_data['slug']] = cat
         self.stdout.write(self.style.SUCCESS(f'✅ {len(CATEGORIES)} categoria(s) criada(s)'))
 
-        # FASE 4: Create Products
         self.stdout.write('📋 Fase 4: Criando Produtos com otimização de imagens...')
         optimized_count = 0
         for prod_data in PRODUCTS:
@@ -302,7 +205,6 @@ class Command(BaseCommand):
             )
         self.stdout.write(self.style.SUCCESS(f'✅ {len(PRODUCTS)} produto(s) criado(s), {optimized_count} imagem(ns) otimizada(s)'))
 
-        # FASE 5: Create Delivery Zones
         self.stdout.write('📋 Fase 5: Criando Zonas de Entrega...')
         zones_created = 0
         for zone_data in DELIVERY_ZONES:
@@ -322,7 +224,6 @@ class Command(BaseCommand):
             zones_created += 1
         self.stdout.write(self.style.SUCCESS(f'✅ {zones_created} zona(s) de entrega criada(s)'))
 
-        # SUMMARY
         self.stdout.write(self.style.SUCCESS('\n' + '='*60))
         self.stdout.write(self.style.SUCCESS('✅ POPULAÇÃO CONCLUÍDA'))
         self.stdout.write(self.style.SUCCESS('='*60))
