@@ -73,6 +73,9 @@ urlpatterns = [
         path('core/', include('apps.core.urls')),
         path('auth/', include('apps.core.auth.urls')),
 
+        # Global GEO/MAPS endpoints (must be before stores/ to avoid catch-all)
+        path('maps/', include('apps.stores.api.geo_maps_urls')),
+
         # Unified Store API
         path('stores/', include('apps.stores.urls')),
 

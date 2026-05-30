@@ -196,15 +196,6 @@ urlpatterns = [
     *orders_urlpatterns,
 
     # ==========================================================================
-    # GEO/MAPS ENDPOINTS
-    # ==========================================================================
-    
-    # Global maps endpoints
-    path('maps/geocode/', StoreGeocodeView.as_view(), name='maps-geocode'),
-    path('maps/reverse-geocode/', StoreReverseGeocodeView.as_view(), name='maps-reverse-geocode'),
-    path('maps/autosuggest/', StoreAutosuggestView.as_view(), name='maps-autosuggest'),
-    
-    # ==========================================================================
     # PAYMENT WEBHOOKS
     # ==========================================================================
     
