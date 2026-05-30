@@ -670,6 +670,9 @@ class StoreCheckoutView(APIView):
             'zip_code': request.data.get('delivery_zip_code'),
             'lat': request.data.get('lat') or request.data.get('delivery_lat'),
             'lng': request.data.get('lng') or request.data.get('delivery_lng'),
+            'fee': request.data.get('delivery_fee'),
+            'distance_km': request.data.get('delivery_distance_km'),
+            'duration_minutes': request.data.get('delivery_duration_minutes'),
         }
         
         coupon_code = request.data.get('coupon_code', '')
