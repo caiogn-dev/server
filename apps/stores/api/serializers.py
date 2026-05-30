@@ -975,10 +975,10 @@ class UpdateCartItemSerializer(serializers.Serializer):
 
 class CheckoutSerializer(serializers.Serializer):
     """Serializer for checkout process."""
-    
+
     # Customer info
     customer_name = serializers.CharField(max_length=255)
-    customer_email = serializers.EmailField()
+    customer_email = serializers.EmailField(required=False, allow_blank=True)
     customer_phone = serializers.CharField(max_length=20)
     
     # Delivery info
