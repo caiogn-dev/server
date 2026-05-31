@@ -5,8 +5,7 @@ from django.test import TestCase
 from django.contrib.auth.models import User
 
 from apps.orders.models import StoreOrder, StoreOrderItem
-from apps.stores.models import Store
-from apps.stores.models.product import Product
+from apps.stores.models import Store, StoreProduct
 from apps.orders.services.uber_delivery import UberDeliveryClient
 
 
@@ -30,7 +29,7 @@ class TestUberDeliveryBugFixes(TestCase):
             state='SP',
             zip_code='01234-567',
         )
-        self.product = Product.objects.create(
+        self.product = StoreProduct.objects.create(
             store=self.store,
             name='Test Product',
             slug='test-product',
