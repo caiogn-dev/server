@@ -5,7 +5,8 @@ from django.test import TestCase
 from django.contrib.auth.models import User
 
 from apps.orders.models import StoreOrder, StoreOrderItem
-from apps.stores.models import Store, Product
+from apps.stores.models import Store
+from apps.stores.models.product import Product
 from apps.orders.services.uber_delivery import UberDeliveryClient
 
 
