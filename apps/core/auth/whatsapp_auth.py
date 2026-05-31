@@ -20,6 +20,8 @@ Para resolver, verifique no Meta Business Manager:
 3. Se o template tem variáveis {{1}}, {{2}}, etc.
 4. Se os componentes enviados correspondem ao template
 """
+import hashlib
+import hmac as _hmac
 import logging
 import random
 import string
@@ -178,7 +180,16 @@ class WhatsAppAuthService:
     def _get_cache_key(phone: str) -> str:
         """Gera chave de cache para o número"""
         return f"whatsapp_auth:{phone}"
-    
+
+    @staticmethod
+    def _hash_code(code: str) -> str:
+        """HMAC-SHA256 do código OTP para não armazenar texto puro no cache."""
+        return _hmac.new(
+            settings.SECRET_KEY.encode(),
+            code.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
     @classmethod
     def send_auth_code(
         cls, 
@@ -220,12 +231,12 @@ class WhatsAppAuthService:
         
         # Gera novo código
         code = cls.generate_code()
-        
-        logger.info(f"[WHATSAPP AUTH] Generated code for {clean_phone}: {code}")
-        
-        # Salva no cache
+
+        logger.info("[WHATSAPP AUTH] Generated code for %s", clean_phone)
+
+        # Salva no cache — apenas o hash, nunca o código em texto puro
         cache_data = {
-            'code': code,
+            'code_hash': cls._hash_code(code),
             'attempts': 0,
             'created_at': timezone.now().isoformat(),
             'phone': clean_phone,
@@ -435,13 +446,19 @@ class WhatsAppAuthService:
                 'message': 'Muitas tentativas incorretas. Solicite um novo código.'
             }
         
-        # Verifica código
-        if stored['code'] != code:
+        # Verifica código com comparação em tempo constante
+        submitted_hash = cls._hash_code(code)
+        stored_hash = stored.get('code_hash') or cls._hash_code(stored.get('code', ''))
+        if not _hmac.compare_digest(stored_hash, submitted_hash):
             stored['attempts'] += 1
-            cache.set(cache_key, stored, timeout=60 * cls.CODE_TTL_MINUTES)
-            
+            # Preserva o TTL original — não reinicia a janela a cada tentativa errada
+            created_at = datetime.fromisoformat(stored['created_at'])
+            elapsed = (timezone.now() - created_at).total_seconds()
+            remaining_ttl = int(max(1, (cls.CODE_TTL_MINUTES * 60) - elapsed))
+            cache.set(cache_key, stored, timeout=remaining_ttl)
+
             remaining_attempts = cls.MAX_ATTEMPTS - stored['attempts']
-            
+
             return {
                 'valid': False,
                 'error': 'invalid_code',
