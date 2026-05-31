@@ -1,7 +1,7 @@
 import os
 import logging
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -11,6 +11,7 @@ class UberDeliveryClient:
     """
     Wrapper for Uber Delivery API.
     Supports create delivery request, poll status, cancel request.
+    Uses OAuth 2.0 Client Credentials flow for authentication.
     """
 
     def __init__(self):
@@ -18,16 +19,54 @@ class UberDeliveryClient:
             'UBER_API_BASE_URL',
             'https://api.uber.com/v1/deliveries'
         )
-        self.api_key = os.getenv('UBER_API_KEY')
+        self.client_id = os.getenv('UBER_API_KEY')
+        self.client_secret = os.getenv('UBER_CLIENT_SECRET')
         self.customer_id = os.getenv('UBER_CUSTOMER_ID')
+        self.token_url = 'https://auth.uber.com/oauth/v2/token'
 
-        if not all([self.api_key, self.customer_id]):
+        self._access_token = None
+        self._token_expires_at = None
+
+        if not all([self.client_id, self.client_secret, self.customer_id]):
             logger.warning("Uber API credentials not configured")
+
+    def _get_access_token(self) -> str:
+        """
+        Get OAuth access token using Client Credentials flow.
+        Cached until expiration.
+        """
+        if self._access_token and self._token_expires_at and datetime.now() < self._token_expires_at:
+            return self._access_token
+
+        try:
+            response = requests.post(
+                self.token_url,
+                data={
+                    'client_id': self.client_id,
+                    'client_secret': self.client_secret,
+                    'grant_type': 'client_credentials',
+                    'scope': 'direct.organizations',
+                },
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            self._access_token = data['access_token']
+            expires_in = data.get('expires_in', 2592000)
+            self._token_expires_at = datetime.now() + timedelta(seconds=expires_in - 60)
+
+            logger.info("Uber OAuth token obtained successfully")
+            return self._access_token
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Uber OAuth error: {str(e)}")
+            raise
 
     def _headers(self) -> Dict[str, str]:
         """Return auth headers for Uber API."""
+        token = self._get_access_token()
         return {
-            'Authorization': f'Bearer {self.api_key}',
+            'Authorization': f'Bearer {token}',
             'Content-Type': 'application/json',
         }
 
@@ -47,27 +86,38 @@ class UberDeliveryClient:
             dropoff_address: Customer address (delivery location)
             customer_phone: Customer phone number
             order_id: StoreOrder ID (for reference)
-            items: List of item dicts with 'name', 'qty'
+            items: List of item dicts with 'name', 'quantity'
 
         Returns:
             Dict with 'delivery_request_id', 'status', or raises exception
         """
         payload = {
             'customer_id': self.customer_id,
-            'pickup_address': pickup_address,
-            'dropoff_address': dropoff_address,
-            'customer_phone': customer_phone,
+            'pickup': {
+                'name': 'Restaurant',
+                'address': pickup_address,
+                'phone_number': '+55' if not customer_phone.startswith('+55') else '' + customer_phone.lstrip('+'),
+            },
+            'dropoff': {
+                'name': 'Customer',
+                'address': dropoff_address,
+                'phone_number': '+55' if not customer_phone.startswith('+55') else '' + customer_phone.lstrip('+'),
+            },
             'external_order_id': str(order_id),
             'items': items or [],
         }
 
         try:
+            logger.info(f"Uber delivery request payload: {payload}")
             resp = requests.post(
                 self.base_url,
                 json=payload,
                 headers=self._headers(),
                 timeout=10,
             )
+            logger.info(f"Uber API response status: {resp.status_code}")
+            if not resp.ok:
+                logger.error(f"Uber API response body: {resp.text}")
             resp.raise_for_status()
             data = resp.json()
 
