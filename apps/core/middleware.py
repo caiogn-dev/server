@@ -384,6 +384,8 @@ class RateLimitMiddleware:
 # Multi-Tenant Middleware
 # ============================================
 
+_TENANT_MISS = object()  # sentinel: key present in cache but store doesn't exist
+
 
 class TenantMiddleware:
     """
@@ -422,49 +424,61 @@ class TenantMiddleware:
         
         return response
     
+    @staticmethod
+    def _get_active_store(Store, slug: str):
+        """
+        Look up an active Store by slug with a 60-second cache to avoid
+        repeated DB queries when the same slug appears across the 4 detection
+        strategies or across many sequential requests.
+        """
+        cache_key = f"tenant:store:{slug}"
+        result = cache.get(cache_key, _TENANT_MISS)
+        if result is not _TENANT_MISS:
+            return result  # None means "confirmed not found", Store instance means found
+        try:
+            store = Store.objects.get(slug=slug, is_active=True)
+            cache.set(cache_key, store, 60)
+            return store
+        except Exception:
+            cache.set(cache_key, None, 60)
+            return None
+
     def _detect_tenant(self, request, Store):
         """Detect tenant from various sources."""
-        from django.core.exceptions import ObjectDoesNotExist
-        
         # 1. Check subdomain
         host = request.get_host().split(':')[0]
         if '.' in host and not host.startswith(('localhost', '127.0.0.1', 'web-production')):
             subdomain = host.split('.')[0]
             if subdomain not in ['www', 'api', 'admin', 'app']:
-                try:
-                    return Store.objects.get(slug=subdomain, is_active=True)
-                except ObjectDoesNotExist:
-                    pass
-        
+                store = self._get_active_store(Store, subdomain)
+                if store:
+                    return store
+
         # 2. Check header
         tenant_slug = request.headers.get('X-Tenant-ID') or request.headers.get('X-Store-Slug')
         if tenant_slug:
-            try:
-                return Store.objects.get(slug=tenant_slug, is_active=True)
-            except ObjectDoesNotExist:
-                pass
-        
+            store = self._get_active_store(Store, tenant_slug)
+            if store:
+                return store
+
         # 3. Check query parameter
         tenant_slug = request.GET.get('tenant') or request.GET.get('store')
         if tenant_slug:
-            try:
-                return Store.objects.get(slug=tenant_slug, is_active=True)
-            except ObjectDoesNotExist:
-                pass
-        
+            store = self._get_active_store(Store, tenant_slug)
+            if store:
+                return store
+
         # 4. Check path (for store-scoped URLs)
         path_parts = request.path.strip('/').split('/')
         if len(path_parts) >= 3 and path_parts[0] == 'api':
-            # Check for /api/v1/stores/{slug}/ pattern
             if 'stores' in path_parts:
                 store_index = path_parts.index('stores')
                 if len(path_parts) > store_index + 1:
                     tenant_slug = path_parts[store_index + 1]
-                    try:
-                        return Store.objects.get(slug=tenant_slug, is_active=True)
-                    except ObjectDoesNotExist:
-                        pass
-        
+                    store = self._get_active_store(Store, tenant_slug)
+                    if store:
+                        return store
+
         return None
 
 
