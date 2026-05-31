@@ -4,6 +4,8 @@ Authentication views for the API.
 import logging
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password as django_validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.exceptions import ObjectDoesNotExist
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
@@ -39,6 +41,13 @@ class RegisterSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=20, required=True)
     coupon_code = serializers.CharField(max_length=50, required=False, allow_blank=True)
     store_slug = serializers.CharField(max_length=100, required=False, allow_blank=True)
+
+    def validate_password(self, value):
+        try:
+            django_validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
 
 
 class TokenSerializer(serializers.Serializer):
@@ -196,6 +205,13 @@ class CurrentUserView(APIView):
 class ChangePasswordSerializer(serializers.Serializer):
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_new_password(self, value):
+        try:
+            django_validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
 
 
 class ChangePasswordView(APIView):
