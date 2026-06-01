@@ -5,7 +5,7 @@ Unified API for all stores including cart, checkout, catalog, maps, and webhooks
 This is the UNIFIED e-commerce API that all frontends should use.
 All frontends must use /api/v1/stores/{store_slug}/ endpoints.
 """
-from django.urls import path, include
+from django.urls import path, include, re_path
 from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
 
@@ -23,6 +23,8 @@ from .api.views import (
     StoreCouponViewSet, StoreDeliveryZoneViewSet,
     # Wishlist views
     StoreWishlistViewSet,
+    # Customer address management
+    MyAddressViewSet,
     # Admin views for full CRUD
     StoreProductTypeAdminViewSet,
     PrintAgentHeartbeatView, PrintAgentClaimNextJobView,
@@ -52,6 +54,36 @@ def store_order_detail(request, store_slug, pk):
         'delete': 'destroy',
     })
     return view(request, store_pk=store_slug, pk=pk)
+
+def my_addresses_list(request, store_slug):
+    """Wrapper to inject store_slug for address list/create."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_slug'] = store_slug
+
+    view = MyAddressViewSet.as_view({'get': 'list', 'post': 'create'})
+    return view(request, store_slug=store_slug)
+
+def my_addresses_detail(request, store_slug, id):
+    """Wrapper to inject store_slug for address detail."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_slug'] = store_slug
+        request.resolver_match.kwargs['id'] = id
+
+    view = MyAddressViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+        'delete': 'destroy',
+    })
+    return view(request, store_slug=store_slug, id=id)
+
+def my_addresses_set_default(request, store_slug, id):
+    """Wrapper to inject store_slug for set-default action."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_slug'] = store_slug
+        request.resolver_match.kwargs['id'] = id
+
+    view = MyAddressViewSet.as_view({'patch': 'set_default'})
+    return view(request, store_slug=store_slug, id=id)
 from .api.webhooks import (
     MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
     CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView,
@@ -151,6 +183,11 @@ store_frontend_patterns = [
     path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
+
+    # Customer-facing address management — using re_path to capture store_slug from parent include()
+    re_path(r'^customer/my-addresses/$', my_addresses_list, name='my-addresses'),
+    re_path(r'^customer/my-addresses/(?P<id>[0-9a-f\-]+)/$', my_addresses_detail, name='my-address-detail'),
+    re_path(r'^customer/my-addresses/(?P<id>[0-9a-f\-]+)/set-default/$', my_addresses_set_default, name='my-address-set-default'),
 
     # Orders CRUD (for slug-based access)
     # Wrapper injects store_slug as store_pk for viewset kwargs
