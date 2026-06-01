@@ -39,6 +39,7 @@ from apps.stores.models import (
     StoreCustomer, StorePaymentGateway,
     StoreWishlist, StoreCustomerAddress,
 )
+from apps.users.models import UserAddress
 from apps.stores.services import cart_service, checkout_service
 from apps.stores.services.delivery_quote_service import delivery_quote_service
 from apps.stores.services.geo import geo_service
@@ -855,17 +856,15 @@ class StoreDeliveryFeeView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
 
-            delivery_payload = {
-                'method': 'delivery',
-                'distance_km': distance_km,
-                'zip_code': zip_code,
-                'address': {
-                    'lat': lat,
-                    'lng': lng,
-                    'raw_address': address or zip_code or '',
-                },
-            }
-            delivery_info = delivery_quote_service.calculate_for_payload(store, delivery_payload)
+            from apps.stores.services.unified_delivery_service import UnifiedDeliveryService
+
+            delivery_info = UnifiedDeliveryService.calculate_delivery_fee(
+                store=store,
+                delivery_method='delivery',
+                lat=float(lat) if lat else None,
+                lng=float(lng) if lng else None,
+                address_text=address or zip_code or None,
+            )
             return Response(delivery_quote_service.normalize(delivery_info))
         except Exception as e:
             logger.error(f"Delivery fee calculation error: {e}")
@@ -1086,3 +1085,84 @@ class StoreWishlistViewSet(viewsets.ViewSet):
             'in_wishlist': added,
             'wishlist_count': wishlist_count
         })
+
+
+class MyAddressViewSet(viewsets.ModelViewSet):
+    """CRUD de endereços salvos do cliente logado."""
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = None  # set in __init__
+    lookup_field = 'id'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from apps.users.serializers import UserAddressSerializer
+        self.serializer_class = UserAddressSerializer
+
+    def get_store_slug(self):
+        """Extract store slug from request path or kwargs."""
+        # When used via include(store_frontend_patterns), Django injects store_slug into kwargs
+        if 'store_slug' in self.kwargs:
+            return self.kwargs['store_slug']
+
+        # Fallback: extract from URL path
+        path_parts = self.request.path.split('/')
+        if len(path_parts) > 4 and path_parts[3]:
+            return path_parts[3]
+
+        return None
+
+    def get_store(self):
+        """Get store by slug from request."""
+        store_slug = self.get_store_slug()
+        if not store_slug:
+            raise get_object_or_404(Store, slug=None)
+        return get_object_or_404(Store, slug=store_slug)
+
+    def get_queryset(self):
+        """Retorna endereços do usuário logado para a loja atual."""
+        store = self.get_store()
+
+        # Filtrar por unified_user (do token) + tenant (loja)
+        unified_user = getattr(self.request.user, 'unified_user', None)
+        if not unified_user:
+            # Fallback se user não tiver unified_user populado
+            from apps.users.models import UnifiedUser
+            unified_user = UnifiedUser.objects.filter(user=self.request.user).first()
+
+        if not unified_user:
+            return UserAddress.objects.none()
+
+        return UserAddress.objects.filter(
+            unified_user=unified_user,
+            tenant=store
+        ).order_by('-is_default', '-created_at')
+
+    def perform_create(self, serializer):
+        """Criar endereço vinculando ao usuário e loja."""
+        store = self.get_store()
+
+        unified_user = getattr(self.request.user, 'unified_user', None)
+        if not unified_user:
+            from apps.users.models import UnifiedUser
+            unified_user = UnifiedUser.objects.filter(user=self.request.user).first()
+
+        serializer.save(unified_user=unified_user, tenant=store)
+
+    @action(detail=True, methods=['patch'])
+    def set_default(self, request, *args, **kwargs):
+        """Marcar endereço como padrão."""
+        address = self.get_object()
+
+        # Desmarcar outros como padrão para o mesmo usuário/loja
+        UserAddress.objects.filter(
+            unified_user=address.unified_user,
+            tenant=address.tenant,
+            is_default=True
+        ).exclude(id=address.id).update(is_default=False)
+
+        # Marcar este como padrão
+        address.is_default = True
+        address.save(update_fields=['is_default', 'updated_at'])
+
+        serializer = self.get_serializer(address)
+        return Response(serializer.data)

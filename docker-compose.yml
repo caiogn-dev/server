@@ -87,6 +87,7 @@ x-django-env: &django-env
   POSTADO_ADMIN_TOKEN: ${POSTADO_ADMIN_TOKEN:-}
   # Uber Delivery
   UBER_API_KEY: ${UBER_API_KEY}
+  UBER_CLIENT_SECRET: ${UBER_CLIENT_SECRET}
   UBER_API_BASE_URL: ${UBER_API_BASE_URL}
   UBER_CUSTOMER_ID: ${UBER_CUSTOMER_ID}
 
@@ -202,7 +203,7 @@ services:
       sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
              nginx -g 'daemon off;'"
     ports:
-      - "80:80"
+      - "8001:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - static_files:/var/www/static:ro

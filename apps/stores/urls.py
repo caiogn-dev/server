@@ -84,6 +84,7 @@ def my_addresses_set_default(request, store_slug, id):
 
     view = MyAddressViewSet.as_view({'patch': 'set_default'})
     return view(request, store_slug=store_slug, id=id)
+
 from .api.webhooks import (
     MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
     CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView,

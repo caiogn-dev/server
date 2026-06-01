@@ -32,7 +32,7 @@ RUN chmod +x /entrypoint.sh \
 USER appuser
 
 # Collectstatic with build-time settings to satisfy production checks
-RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret python manage.py collectstatic --noinput
+RUN DJANGO_ALLOWED_HOSTS=localhost DJANGO_SECRET_KEY=build-time-secret WHATSAPP_WEBHOOK_VERIFY_TOKEN=test-build-token python manage.py collectstatic --noinput
 
 EXPOSE 8000
 

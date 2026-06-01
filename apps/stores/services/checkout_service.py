@@ -284,11 +284,28 @@ class CheckoutService:
         logger = logging.getLogger(__name__)
 
         payload = delivery_payload or {}
-        logger.info(f"calculate_delivery_fee_for_payload received: lat={payload.get('lat')}, lng={payload.get('lng')}, delivery_address={payload.get('address')}")
+
+        # Convert address dict to string if needed
+        address_obj = payload.get('address')
+        address_text = None
+
+        if isinstance(address_obj, str):
+            address_text = address_obj
+        elif isinstance(address_obj, dict):
+            parts = [
+                address_obj.get('street', ''),
+                address_obj.get('number', ''),
+                address_obj.get('neighborhood', ''),
+                address_obj.get('city', ''),
+                address_obj.get('state', ''),
+            ]
+            address_text = ', '.join(filter(None, parts)) or None
+
+        logger.info(f"calculate_delivery_fee_for_payload: lat={payload.get('lat')}, lng={payload.get('lng')}, address_text={address_text}")
         result = UnifiedDeliveryService.calculate_delivery_fee(
             store=store,
             delivery_method=payload.get('method', 'delivery'),
-            address_text=payload.get('address'),
+            address_text=address_text,
             lat=payload.get('lat'),
             lng=payload.get('lng'),
             rain_surcharge=payload.get('rain_surcharge', False),

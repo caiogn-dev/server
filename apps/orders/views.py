@@ -36,7 +36,8 @@ class CreateDeliveryRequestView(APIView):
                 )
 
             # Queue Celery task for Uber delivery
-            create_uber_delivery_request.delay(order.id, order.store_id)
+            # Convert UUIDs to strings for Celery serialization
+            create_uber_delivery_request.delay(str(order.id), str(store.id))
 
             logger.info(f'Queued Uber delivery request for order {order.id}')
 

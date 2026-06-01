@@ -2,7 +2,7 @@
 Serializers para UnifiedUser API.
 """
 from rest_framework import serializers
-from .models import UnifiedUser, UnifiedUserActivity
+from .models import UnifiedUser, UnifiedUserActivity, UserAddress
 
 
 class UnifiedUserSerializer(serializers.ModelSerializer):
@@ -44,10 +44,23 @@ class UnifiedUserListSerializer(serializers.ModelSerializer):
 
 class UnifiedUserActivitySerializer(serializers.ModelSerializer):
     """Serializer para atividades."""
-    
+
     class Meta:
         model = UnifiedUserActivity
         fields = [
             'id', 'activity_type', 'description',
             'metadata', 'created_at',
         ]
+
+
+class UserAddressSerializer(serializers.ModelSerializer):
+    """Serializer para endereços do usuário — customer-facing."""
+
+    class Meta:
+        model = UserAddress
+        fields = [
+            'id', 'label', 'street', 'number', 'neighborhood',
+            'city', 'state', 'zip_code', 'lat', 'lng', 'is_default',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
