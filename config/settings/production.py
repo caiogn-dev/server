@@ -41,6 +41,12 @@ USE_X_FORWARDED_PORT = True
 
 # Production domains always allowed (supplement ENV-configured hosts)
 ALLOWED_HOSTS += [
+    # Cardapidex domains (current brand)
+    'api.cardapidex.com.br',
+    'painel.cardapidex.com.br',
+    'app.cardapidex.com.br',
+    'cardapidex.com.br',
+    # Pastita domains (legacy — keep until DNS migration completes)
     'backend.pastita.com.br',
     'painel.pastita.com.br',
     'pastita.com.br',

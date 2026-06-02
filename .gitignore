@@ -49,3 +49,8 @@ htmlcov/
 .zencoder/
 skills/
 skills-lock.json
+
+# Token files — never commit credentials
+new_token.txt
+*.token
+*.tokens

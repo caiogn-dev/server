@@ -230,7 +230,10 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    # Pastita dashboard
+    # Cardapidex dashboard (current brand)
+    "https://painel.cardapidex.com.br",
+    "https://app.cardapidex.com.br",
+    # Pastita dashboard (legacy, keep until DNS migration completes)
     "https://painel.pastita.com.br",
     # Pastita main site / pastita-3d storefront (custom domains)
     "https://pastita.com.br",
@@ -241,12 +244,14 @@ CORS_ALLOWED_ORIGINS = [
     "https://ce-saladas.vercel.app",
     # ce-saladas dev server (openclaw tunnel + local)
     "https://openclaw.pastita.com.br",
+    "http://localhost:3000",
     "http://localhost:3001",
     # postado admin panel dev server
     "http://localhost:3099",
     # Backend / API self-origin (health checks, swagger)
     "https://backend.pastita.com.br",
     "https://api.pastita.com.br",
+    "https://api.cardapidex.com.br",
 ]
 cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 if cors_origins:
@@ -660,6 +665,8 @@ ADMIN_URL = os.environ.get('DJANGO_ADMIN_URL', 'django-admin') + '/'
 # ─────────────────────────────────────────────────────────────────────────────
 # Django Unfold — admin UI moderno
 # ─────────────────────────────────────────────────────────────────────────────
+_ADMIN_PREFIX = '/' + os.environ.get('DJANGO_ADMIN_URL', 'django-admin').rstrip('/')
+
 UNFOLD = {
     "SITE_TITLE": "Cardapidex Admin",
     "SITE_HEADER": "Cardapidex",
@@ -699,12 +706,12 @@ UNFOLD = {
                     {
                         "title": "Lojas",
                         "icon": "store",
-                        "link": "/django-admin/stores/store/",
+                        "link": f"{_ADMIN_PREFIX}/stores/store/",
                     },
                     {
                         "title": "Equipe",
                         "icon": "group",
-                        "link": "/django-admin/stores/storeteammember/",
+                        "link": f"{_ADMIN_PREFIX}/stores/storeteammember/",
                     },
                 ],
             },
@@ -714,7 +721,7 @@ UNFOLD = {
                     {
                         "title": "Usuários Django",
                         "icon": "person",
-                        "link": "/django-admin/auth/user/",
+                        "link": f"{_ADMIN_PREFIX}/auth/user/",
                     },
                 ],
             },
@@ -724,7 +731,7 @@ UNFOLD = {
                     {
                         "title": "Todos os Pedidos",
                         "icon": "shopping_bag",
-                        "link": "/django-admin/stores/storeorder/",
+                        "link": f"{_ADMIN_PREFIX}/stores/storeorder/",
                     },
                 ],
             },
