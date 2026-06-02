@@ -22,8 +22,8 @@ class EmailService:
     
     def __init__(self):
         self.api_key = os.getenv('RESEND_API_KEY')
-        self.from_email = os.getenv('RESEND_FROM_EMAIL', 'contato@pastita.com.br')
-        self.from_name = os.getenv('RESEND_FROM_NAME', 'Pastita')
+        self.from_email = os.getenv('RESEND_FROM_EMAIL', 'noreply@cardapidex.com.br')
+        self.from_name = os.getenv('RESEND_FROM_NAME', 'Cardapidex')
         
         if RESEND_AVAILABLE and self.api_key:
             resend.api_key = self.api_key
@@ -70,7 +70,7 @@ class EmailService:
     
     def send_order_confirmation(self, order, customer_email: str) -> dict:
         """Send order confirmation email."""
-        subject = f"Pedido #{order.order_number} confirmado - Pastita"
+        subject = f"Pedido #{order.order_number} confirmado - {self.from_name}"
         
         items_html = ""
         for item in order.items.all():
@@ -102,12 +102,12 @@ class EmailService:
         <body>
             <div class="container">
                 <div class="header">
-                    <h1 style="margin: 0;">🍝 Pastita</h1>
+                    <h1 style="margin: 0;">{self.from_name}</h1>
                     <p style="margin: 10px 0 0;">Seu pedido foi confirmado!</p>
                 </div>
                 <div class="content">
                     <p>Olá, <strong>{order.customer_name}</strong>!</p>
-                    <p>Recebemos seu pedido e ele está sendo preparado com carinho.</p>
+                    <p>Recebemos seu pedido e ele está sendo preparado.</p>
                     
                     <p class="order-number">Pedido #{order.order_number}</p>
                     
@@ -136,16 +136,15 @@ class EmailService:
                     <p>Você receberá atualizações sobre o status do seu pedido.</p>
                 </div>
                 <div class="footer">
-                    <p>Pastita - Massas Artesanais</p>
-                    <p>Palmas - TO</p>
+                    <p>{self.from_name}</p>
                 </div>
             </div>
         </body>
         </html>
         """
-        
+
         return self.send_email(customer_email, subject, html)
-    
+
     def send_payment_confirmed(self, order, customer_email: str) -> dict:
         """Send payment confirmation email."""
         subject = f"Pagamento confirmado - Pedido #{order.order_number}"
@@ -175,15 +174,15 @@ class EmailService:
                     <p><strong>Valor pago:</strong> R$ {order.total:.2f}</p>
                 </div>
                 <div class="footer">
-                    <p>Pastita - Massas Artesanais</p>
+                    <p>{self.from_name}</p>
                 </div>
             </div>
         </body>
         </html>
         """
-        
+
         return self.send_email(customer_email, subject, html)
-    
+
     def send_order_shipped(self, order, customer_email: str, tracking_code: str = None) -> dict:
         """Send order shipped/ready notification."""
         subject = f"Pedido #{order.order_number} saiu para entrega!"
@@ -214,10 +213,10 @@ class EmailService:
                     <p>Olá, <strong>{order.customer_name}</strong>!</p>
                     <p>Seu pedido <strong>#{order.order_number}</strong> saiu para entrega!</p>
                     {tracking_info}
-                    <p>Em breve você receberá suas deliciosas massas artesanais.</p>
+                    <p>Em breve seu pedido será entregue.</p>
                 </div>
                 <div class="footer">
-                    <p>Pastita - Massas Artesanais</p>
+                    <p>{self.from_name}</p>
                 </div>
             </div>
         </body>
@@ -251,16 +250,11 @@ class EmailService:
                 <div class="content">
                     <p>Olá, <strong>{order.customer_name}</strong>!</p>
                     <p>Seu pedido <strong>#{order.order_number}</strong> foi entregue com sucesso!</p>
-                    <p>Esperamos que você aproveite suas massas artesanais. Bom apetite! 🍝</p>
+                    <p>Esperamos que tenha gostado do seu pedido!</p>
                     <p>Se tiver qualquer dúvida ou feedback, estamos à disposição.</p>
-                    <p style="margin-top: 20px;">
-                        <strong>Gostou? Conte para seus amigos!</strong><br>
-                        Use o cupom <strong style="color: #722F37;">PASTITA10</strong> na próxima compra e ganhe 10% de desconto.
-                    </p>
                 </div>
                 <div class="footer">
-                    <p>Pastita - Massas Artesanais</p>
-                    <p>Obrigado por escolher a Pastita!</p>
+                    <p>{self.from_name}</p>
                 </div>
             </div>
         </body>

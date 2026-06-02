@@ -344,45 +344,6 @@ class RegisterView(APIView):
         # Create token
         token = Token.objects.create(user=user)
 
-        coupon_code = (data.get('coupon_code') or '').strip()
-        if coupon_code.upper() == 'PASTITA10':
-            subject = 'Cupom PASTITA10 confirmado'
-            greeting_name = user.first_name or user.email
-            html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="utf-8">
-                <style>
-                    body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
-                    .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
-                    .header {{ background: #722F37; color: white; padding: 24px; text-align: center; border-radius: 10px 10px 0 0; }}
-                    .content {{ background: #fff; padding: 24px; border: 1px solid #eee; }}
-                    .coupon {{ font-size: 20px; font-weight: bold; color: #722F37; }}
-                    .footer {{ background: #f9f9f9; padding: 16px; text-align: center; font-size: 12px; color: #666; border-radius: 0 0 10px 10px; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1 style="margin: 0;">Pastita</h1>
-                        <p style="margin: 10px 0 0;">Cupom ativado no cadastro</p>
-                    </div>
-                    <div class="content">
-                        <p>Ola, <strong>{greeting_name}</strong>!</p>
-                        <p>Seu cadastro foi concluido com o cupom:</p>
-                        <p class="coupon">PASTITA10</p>
-                        <p>Use o cupom na sua primeira compra para obter o desconto.</p>
-                    </div>
-                    <div class="footer">
-                        <p>Pastita - Massas Artesanais</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
-            email_service.send_email(user.email, subject, html)
-        
         # Create StoreCustomer for the store if store_slug provided
         store_slug = data.get('store_slug', '').strip()
         if store_slug:
