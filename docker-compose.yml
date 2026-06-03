@@ -127,6 +127,35 @@ services:
       timeout: 3s
       retries: 5
 
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: pastita_pgbouncer
+    restart: unless-stopped
+    environment:
+      DATABASES_HOST: db
+      DATABASES_PORT: 5432
+      DATABASES_USER: postgres
+      DATABASES_PASSWORD: ${DB_PASSWORD:-postgres123}
+      DATABASES_DBNAME: pastita
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: 1000
+      PGBOUNCER_DEFAULT_POOL_SIZE: 25
+      PGBOUNCER_RESERVE_POOL_SIZE: 5
+      PGBOUNCER_RESERVE_POOL_TIMEOUT: 3
+      PGBOUNCER_IDLE_IN_TRANSACTION_SESSION_TIMEOUT: 60000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "6432:6432"
+    healthcheck:
+      test: ["CMD-SHELL", "psql -h localhost -p 6432 -U postgres -d pastita -c 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+
   web:
     build:
       context: .
