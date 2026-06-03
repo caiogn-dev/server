@@ -47,6 +47,11 @@ class PaymentService:
             # Use order total if amount not provided
             if amount is None:
                 amount = order.total
+            elif Decimal(str(amount)) != Decimal(str(order.total)):
+                raise ValueError(
+                    f"Payment amount {amount} does not match order total {order.total} "
+                    f"for order {order.order_number}"
+                )
 
             # Get default gateway if not specified
             gateway = None

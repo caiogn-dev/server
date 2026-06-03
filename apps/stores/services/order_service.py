@@ -157,8 +157,26 @@ class OrderService:
         
         if notes:
             order.notes = f"{order.notes}\n\n[{timezone.now().isoformat()}] Status: {new_status} - {notes}".strip()
-        
-        order.save()
+
+        timestamp_fields = {
+            'processing':       'processing_at',
+            'confirmed':        'confirmed_at',
+            'paid':             'confirmed_at',
+            'preparing':        'preparing_at',
+            'ready':            'ready_at',
+            'out_for_delivery': 'out_for_delivery_at',
+            'shipped':          'out_for_delivery_at',
+            'delivered':        'delivered_at',
+            'completed':        'delivered_at',
+            'cancelled':        'cancelled_at',
+        }
+        changed_fields = ['status']
+        ts_field = timestamp_fields.get(new_status)
+        if ts_field:
+            changed_fields.append(ts_field)
+        if notes:
+            changed_fields.append('notes')
+        order.save(update_fields=changed_fields)
         
         # Trigger webhook
         from .webhook_service import webhook_service
