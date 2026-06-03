@@ -1,7 +1,13 @@
+import hashlib
+import hmac
+import logging
+
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
+
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -353,6 +359,24 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
     def create(self, request):
         from ..tasks import process_messenger_webhook
 
+        app_secret = getattr(settings, "MESSENGER_APP_SECRET", "") or ""
+        if app_secret:
+            raw_body = request.body
+            signature_header = request.headers.get("X-Hub-Signature-256", "")
+            if not signature_header:
+                logger.error("Messenger webhook missing X-Hub-Signature-256 header — rejecting")
+                return Response({"status": "error", "message": "Missing signature"}, status=403)
+            expected = "sha256=" + hmac.new(
+                app_secret.encode("utf-8"),
+                raw_body,
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(signature_header, expected):
+                logger.error("Messenger webhook HMAC mismatch — rejecting")
+                return Response({"status": "error", "message": "Invalid signature"}, status=403)
+        else:
+            logger.warning("MESSENGER_APP_SECRET not configured — webhook signature not validated")
+
         payload = request.data
         process_messenger_webhook.delay(payload)
         return Response({"status": "received"})
@@ -365,8 +389,13 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
         verify_token = (
             getattr(settings, "MESSENGER_WEBHOOK_VERIFY_TOKEN", None)
             or getattr(settings, "MESSENGER_VERIFY_TOKEN", "")
+            or ""
         )
 
-        if mode == "subscribe" and token == verify_token:
+        tokens_match = bool(verify_token) and hmac.compare_digest(
+            (token or "").encode(),
+            verify_token.encode(),
+        )
+        if mode == "subscribe" and tokens_match:
             return Response(int(challenge))
         return Response("Verification failed", status=403)
