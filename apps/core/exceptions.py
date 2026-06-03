@@ -86,26 +86,38 @@ class PaymentGatewayError(ExternalServiceError):
 
 
 def custom_exception_handler(exc, context):
-    """Custom exception handler for DRF."""
-    from rest_framework.exceptions import AuthenticationFailed
-    
-    # Check if it's an auth error on a public endpoint
+    """
+    Custom exception handler for DRF.
+
+    Returns standardized error responses:
+    - 400: Validation error
+    - 401: Authentication failed
+    - 403: Permission denied
+    - 404: Not found
+    - 429: Rate limit exceeded
+    - 500: Server error
+    """
+    from rest_framework.exceptions import (
+        AuthenticationFailed, PermissionDenied, NotFound,
+        ValidationError as DRFValidationError, Throttled
+    )
+
     view = context.get('view')
-    if view and hasattr(view, 'authentication_classes') and not view.authentication_classes:
-        # This is a public endpoint - ignore authentication errors
-        if isinstance(exc, AuthenticationFailed):
-            # Let the request proceed without authentication
-            return None
-    
+    request = context.get('request')
+
+    # Call DRF's default handler first
     response = exception_handler(exc, context)
 
+    # Handle custom BaseAPIException
     if isinstance(exc, BaseAPIException):
-        logger.error(
-            f"API Exception: {exc.code} - {exc.message}",
+        logger.warning(
+            f'API Exception: {exc.code}',
             extra={
                 'code': exc.code,
-                'details': exc.details,
-                'view': context.get('view').__class__.__name__ if context.get('view') else None,
+                'message': exc.message,
+                'view': view.__class__.__name__ if view else None,
+                'method': request.method if request else None,
+                'path': request.path if request else None,
             }
         )
         return Response(
@@ -119,13 +131,97 @@ def custom_exception_handler(exc, context):
             status=exc.status_code
         )
 
-    if response is not None:
-        response.data = {
-            'error': {
-                'code': 'api_error',
-                'message': str(exc),
-                'details': response.data if isinstance(response.data, dict) else {'errors': response.data},
-            }
-        }
+    # Handle specific DRF exceptions with consistent format
+    if isinstance(exc, Throttled):
+        return Response(
+            {
+                'error': {
+                    'code': 'rate_limit_exceeded',
+                    'message': 'Too many requests. Please try again later.',
+                    'details': {'retry_after': exc.wait()},
+                }
+            },
+            status=status.HTTP_429_TOO_MANY_REQUESTS
+        )
 
-    return response
+    if isinstance(exc, PermissionDenied):
+        return Response(
+            {
+                'error': {
+                    'code': 'permission_denied',
+                    'message': 'You do not have permission to perform this action.',
+                    'details': {},
+                }
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    if isinstance(exc, AuthenticationFailed):
+        return Response(
+            {
+                'error': {
+                    'code': 'authentication_failed',
+                    'message': 'Authentication credentials were invalid or missing.',
+                    'details': {},
+                }
+            },
+            status=status.HTTP_401_UNAUTHORIZED
+        )
+
+    if isinstance(exc, NotFound):
+        return Response(
+            {
+                'error': {
+                    'code': 'not_found',
+                    'message': 'The requested resource was not found.',
+                    'details': {},
+                }
+            },
+            status=status.HTTP_404_NOT_FOUND
+        )
+
+    if isinstance(exc, DRFValidationError):
+        return Response(
+            {
+                'error': {
+                    'code': 'validation_error',
+                    'message': 'Invalid data provided.',
+                    'details': response.data if response else {},
+                }
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # Generic handler for DRF exceptions with response
+    if response is not None:
+        return Response(
+            {
+                'error': {
+                    'code': 'api_error',
+                    'message': str(exc) if str(exc) else 'An error occurred',
+                    'details': response.data if isinstance(response.data, dict) else {'errors': response.data},
+                }
+            },
+            status=response.status_code
+        )
+
+    # Fallback for unhandled exceptions
+    logger.error(
+        f'Unhandled exception: {exc.__class__.__name__}',
+        exc_info=True,
+        extra={
+            'view': view.__class__.__name__ if view else None,
+            'method': request.method if request else None,
+            'path': request.path if request else None,
+        }
+    )
+    return Response(
+        {
+            'error': {
+                'code': 'internal_server_error',
+                'message': 'An internal server error occurred.',
+                'details': {},
+            }
+        },
+        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+    )
