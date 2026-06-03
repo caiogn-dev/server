@@ -589,7 +589,26 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
     permission_classes = []
 
     def create(self, request):
+        import hashlib
         from ..services.instagram_webhook_service import InstagramWebhookService
+
+        app_secret = getattr(settings, "INSTAGRAM_APP_SECRET", "") or ""
+        if app_secret:
+            raw_body = request.body
+            signature_header = request.headers.get("X-Hub-Signature-256", "")
+            if not signature_header:
+                logger.error("Instagram webhook missing X-Hub-Signature-256 header — rejecting")
+                return Response({"status": "error", "message": "Missing signature"}, status=403)
+            expected = "sha256=" + hmac.new(
+                app_secret.encode("utf-8"),
+                raw_body,
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(signature_header, expected):
+                logger.error("Instagram webhook HMAC mismatch — rejecting")
+                return Response({"status": "error", "message": "Invalid signature"}, status=403)
+        else:
+            logger.warning("INSTAGRAM_APP_SECRET not configured — webhook signature not validated")
 
         payload = request.data
         result = InstagramWebhookService().process_webhook(payload)
