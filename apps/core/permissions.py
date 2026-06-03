@@ -15,28 +15,28 @@ class IsStoreOwner(permissions.BasePermission):
     
     def has_permission(self, request: Request, view: View) -> bool:
         store_slug = view.kwargs.get('store_slug') or view.kwargs.get('slug')
-        
+
         if not store_slug:
             store_slug = request.query_params.get('store_slug')
-        
+
         if not store_slug:
-            return True
-        
+            return False
+
         from apps.stores.models import Store
-        
+
         try:
             store = Store.objects.get(slug=store_slug, is_active=True)
         except Store.DoesNotExist:
             return False
-        
+
         return store.owner == request.user
-    
+
     def has_object_permission(self, request: Request, view: View, obj) -> bool:
         if hasattr(obj, 'store'):
             return obj.store.owner == request.user
         elif hasattr(obj, 'owner'):
             return obj.owner == request.user
-        
+
         return False
 
 
@@ -44,15 +44,15 @@ class IsStoreStaff(permissions.BasePermission):
     """
     Permission that checks if the user is staff (owner or team member) of the store.
     """
-    
+
     def has_permission(self, request: Request, view: View) -> bool:
         store_slug = view.kwargs.get('store_slug') or view.kwargs.get('slug')
-        
+
         if not store_slug:
             store_slug = request.query_params.get('store_slug')
-        
+
         if not store_slug:
-            return True
+            return False
         
         from apps.stores.models import Store
         

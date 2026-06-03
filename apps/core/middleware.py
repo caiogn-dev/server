@@ -34,12 +34,13 @@ class CSRFExemptMiddleware:
 
         # Debug: log auth header for /stores/*/orders/ endpoints
         if '/stores/' in request.path and '/orders/' in request.path:
-            auth_type = 'none'
             if auth_header.startswith('Token '):
-                auth_type = f'token: {auth_header[6:46]}...'
+                auth_label = 'token'
             elif auth_header.startswith('Bearer '):
-                auth_type = f'bearer: {auth_header[7:37]}...'
-            logger.info(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_type}')
+                auth_label = 'bearer'
+            else:
+                auth_label = 'none'
+            logger.debug(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_label}')
 
         if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
             # Mark this request as CSRF-exempt
@@ -282,9 +283,16 @@ class RateLimitMiddleware:
 
         cache_key = f"rate_limit:{client_ip}"
 
-        request_count = cache.get(cache_key, 0)
+        # Atomic increment: add key with value 0 if absent, then increment.
+        # This avoids the non-atomic get→set race that would let concurrent
+        # requests all read 0 and bypass the limit.
+        cache.add(cache_key, 0, timeout=self.window)
+        try:
+            request_count = cache.incr(cache_key)
+        except Exception:
+            request_count = 1
 
-        if request_count >= self.max_requests:
+        if request_count > self.max_requests:
             logger.warning(
                 f"Rate limit exceeded for IP: {client_ip}",
                 extra={'ip': client_ip, 'count': request_count}
@@ -302,11 +310,9 @@ class RateLimitMiddleware:
                 status=429
             )
 
-        cache.set(cache_key, request_count + 1, self.window)
-
         response = self.get_response(request)
         response['X-RateLimit-Limit'] = str(self.max_requests)
-        response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count - 1))
+        response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count))
         response['X-RateLimit-Reset'] = str(self.window)
 
         return response
@@ -321,9 +327,13 @@ class RateLimitMiddleware:
             window = int(rule.get('window') or self.window)
             identity = self._rate_limit_identity(request, client_ip, rule.get('key_by', 'ip'))
             cache_key = f"rate_limit:scoped:{prefix}:{identity}"
-            request_count = cache.get(cache_key, 0)
+            cache.add(cache_key, 0, timeout=window)
+            try:
+                request_count = cache.incr(cache_key)
+            except Exception:
+                request_count = 1
 
-            if request_count >= max_requests:
+            if request_count > max_requests:
                 logger.warning(
                     "Scoped rate limit exceeded for %s identity=%s",
                     prefix,
@@ -349,10 +359,9 @@ class RateLimitMiddleware:
                     status=429
                 )
 
-            cache.set(cache_key, request_count + 1, window)
             response = self.get_response(request)
             response['X-RateLimit-Limit'] = str(max_requests)
-            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count - 1))
+            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count))
             response['X-RateLimit-Reset'] = str(window)
             response['X-RateLimit-Scope'] = prefix
             return response
