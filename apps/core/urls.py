@@ -23,6 +23,7 @@ urlpatterns = [
     # Health & System
     path('health/', HealthCheckView.as_view(), name='health-check'),
     path('system/', SystemInfoView.as_view(), name='system-info'),
+    path('metrics/', include('apps.core.metrics_urls')),
     
     # CSRF Token (for frontend)
     path('csrf/', CSRFTokenView.as_view(), name='csrf-token'),
