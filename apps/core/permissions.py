@@ -14,21 +14,22 @@ class IsStoreOwner(permissions.BasePermission):
     """
     
     def has_permission(self, request: Request, view: View) -> bool:
+        from apps.stores.models import Store
+        from rest_framework.exceptions import PermissionDenied
+
         store_slug = view.kwargs.get('store_slug') or view.kwargs.get('slug')
-        
+
         if not store_slug:
             store_slug = request.query_params.get('store_slug')
-        
+
         if not store_slug:
-            return True
-        
-        from apps.stores.models import Store
-        
+            raise PermissionDenied("store_slug obrigatório para acesso a recursos da loja")
+
         try:
             store = Store.objects.get(slug=store_slug, is_active=True)
         except Store.DoesNotExist:
             return False
-        
+
         return store.owner == request.user
     
     def has_object_permission(self, request: Request, view: View, obj) -> bool:
@@ -46,23 +47,24 @@ class IsStoreStaff(permissions.BasePermission):
     """
     
     def has_permission(self, request: Request, view: View) -> bool:
+        from apps.stores.models import Store
+        from rest_framework.exceptions import PermissionDenied
+
         store_slug = view.kwargs.get('store_slug') or view.kwargs.get('slug')
-        
+
         if not store_slug:
             store_slug = request.query_params.get('store_slug')
-        
+
         if not store_slug:
-            return True
-        
-        from apps.stores.models import Store
-        
+            raise PermissionDenied("store_slug obrigatório para acesso a recursos da loja")
+
         try:
             store = Store.objects.get(slug=store_slug, is_active=True)
         except Store.DoesNotExist:
             return False
-        
+
         return (
-            store.owner == request.user or 
+            store.owner == request.user or
             store.staff.filter(id=request.user.id).exists()
         )
     
@@ -88,16 +90,17 @@ class HasStoreAccess(permissions.BasePermission):
     def has_permission(self, request: Request, view: View) -> bool:
         if request.user.is_superuser:
             return True
-        
+
+        from apps.stores.models import Store
+        from rest_framework.exceptions import PermissionDenied
+
         store_slug = view.kwargs.get('store_slug') or view.kwargs.get('slug')
-        
+
         if not store_slug:
             store_slug = request.query_params.get('store_slug')
-        
+
         if not store_slug:
-            return True
-        
-        from apps.stores.models import Store
+            raise PermissionDenied("store_slug obrigatório para acesso a recursos da loja")
         
         try:
             store = Store.objects.get(slug=store_slug, is_active=True)

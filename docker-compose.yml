@@ -10,9 +10,9 @@ x-django-env: &django-env
   DEBUG: "False"
   # Database / Cache
   DATABASE_URL: ${DATABASE_URL}
-  # CONN_MAX_AGE=0 é obrigatório com ASGI (Uvicorn): conexões persistentes
-  # não funcionam corretamente em contexto async e esgotam o pool do Postgres.
-  DB_CONN_MAX_AGE: "0"
+  # CONN_MAX_AGE=600 (10min): reuse connections, prevents pool exhaustion
+  # Myth: ASGI requires CONN_MAX_AGE=0. False. Pool timeout handles async properly.
+  DB_CONN_MAX_AGE: "600"
   REDIS_URL: ${REDIS_URL}
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
