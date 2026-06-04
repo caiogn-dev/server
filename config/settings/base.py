@@ -145,7 +145,7 @@ if DATABASE_URL:
                 'PASSWORD': unquote(parsed_db.password or ''),
                 'HOST': parsed_db.hostname or 'localhost',
                 'PORT': str(parsed_db.port or 5432),
-                'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '600')),
+                'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '60')),
             }
         }
         db_query = parse_qs(parsed_db.query)

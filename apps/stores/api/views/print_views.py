@@ -3,9 +3,12 @@ API views for print agents and print jobs.
 """
 from __future__ import annotations
 
+import json
 import logging
+import time
 
 from django.db.models import Q
+from django.http import StreamingHttpResponse
 from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -204,3 +207,54 @@ class PrintAgentFailJobView(APIView):
             retry_delay_seconds=retry_delay_seconds,
         )
         return Response({'ok': True, 'job': StorePrintJobSerializer(job).data})
+
+
+class PrintAgentWatchJobsView(APIView):
+    """Watch for new print jobs via Server-Sent Events (SSE)."""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = []
+
+    def get(self, request):
+        agent = _get_agent_from_request(request)
+        if not agent:
+            return Response({'detail': 'Invalid print agent key'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        agent.mark_seen(
+            ip_address=request.META.get('REMOTE_ADDR', ''),
+            app_version=str(request.GET.get('app_version') or ''),
+            host_name=str(request.GET.get('host_name') or ''),
+        )
+
+        def event_generator():
+            last_job_id = None
+            consecutive_empties = 0
+            max_consecutive_empties = 60  # max 2 min of no jobs before timeout
+
+            while consecutive_empties < max_consecutive_empties:
+                try:
+                    job = claim_next_print_job(agent)
+                    if job:
+                        consecutive_empties = 0
+                        payload = StorePrintJobSerializer(job).data
+                        event_data = json.dumps({'type': 'job', 'data': payload})
+                        yield f"data: {event_data}\n\n"
+                        last_job_id = job.id
+                    else:
+                        consecutive_empties += 1
+                        yield f": heartbeat\n\n"
+                    time.sleep(2)
+                except Exception as e:
+                    logger.error(f'SSE event_generator error: {e}')
+                    yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    time.sleep(5)
+
+        response = StreamingHttpResponse(
+            event_generator(),
+            content_type='text/event-stream',
+            status=200,
+        )
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        response['Connection'] = 'keep-alive'
+        return response

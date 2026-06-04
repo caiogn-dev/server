@@ -28,7 +28,7 @@ from .api.views import (
     # Admin views for full CRUD
     StoreProductTypeAdminViewSet,
     PrintAgentHeartbeatView, PrintAgentClaimNextJobView,
-    PrintAgentCompleteJobView, PrintAgentFailJobView,
+    PrintAgentCompleteJobView, PrintAgentFailJobView, PrintAgentWatchJobsView,
 )
 
 # Wrapper functions to pass store_slug to viewset kwargs
@@ -300,6 +300,7 @@ urlpatterns = [
     # ==========================================================================
     path('print/agent/heartbeat/', PrintAgentHeartbeatView.as_view(), name='print-agent-heartbeat'),
     path('print/agent/claim-next/', PrintAgentClaimNextJobView.as_view(), name='print-agent-claim-next'),
+    path('print/agent/watch/', PrintAgentWatchJobsView.as_view(), name='print-agent-watch'),
     path('print/jobs/<uuid:job_id>/complete/', PrintAgentCompleteJobView.as_view(), name='print-job-complete'),
     path('print/jobs/<uuid:job_id>/fail/', PrintAgentFailJobView.as_view(), name='print-job-fail'),
 

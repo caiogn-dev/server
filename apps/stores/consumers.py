@@ -106,23 +106,59 @@ class OrderConsumer(AsyncWebsocketConsumer):
         except json.JSONDecodeError:
             logger.warning('Invalid JSON received')
 
+    async def order_created(self, event):
+        """Handle order.created message from group broadcast."""
+        await self.send(text_data=json.dumps({
+            'type': 'order.created',
+            'order_id': event.get('order_id'),
+            'status': event.get('status'),
+            'total': event.get('total'),
+            'timestamp': datetime.now().isoformat(),
+        }))
+
     async def order_updated(self, event):
-        """Handle order.updated message from group."""
+        """Handle order.updated message from group broadcast."""
         await self.send(text_data=json.dumps({
             'type': 'order.updated',
             'order_id': event.get('order_id'),
             'status': event.get('status'),
+            'updated_at': event.get('updated_at', datetime.now().isoformat()),
             'timestamp': datetime.now().isoformat(),
         }))
 
+    async def order_payment_received(self, event):
+        """Handle order.payment_received message from group broadcast."""
+        await self.send(text_data=json.dumps({
+            'type': 'order.payment_received',
+            'order_id': event.get('order_id'),
+            'amount': event.get('amount'),
+            'payment_method': event.get('payment_method'),
+            'timestamp': datetime.now().isoformat(),
+        }))
+
+    async def ping(self, event):
+        """Handle ping message (heartbeat)."""
+        await self.send(text_data=json.dumps({
+            'type': 'ping',
+            'timestamp': event.get('timestamp', datetime.now().isoformat()),
+        }))
+
     async def _send_heartbeat(self):
-        """Send heartbeat ping every 30 seconds."""
+        """Send heartbeat ping every 30 seconds to keep connection alive."""
         try:
             while True:
                 await asyncio.sleep(30)
                 heartbeat = create_heartbeat_message()
                 await self.send(text_data=json.dumps(heartbeat))
+                logger.debug(
+                    'Heartbeat sent',
+                    extra={
+                        'user_id': self.user.id,
+                        'store_slug': self.store_slug,
+                    }
+                )
         except asyncio.CancelledError:
+            logger.debug('Heartbeat task cancelled')
             pass
 
     @database_sync_to_async

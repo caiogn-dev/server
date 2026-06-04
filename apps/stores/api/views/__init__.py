@@ -42,6 +42,7 @@ from .print_views import (
     PrintAgentClaimNextJobView,
     PrintAgentCompleteJobView,
     PrintAgentFailJobView,
+    PrintAgentWatchJobsView,
 )
 
 # Coupon management
@@ -94,6 +95,7 @@ __all__ = [
     'PrintAgentClaimNextJobView',
     'PrintAgentCompleteJobView',
     'PrintAgentFailJobView',
+    'PrintAgentWatchJobsView',
     # Coupons
     'StoreCouponViewSet',
     # Delivery
