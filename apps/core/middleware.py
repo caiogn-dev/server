@@ -100,7 +100,7 @@ class TokenAuthMiddleware(BaseMiddleware):
             try:
                 scope['user'] = await get_user_from_token(token_key)
                 if scope['user'].is_authenticated:
-                    logger.info(f"WebSocket authenticated: user={scope['user'].email}, path={path}")
+                    logger.info("WebSocket authenticated: user_id=%s, path=%s", scope['user'].pk, path)
                 else:
                     logger.warning(f"WebSocket auth failed: anonymous user, path={path}")
             except Exception as e:
