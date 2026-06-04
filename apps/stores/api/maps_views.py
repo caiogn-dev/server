@@ -5,6 +5,7 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
+from rest_framework.throttling import AnonRateThrottle
 from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store
@@ -14,10 +15,16 @@ from apps.stores.services.geo import geo_service
 logger = logging.getLogger(__name__)
 
 
+class MapsThrottle(AnonRateThrottle):
+    """60 req/min per IP for public geo endpoints — prevents Google Maps quota drain."""
+    scope = 'maps'
+
+
 class StoreGeocodeView(APIView):
     """Geocode an address."""
-    
+
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [MapsThrottle]
     
     def get(self, request):
         """
@@ -41,8 +48,9 @@ class StoreGeocodeView(APIView):
 
 class StoreReverseGeocodeView(APIView):
     """Reverse geocode coordinates to address."""
-    
+
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [MapsThrottle]
     
     def get(self, request):
         """
@@ -74,8 +82,9 @@ class StoreReverseGeocodeView(APIView):
 
 class StoreRouteView(APIView):
     """Calculate route between two points."""
-    
+
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [MapsThrottle]
     
     def get(self, request, store_slug):
         """
@@ -150,8 +159,9 @@ class StoreRouteView(APIView):
 
 class StoreValidateDeliveryView(APIView):
     """Validate if delivery address is within service area."""
-    
+
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [MapsThrottle]
     
     def post(self, request, store_slug):
         """
@@ -254,9 +264,10 @@ class StoreValidateDeliveryView(APIView):
 
 class StoreDeliveryZonesView(APIView):
     """Get delivery zones as isolines."""
-    
+
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [MapsThrottle]
     
     def get(self, request, store_slug):
         """
@@ -297,8 +308,9 @@ class StoreDeliveryZonesView(APIView):
 
 class StoreAutosuggestView(APIView):
     """Address autocomplete suggestions."""
-    
+
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [MapsThrottle]
     
     def get(self, request, store_slug=None):
         """

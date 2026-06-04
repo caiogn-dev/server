@@ -221,6 +221,8 @@ REST_FRAMEWORK = {
         'lead_create': '10/hour',
         # Webhooks de integrações externas — volume alto esperado
         'webhook': '10000/hour',
+        # Geo/Maps endpoints públicos — protege quota Google Maps
+        'maps': '60/minute',
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
@@ -279,6 +281,8 @@ CORS_EXPOSE_HEADERS = [
     'content-type',
     'x-csrftoken',
 ]
+# Cache preflight responses for 24h — avoids double-request on every API call
+CORS_PREFLIGHT_MAX_AGE = 86400
 
 # Monitoring — set to a Slack/Discord incoming-webhook URL to receive DLQ alerts.
 # Leave blank to only log (no HTTP request will be made).
