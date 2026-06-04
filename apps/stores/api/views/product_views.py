@@ -110,7 +110,28 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 Q(description__icontains=search)
             )
 
-        return qs.select_related('category', 'store')
+        # Optimize based on action (list vs. detail)
+        if self.action in ['retrieve']:
+            # Detail view: full related data
+            qs = qs.select_related(
+                'category',
+                'store',
+            ).prefetch_related(
+                'images',
+                'variants',
+                'options',
+                'combos',
+            )
+        else:
+            # List view: minimal related data
+            qs = qs.select_related(
+                'category',
+                'store',
+            ).prefetch_related(
+                'images',  # Still need images for list thumbnails
+            )
+
+        return qs
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:

@@ -90,12 +90,31 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         if customer:
             qs = qs.filter(customer_phone=customer)
 
-        return qs.select_related(
-            'store', 'customer'
-        ).prefetch_related(
-            'items__product',
-            'combo_items__combo'
-        ).order_by('-created_at')
+        # Optimize querysets by action (different needs for list vs. retrieve)
+        if self.action in ['retrieve']:
+            # Detail view: include all related data
+            qs = qs.select_related(
+                'store',
+                'customer',
+                'invoice',
+            ).prefetch_related(
+                'items__product',
+                'items__combos',
+                'combo_items__combo',
+                'events',
+                'payments',
+                'tracking_updates',
+            )
+        else:
+            # List view: minimal related data
+            qs = qs.select_related(
+                'store',
+                'customer',
+            ).prefetch_related(
+                'items__product',
+            )
+
+        return qs.order_by('-created_at')
     
     def get_serializer_class(self):
         if self.action == 'create':
@@ -421,40 +440,57 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """Get order statistics."""
+        """Get order statistics. Optimized to use single aggregation query."""
+        from django.db.models import Count, Sum, Case, When, Q, F
+
         store_id = request.query_params.get('store')
-        queryset = self.get_queryset()
-        
+        queryset = self.get_queryset().values()  # Strip prefetch for aggregation
+
         if store_id:
             queryset = queryset.filter(store_id=store_id)
-        
+
         now = timezone.now()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
-        
+
+        # Single aggregation query combines all counts
+        agg = queryset.aggregate(
+            # Total counts by period
+            total=Count('id'),
+            today=Count(Case(When(created_at__gte=today, then=1))),
+            this_week=Count(Case(When(created_at__gte=week_ago, then=1))),
+            this_month=Count(Case(When(created_at__gte=month_ago, then=1))),
+
+            # Revenue aggregates
+            revenue_total=Sum('total', filter=Q(payment_status='paid')),
+            revenue_today=Sum('total', filter=Q(payment_status='paid', created_at__gte=today)),
+            revenue_week=Sum('total', filter=Q(payment_status='paid', created_at__gte=week_ago)),
+
+            # By-status counts
+            **{
+                f'status_{status}': Count(Case(When(status=status, then=1)))
+                for status, _ in StoreOrder.OrderStatus.choices
+            }
+        )
+
+        # Build response from single aggregation
         stats = {
-            'total': queryset.count(),
-            'today': queryset.filter(created_at__gte=today).count(),
-            'this_week': queryset.filter(created_at__gte=week_ago).count(),
-            'this_month': queryset.filter(created_at__gte=month_ago).count(),
-            'by_status': {},
+            'total': agg['total'],
+            'today': agg['today'],
+            'this_week': agg['this_week'],
+            'this_month': agg['this_month'],
+            'by_status': {
+                status: agg.get(f'status_{status}', 0)
+                for status, _ in StoreOrder.OrderStatus.choices
+            },
             'revenue': {
-                'total': queryset.filter(payment_status='paid').aggregate(
-                    total=Sum('total')
-                )['total'] or 0,
-                'today': queryset.filter(
-                    payment_status='paid', created_at__gte=today
-                ).aggregate(total=Sum('total'))['total'] or 0,
-                'week': queryset.filter(
-                    payment_status='paid', created_at__gte=week_ago
-                ).aggregate(total=Sum('total'))['total'] or 0,
+                'total': agg['revenue_total'] or 0,
+                'today': agg['revenue_today'] or 0,
+                'week': agg['revenue_week'] or 0,
             }
         }
-        
-        for status_choice, _ in StoreOrder.OrderStatus.choices:
-            stats['by_status'][status_choice] = queryset.filter(status=status_choice).count()
-        
+
         return Response(stats)
     
     @action(detail=False, methods=['get'])
