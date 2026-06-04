@@ -483,7 +483,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         ]
     
     def get_items_count(self, obj):
-        return obj.items.count()
+        return len(obj.items.all())
 
 
 class StorePrintAgentSerializer(serializers.ModelSerializer):
@@ -1348,7 +1348,7 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
         ]
     
     def get_items_count(self, obj):
-        return obj.items.count()
+        return len(obj.items.all())
 
 
 # =============================================================================
