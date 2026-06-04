@@ -220,8 +220,8 @@ class WhatsAppAuthService:
         
         # Gera novo código
         code = cls.generate_code()
-        
-        logger.info(f"[WHATSAPP AUTH] Generated code for {clean_phone}: {code}")
+
+        logger.info(f"[WHATSAPP AUTH] Generated OTP for {clean_phone}")
         
         # Salva no cache
         cache_data = {
@@ -238,7 +238,6 @@ class WhatsAppAuthService:
         
         logger.info(f"[WHATSAPP AUTH] UUID received: '{whatsapp_account_id}' (len={len(whatsapp_account_id) if whatsapp_account_id else 0})")
         logger.info(f"[WHATSAPP AUTH] Will try {len(template_configs)} template configurations")
-        logger.info(f"[WHATSAPP AUTH] Template configs: {template_configs}")
         
         # Tenta enviar com diferentes templates até um funcionar
         message_service = None
@@ -262,7 +261,6 @@ class WhatsAppAuthService:
             templates_tried += 1
             logger.info(f"[WHATSAPP AUTH] === Attempt {i+1}/{len(template_configs)} ===")
             logger.info(f"[WHATSAPP AUTH] Template: '{template_data['name']}', Language: {template_data['language']}")
-            logger.info(f"[WHATSAPP AUTH] Components: {template_data.get('components', [])}")
             
             try:
                 logger.info(f"[WHATSAPP AUTH] Calling send_template_message...")
