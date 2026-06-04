@@ -265,9 +265,9 @@ class RegisterView(APIView):
                     email=user.email,
                     name=customer_name,
                 )
-                logger.info(f"New user automation triggered for {user.email}: {result}")
+                logger.info("New user automation triggered for user_id=%s: %s", user.pk, result)
             else:
-                logger.warning(f"No active store found for new user automation: {user.email}")
+                logger.warning("No active store found for new user automation: user_id=%s", user.pk)
                 
         except Exception as e:
             logger.error(f"Failed to trigger new user automation: {e}")
@@ -398,9 +398,9 @@ class RegisterView(APIView):
                             'whatsapp': phone,
                         }
                     )
-                    logger.info(f"[Register] StoreCustomer created for {email} at store '{store_slug}'")
+                    logger.info("[Register] StoreCustomer created for user_id=%s at store '%s'", user.pk, store_slug)
             except Exception as e:
-                logger.error(f"[Register] Failed to create StoreCustomer for {email}: {e}")
+                logger.error("[Register] Failed to create StoreCustomer for user_id=%s: %s", user.pk, e)
 
         # Trigger new user email automation for all stores (or default store)
         self._trigger_new_user_automation(user, store_slug or None)

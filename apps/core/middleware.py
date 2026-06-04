@@ -58,7 +58,7 @@ def get_user_from_token(token_key):
     from rest_framework.authtoken.models import Token
     try:
         token = Token.objects.select_related('user').get(key=token_key)
-        logger.info(f"WebSocket token auth success: user={token.user.email}")
+        logger.debug("WebSocket token auth success: user_id=%s", token.user.pk)
         return token.user
     except Token.DoesNotExist:
         logger.warning("WebSocket token auth failed: token not found")
