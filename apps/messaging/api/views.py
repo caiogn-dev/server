@@ -1,3 +1,4 @@
+import hmac
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -367,6 +368,10 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
             or getattr(settings, "MESSENGER_VERIFY_TOKEN", "")
         )
 
-        if mode == "subscribe" and token == verify_token:
+        tokens_match = bool(verify_token) and hmac.compare_digest(
+            token.encode() if token else b'',
+            verify_token.encode(),
+        )
+        if mode == "subscribe" and tokens_match:
             return Response(int(challenge))
         return Response("Verification failed", status=403)

@@ -1,3 +1,4 @@
+import hmac
 import logging
 from typing import Optional, Dict, List, Any
 from .messenger_service import MessengerService, MessengerAPIException
@@ -346,6 +347,11 @@ class MessengerPlatformService:
         """Verifica webhook do Messenger"""
         from django.conf import settings
         
-        if mode == 'subscribe' and verify_token == getattr(settings, 'MESSENGER_VERIFY_TOKEN', ''):
+        expected = getattr(settings, 'MESSENGER_VERIFY_TOKEN', '') or ''
+        tokens_match = bool(expected) and hmac.compare_digest(
+            verify_token.encode() if verify_token else b'',
+            expected.encode(),
+        )
+        if mode == 'subscribe' and tokens_match:
             return challenge
         return None
