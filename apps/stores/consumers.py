@@ -1,6 +1,7 @@
 """
 WebSocket Consumers for real-time store updates.
 """
+import hmac
 import json
 import logging
 import asyncio
@@ -61,7 +62,7 @@ def user_can_access_customer_order(user, order_id: str, token: str = '') -> bool
         logger.error("Customer order WebSocket denied - order not found: %s", order_id)
         return False
 
-    if token and order.access_token and token == order.access_token:
+    if token and order.access_token and hmac.compare_digest(token, order.access_token):
         return True
 
     if user and user.is_authenticated:

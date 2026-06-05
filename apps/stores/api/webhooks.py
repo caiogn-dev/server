@@ -2,6 +2,7 @@
 Unified Payment Webhooks for all stores.
 Handles Mercado Pago webhooks and routes to correct store.
 """
+import hmac
 import logging
 import json
 from decimal import Decimal
@@ -330,8 +331,11 @@ class PaymentStatusView(APIView):
                 user.is_superuser
             )
             
-            has_valid_token = token and order.access_token and token == order.access_token
-            
+            has_valid_token = bool(
+                token and order.access_token
+                and hmac.compare_digest(token, order.access_token)
+            )
+
             if not has_valid_token and not is_authenticated_owner:
                 logger.warning(f"Unauthorized access attempt to order {order.order_number}")
                 return Response(
@@ -607,7 +611,10 @@ class CustomerOrderDetailView(APIView):
                 user.is_authenticated
                 and (order.customer_id == user.id or user.is_staff or user.is_superuser)
             )
-            has_valid_token = bool(token and order.access_token and token == order.access_token)
+            has_valid_token = bool(
+                token and order.access_token
+                and hmac.compare_digest(token, order.access_token)
+            )
 
             if not is_owner and not has_valid_token:
                 return Response(
@@ -821,7 +828,7 @@ class OrderReceiptView(APIView):
         # Authorization: token OR authenticated owner/staff
         user = request.user if request.user and request.user.is_authenticated else None
         if token:
-            if order.access_token != token:
+            if not (order.access_token and hmac.compare_digest(token, order.access_token)):
                 return Response({"error": "Token inválido"}, status=status.HTTP_403_FORBIDDEN)
         elif user:
             store = order.store

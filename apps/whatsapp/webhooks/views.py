@@ -1,6 +1,7 @@
 """
 WhatsApp Webhook views.
 """
+import hmac
 import logging
 import json
 from django.conf import settings
@@ -66,11 +67,15 @@ class WhatsAppWebhookView(APIView):
         
         verify_token = getattr(settings, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN', None)
         
-        if mode == 'subscribe' and token == verify_token:
+        tokens_match = bool(verify_token) and hmac.compare_digest(
+            token.encode() if token else b'',
+            verify_token.encode(),
+        )
+        if mode == 'subscribe' and tokens_match:
             logger.info(f"Webhook verified with challenge: {challenge}")
             return HttpResponse(challenge)
         else:
-            logger.warning(f"Webhook verification failed: mode={mode}, token={token}")
+            logger.warning(f"Webhook verification failed: mode={mode}")
             return Response({'error': 'Verification failed'}, status=403)
 
     @extend_schema(
@@ -102,13 +107,12 @@ class WhatsAppWebhookView(APIView):
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
             
-            # Validate signature using the raw body we captured earlier
+            # Validate signature using the raw body we captured earlier.
+            # Never skip signature validation regardless of DEBUG — an attacker
+            # controlling the network could abuse a DEBUG bypass.
             if not service.validate_signature(raw_body, signature):
-                if settings.DEBUG:
-                    logger.warning("Invalid webhook signature — continuing in DEBUG mode only")
-                else:
-                    logger.error("Invalid webhook signature — rejecting request")
-                    return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
+                logger.error("Invalid webhook signature — rejecting request")
+                return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
             
             # Convert headers to simple dict
             headers = {}
