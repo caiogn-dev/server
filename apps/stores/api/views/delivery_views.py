@@ -6,7 +6,7 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
-from django.db.models import Avg
+from django.db.models import Avg, Count
 
 from apps.stores.models import Store, StoreDeliveryZone
 from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
@@ -75,8 +75,12 @@ class StoreDeliveryZoneViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             'by_type': {}
         }
         
+        type_counts = {
+            row['zone_type']: row['count']
+            for row in queryset.values('zone_type').annotate(count=Count('id'))
+        }
         for zone_type, _ in StoreDeliveryZone.ZoneType.choices:
-            stats['by_type'][zone_type] = queryset.filter(zone_type=zone_type).count()
+            stats['by_type'][zone_type] = type_counts.get(zone_type, 0)
         
         return Response(stats)
     
