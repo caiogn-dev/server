@@ -78,6 +78,11 @@ class StoreComboItem(models.Model):
     quantity = models.PositiveIntegerField(default=1)
     allow_customization = models.BooleanField(default=False)
     customization_options = models.JSONField(default=dict, blank=True)
+    selection_rule = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Rules for variant selection: {'required': true, 'min_selections': 4, 'max_selections': 4}"
+    )
 
     class Meta:
         db_table = 'store_combo_items'
