@@ -8,8 +8,8 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 
-from apps.stores.models import StoreDeliveryZone
-from apps.core.permissions import StoreQuerysetMixin
+from apps.stores.models import Store, StoreDeliveryZone
+from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 from ..serializers import StoreDeliveryZoneSerializer, StoreDeliveryZoneCreateSerializer
 from .base import IsStoreOwnerOrStaff
 
@@ -86,10 +86,17 @@ class StoreDeliveryZoneViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         store_id = request.data.get('store')
         distance_km = request.data.get('distance_km')
         zip_code = request.data.get('zip_code')
-        
+
         if not store_id:
             return Response({'error': 'store is required'}, status=400)
-        
+
+        # Ensure the requesting user can access the target store.
+        # This prevents authenticated users from querying delivery fees
+        # of stores they don't own or staff.
+        allowed_qs = accessible_store_ids(request.user)
+        if not Store.objects.filter(id=store_id, id__in=allowed_qs).exists():
+            return Response({'error': 'Sem permissão para acessar esta loja'}, status=403)
+
         zones = StoreDeliveryZone.objects.filter(
             store_id=store_id,
             is_active=True

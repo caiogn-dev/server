@@ -452,8 +452,12 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             }
         }
         
+        status_counts = {
+            row['status']: row['count']
+            for row in queryset.values('status').annotate(count=Count('id'))
+        }
         for status_choice, _ in StoreOrder.OrderStatus.choices:
-            stats['by_status'][status_choice] = queryset.filter(status=status_choice).count()
+            stats['by_status'][status_choice] = status_counts.get(status_choice, 0)
         
         return Response(stats)
     
