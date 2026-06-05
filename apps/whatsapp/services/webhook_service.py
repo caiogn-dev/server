@@ -40,13 +40,17 @@ class WebhookService:
 
     def verify_webhook(self, mode: str, token: str, challenge: str) -> str:
         """Verify webhook subscription."""
+        import hmac as _hmac
         verify_token = settings.WHATSAPP_WEBHOOK_VERIFY_TOKEN
-        
-        if mode == 'subscribe' and token == verify_token:
+        tokens_match = bool(verify_token) and _hmac.compare_digest(
+            token.encode() if token else b'',
+            verify_token.encode(),
+        )
+        if mode == 'subscribe' and tokens_match:
             logger.info("Webhook verification successful")
             return challenge
-        
-        logger.warning(f"Webhook verification failed: mode={mode}")
+
+        logger.warning("Webhook verification failed: mode=%s", mode)
         raise WebhookValidationError(message="Webhook verification failed")
 
     def validate_signature(self, payload: bytes, signature: str) -> bool:

@@ -57,6 +57,13 @@ if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['localhost', '127.0.0.1']:
 if not WHATSAPP_WEBHOOK_VERIFY_TOKEN:
     raise ImproperlyConfigured('WHATSAPP_WEBHOOK_VERIFY_TOKEN must be set in production.')
 
+if not WHATSAPP_APP_SECRET:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        'WHATSAPP_APP_SECRET not set — incoming WhatsApp webhook payloads will NOT be HMAC-verified. '
+        'Set WHATSAPP_APP_SECRET to the Meta App Secret to enable signature validation.'
+    )
+
 if not INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
     import logging as _logging
     _logging.getLogger(__name__).warning('INSTAGRAM_WEBHOOK_VERIFY_TOKEN not set — Instagram webhooks will fail verification.')
