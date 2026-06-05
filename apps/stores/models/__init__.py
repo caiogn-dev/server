@@ -22,7 +22,8 @@ from .product import (
 from .customer import StoreCustomer, StoreCustomerAddress
 
 # Order models
-from .order import StoreOrder, StoreOrderItem, StoreOrderComboItem
+from .order import StoreOrder, StoreOrderItem
+from .order_combo_item import StoreOrderComboItem
 
 # Cart models
 from .cart import StoreCart, StoreCartItem, StoreCartComboItem
