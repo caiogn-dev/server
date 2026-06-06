@@ -106,8 +106,18 @@ class WebhookDispatcherView(View):
         # Verify HMAC signature BEFORE any DB write.
         # Prevents table flooding: an attacker sending spoofed requests would create a
         # WebhookEvent row per request if we wrote first, then validated.
-        # None = no endpoint configured (skip), True = valid, False = invalid (reject).
+        # None = no endpoint configured, True = valid, False = invalid (reject).
+        # Payment providers must ALWAYS have signature validation configured.
+        _SIGNATURE_REQUIRED = {'mercadopago'}
         signature_valid = self._verify_signature(request, provider, payload)
+        if signature_valid is None and provider in _SIGNATURE_REQUIRED:
+            logger.error(
+                "Webhook from payment provider=%s has no endpoint configured — "
+                "rejecting to prevent forged payment notifications. "
+                "Create a WebhookEndpoint with the provider secret to enable.",
+                provider,
+            )
+            return HttpResponse("Signature required", status=403)
         if signature_valid is False:
             logger.warning(
                 "Webhook signature invalid — rejecting provider=%s without DB write", provider
