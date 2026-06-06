@@ -159,7 +159,7 @@ class StoreProduct(BaseModel):
             models.Index(fields=['store', 'category', 'status'], name='product_store_cat_status_idx'),
         ]
         constraints = [
-            models.CheckConstraint(check=models.Q(price__gte=0), name='product_price_gte_0'),
+            models.CheckConstraint(condition=models.Q(price__gte=0), name='product_price_gte_0'),
         ]
 
     def __str__(self):

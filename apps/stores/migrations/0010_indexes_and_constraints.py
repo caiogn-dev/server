@@ -26,35 +26,35 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='storeorder',
             constraint=models.CheckConstraint(
-                check=models.Q(subtotal__gte=0),
+                condition=models.Q(subtotal__gte=0),
                 name='order_subtotal_gte_0',
             ),
         ),
         migrations.AddConstraint(
             model_name='storeorder',
             constraint=models.CheckConstraint(
-                check=models.Q(discount__gte=0),
+                condition=models.Q(discount__gte=0),
                 name='order_discount_gte_0',
             ),
         ),
         migrations.AddConstraint(
             model_name='storeorder',
             constraint=models.CheckConstraint(
-                check=models.Q(total__gte=0),
+                condition=models.Q(total__gte=0),
                 name='order_total_gte_0',
             ),
         ),
         migrations.AddConstraint(
             model_name='storeorder',
             constraint=models.CheckConstraint(
-                check=models.Q(delivery_fee__gte=0),
+                condition=models.Q(delivery_fee__gte=0),
                 name='order_delivery_fee_gte_0',
             ),
         ),
         migrations.AddConstraint(
             model_name='storeorder',
             constraint=models.CheckConstraint(
-                check=models.Q(tax__gte=0),
+                condition=models.Q(tax__gte=0),
                 name='order_tax_gte_0',
             ),
         ),
@@ -63,7 +63,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='storeproduct',
             constraint=models.CheckConstraint(
-                check=models.Q(price__gte=0),
+                condition=models.Q(price__gte=0),
                 name='product_price_gte_0',
             ),
         ),

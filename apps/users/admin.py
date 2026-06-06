@@ -5,7 +5,11 @@ from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.html import format_html
-from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline
+try:
+    from unfold.admin import ModelAdmin as UnfoldModelAdmin
+except (ImportError, ModuleNotFoundError):
+    UnfoldModelAdmin = admin.ModelAdmin
+TabularInline = admin.TabularInline
 
 from .models import UnifiedUser, UnifiedUserActivity
 
@@ -82,5 +86,5 @@ admin.site.unregister(User)
 
 
 @admin.register(User)
-class CustomUserAdmin(UnfoldModelAdmin, BaseUserAdmin):
+class CustomUserAdmin(BaseUserAdmin):
     inlines = list(BaseUserAdmin.inlines or []) + [StoreTeamMemberUserInline]

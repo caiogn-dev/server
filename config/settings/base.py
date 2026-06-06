@@ -35,9 +35,9 @@ ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts_env.split(',') if h.strip()] 
 
 INSTALLED_APPS = [
     'daphne',
-    'unfold',
-    'unfold.contrib.filters',
-    'unfold.contrib.inlines',
+    # 'unfold',  # DISABLED: Unfold package v1.2.4 is broken (missing display_for_field, prettify_json, etc)
+    # 'unfold.contrib.filters',
+    # 'unfold.contrib.inlines',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',

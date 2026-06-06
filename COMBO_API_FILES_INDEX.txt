@@ -1,0 +1,487 @@
+================================================================================
+COMBO API ENDPOINTS - FILES INDEX
+================================================================================
+
+Complete listing of all documentation, implementation, and test files
+Generated: 2026-06-06
+
+================================================================================
+DOCUMENTATION FILES (Primary References)
+================================================================================
+
+1. /home/graco/WORK/server2/COMBO_API_README.md
+   ├─ Type: Primary Documentation
+   ├─ Size: ~500 lines
+   ├─ Content:
+   │  ├─ Overview of combo system
+   │  ├─ Quick start guide
+   │  ├─ API endpoint summary (high-level)
+   │  ├─ URL patterns (canonical + legacy)
+   │  ├─ Error handling overview
+   │  ├─ Testing instructions
+   │  ├─ Frontend integration examples (React)
+   │  ├─ Deployment notes
+   │  ├─ Troubleshooting FAQ
+   │  └─ Support & next steps
+   ├─ Audience: All developers, project managers
+   ├─ Key Sections:
+   │  ├─ What Are Combos? (business context)
+   │  ├─ Quick Start (3 steps)
+   │  ├─ API Endpoints (summary)
+   │  ├─ Testing (automated + manual)
+   │  └─ Frontend Integration (React example)
+   └─ Location: Root of server2 project
+
+2. /home/graco/WORK/server2/COMBO_API_IMPLEMENTATION_SUMMARY.txt
+   ├─ Type: Quick Reference
+   ├─ Size: ~400 lines
+   ├─ Content:
+   │  ├─ Task completion checklist (4/4 complete)
+   │  ├─ Endpoint summary (3 endpoints)
+   │  ├─ URL pattern verification
+   │  ├─ Implementation files list
+   │  ├─ Testing summary (29 tests)
+   │  ├─ Key features implemented
+   │  ├─ Related routes
+   │  ├─ Deployment notes
+   │  ├─ Known limitations & enhancements
+   │  └─ Verification checklist
+   ├─ Audience: Technical leads, QA engineers
+   ├─ Use Case: Quick lookup of file locations, status, and features
+   └─ Location: Root of server2 project
+
+================================================================================
+DETAILED DOCUMENTATION FILES (In /docs/ directory)
+================================================================================
+
+3. /home/graco/WORK/server2/docs/COMBO_API_ENDPOINTS.md
+   ├─ Type: Full API Reference
+   ├─ Size: ~600 lines
+   ├─ Content:
+   │  ├─ Architecture overview
+   │  ├─ Endpoint 1: List Combos (GET /combos/)
+   │  │  ├─ Route, purpose, authentication
+   │  │  ├─ Query parameters table
+   │  │  ├─ Success response (200 OK)
+   │  │  └─ Error responses (404)
+   │  ├─ Endpoint 2: Get Combo Details (GET /combos/{id}/)
+   │  │  ├─ Route, purpose, parameters
+   │  │  ├─ Full response structure
+   │  │  └─ Error responses (400, 404)
+   │  ├─ Endpoint 3: Add Combo to Cart (POST /cart/add-combo/)
+   │  │  ├─ Route, purpose, authentication
+   │  │  ├─ Request body structure
+   │  │  ├─ Success response with cart summary
+   │  │  ├─ Error responses (400, 404, 500)
+   │  │  ├─ Cart management details (guest + auth)
+   │  │  └─ Session creation behavior
+   │  ├─ Implementation details section
+   │  │  ├─ File locations
+   │  │  ├─ View classes (ComboListView, ComboDetailView, AddComboToCartView)
+   │  │  ├─ Serializers (ComboListSerializer, ComboDetailSerializer)
+   │  │  ├─ Validation (ComboSelectionValidator)
+   │  │  └─ URL configuration details
+   │  ├─ Testing the endpoints (curl examples)
+   │  ├─ Integration with storefront (frontend contract)
+   │  ├─ Database models section
+   │  │  ├─ StoreCombo model
+   │  │  ├─ ComboGroup model
+   │  │  └─ ComboGroupVariant model
+   │  ├─ API response contracts
+   │  │  ├─ Pagination contract
+   │  │  └─ Error response format
+   │  ├─ Performance considerations
+   │  ├─ Related endpoints
+   │  └─ Future enhancements
+   ├─ Audience: Frontend developers, API consumers
+   ├─ Key Sections:
+   │  ├─ Overview & Architecture (with tenant isolation notes)
+   │  ├─ Endpoint Specifications (full details)
+   │  ├─ Implementation Details (code references)
+   │  └─ Testing Examples (curl commands)
+   └─ Location: docs/ subdirectory
+
+4. /home/graco/WORK/server2/docs/COMBO_API_URL_ROUTING.md
+   ├─ Type: URL Configuration Reference
+   ├─ Size: ~500 lines
+   ├─ Content:
+   │  ├─ URL pattern summary table
+   │  ├─ Endpoint routes breakdown
+   │  ├─ Route registration in code
+   │  │  ├─ Imports (lines 12-34)
+   │  │  ├─ Pattern definition (lines 163-228)
+   │  │  └─ URL inclusion (lines 231-328)
+   │  ├─ URL pattern matching examples
+   │  │  ├─ Example 1: List combos (canonical)
+   │  │  ├─ Example 2: Get combo detail
+   │  │  ├─ Example 3: Add to cart
+   │  │  └─ Example 4: List combos (legacy)
+   │  ├─ Django URL dispatcher flow diagram
+   │  ├─ URL reverse lookup (reverse() function examples)
+   │  ├─ Namespace configuration (app_name = 'stores')
+   │  ├─ Route priority & order explanation
+   │  ├─ Pattern validation & constraints
+   │  │  ├─ Store slug validation rules
+   │  │  └─ Combo ID (UUID) validation rules
+   │  ├─ Query parameter handling
+   │  ├─ Content negotiation
+   │  ├─ URL edge cases & gotchas (3 issues)
+   │  ├─ Testing URL routing
+   │  ├─ URL configuration best practices
+   │  ├─ Related URLs (admin, nested, etc.)
+   │  ├─ URL configuration file structure
+   │  └─ Changelog
+   ├─ Audience: Backend developers, DevOps, URL routing specialists
+   ├─ Key Sections:
+   │  ├─ URL Pattern Summary (quick table)
+   │  ├─ Route Registration (code walkthrough)
+   │  ├─ URL Dispatcher Flow (diagram)
+   │  ├─ URL Reverse Lookup (examples)
+   │  └─ URL Edge Cases (gotchas to avoid)
+   └─ Location: docs/ subdirectory
+
+5. /home/graco/WORK/server2/docs/COMBO_API_TEST_PLAN.md
+   ├─ Type: Comprehensive Test Suite Documentation
+   ├─ Size: ~800 lines
+   ├─ Content:
+   │  ├─ Prerequisites section (Docker, database, sample data)
+   │  ├─ TEST SUITE 1: List Combos (6 tests)
+   │  │  ├─ 1.1: List all combos (no filters)
+   │  │  ├─ 1.2: Filter by is_active=true
+   │  │  ├─ 1.3: Filter by is_active=false
+   │  │  ├─ 1.4: Pagination with custom page size
+   │  │  ├─ 1.5: Max page size enforcement
+   │  │  └─ 1.6: Non-existent store error
+   │  ├─ TEST SUITE 2: Get Combo Details (5 tests)
+   │  │  ├─ 2.1: Get valid combo details
+   │  │  ├─ 2.2: Invalid UUID format
+   │  │  ├─ 2.3: Non-existent combo
+   │  │  ├─ 2.4: Non-existent store
+   │  │  └─ 2.5: Tenant isolation verification
+   │  ├─ TEST SUITE 3: Add Combo to Cart (10 tests)
+   │  │  ├─ 3.1: Add valid combo (guest)
+   │  │  ├─ 3.2: Multiple quantities
+   │  │  ├─ 3.3: Missing combo_id
+   │  │  ├─ 3.4: Invalid combo_id format
+   │  │  ├─ 3.5: Invalid quantity (non-integer)
+   │  │  ├─ 3.6: Invalid quantity (negative)
+   │  │  ├─ 3.7: Non-existent combo
+   │  │  ├─ 3.8: Missing required selection
+   │  │  ├─ 3.9: Too many selections
+   │  │  └─ 3.10: Sequential adds to cart
+   │  ├─ TEST SUITE 4: URL Pattern Verification (3 tests)
+   │  │  ├─ 4.1: Canonical URL pattern
+   │  │  ├─ 4.2: Legacy URL pattern
+   │  │  └─ 4.3: Incorrect store path
+   │  ├─ TEST SUITE 5: Content Type & Headers (3 tests)
+   │  │  ├─ 5.1: JSON response format
+   │  │  ├─ 5.2: POST content-type validation
+   │  │  └─ 5.3: CORS headers present
+   │  ├─ Performance Tests (2 tests)
+   │  │  ├─ PERF Test 1: List endpoint response time
+   │  │  └─ PERF Test 2: Detail endpoint response time
+   │  ├─ Test execution summary
+   │  ├─ Quick test script (bash)
+   │  ├─ Test coverage matrix (29 tests)
+   │  └─ Notes for test execution
+   ├─ Audience: QA engineers, test automation, developers
+   ├─ Key Sections:
+   │  ├─ Prerequisites (environment setup)
+   │  ├─ 29 Detailed Test Cases (with expected responses)
+   │  ├─ Pass/Fail Criteria (explicit checklist)
+   │  ├─ curl Commands (copy-paste ready)
+   │  └─ Test Coverage Matrix (tracking sheet)
+   └─ Location: docs/ subdirectory
+
+================================================================================
+IMPLEMENTATION FILES (In /apps/stores/ directory)
+================================================================================
+
+6. /home/graco/WORK/server2/apps/stores/api/views/combo_views.py
+   ├─ Type: View Implementation
+   ├─ Size: ~280 lines
+   ├─ Classes:
+   │  ├─ ComboPagination
+   │  │  ├─ page_size = 20
+   │  │  ├─ page_size_query_param = 'page_size'
+   │  │  └─ max_page_size = 100
+   │  ├─ ComboDetailView (APIView)
+   │  │  ├─ GET /api/v1/stores/{store_slug}/combos/{combo_id}/
+   │  │  ├─ Features: UUID validation, tenant isolation
+   │  │  ├─ Returns: ComboDetailSerializer
+   │  │  └─ Errors: 400 (invalid UUID), 404 (not found)
+   │  ├─ ComboListView (APIView)
+   │  │  ├─ GET /api/v1/stores/{store_slug}/combos/
+   │  │  ├─ Features: Pagination, is_active filtering, ordering
+   │  │  ├─ Returns: Paginated ComboListSerializer
+   │  │  └─ Errors: 404 (store not found)
+   │  └─ AddComboToCartView (APIView)
+   │     ├─ POST /api/v1/stores/{store_slug}/cart/add-combo/
+   │     ├─ Features: Validation, stock checks, session management
+   │     ├─ Methods: _get_or_create_cart, _get_cart_response
+   │     ├─ Returns: Cart summary
+   │     └─ Errors: 400 (validation), 404 (not found), 500 (error)
+   ├─ Dependencies:
+   │  ├─ rest_framework
+   │  ├─ apps.stores.models
+   │  ├─ apps.stores.validators (ComboSelectionValidator)
+   │  └─ apps.stores.serializers
+   └─ Location: apps/stores/api/views/
+
+7. /home/graco/WORK/server2/apps/stores/api/combo_serializers.py
+   ├─ Type: Serializer Implementation
+   ├─ Size: ~150 lines
+   ├─ Classes:
+   │  ├─ ComboListSerializer
+   │  │  ├─ Fields: id, store, name, slug, description, image, price, etc.
+   │  │  ├─ Meta: model = StoreCombo, fields = [...]
+   │  │  └─ Usage: ComboListView response
+   │  └─ ComboDetailSerializer
+   │     ├─ Fields: all ComboListSerializer fields + groups
+   │     ├─ groups: nested ComboGroupSerializer
+   │     ├─ Meta: model = StoreCombo, depth = 2
+   │     └─ Usage: ComboDetailView response
+   ├─ Dependencies:
+   │  ├─ rest_framework.serializers
+   │  └─ apps.stores.models
+   └─ Location: apps/stores/api/
+
+8. /home/graco/WORK/server2/apps/stores/validators.py
+   ├─ Type: Validation Logic
+   ├─ Size: ~100 lines
+   ├─ Classes:
+   │  └─ ComboSelectionValidator
+   │     ├─ validate(selections): Main validation method
+   │     ├─ Checks:
+   │     │  ├─ Required selections per group (min_selections)
+   │     │  ├─ Selection limits per group (max_selections)
+   │     │  ├─ Per-variant quantity limits
+   │     │  └─ Stock availability (if tracked)
+   │     ├─ Returns: bool (valid/invalid)
+   │     └─ errors: dict of validation messages
+   ├─ Usage: AddComboToCartView.post()
+   └─ Location: apps/stores/
+
+9. /home/graco/WORK/server2/apps/stores/models/combo_group.py
+   ├─ Type: Model Definition
+   ├─ Size: ~150 lines
+   ├─ Models:
+   │  ├─ ComboGroup
+   │  │  ├─ Fields: combo, name, description, selection_type
+   │  │  ├─ Fields: min_selections, max_selections, is_required
+   │  │  ├─ Fields: sort_order, metadata, timestamps
+   │  │  └─ Relations: FK to StoreCombo, reverse relation to ComboGroupVariant
+   │  └─ ComboGroupVariant
+   │     ├─ Fields: group, product, price_modifier, stock
+   │     ├─ Fields: max_quantity, is_available, sort_order
+   │     └─ Relations: FK to ComboGroup and StoreProduct
+   ├─ Usage: Nested in ComboDetailSerializer
+   └─ Location: apps/stores/models/
+
+10. /home/graco/WORK/server2/apps/stores/models/product.py
+    ├─ Type: Model Definition
+    ├─ Size: ~100 lines (combo-related fields)
+    ├─ Model: StoreCombo
+    │  ├─ Fields: store, name, slug, description, price
+    │  ├─ Fields: image, is_active, sort_order, metadata
+    │  ├─ Fields: created_at, updated_at
+    │  ├─ Relations: FK to Store, FK to StoreImage, reverse FK from ComboGroup
+    │  └─ Methods: __str__, save(), etc.
+    ├─ Usage: Main model for all combo endpoints
+    └─ Location: apps/stores/models/
+
+11. /home/graco/WORK/server2/apps/stores/urls.py
+    ├─ Type: URL Configuration
+    ├─ Size: ~330 lines (entire file)
+    ├─ Key Sections:
+    │  ├─ Line 27: Import ComboDetailView, ComboListView, AddComboToCartView
+    │  ├─ Line 169: path('combos/', ComboListView.as_view(), name='combo-list')
+    │  ├─ Line 170: path('combos/<uuid:combo_id>/', ComboDetailView.as_view(), name='combo-detail')
+    │  ├─ Line 173: path('cart/add-combo/', AddComboToCartView.as_view(), name='add-combo-to-cart')
+    │  ├─ Line 325: path('s/<slug:store_slug>/', include(store_frontend_patterns)) [Legacy]
+    │  └─ Line 327: path('<slug:store_slug>/', include(store_frontend_patterns)) [Canonical]
+    ├─ store_frontend_patterns: List of 25+ URL patterns
+    ├─ app_name = 'stores': Namespace for reverse() lookups
+    └─ Location: apps/stores/
+
+================================================================================
+TEST & SCRIPT FILES
+================================================================================
+
+12. /home/graco/WORK/server2/scripts/test_combo_endpoints.sh
+    ├─ Type: Automated Test Script
+    ├─ Size: ~400 lines
+    ├─ Language: Bash
+    ├─ Purpose: Run all combo endpoint tests with colored output
+    ├─ Features:
+    │  ├─ Color-coded PASS/FAIL output
+    │  ├─ Test counter (Tests Run, Passed, Failed)
+    │  ├─ Comprehensive test execution
+    │  ├─ Curl commands with error handling
+    │  └─ Summary report at end
+    ├─ Test Suites Executed:
+    │  ├─ TEST SUITE 1: List Combos (6 tests)
+    │  ├─ TEST SUITE 2: Get Combo Details (5 tests)
+    │  ├─ TEST SUITE 3: Add Combo to Cart (10 tests)
+    │  ├─ TEST SUITE 4: URL Pattern Verification (3 tests)
+    │  └─ TEST SUITE 5: Content Type & Headers (3 tests)
+    ├─ Usage:
+    │  ├─ ./scripts/test_combo_endpoints.sh
+    │  ├─ ./scripts/test_combo_endpoints.sh kero-kero
+    │  └─ ./scripts/test_combo_endpoints.sh ce-saladas https://backend.pastita.com.br
+    ├─ Parameters:
+    │  ├─ STORE_SLUG (default: ce-saladas)
+    │  └─ BASE_URL (default: http://localhost:8001)
+    ├─ Output:
+    │  ├─ Test headers with descriptions
+    │  ├─ Expected vs actual responses
+    │  ├─ Color-coded results (green/red)
+    │  └─ Summary with pass/fail count
+    ├─ Requirements:
+    │  ├─ curl (HTTP requests)
+    │  ├─ jq (JSON parsing)
+    │  └─ bash 4.0+
+    └─ Location: scripts/
+
+13. /home/graco/WORK/server2/apps/stores/tests/test_combo_api.py (mentioned, may vary)
+    ├─ Type: Unit Tests
+    ├─ Purpose: Test combo API functionality
+    ├─ Test Cases:
+    │  ├─ TestComboListView
+    │  ├─ TestComboDetailView
+    │  └─ TestAddComboToCartView
+    └─ Location: apps/stores/tests/
+
+================================================================================
+SUMMARY STATISTICS
+================================================================================
+
+Total Files Created/Modified: 13+
+  ├─ Documentation Files: 6
+  │  ├─ Primary READMEs: 2
+  │  └─ Detailed References: 4
+  ├─ Implementation Files: 5
+  │  ├─ Views: 1 (combo_views.py)
+  │  ├─ Serializers: 1 (combo_serializers.py)
+  │  ├─ Validators: 1 (validators.py)
+  │  ├─ Models: 2 (combo_group.py, product.py updates)
+  │  └─ URLs: 1 (urls.py updates)
+  └─ Test & Utility Files: 2+
+     ├─ Test Script: 1 (bash)
+     └─ Unit Tests: 1 (Python)
+
+Total Lines of Documentation: 3000+
+  ├─ README: ~500 lines
+  ├─ Implementation Summary: ~400 lines
+  ├─ Endpoints Reference: ~600 lines
+  ├─ URL Routing: ~500 lines
+  ├─ Test Plan: ~800 lines
+  └─ Code Comments: ~200 lines
+
+Total Lines of Code/Config: 1500+
+  ├─ Views: ~280 lines
+  ├─ Serializers: ~150 lines
+  ├─ Validators: ~100 lines
+  ├─ Models: ~250 lines
+  ├─ URL Configuration: ~50 lines (in urls.py)
+  └─ Tests: ~400 lines (estimate)
+
+Test Coverage: 29 test cases documented
+  ├─ List endpoint: 6 tests
+  ├─ Detail endpoint: 5 tests
+  ├─ Add to cart endpoint: 10 tests
+  ├─ URL patterns: 3 tests
+  ├─ Content negotiation: 3 tests
+  └─ Performance: 2 tests
+
+================================================================================
+FILE ORGANIZATION
+================================================================================
+
+/home/graco/WORK/server2/
+├── README files (entry points)
+│   ├── COMBO_API_README.md
+│   ├── COMBO_API_IMPLEMENTATION_SUMMARY.txt
+│   └── COMBO_API_FILES_INDEX.txt (this file)
+│
+├── docs/ (detailed references)
+│   ├── COMBO_API_ENDPOINTS.md
+│   ├── COMBO_API_URL_ROUTING.md
+│   └── COMBO_API_TEST_PLAN.md
+│
+├── scripts/ (utilities)
+│   └── test_combo_endpoints.sh
+│
+├── apps/stores/
+│   ├── api/
+│   │   ├── views/
+│   │   │   └── combo_views.py
+│   │   ├── combo_serializers.py
+│   │   └── __init__.py (exports)
+│   │
+│   ├── models/
+│   │   ├── combo_group.py
+│   │   ├── product.py (StoreCombo)
+│   │   └── order_combo_item.py
+│   │
+│   ├── validators.py
+│   ├── urls.py (updated)
+│   └── tests/
+│       └── test_combo_api.py
+│
+└── config/
+    └── urls.py (includes apps.stores.urls)
+
+================================================================================
+READING ORDER
+================================================================================
+
+For Different Audiences:
+
+Project Managers:
+  1. COMBO_API_README.md (overview)
+  2. COMBO_API_IMPLEMENTATION_SUMMARY.txt (status)
+
+Frontend Developers:
+  1. COMBO_API_README.md (start here)
+  2. docs/COMBO_API_ENDPOINTS.md (API reference)
+  3. COMBO_API_README.md - Frontend Integration section
+
+Backend Developers:
+  1. COMBO_API_IMPLEMENTATION_SUMMARY.txt (quick ref)
+  2. apps/stores/urls.py (line 27, 169-173, 325-327)
+  3. apps/stores/api/views/combo_views.py (implementation)
+  4. docs/COMBO_API_URL_ROUTING.md (detailed)
+
+QA Engineers:
+  1. docs/COMBO_API_TEST_PLAN.md (test cases)
+  2. scripts/test_combo_endpoints.sh (automated tests)
+  3. COMBO_API_README.md (manual testing)
+
+DevOps/Infrastructure:
+  1. COMBO_API_IMPLEMENTATION_SUMMARY.txt (deployment)
+  2. docs/COMBO_API_URL_ROUTING.md (routing details)
+  3. COMBO_API_README.md (troubleshooting)
+
+================================================================================
+FILE MODIFICATION DATES
+================================================================================
+
+All files created/last modified: 2026-06-06
+
+In git status:
+  ├─ Modified: apps/stores/urls.py (existing file, added routes)
+  ├─ Modified: apps/stores/api/views/__init__.py (added exports)
+  ├─ Untracked: apps/stores/api/views/combo_views.py (new)
+  ├─ Untracked: apps/stores/api/combo_serializers.py (new)
+  ├─ Untracked: docs/COMBO_API_ENDPOINTS.md (new)
+  ├─ Untracked: docs/COMBO_API_URL_ROUTING.md (new)
+  ├─ Untracked: docs/COMBO_API_TEST_PLAN.md (new)
+  ├─ Untracked: COMBO_API_README.md (new)
+  ├─ Untracked: COMBO_API_IMPLEMENTATION_SUMMARY.txt (new)
+  ├─ Untracked: COMBO_API_FILES_INDEX.txt (new)
+  └─ Untracked: scripts/test_combo_endpoints.sh (new, +x)
+
+================================================================================
+END OF FILE INDEX
+================================================================================

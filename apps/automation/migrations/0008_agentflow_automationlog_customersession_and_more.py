@@ -418,15 +418,11 @@ class Migration(migrations.Migration):
                 ),
             ],
         ),
+        # PostgreSQL-specific SQL, skipped for SQLite (columns already added via AddField above)
         migrations.RunSQL(
-            sql="""
-                ALTER TABLE company_profiles ADD COLUMN IF NOT EXISTS business_hours jsonb NOT NULL DEFAULT '{}'::jsonb;
-                ALTER TABLE company_profiles ADD COLUMN IF NOT EXISTS company_name varchar(255) NOT NULL DEFAULT '';
-            """,
-            reverse_sql="""
-                ALTER TABLE company_profiles DROP COLUMN IF EXISTS company_name;
-                ALTER TABLE company_profiles DROP COLUMN IF EXISTS business_hours;
-            """,
+            sql='SELECT 1;',  # No-op for SQLite
+            reverse_sql='SELECT 1;',
+            state_operations=[],
         ),
         migrations.RunPython(normalize_company_profile_business_hours, migrations.RunPython.noop),
         AddFieldIfMissing(

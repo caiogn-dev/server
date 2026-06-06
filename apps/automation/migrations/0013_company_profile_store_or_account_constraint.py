@@ -12,6 +12,6 @@ class Migration(migrations.Migration):
     operations = [
         migrations.AddConstraint(
             model_name='companyprofile',
-            constraint=models.CheckConstraint(check=models.Q(('store__isnull', False), ('account__isnull', False), _connector='OR'), name='company_profile_requires_store_or_account'),
+            constraint=models.CheckConstraint(condition=models.Q(('store__isnull', False), ('account__isnull', False), _connector='OR'), name='company_profile_requires_store_or_account'),
         ),
     ]

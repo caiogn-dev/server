@@ -12,7 +12,8 @@ class StoreOrderComboItem(models.Model):
     order_item = models.ForeignKey(
         'stores.StoreOrderItem',
         on_delete=models.CASCADE,
-        related_name='combo_selections'
+        related_name='combo_selections',
+        null=True
     )
     combo = models.ForeignKey(
         'stores.StoreCombo',

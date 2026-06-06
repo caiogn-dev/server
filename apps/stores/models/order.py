@@ -1,5 +1,6 @@
 """
-Store order models - StoreOrder, StoreOrderItem, StoreOrderComboItem.
+Store order models - StoreOrder, StoreOrderItem.
+StoreOrderComboItem has been moved to order_combo_item.py.
 """
 import uuid
 import logging
@@ -257,11 +258,11 @@ class StoreOrder(BaseModel):
             models.Index(fields=['uber_delivery_request_id']),
         ]
         constraints = [
-            models.CheckConstraint(check=models.Q(subtotal__gte=0), name='order_subtotal_gte_0'),
-            models.CheckConstraint(check=models.Q(discount__gte=0), name='order_discount_gte_0'),
-            models.CheckConstraint(check=models.Q(total__gte=0), name='order_total_gte_0'),
-            models.CheckConstraint(check=models.Q(delivery_fee__gte=0), name='order_delivery_fee_gte_0'),
-            models.CheckConstraint(check=models.Q(tax__gte=0), name='order_tax_gte_0'),
+            models.CheckConstraint(condition=models.Q(subtotal__gte=0), name='order_subtotal_gte_0'),
+            models.CheckConstraint(condition=models.Q(discount__gte=0), name='order_discount_gte_0'),
+            models.CheckConstraint(condition=models.Q(total__gte=0), name='order_total_gte_0'),
+            models.CheckConstraint(condition=models.Q(delivery_fee__gte=0), name='order_delivery_fee_gte_0'),
+            models.CheckConstraint(condition=models.Q(tax__gte=0), name='order_tax_gte_0'),
         ]
 
     def __str__(self):
@@ -554,50 +555,6 @@ class StoreOrderItem(models.Model):
 
     def __str__(self):
         return f"{self.quantity}x {self.product_name}"
-
-    def save(self, *args, **kwargs):
-        self.subtotal = self.unit_price * self.quantity
-        super().save(*args, **kwargs)
-
-
-class StoreOrderComboItem(models.Model):
-    """Combo item in an order."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    order = models.ForeignKey(
-        StoreOrder,
-        on_delete=models.CASCADE,
-        related_name='combo_items'
-    )
-
-    combo = models.ForeignKey(
-        'stores.StoreCombo',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-
-    # Denormalized combo info
-    combo_name = models.CharField(max_length=255)
-
-    # Pricing
-    unit_price = models.DecimalField(max_digits=10, decimal_places=2)
-    quantity = models.PositiveIntegerField(default=1)
-    subtotal = models.DecimalField(max_digits=10, decimal_places=2)
-
-    # Customizations
-    customizations = models.JSONField(default=dict, blank=True)
-    notes = models.TextField(blank=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = 'store_order_combo_items'
-        verbose_name = 'Order Combo Item'
-        verbose_name_plural = 'Order Combo Items'
-
-    def __str__(self):
-        return f"{self.quantity}x {self.combo_name}"
 
     def save(self, *args, **kwargs):
         self.subtotal = self.unit_price * self.quantity

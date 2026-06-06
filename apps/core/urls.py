@@ -1,7 +1,7 @@
 """
 Core URLs - Health check, system endpoints, dashboard, auth, and export.
 """
-from django.urls import path
+from django.urls import path, include
 from .api import HealthCheckView, SystemInfoView
 from .dashboard_views import (
     DashboardOverviewView,

@@ -128,7 +128,7 @@ class CompanyProfile(BaseModel):
         verbose_name_plural = 'Company Profiles'
         constraints = [
             models.CheckConstraint(
-                check=models.Q(store__isnull=False) | models.Q(account__isnull=False),
+                condition=models.Q(store__isnull=False) | models.Q(account__isnull=False),
                 name='company_profile_requires_store_or_account',
             )
         ]

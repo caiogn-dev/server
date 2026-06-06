@@ -1,5 +1,8 @@
 from django.contrib import admin
-from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline
+# from unfold.admin import ModelAdmin as UnfoldModelAdmin, TabularInline
+# Using standard Django admin instead (unfold v1.2.4 is broken)
+UnfoldModelAdmin = admin.ModelAdmin
+TabularInline = admin.TabularInline
 
 from .models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
