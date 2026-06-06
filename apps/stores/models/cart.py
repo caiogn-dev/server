@@ -57,14 +57,46 @@ class StoreCart(models.Model):
 
     @property
     def subtotal(self):
-        product_total = sum(item.subtotal for item in self.items.all())
-        combo_total = sum(item.subtotal for item in self.combo_items.all())
+        from decimal import Decimal
+        from django.db.models import Sum, F, Case, When, DecimalField
+
+        product_total = self.items.aggregate(
+            total=Sum(
+                Case(
+                    When(
+                        variant__isnull=False,
+                        variant__price__isnull=False,
+                        variant__price__gt=0,
+                        then=F('variant__price') * F('quantity'),
+                    ),
+                    default=F('product__price') * F('quantity'),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            )
+        )['total'] or Decimal('0.00')
+
+        combo_total = self.combo_items.aggregate(
+            total=Sum(
+                Case(
+                    When(unit_price__isnull=False, then=F('unit_price') * F('quantity')),
+                    When(
+                        combo__isnull=False,
+                        combo__price__isnull=False,
+                        then=F('combo__price') * F('quantity'),
+                    ),
+                    default=Decimal('0.00'),
+                    output_field=DecimalField(max_digits=12, decimal_places=2),
+                )
+            )
+        )['total'] or Decimal('0.00')
+
         return product_total + combo_total
 
     @property
     def item_count(self):
-        product_count = sum(item.quantity for item in self.items.all())
-        combo_count = sum(item.quantity for item in self.combo_items.all())
+        from django.db.models import Sum
+        product_count = self.items.aggregate(total=Sum('quantity'))['total'] or 0
+        combo_count = self.combo_items.aggregate(total=Sum('quantity'))['total'] or 0
         return product_count + combo_count
 
     @property

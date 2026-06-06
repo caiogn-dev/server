@@ -279,7 +279,8 @@ class CartService:
         """Get cart summary with totals."""
         items = []
         subtotal = Decimal('0.00')
-        
+        item_count = 0
+
         # Regular items
         for item in cart.items.select_related('product', 'variant').all():
             item_data = {
@@ -298,7 +299,8 @@ class CartService:
             }
             items.append(item_data)
             subtotal += item.subtotal
-        
+            item_count += item.quantity
+
         # Combo items
         for item in cart.combo_items.select_related('combo').all():
             item_data = {
@@ -315,13 +317,14 @@ class CartService:
             }
             items.append(item_data)
             subtotal += item.subtotal
-        
+            item_count += item.quantity
+
         return {
             'id': str(cart.id),
             'store_id': str(cart.store.id),
             'store_name': cart.store.name,
             'items': items,
-            'item_count': cart.item_count,
+            'item_count': item_count,
             'subtotal': float(subtotal),
             'is_empty': len(items) == 0,
         }
@@ -338,10 +341,11 @@ class CartService:
         preventing overselling when multiple checkouts happen simultaneously.
         """
         errors = []
-        
-        # Get product IDs and variant IDs from cart
-        product_ids = [item.product_id for item in cart.items.all()]
-        variant_ids = [item.variant_id for item in cart.items.all() if item.variant_id]
+
+        # Load items once to avoid redundant queries
+        cart_items = list(cart.items.all())
+        product_ids = [item.product_id for item in cart_items]
+        variant_ids = [item.variant_id for item in cart_items if item.variant_id]
         combo_ids = [item.combo_id for item in cart.combo_items.all() if item.combo_id]
         
         # Lock products for update to prevent race conditions
