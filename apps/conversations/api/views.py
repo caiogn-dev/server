@@ -283,7 +283,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = self.get_object()
         serializer = AssignAgentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         try:
             agent = User.objects.get(id=serializer.validated_data['agent_id'])
         except User.DoesNotExist:
@@ -291,7 +291,15 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 {'error': 'Agent not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
+        if not agent.is_superuser and not agent.is_staff:
+            agent_account_ids = set(accessible_whatsapp_account_ids(agent))
+            if conversation.account_id not in agent_account_ids:
+                return Response(
+                    {'error': 'Agent does not have access to this conversation'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         service = ConversationService()
         conversation = service.assign_agent(str(conversation.id), agent)
         return Response(ConversationSerializer(conversation).data)
