@@ -437,7 +437,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         from django.db.models import Count, Sum, Case, When, Q, F
 
         store_id = request.query_params.get('store')
-        queryset = self.get_queryset().values()  # Strip prefetch for aggregation
+        # Use fresh queryset without prefetch for aggregation (incompatible with .values())
+        queryset = StoreOrder.objects.all()
 
         if store_id:
             queryset = queryset.filter(store_id=store_id)
