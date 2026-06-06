@@ -165,3 +165,8 @@ class OrderConsumer(AsyncWebsocketConsumer):
     def _validate_token(self, token_key: str):
         """Validate token synchronously (runs in thread pool)."""
         return validate_websocket_token(token_key)
+
+
+# Aliases for backward compatibility with routing
+StoreOrdersConsumer = OrderConsumer
+CustomerOrderConsumer = OrderConsumer
