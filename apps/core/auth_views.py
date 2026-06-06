@@ -7,6 +7,7 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password as django_validate_password
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -147,8 +148,9 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        Token.objects.filter(user=user).delete()
-        token = Token.objects.create(user=user)
+        with transaction.atomic():
+            Token.objects.filter(user=user).delete()
+            token = Token.objects.create(user=user)
 
         return Response({
             'token': token.key,
@@ -239,9 +241,9 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data['new_password'])
         user.save()
         
-        # Regenerate token
-        Token.objects.filter(user=user).delete()
-        new_token = Token.objects.create(user=user)
+        with transaction.atomic():
+            Token.objects.filter(user=user).delete()
+            new_token = Token.objects.create(user=user)
         
         return Response({
             'message': 'Password changed successfully',
