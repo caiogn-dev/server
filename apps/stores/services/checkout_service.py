@@ -473,16 +473,16 @@ class CheckoutService:
         delivery_fee: Decimal = Decimal('0'),
         discount: Decimal = Decimal('0')
     ) -> dict:
-        """Calculate order totals."""
+        """Calculate order totals.
+
+        cart.subtotal already aggregates both regular items and combo items,
+        so there is no need to iterate over combo_items separately.
+        """
         subtotal = Decimal(str(cart.subtotal))
-        
-        # Add combo items
-        for combo_item in cart.combo_items.all():
-            subtotal += combo_item.subtotal
-        
+
         # Total = subtotal + delivery - discount (no tax)
         total = subtotal + delivery_fee - discount
-        
+
         return {
             'subtotal': float(subtotal),
             'delivery_fee': float(delivery_fee),
@@ -563,11 +563,11 @@ class CheckoutService:
 
         delivery_fee = Decimal(str(delivery_info['fee']))
         
-        # Calculate subtotal
+        # Calculate subtotal — select_related avoids N+1 on unit_price access
         subtotal = Decimal('0')
-        for item in cart.items.all():
+        for item in cart.items.select_related('product', 'variant').all():
             subtotal += item.subtotal
-        for combo_item in cart.combo_items.all():
+        for combo_item in cart.combo_items.select_related('combo').all():
             subtotal += combo_item.subtotal
 
         customer_record = CustomerIdentityService.sync_checkout_customer(
