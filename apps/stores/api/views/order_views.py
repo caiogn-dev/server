@@ -127,9 +127,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Create an order and return the full order contract used by the dashboard."""
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            logger.warning(f'[ORDER_CREATE_ERROR] Validation failed: {serializer.errors}')
-            logger.warning(f'[ORDER_CREATE_ERROR] Request data: {request.data}')
-        serializer.is_valid(raise_exception=True)
+            logger.warning('[ORDER_CREATE_ERROR] Validation failed: %s', serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         order = serializer.save()
         return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
