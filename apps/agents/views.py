@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
+from rest_framework.throttling import UserRateThrottle
 from django_filters.rest_framework import DjangoFilterBackend
 from django.conf import settings
 from django.db.models import Q
@@ -102,7 +103,7 @@ class AgentViewSet(viewsets.ModelViewSet):
         request=ProcessMessageSerializer,
         responses={200: ProcessMessageResponseSerializer}
     )
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], throttle_classes=[type('AgentProcessThrottle', (UserRateThrottle,), {'scope': 'agent_process'})])
     def process(self, request, pk=None):
         """Process a message through the agent."""
         agent = self.get_object()

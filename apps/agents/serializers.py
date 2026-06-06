@@ -74,7 +74,7 @@ class AgentConversationSerializer(serializers.ModelSerializer):
 
 class ProcessMessageSerializer(serializers.Serializer):
     """Serializer for processing messages."""
-    message = serializers.CharField(required=True, help_text="Mensagem do usuário")
+    message = serializers.CharField(required=True, max_length=10000, help_text="Mensagem do usuário")
     session_id = serializers.CharField(required=False, allow_blank=True, help_text="ID da sessão (opcional)")
     phone_number = serializers.CharField(required=False, allow_blank=True, help_text="Número de telefone")
     context = serializers.DictField(required=False, default=dict, help_text="Contexto adicional")
