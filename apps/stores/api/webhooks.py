@@ -99,7 +99,7 @@ class MercadoPagoWebhookView(APIView):
                 webhook_secret = integration.webhook_secret if integration else None
         except Exception as e:
             logger.error("Error fetching payment gateway for signature check: %s", e)
-            return True  # DB error — can't validate; allow and log
+            return False  # Fail closed — reject when secret cannot be verified
 
         if not webhook_secret:
             # No secret configured — skip validation (True = allow)
