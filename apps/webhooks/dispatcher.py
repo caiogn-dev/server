@@ -5,6 +5,7 @@ import logging
 import hmac
 import hashlib
 import json
+import time
 from typing import Dict, Any, Optional, Type
 from django.http import HttpResponse, JsonResponse
 from django.views import View
@@ -33,6 +34,17 @@ def _check_rate_limit(ip: str, provider: str) -> bool:
 from .handlers.base import BaseHandler
 
 logger = logging.getLogger(__name__)
+
+# Providers that carry financial or sensitive user data and MUST have signature
+# verification configured. When no WebhookEndpoint/secret is set for these
+# providers we still allow the request through (backwards compat) but emit a
+# loud WARNING so the operator knows the endpoint is unprotected.
+_PROVIDERS_REQUIRE_SIGNATURE: frozenset = frozenset({
+    'whatsapp', 'instagram', 'messenger', 'mercadopago',
+})
+
+# Maximum allowed age of a webhook timestamp to prevent replay attacks.
+_TIMESTAMP_TOLERANCE_SECONDS = 300  # 5 minutes
 
 
 class WebhookDispatcherView(View):
@@ -98,9 +110,18 @@ class WebhookDispatcherView(View):
         signature_valid = self._verify_signature(request, provider, payload)
         if signature_valid is False:
             logger.warning(
-                f"Webhook signature invalid — rejecting provider={provider} without DB write"
+                "Webhook signature invalid — rejecting provider=%s without DB write", provider
             )
             return HttpResponse("Invalid signature", status=403)
+
+        if signature_valid is None and provider in _PROVIDERS_REQUIRE_SIGNATURE:
+            logger.warning(
+                "AVISO DE SEGURANÇA: webhook do provedor '%s' processado SEM verificação de "
+                "assinatura HMAC. Nenhum WebhookEndpoint com secret configurado foi encontrado. "
+                "Qualquer requisição não autenticada será aceita. "
+                "Configure um WebhookEndpoint com secret no admin para habilitar a validação.",
+                provider,
+            )
 
         # Extract event type
         event_type = self._extract_event_type(provider, payload, headers)
@@ -310,6 +331,20 @@ class WebhookDispatcherView(View):
                     elif part.startswith('v1='):
                         v1 = part[3:]
                 if not ts or not v1:
+                    return False
+                # Validate timestamp to prevent replay attacks
+                try:
+                    ts_int = int(ts)
+                    age = abs(int(time.time()) - ts_int)
+                    if age > _TIMESTAMP_TOLERANCE_SECONDS:
+                        logger.warning(
+                            "MercadoPago webhook rejeitado: timestamp muito antigo "
+                            "(ts=%s, age=%ds, tolerância=%ds)",
+                            ts, age, _TIMESTAMP_TOLERANCE_SECONDS,
+                        )
+                        return False
+                except (ValueError, TypeError):
+                    logger.warning("MercadoPago webhook: timestamp inválido: %r", ts)
                     return False
                 try:
                     data_id = str(payload.get('data', {}).get('id') or '')
