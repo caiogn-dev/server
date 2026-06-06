@@ -9,9 +9,19 @@
 
 ## 1. Executive Summary
 
-Build a complete combo builder system that allows store admins to create product bundles with flexible selection rules, and customers to choose variants at purchase time. Each combo can have multiple product groups (e.g., Rondelli + Molho) with independent selection constraints and stock limits.
+Build a complete **multi-tenant** combo builder system that allows store admins to create product bundles with flexible selection rules, and customers to choose variants at purchase time. Each combo can have multiple product groups (e.g., Rondelli + Molho) with independent selection constraints and stock limits.
+
+**Multi-Tenant Isolation:**
+- Each `Store` (tenant) has **isolated combos**
+- Admin of Store A sees **only** Store A's combos
+- Admin of Store B sees **only** Store B's combos
+- One owner can manage multiple stores with different combos each
+- API always filtered by `{store_slug}` — no cross-tenant data leakage
 
 **Example:** "Compre 3 Leve 4" = 4 Rondelli sabores (obrigatório) + até 4 Molhos (opcional)
+- Store "ce-saladas": Has "Compre 3 Leve 4" combo
+- Store "pastita-pizza": Might have different combo structure
+- Both coexist without conflicts
 
 ---
 
@@ -53,6 +63,7 @@ Represents a product group within a combo with selection rules.
 class ComboProductGroup(models.Model):
     id = UUIDField(primary_key=True, default=uuid.uuid4)
     combo = ForeignKey(StoreCombo, on_delete=CASCADE, related_name='groups')
+    # product must belong to same store as combo (enforced in save())
     product = ForeignKey(StoreProduct, on_delete=CASCADE)
     
     # Selection rules
@@ -96,7 +107,21 @@ class ComboProductGroupVariantLimit(models.Model):
 ### 3.2 Modified Models
 
 #### `StoreCombo` (existing)
-No changes required. Already has: name, slug, price, description, image, is_active, featured, etc.
+Already tenant-isolated:
+```python
+class StoreCombo(models.Model):
+    id = UUIDField(primary_key=True)
+    store = ForeignKey(Store, on_delete=CASCADE, related_name='combos')  # ← TENANT KEY
+    name = CharField(max_length=255)
+    slug = SlugField(max_length=255)
+    price = DecimalField(max_digits=10, decimal_places=2)
+    # ... other fields
+    
+    class Meta:
+        unique_together = ['store', 'slug']  # Slug unique per store, not globally
+```
+
+**Tenant Isolation:** `unique_together` ensures slug is unique **per store**. Store A can have "compre-3-leve-4" and Store B can have another "compre-3-leve-4" — they don't conflict.
 
 #### `StoreOrderComboItem` (existing, already created)
 Already tracks customer selections:
@@ -221,16 +246,67 @@ Already tracks customer selections:
 
 ---
 
-## 5. Frontend: pastita-dash Admin UI
+## 5. Multi-Tenant Security & Isolation
 
-### 5.1 Combo List Page (`/dashboard/combos`)
+### 5.1 Tenant Boundary
+
+**Golden Rule:** All requests must include `{store_slug}` in the URL path. Backend **always** filters by store.
+
+### 5.2 API Access Control
+
+**GET `/api/v1/stores/{store_slug}/combos/`**
+- Authenticated user must have permission for this store
+- Returns combos WHERE `combo.store.slug = store_slug` ONLY
+- No cross-tenant data visible
+
+**POST `/api/v1/stores/{store_slug}/combos/` (create)**
+- Authenticated user must have `manage_combos` permission for this store
+- When creating combo, force `combo.store_id = store.id`
+- Cannot specify store in request body (enforced backend)
+
+**POST `/api/v1/stores/{store_slug}/cart/add-combo/`**
+- Customer (authenticated or guest) selects combo from cart
+- Backend verifies: `combo.store.slug = store_slug`
+- Rejects if combo doesn't belong to this store (400 Bad Request)
+
+### 5.3 Frontend Scoping
+
+**pastita-dash:**
+- Admin logs in to Store A
+- Dashboard shows only Store A's combos
+- If admin manages multiple stores, has store selector dropdown
+- Cannot navigate to other stores' combos via URL manipulation
+
+**Example URL structure:**
+```
+/dashboard/stores/ce-saladas/combos         ← Only CE SALADAS combos
+/dashboard/stores/pastita-pizza/combos      ← Only PASTITA PIZZA combos
+/dashboard/stores/ce-saladas/combos/new     ← Create combo for CE SALADAS
+```
+
+### 5.4 Data Integrity Checks
+
+In `ComboProductGroup.save()` and `ComboProductGroupVariantLimit.save()`:
+```python
+def save(self, *args, **kwargs):
+    # Ensure product belongs to same store as combo
+    if self.product.store_id != self.combo.store_id:
+        raise ValidationError("Product must belong to same store as combo")
+    super().save(*args, **kwargs)
+```
+
+---
+
+## 6. Frontend: pastita-dash Admin UI
+
+### 6.1 Combo List Page (`/dashboard/stores/{store_slug}/combos`)
 
 **Components:**
 - Table with columns: Name, Price, Groups, Status, Actions
 - Buttons: "New Combo", filters by status
 - Row actions: Edit, Duplicate, Toggle Active, Delete
 
-### 5.2 Combo Create/Edit Form (`/dashboard/combos/new` or `/dashboard/combos/{id}/edit`)
+### 6.2 Combo Create/Edit Form (`/dashboard/stores/{store_slug}/combos/new` or `/dashboard/stores/{store_slug}/combos/{id}/edit`)
 
 **Layout:**
 
@@ -262,7 +338,7 @@ Already tracks customer selections:
 - "Save"
 - "Cancel"
 
-### 5.3 Customer Modal (Product Detail)
+### 6.3 Customer Modal (Product Detail)
 
 **When product_type = 'combo':**
 
@@ -287,9 +363,9 @@ Already tracks customer selections:
 
 ---
 
-## 6. Backend Validation Logic
+## 7. Backend Validation Logic
 
-### 6.1 Selection Validator Class
+### 7.1 Selection Validator Class
 
 ```python
 class ComboSelectionValidator:
@@ -350,7 +426,7 @@ class ComboSelectionValidator:
                 errors[str(group.id)] = f"Only {variant.stock} in stock"
 ```
 
-### 6.2 Order Checkout Validation
+### 7.2 Order Checkout Validation
 
 Before creating order, validate combo selections in checkout endpoint:
 - Call `ComboSelectionValidator.validate()`
@@ -359,9 +435,9 @@ Before creating order, validate combo selections in checkout endpoint:
 
 ---
 
-## 7. Data Flow Diagrams
+## 8. Data Flow Diagrams
 
-### 7.1 Admin Creates Combo
+### 8.1 Admin Creates Combo
 
 ```
 Admin fills form in pastita-dash
@@ -380,7 +456,7 @@ POST /api/v1/stores/{slug}/combos/ (create)
 pastita-dash shows "Combo saved!"
 ```
 
-### 7.2 Customer Buys Combo
+### 8.2 Customer Buys Combo
 
 ```
 Customer browses store, clicks combo product
@@ -403,7 +479,7 @@ Frontend adds item to cart, closes modal
 
 ---
 
-## 8. Migration Strategy
+## 9. Migration Strategy
 
 ### Phase 1: Database
 1. Create migration for `ComboProductGroup` model
@@ -430,7 +506,7 @@ Frontend adds item to cart, closes modal
 
 ---
 
-## 9. Edge Cases & Constraints
+## 10. Edge Cases & Constraints
 
 | Case | Handling |
 |------|----------|
@@ -444,7 +520,7 @@ Frontend adds item to cart, closes modal
 
 ---
 
-## 10. Success Criteria
+## 11. Success Criteria
 
 - ✅ Admin can create combos with multiple groups in pastita-dash (no Django admin)
 - ✅ Each group has independent selection rules (required, min/max, duplicates)
@@ -456,7 +532,7 @@ Frontend adds item to cart, closes modal
 
 ---
 
-## 11. Out of Scope
+## 12. Out of Scope
 
 - Analytics on combo purchases (separate feature)
 - A/B testing combo pricing
@@ -465,7 +541,7 @@ Frontend adds item to cart, closes modal
 
 ---
 
-## 12. Open Questions / Notes
+## 13. Open Questions / Notes
 
 - **Price overrides per variant:** ComboProductGroupVariantLimit has optional `price_override`, but "Combo" always uses combo.price. Confirm if variants should have different prices in future.
 - **Combo in combo:** Can you nest combos? Not supporting yet; simplify first.
