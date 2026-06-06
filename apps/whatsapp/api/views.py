@@ -425,8 +425,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         # Resolve store: explicit store_id or first store on account
         if store_id:
+            from apps.core.permissions import accessible_store_ids
+            store_qs = Store.objects.all()
+            if not (request.user.is_staff or request.user.is_superuser):
+                store_qs = store_qs.filter(id__in=accessible_store_ids(request.user))
             try:
-                store = Store.objects.get(id=store_id)
+                store = store_qs.get(id=store_id)
             except Store.DoesNotExist:
                 return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
         else:

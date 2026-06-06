@@ -60,18 +60,25 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         """Create a new auto message."""
         serializer = CreateAutoMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         data = serializer.validated_data
         company_id = data.pop('company_id')
-        
+
+        company_qs = CompanyProfile.objects.filter(id=company_id, is_active=True)
+        if not (request.user.is_superuser or request.user.is_staff):
+            company_qs = company_qs.filter(
+                Q(store__owner=request.user) |
+                Q(store__staff=request.user) |
+                Q(account__owner=request.user)
+            )
         try:
-            company = CompanyProfile.objects.get(id=company_id, is_active=True)
+            company = company_qs.get()
         except CompanyProfile.DoesNotExist:
             return Response(
                 {'error': 'Company profile not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
         auto_message = AutoMessage.objects.create(company=company, **data)
         
         return Response(
@@ -188,13 +195,14 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         updated_count = 0
         errors = []
         
+        accessible_qs = self.get_queryset()
         for update in updates:
             message_id = update.get('id')
             if not message_id:
                 continue
-            
+
             try:
-                auto_message = AutoMessage.objects.get(id=message_id)
+                auto_message = accessible_qs.get(id=message_id)
                 
                 for field in ['is_active', 'priority', 'message_text', 'delay_seconds']:
                     if field in update:
