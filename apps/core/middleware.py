@@ -247,9 +247,13 @@ class RateLimitMiddleware:
             if request.method == 'POST':
                 client_ip = self.get_client_ip(request)
                 wh_key = f"rate_limit:webhook:{client_ip}"
-                wh_count = cache.get(wh_key, 0)
                 wh_max = getattr(settings, 'WEBHOOK_RATE_LIMIT_REQUESTS', 300)
-                if wh_count >= wh_max:
+                try:
+                    cache.add(wh_key, 0, 60)
+                    wh_count = cache.incr(wh_key)
+                except Exception:
+                    wh_count = 0
+                if wh_count > wh_max:
                     logger.warning(
                         f"Webhook flood guard triggered for IP: {client_ip}",
                         extra={'ip': client_ip, 'count': wh_count},
@@ -258,7 +262,6 @@ class RateLimitMiddleware:
                         {'error': {'code': 'rate_limit_exceeded', 'message': 'Too many requests.'}},
                         status=429,
                     )
-                cache.set(wh_key, wh_count + 1, 60)
             return self.get_response(request)
 
         if request.path.startswith('/admin/'):
@@ -282,9 +285,13 @@ class RateLimitMiddleware:
 
         cache_key = f"rate_limit:{client_ip}"
 
-        request_count = cache.get(cache_key, 0)
+        try:
+            cache.add(cache_key, 0, self.window)
+            request_count = cache.incr(cache_key)
+        except Exception:
+            request_count = 0
 
-        if request_count >= self.max_requests:
+        if request_count > self.max_requests:
             logger.warning(
                 f"Rate limit exceeded for IP: {client_ip}",
                 extra={'ip': client_ip, 'count': request_count}
@@ -302,11 +309,9 @@ class RateLimitMiddleware:
                 status=429
             )
 
-        cache.set(cache_key, request_count + 1, self.window)
-
         response = self.get_response(request)
         response['X-RateLimit-Limit'] = str(self.max_requests)
-        response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count - 1))
+        response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count))
         response['X-RateLimit-Reset'] = str(self.window)
 
         return response
@@ -321,9 +326,13 @@ class RateLimitMiddleware:
             window = int(rule.get('window') or self.window)
             identity = self._rate_limit_identity(request, client_ip, rule.get('key_by', 'ip'))
             cache_key = f"rate_limit:scoped:{prefix}:{identity}"
-            request_count = cache.get(cache_key, 0)
+            try:
+                cache.add(cache_key, 0, window)
+                request_count = cache.incr(cache_key)
+            except Exception:
+                request_count = 0
 
-            if request_count >= max_requests:
+            if request_count > max_requests:
                 logger.warning(
                     "Scoped rate limit exceeded for %s identity=%s",
                     prefix,
@@ -349,10 +358,9 @@ class RateLimitMiddleware:
                     status=429
                 )
 
-            cache.set(cache_key, request_count + 1, window)
             response = self.get_response(request)
             response['X-RateLimit-Limit'] = str(max_requests)
-            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count - 1))
+            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count))
             response['X-RateLimit-Reset'] = str(window)
             response['X-RateLimit-Scope'] = prefix
             return response
