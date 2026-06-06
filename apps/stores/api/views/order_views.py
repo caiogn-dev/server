@@ -96,14 +96,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             qs = qs.select_related(
                 'store',
                 'customer',
-                'invoice',
             ).prefetch_related(
                 'items__product',
-                'items__combos',
-                'combo_items__combo',
-                'events',
-                'payments',
-                'tracking_updates',
             )
         else:
             # List view: minimal related data
