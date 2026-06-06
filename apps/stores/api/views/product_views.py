@@ -206,17 +206,48 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         product_id = self.kwargs.get('product_pk')
-        if product_id:
-            return StoreProductVariant.objects.filter(product_id=product_id)
-        return StoreProductVariant.objects.none()
+        if not product_id:
+            return StoreProductVariant.objects.none()
+        qs = StoreProductVariant.objects.filter(product_id=product_id)
+        user = self.request.user
+        if not (user.is_staff or user.is_superuser):
+            from apps.core.permissions import accessible_store_ids
+            qs = qs.filter(product__store__id__in=accessible_store_ids(user))
+        return qs
 
 
 class StoreComboViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store combos."""
-    
+
     serializer_class = StoreComboSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
+
+    def _assert_store_access(self, store):
+        from rest_framework.exceptions import PermissionDenied
+        user = self.request.user
+        if not user.is_authenticated:
+            raise PermissionDenied("Autenticação necessária.")
+        if user.is_staff or user.is_superuser:
+            return
+        perm = IsStoreOwnerOrStaff()
+        if not perm._user_can_access_store(user, store):
+            raise PermissionDenied("Você não tem acesso a esta loja.")
+
+    def perform_create(self, serializer):
+        store = serializer.validated_data.get('store')
+        if store:
+            self._assert_store_access(store)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        store = serializer.instance.store
+        self._assert_store_access(store)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._assert_store_access(instance.store)
+        instance.delete()
+
     def get_queryset(self):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')
@@ -243,10 +274,35 @@ class StoreComboViewSet(viewsets.ModelViewSet):
 
 class StoreProductTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing product types."""
-    
+
     serializer_class = StoreProductTypeSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
+
+    def _assert_store_access(self, store):
+        from rest_framework.exceptions import PermissionDenied
+        user = self.request.user
+        if not user.is_authenticated:
+            raise PermissionDenied("Autenticação necessária.")
+        if user.is_staff or user.is_superuser:
+            return
+        perm = IsStoreOwnerOrStaff()
+        if not perm._user_can_access_store(user, store):
+            raise PermissionDenied("Você não tem acesso a esta loja.")
+
+    def perform_create(self, serializer):
+        store = serializer.validated_data.get('store')
+        if store:
+            self._assert_store_access(store)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        self._assert_store_access(serializer.instance.store)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self._assert_store_access(instance.store)
+        instance.delete()
+
     def get_queryset(self):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')

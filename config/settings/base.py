@@ -222,6 +222,8 @@ REST_FRAMEWORK = {
         'lead_create': '10/hour',
         # Webhooks de integrações externas — volume alto esperado
         'webhook': '10000/hour',
+        # Agente IA: proteção contra abuso de custo com LLMs externos
+        'agent_process': '120/hour',
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
