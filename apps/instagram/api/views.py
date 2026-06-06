@@ -590,6 +590,12 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
 
     def create(self, request):
         from ..services.instagram_webhook_service import InstagramWebhookService
+        from ..webhooks.handlers import InstagramWebhookHandler
+
+        signature = request.headers.get("X-Hub-Signature-256", "")
+        if not InstagramWebhookHandler().verify_signature(request.body, signature):
+            logger.warning("Instagram webhook: invalid or missing signature")
+            return Response({"status": "error", "message": "Invalid signature"}, status=403)
 
         payload = request.data
         result = InstagramWebhookService().process_webhook(payload)
