@@ -34,8 +34,10 @@ class WebhookAuthMixin:
     
     def validate_signature(self, payload: bytes, signature: str, secret: str) -> bool:
         """Validate webhook signature."""
-        if not signature or not secret:
-            return True  # Skip validation if no signature provided
+        if not secret:
+            return True  # No secret configured — skip validation
+        if not signature:
+            return False  # Secret configured but no signature provided — reject
         
         # Remove 'sha256=' prefix if present
         if signature.startswith('sha256='):
