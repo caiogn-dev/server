@@ -6,7 +6,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from channels.testing import WebsocketCommunicator
 from channels.layers import get_channel_layer
-from apps.stores.models import Store, Order
+from apps.stores.models import Store, StoreOrder
 from apps.core.consumers import OrderConsumer
 from asgiref.sync import sync_to_async
 
@@ -107,7 +107,7 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         await communicator.connect()
 
         # Create order (simulates backend order creation)
-        order = await sync_to_async(Order.objects.create)(
+        order = await sync_to_async(StoreOrder.objects.create)(
             store=self.store,
             customer_phone='+5511999999999',
             subtotal=100.00,
