@@ -517,7 +517,7 @@ class CustomerOrdersView(APIView):
         # Get orders where customer email or phone matches user
         orders = StoreOrder.objects.filter(
             customer=user
-        ).select_related('store').prefetch_related('items__product', 'combo_items')
+        ).select_related('store').prefetch_related('items__product')
         
         if store_slug:
             orders = orders.filter(store__slug=store_slug)
@@ -554,19 +554,10 @@ class CustomerOrdersView(APIView):
                     'subtotal': float(item.subtotal),
                     'image_url': image_url(getattr(item, 'product', None)),
                 })
-            for item in order.combo_items.all()[: max(0, 3 - len(items))]:
-                items.append({
-                    'id': str(item.id),
-                    'product': '',
-                    'product_name': item.combo_name,
-                    'variant_name': '',
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'subtotal': float(item.subtotal),
-                    'image_url': '',
-                    'notes': item.notes,
-                })
-            total_items = order.items.count() + order.combo_items.count()
+            # TODO: Add combo_items support when StoreOrder has combo_items relation
+            # for item in order.combo_items.all()[: max(0, 3 - len(items))]:
+            #     items.append({...})
+            total_items = order.items.count()  # + order.combo_items.count()
             results.append({
                 'id': str(order.id),
                 'order_number': order.order_number,
@@ -599,7 +590,7 @@ class CustomerOrderDetailView(APIView):
     def get(self, request, order_id):
         """Get order details."""
         try:
-            order = StoreOrder.objects.select_related('store').prefetch_related('items__product', 'combo_items').get(id=order_id)
+            order = StoreOrder.objects.select_related('store').prefetch_related('items__product').get(id=order_id)
 
             token = request.query_params.get('token', '')
             user = request.user
@@ -647,26 +638,9 @@ class CustomerOrderDetailView(APIView):
                     ),
                     'image_url': image_url(getattr(item, 'product', None)),
                 })
-            for item in order.combo_items.all():
-                items.append({
-                    'id': str(item.id),
-                    'product': '',
-                    'product_name': item.combo_name,
-                    'variant_name': '',
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'subtotal': float(item.subtotal),
-                    'notes': item.notes,
-                    'customizations': item.customizations,
-                    'is_custom_salad': bool(
-                        isinstance(item.customizations, dict)
-                        and (
-                            item.customizations.get('is_salad_builder')
-                            or item.customizations.get('type') == 'custom_salad'
-                        )
-                    ),
-                    'image_url': '',
-                })
+            # TODO: Add combo_items support when StoreOrder has combo_items relation
+            # for item in order.combo_items.all():
+            #     items.append({...})
             
             def _ts(dt):
                 return dt.isoformat() if dt else None
@@ -812,7 +786,7 @@ class OrderReceiptView(APIView):
             order = (
                 StoreOrder.objects
                 .select_related("store")
-                .prefetch_related("items__product", "combo_items")
+                .prefetch_related("items__product")
                 .get(id=order_id)
             )
         except StoreOrder.DoesNotExist:

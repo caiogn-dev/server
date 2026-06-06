@@ -9,6 +9,11 @@ class StoreOrderComboItem(models.Model):
     """Tracks a combo item in an order, including customer's selected variants."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    order = models.ForeignKey(
+        'stores.StoreOrder',
+        on_delete=models.CASCADE,
+        related_name='combo_items'
+    )
     order_item = models.ForeignKey(
         'stores.StoreOrderItem',
         on_delete=models.CASCADE,
