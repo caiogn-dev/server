@@ -482,16 +482,31 @@ class WhatsAppAuthService:
             'phone_number': clean_phone,
         }
     
+    # Intervalo mínimo entre reenvios para o mesmo número (segundos)
+    RESEND_COOLDOWN_SECONDS = 120
+
     @classmethod
     def resend_code(cls, phone_number: str, whatsapp_account_id: str) -> dict:
         """
-        Reenvia código (apenas se o anterior expirou).
+        Reenvia código respeitando cooldown por número de telefone.
+        Rejeita sem tocar no código anterior se o intervalo mínimo não foi atingido.
+        Isso impede que atacantes com múltiplos IPs bombardeiem um número com OTPs.
         """
         clean_phone = cls._normalize_phone(phone_number)
         cache_key = cls._get_cache_key(clean_phone)
-        
-        # Força remoção do cache anterior
+
+        existing = cache.get(cache_key)
+        if existing:
+            created_at = datetime.fromisoformat(existing['created_at'])
+            elapsed = (timezone.now() - created_at).total_seconds()
+            if elapsed < cls.RESEND_COOLDOWN_SECONDS:
+                wait_seconds = int(cls.RESEND_COOLDOWN_SECONDS - elapsed)
+                return {
+                    'success': False,
+                    'error': 'resend_too_soon',
+                    'message': f'Aguarde {wait_seconds} segundos antes de reenviar o código.',
+                    'retry_after': wait_seconds,
+                }
+
         cache.delete(cache_key)
-        
-        # Envia novo código
         return cls.send_auth_code(clean_phone, whatsapp_account_id)
