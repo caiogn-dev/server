@@ -49,3 +49,6 @@ htmlcov/
 .zencoder/
 skills/
 skills-lock.json
+*.swp
+*.swo
+new_token.txt
