@@ -54,11 +54,16 @@ class CSRFExemptMiddleware:
 
 @database_sync_to_async
 def get_user_from_token(token_key):
-    """Get user from token key."""
+    """Get user from token key, rejecting expired tokens."""
     from rest_framework.authtoken.models import Token
     try:
         token = Token.objects.select_related('user').get(key=token_key)
-        logger.info(f"WebSocket token auth success: user={token.user.email}")
+        ttl_days = getattr(settings, 'AUTH_TOKEN_TTL_DAYS', 30)
+        if ttl_days is not None:
+            cutoff = timezone.now() - timedelta(days=ttl_days)
+            if token.created < cutoff:
+                logger.warning("WebSocket token auth failed: token expired")
+                return AnonymousUser()
         return token.user
     except Token.DoesNotExist:
         logger.warning("WebSocket token auth failed: token not found")
