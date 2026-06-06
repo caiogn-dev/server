@@ -39,13 +39,10 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
-# Production domains always allowed (supplement ENV-configured hosts)
-ALLOWED_HOSTS += [
-    'backend.pastita.com.br',
-    'painel.pastita.com.br',
-    'pastita.com.br',
-    'dev.painel.pastita.com.br',
-]
+# Additional hosts from environment (comma-separated)
+_extra_hosts = os.environ.get('DJANGO_EXTRA_ALLOWED_HOSTS', '')
+if _extra_hosts:
+    ALLOWED_HOSTS += [h.strip() for h in _extra_hosts.split(',') if h.strip()]
 
 # Enforce required production settings
 if not SECRET_KEY:
