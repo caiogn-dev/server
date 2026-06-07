@@ -117,18 +117,15 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'category',
                 'store',
             ).prefetch_related(
-                'images',
                 'variants',
                 'options',
                 'combos',
             )
         else:
-            # List view: minimal related data
+            # List view: minimal related data (images is JSONField, not a relation)
             qs = qs.select_related(
                 'category',
                 'store',
-            ).prefetch_related(
-                'images',  # Still need images for list thumbnails
             )
 
         return qs
