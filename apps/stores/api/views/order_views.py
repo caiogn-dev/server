@@ -107,12 +107,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Create an order and return the full order contract used by the dashboard."""
         serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            logger.warning(f'[ORDER_CREATE_ERROR] Validation failed: {serializer.errors}')
-            logger.warning(f'[ORDER_CREATE_ERROR] Request data: {request.data}')
         serializer.is_valid(raise_exception=True)
-        order = serializer.save()
-        return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
+        self.perform_create(serializer)
+        return Response(StoreOrderSerializer(serializer.instance).data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         order = serializer.save()
@@ -363,7 +360,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         order.paid_at = timezone.now()
         order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
         
-        logger.info(f"Order {order.order_number} marked as paid")
+        logger.info("Order %s marked as paid", order.order_number)
         
         # Notify via WebSocket
         self._notify_order_update(order, 'order.paid')

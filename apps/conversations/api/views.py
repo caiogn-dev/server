@@ -74,9 +74,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = _accessible_conversations(self.request.user)
-        search = (self.request.query_params.get('search') or '').strip()
+        search = (self.request.query_params.get('search') or '').strip()[:100]
         if search:
-            for token in search.split():
+            tokens = search.split()[:5]
+            for token in tokens:
                 token_query = Q()
                 for variant in _search_token_variants(token):
                     token_query |= (

@@ -29,22 +29,9 @@ class CSRFExemptMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        # If request has Authorization header with Token, mark as CSRF-safe
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-
-        # Debug: log auth header for /stores/*/orders/ endpoints
-        if '/stores/' in request.path and '/orders/' in request.path:
-            auth_type = 'none'
-            if auth_header.startswith('Token '):
-                auth_type = f'token: {auth_header[6:46]}...'
-            elif auth_header.startswith('Bearer '):
-                auth_type = f'bearer: {auth_header[7:37]}...'
-            logger.info(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_type}')
-
         if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
-            # Mark this request as CSRF-exempt
             request._dont_enforce_csrf_checks = True
-
         return self.get_response(request)
 
 
@@ -58,13 +45,13 @@ def get_user_from_token(token_key):
     from rest_framework.authtoken.models import Token
     try:
         token = Token.objects.select_related('user').get(key=token_key)
-        logger.info(f"WebSocket token auth success: user={token.user.email}")
+        logger.debug("WebSocket token auth success: user_id=%s", token.user_id)
         return token.user
     except Token.DoesNotExist:
         logger.warning("WebSocket token auth failed: token not found")
         return AnonymousUser()
     except Exception as e:
-        logger.error(f"WebSocket token auth error: {e}")
+        logger.error("WebSocket token auth error: %s", e)
         return AnonymousUser()
 
 
@@ -82,32 +69,27 @@ class TokenAuthMiddleware(BaseMiddleware):
 
     async def __call__(self, scope, receive, send):
         path = scope.get('path', 'unknown')
-        logger.info(f"WebSocket middleware processing: path={path}")
-
         token_key = None
 
         headers = dict(scope.get('headers', []))
         auth_header = headers.get(b'authorization', b'').decode()
         if auth_header.startswith('Token '):
             token_key = auth_header[6:]
-            logger.debug(f"WebSocket token found in Authorization header")
         elif auth_header.startswith('Bearer '):
             token_key = auth_header[7:]
-            logger.debug(f"WebSocket token found in Bearer header")
+        else:
+            logger.debug("WebSocket no token provided: path=%s", path)
         
         # Authenticate user
         if token_key:
             try:
                 scope['user'] = await get_user_from_token(token_key)
-                if scope['user'].is_authenticated:
-                    logger.info(f"WebSocket authenticated: user={scope['user'].email}, path={path}")
-                else:
-                    logger.warning(f"WebSocket auth failed: anonymous user, path={path}")
+                if not scope['user'].is_authenticated:
+                    logger.warning("WebSocket auth failed: anonymous user, path=%s", path)
             except Exception as e:
-                logger.error(f"WebSocket auth exception: {e}")
+                logger.error("WebSocket auth exception: %s", e)
                 scope['user'] = AnonymousUser()
         else:
-            logger.info(f"WebSocket no token provided: path={path}")
             scope['user'] = AnonymousUser()
         
         return await super().__call__(scope, receive, send)
@@ -160,16 +142,25 @@ class TokenExpirationMiddleware:
         return self.get_response(request)
 
     def _is_expired(self, token_key):
+        # Cache result for 5 minutes to avoid a DB hit on every authenticated request.
+        # Uses a hash of the key so the actual token isn't stored as the cache key.
+        cache_key = f'token_exp:{hashlib.sha256(token_key.encode()).hexdigest()[:32]}'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         from rest_framework.authtoken.models import Token
         try:
             token = Token.objects.only('created').get(key=token_key)
             cutoff = timezone.now() - timedelta(days=self.ttl_days)
-            return token.created < cutoff
+            expired = token.created < cutoff
         except Token.DoesNotExist:
-            # Let DRF handle the 401 for unknown tokens.
-            return False
+            expired = False
         except Exception:
-            return False
+            expired = False
+
+        cache.set(cache_key, expired, timeout=300)
+        return expired
 
 
 class RequestLoggingMiddleware:
