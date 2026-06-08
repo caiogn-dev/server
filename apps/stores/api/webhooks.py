@@ -63,8 +63,8 @@ class MercadoPagoWebhookView(APIView):
         
         except Exception as e:
             logger.error(f"Webhook error: {e}", exc_info=True)
-            # Always return 200 to prevent retries
-            return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_200_OK)
+            # Always return 200 to prevent retries; do not expose internal error details
+            return Response({'status': 'error', 'message': 'Webhook processing failed'}, status=status.HTTP_200_OK)
     
     def _validate_signature(self, request, store_slug):
         """

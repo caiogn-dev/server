@@ -137,8 +137,8 @@ class WhatsAppWebhookView(APIView):
             
         except Exception as e:
             logger.error(f"Webhook POST error: {str(e)}", exc_info=True)
-            # Still return 200 to avoid Meta retrying
-            return Response({'status': 'error', 'message': str(e)})
+            # Still return 200 to avoid Meta retrying; do not expose internal error details
+            return Response({'status': 'error', 'message': 'Webhook processing failed'})
 
 
 class WebhookDebugView(APIView):
