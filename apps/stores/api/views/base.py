@@ -40,19 +40,13 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
 
     def has_permission(self, request, view):
         import logging
-        import sys
         logger = logging.getLogger(__name__)
-
-        # Force print to stderr for debugging
-        print(f"[PERM_DEBUG] has_permission called", file=sys.stderr)
 
         if not (request.user and request.user.is_authenticated):
             logger.warning(f"[IsStoreOwnerOrStaff] User not authenticated: {request.user}")
-            print(f"[PERM_DEBUG] User not authenticated", file=sys.stderr)
             return False
 
-        logger.info(f"[IsStoreOwnerOrStaff] User authenticated: {request.user.email}, is_staff={request.user.is_staff}, is_superuser={request.user.is_superuser}")
-        print(f"[PERM_DEBUG] User authenticated: {request.user.email}, is_staff={request.user.is_staff}", file=sys.stderr)
+        logger.debug(f"[IsStoreOwnerOrStaff] User authenticated: {request.user.email}, is_staff={request.user.is_staff}, is_superuser={request.user.is_superuser}")
 
         # Superusers and Django staff bypass store ownership check
         if request.user.is_staff or request.user.is_superuser:
