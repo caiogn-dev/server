@@ -49,3 +49,5 @@ htmlcov/
 .zencoder/
 skills/
 skills-lock.json
+new_token.txt
+long_lived_page_token.txt
