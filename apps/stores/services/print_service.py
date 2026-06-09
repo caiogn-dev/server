@@ -83,15 +83,19 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
         })
 
     for combo in order.combo_items.all():
-        customizations = combo.customizations if isinstance(combo.customizations, dict) else {}
+        if getattr(combo, 'order_item_id', None):
+            continue
+        display_data = combo.display_data if isinstance(combo.display_data, dict) else {}
+        customizations = display_data.get('customizations') if isinstance(display_data.get('customizations'), dict) else {}
+        unit_price = display_data.get('unit_price') or 0
         items.append({
             'type': 'combo',
             'qty': combo.quantity,
-            'name': combo.combo_name,
-            'unit_price': _money(combo.unit_price),
+            'name': display_data.get('combo_name') or (combo.combo.name if combo.combo else 'Combo'),
+            'unit_price': _money(unit_price),
             'subtotal': _money(combo.subtotal),
             'details': ['COMBO', *_ingredient_lines(customizations.get('ingredients') or [])],
-            'notes': combo.notes or '',
+            'notes': '',
         })
 
     scheduled_for = ' '.join(filter(None, [

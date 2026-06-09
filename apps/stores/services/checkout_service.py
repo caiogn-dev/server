@@ -330,7 +330,16 @@ class CheckoutService:
         if isinstance(ingredients_raw, str):
             ingredients = [part.strip() for part in ingredients_raw.split('·') if part.strip()]
         elif isinstance(ingredients_raw, list):
-            ingredients = [str(part).strip() for part in ingredients_raw if str(part).strip()]
+            ingredients = []
+            for part in ingredients_raw:
+                if isinstance(part, dict):
+                    label = part.get('name') or part.get('label') or part.get('ingredient_name')
+                    if label:
+                        ingredients.append(part)
+                    continue
+                value = str(part).strip()
+                if value:
+                    ingredients.append(value)
         else:
             ingredients = []
 
@@ -717,7 +726,7 @@ class CheckoutService:
             if not is_virtual:
                 display_name = f"Combo: {display_name}"
 
-            StoreOrderItem.objects.create(
+            order_item = StoreOrderItem.objects.create(
                 order=order,
                 product=None,
                 variant=None,
@@ -730,6 +739,28 @@ class CheckoutService:
                 options=combo_item.customizations,
                 notes=combo_item.notes,
             )
+
+            if not is_virtual:
+                group_selections = combo_item.group_selections or combo_item.customizations.get('selections', {})
+                selected_variant_ids = [
+                    variant_id
+                    for variant_ids in group_selections.values()
+                    for variant_id in (variant_ids if isinstance(variant_ids, list) else [variant_ids])
+                ]
+                StoreOrderComboItem.objects.create(
+                    order=order,
+                    order_item=order_item,
+                    combo=combo_item.combo,
+                    quantity=combo_item.quantity,
+                    group_selections=group_selections,
+                    selected_variant_ids=selected_variant_ids,
+                    selected_variants_data=[],
+                    display_data={
+                        'combo_name': combo_item.effective_name,
+                        'unit_price': str(combo_item.effective_price),
+                        'customizations': combo_item.customizations,
+                    },
+                )
 
             # Decrement combo stock if tracked (real combos only)
             if not is_virtual and combo_item.combo.track_stock:

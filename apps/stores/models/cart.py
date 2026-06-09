@@ -2,9 +2,11 @@
 Store cart models - StoreCart, StoreCartItem, StoreCartComboItem.
 """
 import uuid
+from decimal import Decimal
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+import django.db.models.deletion
 
 User = get_user_model()
 
@@ -182,28 +184,32 @@ class StoreCartItem(models.Model):
 
 
 class StoreCartComboItem(models.Model):
-    """Combo item in a shopping cart.
+    """Combo/bundle line in a shopping cart.
 
-    Supports both real combos (combo FK set) and virtual combos like
-    the salad builder (combo=None, combo_name and unit_price set manually).
+    Products and variants are handled by StoreCartItem. This model is only for
+    true bundles/promotions, and for legacy virtual items such as the salad
+    builder. We keep name/price snapshots so cart totals are stable if the
+    catalog changes after the customer adds the item.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     cart = models.ForeignKey(StoreCart, on_delete=models.CASCADE, related_name='combo_items')
     combo = models.ForeignKey(
         'stores.StoreCombo',
-        on_delete=models.SET_NULL,
+        on_delete=django.db.models.deletion.SET_NULL,
         null=True,
         blank=True,
-        related_name='cart_items'
+        related_name='cart_items',
     )
-    # Denormalized name — required for virtual combos (combo=None), optional for real combos
+
     combo_name = models.CharField(max_length=255, blank=True)
-    # Denormalized price — required for virtual combos, optional for real combos (uses combo.price)
     unit_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
-    quantity = models.PositiveIntegerField(default=1)
+    # Group selections: { "group_id": ["variant_id1", "variant_id2"] }
+    group_selections = models.JSONField(default=dict, blank=True)
     customizations = models.JSONField(default=dict, blank=True)
+
+    quantity = models.PositiveIntegerField(default=1)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -214,20 +220,32 @@ class StoreCartComboItem(models.Model):
         verbose_name_plural = 'Cart Combo Items'
 
     def __str__(self):
-        name = self.combo_name or (self.combo.name if self.combo else 'Combo')
-        return f"{self.quantity}x {name}"
+        return f"{self.quantity}x {self.effective_name}"
 
     @property
     def effective_name(self):
-        return self.combo_name or (self.combo.name if self.combo else 'Combo')
+        if self.combo_name:
+            return self.combo_name
+        if self.combo:
+            return self.combo.name
+        return 'Combo'
 
     @property
     def effective_price(self):
         if self.unit_price is not None:
             return self.unit_price
-        return self.combo.price if self.combo else 0
+        if self.combo:
+            return self.combo.price
+        return Decimal('0.00')
 
     @property
     def subtotal(self):
-        from decimal import Decimal
         return Decimal(str(self.effective_price)) * self.quantity
+
+    def save(self, *args, **kwargs):
+        if self.combo and not self.combo_name:
+            self.combo_name = self.combo.name
+        if self.combo and self.unit_price is None:
+            self.unit_price = self.combo.price
+        super().save(*args, **kwargs)
+        StoreCart.objects.filter(id=self.cart_id).update(updated_at=timezone.now())

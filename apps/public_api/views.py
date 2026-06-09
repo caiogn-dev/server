@@ -25,7 +25,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 import logging
 from django.conf import settings
-from apps.stores.models import Store, StoreCategory, StoreProduct
+from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo
 from .models import Lead
 from .serializers import (
     PublicStoreSerializer,
@@ -144,6 +144,24 @@ def public_product_detail(request, slug, pk):
     store = _get_active_store(slug)
     product = get_object_or_404(StoreProduct, pk=pk, store=store, status='active')
     return Response(PublicProductSerializer(product, context={'request': request}).data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
+def public_store_combos(request, slug):
+    """Retorna todos os combos da loja com grupos e variantes."""
+    store = _get_active_store(slug)
+    combos = (
+        StoreCombo.objects.filter(store=store, is_active=True)
+        .prefetch_related('groups__product', 'groups__variant_limits__variant')
+        .order_by('sort_order', 'name')
+    )
+
+    paginator = _PublicProductPagination()
+    page = paginator.paginate_queryset(combos, request)
+    serializer = PublicComboSerializer(page, many=True, context={'request': request})
+    return paginator.get_paginated_response(serializer.data)
 
 
 @api_view(['GET'])

@@ -112,7 +112,7 @@ class DeliveryQuoteService:
             zones = StoreDeliveryZone.objects.filter(
                 store=store,
                 is_active=True,
-                zone_type='distance_band',
+                zone_type__in=['distance_band', 'custom_distance'],
             ).order_by('min_km')
 
             for zone in zones:

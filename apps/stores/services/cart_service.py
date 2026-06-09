@@ -126,6 +126,7 @@ class CartService:
         notes: str = '',
         combo_name: str = '',
         unit_price=None,
+        group_selections: dict = None,
     ) -> StoreCartComboItem:
         """Add a combo to the cart.
 
@@ -139,7 +140,7 @@ class CartService:
             if combo.track_stock and combo.stock_quantity < quantity:
                 raise ValueError(f"Estoque insuficiente para o combo. Disponível: {combo.stock_quantity}")
             effective_name = combo_name or combo.name
-            effective_price = unit_price
+            effective_price = Decimal(str(unit_price)) if unit_price is not None else combo.price
         else:
             # Virtual combo (salad builder, etc.)
             if not combo_name:
@@ -152,15 +153,23 @@ class CartService:
                 raise ValueError(f"unit_price must be a valid positive decimal for virtual combos: {e}")
             effective_name = combo_name
 
+        customizations = customizations or {}
+        group_selections = group_selections or customizations.get('selections') or customizations.get('group_selections') or {}
+
         # For real combos try to merge with existing entry; virtual combos always create new
         existing = None
         if combo is not None:
-            existing = cart.combo_items.filter(combo=combo).first()
+            existing = cart.combo_items.filter(
+                combo=combo,
+                group_selections=group_selections,
+            ).first()
 
         if existing:
             existing.quantity += quantity
             if customizations:
                 existing.customizations = {**existing.customizations, **customizations}
+            if group_selections:
+                existing.group_selections = group_selections
             if notes:
                 existing.notes = notes
             existing.save()
@@ -172,7 +181,8 @@ class CartService:
                 combo_name=effective_name,
                 unit_price=effective_price,
                 quantity=quantity,
-                customizations=customizations or {},
+                group_selections=group_selections,
+                customizations=customizations,
                 notes=notes,
             )
     

@@ -58,6 +58,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
     is_available = serializers.SerializerMethodField()
     variants = serializers.SerializerMethodField()
+    variant_label = serializers.SerializerMethodField()
 
     class Meta:
         model = StoreProduct
@@ -66,7 +67,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
             'price', 'compare_at_price',
             'image_url', 'category_name', 'category_slug',
             'is_available', 'sort_order',
-            'attributes', 'tags', 'variants',
+            'attributes', 'tags', 'variants', 'variant_label',
         ]
 
     def get_image_url(self, obj):
@@ -78,6 +79,18 @@ class PublicProductSerializer(serializers.ModelSerializer):
 
     def get_is_available(self, obj):
         return obj.status == 'active'
+
+    def get_variant_label(self, obj):
+        """Retorna o label dinâmico para variantes (tamanho, sabor, ingrediente, etc)"""
+        if not obj.product_type:
+            return 'Opções'
+
+        custom_fields = obj.product_type.custom_fields or []
+        if custom_fields:
+            first_field = custom_fields[0]
+            return first_field.get('label', 'Opções')
+
+        return 'Opções'
 
     def get_variants(self, obj):
         request = self.context.get('request')
@@ -105,10 +118,11 @@ class PublicProductSerializer(serializers.ModelSerializer):
 
 class PublicComboSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    groups = serializers.SerializerMethodField()
 
     class Meta:
         model = StoreCombo
-        fields = ['id', 'name', 'description', 'price', 'image_url', 'is_active']
+        fields = ['id', 'name', 'description', 'price', 'image_url', 'is_active', 'groups']
 
     def get_image_url(self, obj):
         request = self.context.get('request')
@@ -116,6 +130,45 @@ class PublicComboSerializer(serializers.ModelSerializer):
             url = obj.image.url
             return request.build_absolute_uri(url) if request else url
         return None
+
+    def get_groups(self, obj):
+        """Retorna grupos com suas variantes para seleção"""
+        groups_data = []
+        for group in obj.groups.all():
+            variant_limits = group.variant_limits.all()
+            variants = []
+
+            for limit in variant_limits:
+                variant = limit.variant
+                image_url = None
+                if variant.image:
+                    request = self.context.get('request')
+                    image_url = request.build_absolute_uri(variant.image.url) if request else variant.image.url
+                elif variant.image_url:
+                    image_url = variant.image_url
+
+                variants.append({
+                    'variant_id': str(variant.id),
+                    'name': variant.name,
+                    'variant_name': variant.name,
+                    'price': str(variant.price or group.product.price),
+                    'price_override': str(limit.price_override) if limit.price_override else None,
+                    'stock': variant.stock_quantity,
+                    'max_selections': limit.max_selections,
+                    'image_url': image_url,
+                })
+
+            groups_data.append({
+                'id': str(group.id),
+                'product_id': str(group.product.id),
+                'product_name': group.product.name,
+                'is_required': group.is_required,
+                'min_selections': group.min_selections,
+                'max_selections': group.max_selections,
+                'variant_limits': variants,
+            })
+
+        return groups_data
 
 
 class LeadSerializer(serializers.ModelSerializer):

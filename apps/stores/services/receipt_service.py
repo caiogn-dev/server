@@ -187,8 +187,12 @@ def generate_order_receipt_pdf(order: "StoreOrder") -> bytes:
         ])
 
     for ci in combo_items:
-        name = ci.combo_name or "-"
-        customizations = ci.customizations if isinstance(ci.customizations, dict) else {}
+        if getattr(ci, 'order_item_id', None):
+            continue
+        display_data = ci.display_data if isinstance(ci.display_data, dict) else {}
+        name = display_data.get('combo_name') or (ci.combo.name if ci.combo else "-")
+        customizations = display_data.get('customizations') if isinstance(display_data.get('customizations'), dict) else {}
+        unit_price = Decimal(str(display_data.get('unit_price') or 0))
         if customizations.get('is_salad_builder') and customizations.get('ingredients'):
             ingredients = customizations['ingredients']
             ingredient_parts = []
@@ -207,8 +211,8 @@ def generate_order_receipt_pdf(order: "StoreOrder") -> bytes:
         item_rows.append([
             name,
             str(ci.quantity),
-            _fmt_brl(ci.unit_price),
-            _fmt_brl(ci.unit_price * ci.quantity),
+            _fmt_brl(unit_price),
+            _fmt_brl(unit_price * ci.quantity),
         ])
 
     col_w = [W - 7 * cm, 1.5 * cm, 2.5 * cm, 3 * cm]

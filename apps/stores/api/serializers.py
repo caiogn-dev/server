@@ -199,7 +199,7 @@ class StoreWebhookSerializer(serializers.ModelSerializer):
 class StoreCategorySerializer(serializers.ModelSerializer):
     """Serializer for StoreCategory model."""
     
-    image_url = serializers.SerializerMethodField()
+    image_url = serializers.URLField(required=False, allow_blank=True)
     products_count = serializers.SerializerMethodField()
     children = serializers.SerializerMethodField()
     
@@ -877,7 +877,7 @@ class StoreStatsSerializer(serializers.Serializer):
 # CART SERIALIZERS
 # =============================================================================
 
-from apps.stores.models import StoreCart, StoreCartItem, StoreCartComboItem, StoreCombo, StoreComboItem, StoreProductType
+from apps.stores.models import StoreCart, StoreCartItem, StoreCartComboItem, StoreCombo, StoreProductType
 
 
 class StoreCartItemSerializer(serializers.ModelSerializer):
@@ -905,7 +905,7 @@ class StoreCartItemSerializer(serializers.ModelSerializer):
 
 
 class StoreCartComboItemSerializer(serializers.ModelSerializer):
-    """Serializer for cart combo items (real and virtual)."""
+    """Serializer for cart combo items with group selections."""
 
     combo_name = serializers.SerializerMethodField()
     combo_image = serializers.SerializerMethodField()
@@ -917,7 +917,7 @@ class StoreCartComboItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'combo', 'combo_name', 'combo_image',
             'quantity', 'unit_price', 'subtotal',
-            'customizations', 'notes',
+            'group_selections', 'customizations', 'notes',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -926,9 +926,7 @@ class StoreCartComboItemSerializer(serializers.ModelSerializer):
         return obj.effective_name
 
     def get_combo_image(self, obj):
-        if obj.combo:
-            return obj.combo.get_image_url()
-        return None
+        return obj.combo.get_image_url() if obj.combo else None
 
     def get_unit_price(self, obj):
         return str(obj.effective_price)
@@ -995,7 +993,7 @@ class CheckoutSerializer(serializers.Serializer):
     distance_km = serializers.DecimalField(max_digits=7, decimal_places=2, required=False, allow_null=True)
     
     # Payment
-    payment_method = serializers.ChoiceField(choices=['pix', 'credit_card', 'debit_card', 'cash', 'card'], default='pix')
+    payment_method = serializers.ChoiceField(choices=['pix', 'card', 'cash'], default='pix')
     
     # Coupon
     coupon_code = serializers.CharField(required=False, allow_blank=True, default='')
@@ -1051,28 +1049,11 @@ class CatalogProductTypeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
-class StoreComboItemSerializer(serializers.ModelSerializer):
-    """Serializer for combo items."""
-    
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    product_image = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = StoreComboItem
-        fields = [
-            'id', 'product', 'product_name', 'product_image',
-            'variant', 'quantity',
-            'allow_customization', 'customization_options'
-        ]
-    
-    def get_product_image(self, obj):
-        return obj.product.get_main_image_url()
-
-
 class StoreComboSerializer(serializers.ModelSerializer):
-    """Serializer for combos."""
+    """Serializer for combos with product groups."""
 
-    items = StoreComboItemSerializer(many=True, required=False)
+    groups = serializers.JSONField(required=False)
+    items = serializers.JSONField(required=False)
     image_url = serializers.SerializerMethodField()
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
@@ -1085,7 +1066,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'image', 'image_url',
             'is_active', 'featured',
             'track_stock', 'stock_quantity',
-            'items',
+            'items', 'groups',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -1093,25 +1074,132 @@ class StoreComboSerializer(serializers.ModelSerializer):
     def get_image_url(self, obj):
         return obj.get_image_url()
 
+    def get_groups(self, obj):
+        """Retorna grupos com suas variantes para seleção no combo."""
+        groups_data = []
+        for group in obj.groups.all().order_by('position'):
+            variant_limits = group.variant_limits.all()
+            variants = []
+
+            for limit in variant_limits:
+                variant = limit.variant
+                variants.append({
+                    'variant_id': str(variant.id),
+                    'name': variant.name,
+                    'variant_name': variant.name,
+                    'price': float(variant.price or group.product.price),
+                    'price_override': float(limit.price_override) if limit.price_override else None,
+                    'stock': variant.stock_quantity,
+                    'max_selections': limit.max_selections,
+                    'image_url': variant.image.url if variant.image else variant.image_url,
+                })
+
+            groups_data.append({
+                'id': str(group.id),
+                'product_id': str(group.product.id),
+                'product_name': group.product.name,
+                'is_required': group.is_required,
+                'min_selections': group.min_selections,
+                'max_selections': group.max_selections,
+                'allow_duplicate_variants': group.allow_duplicate_variants,
+                'position': group.position,
+                'variant_limits': variants,
+            })
+
+        return groups_data
+
+    def get_items(self, obj):
+        return [
+            {
+                'id': str(item.id),
+                'product': str(item.product_id),
+                'product_name': item.product.name,
+                'product_image': item.product.get_main_image_url(),
+                'variant': str(item.variant_id) if item.variant_id else None,
+                'quantity': item.quantity,
+                'allow_customization': item.allow_customization,
+                'customization_options': item.customization_options,
+            }
+            for item in obj.items.select_related('product', 'variant').all()
+        ]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        data['image_url'] = instance.get_image_url()
+        data['items'] = self.get_items(instance)
+        data['groups'] = self.get_groups(instance)
+        return data
+
+    def _sync_items(self, combo, items_data):
+        from apps.stores.models import StoreComboItem
+
+        combo.items.all().delete()
+        for item in items_data or []:
+            product_id = item.get('product') or item.get('product_id')
+            if not product_id:
+                continue
+            StoreComboItem.objects.create(
+                combo=combo,
+                product_id=product_id,
+                variant_id=item.get('variant') or item.get('variant_id') or None,
+                quantity=item.get('quantity') or 1,
+                allow_customization=item.get('allow_customization', False),
+                customization_options=item.get('customization_options') or {},
+            )
+
+    def _sync_groups(self, combo, groups_data):
+        from apps.stores.models.combo_group import (
+            ComboProductGroup,
+            ComboProductGroupVariantLimit,
+        )
+
+        combo.groups.all().delete()
+        for idx, group_data in enumerate(groups_data or []):
+            product_id = group_data.get('product') or group_data.get('product_id')
+            if not product_id:
+                continue
+            group = ComboProductGroup.objects.create(
+                combo=combo,
+                product_id=product_id,
+                is_required=group_data.get('is_required', True),
+                min_selections=group_data.get('min_selections', 1),
+                max_selections=group_data.get('max_selections', 1),
+                allow_duplicate_variants=group_data.get('allow_duplicate_variants', False),
+                position=group_data.get('position', idx),
+            )
+            for limit_data in group_data.get('variant_limits') or []:
+                variant_id = limit_data.get('variant') or limit_data.get('variant_id')
+                if not variant_id:
+                    continue
+                ComboProductGroupVariantLimit.objects.create(
+                    group=group,
+                    variant_id=variant_id,
+                    max_selections=limit_data.get('max_selections') or 1,
+                    price_override=limit_data.get('price_override') or None,
+                )
+
+    @transaction.atomic
     def create(self, validated_data):
-        items_data = validated_data.pop('items', [])
-        combo = StoreCombo.objects.create(**validated_data)
-        for item_data in items_data:
-            item_data.pop('product_name', None)
-            item_data.pop('product_image', None)
-            StoreComboItem.objects.create(combo=combo, **item_data)
+        groups_data = validated_data.pop('groups', None)
+        items_data = validated_data.pop('items', None)
+        combo = super().create(validated_data)
+        if items_data is not None:
+            self._sync_items(combo, items_data)
+        if groups_data is not None:
+            self._sync_groups(combo, groups_data)
         return combo
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        groups_data = validated_data.pop('groups', None)
         items_data = validated_data.pop('items', None)
         combo = super().update(instance, validated_data)
         if items_data is not None:
-            combo.items.all().delete()
-            for item_data in items_data:
-                item_data.pop('product_name', None)
-                item_data.pop('product_image', None)
-                StoreComboItem.objects.create(combo=combo, **item_data)
+            self._sync_items(combo, items_data)
+        if groups_data is not None:
+            self._sync_groups(combo, groups_data)
         return combo
+
 
 
 class StoreCatalogSerializer(serializers.Serializer):
@@ -1306,16 +1394,33 @@ class DeliveryFeeResponseSerializer(serializers.Serializer):
 # =============================================================================
 
 class StoreOrderComboItemSerializer(serializers.ModelSerializer):
-    """Serializer for order combo items."""
-    
+    """Serializer for order combo items with group selections."""
+
+    combo_name = serializers.SerializerMethodField()
+    combo_price = serializers.SerializerMethodField()
+
     class Meta:
         model = StoreOrderComboItem
         fields = [
-            'id', 'combo', 'combo_name',
-            'unit_price', 'quantity', 'subtotal',
-            'customizations', 'notes', 'created_at'
+            'id', 'combo', 'combo_name', 'combo_price',
+            'order_item', 'quantity', 'group_selections',
+            'selected_variant_ids', 'selected_variants_data',
+            'display_data',
+            'created_at'
         ]
-        read_only_fields = ['id', 'subtotal', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def get_combo_name(self, obj):
+        if obj.combo:
+            return obj.combo.name
+        return obj.display_data.get('combo_name', 'Combo')
+
+    def get_combo_price(self, obj):
+        if obj.combo:
+            return str(obj.combo.price)
+        if obj.order_item:
+            return str(obj.order_item.unit_price)
+        return ''
 
 
 # Update StoreOrderSerializer to include combo_items
@@ -1391,8 +1496,8 @@ class PublicProductSerializer(serializers.ModelSerializer):
 
 class PublicComboSerializer(serializers.ModelSerializer):
     """Public combo serializer for storefront."""
-    
-    items = StoreComboItemSerializer(many=True, read_only=True)
+
+    groups = serializers.SerializerMethodField()
     image_url = serializers.SerializerMethodField()
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
@@ -1406,7 +1511,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
             'image_url',
             'is_active', 'featured',
             'stock_quantity', 'is_in_stock',
-            'items'
+            'groups'
         ]
     
     def get_image_url(self, obj):

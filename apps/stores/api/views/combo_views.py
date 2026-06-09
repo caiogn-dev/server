@@ -220,7 +220,8 @@ class AddComboToCartView(views.APIView):
                 combo_name=combo.name,
                 unit_price=combo.price,
                 quantity=quantity,
-                customizations={'selections': selections}
+                group_selections=selections,
+                customizations={'selections': selections},
             )
         except Exception as e:
             return Response(
@@ -244,15 +245,25 @@ class AddComboToCartView(views.APIView):
                 defaults={'metadata': {}}
             )
         else:
-            # Use session-based cart
-            session_key = request.session.session_key
+            # Prefer the explicit guest cart key used by cardapidex-web, then
+            # fall back to Django's session key for older clients.
+            session_key = (
+                request.headers.get('X-Cart-Key')
+                or request.query_params.get('cart_key')
+                or request.data.get('cart_key')
+            )
             if not session_key:
-                request.session.create()
                 session_key = request.session.session_key
+            if not session_key:
+                try:
+                    request.session.create()
+                    session_key = request.session.session_key
+                except Exception:
+                    session_key = f"cart_{uuid_module.uuid4()}"
 
             cart, _ = StoreCart.objects.get_or_create(
                 store=store,
-                session_key=session_key,
+                session_key=str(session_key)[:255],
                 user__isnull=True,
                 is_active=True,
                 defaults={'metadata': {}}
@@ -273,7 +284,7 @@ class AddComboToCartView(views.APIView):
                     'quantity': item.quantity,
                     'unit_price': str(item.effective_price),
                     'subtotal': str(item.subtotal),
-                    'selections': item.customizations.get('selections', {})
+                    'selections': item.group_selections or item.customizations.get('selections', {})
                 }
                 for item in cart.combo_items.all()
             ]

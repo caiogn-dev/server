@@ -175,7 +175,7 @@ services:
       redis:
         condition: service_healthy
     command: >
-      gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 2
+      gunicorn config.asgi:application -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers 4 --timeout 120
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/sse/health/"]
       interval: 30s

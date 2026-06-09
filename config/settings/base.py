@@ -123,6 +123,8 @@ if REDIS_URL:
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
             'CONFIG': {
                 'hosts': [REDIS_URL],
+                'capacity': 3000,
+                'expiry': 60,
             },
         },
     }

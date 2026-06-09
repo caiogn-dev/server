@@ -480,7 +480,10 @@ class OrderService:
             lines.append(f"  • {item.quantity}x {item.product_name} - R$ {item.subtotal:.2f}")
         
         for combo_item in order.combo_items.all():
-            lines.append(f"  • {combo_item.quantity}x {combo_item.combo.name} - R$ {combo_item.subtotal:.2f}")
+            if getattr(combo_item, 'order_item_id', None):
+                continue
+            combo_name = combo_item.combo.name if combo_item.combo else combo_item.display_data.get('combo_name', 'Combo')
+            lines.append(f"  • {combo_item.quantity}x {combo_name} - R$ {combo_item.subtotal:.2f}")
         
         lines.extend([
             "",

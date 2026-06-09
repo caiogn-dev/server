@@ -41,7 +41,7 @@ class FirstMessageAuthMixin:
       _post_auth_connect() — join groups, send welcome message
       handle_message(content) — handle messages after auth
     """
-    AUTH_TIMEOUT = 5
+    AUTH_TIMEOUT = 30
 
     async def connect(self):
         self._authenticated = False
@@ -56,12 +56,15 @@ class FirstMessageAuthMixin:
             await self._post_auth_connect()
             return
 
+        # Para WebSocket: aceitar conexão sem autenticação inicial
+        # O cliente enviará o token na primeira mensagem via receive_json
+        # Se não autenticar em 5 segundos, a conexão será fechada
         self._auth_task = asyncio.ensure_future(self._auth_timeout())
 
     async def _auth_timeout(self):
         await asyncio.sleep(self.AUTH_TIMEOUT)
         if not self._authenticated:
-            logger.warning("WS auth timeout on %s", self.scope.get('path', ''))
+            logger.warning("WS auth timeout on %s (close code 4001)", self.scope.get('path', ''))
             try:
                 await self.close(code=4001)
             except RuntimeError:
@@ -69,8 +72,11 @@ class FirstMessageAuthMixin:
 
     async def receive_json(self, content):
         if not self._authenticated:
-            if content.get('type') == 'auth':
+            msg_type = content.get('type')
+            logger.debug(f"WS receive_json (not authenticated): type={msg_type}, path={self.scope.get('path', 'unknown')}")
+            if msg_type == 'auth':
                 token = content.get('token', '')
+                logger.debug(f"WS auth attempt: token_len={len(token) if token else 0}")
                 user = await get_cached_user_async(token) if token else None
                 if user and getattr(user, 'is_authenticated', False):
                     self._authenticated = True
@@ -78,8 +84,11 @@ class FirstMessageAuthMixin:
                         self._auth_task.cancel()
                     self.user = user
                     self.scope['user'] = user
+                    logger.info(f"WS authenticated: user={user.id}, path={self.scope.get('path', '')}")
                     await self._post_auth_connect()
                     return
+                else:
+                    logger.warning(f"WS auth failed: user={user}, is_authenticated={getattr(user, 'is_authenticated', None) if user else None}")
             await self.close(code=4001)
             return
         await self.handle_message(content)

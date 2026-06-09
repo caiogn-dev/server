@@ -99,7 +99,17 @@ class TokenAuthMiddleware(BaseMiddleware):
         elif auth_header.startswith('Bearer '):
             token_key = auth_header[7:]
             logger.debug(f"WebSocket token found in Bearer header")
-        
+
+        # Fallback: try query parameter (for browser WebSocket without Authorization headers)
+        if not token_key:
+            query_string = scope.get('query_string', b'').decode()
+            if 'token=' in query_string:
+                try:
+                    token_key = query_string.split('token=')[1].split('&')[0]
+                    logger.debug(f"WebSocket token found in query parameter")
+                except (IndexError, AttributeError):
+                    pass
+
         # Authenticate user
         if token_key:
             try:
@@ -114,7 +124,7 @@ class TokenAuthMiddleware(BaseMiddleware):
         else:
             logger.info(f"WebSocket no token provided: path={path}")
             scope['user'] = AnonymousUser()
-        
+
         return await super().__call__(scope, receive, send)
 
 

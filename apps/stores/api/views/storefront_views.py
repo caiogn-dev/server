@@ -309,11 +309,9 @@ class StoreCatalogView(APIView):
 
         featured_products = [p for p in all_products if p.featured]
 
-        combos = list(
-            StoreCombo.objects.filter(store=store, is_active=True)
-            .prefetch_related('items__product')
+        combos = StoreCombo.objects.filter(store=store, is_active=True) \
+            .prefetch_related('groups__product', 'groups__variant_limits__variant') \
             .order_by('sort_order', 'name')
-        )
         combos_destaque = [c for c in combos if c.featured]
 
         product_types = list(
@@ -537,7 +535,15 @@ class StoreCartViewSet(viewsets.ViewSet):
         
         product_id = request.data.get('product_id')
         combo_id = request.data.get('combo_id')
-        quantity = int(request.data.get('quantity', 1))
+        try:
+            quantity = int(request.data.get('quantity', 1))
+            if quantity < 1:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return Response(
+                {'error': 'quantity must be a positive integer'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         notes = request.data.get('notes', '')
         
         combo_name = request.data.get('combo_name', '')
@@ -579,8 +585,22 @@ class StoreCartViewSet(viewsets.ViewSet):
             elif combo_id:
                 # Real combo
                 customizations = request.data.get('customizations', {})
+                group_selections = (
+                    request.data.get('group_selections')
+                    or request.data.get('selections')
+                    or customizations.get('group_selections')
+                    or customizations.get('selections')
+                    or {}
+                )
                 combo = StoreCombo.objects.get(id=combo_id, store=store, is_active=True)
-                cart_service.add_combo(cart, combo, quantity, customizations, notes)
+                cart_service.add_combo(
+                    cart,
+                    combo,
+                    quantity,
+                    customizations=customizations,
+                    notes=notes,
+                    group_selections=group_selections,
+                )
             else:
                 # Product
                 variant_id = request.data.get('variant_id')
@@ -678,7 +698,16 @@ class StoreCheckoutView(APIView):
         
         coupon_code = request.data.get('coupon_code', '')
         notes = request.data.get('customer_notes') or request.data.get('notes', '')
-        payment_method = request.data.get('payment_method', 'pix')
+        raw_payment_method = (request.data.get('payment_method') or '').strip()
+        payment_requested = bool(raw_payment_method)
+        payment_method_aliases = {
+            'credit_card': 'card',
+            'debit_card': 'card',
+            'cartao': 'card',
+            'cartão': 'card',
+            'dinheiro': 'cash',
+        }
+        payment_method = payment_method_aliases.get(raw_payment_method, raw_payment_method) or 'pix'
         payment_payload = dict(request.data.get('payment', {}) or {})
         request_origin_base = get_request_origin_base(request)
         if request_origin_base:
@@ -720,7 +749,7 @@ class StoreCheckoutView(APIView):
             
             # Process payment if method specified
             payment_result = None
-            if payment_method:
+            if payment_requested:
                 payment_result = checkout_service.create_payment(
                     order, payment_method, payment_payload
                 )
