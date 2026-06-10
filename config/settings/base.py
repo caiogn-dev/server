@@ -329,6 +329,9 @@ WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v22.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
+# Secret genérico de fallback para webhooks Meta (whatsapp/instagram/messenger)
+# quando não há WebhookEndpoint nem secret específico configurado.
+META_WEBHOOK_APP_SECRET = os.environ.get('META_WEBHOOK_APP_SECRET', '')
 WHATSAPP_ENABLE_LLM_FALLBACK = os.environ.get('WHATSAPP_ENABLE_LLM_FALLBACK', 'false').strip().lower() in {
     '1', 'true', 'yes', 'on'
 }

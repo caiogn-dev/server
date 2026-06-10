@@ -36,12 +36,16 @@ from .handlers.base import BaseHandler
 logger = logging.getLogger(__name__)
 
 # Providers that carry financial or sensitive user data and MUST have signature
-# verification configured. When no WebhookEndpoint/secret is set for these
-# providers we still allow the request through (backwards compat) but emit a
-# loud WARNING so the operator knows the endpoint is unprotected.
+# verification configured (fail-closed). When no secret is available for these
+# providers — nem WebhookEndpoint nem fallback via settings — a requisição é
+# rejeitada com 403. Configure um WebhookEndpoint com secret no admin OU as
+# envs WHATSAPP_APP_SECRET / INSTAGRAM_APP_SECRET / META_WEBHOOK_APP_SECRET.
 _PROVIDERS_REQUIRE_SIGNATURE: frozenset = frozenset({
     'whatsapp', 'instagram', 'messenger', 'mercadopago',
 })
+
+# Providers da Meta que compartilham o formato de assinatura X-Hub-Signature-256.
+_META_PROVIDERS: frozenset = frozenset({'whatsapp', 'instagram', 'messenger'})
 
 # Maximum allowed age of a webhook timestamp to prevent replay attacks.
 _TIMESTAMP_TOLERANCE_SECONDS = 300  # 5 minutes
@@ -106,15 +110,14 @@ class WebhookDispatcherView(View):
         # Verify HMAC signature BEFORE any DB write.
         # Prevents table flooding: an attacker sending spoofed requests would create a
         # WebhookEvent row per request if we wrote first, then validated.
-        # None = no endpoint configured, True = valid, False = invalid (reject).
-        # Payment providers must ALWAYS have signature validation configured.
-        _SIGNATURE_REQUIRED = {'mercadopago'}
+        # None = no secret configured, True = valid, False = invalid (reject).
+        # Meta + MercadoPago são fail-closed: sem secret configurado → 403.
         signature_valid = self._verify_signature(request, provider, payload)
-        if signature_valid is None and provider in _SIGNATURE_REQUIRED:
+        if signature_valid is None and provider in _PROVIDERS_REQUIRE_SIGNATURE:
             logger.error(
-                "Webhook from payment provider=%s has no endpoint configured — "
-                "rejecting to prevent forged payment notifications. "
-                "Create a WebhookEndpoint with the provider secret to enable.",
+                "Webhook provider=%s sem secret configurado — rejeitando (fail-closed). "
+                "Configure um WebhookEndpoint com secret no admin OU a env "
+                "WHATSAPP_APP_SECRET / INSTAGRAM_APP_SECRET / META_WEBHOOK_APP_SECRET.",
                 provider,
             )
             return HttpResponse("Signature required", status=403)
@@ -123,15 +126,6 @@ class WebhookDispatcherView(View):
                 "Webhook signature invalid — rejecting provider=%s without DB write", provider
             )
             return HttpResponse("Invalid signature", status=403)
-
-        if signature_valid is None and provider in _PROVIDERS_REQUIRE_SIGNATURE:
-            logger.warning(
-                "AVISO DE SEGURANÇA: webhook do provedor '%s' processado SEM verificação de "
-                "assinatura HMAC. Nenhum WebhookEndpoint com secret configurado foi encontrado. "
-                "Qualquer requisição não autenticada será aceita. "
-                "Configure um WebhookEndpoint com secret no admin para habilitar a validação.",
-                provider,
-            )
 
         # Extract event type
         event_type = self._extract_event_type(provider, payload, headers)
@@ -304,30 +298,51 @@ class WebhookDispatcherView(View):
 
         return None
     
+    @staticmethod
+    def _meta_fallback_secret(provider: str) -> str:
+        """Secret de fallback via settings quando não há WebhookEndpoint no banco."""
+        from django.conf import settings
+        if provider == 'whatsapp':
+            specific = getattr(settings, 'WHATSAPP_APP_SECRET', '')
+        elif provider in ('instagram', 'messenger'):
+            specific = getattr(settings, 'INSTAGRAM_APP_SECRET', '')
+        else:
+            specific = ''
+        return specific or getattr(settings, 'META_WEBHOOK_APP_SECRET', '')
+
+    @staticmethod
+    def _verify_meta_signature(request, secret: str) -> bool:
+        """Meta (X-Hub-Signature-256): sha256=<hmac do body com o app secret>."""
+        signature_header = request.headers.get('X-Hub-Signature-256', '')
+        if not signature_header.startswith('sha256='):
+            return False
+        expected = hmac.new(secret.encode(), request.body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(signature_header[7:], expected)
+
     def _verify_signature(self, request, provider: str, payload: dict) -> Optional[bool]:
         """Verify webhook signature."""
         try:
-            endpoint = WebhookEndpoint.objects.get(provider=provider, is_active=True)
-            
-            if not endpoint.secret:
+            try:
+                endpoint = WebhookEndpoint.objects.get(provider=provider, is_active=True)
+            except WebhookEndpoint.DoesNotExist:
+                endpoint = None
+
+            if endpoint is None or not endpoint.secret:
+                # Fallback: secret via settings/env (Meta apenas)
+                if provider in _META_PROVIDERS:
+                    fallback = self._meta_fallback_secret(provider)
+                    if fallback:
+                        return self._verify_meta_signature(request, fallback)
                 return None  # No verification configured
-            
+
             signature_header = request.headers.get(endpoint.signature_header)
             if not signature_header:
                 return False
-            
+
             # Calculate expected signature
-            if provider in ('whatsapp', 'instagram', 'messenger'):
-                # Meta signature format: sha256=<hmac>
-                expected = hmac.new(
-                    endpoint.secret.encode(),
-                    request.body,
-                    hashlib.sha256
-                ).hexdigest()
-                
-                if signature_header.startswith('sha256='):
-                    return hmac.compare_digest(signature_header[7:], expected)
-            
+            if provider in _META_PROVIDERS:
+                return self._verify_meta_signature(request, endpoint.secret)
+
             elif provider == 'mercadopago':
                 # MP format: x-signature: ts=<ts>,v1=<hmac>
                 # Signed template: "id:<data.id>;request-id:<X-Request-Id>;ts:<ts>"

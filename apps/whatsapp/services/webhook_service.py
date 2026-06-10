@@ -54,8 +54,12 @@ class WebhookService:
         app_secret = settings.WHATSAPP_APP_SECRET
         
         if not app_secret:
-            logger.warning("WHATSAPP_APP_SECRET not configured, skipping signature validation")
-            return True
+            # Fail-closed: sem secret não há como validar a origem do webhook.
+            logger.error(
+                "WHATSAPP_APP_SECRET não configurado — rejeitando webhook (fail-closed). "
+                "Configure a env WHATSAPP_APP_SECRET para habilitar a validação."
+            )
+            return False
         
         if not signature:
             logger.warning("No signature provided in webhook request")
