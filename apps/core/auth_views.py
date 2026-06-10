@@ -244,33 +244,28 @@ class RegisterView(APIView):
         try:
             from apps.marketing.services.email_automation_service import email_automation_service
             from apps.stores.models import Store
-            
-            # Get store by slug or use default (pastita)
+
             store = None
             if store_slug:
                 store = Store.objects.filter(slug=store_slug, is_active=True).first()
-            
+
             if not store:
-                # Try to get default store (pastita)
-                store = Store.objects.filter(slug='pastita', is_active=True).first()
-            
-            if not store:
-                # Get any active store
-                store = Store.objects.filter(is_active=True).first()
-            
-            if store:
-                customer_name = f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0]
-                result = email_automation_service.on_new_user(
-                    store_id=str(store.id),
-                    email=user.email,
-                    name=customer_name,
+                logger.warning(
+                    "New user automation skipped: store slug '%s' not found or not provided.",
+                    store_slug,
                 )
-                logger.info(f"New user automation triggered for {user.email}: {result}")
-            else:
-                logger.warning(f"No active store found for new user automation: {user.email}")
-                
+                return
+
+            customer_name = f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0]
+            result = email_automation_service.on_new_user(
+                store_id=str(store.id),
+                email=user.email,
+                name=customer_name,
+            )
+            logger.info("New user automation triggered for store %s: %s", store.slug, result)
+
         except Exception as e:
-            logger.error(f"Failed to trigger new user automation: {e}")
+            logger.error("Failed to trigger new user automation: %s", e)
 
     @extend_schema(
         summary="Register",
