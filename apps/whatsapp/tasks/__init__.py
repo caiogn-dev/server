@@ -192,8 +192,11 @@ def process_message_with_agent(self, message_id: str):
                         'ai_agent_error_fallback',
                         {},
                     )
-                except:
-                    pass
+                except Exception:
+                    logger.exception(
+                        "Falha ao enviar mensagem de fallback do agente (message_id=%s)",
+                        message_id,
+                    )
         else:
             logger.warning(f"No response text generated for message: {message_id}")
         
@@ -418,7 +421,7 @@ def try_create_order_from_conversation(conversation, phone_number: str) -> dict:
                             quantity = 1
                         if quantity > 20:  # Sanity check
                             quantity = 1
-                    except:
+                    except (ValueError, TypeError):
                         quantity = 1
                 
                 items.append({
