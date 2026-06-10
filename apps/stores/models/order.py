@@ -79,7 +79,7 @@ class StoreOrder(BaseModel):
     )
     customer_name = models.CharField(max_length=255)
     customer_email = models.EmailField(blank=True)
-    customer_phone = models.CharField(max_length=20)
+    customer_phone = models.CharField(max_length=20, db_index=True)
 
     # Status
     status = models.CharField(

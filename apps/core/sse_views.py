@@ -78,22 +78,22 @@ class BaseSSEView(View):
             return None
     
     def check_authentication(self, request):
-        """Check if request is authenticated."""
-        # Try query parameter
-        token = request.GET.get('token')
-        if token:
-            return self.get_user_from_token(token)
-        
-        # Try Authorization header
+        """Check if request is authenticated.
+
+        Tokens are accepted only via Authorization header or Django session.
+        Query-parameter tokens are rejected: they appear in server logs, proxy
+        caches, and browser history, leaking credentials.
+        """
+        # Authorization header (standard path)
         auth_header = request.headers.get('Authorization', '')
         if auth_header.startswith('Token '):
-            token = auth_header[6:]
+            token = auth_header[6:].strip()
             return self.get_user_from_token(token)
-        
-        # Try session
+
+        # Django session fallback (same-origin dashboard)
         if request.user.is_authenticated:
             return request.user
-        
+
         return None
     
     def get_event_stream(self, request, user, last_event_id=None):
