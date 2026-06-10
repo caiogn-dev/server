@@ -104,94 +104,83 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
         
         try:
             with transaction.atomic():
-                # Delete messages
-                deleted_counts['messages'] = account.messages.count()
-                account.messages.all().delete()
-                
-                # Delete webhook events
-                deleted_counts['webhook_events'] = account.webhook_events.count()
-                account.webhook_events.all().delete()
-                
-                # Delete templates
-                deleted_counts['templates'] = account.templates.count()
-                account.templates.all().delete()
-                
+                # delete() retorna (total_count, {model_label: count}) — evita count() extra
+                deleted_counts['messages'], _ = account.messages.all().delete()
+                deleted_counts['webhook_events'], _ = account.webhook_events.all().delete()
+                deleted_counts['templates'], _ = account.templates.all().delete()
+
                 # Delete conversations
                 try:
                     from apps.conversations.models import Conversation
-                    conversations = Conversation.objects.filter(account=account)
-                    deleted_counts['conversations'] = conversations.count()
-                    conversations.delete()
+                    deleted_counts['conversations'], _ = (
+                        Conversation.objects.filter(account=account).delete()
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not delete conversations: {e}")
+                    logger.warning("Could not delete conversations: %s", e)
                     deleted_counts['conversations'] = 0
-                
+
                 # Delete campaigns and related
                 try:
                     from apps.campaigns.models import Campaign, ContactList
                     from apps.automation.models import ScheduledMessage
-                    campaigns = Campaign.objects.filter(account=account)
-                    for campaign in campaigns:
+                    for campaign in Campaign.objects.filter(account=account):
                         campaign.recipients.all().delete()
-                    deleted_counts['campaigns'] = campaigns.count()
-                    campaigns.delete()
-                    
-                    scheduled = ScheduledMessage.objects.filter(account=account)
-                    deleted_counts['scheduled_messages'] = scheduled.count()
-                    scheduled.delete()
-                    
-                    contact_lists = ContactList.objects.filter(account=account)
-                    deleted_counts['contact_lists'] = contact_lists.count()
-                    contact_lists.delete()
+                    deleted_counts['campaigns'], _ = Campaign.objects.filter(account=account).delete()
+                    deleted_counts['scheduled_messages'], _ = (
+                        ScheduledMessage.objects.filter(account=account).delete()
+                    )
+                    deleted_counts['contact_lists'], _ = (
+                        ContactList.objects.filter(account=account).delete()
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not delete campaigns: {e}")
+                    logger.warning("Could not delete campaigns: %s", e)
                     deleted_counts['campaigns'] = 0
-                
+
                 # Delete automation sessions
                 try:
                     from apps.automation.models import CustomerSession
-                    sessions = CustomerSession.objects.filter(company__account=account)
-                    deleted_counts['automation_sessions'] = sessions.count()
-                    sessions.delete()
+                    deleted_counts['automation_sessions'], _ = (
+                        CustomerSession.objects.filter(company__account=account).delete()
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not delete automation sessions: {e}")
+                    logger.warning("Could not delete automation sessions: %s", e)
                     deleted_counts['automation_sessions'] = 0
-                
+
                 # Delete company profiles
                 try:
                     from apps.automation.models import CompanyProfile
-                    profiles = CompanyProfile.objects.filter(account=account)
-                    deleted_counts['company_profiles'] = profiles.count()
-                    profiles.delete()
+                    deleted_counts['company_profiles'], _ = (
+                        CompanyProfile.objects.filter(account=account).delete()
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not delete company profiles: {e}")
+                    logger.warning("Could not delete company profiles: %s", e)
                     deleted_counts['company_profiles'] = 0
 
                 # Delete store orders and integrations linked to this WhatsApp account
                 try:
                     from apps.stores.models import StoreIntegration, StoreOrder
-                    store_ids = StoreIntegration.objects.filter(
-                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
-                    ).filter(
-                        Q(phone_number_id=account.phone_number_id) |
-                        Q(waba_id=account.waba_id)
-                    ).values_list('store_id', flat=True)
-                    store_ids = list(store_ids)
-                    deleted_counts['store_orders'] = StoreOrder.objects.filter(store_id__in=store_ids).count()
-                    StoreOrder.objects.filter(store_id__in=store_ids).delete()
-                    deleted_counts['store_integrations'] = StoreIntegration.objects.filter(
-                        store_id__in=store_ids,
-                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
-                    ).count()
-                    StoreIntegration.objects.filter(
-                        store_id__in=store_ids,
-                        integration_type=StoreIntegration.IntegrationType.WHATSAPP
-                    ).delete()
+                    store_ids = list(
+                        StoreIntegration.objects.filter(
+                            integration_type=StoreIntegration.IntegrationType.WHATSAPP
+                        ).filter(
+                            Q(phone_number_id=account.phone_number_id) |
+                            Q(waba_id=account.waba_id)
+                        ).values_list('store_id', flat=True)
+                    )
+                    deleted_counts['store_orders'], _ = (
+                        StoreOrder.objects.filter(store_id__in=store_ids).delete()
+                    )
+                    deleted_counts['store_integrations'], _ = (
+                        StoreIntegration.objects.filter(
+                            store_id__in=store_ids,
+                            integration_type=StoreIntegration.IntegrationType.WHATSAPP,
+                        ).delete()
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not delete store integrations/orders: {e}")
+                    logger.warning("Could not delete store integrations/orders: %s", e)
                     deleted_counts['store_orders'] = 0
                     deleted_counts['store_integrations'] = 0
-                
+
                 # Finally delete the account
                 account.delete()
                 
