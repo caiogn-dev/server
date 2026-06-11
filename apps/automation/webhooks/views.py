@@ -33,20 +33,28 @@ class WebhookAuthMixin:
         return request.headers.get('X-Webhook-Signature', '')
     
     def validate_signature(self, payload: bytes, signature: str, secret: str) -> bool:
-        """Validate webhook signature."""
-        if not signature or not secret:
-            return True  # Skip validation if no signature provided
-        
+        """Validate webhook signature using HMAC-SHA256.
+
+        Returns False (reject) when the secret is configured but no signature is
+        provided — callers must treat an absent signature as invalid, not as a
+        no-op bypass.
+        """
+        if not secret:
+            return True  # Secret not configured — validation not required
+
+        if not signature:
+            return False  # Secret IS configured but caller sent no signature
+
         # Remove 'sha256=' prefix if present
         if signature.startswith('sha256='):
             signature = signature[7:]
-        
+
         expected = hmac.new(
             secret.encode(),
             payload,
             hashlib.sha256
         ).hexdigest()
-        
+
         return hmac.compare_digest(expected, signature)
     
     def authenticate_webhook(self, request):
