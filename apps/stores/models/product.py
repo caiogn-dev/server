@@ -123,6 +123,9 @@ class StoreProduct(BaseModel):
     )
     featured = models.BooleanField(default=False)
 
+    # Pausa rápida (item esgotado): produto fica indisponível até este horário
+    paused_until = models.DateTimeField(null=True, blank=True)
+
     # Images
     main_image = models.ImageField(upload_to='stores/products/', blank=True, null=True)
     main_image_url = models.URLField(blank=True)
@@ -185,7 +188,16 @@ class StoreProduct(BaseModel):
         return self.track_stock and self.stock_quantity <= self.low_stock_threshold
 
     @property
+    def is_paused(self):
+        if not self.paused_until:
+            return False
+        from django.utils import timezone
+        return self.paused_until > timezone.now()
+
+    @property
     def is_in_stock(self):
+        if self.is_paused:
+            return False
         if not self.track_stock:
             return True
         return self.stock_quantity > 0 or self.allow_backorder

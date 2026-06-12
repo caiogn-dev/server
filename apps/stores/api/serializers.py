@@ -260,6 +260,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
     discount_percentage = serializers.ReadOnlyField()
     is_low_stock = serializers.ReadOnlyField()
     is_in_stock = serializers.ReadOnlyField()
+    is_paused = serializers.ReadOnlyField()
     variants = StoreProductVariantSerializer(many=True, read_only=True)
     
     class Meta:
@@ -273,6 +274,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
             'allow_backorder', 'is_low_stock', 'is_in_stock',
+            'paused_until', 'is_paused',
             'status', 'featured',
             'main_image', 'main_image_url', 'images',
             'meta_title', 'meta_description',
@@ -380,6 +382,7 @@ class StoreProductWithTypeSerializer(serializers.ModelSerializer):
     discount_percentage = serializers.ReadOnlyField()
     is_low_stock = serializers.ReadOnlyField()
     is_in_stock = serializers.ReadOnlyField()
+    is_paused = serializers.ReadOnlyField()
     variants = StoreProductVariantSerializer(many=True, read_only=True)
     
     class Meta:
@@ -393,6 +396,7 @@ class StoreProductWithTypeSerializer(serializers.ModelSerializer):
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
             'allow_backorder', 'is_low_stock', 'is_in_stock',
+            'paused_until', 'is_paused',
             'status', 'featured',
             'main_image', 'main_image_url', 'images',
             'attributes', 'tags', 'sort_order',
@@ -1476,6 +1480,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
     is_on_sale = serializers.ReadOnlyField()
     discount_percentage = serializers.ReadOnlyField()
     is_in_stock = serializers.ReadOnlyField()
+    is_paused = serializers.ReadOnlyField()
     
     class Meta:
         model = StoreProduct
@@ -1483,7 +1488,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'short_description',
             'price', 'compare_at_price',
             'is_on_sale', 'discount_percentage',
-            'stock_quantity', 'is_in_stock',
+            'stock_quantity', 'is_in_stock', 'is_paused',
             'status', 'featured',
             'main_image_url', 'images',
             'category', 'category_name', 'category_slug',

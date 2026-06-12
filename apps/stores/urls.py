@@ -24,7 +24,7 @@ from .api.views import (
     # Wishlist views
     StoreWishlistViewSet,
     # Combo views
-    ComboDetailView, ComboListView, AddComboToCartView,
+    ComboUpdateView, AddComboToCartView,
     # Customer address management
     MyAddressViewSet,
     # Admin views for full CRUD
@@ -165,9 +165,8 @@ store_frontend_patterns = [
     path('app-config/', StoreAppConfigView.as_view(), name='store-app-config'),
     path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
     path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),
-    # Combo endpoints
-    path('combos/', ComboListView.as_view(), name='combo-list'),
-    path('combos/<uuid:combo_id>/', ComboDetailView.as_view(), name='combo-detail'),
+    # Combo PATCH endpoint
+    path('combos/<uuid:combo_id>/', ComboUpdateView.as_view(), name='combo-update'),
     path('cart/', StoreCartViewSet.as_view({'get': 'get_cart_by_store'}), name='store-cart'),
     path('cart/add/', StoreCartViewSet.as_view({'post': 'add_item'}), name='store-cart-add'),
     path('cart/add-combo/', AddComboToCartView.as_view(), name='add-combo-to-cart'),

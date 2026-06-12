@@ -147,6 +147,34 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response({'status': product.status})
     
     @action(detail=True, methods=['post'])
+    def pause(self, request, pk=None):
+        """Pausa rápida do produto. Body: {minutes: int} ou vazio = até amanhã."""
+        from datetime import timedelta
+        from django.utils import timezone
+
+        product = self.get_object()
+        minutes = request.data.get('minutes')
+        if minutes:
+            product.paused_until = timezone.now() + timedelta(minutes=int(minutes))
+        else:
+            # Até amanhã: meia-noite local do dia seguinte
+            tomorrow = timezone.localtime() + timedelta(days=1)
+            product.paused_until = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
+        product.save(update_fields=['paused_until', 'updated_at'])
+        return Response({
+            'is_paused': product.is_paused,
+            'paused_until': product.paused_until,
+        })
+
+    @action(detail=True, methods=['post'])
+    def unpause(self, request, pk=None):
+        """Remove a pausa do produto."""
+        product = self.get_object()
+        product.paused_until = None
+        product.save(update_fields=['paused_until', 'updated_at'])
+        return Response({'is_paused': False, 'paused_until': None})
+
+    @action(detail=True, methods=['post'])
     def toggle_featured(self, request, pk=None):
         """Toggle product featured status."""
         product = self.get_object()

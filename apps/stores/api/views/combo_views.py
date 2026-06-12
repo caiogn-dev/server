@@ -6,120 +6,46 @@ Provides:
 - ComboListView: GET /api/v1/stores/{store_slug}/combos/
 - AddComboToCartView: POST /api/v1/stores/{store_slug}/cart/add-combo/
 """
-import uuid as uuid_module
-from decimal import Decimal
 from rest_framework import views, permissions, status
 from rest_framework.response import Response
-from rest_framework.pagination import PageNumberPagination
-from django.shortcuts import get_object_or_404
 from django.db import transaction
 
 from apps.stores.models import (
-    StoreCombo, StoreCart, StoreCartComboItem,
-    Store
+    StoreCombo, StoreCart, StoreCartComboItem, Store
 )
 from apps.stores.validators import ComboSelectionValidator
-from ..serializers import (
-    ComboDetailSerializer, ComboListSerializer
-)
+from ..serializers import StoreComboSerializer
 from .base import filter_by_store
 
 
-class ComboPagination(PageNumberPagination):
-    """Pagination for combo list views."""
-    page_size = 20
-    page_size_query_param = 'page_size'
-    max_page_size = 100
+class ComboUpdateView(views.APIView):
+    """PATCH /api/v1/stores/{store_slug}/combos/{combo_id}/"""
+    permission_classes = [permissions.IsAuthenticated]
 
+    def patch(self, request, store_slug, combo_id):
+        """Update combo fields."""
+        from apps.stores.models import Store
+        from ..serializers import StoreComboSerializer
 
-class ComboDetailView(views.APIView):
-    """
-    GET /api/v1/stores/{store_slug}/combos/{combo_id}/
-
-    Returns full combo details including:
-    - Basic info (name, price, image, etc.)
-    - Groups with variants and stock info
-    - Selection rules per group
-    - Per-variant limits
-
-    Enforces tenant isolation: returns 404 if combo.store.slug != store_slug
-    """
-    permission_classes = [permissions.AllowAny]
-
-    def get(self, request, store_slug, combo_id):
-        """Retrieve combo details with groups and variants."""
         try:
             store = Store.objects.get(slug=store_slug)
         except Store.DoesNotExist:
-            return Response(
-                {'detail': 'Loja não encontrada.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
         try:
-            combo_uuid = uuid_module.UUID(str(combo_id))
-        except (ValueError, AttributeError, TypeError):
-            return Response(
-                {'detail': 'ID de combo inválido.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Get combo and verify it belongs to this store
-        try:
-            combo = StoreCombo.objects.get(id=combo_uuid, store=store)
+            combo = StoreCombo.objects.get(id=combo_id, store=store)
         except StoreCombo.DoesNotExist:
-            return Response(
-                {'detail': 'Combo não encontrado.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+            return Response({'detail': 'Combo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
-        serializer = ComboDetailSerializer(combo)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # Check permission
+        if not (request.user.is_staff or request.user.is_superuser or combo.store.owner == request.user):
+            return Response({'detail': 'Permissão negada.'}, status=status.HTTP_403_FORBIDDEN)
 
-
-class ComboListView(views.APIView):
-    """
-    GET /api/v1/stores/{store_slug}/combos/?is_active=true
-
-    Lists combos for a store with optional filtering.
-
-    Query Parameters:
-    - is_active: Filter by active status (true/false)
-    - page: Pagination (default: 1)
-    - page_size: Results per page (default: 20, max: 100)
-    """
-    permission_classes = [permissions.AllowAny]
-    pagination_class = ComboPagination
-
-    def get(self, request, store_slug):
-        """List combos for store with optional filtering."""
-        try:
-            store = Store.objects.get(slug=store_slug)
-        except Store.DoesNotExist:
-            return Response(
-                {'detail': 'Loja não encontrada.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        # Start with combos for this store
-        queryset = StoreCombo.objects.filter(store=store).order_by('sort_order', 'name')
-
-        # Optional: filter by is_active
-        is_active = request.query_params.get('is_active')
-        if is_active is not None:
-            is_active_bool = is_active.lower() in ['true', '1', 'yes']
-            queryset = queryset.filter(is_active=is_active_bool)
-
-        # Paginate
-        paginator = self.pagination_class()
-        page = paginator.paginate_queryset(queryset, request)
-        if page is not None:
-            serializer = ComboListSerializer(page, many=True)
-            return paginator.get_paginated_response(serializer.data)
-
-        # Fallback if no pagination
-        serializer = ComboListSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        serializer = StoreComboSerializer(combo, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class AddComboToCartView(views.APIView):
