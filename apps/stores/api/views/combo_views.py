@@ -6,6 +6,7 @@ Provides:
 - ComboListView: GET /api/v1/stores/{store_slug}/combos/
 - AddComboToCartView: POST /api/v1/stores/{store_slug}/cart/add-combo/
 """
+import uuid as uuid_module
 from rest_framework import views, permissions, status
 from rest_framework.response import Response
 from django.db import transaction
@@ -16,36 +17,6 @@ from apps.stores.models import (
 from apps.stores.validators import ComboSelectionValidator
 from ..serializers import StoreComboSerializer
 from .base import filter_by_store
-
-
-class ComboUpdateView(views.APIView):
-    """PATCH /api/v1/stores/{store_slug}/combos/{combo_id}/"""
-    permission_classes = [permissions.IsAuthenticated]
-
-    def patch(self, request, store_slug, combo_id):
-        """Update combo fields."""
-        from apps.stores.models import Store
-        from ..serializers import StoreComboSerializer
-
-        try:
-            store = Store.objects.get(slug=store_slug)
-        except Store.DoesNotExist:
-            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
-
-        try:
-            combo = StoreCombo.objects.get(id=combo_id, store=store)
-        except StoreCombo.DoesNotExist:
-            return Response({'detail': 'Combo não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
-
-        # Check permission
-        if not (request.user.is_staff or request.user.is_superuser or combo.store.owner == request.user):
-            return Response({'detail': 'Permissão negada.'}, status=status.HTTP_403_FORBIDDEN)
-
-        serializer = StoreComboSerializer(combo, data=request.data, partial=True)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class AddComboToCartView(views.APIView):

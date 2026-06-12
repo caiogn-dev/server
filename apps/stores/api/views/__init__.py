@@ -57,7 +57,6 @@ from .delivery_views import (
 
 # Combo views
 from .combo_views import (
-    ComboUpdateView,
     AddComboToCartView,
 )
 
@@ -107,7 +106,6 @@ __all__ = [
     # Delivery
     'StoreDeliveryZoneViewSet',
     # Combos
-    'ComboUpdateView',
     'AddComboToCartView',
     # Storefront
     'StoreCartViewSet',

@@ -1057,7 +1057,6 @@ class StoreComboSerializer(serializers.ModelSerializer):
     """Serializer for combos with product groups."""
 
     groups = serializers.JSONField(required=False)
-    items = serializers.JSONField(required=False)
     image_url = serializers.SerializerMethodField()
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
@@ -1070,7 +1069,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'image', 'image_url',
             'is_active', 'featured',
             'track_stock', 'stock_quantity',
-            'items', 'groups',
+            'groups',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -1112,44 +1111,11 @@ class StoreComboSerializer(serializers.ModelSerializer):
 
         return groups_data
 
-    def get_items(self, obj):
-        return [
-            {
-                'id': str(item.id),
-                'product': str(item.product_id),
-                'product_name': item.product.name,
-                'product_image': item.product.get_main_image_url(),
-                'variant': str(item.variant_id) if item.variant_id else None,
-                'quantity': item.quantity,
-                'allow_customization': item.allow_customization,
-                'customization_options': item.customization_options,
-            }
-            for item in obj.items.select_related('product', 'variant').all()
-        ]
-
     def to_representation(self, instance):
         data = super().to_representation(instance)
         data['image_url'] = instance.get_image_url()
-        data['items'] = self.get_items(instance)
         data['groups'] = self.get_groups(instance)
         return data
-
-    def _sync_items(self, combo, items_data):
-        from apps.stores.models import StoreComboItem
-
-        combo.items.all().delete()
-        for item in items_data or []:
-            product_id = item.get('product') or item.get('product_id')
-            if not product_id:
-                continue
-            StoreComboItem.objects.create(
-                combo=combo,
-                product_id=product_id,
-                variant_id=item.get('variant') or item.get('variant_id') or None,
-                quantity=item.get('quantity') or 1,
-                allow_customization=item.get('allow_customization', False),
-                customization_options=item.get('customization_options') or {},
-            )
 
     def _sync_groups(self, combo, groups_data):
         from apps.stores.models.combo_group import (
@@ -1185,10 +1151,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         groups_data = validated_data.pop('groups', None)
-        items_data = validated_data.pop('items', None)
         combo = super().create(validated_data)
-        if items_data is not None:
-            self._sync_items(combo, items_data)
         if groups_data is not None:
             self._sync_groups(combo, groups_data)
         return combo
@@ -1196,10 +1159,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def update(self, instance, validated_data):
         groups_data = validated_data.pop('groups', None)
-        items_data = validated_data.pop('items', None)
         combo = super().update(instance, validated_data)
-        if items_data is not None:
-            self._sync_items(combo, items_data)
         if groups_data is not None:
             self._sync_groups(combo, groups_data)
         return combo
