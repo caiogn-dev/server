@@ -57,16 +57,21 @@ if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['localhost', '127.0.0.1']:
 if not WHATSAPP_WEBHOOK_VERIFY_TOKEN:
     raise ImproperlyConfigured('WHATSAPP_WEBHOOK_VERIFY_TOKEN must be set in production.')
 
-if not INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
-    _instagram_disabled = os.environ.get('INSTAGRAM_WEBHOOKS_DISABLED', '').lower() in ('1', 'true', 'yes')
-    if _instagram_disabled:
-        import logging as _logging
-        _logging.getLogger(__name__).info('Instagram webhooks disabled via INSTAGRAM_WEBHOOKS_DISABLED.')
-    else:
+_instagram_disabled = os.environ.get('INSTAGRAM_WEBHOOKS_DISABLED', '').lower() in ('1', 'true', 'yes')
+if not _instagram_disabled:
+    if not INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
         raise ImproperlyConfigured(
             'INSTAGRAM_WEBHOOK_VERIFY_TOKEN must be set in production. '
             'Set INSTAGRAM_WEBHOOKS_DISABLED=true to opt out.'
         )
+    if not INSTAGRAM_APP_SECRET:
+        raise ImproperlyConfigured(
+            'INSTAGRAM_APP_SECRET must be set in production (required for webhook signature validation). '
+            'Set INSTAGRAM_WEBHOOKS_DISABLED=true to opt out.'
+        )
+else:
+    import logging as _logging
+    _logging.getLogger(__name__).info('Instagram webhooks disabled via INSTAGRAM_WEBHOOKS_DISABLED.')
 
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False
