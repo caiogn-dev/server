@@ -124,7 +124,25 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             logger.warning('[ORDER_CREATE_ERROR] Validation failed: %s', serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         order = serializer.save()
-        return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+        # PDV: gerar o pagamento na criação (o checkout do storefront faz isso;
+        # esta rota administrativa não fazia — pedido nascia sem link/QR PIX)
+        payment_error = None
+        if order.payment_method == 'pix' and not order.pix_code:
+            from apps.stores.services.checkout_service import CheckoutService
+            try:
+                result = CheckoutService.create_payment(order, payment_method='pix')
+                if not result.get('success'):
+                    payment_error = result.get('error') or 'Falha ao gerar pagamento PIX'
+                order.refresh_from_db()
+            except Exception as exc:
+                logger.warning('[ORDER_CREATE] Falha ao gerar PIX do pedido %s: %s', order.id, exc)
+                payment_error = str(exc)
+
+        data = StoreOrderSerializer(order).data
+        if payment_error:
+            data['payment_error'] = payment_error
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
         order = serializer.save()
