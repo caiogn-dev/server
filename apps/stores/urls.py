@@ -93,6 +93,7 @@ from .api.webhooks import (
     OrderReceiptView,
 )
 from .api.views.review_views import OrderReviewByTokenView, StoreReviewListView
+from .api.views.cash_views import CashOpenView, CashCurrentView, CashMovementView, CashCloseView
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
     StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView
@@ -165,6 +166,11 @@ products_router.register(r'variants', StoreProductVariantViewSet, basename='prod
 store_frontend_patterns = [
     path('', StorePublicView.as_view(), name='store-public'),
     path('reviews/', StoreReviewListView.as_view(), name='store-reviews'),
+    # Caixa (PDV)
+    path('cash/open/', CashOpenView.as_view(), name='store-cash-open'),
+    path('cash/current/', CashCurrentView.as_view(), name='store-cash-current'),
+    path('cash/movement/', CashMovementView.as_view(), name='store-cash-movement'),
+    path('cash/close/', CashCloseView.as_view(), name='store-cash-close'),
     path('app-config/', StoreAppConfigView.as_view(), name='store-app-config'),
     path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
     path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),

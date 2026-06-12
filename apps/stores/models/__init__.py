@@ -60,6 +60,9 @@ from .review import StoreReview
 # Loyalty
 from .loyalty import StoreLoyaltyAccount, StoreLoyaltyTransaction
 
+# Cash (PDV)
+from .cash import StoreCashSession, StoreCashMovement
+
 
 __all__ = [
     # Base
@@ -106,4 +109,7 @@ __all__ = [
     # Loyalty
     'StoreLoyaltyAccount',
     'StoreLoyaltyTransaction',
+    # Cash (PDV)
+    'StoreCashSession',
+    'StoreCashMovement',
 ]
