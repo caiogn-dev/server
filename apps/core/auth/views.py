@@ -73,7 +73,7 @@ def send_whatsapp_auth_code(request):
     phone = request.data.get('phone_number')
     account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
     
-    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
+    logger.info("[WHATSAPP AUTH API] Request to send code to phone ending in ...%s", str(phone or '')[-4:] or '?')
     
     if not phone:
         return Response(

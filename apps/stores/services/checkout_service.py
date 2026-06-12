@@ -815,7 +815,7 @@ class CheckoutService:
 
         sdk = mercadopago.SDK(credentials['access_token'])
         payer_email = get_valid_email_for_payment(order)
-        logger.info(f"Using email for payment: {payer_email} (original: {order.customer_email})")
+        logger.info("Using resolved payer email for order #%s (placeholder substituted: %s)", order.order_number, payer_email != order.customer_email)
 
         payment_payload = payment_data or {}
 
