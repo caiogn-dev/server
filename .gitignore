@@ -52,3 +52,8 @@ skills-lock.json
 *.swp
 *.swo
 new_token.txt
+
+# Dumps e scripts de recovery (nunca versionar)
+recovery_*
+*.sql.bak
+*_dump.sql
