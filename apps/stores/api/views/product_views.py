@@ -275,11 +275,11 @@ class StoreComboViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         import uuid as uuid_module
-        store_param = self.request.query_params.get('store')
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         store_slug = self.kwargs.get('store_slug')
-        
+
         queryset = StoreCombo.objects.all()
-        
+
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
         elif store_param:
@@ -288,13 +288,15 @@ class StoreComboViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(store_id=store_param)
             except (ValueError, AttributeError):
                 queryset = queryset.filter(store__slug=store_param)
-        
+
         # Only hide inactive combos for unauthenticated / non-staff public requests
         if self.action == 'list' and not (self.request.user.is_authenticated and
                                           (self.request.user.is_staff or self.request.user.is_superuser)):
             queryset = queryset.filter(is_active=True)
 
-        return queryset.select_related('store').prefetch_related('items__product')
+        return queryset.select_related('store').prefetch_related(
+            'groups__product', 'groups__variant_limits__variant'
+        )
 
 
 class StoreProductTypeViewSet(viewsets.ModelViewSet):

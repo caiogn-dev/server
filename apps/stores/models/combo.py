@@ -1,5 +1,6 @@
 """
-Store combo models - StoreCombo, StoreComboItem.
+Store combo model - StoreCombo.
+Grupos de seleção ficam em combo_group.py (ComboProductGroup).
 """
 import uuid
 from decimal import Decimal
@@ -59,35 +60,3 @@ class StoreCombo(models.Model):
         return 0
 
 
-class StoreComboItem(models.Model):
-    """Individual item in a combo."""
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    combo = models.ForeignKey(StoreCombo, on_delete=models.CASCADE, related_name='items')
-    product = models.ForeignKey(
-        'stores.StoreProduct',
-        on_delete=models.CASCADE,
-        related_name='combo_items'
-    )
-    variant = models.ForeignKey(
-        'stores.StoreProductVariant',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-    quantity = models.PositiveIntegerField(default=1)
-    allow_customization = models.BooleanField(default=False)
-    customization_options = models.JSONField(default=dict, blank=True)
-    selection_rule = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Rules for variant selection: {'required': true, 'min_selections': 4, 'max_selections': 4}"
-    )
-
-    class Meta:
-        db_table = 'store_combo_items'
-        verbose_name = 'Combo Item'
-        verbose_name_plural = 'Combo Items'
-
-    def __str__(self):
-        return f"{self.quantity}x {self.product.name} in {self.combo.name}"
