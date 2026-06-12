@@ -444,9 +444,18 @@ class StoreOrderItemSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'subtotal', 'created_at']
 
 
+_PLACEHOLDER_EMAIL_DOMAINS = ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br', '@pastita.local')
+
+
+def _is_placeholder_email(email: str | None) -> bool:
+    if not email:
+        return False
+    return any(email.endswith(d) for d in _PLACEHOLDER_EMAIL_DOMAINS)
+
+
 class StoreOrderSerializer(serializers.ModelSerializer):
     """Serializer for StoreOrder model."""
-    
+
     items = StoreOrderItemSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     payment_status_display = serializers.CharField(source='get_payment_status_display', read_only=True)
@@ -454,7 +463,12 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
     store_slug = serializers.CharField(source='store.slug', read_only=True)
     items_count = serializers.SerializerMethodField()
-    
+    customer_email = serializers.SerializerMethodField()
+
+    def get_customer_email(self, obj) -> str | None:
+        email = obj.customer_email
+        return None if _is_placeholder_email(email) else email
+
     class Meta:
         model = StoreOrder
         fields = [
