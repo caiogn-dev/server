@@ -105,29 +105,60 @@ class MercadoPagoWebhookView(APIView):
             # No secret configured — skip validation (True = allow)
             return True
 
-        # Secret IS configured — enforce validation
-        # Mercado Pago sends signature in query string: ?signature=<hex>
-        provided_sig = (
-            request.query_params.get('signature')
-            or request.headers.get('X-Signature')
-            or request.headers.get('X-Hub-Signature')
-            or ''
-        )
-        if not provided_sig:
-            logger.warning("MP webhook missing signature for store %s", store_slug)
-            return False
+        # Secret IS configured — enforce validation.
+        # MP supports two signature formats:
+        # 1. Legacy: ?signature=<hex>  — HMAC-SHA256 over the raw request body
+        # 2. Current: X-Signature: ts=<ts>,v1=<hex>  — HMAC-SHA256 over
+        #    "id:<data_id>;request-id:<x-request-id>;ts:<ts>"
 
-        # Strip algorithm prefix if present (e.g. "sha256=abc...")
-        if '=' in provided_sig and not provided_sig.startswith('0') and len(provided_sig) < 20:
-            provided_sig = provided_sig.split('=', 1)[-1]
+        query_sig = request.query_params.get('signature', '')
+        x_sig_header = request.headers.get('X-Signature', '')
 
         try:
-            body = request.body.decode('utf-8')
+            if x_sig_header:
+                # Parse "ts=<ts>,v1=<hex>" into parts dict
+                parts = {}
+                for part in x_sig_header.split(','):
+                    if '=' in part:
+                        k, v = part.split('=', 1)
+                        parts[k.strip()] = v.strip()
+
+                ts = parts.get('ts', '')
+                provided_sig = parts.get('v1', '')
+                if not provided_sig:
+                    logger.warning("MP X-Signature missing v1 component for store %s", store_slug)
+                    return False
+
+                # Reconstruct signed message from request context
+                data_id = (
+                    request.query_params.get('data.id')
+                    or (request.data or {}).get('data', {}).get('id', '')
+                    if hasattr(request, 'data') else ''
+                )
+                request_id = request.headers.get('X-Request-Id', '')
+                signed_message = f'id:{data_id};request-id:{request_id};ts:{ts}'
+                body_bytes = signed_message.encode('utf-8')
+
+            elif query_sig:
+                # Legacy format: ?signature=<hex> — HMAC over raw body
+                provided_sig = query_sig
+                body_bytes = request.body
+
+            else:
+                hub_sig = request.headers.get('X-Hub-Signature', '')
+                if hub_sig.startswith('sha256='):
+                    provided_sig = hub_sig[7:]
+                    body_bytes = request.body
+                else:
+                    logger.warning("MP webhook missing signature for store %s", store_slug)
+                    return False
+
             expected = hmac_mod.new(
                 webhook_secret.encode('utf-8'),
-                body.encode('utf-8'),
+                body_bytes if isinstance(body_bytes, bytes) else body_bytes.encode('utf-8'),
                 hashlib.sha256,
             ).hexdigest()
+
             if hmac_mod.compare_digest(provided_sig, expected):
                 return True
             logger.warning("MP webhook signature mismatch for store %s", store_slug)
