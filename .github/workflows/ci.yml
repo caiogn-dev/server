@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Instala dependências
+        run: pip install -r requirements.txt
+      - name: Sintaxe (compileall)
+        run: python -m compileall -q apps config
+      - name: Django system check (importa todos os módulos e URLs)
+        env:
+          SECRET_KEY: ci-dummy-secret-key-not-used-in-prod
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          DJANGO_SETTINGS_MODULE: config.settings.development
+        run: python manage.py check
+      - name: Migrações pendentes? (aviso, não bloqueia)
+        continue-on-error: true
+        env:
+          SECRET_KEY: ci-dummy-secret-key-not-used-in-prod
+          DATABASE_URL: postgres://ci:ci@localhost:5432/ci
+          REDIS_URL: redis://localhost:6379/0
+          DJANGO_SETTINGS_MODULE: config.settings.development
+        run: python manage.py makemigrations --check --dry-run
