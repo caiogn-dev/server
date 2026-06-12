@@ -115,11 +115,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             )
             raise serializers.ValidationError(serializer.errors)
         order = serializer.save()
-        return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
-
-    def perform_create(self, serializer):
-        order = serializer.save()
         self._notify_order_update(order, 'order.created')
+        return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         return self._update_with_full_response(request, partial=False, *args, **kwargs)
