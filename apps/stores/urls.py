@@ -92,6 +92,7 @@ from .api.webhooks import (
     CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView,
     OrderReceiptView,
 )
+from .api.views.review_views import OrderReviewByTokenView, StoreReviewListView
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
     StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView
@@ -163,6 +164,7 @@ products_router.register(r'variants', StoreProductVariantViewSet, basename='prod
 
 store_frontend_patterns = [
     path('', StorePublicView.as_view(), name='store-public'),
+    path('reviews/', StoreReviewListView.as_view(), name='store-reviews'),
     path('app-config/', StoreAppConfigView.as_view(), name='store-app-config'),
     path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
     path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),
@@ -249,6 +251,8 @@ urlpatterns = [
     
     # SECURE: Get order by access token (public endpoint)
     path('orders/by-token/<str:access_token>/', OrderByTokenView.as_view(), name='order-by-token'),
+    # Avaliação do pedido pelo cliente (público via token)
+    path('orders/by-token/<str:access_token>/review/', OrderReviewByTokenView.as_view(), name='order-review-by-token'),
     
     # ==========================================================================
     # CUSTOMER ORDER ENDPOINTS (public/authenticated)

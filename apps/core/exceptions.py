@@ -138,7 +138,7 @@ def custom_exception_handler(exc, context):
                 'error': {
                     'code': 'rate_limit_exceeded',
                     'message': 'Too many requests. Please try again later.',
-                    'details': {'retry_after': exc.wait()},
+                    'details': {'retry_after': exc.wait},
                 }
             },
             status=status.HTTP_429_TOO_MANY_REQUESTS
