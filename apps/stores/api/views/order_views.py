@@ -3,7 +3,7 @@ Order management API views.
 """
 import logging
 import uuid as uuid_module
-from rest_framework import viewsets, status, permissions
+from rest_framework import viewsets, status, permissions, serializers
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -108,9 +108,12 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Create an order and return the full order contract used by the dashboard."""
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            logger.warning(f'[ORDER_CREATE_ERROR] Validation failed: {serializer.errors}')
-            logger.warning(f'[ORDER_CREATE_ERROR] Request data: {request.data}')
-        serializer.is_valid(raise_exception=True)
+            logger.warning(
+                '[ORDER_CREATE_ERROR] Validation failed: %s (fields: %s)',
+                list(serializer.errors.keys()),
+                list(request.data.keys()),
+            )
+            raise serializers.ValidationError(serializer.errors)
         order = serializer.save()
         return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
