@@ -57,6 +57,9 @@ from .team import StoreTeamMember
 # Review
 from .review import StoreReview
 
+# Loyalty
+from .loyalty import StoreLoyaltyAccount, StoreLoyaltyTransaction
+
 
 __all__ = [
     # Base
@@ -100,4 +103,7 @@ __all__ = [
     'StoreTeamMember',
     # Review
     'StoreReview',
+    # Loyalty
+    'StoreLoyaltyAccount',
+    'StoreLoyaltyTransaction',
 ]

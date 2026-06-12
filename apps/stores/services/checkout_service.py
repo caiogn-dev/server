@@ -393,6 +393,42 @@ class CheckoutService:
 
     @staticmethod
     def get_loyalty_status(store: Store, user=None) -> dict:
+        """Status de fidelidade lendo do saldo persistido (StoreLoyaltyAccount).
+
+        Na primeira leitura de um cliente sem conta, faz backfill do histórico
+        de pedidos (lógica legada) para a trilha persistida — depois disso toda
+        leitura é O(1) e os créditos novos chegam via OrderService/checkout.
+        """
+        from apps.stores.services.loyalty_service import LoyaltyService
+
+        if user and getattr(user, 'is_authenticated', False):
+            CheckoutService._ensure_loyalty_backfilled(store, user)
+        status = LoyaltyService.get_status(store, user)
+        available = status['available_rewards']
+        status['remaining'] = 0 if available else status['remaining']
+        status['label'] = f"A cada {status['threshold']} saladas, 1 grátis"
+        return status
+
+    @staticmethod
+    def _ensure_loyalty_backfilled(store: Store, user) -> None:
+        from apps.stores.models import StoreLoyaltyAccount
+        from apps.stores.services.loyalty_service import LoyaltyService
+
+        if StoreLoyaltyAccount.objects.filter(store=store, user=user).exists():
+            return
+        legacy = CheckoutService._compute_loyalty_from_history(store, user)
+        # Cria a conta mesmo zerada para não re-escanear a cada request
+        LoyaltyService._get_account(store, user)
+        if legacy['qualified_salads']:
+            for order_id, qty in legacy.get('per_order_qualified', {}).items():
+                order = StoreOrder.objects.filter(id=order_id).first()
+                if order and qty:
+                    LoyaltyService.credit_qualified(store, user, order, qty)
+        if legacy['rewards_redeemed']:
+            LoyaltyService.backfill_redeemed(store, user, legacy['rewards_redeemed'])
+
+    @staticmethod
+    def _compute_loyalty_from_history(store: Store, user=None) -> dict:
         threshold = int((store.metadata or {}).get('loyalty_salads_required', 10) or 10)
         threshold = max(1, threshold)
         enabled = bool((store.metadata or {}).get('loyalty_enabled', True))
@@ -428,13 +464,18 @@ class CheckoutService:
 
         qualified = 0
         redeemed = 0
+        per_order_qualified = {}
         for order in orders:
             loyalty_meta = (order.metadata or {}).get('loyalty_reward') or {}
             if loyalty_meta.get('applied'):
                 redeemed += int(loyalty_meta.get('count') or 1)
+            order_qty = 0
             for item in order.items.all():
                 if CheckoutService._is_salad_order_item(item):
-                    qualified += int(item.quantity or 0)
+                    order_qty += int(item.quantity or 0)
+            if order_qty:
+                per_order_qualified[str(order.id)] = order_qty
+                qualified += order_qty
 
         earned = qualified // threshold
         available = max(0, earned - redeemed)
@@ -450,6 +491,7 @@ class CheckoutService:
             'remaining': 0 if available else max(0, threshold - progress),
             'can_redeem': enabled and available > 0,
             'label': f'A cada {threshold} saladas, 1 grátis',
+            'per_order_qualified': per_order_qualified,
         }
 
     @staticmethod
@@ -688,6 +730,17 @@ class CheckoutService:
         if customer_user and customer_user != cart.user:
             cart.user = customer_user
             cart.save(update_fields=['user', 'updated_at'])
+
+        # Fidelidade persistida: registra o resgate na trilha auditável
+        if loyalty_reward.get('applied'):
+            loyalty_user = customer_user or cart.user
+            if loyalty_user:
+                from apps.stores.services.loyalty_service import LoyaltyService
+                try:
+                    LoyaltyService.redeem(store, loyalty_user, order, rewards=int(loyalty_reward.get('count') or 1))
+                except ValueError:
+                    # can_redeem já foi validado acima; corrida rara → não bloquear o pedido
+                    logger.warning('Loyalty redeem sem saldo no pedido %s', order.id)
         
         # Create order items and decrement stock
         for item in cart.items.select_related('product', 'variant').all():
