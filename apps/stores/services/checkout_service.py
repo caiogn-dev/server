@@ -717,9 +717,11 @@ class CheckoutService:
                     stock_quantity=F('stock_quantity') - combo_item.quantity
                 )
         
-        # Mark coupon as used (atomic)
+        # Mark coupon as used (atomic); if False, the limit was hit by a concurrent
+        # checkout between our is_valid() check and now — roll back the whole order.
         if coupon:
-            coupon.increment_usage()
+            if not coupon.increment_usage():
+                raise ValueError('Código de cupom atingiu o limite de uso. Tente novamente.')
 
         if store_customer:
             store_customer.last_order_at = timezone.now()
