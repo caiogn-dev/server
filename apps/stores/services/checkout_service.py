@@ -613,7 +613,8 @@ class CheckoutService:
                 'threshold': loyalty_status.get('threshold', 10),
             }
         
-        # Calculate total (no tax - just subtotal + delivery - discount)
+        # Cap discount so combined coupon+loyalty can't exceed subtotal+delivery
+        discount = min(discount, subtotal + delivery_fee)
         total = subtotal + delivery_fee - discount
 
         extra_metadata = dict(delivery_payload.get('metadata') or {})
