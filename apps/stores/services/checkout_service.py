@@ -711,6 +711,7 @@ class CheckoutService:
             email=customer_data.get('email', ''),
             phone=customer_data.get('phone', ''),
             cpf=customer_data.get('cpf', ''),
+            accepts_marketing=customer_data.get('accepts_marketing'),
             delivery_method=delivery_payload.get('method', '') if delivery_payload else '',
             delivery_address=delivery_payload.get('address', {}) if delivery_payload else {},
             user=cart.user,

@@ -243,6 +243,7 @@ class CustomerIdentityService:
         cpf: str = "",
         delivery_method: str = "",
         delivery_address: Optional[dict] = None,
+        accepts_marketing: Optional[bool] = None,
         user=None,
     ) -> dict:
         """
@@ -308,6 +309,14 @@ class CustomerIdentityService:
         )
 
         store_customer_updates = []
+        # LGPD: consentimento de marketing (opt-in). Registra timestamp ao consentir.
+        if accepts_marketing is not None and store_customer.accepts_marketing != bool(accepts_marketing):
+            store_customer.accepts_marketing = bool(accepts_marketing)
+            store_customer_updates.append("accepts_marketing")
+            if accepts_marketing:
+                from django.utils import timezone as _tz
+                store_customer.marketing_opt_in_at = _tz.now()
+                store_customer_updates.append("marketing_opt_in_at")
         if normalized_phone and store_customer.phone != normalized_phone:
             store_customer.phone = normalized_phone
             store_customer_updates.append("phone")

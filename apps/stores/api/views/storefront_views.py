@@ -680,6 +680,7 @@ class StoreCheckoutView(APIView):
             'email': request.data.get('customer_email', ''),
             'phone': request.data.get('customer_phone', ''),
             'cpf': request.data.get('cpf', ''),
+            'accepts_marketing': request.data.get('accepts_marketing'),
         }
         
         # Extract delivery data
