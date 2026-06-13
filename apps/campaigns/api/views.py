@@ -319,37 +319,33 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def schedule(self, request, pk=None):
         """Schedule a campaign."""
+        campaign = self.get_object()
         scheduled_at = request.data.get('scheduled_at')
         if not scheduled_at:
             return Response(
                 {'error': 'scheduled_at is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         service = CampaignService()
         try:
             from django.utils.dateparse import parse_datetime
             scheduled_at = parse_datetime(scheduled_at)
-            campaign = service.schedule_campaign(str(pk), scheduled_at)
+            campaign = service.schedule_campaign(str(campaign.id), scheduled_at)
             return Response(CampaignSerializer(campaign).data)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
+
     @extend_schema(summary="Start campaign")
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):
         """Start a campaign immediately."""
+        campaign = self.get_object()
         service = CampaignService()
         try:
-            campaign = service.start_campaign(str(pk))
-            logger.info(f"Campaign {pk} started successfully by user {request.user}")
+            campaign = service.start_campaign(str(campaign.id))
+            logger.info(f"Campaign {campaign.id} started successfully by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
-        except Campaign.DoesNotExist:
-            logger.warning(f"Campaign {pk} not found")
-            return Response(
-                {'error': 'Campanha não encontrada'},
-                status=status.HTTP_404_NOT_FOUND
-            )
         except ValueError as e:
             logger.warning(f"Campaign {pk} start validation failed: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -359,18 +355,17 @@ class CampaignViewSet(viewsets.ModelViewSet):
                 {'error': 'Erro ao iniciar campanha. Verifique se o serviço de filas está ativo.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
+
     @extend_schema(summary="Pause campaign")
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
         """Pause a running campaign."""
+        campaign = self.get_object()
         service = CampaignService()
         try:
-            campaign = service.pause_campaign(str(pk))
-            logger.info(f"Campaign {pk} paused by user {request.user}")
+            campaign = service.pause_campaign(str(campaign.id))
+            logger.info(f"Campaign {campaign.id} paused by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
-        except Campaign.DoesNotExist:
-            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
@@ -381,13 +376,12 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def resume(self, request, pk=None):
         """Resume a paused campaign."""
+        campaign = self.get_object()
         service = CampaignService()
         try:
-            campaign = service.resume_campaign(str(pk))
-            logger.info(f"Campaign {pk} resumed by user {request.user}")
+            campaign = service.resume_campaign(str(campaign.id))
+            logger.info(f"Campaign {campaign.id} resumed by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
-        except Campaign.DoesNotExist:
-            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
@@ -398,27 +392,27 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """Cancel a campaign."""
+        campaign = self.get_object()
         service = CampaignService()
         try:
-            campaign = service.cancel_campaign(str(pk))
-            logger.info(f"Campaign {pk} cancelled by user {request.user}")
+            campaign = service.cancel_campaign(str(campaign.id))
+            logger.info(f"Campaign {campaign.id} cancelled by user {request.user}")
             return Response(CampaignSerializer(campaign).data)
-        except Campaign.DoesNotExist:
-            return Response({'error': 'Campanha não encontrada'}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Campaign {pk} cancel error: {e}\n{traceback.format_exc()}")
             return Response({'error': 'Erro ao cancelar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+
     @extend_schema(summary="Get campaign statistics")
     @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):
         """Get campaign statistics."""
+        campaign = self.get_object()
         service = CampaignService()
-        stats = service.get_campaign_stats(str(pk))
+        stats = service.get_campaign_stats(str(campaign.id))
         return Response(stats)
-    
+
     @extend_schema(summary="Force process campaign batch")
     @action(detail=True, methods=['post'])
     def process(self, request, pk=None):
@@ -426,30 +420,24 @@ class CampaignViewSet(viewsets.ModelViewSet):
         Force process a campaign batch synchronously.
         Use this when Celery is not available or campaign is stuck.
         """
+        campaign = self.get_object()
         service = CampaignService()
         try:
-            campaign = Campaign.objects.get(id=pk)
-            
             if campaign.status in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
                 campaign.status = Campaign.CampaignStatus.RUNNING
                 campaign.started_at = timezone.now()
                 campaign.save()
-                logger.info(f"Campaign {pk} status changed to running")
-            
+                logger.info(f"Campaign {campaign.id} status changed to running")
+
             if campaign.status != Campaign.CampaignStatus.RUNNING:
                 return Response(
                     {'error': 'Campaign is not running'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            result = service.process_campaign_batch(str(pk), batch_size=50)
+
+            result = service.process_campaign_batch(str(campaign.id), batch_size=50)
             return Response(result)
-            
-        except Campaign.DoesNotExist:
-            return Response(
-                {'error': 'Campaign not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+
         except Exception as e:
             logger.exception(f"Error processing campaign {pk}: {e}")
             return Response(
@@ -480,12 +468,13 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def add_recipients(self, request, pk=None):
         """Add recipients to a campaign."""
+        campaign = self.get_object()
         serializer = AddRecipientsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         service = CampaignService()
         try:
-            count = service.add_recipients(str(pk), serializer.validated_data['contacts'])
+            count = service.add_recipients(str(campaign.id), serializer.validated_data['contacts'])
             return Response({'added': count})
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)

@@ -227,23 +227,33 @@ class SubscriberViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def import_csv(self, request):
         """Import subscribers from CSV."""
+        from apps.core.permissions import accessible_store_ids
         store_id = request.data.get('store')
         contacts = request.data.get('contacts', [])
-        
+
         if not store_id:
             return Response(
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        # Verify the requesting user has access to this store.
+        user = request.user
+        if not (user.is_staff or user.is_superuser):
+            if str(store_id) not in [str(sid) for sid in accessible_store_ids(user)]:
+                return Response(
+                    {'error': 'Acesso negado à loja informada'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
         created = 0
         updated = 0
-        
+
         for contact in contacts:
             email = contact.get('email')
             if not email:
                 continue
-            
+
             subscriber, was_created = Subscriber.objects.update_or_create(
                 store_id=store_id,
                 email=email,
@@ -253,12 +263,12 @@ class SubscriberViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                     'source': 'import',
                 }
             )
-            
+
             if was_created:
                 created += 1
             else:
                 updated += 1
-        
+
         return Response({
             'created': created,
             'updated': updated,
