@@ -171,6 +171,9 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             # Subscribe to specific order updates
             order_id = content.get('order_id')
             if order_id:
+                if not await self.check_order_belongs_to_store(order_id):
+                    await self.send_json({'type': 'error', 'code': 'ORDER_ACCESS_DENIED', 'order_id': order_id})
+                    return
                 await self.channel_layer.group_add(
                     f"order_{order_id}",
                     self.channel_name
@@ -236,6 +239,20 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             return user_can_access_store_orders(self.scope.get('user'), self.store_slug)
         except Exception as e:
             logger.error(f"WebSocket access check error: {e}")
+            return False
+
+    @database_sync_to_async
+    def check_order_belongs_to_store(self, order_id: str) -> bool:
+        """Verify the order belongs to the store this consumer is connected to."""
+        from apps.stores.models import StoreOrder
+        user = self.scope.get('user')
+        if user and (user.is_staff or user.is_superuser):
+            return True
+        try:
+            return StoreOrder.objects.filter(
+                id=order_id, store__slug=self.store_slug
+            ).exists()
+        except Exception:
             return False
 
 

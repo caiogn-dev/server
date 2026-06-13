@@ -96,6 +96,9 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
             # Subscribe to a specific conversation for typing indicators
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                if not await self.verify_conversation_access(conversation_id):
+                    await self.send_json({'type': 'error', 'code': 'CONV_ACCESS_DENIED', 'conversation_id': conversation_id})
+                    return
                 group_name = f"instagram_conv_{conversation_id}"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.conversation_groups.add(group_name)
@@ -103,7 +106,7 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
                     'type': 'subscribed',
                     'conversation_id': conversation_id
                 })
-        
+
         elif message_type == 'unsubscribe_conversation':
             conversation_id = content.get('conversation_id')
             if conversation_id:
@@ -114,10 +117,12 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
                     'type': 'unsubscribed',
                     'conversation_id': conversation_id
                 })
-        
+
         elif message_type == 'typing_start':
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                if not await self.verify_conversation_access(conversation_id):
+                    return
                 await self.channel_layer.group_send(
                     f"instagram_conv_{conversation_id}",
                     {
@@ -127,10 +132,12 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
                         'is_typing': True
                     }
                 )
-        
+
         elif message_type == 'typing_stop':
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                if not await self.verify_conversation_access(conversation_id):
+                    return
                 await self.channel_layer.group_send(
                     f"instagram_conv_{conversation_id}",
                     {
@@ -219,15 +226,26 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
     def verify_account_access(self, account_id: str) -> bool:
         """Verify user has access to the Instagram account."""
         from .models import IGAccount
-        
+
         if not account_id:
             return False
-        
+
         try:
-            # Check if user owns the account or is superuser
             account = IGAccount.objects.get(id=account_id)
             return account.owner == self.user or self.user.is_superuser
         except IGAccount.DoesNotExist:
+            return False
+
+    @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        """Verify conversation belongs to the connected Instagram account."""
+        from .models import InstagramConversation
+        if self.user.is_superuser:
+            return True
+        try:
+            conv = InstagramConversation.objects.only('account_id').get(id=conversation_id)
+            return str(conv.account_id) == str(self.account_id)
+        except (InstagramConversation.DoesNotExist, Exception):
             return False
 
 
