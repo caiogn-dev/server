@@ -73,6 +73,7 @@ from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView
 from .api.views.crm_views import (
     CustomerSearchView,
     CustomerAddressViewSet,
+    CustomerProfileView,
     TeamMemberViewSet,
     places_search_view,
 )
@@ -159,6 +160,7 @@ store_frontend_patterns = [
 
     # CRM
     path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),
+    path('crm/customers/<uuid:user_id>/', CustomerProfileView.as_view(), name='store-crm-customer-profile'),
     path('crm/customers/<uuid:user_id>/addresses/', CustomerAddressViewSet.as_view({
         'get': 'list',
         'post': 'create',
