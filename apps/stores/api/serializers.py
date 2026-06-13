@@ -29,7 +29,9 @@ class StoreSerializer(serializers.ModelSerializer):
     integrations_count = serializers.SerializerMethodField()
     products_count = serializers.SerializerMethodField()
     orders_count = serializers.SerializerMethodField()
-    
+    avg_rating = serializers.SerializerMethodField()
+    reviews_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Store
         fields = [
@@ -44,11 +46,20 @@ class StoreSerializer(serializers.ModelSerializer):
             'delivery_enabled', 'pickup_enabled',
             'min_order_value', 'free_delivery_threshold', 'default_delivery_fee',
             'operating_hours', 'is_open',
+            'avg_rating', 'reviews_count',
             'owner', 'metadata',
             'integrations_count', 'products_count', 'orders_count',
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
+
+    def get_avg_rating(self, obj):
+        from django.db.models import Avg
+        avg = obj.reviews.filter(is_public=True).aggregate(a=Avg('rating'))['a']
+        return round(avg, 1) if avg is not None else None
+
+    def get_reviews_count(self, obj):
+        return obj.reviews.filter(is_public=True).count()
     
     def get_logo_url(self, obj):
         return obj.get_logo_url()
@@ -1503,6 +1514,12 @@ class PublicCatalogSerializer(serializers.Serializer):
     def get_store(self, obj):
         store = obj.get('store')
         if store:
+            # Prova social: nota média + contagem de avaliações públicas
+            from django.db.models import Avg, Count
+            agg = store.reviews.filter(is_public=True).aggregate(
+                avg=Avg('rating'), n=Count('id'),
+            )
+            avg_rating = round(agg['avg'], 1) if agg['avg'] is not None else None
             return {
                 'id': str(store.id),
                 'name': store.name,
@@ -1522,6 +1539,11 @@ class PublicCatalogSerializer(serializers.Serializer):
                 'pickup_enabled': store.pickup_enabled,
                 'min_order_value': str(store.min_order_value),
                 'default_delivery_fee': str(store.default_delivery_fee),
+                'free_delivery_threshold': (
+                    str(store.free_delivery_threshold) if store.free_delivery_threshold else None
+                ),
+                'avg_rating': avg_rating,
+                'reviews_count': agg['n'],
                 'is_open': store.is_open(),
             }
         return None
