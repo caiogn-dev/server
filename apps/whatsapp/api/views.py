@@ -312,6 +312,19 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['account', 'direction', 'status', 'message_type', 'conversation']
 
+    def _check_account_access(self, account_id) -> Response | None:
+        """Return 403 Response if user cannot access this account, else None."""
+        if not _accessible_accounts(self.request.user).filter(id=account_id).exists():
+            logger.warning(
+                "WhatsApp API access denied: user=%s account_id=%s action=%s",
+                self.request.user.id, account_id, self.action,
+            )
+            return Response(
+                {'error': 'Acesso negado à conta WhatsApp'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return None
+
     def get_queryset(self):
         accessible_ids = _accessible_accounts(self.request.user).values_list('id', flat=True)
         queryset = Message.objects.select_related(
@@ -344,7 +357,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a text message."""
         serializer = SendTextMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_text_message(**serializer.validated_data)
         
@@ -363,7 +378,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a template message."""
         serializer = SendTemplateMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_template_message(**serializer.validated_data)
         
@@ -382,7 +399,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive buttons message."""
         serializer = SendInteractiveButtonsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_interactive_buttons(**serializer.validated_data)
         
@@ -401,7 +420,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive list message."""
         serializer = SendInteractiveListSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_interactive_list(**serializer.validated_data)
         
@@ -420,6 +441,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.validated_data
 
         account_id = str(data['account_id'])
+        denied = self._check_account_access(account_id)
+        if denied:
+            return denied
         to = data['to']
         store_id = data.get('store_id')
 
@@ -496,7 +520,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an image message."""
         serializer = SendImageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_image(**serializer.validated_data)
         
@@ -515,7 +541,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a document message."""
         serializer = SendDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_document(**serializer.validated_data)
         
@@ -557,6 +585,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         if not account_id or not to or not file_obj:
             return Response({'error': 'account_id, to, and file are required'}, status=status.HTTP_400_BAD_REQUEST)
+        denied = self._check_account_access(account_id)
+        if denied:
+            return denied
 
         # Determine message type from MIME
         mime = file_obj.content_type or ''
@@ -645,7 +676,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an audio message."""
         serializer = SendAudioSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_audio(**serializer.validated_data)
 
@@ -661,7 +694,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a video message."""
         serializer = SendVideoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         message = service.send_video(**serializer.validated_data)
 
@@ -677,7 +712,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Mark a message as read."""
         serializer = MarkAsReadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         success = service.mark_as_read(
             account_id=str(serializer.validated_data['account_id']),
@@ -696,7 +733,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         messages = service.get_conversation_history(
             account_id=str(serializer.validated_data['account_id']),
@@ -716,7 +755,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        denied = self._check_account_access(serializer.validated_data['account_id'])
+        if denied:
+            return denied
         service = MessageService()
         stats = service.get_message_stats(
             account_id=str(serializer.validated_data['account_id']),
