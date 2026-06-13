@@ -43,9 +43,18 @@ class NotificationConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             await self.send_json({'type': 'pong', 'timestamp': json.dumps(content.get('timestamp'))})
         elif message_type == 'subscribe':
             channel = content.get('channel')
-            if channel:
+            # Only allow users to subscribe to their own personal notification channels.
+            # Staff may subscribe to any channel for monitoring purposes.
+            if channel and (
+                self.user.is_staff
+                or self.user.is_superuser
+                or channel == f"user_{self.user.id}"
+                or channel.startswith(f"user_{self.user.id}_")
+            ):
                 await self.channel_layer.group_add(channel, self.channel_name)
                 await self.send_json({'type': 'subscribed', 'channel': channel})
+            elif channel:
+                await self.send_json({'type': 'error', 'message': 'Access denied to channel'})
         elif message_type == 'unsubscribe':
             channel = content.get('channel')
             if channel:
@@ -84,6 +93,7 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             await self.close(code=4000)
             return
         if not await self.check_conversation_access():
+            logger.warning("Chat WS: User %s denied access to conversation %s", self.user.id, self.conversation_id)
             await self.close(code=4003)
             return
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
@@ -160,6 +170,19 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         except Message.DoesNotExist:
             pass
 
+    @database_sync_to_async
+    def check_conversation_access(self) -> bool:
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            from apps.conversations.models import Conversation
+            conv = Conversation.objects.select_related('account').only('account__owner_id').get(
+                id=self.conversation_id
+            )
+            return conv.account.owner_id == self.user.id
+        except Exception:
+            return False
+
 
 class DashboardConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
     """WebSocket consumer for dashboard real-time updates."""
@@ -235,3 +258,13 @@ class DashboardConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
 
     async def new_conversation(self, event):
         await self.send_json({'type': 'new_conversation', 'conversation': event['conversation']})
+
+    @database_sync_to_async
+    def check_account_access(self, account_id: str) -> bool:
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            from apps.whatsapp.models import WhatsAppAccount
+            return WhatsAppAccount.objects.filter(id=account_id, owner=self.user).exists()
+        except Exception:
+            return False

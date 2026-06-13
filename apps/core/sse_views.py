@@ -375,42 +375,62 @@ class WhatsAppSSEView(BaseSSEView):
         """Stream WhatsApp updates."""
         from apps.whatsapp.models import Message
         from apps.conversations.models import Conversation
+        from apps.core.permissions import accessible_whatsapp_account_ids
         from django.utils import timezone
-        from datetime import timedelta
-        
+
         account_id = request.GET.get('account_id')
         conversation_id = request.GET.get('conversation_id')
-        
+
+        # Resolve the set of accounts this user is allowed to see once, before
+        # the polling loop, so every iteration avoids redundant DB hits.
+        allowed_account_ids = list(accessible_whatsapp_account_ids(user))
+
+        if account_id:
+            # Reject the request outright if the caller asked for an account
+            # they cannot access — prevents cross-tenant enumeration via SSE.
+            from apps.whatsapp.models import WhatsAppAccount
+            if not WhatsAppAccount.objects.filter(
+                id=account_id, id__in=allowed_account_ids
+            ).exists():
+                yield SSEEvent(
+                    event_type='error',
+                    data={'message': 'Access denied to WhatsApp account'},
+                )
+                return
+            # Narrow the allowed set to just this one verified account.
+            allowed_account_ids = [account_id]
+
         last_check = timezone.now()
         last_message_id = None
-        
-        # Get initial state
+
         if conversation_id:
+            # Verify the conversation belongs to an account the user can access.
             try:
-                conversation = Conversation.objects.get(id=conversation_id)
+                conversation = Conversation.objects.filter(
+                    id=conversation_id,
+                    account_id__in=allowed_account_ids,
+                ).get()
                 last_message = conversation.messages.order_by('-created_at').first()
                 if last_message:
                     last_message_id = str(last_message.id)
             except Conversation.DoesNotExist:
                 yield SSEEvent(
                     event_type='error',
-                    data={'message': 'Conversation not found'}
+                    data={'message': 'Conversation not found or access denied'},
                 )
                 return
-        
+
         while True:
             current_time = timezone.now()
-            
-            # Query for new messages
-            query = Message.objects.filter(created_at__gt=last_check)
-            
-            if account_id:
-                query = query.filter(account_id=account_id)
+
+            # All queries are always scoped to the user's allowed accounts.
+            base_filter = {'created_at__gt': last_check, 'account_id__in': allowed_account_ids}
+            query = Message.objects.filter(**base_filter)
             if conversation_id:
                 query = query.filter(conversation_id=conversation_id)
-            
+
             new_messages = query.order_by('created_at')[:50]
-            
+
             for message in new_messages:
                 yield SSEEvent(
                     event_type='message',
@@ -427,18 +447,16 @@ class WhatsAppSSEView(BaseSSEView):
                     id=f"msg_{message.id}_{int(time.time())}"
                 )
                 last_message_id = str(message.id)
-            
-            # Query for status updates
-            status_updates = Message.objects.filter(
-                updated_at__gt=last_check,
-                created_at__lt=last_check  # Only existing messages
-            ).exclude(status='pending')[:50]
-            
-            if account_id:
-                status_updates = status_updates.filter(account_id=account_id)
+
+            status_filter = {
+                'updated_at__gt': last_check,
+                'created_at__lt': last_check,
+                'account_id__in': allowed_account_ids,
+            }
+            status_updates = Message.objects.filter(**status_filter).exclude(status='pending')[:50]
             if conversation_id:
                 status_updates = status_updates.filter(conversation_id=conversation_id)
-            
+
             for message in status_updates:
                 yield SSEEvent(
                     event_type='status_update',
@@ -449,7 +467,7 @@ class WhatsAppSSEView(BaseSSEView):
                     },
                     id=f"status_{message.id}_{int(time.time())}"
                 )
-            
+
             last_check = current_time
             yield None
 

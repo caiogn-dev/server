@@ -4,6 +4,7 @@ WebSocket consumers for automation real-time updates.
 import logging
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 
 from apps.core.base_consumer import FirstMessageAuthMixin
@@ -19,7 +20,11 @@ class AutomationConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         self.company_groups = set()
 
     async def _post_auth_connect(self):
-        await self.channel_layer.group_add("automation", self.channel_name)
+        # The global "automation" group is only for staff; regular users have
+        # no business seeing cross-tenant events broadcast to it.
+        if self.user.is_staff or self.user.is_superuser:
+            await self.channel_layer.group_add("automation", self.channel_name)
+            self.company_groups.add("automation")
         await self.channel_layer.group_add(f"user_{self.user.id}_automation", self.channel_name)
         await self.send_json({
             'type': 'connection_established',

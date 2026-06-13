@@ -118,6 +118,19 @@ class HandoverConsumer(AsyncWebsocketConsumer):
         }))
     
     @database_sync_to_async
+    def check_conversation_access(self, conversation_id: str) -> bool:
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            from apps.conversations.models import Conversation
+            conv = Conversation.objects.select_related('account').only('account__owner_id').get(
+                id=conversation_id
+            )
+            return conv.account.owner_id == self.user.id
+        except Exception:
+            return False
+
+    @database_sync_to_async
     def get_user_store_ids(self):
         """Retorna IDs das lojas que o usuário é membro."""
         try:
