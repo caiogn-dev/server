@@ -78,3 +78,27 @@ class TeamMemberCreateSerializer(serializers.ModelSerializer):
         if not User.objects.filter(pk=value).exists():
             raise serializers.ValidationError("Usuário não encontrado.")
         return value
+
+
+class ActiveOrderSerializer(serializers.Serializer):
+    """Pedido ativo resumido para exibição no painel CRM."""
+    id = serializers.UUIDField()
+    status = serializers.CharField()
+    total = serializers.DecimalField(max_digits=10, decimal_places=2)
+
+
+class CustomerProfileSerializer(CustomerSearchSerializer):
+    """
+    Perfil completo de um cliente — extends CustomerSearchResult with active_order.
+    Usado em GET /stores/{slug}/crm/customers/{id}/.
+    """
+    active_order = serializers.SerializerMethodField()
+
+    class Meta(CustomerSearchSerializer.Meta):
+        fields = CustomerSearchSerializer.Meta.fields + ['active_order']
+
+    def get_active_order(self, obj):
+        active_order = self.context.get('active_order')
+        if not active_order:
+            return None
+        return ActiveOrderSerializer(active_order).data

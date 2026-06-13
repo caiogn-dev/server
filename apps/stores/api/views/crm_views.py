@@ -24,6 +24,7 @@ from ..crm_serializers import (
     UserAddressSerializer,
     TeamMemberSerializer,
     TeamMemberCreateSerializer,
+    CustomerProfileSerializer,
 )
 from .base import IsStoreOwnerOrStaff
 
@@ -37,6 +38,62 @@ def _get_store(store_slug: str) -> Store:
         return get_object_or_404(Store, pk=store_slug)
     except (ValueError, AttributeError):
         return get_object_or_404(Store, slug=store_slug)
+
+
+# ---------------------------------------------------------------------------
+# Customer Profile
+# ---------------------------------------------------------------------------
+
+_ACTIVE_ORDER_STATUSES = [
+    'pending', 'confirmed', 'processing', 'paid',
+    'preparing', 'ready', 'shipped', 'out_for_delivery',
+]
+
+
+class CustomerProfileView(APIView):
+    """
+    Perfil completo de um cliente (UnifiedUser).
+
+    GET /api/v1/stores/{store_slug}/crm/customers/{user_id}/
+    """
+    permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
+
+    def get(self, request, store_slug, user_id):
+        store = _get_store(store_slug)
+
+        perm = IsStoreOwnerOrStaff()
+        if not perm._user_can_access_store(request.user, store):
+            return Response({'detail': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+        unified_user = get_object_or_404(
+            UnifiedUser.objects.prefetch_related(
+                Prefetch(
+                    'addresses',
+                    queryset=UserAddress.objects.filter(tenant=store),
+                    to_attr='_store_addresses',
+                )
+            ),
+            pk=user_id,
+        )
+
+        from apps.stores.models import StoreOrder
+        active_order = (
+            StoreOrder.objects
+            .filter(
+                store=store,
+                customer_phone=unified_user.phone_number,
+                status__in=_ACTIVE_ORDER_STATUSES,
+            )
+            .order_by('-created_at')
+            .only('id', 'status', 'total')
+            .first()
+        )
+
+        serializer = CustomerProfileSerializer(
+            unified_user,
+            context={'store': store, 'request': request, 'active_order': active_order},
+        )
+        return Response(serializer.data)
 
 
 # ---------------------------------------------------------------------------
