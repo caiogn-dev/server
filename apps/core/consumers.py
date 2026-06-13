@@ -83,6 +83,9 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         if not self.conversation_id:
             await self.close(code=4000)
             return
+        if not await self.check_conversation_access():
+            await self.close(code=4003)
+            return
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.send_json({
             'type': 'connection_established',
@@ -133,6 +136,20 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         })
 
     @database_sync_to_async
+    def check_conversation_access(self) -> bool:
+        """Verify the user has access to the conversation."""
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            from apps.conversations.models import Conversation
+            conv = Conversation.objects.select_related('account').only(
+                'account__owner_id'
+            ).get(id=self.conversation_id)
+            return conv.account.owner_id == self.user.id
+        except Exception:
+            return False
+
+    @database_sync_to_async
     def mark_message_read(self, message_id):
         from apps.whatsapp.models import Message
         try:
@@ -177,6 +194,9 @@ class DashboardConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         if message_type == 'subscribe_account':
             account_id = content.get('account_id')
             if account_id:
+                if not await self.check_account_access(account_id):
+                    await self.send_json({'type': 'error', 'code': 'ACCOUNT_ACCESS_DENIED', 'account_id': account_id})
+                    return
                 if self.account_group:
                     await self.channel_layer.group_discard(self.account_group, self.channel_name)
                 self.account_group = f"account_{account_id}"
@@ -190,6 +210,19 @@ class DashboardConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             })
         elif message_type == 'ping':
             await self.send_json({'type': 'pong'})
+
+    @database_sync_to_async
+    def check_account_access(self, account_id: str) -> bool:
+        """Verify the user has access to the specified WhatsApp account."""
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            from apps.whatsapp.models import WhatsAppAccount
+            return WhatsAppAccount.objects.filter(
+                id=account_id, owner=self.user
+            ).exists()
+        except Exception:
+            return False
 
     async def stats_update(self, event):
         await self.send_json({'type': 'stats_update', 'stats': event['stats']})
