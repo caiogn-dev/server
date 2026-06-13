@@ -592,10 +592,14 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
         from ..services.instagram_webhook_service import InstagramWebhookService
         from ..webhooks.handlers import InstagramWebhookHandler
 
-        signature = request.headers.get("X-Hub-Signature-256", "")
-        if not InstagramWebhookHandler().verify_signature(request.body, signature):
-            logger.warning("Instagram webhook: invalid or missing signature")
-            return Response({"status": "error", "message": "Invalid signature"}, status=403)
+        signature = request.headers.get('X-Hub-Signature-256', '')
+        handler = InstagramWebhookHandler()
+        if not handler.verify_signature(request.body, signature):
+            if getattr(settings, 'DEBUG', False):
+                logger.warning("Instagram webhook: invalid signature — continuing in DEBUG mode")
+            else:
+                logger.error("Instagram webhook: invalid signature — rejecting")
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_403_FORBIDDEN)
 
         payload = request.data
         result = InstagramWebhookService().process_webhook(payload)

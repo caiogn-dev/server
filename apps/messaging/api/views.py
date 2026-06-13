@@ -1,13 +1,9 @@
-import hashlib
-import hmac
 import logging
 
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
-
-logger = logging.getLogger(__name__)
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +24,8 @@ from .serializers import (
     MessengerProfileSerializer,
     MessengerSponsoredMessageSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class MessengerAccountViewSet(viewsets.ModelViewSet):
@@ -358,20 +356,16 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
 
     def create(self, request):
         from ..tasks import process_messenger_webhook
+        from apps.instagram.webhooks.handlers import InstagramWebhookHandler
 
-        app_secret = getattr(settings, "INSTAGRAM_APP_SECRET", "") or getattr(settings, "MESSENGER_APP_SECRET", "")
-        signature = request.headers.get("X-Hub-Signature-256", "")
-        if app_secret:
-            if not signature or not signature.startswith("sha256="):
-                logger.warning("Messenger webhook: missing or malformed signature")
-                return Response({"status": "error", "message": "Invalid signature"}, status=403)
-            expected = hmac.new(app_secret.encode(), request.body, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(expected, signature[7:]):
-                logger.warning("Messenger webhook: signature mismatch")
-                return Response({"status": "error", "message": "Invalid signature"}, status=403)
-        elif not getattr(settings, "DEBUG", False):
-            logger.error("Messenger webhook: INSTAGRAM_APP_SECRET not configured, rejecting in production")
-            return Response({"status": "error", "message": "Webhook not configured"}, status=403)
+        signature = request.headers.get('X-Hub-Signature-256', '')
+        handler = InstagramWebhookHandler()
+        if not handler.verify_signature(request.body, signature):
+            if getattr(settings, 'DEBUG', False):
+                logger.warning("Messenger webhook: invalid signature — continuing in DEBUG mode")
+            else:
+                logger.error("Messenger webhook: invalid signature — rejecting")
+                return Response({'status': 'invalid_signature'}, status=status.HTTP_403_FORBIDDEN)
 
         payload = request.data
         process_messenger_webhook.delay(payload)
