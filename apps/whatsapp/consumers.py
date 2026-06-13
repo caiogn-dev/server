@@ -64,6 +64,9 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         elif message_type == 'subscribe_conversation':
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                if not await self.verify_conversation_access(conversation_id):
+                    await self.send_json({'type': 'error', 'code': 'CONV_ACCESS_DENIED', 'conversation_id': conversation_id})
+                    return
                 group_name = f"whatsapp_conv_{conversation_id}"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.conversation_groups.add(group_name)
@@ -81,6 +84,8 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
             conversation_id = content.get('conversation_id')
             is_typing = content.get('is_typing', False)
             if conversation_id:
+                if not await self.verify_conversation_access(conversation_id):
+                    return
                 await self.channel_layer.group_send(
                     f"whatsapp_conv_{conversation_id}",
                     {
@@ -153,6 +158,17 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         except WhatsAppAccount.DoesNotExist:
             return False
 
+    @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        from apps.conversations.models import Conversation
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            conv = Conversation.objects.only('account_id').get(id=conversation_id)
+            return str(conv.account_id) == str(self.account_id)
+        except (Conversation.DoesNotExist, Exception):
+            return False
+
 
 class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
     """
@@ -197,6 +213,9 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
         elif message_type == 'subscribe_conversation':
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                if not await self.verify_conversation_access_dashboard(conversation_id):
+                    await self.send_json({'type': 'error', 'code': 'CONV_ACCESS_DENIED', 'conversation_id': conversation_id})
+                    return
                 group_name = f"whatsapp_conv_{conversation_id}"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.account_groups.add(group_name)
@@ -214,6 +233,8 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
             conversation_id = content.get('conversation_id')
             is_typing = content.get('is_typing', False)
             if conversation_id:
+                if not await self.verify_conversation_access_dashboard(conversation_id):
+                    return
                 await self.channel_layer.group_send(
                     f"whatsapp_conv_{conversation_id}",
                     {
@@ -278,3 +299,17 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
         if self.user.is_staff:
             return [str(pk) for pk in WhatsAppAccount.objects.values_list('id', flat=True)]
         return [str(pk) for pk in WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)]
+
+    @database_sync_to_async
+    def verify_conversation_access_dashboard(self, conversation_id: str) -> bool:
+        from apps.conversations.models import Conversation
+        from .models import WhatsAppAccount
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            conv = Conversation.objects.only('account_id').get(id=conversation_id)
+            return WhatsAppAccount.objects.filter(
+                id=conv.account_id, owner=self.user
+            ).exists()
+        except (Conversation.DoesNotExist, Exception):
+            return False
