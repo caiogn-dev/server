@@ -509,7 +509,7 @@ class StorePrintAgentSerializer(serializers.ModelSerializer):
             'platform', 'connection_mode', 'printer_name', 'printer_host',
             'printer_port', 'poll_interval_seconds', 'max_retries',
             'last_seen_at', 'last_seen_ip', 'last_error',
-            'app_version', 'host_name', 'metadata', 'is_online',
+            'app_version', 'host_name', 'available_printers', 'metadata', 'is_online',
             'created_at', 'updated_at', 'is_active',
         ]
         read_only_fields = [

@@ -67,6 +67,8 @@ class StorePrintAgent(BaseModel):
     last_error = models.TextField(blank=True)
     app_version = models.CharField(max_length=50, blank=True)
     host_name = models.CharField(max_length=255, blank=True)
+    # Impressoras instaladas no PC do agent (heartbeat) — alimenta o dropdown do painel
+    available_printers = models.JSONField(default=list, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
 
     class Meta:

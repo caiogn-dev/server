@@ -121,7 +121,22 @@ class PrintAgentHeartbeatView(APIView):
             app_version=str(request.data.get('app_version') or ''),
             host_name=str(request.data.get('host_name') or ''),
         )
-        return Response({'ok': True, 'agent_id': str(agent.id), 'store_id': str(agent.store_id)})
+
+        # Impressoras detectadas no PC do agent (popula o dropdown do painel)
+        printers = request.data.get('available_printers')
+        if isinstance(printers, list):
+            cleaned = [str(name)[:255] for name in printers if str(name).strip()][:50]
+            if cleaned and cleaned != agent.available_printers:
+                agent.available_printers = cleaned
+                agent.save(update_fields=['available_printers', 'updated_at'])
+
+        return Response({
+            'ok': True,
+            'agent_id': str(agent.id),
+            'store_id': str(agent.store_id),
+            # O agent obedece a impressora escolhida no painel
+            'printer_name': agent.printer_name,
+        })
 
 
 class PrintAgentClaimNextJobView(APIView):
