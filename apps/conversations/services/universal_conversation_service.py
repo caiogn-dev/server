@@ -29,12 +29,40 @@ class UniversalConversationService:
 
     def _build_whatsapp_rows(self, user) -> List[Dict[str, Any]]:
         from apps.conversations.api.views import _accessible_conversations
+        from apps.whatsapp.models import Message as WhatsAppMessage
+        from django.db.models import Count, OuterRef, Subquery, Q
 
-        queryset = _accessible_conversations(user)
+        last_msg_subquery = (
+            WhatsAppMessage.objects
+            .filter(conversation=OuterRef('pk'))
+            .order_by('-created_at')
+            .values('id')[:1]
+        )
+
+        queryset = (
+            _accessible_conversations(user)
+            .annotate(
+                unread_inbound=Count(
+                    'messages',
+                    filter=Q(messages__direction='inbound', messages__read_at__isnull=True),
+                ),
+                last_message_id=Subquery(last_msg_subquery),
+            )
+        )
+
+        # Fetch last messages in bulk — single query for all conversations
+        conv_list = list(queryset)
+        msg_ids = [conv.last_message_id for conv in conv_list if conv.last_message_id]
+        messages_by_id = {
+            str(m.id): m
+            for m in WhatsAppMessage.objects.filter(id__in=msg_ids).only(
+                'id', 'text_body', 'message_type', 'created_at'
+            )
+        } if msg_ids else {}
+
         rows: List[Dict[str, Any]] = []
-
-        for conv in queryset:
-            last_message = conv.messages.order_by("-created_at").first()
+        for conv in conv_list:
+            last_message = messages_by_id.get(str(conv.last_message_id)) if conv.last_message_id else None
             rows.append(
                 {
                     "id": f"whatsapp:{conv.id}",
@@ -46,10 +74,7 @@ class UniversalConversationService:
                     "secondary_identifier": conv.phone_number,
                     "last_message_preview": self._whatsapp_preview(last_message),
                     "last_message_at": conv.last_message_at or conv.created_at,
-                    "unread_count": conv.messages.filter(
-                        direction="inbound",
-                        read_at__isnull=True,
-                    ).count(),
+                    "unread_count": conv.unread_inbound,
                     "status": conv.status,
                     "route": "/whatsapp/inbox",
                     "route_params": {"conversation": str(conv.id)},
