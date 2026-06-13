@@ -2,6 +2,7 @@
 WebSocket consumers for automation real-time updates.
 """
 import logging
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.contrib.auth import get_user_model
 
@@ -41,6 +42,9 @@ class AutomationConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         elif message_type == 'subscribe_company':
             company_id = content.get('company_id')
             if company_id:
+                if not await self.verify_company_access(company_id):
+                    await self.send_json({'type': 'error', 'code': 'COMPANY_ACCESS_DENIED', 'company_id': company_id})
+                    return
                 group_name = f"company_{company_id}_automation"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.company_groups.add(group_name)
@@ -111,7 +115,24 @@ class AutomationConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             'type': 'report_generated',
             'report': event['report']
         })
-    
+
+    @database_sync_to_async
+    def verify_company_access(self, company_id: str) -> bool:
+        """Verify the user has access to the CompanyProfile."""
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        try:
+            from apps.automation.models import CompanyProfile
+            profile = CompanyProfile.objects.select_related(
+                'account', 'store'
+            ).get(id=company_id, is_active=True)
+            if profile.account_id and profile.account.owner_id == self.user.id:
+                return True
+            if profile.store_id and profile.store.owner_id == self.user.id:
+                return True
+            return False
+        except Exception:
+            return False
 
 
 # Utility functions to send WebSocket events
