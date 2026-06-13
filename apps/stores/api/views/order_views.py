@@ -421,41 +421,44 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        """Get order statistics."""
+        """Get order statistics. Uses a single aggregate query instead of N count() calls."""
         store_id = request.query_params.get('store')
         queryset = self.get_queryset()
-        
+
         if store_id:
             queryset = queryset.filter(store_id=store_id)
-        
+
         now = timezone.now()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
-        
-        stats = {
-            'total': queryset.count(),
-            'today': queryset.filter(created_at__gte=today).count(),
-            'this_week': queryset.filter(created_at__gte=week_ago).count(),
-            'this_month': queryset.filter(created_at__gte=month_ago).count(),
-            'by_status': {},
-            'revenue': {
-                'total': queryset.filter(payment_status='paid').aggregate(
-                    total=Sum('total')
-                )['total'] or 0,
-                'today': queryset.filter(
-                    payment_status='paid', created_at__gte=today
-                ).aggregate(total=Sum('total'))['total'] or 0,
-                'week': queryset.filter(
-                    payment_status='paid', created_at__gte=week_ago
-                ).aggregate(total=Sum('total'))['total'] or 0,
-            }
+
+        agg_kwargs = {
+            'total': Count('id'),
+            'today_count': Count('id', filter=Q(created_at__gte=today)),
+            'week_count': Count('id', filter=Q(created_at__gte=week_ago)),
+            'month_count': Count('id', filter=Q(created_at__gte=month_ago)),
+            'revenue_total': Sum('total', filter=Q(payment_status='paid')),
+            'revenue_today': Sum('total', filter=Q(payment_status='paid', created_at__gte=today)),
+            'revenue_week': Sum('total', filter=Q(payment_status='paid', created_at__gte=week_ago)),
         }
-        
-        for status_choice, _ in StoreOrder.OrderStatus.choices:
-            stats['by_status'][status_choice] = queryset.filter(status=status_choice).count()
-        
-        return Response(stats)
+        for s, _ in StoreOrder.OrderStatus.choices:
+            agg_kwargs[f'status_{s}'] = Count('id', filter=Q(status=s))
+
+        agg = queryset.aggregate(**agg_kwargs)
+
+        return Response({
+            'total': agg['total'],
+            'today': agg['today_count'],
+            'this_week': agg['week_count'],
+            'this_month': agg['month_count'],
+            'by_status': {s: agg[f'status_{s}'] for s, _ in StoreOrder.OrderStatus.choices},
+            'revenue': {
+                'total': agg['revenue_total'] or 0,
+                'today': agg['revenue_today'] or 0,
+                'week': agg['revenue_week'] or 0,
+            },
+        })
     
     @action(detail=False, methods=['get'])
     def by_customer(self, request):
