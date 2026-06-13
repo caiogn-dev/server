@@ -216,7 +216,8 @@ class StorePayment(BaseModel):
     # Payer info
     payer_email = models.EmailField(blank=True, help_text='Payer email')
     payer_name = models.CharField(max_length=255, blank=True, help_text='Payer name')
-    payer_document = models.CharField(max_length=50, blank=True, help_text='CPF/CNPJ')
+    # LGPD: CPF/CNPJ criptografado em repouso (EncryptedCharField — Fernet/AES)
+    payer_document = EncryptedCharField(max_length=255, blank=True, help_text='CPF/CNPJ (encrypted)')
 
     # Payment details (method-specific)
     payment_url = models.URLField(blank=True, help_text='Payment URL for customer')
