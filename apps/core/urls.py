@@ -18,6 +18,7 @@ from .export_views import (
     export_messages, export_orders, export_sessions,
     export_automation_logs, export_conversations
 )
+from .lgpd_views import LGPDViewSet
 
 urlpatterns = [
     # Health & System
@@ -51,4 +52,8 @@ urlpatterns = [
     path('export/sessions/', export_sessions, name='export-sessions'),
     path('export/automation-logs/', export_automation_logs, name='export-automation-logs'),
     path('export/conversations/', export_conversations, name='export-conversations'),
+
+    # LGPD — direitos do titular (art. 18)
+    path('lgpd/data_export/', LGPDViewSet.as_view({'get': 'data_export'}), name='lgpd-data-export'),
+    path('lgpd/request_deletion/', LGPDViewSet.as_view({'post': 'request_deletion'}), name='lgpd-request-deletion'),
 ]

@@ -383,3 +383,46 @@ class CustomerIdentityService:
             "store_customer": store_customer,
             "user_created": user_created,
         }
+
+
+    @classmethod
+    def anonymize_user(cls, user) -> str:
+        """LGPD art. 18: anonimiza os dados pessoais do titular (direito ao esquecimento).
+
+        Anonimiza em vez de hard-delete para preservar integridade do histórico de
+        pedidos — dado anonimizado deixa de ser dado pessoal. Idempotente.
+        Retorna o e-mail placeholder usado.
+        """
+        from django.utils import timezone
+        placeholder_email = f"removido_{user.pk}@anonimizado.local"
+        placeholder_handle = f"removido_{user.pk}"
+
+        # Django auth user
+        user.first_name = "Cliente"
+        user.last_name = "removido"
+        user.email = placeholder_email
+        if getattr(user, 'username', None):
+            user.username = placeholder_handle
+        user.is_active = False
+        user.save(update_fields=["first_name", "last_name", "email", "username", "is_active"])
+
+        # UnifiedUser
+        uni = getattr(user, "unified_profile", None)
+        if uni:
+            uni.name = "Cliente removido"
+            uni.email = placeholder_email
+            uni.phone_number = placeholder_handle
+            uni.profile_picture = ""
+            uni.save(update_fields=["name", "email", "phone_number", "profile_picture"])
+
+        # StoreCustomer + endereços (PII)
+        from apps.stores.models import StoreCustomer, StoreCustomerAddress
+        for sc in StoreCustomer.objects.filter(user=user):
+            sc.phone = ""
+            sc.whatsapp = ""
+            sc.accepts_marketing = False
+            sc.marketing_opt_in_at = None
+            sc.save(update_fields=["phone", "whatsapp", "accepts_marketing", "marketing_opt_in_at"])
+            StoreCustomerAddress.objects.filter(customer=sc).delete()
+
+        return placeholder_email
