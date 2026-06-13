@@ -273,6 +273,8 @@ class StoreProductSerializer(serializers.ModelSerializer):
     is_in_stock = serializers.ReadOnlyField()
     is_paused = serializers.ReadOnlyField()
     variants = StoreProductVariantSerializer(many=True, read_only=True)
+    catalog_role = serializers.SerializerMethodField()
+    merchandising_flags = serializers.SerializerMethodField()
     
     class Meta:
         model = StoreProduct
@@ -291,6 +293,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             'meta_title', 'meta_description',
             'weight', 'weight_unit', 'dimensions',
             'attributes', 'tags', 'sort_order',
+            'catalog_role', 'merchandising_flags',
             'view_count', 'sold_count',
             'variants',
             'created_at', 'updated_at', 'is_active'
@@ -299,6 +302,26 @@ class StoreProductSerializer(serializers.ModelSerializer):
     
     def get_main_image_url(self, obj):
         return obj.get_main_image_url()
+
+    def get_catalog_role(self, obj):
+        category_slug = (obj.category.slug if obj.category else '').lower()
+        tags = {str(tag).lower() for tag in (obj.tags or [])}
+        if category_slug in {'mais-pedidos', 'promocoes'} or obj.featured:
+            return 'featured'
+        if category_slug in {'bebidas', 'molhos'} or tags & {'upsell', 'cross-sell', 'cross_sell', 'bebida', 'molho'}:
+            return 'addon'
+        return 'primary'
+
+    def get_merchandising_flags(self, obj):
+        category_slug = (obj.category.slug if obj.category else '').lower()
+        tags = {str(tag).lower() for tag in (obj.tags or [])}
+        return {
+            'is_featured': bool(obj.featured or category_slug in {'mais-pedidos', 'promocoes'} or 'destaque' in tags),
+            'is_upsell': bool(category_slug in {'bebidas', 'molhos'} or tags & {'upsell', 'adicional'}),
+            'is_cross_sell': bool(tags & {'cross-sell', 'cross_sell', 'combo'} or category_slug in {'bebidas', 'molhos'}),
+            'category_slug': category_slug,
+            'product_type_slug': obj.product_type.slug if obj.product_type else '',
+        }
 
 
 class StoreProductCreateSerializer(serializers.ModelSerializer):
@@ -463,6 +486,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     """Serializer for StoreOrder model."""
     
     items = StoreOrderItemSerializer(many=True, read_only=True)
+    combo_items = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     payment_status_display = serializers.CharField(source='get_payment_status_display', read_only=True)
     delivery_method_display = serializers.CharField(source='get_delivery_method_display', read_only=True)
@@ -487,7 +511,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
-            'items', 'items_count', 'metadata',
+            'items', 'combo_items', 'items_count', 'metadata',
             'created_at', 'updated_at', 'is_active',
             'delivery_provider',
             'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
@@ -506,6 +530,9 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     
     def get_items_count(self, obj):
         return len(obj.items.all())
+
+    def get_combo_items(self, obj):
+        return StoreOrderComboItemSerializer(obj.combo_items.all(), many=True).data
 
 
 class StorePrintAgentSerializer(serializers.ModelSerializer):
@@ -926,13 +953,14 @@ class StoreCartComboItemSerializer(serializers.ModelSerializer):
     combo_image = serializers.SerializerMethodField()
     unit_price = serializers.SerializerMethodField()
     subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    selected_variants_data = serializers.SerializerMethodField()
 
     class Meta:
         model = StoreCartComboItem
         fields = [
             'id', 'combo', 'combo_name', 'combo_image',
             'quantity', 'unit_price', 'subtotal',
-            'group_selections', 'customizations', 'notes',
+            'group_selections', 'selected_variants_data', 'customizations', 'notes',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -945,6 +973,12 @@ class StoreCartComboItemSerializer(serializers.ModelSerializer):
 
     def get_unit_price(self, obj):
         return str(obj.effective_price)
+
+    def get_selected_variants_data(self, obj):
+        if not obj.combo_id:
+            return []
+        from apps.stores.services.checkout_service import CheckoutService
+        return CheckoutService.build_combo_selection_snapshot(obj)['selected_variants_data']
 
 
 class StoreCartSerializer(serializers.ModelSerializer):
@@ -1071,6 +1105,8 @@ class StoreComboSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
+    catalog_role = serializers.SerializerMethodField()
+    merchandising_flags = serializers.SerializerMethodField()
 
     class Meta:
         model = StoreCombo
@@ -1080,13 +1116,25 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'image', 'image_url',
             'is_active', 'featured',
             'track_stock', 'stock_quantity',
-            'groups',
+            'groups', 'catalog_role', 'merchandising_flags',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
     def get_image_url(self, obj):
         return obj.get_image_url()
+
+    def get_catalog_role(self, obj):
+        return 'bundle'
+
+    def get_merchandising_flags(self, obj):
+        return {
+            'is_featured': bool(obj.featured),
+            'is_upsell': False,
+            'is_cross_sell': True,
+            'category_slug': 'combos',
+            'product_type_slug': 'combo',
+        }
 
     def get_groups(self, obj):
         """Retorna grupos com suas variantes para seleção no combo."""

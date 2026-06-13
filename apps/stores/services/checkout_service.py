@@ -179,6 +179,69 @@ class CheckoutService:
     """Service for processing checkouts."""
 
     @staticmethod
+    def build_combo_selection_snapshot(combo_item) -> dict:
+        """Resolve combo variant UUID selections into an order-time display snapshot."""
+        group_selections = combo_item.group_selections or combo_item.customizations.get('selections', {})
+        normalized_groups = {
+            str(group_id): [
+                str(variant_id)
+                for variant_id in (variant_ids if isinstance(variant_ids, list) else [variant_ids])
+                if variant_id
+            ]
+            for group_id, variant_ids in (group_selections or {}).items()
+        }
+        selected_variant_ids = [
+            variant_id
+            for variant_ids in normalized_groups.values()
+            for variant_id in variant_ids
+        ]
+
+        groups_by_id = {}
+        if combo_item.combo_id:
+            for group in combo_item.combo.groups.select_related('product').prefetch_related('variant_limits__variant').all():
+                groups_by_id[str(group.id)] = group
+
+        variants = StoreProductVariant.objects.filter(id__in=selected_variant_ids).select_related('product')
+        variants_by_id = {str(variant.id): variant for variant in variants}
+
+        selected_variants_data = []
+        display_groups = []
+        for group_id, variant_ids in normalized_groups.items():
+            group = groups_by_id.get(group_id)
+            counts = {}
+            for variant_id in variant_ids:
+                counts[variant_id] = counts.get(variant_id, 0) + 1
+
+            group_items = []
+            for variant_id, quantity in counts.items():
+                variant = variants_by_id.get(variant_id)
+                item_data = {
+                    'group_id': group_id,
+                    'group_name': group.product.name if group else '',
+                    'variant_id': variant_id,
+                    'variant_name': variant.name if variant else '',
+                    'product_id': str(variant.product_id) if variant else '',
+                    'product_name': variant.product.name if variant and variant.product else '',
+                    'quantity': quantity,
+                    'sku': variant.sku if variant else '',
+                }
+                selected_variants_data.append(item_data)
+                group_items.append(item_data)
+
+            display_groups.append({
+                'group_id': group_id,
+                'group_name': group.product.name if group else '',
+                'items': group_items,
+            })
+
+        return {
+            'group_selections': normalized_groups,
+            'selected_variant_ids': selected_variant_ids,
+            'selected_variants_data': selected_variants_data,
+            'display_groups': display_groups,
+        }
+
+    @staticmethod
     def _normalize_base_url(raw_url: str) -> str:
         """Return scheme + host only for a storefront or app deep link base URL."""
         if not raw_url:
@@ -794,24 +857,20 @@ class CheckoutService:
             )
 
             if not is_virtual:
-                group_selections = combo_item.group_selections or combo_item.customizations.get('selections', {})
-                selected_variant_ids = [
-                    variant_id
-                    for variant_ids in group_selections.values()
-                    for variant_id in (variant_ids if isinstance(variant_ids, list) else [variant_ids])
-                ]
+                selection_snapshot = CheckoutService.build_combo_selection_snapshot(combo_item)
                 StoreOrderComboItem.objects.create(
                     order=order,
                     order_item=order_item,
                     combo=combo_item.combo,
                     quantity=combo_item.quantity,
-                    group_selections=group_selections,
-                    selected_variant_ids=selected_variant_ids,
-                    selected_variants_data=[],
+                    group_selections=selection_snapshot['group_selections'],
+                    selected_variant_ids=selection_snapshot['selected_variant_ids'],
+                    selected_variants_data=selection_snapshot['selected_variants_data'],
                     display_data={
                         'combo_name': combo_item.effective_name,
                         'unit_price': str(combo_item.effective_price),
                         'customizations': combo_item.customizations,
+                        'groups': selection_snapshot['display_groups'],
                     },
                 )
 
