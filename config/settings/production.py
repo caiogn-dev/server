@@ -115,3 +115,28 @@ LOGGING = {
         },
     },
 }
+
+
+# ── Sentry (observabilidade) ────────────────────────────────────────────────
+# Env-gated: só ativa se SENTRY_DSN estiver definido E o pacote instalado.
+# import protegido para nunca quebrar o boot se o sentry-sdk não estiver presente.
+SENTRY_DSN = os.environ.get('SENTRY_DSN', '').strip()
+if SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.django import DjangoIntegration
+        from sentry_sdk.integrations.celery import CeleryIntegration
+
+        sentry_sdk.init(
+            dsn=SENTRY_DSN,
+            integrations=[DjangoIntegration(), CeleryIntegration()],
+            traces_sample_rate=float(os.environ.get('SENTRY_TRACES_SAMPLE_RATE', '0.05')),
+            send_default_pii=False,
+            environment=os.environ.get('SENTRY_ENVIRONMENT', 'production'),
+            release=os.environ.get('SENTRY_RELEASE', ''),
+        )
+    except ImportError:
+        import logging as _logging
+        _logging.getLogger('apps').warning(
+            'SENTRY_DSN definido mas sentry-sdk não instalado — rode pip install sentry-sdk e rebuilde.'
+        )

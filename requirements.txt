@@ -77,3 +77,6 @@ google-auth>=2.20.0
 # Testing
 pytest>=7.0.0
 pytest-django>=4.7.0
+
+# Observabilidade (ativa só com SENTRY_DSN no env)
+sentry-sdk>=2.0.0
