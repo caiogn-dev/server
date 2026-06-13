@@ -71,6 +71,22 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
                 {'error': 'Company profile not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
+
+        # Verify the requesting user has access to this company.
+        user = request.user
+        if not (user.is_staff or user.is_superuser):
+            owns = (
+                (company.account_id and company.account.owner_id == user.id) or
+                (company.store_id and (
+                    company.store.owner_id == user.id or
+                    company.store.staff.filter(id=user.id).exists()
+                ))
+            )
+            if not owns:
+                return Response(
+                    {'error': 'Acesso negado ao perfil de empresa'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
         
         auto_message = AutoMessage.objects.create(company=company, **data)
         
@@ -194,12 +210,14 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
                 continue
             
             try:
-                auto_message = AutoMessage.objects.get(id=message_id)
-                
+                # Use the scoped queryset so users cannot update messages
+                # belonging to companies they don't own.
+                auto_message = self.get_queryset().get(id=message_id)
+
                 for field in ['is_active', 'priority', 'message_text', 'delay_seconds']:
                     if field in update:
                         setattr(auto_message, field, update[field])
-                
+
                 auto_message.save()
                 updated_count += 1
             except AutoMessage.DoesNotExist:
