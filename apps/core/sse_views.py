@@ -79,21 +79,17 @@ class BaseSSEView(View):
     
     def check_authentication(self, request):
         """Check if request is authenticated."""
-        # Try query parameter
-        token = request.GET.get('token')
-        if token:
-            return self.get_user_from_token(token)
-        
-        # Try Authorization header
+        # Authorization header (token nunca deve ir na query string — seria
+        # exposto em logs de acesso e histórico do navegador)
         auth_header = request.headers.get('Authorization', '')
         if auth_header.startswith('Token '):
             token = auth_header[6:]
             return self.get_user_from_token(token)
-        
-        # Try session
+
+        # Session auth (para panel)
         if request.user.is_authenticated:
             return request.user
-        
+
         return None
     
     def get_event_stream(self, request, user, last_event_id=None):
