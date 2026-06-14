@@ -347,7 +347,8 @@ class WhatsAppAuthService:
         if cls.USE_TEXT_FALLBACK:
             logger.info(f"[WHATSAPP AUTH] Trying text message fallback...")
             try:
-                text_message = f"🥗 Seu código de verificação Cê Saladas é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
+                company_name = getattr(settings, 'OTP_COMPANY_NAME', 'Verificação')
+                text_message = f"Seu código de verificação {company_name} é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
                 result = message_service.send_text_message(
                     account_id=whatsapp_account_id,
                     to=clean_phone,
