@@ -221,7 +221,7 @@ class WhatsAppAuthService:
         # Gera novo código
         code = cls.generate_code()
         
-        logger.info(f"[WHATSAPP AUTH] Generated code for {clean_phone}: {code}")
+        logger.info(f"[WHATSAPP AUTH] Código gerado para {clean_phone}")
         
         # Salva no cache
         cache_data = {
