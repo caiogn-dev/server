@@ -108,15 +108,17 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Create an order and return the full order contract used by the dashboard."""
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            logger.warning(f'[ORDER_CREATE_ERROR] Validation failed: {serializer.errors}')
-            logger.warning(f'[ORDER_CREATE_ERROR] Request data: {request.data}')
-        serializer.is_valid(raise_exception=True)
+            logger.warning('[ORDER_CREATE_ERROR] Validation failed: %s', serializer.errors)
+            logger.warning('[ORDER_CREATE_ERROR] Request data: %s', request.data)
+            serializer.is_valid(raise_exception=True)
         order = serializer.save()
+        self._notify_order_update(order, 'order.created')
         return Response(StoreOrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
     def perform_create(self, serializer):
-        order = serializer.save()
-        self._notify_order_update(order, 'order.created')
+        # Nota: o broadcast de 'order.created' é disparado em create() diretamente
+        # para que o objeto completo esteja disponível antes da resposta.
+        serializer.save()
 
     def update(self, request, *args, **kwargs):
         return self._update_with_full_response(request, partial=False, *args, **kwargs)
