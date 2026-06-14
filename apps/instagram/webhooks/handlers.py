@@ -31,10 +31,18 @@ class InstagramWebhookHandler:
             True if signature is valid
         """
         if not self.app_secret:
-            if getattr(settings, 'DEBUG', False):
-                logger.warning("INSTAGRAM_APP_SECRET not configured, skipping signature verification in DEBUG")
+            skip = getattr(settings, 'INSTAGRAM_SKIP_SIGNATURE_VALIDATION', False)
+            if skip:
+                logger.warning(
+                    "INSTAGRAM_APP_SECRET não configurado — ignorando porque "
+                    "INSTAGRAM_SKIP_SIGNATURE_VALIDATION=True"
+                )
                 return True
-            logger.error("INSTAGRAM_APP_SECRET not configured, rejecting webhook in production")
+            logger.error(
+                "INSTAGRAM_APP_SECRET não configurado — rejeitando webhook. "
+                "Defina INSTAGRAM_APP_SECRET ou INSTAGRAM_SKIP_SIGNATURE_VALIDATION=True "
+                "para desenvolvimento local."
+            )
             return False
         
         if not signature:
