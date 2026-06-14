@@ -20,6 +20,8 @@ from django.views.decorators.csrf import csrf_protect
 from apps.stores.models import Store, StoreOrder, StoreProduct, StoreCustomer
 from apps.conversations.models import Conversation
 from .decorators import panel_login_required, store_required
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -421,7 +423,16 @@ def store_settings(request):
     if request.method == 'POST':
         # Basic store settings update
         store.name = request.POST.get('name', store.name).strip() or store.name
-        store.email = request.POST.get('email', store.email).strip()
+        # Validar e-mail antes de salvar (full_clean() nao e chamado em .save() direto)
+        email_input = request.POST.get('email', store.email).strip()
+        if email_input:
+            try:
+                validate_email(email_input)
+                store.email = email_input
+            except ValidationError:
+                pass  # Manter e-mail anterior se invalido
+        else:
+            store.email = ''
         store.phone = request.POST.get('phone', store.phone).strip()
         store.address = request.POST.get('address', store.address).strip()
         store.city = request.POST.get('city', store.city).strip()

@@ -268,11 +268,21 @@ class StoreOrder(BaseModel):
         return f"{self.store.name} - Order #{self.order_number}"
 
     def save(self, *args, **kwargs):
+        from django.db import IntegrityError as _IntegrityError
         if not self.order_number:
             self.order_number = self.generate_order_number()
         if not self.access_token:
             self.access_token = self.generate_access_token()
-        super().save(*args, **kwargs)
+        for _attempt in range(5):
+            try:
+                super().save(*args, **kwargs)
+                return
+            except _IntegrityError:
+                if _attempt == 4:
+                    raise
+                # Regenerate only the conflicting field before retry
+                if StoreOrder.objects.filter(order_number=self.order_number).exists():
+                    self.order_number = self.generate_order_number()
 
     def generate_order_number(self):
         """Generate unique order number."""
@@ -280,7 +290,7 @@ class StoreOrder(BaseModel):
         import string
         prefix = self.store.slug[:3].upper() if self.store else 'ORD'
         timestamp = timezone.now().strftime('%y%m%d')
-        random_suffix = ''.join(random.choices(string.digits, k=4))
+        random_suffix = ''.join(random.choices(string.digits, k=6))
         return f"{prefix}{timestamp}{random_suffix}"
 
     @staticmethod
