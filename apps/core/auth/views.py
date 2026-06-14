@@ -91,10 +91,7 @@ def send_whatsapp_auth_code(request):
         result = WhatsAppAuthService.send_auth_code(phone, account_id)
         
         if result.get('success'):
-            from django.conf import settings
-            if settings.DEBUG:
-                logger.debug(f"[WHATSAPP AUTH API] Code sent: {result.get('code')}")
-            # Never expose the OTP code in the API response
+            # Nunca expor o código OTP na resposta da API
             result.pop('code', None)
             return Response(result, status=status.HTTP_200_OK)
         else:

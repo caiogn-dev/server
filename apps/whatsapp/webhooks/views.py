@@ -102,13 +102,20 @@ class WhatsAppWebhookView(APIView):
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
             
-            # Validate signature using the raw body we captured earlier
+            # Validate HMAC-SHA256 signature from Meta
             if not service.validate_signature(raw_body, signature):
-                if settings.DEBUG:
-                    logger.warning("Invalid webhook signature — continuing in DEBUG mode only")
+                skip_validation = getattr(settings, 'WHATSAPP_SKIP_SIGNATURE_VALIDATION', False)
+                if skip_validation:
+                    logger.warning(
+                        "Assinatura do webhook inválida — ignorando porque "
+                        "WHATSAPP_SKIP_SIGNATURE_VALIDATION=True"
+                    )
                 else:
-                    logger.error("Invalid webhook signature — rejecting request")
-                    return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
+                    logger.error("Assinatura do webhook inválida — rejeitando requisição")
+                    return Response(
+                        {'status': 'error', 'message': 'Invalid signature'},
+                        status=403,
+                    )
             
             # Convert headers to simple dict
             headers = {}
