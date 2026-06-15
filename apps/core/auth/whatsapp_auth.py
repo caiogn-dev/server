@@ -20,9 +20,9 @@ Para resolver, verifique no Meta Business Manager:
 3. Se o template tem variáveis {{1}}, {{2}}, etc.
 4. Se os componentes enviados correspondem ao template
 """
+import hmac
 import logging
-import random
-import string
+import secrets
 from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
@@ -159,8 +159,8 @@ class WhatsAppAuthService:
     
     @staticmethod
     def generate_code() -> str:
-        """Gera código numérico aleatório de 6 dígitos"""
-        return ''.join(random.choices(string.digits, k=WhatsAppAuthService.CODE_LENGTH))
+        """Gera código numérico criptograficamente seguro de 6 dígitos"""
+        return str(secrets.randbelow(10 ** WhatsAppAuthService.CODE_LENGTH)).zfill(WhatsAppAuthService.CODE_LENGTH)
     
     @staticmethod
     def _normalize_phone(phone: str) -> str:
@@ -221,7 +221,7 @@ class WhatsAppAuthService:
         # Gera novo código
         code = cls.generate_code()
         
-        logger.info(f"[WHATSAPP AUTH] Generated code for {clean_phone}: {code}")
+        logger.info("[WHATSAPP AUTH] OTP code generated for %s", clean_phone)
         
         # Salva no cache
         cache_data = {
@@ -435,13 +435,13 @@ class WhatsAppAuthService:
                 'message': 'Muitas tentativas incorretas. Solicite um novo código.'
             }
         
-        # Verifica código
-        if stored['code'] != code:
+        # Verifica código com comparação resistente a timing attack
+        if not hmac.compare_digest(stored['code'], code):
             stored['attempts'] += 1
             cache.set(cache_key, stored, timeout=60 * cls.CODE_TTL_MINUTES)
-            
+
             remaining_attempts = cls.MAX_ATTEMPTS - stored['attempts']
-            
+
             return {
                 'valid': False,
                 'error': 'invalid_code',

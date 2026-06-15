@@ -61,6 +61,12 @@ if not INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
     import logging as _logging
     _logging.getLogger(__name__).warning('INSTAGRAM_WEBHOOK_VERIFY_TOKEN not set — Instagram webhooks will fail verification.')
 
+if not WHATSAPP_APP_SECRET:
+    raise ImproperlyConfigured(
+        'WHATSAPP_APP_SECRET must be set in production. '
+        'Without it, webhook signature validation is disabled and any actor can inject fake messages.'
+    )
+
 # CORS - never allow all in production
 CORS_ALLOW_ALL_ORIGINS = False
 
