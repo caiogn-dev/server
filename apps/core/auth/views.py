@@ -66,8 +66,7 @@ def send_whatsapp_auth_code(request):
         "message_id": "wamid....",
         "expires_at": "2024-01-01T12:15:00Z",
         "expires_in_minutes": 15,
-        "phone_number": "5511999999999",
-        "code": "123456"  # Apenas em DEBUG
+        "phone_number": "5511999999999"
     }
     """
     phone = request.data.get('phone_number')
