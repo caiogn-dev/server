@@ -655,7 +655,17 @@ POSTADO_ADMIN_TOKEN = os.environ.get('POSTADO_ADMIN_TOKEN', '')
 # ─────────────────────────────────────────────────────────────────────────────
 # Admin URL — configurável via env var para segurança
 # ─────────────────────────────────────────────────────────────────────────────
-ADMIN_URL = os.environ.get('DJANGO_ADMIN_URL', 'django-admin') + '/'
+_admin_url_env = os.environ.get('DJANGO_ADMIN_URL', '')
+if not _admin_url_env:
+    import warnings
+    warnings.warn(
+        "DJANGO_ADMIN_URL não está configurado. "
+        "Defina esta variável de ambiente para obscurecer a URL do admin. "
+        "Usando 'django-admin' como padrão inseguro.",
+        stacklevel=1,
+    )
+    _admin_url_env = 'django-admin'
+ADMIN_URL = _admin_url_env + '/'
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Django Unfold — admin UI moderno

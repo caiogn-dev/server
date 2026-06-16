@@ -221,7 +221,7 @@ class WhatsAppAuthService:
         # Gera novo código
         code = cls.generate_code()
         
-        logger.info(f"[WHATSAPP AUTH] Generated code for {clean_phone}: {code}")
+        logger.info(f"[WHATSAPP AUTH] Generated code for {clean_phone}")
         
         # Salva no cache
         cache_data = {
@@ -284,7 +284,7 @@ class WhatsAppAuthService:
                 
                 expires_at = timezone.now() + timedelta(minutes=cls.CODE_TTL_MINUTES)
                 
-                response = {
+                return {
                     'success': True,
                     'message': 'Código enviado com sucesso',
                     'message_id': result.get('messages', [{}])[0].get('id') if hasattr(result, 'get') else str(result.id) if hasattr(result, 'id') else None,
@@ -293,12 +293,6 @@ class WhatsAppAuthService:
                     'phone_number': clean_phone,
                     'template_used': template_data['name'],
                 }
-                
-                # Inclui código apenas em DEBUG
-                if settings.DEBUG:
-                    response['code'] = code
-                
-                return response
                 
             except Exception as e:
                 import traceback
@@ -358,7 +352,7 @@ class WhatsAppAuthService:
                 
                 expires_at = timezone.now() + timedelta(minutes=cls.CODE_TTL_MINUTES)
                 
-                response = {
+                return {
                     'success': True,
                     'message': 'Código enviado com sucesso',
                     'message_id': str(result.id) if hasattr(result, 'id') else None,
@@ -367,11 +361,6 @@ class WhatsAppAuthService:
                     'phone_number': clean_phone,
                     'template_used': 'text_fallback',
                 }
-                
-                if settings.DEBUG:
-                    response['code'] = code
-                
-                return response
                 
             except Exception as text_error:
                 text_error_str = str(text_error) if str(text_error) else repr(text_error)
