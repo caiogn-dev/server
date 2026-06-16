@@ -79,7 +79,9 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
     def force_delete(self, request, pk=None):
         """
         Force delete a WhatsApp account and all related data.
-        
+
+        Requer: usuário staff/superuser + parâmetro ?confirm=<nome_da_conta>.
+
         This will delete:
         - All messages
         - All webhook events
@@ -93,12 +95,31 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
         - All langflow integrations
         - The account itself
         """
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {'error': 'Apenas administradores podem executar force delete.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         from django.db import transaction
         from django.db.models import Q
-        
+
         account = self.get_object()
         account_id = str(account.id)
         account_name = account.name
+
+        confirm = request.query_params.get('confirm', '')
+        if confirm != account_name:
+            return Response(
+                {
+                    'error': 'Confirmação necessária.',
+                    'message': (
+                        f"Passe ?confirm={account_name} na query string "
+                        "para confirmar a exclusão permanente e irreversível."
+                    ),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         deleted_counts = {}
         
