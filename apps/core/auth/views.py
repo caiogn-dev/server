@@ -72,9 +72,7 @@ def send_whatsapp_auth_code(request):
     """
     phone = request.data.get('phone_number')
     account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
-    
-    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
-    
+
     if not phone:
         return Response(
             {'error': 'phone_number é obrigatório'},
@@ -101,7 +99,7 @@ def send_whatsapp_auth_code(request):
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
     except WhatsAppAuthError as e:
-        logger.error(f"[WHATSAPP AUTH API] Error: {str(e)}")
+        logger.error("[WHATSAPP AUTH API] Falha ao enviar código: %s", type(e).__name__)
         return Response(
             {'error': 'send_error', 'message': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -166,7 +164,7 @@ def verify_whatsapp_auth_code(request):
             )
             token, _ = Token.objects.get_or_create(user=user)
         except Exception as exc:
-            logger.exception(f"[WHATSAPP AUTH API] Failed to create auth token: {exc}")
+            logger.exception("[WHATSAPP AUTH API] Falha ao criar token de autenticação: %s", type(exc).__name__)
             return Response(
                 {'error': 'auth_error', 'message': 'Falha ao autenticar usuário'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
