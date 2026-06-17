@@ -56,16 +56,28 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         
         return queryset.order_by('company', 'event_type', 'priority')
     
+    def _accessible_company_qs(self, user):
+        """Return CompanyProfile queryset scoped to the user's accessible stores."""
+        from django.db.models import Q
+        qs = CompanyProfile.objects.filter(is_active=True)
+        if user.is_superuser or user.is_staff:
+            return qs
+        return qs.filter(
+            Q(store__owner=user) |
+            Q(store__staff=user) |
+            Q(account__owner=user)
+        ).distinct()
+
     def create(self, request, *args, **kwargs):
         """Create a new auto message."""
         serializer = CreateAutoMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         data = serializer.validated_data
         company_id = data.pop('company_id')
-        
+
         try:
-            company = CompanyProfile.objects.get(id=company_id, is_active=True)
+            company = self._accessible_company_qs(request.user).get(id=company_id)
         except CompanyProfile.DoesNotExist:
             return Response(
                 {'error': 'Company profile not found'},
@@ -194,12 +206,12 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
                 continue
             
             try:
-                auto_message = AutoMessage.objects.get(id=message_id)
-                
+                auto_message = self.get_queryset().get(id=message_id)
+
                 for field in ['is_active', 'priority', 'message_text', 'delay_seconds']:
                     if field in update:
                         setattr(auto_message, field, update[field])
-                
+
                 auto_message.save()
                 updated_count += 1
             except AutoMessage.DoesNotExist:

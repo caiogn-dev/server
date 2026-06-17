@@ -85,7 +85,7 @@ def send_scheduled_message(self, message_id: str):
                 sent_at=timezone.now(),
                 whatsapp_message_id=result.get('whatsapp_message_id', ''),
             )
-            logger.info('Scheduled message %s sent successfully to %s', message_id, message.to_number)
+            logger.info('Scheduled message %s sent successfully', message_id)
             # Notificação WebSocket (best-effort)
             try:
                 from ..consumers import notify_scheduled_message_sent

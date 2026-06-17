@@ -426,32 +426,25 @@ class CampaignViewSet(viewsets.ModelViewSet):
         Force process a campaign batch synchronously.
         Use this when Celery is not available or campaign is stuck.
         """
+        campaign = self.get_object()  # enforces user-scoped queryset + object permission
         service = CampaignService()
         try:
-            campaign = Campaign.objects.get(id=pk)
-            
             if campaign.status in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
                 campaign.status = Campaign.CampaignStatus.RUNNING
                 campaign.started_at = timezone.now()
                 campaign.save()
-                logger.info(f"Campaign {pk} status changed to running")
-            
+
             if campaign.status != Campaign.CampaignStatus.RUNNING:
                 return Response(
                     {'error': 'Campaign is not running'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
+
             result = service.process_campaign_batch(str(pk), batch_size=50)
             return Response(result)
-            
-        except Campaign.DoesNotExist:
-            return Response(
-                {'error': 'Campaign not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
+
         except Exception as e:
-            logger.exception(f"Error processing campaign {pk}: {e}")
+            logger.exception("Error processing campaign %s: %s", pk, type(e).__name__)
             return Response(
                 {'error': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
