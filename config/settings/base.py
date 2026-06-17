@@ -230,7 +230,12 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    # Pastita dashboard
+    # Cardapidex dashboard (nova marca)
+    "https://painel.cardapidex.com.br",
+    # Cardapidex storefront (nova marca)
+    "https://cardapidex.com.br",
+    "https://www.cardapidex.com.br",
+    # Pastita dashboard (legado — manter enquanto DNS não migrar)
     "https://painel.pastita.com.br",
     # Pastita main site / pastita-3d storefront (custom domains)
     "https://pastita.com.br",
@@ -242,6 +247,8 @@ CORS_ALLOWED_ORIGINS = [
     # ce-saladas dev server (openclaw tunnel + local)
     "https://openclaw.pastita.com.br",
     "http://localhost:3001",
+    # pastita-dash dev server (porta 3000 — vite strict)
+    "http://localhost:3000",
     # postado admin panel dev server
     "http://localhost:3099",
     # Backend / API self-origin (health checks, swagger)

@@ -45,6 +45,10 @@ ALLOWED_HOSTS += [
     'painel.pastita.com.br',
     'pastita.com.br',
     'dev.painel.pastita.com.br',
+    # Cardapidex (nova marca)
+    'painel.cardapidex.com.br',
+    'cardapidex.com.br',
+    'www.cardapidex.com.br',
 ]
 
 # Enforce required production settings
