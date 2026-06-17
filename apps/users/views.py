@@ -21,36 +21,46 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
     """
     queryset = UnifiedUser.objects.all()
     permission_classes = [IsAuthenticated]
-    
+
     def get_serializer_class(self):
         if self.action == 'list':
             return UnifiedUserListSerializer
         return UnifiedUserSerializer
-    
+
     def get_queryset(self):
-        """Filtra por query params."""
+        """Filtra por loja acessível e por query params."""
+        from apps.core.permissions import accessible_store_ids
+
+        user = self.request.user
         queryset = super().get_queryset()
-        
+
+        # Staff/superuser vê todos; store admins só vêem clientes das suas lojas
+        if not (user.is_staff or user.is_superuser):
+            store_ids = accessible_store_ids(user)
+            queryset = queryset.filter(
+                store_customers__store_id__in=store_ids
+            ).distinct()
+
         # Filtro por telefone
         phone = self.request.query_params.get('phone')
         if phone:
             queryset = queryset.filter(phone_number__icontains=phone)
-        
+
         # Filtro por email
         email = self.request.query_params.get('email')
         if email:
             queryset = queryset.filter(email__icontains=email)
-        
+
         # Filtro por nome
         name = self.request.query_params.get('name')
         if name:
             queryset = queryset.filter(name__icontains=name)
-        
+
         # Filtro: tem carrinho abandonado
         has_cart = self.request.query_params.get('has_abandoned_cart')
         if has_cart:
             queryset = queryset.filter(has_abandoned_cart=True)
-        
+
         return queryset
     
     @action(detail=True, methods=['get'])
@@ -78,8 +88,8 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
                 {'error': 'phone parameter required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        user = get_object_or_404(UnifiedUser, phone_number=phone)
+
+        user = get_object_or_404(self.get_queryset(), phone_number=phone)
         serializer = self.get_serializer(user)
         return Response(serializer.data)
     
