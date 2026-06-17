@@ -115,7 +115,7 @@ class AddComboToCartView(views.APIView):
                 cart=cart,
                 combo=combo,
                 combo_name=combo.name,
-                unit_price=combo.price,
+                unit_price=combo.compute_unit_price(selections),
                 quantity=quantity,
                 group_selections=selections,
                 customizations={'selections': selections},

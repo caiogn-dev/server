@@ -1187,7 +1187,7 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'price', 'compare_at_price', 'savings', 'savings_percentage',
             'image', 'image_url',
             'is_active', 'featured',
-            'track_stock', 'stock_quantity',
+            'track_stock', 'stock_quantity', 'dynamic_pricing',
             'groups', 'catalog_role', 'merchandising_flags',
             'created_at', 'updated_at'
         ]
@@ -1592,7 +1592,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
             'price', 'compare_at_price', 'savings', 'savings_percentage',
             'image_url',
             'is_active', 'featured',
-            'stock_quantity', 'is_in_stock',
+            'stock_quantity', 'is_in_stock', 'dynamic_pricing',
             'groups'
         ]
     

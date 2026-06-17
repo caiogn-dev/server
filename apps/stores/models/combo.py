@@ -29,6 +29,10 @@ class StoreCombo(models.Model):
     track_stock = models.BooleanField(default=False)
     stock_quantity = models.IntegerField(default=0)
     sort_order = models.PositiveIntegerField(default=0)
+    # Preço dinâmico: total = price (base) + soma dos itens selecionados
+    # (price_override do item, ou preço normal do produto/variante se sem override).
+    # Quando False, o total é o price fixo. Ver compute_unit_price().
+    dynamic_pricing = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -46,6 +50,46 @@ class StoreCombo(models.Model):
         if self.image:
             return build_absolute_media_url(self.image.url)
         return build_absolute_media_url(self.image_url or '')
+
+    def compute_unit_price(self, selections):
+        """Preço unitário do combo dado as seleções do cliente.
+
+        selections = {group_id: [id, ...]} onde id é variant_id OU product_id.
+        - dynamic_pricing False → preço fixo (self.price).
+        - dynamic_pricing True  → self.price (base) + Σ por item selecionado de
+          (price_override do item, ou preço normal do produto/variante).
+        """
+        base = self.price or Decimal('0.00')
+        if not self.dynamic_pricing:
+            return base
+
+        total = Decimal(str(base))
+        groups = {str(g.id): g for g in self.groups.all().prefetch_related(
+            'variant_limits__variant', 'product_options__product'
+        )}
+        for group_id, selected_ids in (selections or {}).items():
+            group = groups.get(str(group_id))
+            if not group:
+                continue
+            variant_price = {}
+            for limit in group.variant_limits.all():
+                v = limit.variant
+                variant_price[str(v.id)] = (
+                    limit.price_override if limit.price_override is not None
+                    else (v.price if v.price is not None else (group.product.price if group.product_id else Decimal('0.00')))
+                )
+            option_price = {}
+            for opt in group.product_options.all():
+                option_price[str(opt.product_id)] = (
+                    opt.price_override if opt.price_override is not None else opt.product.price
+                )
+            for sel_id in (selected_ids or []):
+                key = str(sel_id)
+                if key in option_price:
+                    total += Decimal(str(option_price[key]))
+                elif key in variant_price:
+                    total += Decimal(str(variant_price[key]))
+        return total
 
     @property
     def savings(self):

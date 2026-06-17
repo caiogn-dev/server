@@ -159,6 +159,56 @@ class ComboProductGroupSyncTestCase(TestCase):
         self.assertEqual(str(group.product_id), str(product.id))
         self.assertEqual(group.variant_limits.count(), 1)
 
+    def test_dynamic_pricing_sums_overrides_and_product_prices(self):
+        """Preço dinâmico: base + override do item (ou preço normal se sem override)."""
+        from decimal import Decimal
+        create = StoreComboSerializer(data={
+            'store': str(self.store.id),
+            'name': 'Combo Dinâmico',
+            'slug': 'combo-dinamico',
+            'price': '0.00',
+            'is_active': True,
+            'dynamic_pricing': True,
+            'groups': [{
+                'title': 'Escolha saladas',
+                'min_selections': 1,
+                'max_selections': 5,
+                'allow_duplicate_variants': True,
+                'product_options': [
+                    {'product_id': str(self.salada_caesar.id), 'max_selections': 2,
+                     'price_override': '22.00'},
+                    {'product_id': str(self.salada_tropical.id), 'max_selections': 2,
+                     'price_override': '25.00'},
+                    # Vegana sem override → usa preço normal do produto (25.00)
+                    {'product_id': str(self.salada_vegana.id), 'max_selections': 2,
+                     'price_override': None},
+                ],
+            }],
+        })
+        self.assertTrue(create.is_valid(), create.errors)
+        combo = create.save()
+        group = combo.groups.get()
+        selections = {str(group.id): [
+            str(self.salada_caesar.id),
+            str(self.salada_tropical.id),
+            str(self.salada_vegana.id),
+        ]}
+        # 0 (base) + 22 + 25 + 25 (preço normal da vegana) = 72
+        self.assertEqual(combo.compute_unit_price(selections), Decimal('72.00'))
+
+    def test_fixed_pricing_ignores_selections(self):
+        """Sem dynamic_pricing, o preço é fixo (combo.price), ignora seleções."""
+        from decimal import Decimal
+        create = StoreComboSerializer(data=self._product_group_payload([
+            {'product_id': str(self.salada_caesar.id), 'max_selections': 2,
+             'price_override': '22.00'},
+        ]))
+        self.assertTrue(create.is_valid(), create.errors)
+        combo = create.save()  # price 90.00, dynamic_pricing default False
+        group = combo.groups.get()
+        selections = {str(group.id): [str(self.salada_caesar.id)]}
+        self.assertEqual(combo.compute_unit_price(selections), Decimal('90.00'))
+
     def test_image_url_is_writable(self):
         """Regressão: image_url do combo deve salvar (era read-only/method field)."""
         payload = {
