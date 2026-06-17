@@ -32,7 +32,7 @@ class MpOrdersTestCase(TestCase):
         self.assertEqual(mp_orders.phone_parts('+55 (63) 99988-7766'), ('63', '999887766'))
 
     def test_statement_descriptor_sanitiza(self):
-        self.assertEqual(mp_orders.statement_descriptor(self.store), 'CE SALADAS')  # sem '!', <=13
+        self.assertEqual(mp_orders.statement_descriptor(self.store), 'CARDAPIDEX')  # sem '!', <=13
 
     def test_build_items(self):
         items = mp_orders.build_items(self.order)
@@ -64,7 +64,7 @@ class MpOrdersTestCase(TestCase):
         self.assertEqual(p['external_reference'], str(self.order.id))
         pay = p['transactions']['payments'][0]
         self.assertEqual(pay['payment_method']['token'], 'TKN')
-        self.assertEqual(pay['payment_method']['statement_descriptor'], 'CE SALADAS')
+        self.assertEqual(pay['payment_method']['statement_descriptor'], 'CARDAPIDEX')
         self.assertEqual(len(p['items']), 2)
 
     def test_interpret_aprovado(self):

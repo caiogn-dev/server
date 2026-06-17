@@ -30,8 +30,11 @@ def phone_parts(phone):
 
 
 def statement_descriptor(store):
-    name = getattr(store, 'name', '') or 'CARDAPIDEX'
-    # translitera acentos (ê→e) antes de remover o resto
+    # Nome na fatura do cartão. Usa o descriptor da plataforma (config), não o
+    # nome da loja — o lojista quer "Cardapidex". O MP só honra isto se a conta
+    # também tiver "Nome para extratos" configurado.
+    from django.conf import settings
+    name = getattr(settings, 'MERCADO_PAGO_STATEMENT_DESCRIPTOR', '') or 'CARDAPIDEX'
     name = unicodedata.normalize('NFKD', name).encode('ascii', 'ignore').decode('ascii')
     name = re.sub(r'[^A-Za-z0-9 ]', '', name).upper().strip()[:13]
     return name or 'CARDAPIDEX'

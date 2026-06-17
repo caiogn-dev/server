@@ -615,7 +615,7 @@ SPECTACULAR_SETTINGS = {
 # Mercado Pago
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
-MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'PASTITA')
+MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'CARDAPIDEX')
 # SaaS billing: cobrança automática no fim do trial (Celery). OFF até validar em sandbox.
 # A assinatura iniciada pelo dono (botão "Assinar") NÃO depende deste flag.
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
