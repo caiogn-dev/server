@@ -59,26 +59,43 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
         
         return queryset.order_by('name')
     
+    def _check_account_access(self, user, account_id):
+        """Return the WhatsAppAccount if the user may use it, else None."""
+        if not account_id:
+            return None
+        from apps.whatsapp.models import WhatsAppAccount
+        qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
+        if not (user.is_superuser or user.is_staff):
+            allowed_ids = accessible_whatsapp_account_ids(user)
+            qs = qs.filter(id__in=allowed_ids)
+        return qs.first()
+
     def create(self, request, *args, **kwargs):
         """Create a new report schedule."""
         serializer = CreateReportScheduleSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         data = serializer.validated_data
         account_id = data.pop('account_id', None)
         company_id = data.pop('company_id', None)
-        
+
+        if account_id and not self._check_account_access(request.user, account_id):
+            return Response(
+                {'error': 'WhatsApp account not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
         schedule = ReportSchedule.objects.create(
             account_id=account_id,
             company_id=company_id,
             created_by=request.user,
             **data
         )
-        
+
         # Calculate next run
         schedule.calculate_next_run()
         schedule.save()
-        
+
         return Response(
             ReportScheduleSerializer(schedule).data,
             status=status.HTTP_201_CREATED
@@ -89,12 +106,17 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         serializer = UpdateReportScheduleSerializer(data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        
+
         data = serializer.validated_data
         account_id = data.pop('account_id', None)
         company_id = data.pop('company_id', None)
-        
+
         if account_id is not None:
+            if not self._check_account_access(request.user, account_id):
+                return Response(
+                    {'error': 'WhatsApp account not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             instance.account_id = account_id
         if company_id is not None:
             instance.company_id = company_id
@@ -204,21 +226,35 @@ class GeneratedReportViewSet(viewsets.ReadOnlyModelViewSet):
         """Generate a report on demand."""
         serializer = GenerateReportSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         data = serializer.validated_data
-        
+        account_id = str(data.get('account_id')) if data.get('account_id') else None
+
+        # Verify the user has access to the requested account before queuing the task
+        if account_id:
+            from apps.whatsapp.models import WhatsAppAccount
+            account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
+            if not (request.user.is_superuser or request.user.is_staff):
+                allowed_ids = accessible_whatsapp_account_ids(request.user)
+                account_qs = account_qs.filter(id__in=allowed_ids)
+            if not account_qs.exists():
+                return Response(
+                    {'error': 'WhatsApp account not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
         from apps.automation.tasks import generate_report
         task = generate_report.delay(
             report_type=data.get('report_type', 'full'),
             period_start=data.get('period_start', '').isoformat() if data.get('period_start') else None,
             period_end=data.get('period_end', '').isoformat() if data.get('period_end') else None,
-            account_id=str(data.get('account_id')) if data.get('account_id') else None,
+            account_id=account_id,
             company_id=str(data.get('company_id')) if data.get('company_id') else None,
             recipients=data.get('recipients', []),
             export_format=data.get('export_format', 'xlsx'),
             user_id=request.user.id
         )
-        
+
         return Response({
             'success': True,
             'message': 'Report generation started',
