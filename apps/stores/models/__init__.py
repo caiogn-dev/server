@@ -31,6 +31,7 @@ from .cart import StoreCart, StoreCartItem, StoreCartComboItem
 # Combo models
 from .combo import StoreCombo
 from .combo_group import ComboProductGroup, ComboProductGroupVariantLimit, ComboProductGroupProductOption
+from .subscription import StoreSubscription
 
 # Coupon
 from .coupon import StoreCoupon
@@ -89,6 +90,7 @@ __all__ = [
     'StoreCartComboItem',
     # Combo
     'StoreCombo',
+    'StoreSubscription',
     'ComboProductGroup',
     'ComboProductGroupVariantLimit',
     'ComboProductGroupProductOption',

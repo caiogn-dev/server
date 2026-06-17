@@ -373,3 +373,12 @@ def owner_signup(request):
             'onboarding_completed': store.onboarding_completed,
         },
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
+def public_plans(request):
+    """GET /api/v1/public/plans/ — catálogo de planos SaaS (landing/dash)."""
+    from apps.stores.billing import public_catalog
+    return Response({'plans': public_catalog()})

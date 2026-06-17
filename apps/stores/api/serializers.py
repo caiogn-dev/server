@@ -48,10 +48,12 @@ class StoreSerializer(serializers.ModelSerializer):
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
             'owner', 'metadata',
+            'plan', 'trial_ends_at', 'onboarding_completed',
             'integrations_count', 'products_count', 'orders_count',
             'created_at', 'updated_at', 'is_active'
         ]
-        read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'owner', 'created_at', 'updated_at',
+                            'plan', 'trial_ends_at']
 
     # Estes 5 contadores são anotados na queryset do StoreViewSet (anno_*) via
     # Subquery — 1 query em vez de 5 por loja. Se a anotação não estiver

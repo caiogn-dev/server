@@ -1,0 +1,41 @@
+"""
+StoreSubscription — assinatura SaaS de uma loja (1:1 com Store).
+A cobrança MercadoPago é wired no sub-projeto Billing; aqui é só o estado.
+"""
+import uuid
+from django.db import models
+
+
+class StoreSubscription(models.Model):
+    class Status(models.TextChoices):
+        TRIALING = 'trialing', 'Em trial'
+        ACTIVE = 'active', 'Ativa'
+        PAST_DUE = 'past_due', 'Pagamento atrasado'
+        SUSPENDED = 'suspended', 'Suspensa'
+        CANCELED = 'canceled', 'Cancelada'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store = models.OneToOneField(
+        'stores.Store', on_delete=models.CASCADE, related_name='subscription'
+    )
+    plan = models.CharField(max_length=20, default='starter')
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.TRIALING)
+
+    # MercadoPago (preenchidos quando a cobrança for ligada)
+    mp_preapproval_id = models.CharField(max_length=255, blank=True, default='')
+    setup_fee_paid = models.BooleanField(default=False)
+
+    current_period_end = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    canceled_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'store_subscriptions'
+        verbose_name = 'Store Subscription'
+        verbose_name_plural = 'Store Subscriptions'
+
+    def __str__(self):
+        return f"{self.store.name} — {self.plan} ({self.status})"
