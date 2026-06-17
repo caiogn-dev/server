@@ -92,6 +92,11 @@ class Store(BaseModel):
         MINIMAL = 'minimal', 'Minimal'
         DARK = 'dark', 'Dark'
 
+    class StorePlan(models.TextChoices):
+        STARTER = 'starter', 'Starter'
+        PRO = 'pro', 'Pro'
+        PREMIUM = 'premium', 'Premium'
+
     # Basic Info
     name = models.CharField(max_length=255)
     slug = models.SlugField(max_length=100, unique=True, db_index=True)
@@ -105,6 +110,22 @@ class Store(BaseModel):
         max_length=20,
         choices=StoreStatus.choices,
         default=StoreStatus.PENDING
+    )
+
+    # SaaS / Onboarding
+    plan = models.CharField(
+        max_length=20,
+        choices=StorePlan.choices,
+        default=StorePlan.STARTER,
+        help_text="Plano de assinatura (feature-gates aplicados no sub-projeto Billing)",
+    )
+    trial_ends_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fim do trial gratuito (signup self-service). Null = sem trial.",
+    )
+    onboarding_completed = models.BooleanField(
+        default=False,
+        help_text="Wizard de onboarding concluído (passos mínimos).",
     )
 
     # Branding

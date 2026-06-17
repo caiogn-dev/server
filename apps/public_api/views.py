@@ -23,14 +23,16 @@ class _PublicReadThrottle(AnonRateThrottle):
     scope = 'public_read'
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db.models import Prefetch
 import logging
 from django.conf import settings
-from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo
+from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo, StoreProductVariant
 from .models import Lead
 from .serializers import (
     PublicStoreSerializer,
     PublicCategorySerializer,
     PublicProductSerializer,
+    PublicComboSerializer,
     LeadSerializer,
 )
 
@@ -74,17 +76,29 @@ def public_store_catalog(request, slug):
     """Full catalog: store + categories with their products."""
     store = _get_active_store(slug)
 
+    # Produtos ativos já com category + product_type (select_related) e variantes
+    # ativas (prefetch filtrado) — colapsa o N+1 antigo (~1+2C+2P queries) p/ ~5 total.
+    active_products = (
+        StoreProduct.objects
+        .filter(status='active')
+        .select_related('category', 'product_type')
+        .prefetch_related(Prefetch(
+            'variants',
+            queryset=StoreProductVariant.objects.filter(is_active=True).order_by('sort_order', 'name'),
+        ))
+        .order_by('sort_order', 'name')
+    )
     categories = (
         StoreCategory.objects
         .filter(store=store, is_active=True)
-        .prefetch_related('products')
+        .prefetch_related(Prefetch('products', queryset=active_products))
         .order_by('sort_order', 'name')
     )
 
     catalog = []
     for cat in categories:
-        products = cat.products.filter(status='active').order_by('sort_order', 'name')
-        if not products.exists():
+        products = list(cat.products.all())  # usa o cache do prefetch — zero query extra
+        if not products:
             continue
         catalog.append({
             **PublicCategorySerializer(cat, context={'request': request}).data,
@@ -118,8 +132,11 @@ def public_store_products(request, slug):
     products = (
         StoreProduct.objects
         .filter(store=store, status='active')
-        .select_related('category')
-        .prefetch_related('variants')
+        .select_related('category', 'product_type')
+        .prefetch_related(Prefetch(
+            'variants',
+            queryset=StoreProductVariant.objects.filter(is_active=True).order_by('sort_order', 'name'),
+        ))
         .order_by('sort_order', 'name')
     )
 
@@ -250,3 +267,109 @@ def _notify_owner_whatsapp(lead: Lead) -> None:
         logger.info('Owner WhatsApp notification sent for lead %s', lead.id)
     except Exception as exc:
         logger.error('Failed to send WhatsApp notification for lead %s: %s', lead.id, exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Onboarding self-service: cria dono + loja em trial
+# ─────────────────────────────────────────────────────────────────────────────
+class _PublicSignupThrottle(AnonRateThrottle):
+    scope = 'auth'  # reusa o rate de auth (anti-abuso de signup)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicSignupThrottle])
+def owner_signup(request):
+    """
+    POST /api/v1/public/signup/
+    Cria o dono (User) + a Loja em trial (14d). Self-service onboarding.
+
+    Body: { name, password, phone, email?, store_name, store_slug?, whatsapp? }
+    Retorna: { token, user, store }  (201) ou erros de validação (400).
+    """
+    from datetime import timedelta
+    from django.contrib.auth.models import User
+    from django.contrib.auth.password_validation import validate_password
+    from django.core.exceptions import ValidationError as DjangoValidationError
+    from django.utils.text import slugify
+    from django.db import transaction
+    from rest_framework.authtoken.models import Token
+    from apps.core.models import UserProfile
+
+    data = request.data
+    name = (data.get('name') or '').strip()
+    password = data.get('password') or ''
+    phone = (data.get('phone') or '').strip()
+    email = (data.get('email') or '').strip().lower()
+    store_name = (data.get('store_name') or '').strip()
+    store_slug = (data.get('store_slug') or '').strip()
+    whatsapp = (data.get('whatsapp') or '').strip()
+
+    errors = {}
+    if not name:
+        errors['name'] = ['Nome é obrigatório']
+    if not store_name:
+        errors['store_name'] = ['Nome da loja é obrigatório']
+    if not phone and not email:
+        errors['phone'] = ['Email ou celular é obrigatório']
+    try:
+        validate_password(password)
+    except DjangoValidationError as e:
+        errors['password'] = list(e.messages)
+    if errors:
+        return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+    if not email and phone:
+        email = f"{phone.replace('+', '').replace('-', '').replace(' ', '')}@cardapidex.local"
+
+    if User.objects.filter(email__iexact=email).exists():
+        return Response({'email': ['Este e-mail já está cadastrado']}, status=status.HTTP_400_BAD_REQUEST)
+    if phone and UserProfile.objects.filter(phone=phone).exists():
+        return Response({'phone': ['Este celular já está cadastrado']}, status=status.HTTP_400_BAD_REQUEST)
+
+    base_slug = slugify(store_slug or store_name)[:90] or 'loja'
+    slug = base_slug
+    i = 1
+    while Store.objects.filter(slug=slug).exists():
+        slug = f"{base_slug}-{i}"
+        i += 1
+
+    parts = name.split(' ', 1)
+    first_name = parts[0]
+    last_name = parts[1] if len(parts) > 1 else ''
+
+    base_username = (email.split('@')[0] or 'dono')[:20]
+    username = base_username
+    c = 1
+    while User.objects.filter(username=username).exists():
+        username = f"{base_username}{c}"
+        c += 1
+
+    with transaction.atomic():
+        user = User.objects.create_user(
+            username=username, email=email, password=password,
+            first_name=first_name, last_name=last_name,
+        )
+        if phone:
+            profile, _ = UserProfile.objects.get_or_create(user=user)
+            profile.phone = phone
+            profile.save()
+        store = Store.objects.create(
+            name=store_name, slug=slug, owner=user,
+            status=Store.StoreStatus.ACTIVE,
+            plan=Store.StorePlan.STARTER,
+            trial_ends_at=timezone.now() + timedelta(days=14),
+            onboarding_completed=False,
+            whatsapp_number=whatsapp or '',
+        )
+        token = Token.objects.create(user=user)
+
+    return Response({
+        'token': token.key,
+        'user': {'id': user.id, 'email': user.email, 'name': name},
+        'store': {
+            'id': str(store.id), 'slug': store.slug, 'name': store.name,
+            'trial_ends_at': store.trial_ends_at.isoformat(),
+            'onboarding_completed': store.onboarding_completed,
+        },
+    }, status=status.HTTP_201_CREATED)
