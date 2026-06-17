@@ -34,6 +34,13 @@ class StoreCategory(models.Model):
     sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
 
+    # Categoria interna do Salad Builder (base, complemento, proteína, molhos):
+    # usada só dentro do componente de montagem, escondida do cardápio normal.
+    is_builder_group = models.BooleanField(
+        default=False,
+        help_text="Categoria usada apenas no Salad Builder; não aparece como seção do cardápio.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

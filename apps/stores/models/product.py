@@ -234,8 +234,9 @@ class StoreProductVariant(models.Model):
     # Stock
     stock_quantity = models.IntegerField(default=0)
 
-    # Options
-    options = models.JSONField(default=dict)
+    # Options — atributos que diferenciam a variante (tamanho, cor, sabor).
+    # blank=True: variantes simples (ex.: sabores de molho) não precisam preencher.
+    options = models.JSONField(default=dict, blank=True)
 
     # Image
     image = models.ImageField(upload_to='stores/variants/', blank=True, null=True)

@@ -16,11 +16,17 @@ class ComboProductGroup(models.Model):
         on_delete=models.CASCADE,
         related_name='groups'
     )
-    # Product must belong to same store as combo (enforced in save())
+    # Âncora opcional: grupos baseados em VARIANTES têm um produto-âncora.
+    # Grupos baseados em PRODUTOS (escolha entre vários produtos) deixam null
+    # e usam `title` + product_options.
     product = models.ForeignKey(
         'stores.StoreProduct',
-        on_delete=models.CASCADE
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
     )
+    # Rótulo do grupo quando não há produto-âncora (ex: "Escolha suas 5 saladas").
+    title = models.CharField(max_length=255, blank=True)
 
     # Selection rules
     is_required = models.BooleanField(default=True)
@@ -37,15 +43,18 @@ class ComboProductGroup(models.Model):
         db_table = 'combo_product_groups'
         verbose_name = 'Combo Product Group'
         verbose_name_plural = 'Combo Product Groups'
+        # product agora é nullable; NULLs não colidem no Postgres, então grupos
+        # de produtos (sem âncora) coexistem no mesmo combo.
         unique_together = ['combo', 'product']
         ordering = ['position']
 
     def __str__(self):
-        return f"{self.combo.name} - {self.product.name}"
+        label = self.product.name if self.product else (self.title or 'grupo')
+        return f"{self.combo.name} - {label}"
 
     def save(self, *args, **kwargs):
-        """Ensure product belongs to same store as combo."""
-        if self.product.store_id != self.combo.store_id:
+        """Ensure product (quando há âncora) pertence à mesma loja do combo."""
+        if self.product_id and self.product.store_id != self.combo.store_id:
             raise ValidationError(
                 "Product must belong to the same store as the combo"
             )
@@ -87,4 +96,50 @@ class ComboProductGroupVariantLimit(models.Model):
         unique_together = ['group', 'variant']
 
     def __str__(self):
-        return f"{self.group.product.name} - {self.variant.name}: max {self.max_selections}"
+        anchor = self.group.product.name if self.group.product_id else (self.group.title or 'grupo')
+        return f"{anchor} - {self.variant.name}: max {self.max_selections}"
+
+
+class ComboProductGroupProductOption(models.Model):
+    """Opção de PRODUTO dentro de um grupo de combo.
+
+    Permite "escolha N entre vários produtos" (ex: 5 saladas), complementando
+    o ComboProductGroupVariantLimit (que é por variante). Um grupo pode usar
+    variantes OU produtos como opções.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    group = models.ForeignKey(
+        ComboProductGroup,
+        on_delete=models.CASCADE,
+        related_name='product_options'
+    )
+    product = models.ForeignKey(
+        'stores.StoreProduct',
+        on_delete=models.CASCADE
+    )
+
+    # Limite desta opção no grupo (quantas vezes pode ser escolhida)
+    max_selections = models.PositiveIntegerField(default=1)
+
+    # Preço por opção (se diferente do preço do produto dentro do combo)
+    price_override = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    position = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'combo_product_group_product_options'
+        verbose_name = 'Combo Product Option'
+        verbose_name_plural = 'Combo Product Options'
+        unique_together = ['group', 'product']
+        ordering = ['position']
+
+    def __str__(self):
+        return f"{self.group} - opção {self.product.name}"

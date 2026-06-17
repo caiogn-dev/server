@@ -66,6 +66,13 @@ class ComboSelectionValidator:
 
         return len(self.errors) == 0
 
+    @staticmethod
+    def _group_label(group) -> str:
+        """Rótulo do grupo: produto-âncora, senão title (grupo de produtos)."""
+        if getattr(group, 'product_id', None):
+            return group.product.name
+        return group.title or 'grupo'
+
     def _validate_required_groups(self, selections: Dict[str, List[str]]) -> None:
         """
         Check that all required groups have at least one selection.
@@ -79,7 +86,7 @@ class ComboSelectionValidator:
             group_id = str(group.id)
             if group_id not in selections or not selections[group_id]:
                 self.errors.append(
-                    f"Grupo '{group.product.name}' é obrigatório. "
+                    f"Grupo '{self._group_label(group)}' é obrigatório. "
                     f"Selecione pelo menos 1 item."
                 )
 
@@ -103,14 +110,14 @@ class ComboSelectionValidator:
             # Check minimum selections
             if count < group.min_selections:
                 self.errors.append(
-                    f"Grupo '{group.product.name}': selecione no mínimo "
+                    f"Grupo '{self._group_label(group)}': selecione no mínimo "
                     f"{group.min_selections} item(ns). Você selecionou {count}."
                 )
 
             # Check maximum selections
             if count > group.max_selections:
                 self.errors.append(
-                    f"Grupo '{group.product.name}': selecione no máximo "
+                    f"Grupo '{self._group_label(group)}': selecione no máximo "
                     f"{group.max_selections} item(ns). Você selecionou {count}."
                 )
 
@@ -136,7 +143,7 @@ class ComboSelectionValidator:
                     duplicates = [vid for vid in variant_ids if variant_ids.count(vid) > 1]
                     duplicate_names = self._get_variant_names(list(set(duplicates)))
                     self.errors.append(
-                        f"Grupo '{group.product.name}': não é permitido selecionar "
+                        f"Grupo '{self._group_label(group)}': não é permitido selecionar "
                         f"variantes duplicadas. Você selecionou múltiplas vezes: "
                         f"{', '.join(duplicate_names)}."
                     )
@@ -156,56 +163,62 @@ class ComboSelectionValidator:
         """
         groups_map = {str(g.id): g for g in self.combo.groups.all()}
 
-        for group_id, variant_ids in selections.items():
+        for group_id, sel_ids in selections.items():
             if group_id not in groups_map:
                 continue
 
             group = groups_map[group_id]
+            label = self._group_label(group)
 
-            # Get all variant limits for this group
             variant_limits_map = {
-                str(vl.variant_id): vl
-                for vl in group.variant_limits.all()
+                str(vl.variant_id): vl for vl in group.variant_limits.all()
+            }
+            # NOVO: opções de PRODUTO do grupo (escolha entre vários produtos)
+            product_options_map = {
+                str(po.product_id): po for po in group.product_options.all()
             }
 
-            # Count selections per variant in this group
-            variant_counts = {}
-            for vid in variant_ids:
-                variant_counts[vid] = variant_counts.get(vid, 0) + 1
+            counts = {}
+            for sid in sel_ids:
+                counts[sid] = counts.get(sid, 0) + 1
 
-            for variant_id, count in variant_counts.items():
-                # Validate variant exists and belongs to group's product
-                try:
-                    variant = StoreProductVariant.objects.get(id=variant_id)
-
-                    if variant.product_id != group.product_id:
+            for sid, count in counts.items():
+                # 1) É uma opção de PRODUTO do grupo?
+                if sid in product_options_map:
+                    po = product_options_map[sid]
+                    if count > po.max_selections:
                         self.errors.append(
-                            f"Variante '{variant.name}' não pertence ao grupo "
-                            f"'{group.product.name}'."
+                            f"'{po.product.name}' em '{label}': no máximo "
+                            f"{po.max_selections} seleção(ões). Você selecionou {count}."
                         )
-                        continue
-
-                except StoreProductVariant.DoesNotExist:
-                    self.errors.append(f"Variante desconhecida: {variant_id}")
                     continue
 
-                # Check variant limit
-                if variant_id in variant_limits_map:
-                    limit = variant_limits_map[variant_id]
+                # 2) Senão, valida como VARIANTE
+                try:
+                    variant = StoreProductVariant.objects.get(id=sid)
+                    if group.product_id and variant.product_id != group.product_id:
+                        self.errors.append(
+                            f"Variante '{variant.name}' não pertence ao grupo '{label}'."
+                        )
+                        continue
+                except StoreProductVariant.DoesNotExist:
+                    self.errors.append(f"Opção desconhecida: {sid}")
+                    continue
+
+                if sid in variant_limits_map:
+                    limit = variant_limits_map[sid]
                     if count > limit.max_selections:
                         self.errors.append(
-                            f"Variante '{variant.name}' em '{group.product.name}': "
-                            f"no máximo {limit.max_selections} seleção(ões) permitida(s). "
+                            f"Variante '{variant.name}' em '{label}': no máximo "
+                            f"{limit.max_selections} seleção(ões) permitida(s). "
                             f"Você selecionou {count}."
                         )
-                else:
-                    # If no explicit limit, default to group's max_selections per variant
-                    if count > group.max_selections:
-                        self.errors.append(
-                            f"Variante '{variant.name}' em '{group.product.name}': "
-                            f"no máximo {group.max_selections} seleção(ões) permitida(s). "
-                            f"Você selecionou {count}."
-                        )
+                elif count > group.max_selections:
+                    self.errors.append(
+                        f"Variante '{variant.name}' em '{label}': no máximo "
+                        f"{group.max_selections} seleção(ões) permitida(s). "
+                        f"Você selecionou {count}."
+                    )
 
                 # Check stock availability
                 if variant.product.track_stock and variant.stock_quantity < count:

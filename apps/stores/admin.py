@@ -9,6 +9,12 @@ from .models import (
     StoreProduct, StoreProductVariant, StoreOrder, StoreOrderItem,
     StoreCustomer, StoreTeamMember,
     StorePaymentGateway, StorePayment, StorePaymentWebhookEvent,
+    StoreCombo,
+)
+from .models.combo_group import (
+    ComboProductGroup,
+    ComboProductGroupVariantLimit,
+    ComboProductGroupProductOption,
 )
 
 
@@ -151,3 +157,42 @@ class StorePaymentWebhookEventAdmin(UnfoldModelAdmin):
     search_fields = ['event_id', 'event_type']
     readonly_fields = ['event_id', 'payload', 'headers', 'created_at', 'processed_at']
     date_hierarchy = 'created_at'
+
+
+# ── Combos ───────────────────────────────────────────────────────────────────
+
+class ComboProductGroupInline(TabularInline):
+    model = ComboProductGroup
+    extra = 0
+    fields = ('title', 'product', 'is_required', 'min_selections', 'max_selections', 'position')
+    show_change_link = True
+
+
+@admin.register(StoreCombo)
+class StoreComboAdmin(UnfoldModelAdmin):
+    list_display = ['name', 'store', 'price', 'compare_at_price', 'is_active', 'featured', 'created_at']
+    list_filter = ['store', 'is_active', 'featured']
+    search_fields = ['name', 'slug', 'store__name']
+    prepopulated_fields = {'slug': ('name',)}
+    readonly_fields = ['created_at', 'updated_at']
+    inlines = [ComboProductGroupInline]
+
+
+class ComboProductGroupVariantLimitInline(TabularInline):
+    model = ComboProductGroupVariantLimit
+    extra = 0
+    fields = ('variant', 'max_selections', 'price_override')
+
+
+class ComboProductGroupProductOptionInline(TabularInline):
+    model = ComboProductGroupProductOption
+    extra = 0
+    fields = ('product', 'max_selections', 'price_override', 'position')
+
+
+@admin.register(ComboProductGroup)
+class ComboProductGroupAdmin(UnfoldModelAdmin):
+    list_display = ['__str__', 'combo', 'product', 'title', 'min_selections', 'max_selections', 'position']
+    list_filter = ['combo__store', 'is_required']
+    search_fields = ['title', 'combo__name', 'product__name']
+    inlines = [ComboProductGroupVariantLimitInline, ComboProductGroupProductOptionInline]

@@ -53,30 +53,44 @@ class StoreSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at']
 
+    # Estes 5 contadores são anotados na queryset do StoreViewSet (anno_*) via
+    # Subquery — 1 query em vez de 5 por loja. Se a anotação não estiver
+    # presente (ex: serializer usado fora do viewset), cai no fallback antigo.
     def get_avg_rating(self, obj):
+        if hasattr(obj, 'anno_avg_rating'):
+            v = obj.anno_avg_rating
+            return round(v, 1) if v is not None else None
         from django.db.models import Avg
         avg = obj.reviews.filter(is_public=True).aggregate(a=Avg('rating'))['a']
         return round(avg, 1) if avg is not None else None
 
     def get_reviews_count(self, obj):
+        if hasattr(obj, 'anno_reviews_count'):
+            return obj.anno_reviews_count
         return obj.reviews.filter(is_public=True).count()
-    
+
     def get_logo_url(self, obj):
         return obj.get_logo_url()
-    
+
     def get_banner_url(self, obj):
         return obj.get_banner_url()
-    
+
     def get_is_open(self, obj):
         return obj.is_open()
-    
+
     def get_integrations_count(self, obj):
+        if hasattr(obj, 'anno_integrations_count'):
+            return obj.anno_integrations_count
         return obj.integrations.filter(is_active=True).count()
-    
+
     def get_products_count(self, obj):
+        if hasattr(obj, 'anno_products_count'):
+            return obj.anno_products_count
         return obj.products.filter(status='active').count()
-    
+
     def get_orders_count(self, obj):
+        if hasattr(obj, 'anno_orders_count'):
+            return obj.anno_orders_count
         return obj.orders.count()
 
 
@@ -219,7 +233,7 @@ class StoreCategorySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'store', 'name', 'slug', 'description',
             'image', 'image_url', 'parent', 'children',
-            'sort_order', 'is_active', 'products_count',
+            'sort_order', 'is_active', 'is_builder_group', 'products_count',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -265,6 +279,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
     
     main_image_url = serializers.SerializerMethodField()
     category_name = serializers.CharField(source='category.name', read_only=True)
+    category_slug = serializers.CharField(source='category.slug', read_only=True)
     product_type_name = serializers.CharField(source='product_type.name', read_only=True)
     product_type_slug = serializers.CharField(source='product_type.slug', read_only=True)
     is_on_sale = serializers.ReadOnlyField()
@@ -279,7 +294,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = StoreProduct
         fields = [
-            'id', 'store', 'category', 'category_name',
+            'id', 'store', 'category', 'category_name', 'category_slug',
             'product_type', 'product_type_name', 'product_type_slug', 'type_attributes',
             'name', 'slug', 'description', 'short_description',
             'sku', 'barcode',
@@ -1098,11 +1113,68 @@ class CatalogProductTypeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+def build_combo_groups(obj):
+    """Monta os grupos de um combo com opções (variantes E/OU produtos).
+
+    Compartilhado entre StoreComboSerializer (admin) e PublicComboSerializer
+    (storefront) para garantir paridade do contrato de exibição.
+    """
+    groups_data = []
+    for group in obj.groups.all().order_by('position'):
+        anchor_price = group.product.price if group.product_id else 0
+        variants = []
+        for limit in group.variant_limits.all():
+            variant = limit.variant
+            variants.append({
+                'variant_id': str(variant.id),
+                'name': variant.name,
+                'variant_name': variant.name,
+                'price': float(variant.price or anchor_price),
+                'price_override': float(limit.price_override) if limit.price_override else None,
+                'stock': variant.stock_quantity,
+                'max_selections': limit.max_selections,
+                'image_url': variant.image.url if variant.image else variant.image_url,
+            })
+
+        # Opções de PRODUTO (escolha entre vários produtos no grupo)
+        product_options = []
+        for opt in group.product_options.all().order_by('position'):
+            p = opt.product
+            p_img = (p.main_image.url if getattr(p, 'main_image', None) else None) or getattr(p, 'main_image_url', None)
+            product_options.append({
+                'product_id': str(p.id),
+                'name': p.name,
+                'price': float(opt.price_override) if opt.price_override is not None else float(p.price),
+                'price_override': float(opt.price_override) if opt.price_override is not None else None,
+                'stock': p.stock_quantity,
+                'max_selections': opt.max_selections,
+                'image_url': p_img,
+            })
+
+        groups_data.append({
+            'id': str(group.id),
+            'product_id': str(group.product.id) if group.product_id else None,
+            'product_name': group.product.name if group.product_id else (group.title or ''),
+            'title': group.title or (group.product.name if group.product_id else ''),
+            'is_required': group.is_required,
+            'min_selections': group.min_selections,
+            'max_selections': group.max_selections,
+            'allow_duplicate_variants': group.allow_duplicate_variants,
+            'position': group.position,
+            'variant_limits': variants,
+            'product_options': product_options,
+        })
+
+    return groups_data
+
+
 class StoreComboSerializer(serializers.ModelSerializer):
     """Serializer for combos with product groups."""
 
     groups = serializers.JSONField(required=False)
-    image_url = serializers.SerializerMethodField()
+    # image_url é o URLField gravável do model (não method field): permite que o
+    # dash salve a imagem do combo por URL. A saída final é normalizada em
+    # to_representation via get_image_url() do model.
     savings = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     savings_percentage = serializers.IntegerField(read_only=True)
     catalog_role = serializers.SerializerMethodField()
@@ -1137,38 +1209,8 @@ class StoreComboSerializer(serializers.ModelSerializer):
         }
 
     def get_groups(self, obj):
-        """Retorna grupos com suas variantes para seleção no combo."""
-        groups_data = []
-        for group in obj.groups.all().order_by('position'):
-            variant_limits = group.variant_limits.all()
-            variants = []
-
-            for limit in variant_limits:
-                variant = limit.variant
-                variants.append({
-                    'variant_id': str(variant.id),
-                    'name': variant.name,
-                    'variant_name': variant.name,
-                    'price': float(variant.price or group.product.price),
-                    'price_override': float(limit.price_override) if limit.price_override else None,
-                    'stock': variant.stock_quantity,
-                    'max_selections': limit.max_selections,
-                    'image_url': variant.image.url if variant.image else variant.image_url,
-                })
-
-            groups_data.append({
-                'id': str(group.id),
-                'product_id': str(group.product.id),
-                'product_name': group.product.name,
-                'is_required': group.is_required,
-                'min_selections': group.min_selections,
-                'max_selections': group.max_selections,
-                'allow_duplicate_variants': group.allow_duplicate_variants,
-                'position': group.position,
-                'variant_limits': variants,
-            })
-
-        return groups_data
+        """Retorna grupos com opções (variantes E/OU produtos) para seleção."""
+        return build_combo_groups(obj)
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -1180,16 +1222,21 @@ class StoreComboSerializer(serializers.ModelSerializer):
         from apps.stores.models.combo_group import (
             ComboProductGroup,
             ComboProductGroupVariantLimit,
+            ComboProductGroupProductOption,
         )
 
         combo.groups.all().delete()
         for idx, group_data in enumerate(groups_data or []):
             product_id = group_data.get('product') or group_data.get('product_id')
-            if not product_id:
+            product_options = group_data.get('product_options') or []
+            # Grupo de VARIANTES tem produto-âncora; grupo de PRODUTOS tem
+            # product_options (sem âncora). Pula só o grupo totalmente vazio.
+            if not product_id and not product_options:
                 continue
             group = ComboProductGroup.objects.create(
                 combo=combo,
-                product_id=product_id,
+                product_id=product_id or None,
+                title=group_data.get('title') or '',
                 is_required=group_data.get('is_required', True),
                 min_selections=group_data.get('min_selections', 1),
                 max_selections=group_data.get('max_selections', 1),
@@ -1205,6 +1252,17 @@ class StoreComboSerializer(serializers.ModelSerializer):
                     variant_id=variant_id,
                     max_selections=limit_data.get('max_selections') or 1,
                     price_override=limit_data.get('price_override') or None,
+                )
+            for pos, opt_data in enumerate(product_options):
+                opt_product_id = opt_data.get('product') or opt_data.get('product_id')
+                if not opt_product_id:
+                    continue
+                ComboProductGroupProductOption.objects.create(
+                    group=group,
+                    product_id=opt_product_id,
+                    max_selections=opt_data.get('max_selections') or 1,
+                    price_override=opt_data.get('price_override') or None,
+                    position=opt_data.get('position', pos),
                 )
 
     @transaction.atomic
@@ -1540,7 +1598,11 @@ class PublicComboSerializer(serializers.ModelSerializer):
     
     def get_image_url(self, obj):
         return obj.get_image_url()
-    
+
+    def get_groups(self, obj):
+        """Mesmo contrato de grupos do StoreComboSerializer (variantes/produtos)."""
+        return build_combo_groups(obj)
+
     def get_is_in_stock(self, obj):
         if not obj.track_stock:
             return True
