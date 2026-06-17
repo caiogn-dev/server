@@ -17,6 +17,7 @@ from django.db import transaction
 from django.db.models import Q
 from apps.conversations.models import Conversation
 from apps.conversations.repositories.conversation_repository import ConversationRepository
+from apps.core.permissions import accessible_whatsapp_account_ids
 from .models import (
     ConversationHandover,
     HandoverRequest,
@@ -53,10 +54,16 @@ class HandoverViewSet(viewsets.ViewSet):
     ViewSet para gerenciar handover de conversas.
     """
     permission_classes = [permissions.IsAuthenticated]
-    
+
     def get_conversation(self, pk):
-        """Obtém a conversa pelo ID."""
-        return get_object_or_404(Conversation, pk=pk)
+        """Return the conversation only if the current user may access it."""
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            return get_object_or_404(Conversation, pk=pk)
+        allowed_account_ids = accessible_whatsapp_account_ids(user)
+        return get_object_or_404(
+            Conversation, pk=pk, is_active=True, account_id__in=allowed_account_ids
+        )
     
     def get_or_create_handover(self, conversation):
         """Obtém ou cria o registro de handover."""
@@ -229,15 +236,16 @@ class HandoverRequestViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Retorna solicitações visíveis para o usuário."""
         user = self.request.user
-        
+
         # Se é superusuário, vê tudo
-        if user.is_superuser:
+        if user.is_superuser or user.is_staff:
             return HandoverRequest.objects.all()
-        
-        # Se é operador, vê solicitações pendentes da loja
-        # e solicitações atribuídas a ele
+
+        # Scope pending requests to conversations the user's accounts own
+        allowed_account_ids = accessible_whatsapp_account_ids(user)
         return HandoverRequest.objects.filter(
-            Q(status=HandoverRequestStatus.PENDING) |
+            Q(conversation__account_id__in=allowed_account_ids,
+              status=HandoverRequestStatus.PENDING) |
             Q(assigned_to=user) |
             Q(requested_by=user)
         ).distinct()
