@@ -20,6 +20,7 @@ from apps.automation.api.serializers import (
     UpdateCompanyProfileSerializer,
 )
 from apps.core.permissions import accessible_whatsapp_account_ids
+from apps.stores.models import Store
 from .base import StandardResultsSetPagination
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,15 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(_business_type=business_type)
         
         return queryset
-    
+
+    def _accessible_store_qs(self, user):
+        """Return a Store queryset scoped to the stores the user owns or staffs."""
+        from django.db.models import Q
+        qs = Store.objects.filter(is_active=True)
+        if user.is_superuser or user.is_staff:
+            return qs
+        return qs.filter(Q(owner=user) | Q(staff=user)).distinct()
+
     @action(detail=False, methods=['get'])
     def store_data(self, request):
         """
@@ -81,34 +90,48 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            from apps.stores.models import Store
-            
             # Try to find store by slug first
             if store_slug:
-                store = Store.objects.get(slug=store_slug, is_active=True)
+                try:
+                    store = self._accessible_store_qs(request.user).get(slug=store_slug)
+                except Store.DoesNotExist:
+                    return Response(
+                        {'error': 'Store not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
             else:
-                # Try to find store by WhatsApp account
+                # Try to find store by WhatsApp account — verify account access first
                 from apps.whatsapp.models import WhatsAppAccount
-                account = WhatsAppAccount.objects.get(id=account_id)
-                
+                account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
+                if not (request.user.is_superuser or request.user.is_staff):
+                    allowed_ids = accessible_whatsapp_account_ids(request.user)
+                    account_qs = account_qs.filter(id__in=allowed_ids)
+                try:
+                    account = account_qs.get()
+                except WhatsAppAccount.DoesNotExist:
+                    return Response(
+                        {'error': 'WhatsApp account not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
                 # Look for store with matching whatsapp_number
                 store = Store.objects.filter(
                     whatsapp_number=account.phone_number,
                     is_active=True
                 ).first()
-                
+
                 if not store:
                     # Try by owner
                     store = Store.objects.filter(
                         owner=account.owner,
                         is_active=True
                     ).first()
-            
-            if not store:
-                return Response(
-                    {'error': 'Store not found'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+
+                if not store:
+                    return Response(
+                        {'error': 'Store not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
             
             # Build business hours from store.operating_hours
             business_hours = {}
@@ -175,8 +198,7 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         # If store_id provided, fetch store data
         if store_id:
             try:
-                from apps.stores.models import Store
-                store = Store.objects.get(id=store_id, is_active=True)
+                store = self._accessible_store_qs(request.user).get(id=store_id)
                 
                 # Auto-populate from store if not manually provided
                 if not data.get('company_name'):
