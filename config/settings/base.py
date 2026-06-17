@@ -621,6 +621,10 @@ MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCR
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
 # URL do painel (back_url do checkout de assinatura). FRONTEND_URL é lista p/ CORS, não serve.
 BILLING_PANEL_URL = os.environ.get('BILLING_PANEL_URL', 'https://painel.cardapidex.com.br').rstrip('/')
+# Token de SANDBOX (TEST-...) só para a assinatura SaaS. Se setado, billing usa ele
+# em vez do token de produção — permite testar sem cobrar de verdade e sem mexer
+# no token dos pedidos. Vazio = usa produção (cobrança real).
+MERCADO_PAGO_SANDBOX_TOKEN = os.environ.get('MERCADO_PAGO_SANDBOX_TOKEN', '')
 BACKEND_URL = os.environ.get('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 ECOMMERCE_DEFAULT_ACCOUNT_ID = os.environ.get('ECOMMERCE_DEFAULT_ACCOUNT_ID', '').strip()

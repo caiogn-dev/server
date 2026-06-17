@@ -21,10 +21,15 @@ class SubscriptionError(Exception):
     pass
 
 
+def is_sandbox():
+    return bool(getattr(settings, 'MERCADO_PAGO_SANDBOX_TOKEN', ''))
+
+
 def _sdk():
-    token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', '')
+    # Prefere o token de SANDBOX (TEST-) se setado — testa sem cobrar de verdade.
+    token = getattr(settings, 'MERCADO_PAGO_SANDBOX_TOKEN', '') or getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', '')
     if not token:
-        raise SubscriptionError('MERCADO_PAGO_ACCESS_TOKEN não configurado.')
+        raise SubscriptionError('Token MercadoPago não configurado.')
     import mercadopago
     return mercadopago.SDK(token)
 
