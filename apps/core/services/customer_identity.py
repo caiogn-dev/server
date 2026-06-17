@@ -356,26 +356,25 @@ class CustomerIdentityService:
         if store_customer_updates:
             store_customer.save(update_fields=store_customer_updates)
 
-        # Link to UnifiedUser if not already done
+        # Cria/linka o UnifiedUser (modelo CRM canônico — a busca de clientes do
+        # dashboard consulta UnifiedUser). Antes só LINKAVA um existente, então
+        # cliente novo cadastrado no "Novo Pedido" não aparecia na busca depois.
         if store_customer.unified_user_id is None:
             try:
                 from apps.users.models import UnifiedUser
-                unified = (
-                    UnifiedUser.objects
-                    .filter(django_user=resolved_user)
-                    .first()
-                )
-                if unified is None and normalized_phone:
-                    unified = (
-                        UnifiedUser.objects
-                        .filter(phone_number=normalized_phone)
-                        .first()
+                real_email = email if (email and not email.endswith(".invalid")) else ""
+                if normalized_phone or real_email:
+                    unified, _ = UnifiedUser.resolve(
+                        phone=normalized_phone,
+                        email=real_email,
+                        name=customer_name,
+                        django_user=resolved_user,
                     )
-                if unified:
-                    store_customer.unified_user = unified
-                    store_customer.save(update_fields=["unified_user"])
+                    if unified:
+                        store_customer.unified_user = unified
+                        store_customer.save(update_fields=["unified_user"])
             except Exception:
-                logger.debug("[IDENTITY] Não foi possível linkar UnifiedUser ao StoreCustomer")
+                logger.debug("[IDENTITY] Não foi possível criar/linkar UnifiedUser ao StoreCustomer")
 
         return {
             "user": resolved_user,
