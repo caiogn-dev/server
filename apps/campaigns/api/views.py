@@ -428,8 +428,8 @@ class CampaignViewSet(viewsets.ModelViewSet):
         """
         service = CampaignService()
         try:
-            campaign = Campaign.objects.get(id=pk)
-            
+            campaign = self.get_object()
+
             if campaign.status in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
                 campaign.status = Campaign.CampaignStatus.RUNNING
                 campaign.started_at = timezone.now()
@@ -445,11 +445,6 @@ class CampaignViewSet(viewsets.ModelViewSet):
             result = service.process_campaign_batch(str(pk), batch_size=50)
             return Response(result)
             
-        except Campaign.DoesNotExist:
-            return Response(
-                {'error': 'Campaign not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
         except Exception as e:
             logger.exception(f"Error processing campaign {pk}: {e}")
             return Response(
@@ -538,10 +533,20 @@ class ContactListViewSet(viewsets.ModelViewSet):
         serializer = ImportContactsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        user = request.user
+        account_id = serializer.validated_data['account_id']
+        if not (user.is_superuser or user.is_staff):
+            allowed_ids = accessible_whatsapp_account_ids(user)
+            if str(account_id) not in [str(aid) for aid in allowed_ids]:
+                return Response(
+                    {'error': 'WhatsApp account not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
         service = CampaignService()
         try:
             contact_list = service.import_contacts_from_csv(
-                account_id=serializer.validated_data['account_id'],
+                account_id=account_id,
                 name=serializer.validated_data['name'],
                 csv_content=serializer.validated_data['csv_content'],
                 created_by=request.user

@@ -8,8 +8,8 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 
-from apps.stores.models import StoreDeliveryZone
-from apps.core.permissions import StoreQuerysetMixin
+from apps.stores.models import Store, StoreDeliveryZone
+from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 from ..serializers import StoreDeliveryZoneSerializer, StoreDeliveryZoneCreateSerializer
 from .base import IsStoreOwnerOrStaff
 
@@ -89,7 +89,12 @@ class StoreDeliveryZoneViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         
         if not store_id:
             return Response({'error': 'store is required'}, status=400)
-        
+
+        user = request.user
+        if not (user.is_superuser or user.is_staff):
+            if str(store_id) not in [str(sid) for sid in accessible_store_ids(user)]:
+                return Response({'error': 'Store not found'}, status=404)
+
         zones = StoreDeliveryZone.objects.filter(
             store_id=store_id,
             is_active=True
