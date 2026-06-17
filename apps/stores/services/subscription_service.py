@@ -43,6 +43,10 @@ def create_subscription(store, plan_key, payer_email, back_url):
     plan = billing.get_plan(plan_key)
     sdk = _sdk()
 
+    # URL pra onde o MercadoPago manda os eventos da assinatura (preapproval).
+    backend = getattr(settings, 'BACKEND_URL', '').rstrip('/')
+    notification_url = f"{backend}/webhooks/payments/mercadopago/" if backend else None
+
     data = {
         'reason': f"Cardapidex {plan['name']} — {store.name}",
         'auto_recurring': {
@@ -55,6 +59,8 @@ def create_subscription(store, plan_key, payer_email, back_url):
         'payer_email': payer_email,
         'status': 'pending',
     }
+    if notification_url:
+        data['notification_url'] = notification_url
 
     resp = sdk.preapproval().create(data)
     if resp.get('status') not in (200, 201):

@@ -32,7 +32,8 @@ class StoreSubscribeView(APIView):
             return Response({'detail': 'Plano inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
         payer_email = (request.user.email or '').strip()
-        back_url = f"{getattr(settings, 'FRONTEND_URL', '')}/plano"
+        # back_url precisa ser UMA URL válida (FRONTEND_URL é lista p/ CORS → não usar).
+        back_url = f"{getattr(settings, 'BILLING_PANEL_URL', 'https://painel.cardapidex.com.br')}/plano"
         try:
             result = subscription_service.create_subscription(store, plan, payer_email, back_url)
         except subscription_service.SubscriptionError as e:
