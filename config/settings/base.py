@@ -148,6 +148,9 @@ if DATABASE_URL:
                 'HOST': parsed_db.hostname or 'localhost',
                 'PORT': str(parsed_db.port or 5432),
                 'CONN_MAX_AGE': int(os.environ.get('DB_CONN_MAX_AGE', '60')),
+                # Obrigatório atrás do pgbouncer em transaction pooling: cursores
+                # server-side (.iterator()) podem cair em outra conexão de servidor.
+                'DISABLE_SERVER_SIDE_CURSORS': True,
             }
         }
         db_query = parse_qs(parsed_db.query)
@@ -226,6 +229,9 @@ REST_FRAMEWORK = {
         'webhook': '10000/hour',
         # Agente IA: proteção contra abuso de custo com LLMs externos
         'agent_process': '120/hour',
+        # Geo (autosuggest / delivery-zones): proxy não-auth p/ Google Maps PAGO.
+        # Protege a conta de billing contra DoS financeiro.
+        'geo': '30/minute',
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
@@ -329,6 +335,11 @@ WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v22.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
+# App ID do Meta — necessário para o Embedded Signup (troca code->token OAuth).
+# É o ID público do app (não secreto). Defina META_APP_ID no .env.
+META_APP_ID = os.environ.get('META_APP_ID', '').strip()
+# App secret do Meta (client_secret do OAuth). Fallback p/ WHATSAPP_APP_SECRET.
+META_APP_SECRET = (os.environ.get('META_APP_SECRET', '') or WHATSAPP_APP_SECRET).strip()
 # Secret genérico de fallback para webhooks Meta (whatsapp/instagram/messenger)
 # quando não há WebhookEndpoint nem secret específico configurado.
 META_WEBHOOK_APP_SECRET = os.environ.get('META_WEBHOOK_APP_SECRET', '')
@@ -605,6 +616,9 @@ SPECTACULAR_SETTINGS = {
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
 MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'PASTITA')
+# SaaS billing: cobrança automática no fim do trial (Celery). OFF até validar em sandbox.
+# A assinatura iniciada pelo dono (botão "Assinar") NÃO depende deste flag.
+BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
 BACKEND_URL = os.environ.get('BACKEND_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 ECOMMERCE_DEFAULT_ACCOUNT_ID = os.environ.get('ECOMMERCE_DEFAULT_ACCOUNT_ID', '').strip()

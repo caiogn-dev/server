@@ -27,7 +27,15 @@ def _verify_mercadopago_signature(request, payload: dict) -> bool:
     """
     secret = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
     if not secret:
-        return True  # not configured — skip validation
+        # Sem secret: em produção REJEITA (fail-closed) — aceitar abriria forja
+        # de webhook de pagamento (marcar pedido como pago sem pagar). Em DEBUG
+        # libera para testes locais. (Em prod o secret está setado, então isto
+        # é só rede de segurança contra deploy mal configurado.)
+        from django.conf import settings
+        if not settings.DEBUG:
+            logger.warning("MERCADO_PAGO_WEBHOOK_SECRET ausente em produção — rejeitando webhook")
+            return False
+        return True  # DEBUG: skip validation para testes locais
 
     x_signature = request.headers.get('x-signature', '')
     x_request_id = request.headers.get('x-request-id', '')
@@ -88,10 +96,28 @@ class MercadoPagoHandler(BaseHandler):
             result = self._handle_payment_webhook(payload)
         elif event_type.startswith('merchant_order'):
             result = self._handle_order_webhook(payload)
+        elif event_type.startswith('subscription') or 'preapproval' in event_type:
+            result = self._handle_preapproval_webhook(data_id)
         else:
             result = {'processed': False, 'reason': 'unknown_event_type'}
-        
+
         return result
+
+    def _handle_preapproval_webhook(self, preapproval_id) -> Dict[str, Any]:
+        """Assinatura SaaS (preapproval): busca status no MP e atualiza StoreSubscription."""
+        if not preapproval_id:
+            return {'processed': False, 'reason': 'no_preapproval_id'}
+        try:
+            from django.conf import settings
+            import mercadopago
+            sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
+            resp = sdk.preapproval().get(str(preapproval_id))
+            mp_status = (resp.get('response') or {}).get('status', '')
+            from apps.stores.services import subscription_service
+            return subscription_service.apply_preapproval_event(str(preapproval_id), mp_status)
+        except Exception as e:
+            logger.error(f"Erro no webhook de preapproval {preapproval_id}: {e}")
+            return {'processed': False, 'reason': 'preapproval_error'}
     
     def _handle_payment_webhook(self, payload: dict) -> Dict[str, Any]:
         """Handle payment-related webhooks."""
