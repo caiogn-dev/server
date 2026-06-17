@@ -59,18 +59,27 @@ def plan_limits(plan_key):
     return get_plan(plan_key)['limits']
 
 
+def is_billing_exempt(store):
+    """Lojas grandfather (pré-SaaS) não têm limites nem cobrança."""
+    return bool(getattr(store, 'billing_exempt', False))
+
+
 def plan_allows(store, feature):
     """
     True se o plano da loja permite a feature.
     NÃO é enforcement automático — chamadores decidem quando aplicar.
     Features booleanas: custom_domain, whatsapp_bot, ai_agent.
     """
+    if is_billing_exempt(store):
+        return True
     limits = plan_limits(getattr(store, 'plan', DEFAULT_PLAN))
     return bool(limits.get(feature, False))
 
 
 def within_product_limit(store, current_count):
     """True se a loja ainda pode adicionar produto (None = ilimitado)."""
+    if is_billing_exempt(store):
+        return True
     cap = plan_limits(getattr(store, 'plan', DEFAULT_PLAN)).get('max_products')
     return cap is None or current_count < cap
 

@@ -127,6 +127,10 @@ class Store(BaseModel):
         default=False,
         help_text="Wizard de onboarding concluído (passos mínimos).",
     )
+    billing_exempt = models.BooleanField(
+        default=False,
+        help_text="Isenta de cobrança e limites de plano (grandfather: lojas pré-SaaS).",
+    )
 
     # Branding
     logo = models.ImageField(upload_to='stores/logos/', blank=True, null=True,

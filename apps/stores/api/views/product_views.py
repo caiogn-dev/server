@@ -262,6 +262,15 @@ class StoreComboViewSet(viewsets.ModelViewSet):
         store = serializer.validated_data.get('store')
         if store:
             self._assert_store_access(store)
+            # Feature-gate: limite de produtos por plano (lojas exempt/grandfather passam).
+            from apps.stores import billing
+            from rest_framework.exceptions import ValidationError as DRFValidationError
+            if not billing.within_product_limit(store, store.products.count()):
+                cap = billing.plan_limits(getattr(store, 'plan', billing.DEFAULT_PLAN)).get('max_products')
+                raise DRFValidationError({
+                    'detail': f'Limite do plano atingido ({cap} produtos). '
+                              f'Faça upgrade do plano para adicionar mais.'
+                })
         serializer.save()
 
     def perform_update(self, serializer):

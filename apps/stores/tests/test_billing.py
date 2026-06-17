@@ -37,6 +37,16 @@ class BillingCatalogTestCase(TestCase):
         self.assertFalse(billing.within_product_limit(starter, 50))  # cap 50
         self.assertTrue(billing.within_product_limit(pro, 9999))     # ilimitado
 
+    def test_loja_exempt_ignora_limites(self):
+        store = self._store('starter')
+        store.billing_exempt = True
+        store.save()
+        # exempt: sem limite de produto e tudo liberado
+        self.assertTrue(billing.within_product_limit(store, 9999))
+        self.assertTrue(billing.plan_allows(store, 'custom_domain'))
+        self.assertTrue(billing.plan_allows(store, 'ai_agent'))
+        self.assertTrue(billing.is_billing_exempt(store))
+
     def test_get_plan_fallback(self):
         self.assertEqual(billing.get_plan('inexistente')['key'], 'starter')
 
