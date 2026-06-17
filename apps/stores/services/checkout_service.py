@@ -6,7 +6,7 @@ import logging
 import re
 import uuid
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import urlparse
 from django.db import models, transaction
 from django.db.models import F, Q
@@ -203,40 +203,71 @@ class CheckoutService:
 
         variants = StoreProductVariant.objects.filter(id__in=selected_variant_ids).select_related('product')
         variants_by_id = {str(variant.id): variant for variant in variants}
+        # IDs que NÃO são variantes -> resolver como PRODUTO (opções de produto
+        # no grupo). UUID de variante e de produto não colidem, então dá pra
+        # misturar no mesmo group_selections sem quebrar combos de variante.
+        product_only_ids = [i for i in selected_variant_ids if i not in variants_by_id]
+        products_by_id = {
+            str(p.id): p for p in StoreProduct.objects.filter(id__in=product_only_ids)
+        }
+
+        def _group_label(grp):
+            if not grp:
+                return ''
+            return (grp.title or (grp.product.name if grp.product_id else '')) or ''
 
         selected_variants_data = []
         display_groups = []
-        for group_id, variant_ids in normalized_groups.items():
+        for group_id, sel_ids in normalized_groups.items():
             group = groups_by_id.get(group_id)
             counts = {}
-            for variant_id in variant_ids:
-                counts[variant_id] = counts.get(variant_id, 0) + 1
+            for sid in sel_ids:
+                counts[sid] = counts.get(sid, 0) + 1
 
             group_items = []
-            for variant_id, quantity in counts.items():
-                variant = variants_by_id.get(variant_id)
-                item_data = {
-                    'group_id': group_id,
-                    'group_name': group.product.name if group else '',
-                    'variant_id': variant_id,
-                    'variant_name': variant.name if variant else '',
-                    'product_id': str(variant.product_id) if variant else '',
-                    'product_name': variant.product.name if variant and variant.product else '',
-                    'quantity': quantity,
-                    'sku': variant.sku if variant else '',
-                }
+            for sid, quantity in counts.items():
+                variant = variants_by_id.get(sid)
+                if variant is not None:
+                    item_data = {
+                        'group_id': group_id,
+                        'group_name': _group_label(group),
+                        'variant_id': sid,
+                        'variant_name': variant.name,
+                        'product_id': str(variant.product_id),
+                        'product_name': variant.product.name if variant.product else '',
+                        'quantity': quantity,
+                        'sku': variant.sku,
+                    }
+                else:
+                    prod = products_by_id.get(sid)
+                    item_data = {
+                        'group_id': group_id,
+                        'group_name': _group_label(group),
+                        'variant_id': '',
+                        'variant_name': '',
+                        'product_id': sid if prod else '',
+                        'product_name': prod.name if prod else '',
+                        'quantity': quantity,
+                        'sku': getattr(prod, 'sku', '') if prod else '',
+                    }
                 selected_variants_data.append(item_data)
                 group_items.append(item_data)
 
             display_groups.append({
                 'group_id': group_id,
-                'group_name': group.product.name if group else '',
+                'group_name': _group_label(group),
                 'items': group_items,
             })
 
+        # selected_variant_ids fica só com variantes REAIS (compat downstream);
+        # produtos escolhidos vão em selected_product_ids.
+        real_variant_ids = [i for i in selected_variant_ids if i in variants_by_id]
+        selected_product_ids = [i for i in selected_variant_ids if i in products_by_id]
+
         return {
             'group_selections': normalized_groups,
-            'selected_variant_ids': selected_variant_ids,
+            'selected_variant_ids': real_variant_ids,
+            'selected_product_ids': selected_product_ids,
             'selected_variants_data': selected_variants_data,
             'display_groups': display_groups,
         }
@@ -316,13 +347,17 @@ class CheckoutService:
     def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
         """Calculate delivery fee dynamically based on distance.
 
-        Default pricing (Ce Saladas):
-          - R$ 9,00 flat até 4 km
-          - R$ 9,00 + (dist - 4) × R$ 1,00 acima de 4 km
+        Delega a DeliveryQuoteService.calculate_dynamic_fee — a fonte única da
+        matemática de taxa dinâmica.
+
+        Pricing:
+          - base plana até 4 km (delivery_flat_km)
+          - base + (dist - 4) × R$ 1,00 acima de 4 km
           - Acima de 16 km: fee=None (a combinar)
+          base = metadata['delivery_base_fee'] OU store.default_delivery_fee OU 9.00.
 
         Overridable via store.metadata keys:
-          delivery_base_fee      (default 9.00)
+          delivery_base_fee      (default: store.default_delivery_fee, senão 9.00)
           delivery_fee_per_km    (default 1.00)
           delivery_flat_km       (default 4.0 — distância onde a taxa é plana)
           delivery_free_km       (legacy alias for delivery_flat_km)
@@ -749,8 +784,16 @@ class CheckoutService:
                 'threshold': loyalty_status.get('threshold', 10),
             }
         
-        # Calculate total (no tax - just subtotal + delivery - discount)
-        total = subtotal + delivery_fee - discount
+        # Calculate total (no tax - just subtotal + delivery - discount).
+        # HOTFIX: cupom percentual gera desconto com 3+ casas (ex: 44.99*10% =
+        # 4.499 -> total 40.491). float(40.491) faz o Mercado Pago rejeitar com
+        # "Invalid transaction_amount" (code 4037) = checkout 400. Quantiza
+        # desconto e total para centavos (2 casas) e nunca deixa total negativo.
+        _CENTS = Decimal('0.01')
+        discount = discount.quantize(_CENTS, rounding=ROUND_HALF_UP)
+        total = (subtotal + delivery_fee - discount).quantize(_CENTS, rounding=ROUND_HALF_UP)
+        if total < Decimal('0'):
+            total = Decimal('0.00')
 
         extra_metadata = dict(delivery_payload.get('metadata') or {})
 
@@ -1062,69 +1105,61 @@ class CheckoutService:
                 except (TypeError, ValueError):
                     installments = 1
 
-                direct_payment_data = {
-                    "transaction_amount": float(order.total),
-                    "token": card_token,
-                    "description": f"Pedido #{order.order_number} - {order.store.name}",
-                    "installments": max(1, installments),
-                    "payment_method_id": payment_method_id,
-                    "payer": {
-                        "email": payer_data.get('email') or payer_email,
+                # Orders API (Checkout Transparente via Orders) — payload rico do
+                # pedido real (itens, pagador, endereço, statement_descriptor, device_id).
+                from apps.stores.services import mp_orders
+                device_id = (
+                    payment_payload.get('device_id')
+                    or payment_payload.get('deviceId')
+                    or payment_payload.get('device_session_id')
+                )
+                payment_type = 'debit_card' if payment_method == 'debit_card' else 'credit_card'
+                order_payload = mp_orders.build_order_payload(
+                    order,
+                    card_token=card_token,
+                    payment_method_id=payment_method_id,
+                    installments=max(1, installments),
+                    payer_email=payer_data.get('email') or payer_email,
+                    payer_data={
+                        'identification_type': identification_type,
+                        'identification_number': identification_number,
                     },
-                    "external_reference": str(order.id),
-                    "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
-                }
+                    payment_type=payment_type,
+                )
+                status_code, body = mp_orders.create_order(
+                    credentials['access_token'], order_payload, device_id=device_id,
+                )
+                ok, mapped_status, pay_id, status_detail = mp_orders.interpret(status_code, body)
 
-                issuer_id = payment_payload.get('issuer_id')
-                if issuer_id:
-                    direct_payment_data['issuer_id'] = issuer_id
-
-                if identification_type and identification_number:
-                    direct_payment_data['payer']['identification'] = {
-                        'type': identification_type,
-                        'number': identification_number,
-                    }
-
-                result = sdk.payment().create(direct_payment_data)
-
-                if result["status"] in (200, 201):
-                    payment = result["response"]
-                    payment_status = payment.get('status', 'pending')
-
-                    order.payment_id = str(payment['id'])
+                if ok:
+                    order.payment_id = pay_id or str(body.get('id', ''))
                     order.payment_method = payment_method
-
-                    if payment_status == 'approved':
+                    if mapped_status == 'approved':
                         order.status = StoreOrder.OrderStatus.CONFIRMED
                         order.payment_status = StoreOrder.PaymentStatus.PAID
                         order.paid_at = timezone.now()
                         if not order.confirmed_at:
                             order.confirmed_at = timezone.now()
-                    elif payment_status in {'in_process', 'pending'}:
-                        order.payment_status = (
-                            StoreOrder.PaymentStatus.PROCESSING
-                            if payment_status == 'in_process'
-                            else StoreOrder.PaymentStatus.PENDING
-                        )
-                    else:
-                        order.status = StoreOrder.OrderStatus.FAILED
-                        order.payment_status = StoreOrder.PaymentStatus.FAILED
-
+                    else:  # pending / action_required
+                        order.payment_status = StoreOrder.PaymentStatus.PENDING
                     order.save()
 
                     return {
                         'success': True,
-                        'payment_id': payment['id'],
-                        'status': payment_status,
-                        'status_detail': payment.get('status_detail', ''),
+                        'payment_id': order.payment_id,
+                        'status': 'approved' if mapped_status == 'approved' else 'pending',
+                        'status_detail': status_detail,
                         'payment_method': payment_method,
                         'requires_redirect': False,
                     }
 
-                logger.error(f"Direct card payment failed: {result}")
+                logger.error(f"Orders API card payment failed: {status_code} {body}")
+                order.status = StoreOrder.OrderStatus.FAILED
+                order.payment_status = StoreOrder.PaymentStatus.FAILED
+                order.save(update_fields=['status', 'payment_status', 'updated_at'])
                 return {
                     'success': False,
-                    'error': result.get('response', {}).get('message', 'Erro ao processar pagamento com cartao'),
+                    'error': status_detail or 'Erro ao processar pagamento com cartao',
                 }
 
             if not allow_redirect:
@@ -1214,7 +1249,12 @@ class CheckoutService:
             return None
         
         old_status = order.status
-        
+        # Estados em que o estoque já foi devolvido — evita restaurar 2x em webhooks repetidos.
+        _STOCK_RESTORED_STATUSES = {
+            StoreOrder.OrderStatus.CANCELLED,
+            StoreOrder.OrderStatus.REFUNDED,
+        }
+
         update_fields = ['updated_at']
 
         if status == 'approved':
@@ -1245,7 +1285,11 @@ class CheckoutService:
             order.payment_status = StoreOrder.PaymentStatus.FAILED
             order.cancelled_at = timezone.now()
             update_fields.extend(['status', 'payment_status', 'cancelled_at'])
-            CheckoutService._restore_stock(order)
+            # Só restaura estoque na PRIMEIRA transição para cancelado/estornado.
+            # MP reenvia webhooks (cada um com id próprio, o dedup não pega), e
+            # restaurar de novo infla o estoque -> overselling. Guard por old_status.
+            if old_status not in _STOCK_RESTORED_STATUSES:
+                CheckoutService._restore_stock(order)
             trigger_order_email_automation(order, 'order_cancelled')
 
         elif status == 'refunded':
@@ -1253,7 +1297,8 @@ class CheckoutService:
             order.payment_status = StoreOrder.PaymentStatus.REFUNDED
             order.cancelled_at = timezone.now()
             update_fields.extend(['status', 'payment_status', 'cancelled_at'])
-            CheckoutService._restore_stock(order)
+            if old_status not in _STOCK_RESTORED_STATUSES:
+                CheckoutService._restore_stock(order)
 
         else:
             return order
