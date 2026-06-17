@@ -468,14 +468,18 @@ class CustomersViewSet(viewsets.ViewSet):
         subscriber_count = Subscriber.objects.filter(store_id=store_id).count()
 
         # Count unique order emails for this store
-        try:
-            Store.objects.get(id=store_id)
-            order_emails = StoreOrder.objects.filter(
-                store_id=store_id,
-                customer_email__isnull=False,
-            ).exclude(customer_email='').values('customer_email').distinct().count()
-        except Store.DoesNotExist:
+        user = request.user
+        allowed_ids = None if (user.is_superuser or user.is_staff) else accessible_store_ids(user)
+        if allowed_ids is not None and str(store_id) not in [str(i) for i in allowed_ids]:
             order_emails = 0
+        else:
+            try:
+                order_emails = StoreOrder.objects.filter(
+                    store_id=store_id,
+                    customer_email__isnull=False,
+                ).exclude(customer_email='').values('customer_email').distinct().count()
+            except Exception:
+                order_emails = 0
 
         return Response({'count': max(user_count, subscriber_count, order_emails)})
     
@@ -686,7 +690,7 @@ class EmailAutomationViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             )
         
         try:
-            automation = EmailAutomation.objects.get(id=automation_id)
+            automation = self.get_queryset().get(id=automation_id)
         except EmailAutomation.DoesNotExist:
             return Response(
                 {'error': 'Automation not found'},
@@ -781,7 +785,11 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
         store_url = 'https://loja.com.br'
         if store_id:
             try:
-                store = Store.objects.get(id=store_id)
+                user = request.user
+                qs = Store.objects.filter(is_active=True)
+                if not (user.is_superuser or user.is_staff):
+                    qs = qs.filter(id__in=accessible_store_ids(user))
+                store = qs.get(id=store_id)
                 store_name = store.name
                 store_url = store.website_url or f'https://{store.slug}.com.br'
             except Store.DoesNotExist:
