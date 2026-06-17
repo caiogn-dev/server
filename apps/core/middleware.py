@@ -32,15 +32,6 @@ class CSRFExemptMiddleware:
         # If request has Authorization header with Token, mark as CSRF-safe
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
 
-        # Debug: log auth header for /stores/*/orders/ endpoints
-        if '/stores/' in request.path and '/orders/' in request.path:
-            auth_type = 'none'
-            if auth_header.startswith('Token '):
-                auth_type = f'token: {auth_header[6:46]}...'
-            elif auth_header.startswith('Bearer '):
-                auth_type = f'bearer: {auth_header[7:37]}...'
-            logger.info(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_type}')
-
         if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
             # Mark this request as CSRF-exempt
             request._dont_enforce_csrf_checks = True
@@ -58,13 +49,13 @@ def get_user_from_token(token_key):
     from rest_framework.authtoken.models import Token
     try:
         token = Token.objects.select_related('user').get(key=token_key)
-        logger.info(f"WebSocket token auth success: user={token.user.email}")
+        logger.debug("WebSocket token auth success")
         return token.user
     except Token.DoesNotExist:
         logger.warning("WebSocket token auth failed: token not found")
         return AnonymousUser()
     except Exception as e:
-        logger.error(f"WebSocket token auth error: {e}")
+        logger.error("WebSocket token auth error: %s", type(e).__name__)
         return AnonymousUser()
 
 
@@ -100,14 +91,14 @@ class TokenAuthMiddleware(BaseMiddleware):
             try:
                 scope['user'] = await get_user_from_token(token_key)
                 if scope['user'].is_authenticated:
-                    logger.info(f"WebSocket authenticated: user={scope['user'].email}, path={path}")
+                    logger.debug("WebSocket authenticated: path=%s", path)
                 else:
-                    logger.warning(f"WebSocket auth failed: anonymous user, path={path}")
+                    logger.warning("WebSocket auth failed: anonymous user, path=%s", path)
             except Exception as e:
-                logger.error(f"WebSocket auth exception: {e}")
+                logger.error("WebSocket auth exception: %s", type(e).__name__)
                 scope['user'] = AnonymousUser()
         else:
-            logger.info(f"WebSocket no token provided: path={path}")
+            logger.debug("WebSocket no token provided: path=%s", path)
             scope['user'] = AnonymousUser()
         
         return await super().__call__(scope, receive, send)
