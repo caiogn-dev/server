@@ -319,7 +319,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         ).filter(
             account_id__in=accessible_ids
         )
-        
+
         # Filter by phone_number (from_number OR to_number)
         phone_number = self.request.query_params.get('phone_number')
         if phone_number:
@@ -327,12 +327,22 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(
                 Q(from_number__icontains=phone_number) | Q(to_number__icontains=phone_number)
             )
-        
+
         # Default ordering by created_at desc
         ordering = self.request.query_params.get('ordering', '-created_at')
         queryset = queryset.order_by(ordering)
-        
+
         return queryset
+
+    def _check_account_access(self, account_id):
+        """Return True if the current user may use this WhatsApp account."""
+        try:
+            _accessible_accounts(self.request.user).get(id=account_id)
+            return True
+        except WhatsAppAccount.DoesNotExist:
+            return False
+
+    _ACCOUNT_NOT_FOUND = {'error': 'WhatsApp account not found'}
 
     @extend_schema(
         summary="Send text message",
@@ -344,10 +354,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a text message."""
         serializer = SendTextMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         message = service.send_text_message(**serializer.validated_data)
-        
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -363,10 +375,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a template message."""
         serializer = SendTemplateMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         message = service.send_template_message(**serializer.validated_data)
-        
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -382,10 +396,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive buttons message."""
         serializer = SendInteractiveButtonsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         message = service.send_interactive_buttons(**serializer.validated_data)
-        
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -401,10 +417,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive list message."""
         serializer = SendInteractiveListSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         message = service.send_interactive_list(**serializer.validated_data)
-        
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -423,6 +441,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         to = data['to']
         store_id = data.get('store_id')
 
+        # Verify caller has access to this WhatsApp account
+        try:
+            account = _accessible_accounts(self.request.user).get(id=account_id)
+        except WhatsAppAccount.DoesNotExist:
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         # Resolve store: explicit store_id or first store on account
         if store_id:
             try:
@@ -430,11 +454,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
             except Store.DoesNotExist:
                 return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
         else:
-            try:
-                account = WhatsAppAccount.objects.get(id=account_id)
-                store = account.stores.first()
-            except WhatsAppAccount.DoesNotExist:
-                return Response({'detail': 'Conta não encontrada.'}, status=status.HTTP_400_BAD_REQUEST)
+            store = account.stores.first()
 
         if not store:
             return Response({'detail': 'Nenhuma loja associada à conta.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -496,10 +516,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an image message."""
         serializer = SendImageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         message = service.send_image(**serializer.validated_data)
-        
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -515,10 +537,12 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a document message."""
         serializer = SendDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         message = service.send_document(**serializer.validated_data)
-        
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -557,6 +581,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         if not account_id or not to or not file_obj:
             return Response({'error': 'account_id, to, and file are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not self._check_account_access(account_id):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
 
         # Determine message type from MIME
         mime = file_obj.content_type or ''
@@ -645,6 +672,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an audio message."""
         serializer = SendAudioSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
 
         service = MessageService()
         message = service.send_audio(**serializer.validated_data)
@@ -661,6 +690,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a video message."""
         serializer = SendVideoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
 
         service = MessageService()
         message = service.send_video(**serializer.validated_data)
@@ -677,13 +708,15 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Mark a message as read."""
         serializer = MarkAsReadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         success = service.mark_as_read(
             account_id=str(serializer.validated_data['account_id']),
             message_id=serializer.validated_data['message_id']
         )
-        
+
         return Response({'success': success})
 
     @extend_schema(
@@ -696,14 +729,16 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         messages = service.get_conversation_history(
             account_id=str(serializer.validated_data['account_id']),
             phone_number=serializer.validated_data['phone_number'],
             limit=serializer.validated_data.get('limit', 50)
         )
-        
+
         return Response(MessageSerializer(messages, many=True).data)
 
     @extend_schema(
@@ -716,14 +751,16 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        if not self._check_account_access(serializer.validated_data['account_id']):
+            return Response(self._ACCOUNT_NOT_FOUND, status=status.HTTP_404_NOT_FOUND)
+
         service = MessageService()
         stats = service.get_message_stats(
             account_id=str(serializer.validated_data['account_id']),
             start_date=serializer.validated_data['start_date'],
             end_date=serializer.validated_data['end_date']
         )
-        
+
         return Response(stats)
 
 
