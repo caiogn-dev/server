@@ -9,7 +9,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.stores.models import StoreCoupon
-from apps.core.permissions import StoreQuerysetMixin
+from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 from ..serializers import StoreCouponSerializer, StoreCouponCreateSerializer
 from .base import IsStoreOwnerOrStaff
 
@@ -63,7 +63,12 @@ class StoreCouponViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 {'valid': False, 'error': 'code and store are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        user = request.user
+        if not (user.is_superuser or user.is_staff):
+            if str(store_id) not in [str(sid) for sid in accessible_store_ids(user)]:
+                return Response({'valid': False, 'error': 'Cupom não encontrado'})
+
         try:
             coupon = StoreCoupon.objects.get(
                 code__iexact=code,
