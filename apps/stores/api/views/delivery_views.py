@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 
-from apps.stores.models import StoreDeliveryZone
+from apps.stores.models import Store, StoreDeliveryZone
 from apps.core.permissions import StoreQuerysetMixin
 from ..serializers import StoreDeliveryZoneSerializer, StoreDeliveryZoneCreateSerializer
 from .base import IsStoreOwnerOrStaff

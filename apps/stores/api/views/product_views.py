@@ -8,6 +8,8 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.db.models import Q
 
+from rest_framework.exceptions import PermissionDenied
+
 from apps.stores.models import (
     StoreCategory, StoreProduct, StoreProductVariant,
     StoreCombo, StoreProductType
@@ -190,12 +192,33 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
         return StoreProductVariant.objects.none()
 
 
+def _assert_store_write_access(user, store):
+    """Raise PermissionDenied if user cannot write to the given store."""
+    if user.is_staff or user.is_superuser:
+        return
+    from .base import IsStoreOwnerOrStaff
+    if not IsStoreOwnerOrStaff()._user_can_access_store(user, store):
+        raise PermissionDenied()
+
+
 class StoreComboViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store combos."""
-    
+
     serializer_class = StoreComboSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
+
+    def perform_create(self, serializer):
+        _assert_store_write_access(self.request.user, serializer.validated_data['store'])
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        _assert_store_write_access(self.request.user, serializer.instance.store)
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        _assert_store_write_access(self.request.user, instance.store)
+        super().perform_destroy(instance)
+
     def get_queryset(self):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')
@@ -222,10 +245,22 @@ class StoreComboViewSet(viewsets.ModelViewSet):
 
 class StoreProductTypeViewSet(viewsets.ModelViewSet):
     """ViewSet for managing product types."""
-    
+
     serializer_class = StoreProductTypeSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    
+
+    def perform_create(self, serializer):
+        _assert_store_write_access(self.request.user, serializer.validated_data['store'])
+        super().perform_create(serializer)
+
+    def perform_update(self, serializer):
+        _assert_store_write_access(self.request.user, serializer.instance.store)
+        super().perform_update(serializer)
+
+    def perform_destroy(self, instance):
+        _assert_store_write_access(self.request.user, instance.store)
+        super().perform_destroy(instance)
+
     def get_queryset(self):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')
