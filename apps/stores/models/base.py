@@ -91,6 +91,7 @@ class Store(BaseModel):
         CLASSIC = 'classic', 'Classic'
         MINIMAL = 'minimal', 'Minimal'
         DARK = 'dark', 'Dark'
+        ELEGANT = 'elegant', 'Elegant'
 
     class StorePlan(models.TextChoices):
         STARTER = 'starter', 'Starter'
