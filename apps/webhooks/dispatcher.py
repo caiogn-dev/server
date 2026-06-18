@@ -6,6 +6,7 @@ import hmac
 import hashlib
 import json
 from typing import Dict, Any, Optional, Type
+from django.db import IntegrityError
 from django.http import HttpResponse, JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
@@ -119,17 +120,27 @@ class WebhookDispatcherView(View):
                 logger.info(f"Duplicate webhook event: {event_id} (status={existing.status})")
                 return HttpResponse("OK", status=200)
 
-        # Create event log (only after HMAC passes)
-        event = WebhookEvent.objects.create(
-            provider=provider,
-            event_type=event_type,
-            event_id=event_id or '',
-            payload=payload,
-            headers=headers,
-            query_params=dict(request.GET),
-            status=WebhookEvent.Status.PENDING,
-            signature_valid=signature_valid,
-        )
+        # Create event log (only after HMAC passes).
+        # Use try/except IntegrityError to handle the race where two concurrent
+        # requests with the same event_id both pass the dedup filter above but
+        # only one should win — the DB unique constraint is the final arbiter.
+        try:
+            event = WebhookEvent.objects.create(
+                provider=provider,
+                event_type=event_type,
+                event_id=event_id or '',
+                payload=payload,
+                headers=headers,
+                query_params=dict(request.GET),
+                status=WebhookEvent.Status.PENDING,
+                signature_valid=signature_valid,
+            )
+        except IntegrityError:
+            logger.info(
+                "Duplicate webhook event (race condition) — event_id=%s provider=%s",
+                event_id, provider,
+            )
+            return HttpResponse("OK", status=200)
 
         # Process with handler
         try:

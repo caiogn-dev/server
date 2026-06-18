@@ -348,7 +348,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             )
         
         order.payment_status = new_status
-        if new_status == 'paid':
+        if new_status == 'paid' and not order.paid_at:
             order.paid_at = timezone.now()
         order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
         
@@ -358,9 +358,13 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     def mark_paid(self, request, pk=None):
         """Mark order as paid (convenience endpoint)."""
         order = self.get_object()
-        
+
+        if order.payment_status == StoreOrder.PaymentStatus.PAID:
+            return Response(StoreOrderSerializer(order).data)
+
         order.payment_status = StoreOrder.PaymentStatus.PAID
-        order.paid_at = timezone.now()
+        if not order.paid_at:
+            order.paid_at = timezone.now()
         order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
         
         logger.info(f"Order {order.order_number} marked as paid")
