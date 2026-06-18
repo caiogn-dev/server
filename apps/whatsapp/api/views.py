@@ -334,6 +334,15 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         
         return queryset
 
+    def _assert_account_access(self, account_id):
+        """Raise PermissionDenied if the authenticated user cannot use this account."""
+        user = self.request.user
+        if user.is_staff or user.is_superuser:
+            return
+        if not _accessible_accounts(user).filter(id=account_id).exists():
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+
     @extend_schema(
         summary="Send text message",
         request=SendTextMessageSerializer,
@@ -344,7 +353,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a text message."""
         serializer = SendTextMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_text_message(**serializer.validated_data)
         
@@ -363,7 +372,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a template message."""
         serializer = SendTemplateMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_template_message(**serializer.validated_data)
         
@@ -382,7 +391,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive buttons message."""
         serializer = SendInteractiveButtonsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_interactive_buttons(**serializer.validated_data)
         
@@ -401,7 +410,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an interactive list message."""
         serializer = SendInteractiveListSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_interactive_list(**serializer.validated_data)
         
@@ -420,6 +429,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         data = serializer.validated_data
 
         account_id = str(data['account_id'])
+        self._assert_account_access(data['account_id'])
         to = data['to']
         store_id = data.get('store_id')
 
@@ -496,7 +506,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an image message."""
         serializer = SendImageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_image(**serializer.validated_data)
         
@@ -515,7 +525,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a document message."""
         serializer = SendDocumentSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_document(**serializer.validated_data)
         
@@ -557,6 +567,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         if not account_id or not to or not file_obj:
             return Response({'error': 'account_id, to, and file are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        self._assert_account_access(account_id)
 
         # Determine message type from MIME
         mime = file_obj.content_type or ''
@@ -645,7 +657,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send an audio message."""
         serializer = SendAudioSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_audio(**serializer.validated_data)
 
@@ -661,7 +673,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Send a video message."""
         serializer = SendVideoSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         message = service.send_video(**serializer.validated_data)
 
@@ -677,7 +689,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Mark a message as read."""
         serializer = MarkAsReadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         success = service.mark_as_read(
             account_id=str(serializer.validated_data['account_id']),
@@ -696,7 +708,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         messages = service.get_conversation_history(
             account_id=str(serializer.validated_data['account_id']),
@@ -716,7 +728,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._assert_account_access(serializer.validated_data['account_id'])
         service = MessageService()
         stats = service.get_message_stats(
             account_id=str(serializer.validated_data['account_id']),
