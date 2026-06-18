@@ -64,11 +64,11 @@ class StoreCouponViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Scope the lookup to stores the user can access, to prevent
+        # cross-tenant coupon enumeration.
+        allowed_qs = self.get_queryset()
         try:
-            coupon = StoreCoupon.objects.get(
-                code__iexact=code,
-                store_id=store_id
-            )
+            coupon = allowed_qs.get(code__iexact=code, store_id=store_id)
         except StoreCoupon.DoesNotExist:
             return Response({'valid': False, 'error': 'Cupom não encontrado'})
         
