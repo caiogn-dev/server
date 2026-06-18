@@ -87,59 +87,70 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         logger.info(f"Instagram WS: Disconnected from account {self.account_id}")
     
     async def handle_message(self, content):
-        message_type = content.get('type')
-        
-        if message_type == 'ping':
-            await self.send_json({'type': 'pong'})
-        
-        elif message_type == 'subscribe_conversation':
-            # Subscribe to a specific conversation for typing indicators
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                group_name = f"instagram_conv_{conversation_id}"
-                await self.channel_layer.group_add(group_name, self.channel_name)
-                self.conversation_groups.add(group_name)
-                await self.send_json({
-                    'type': 'subscribed',
-                    'conversation_id': conversation_id
-                })
-        
-        elif message_type == 'unsubscribe_conversation':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                group_name = f"instagram_conv_{conversation_id}"
-                await self.channel_layer.group_discard(group_name, self.channel_name)
-                self.conversation_groups.discard(group_name)
-                await self.send_json({
-                    'type': 'unsubscribed',
-                    'conversation_id': conversation_id
-                })
-        
-        elif message_type == 'typing_start':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                await self.channel_layer.group_send(
-                    f"instagram_conv_{conversation_id}",
-                    {
-                        'type': 'typing_indicator',
-                        'conversation_id': conversation_id,
-                        'user_id': str(self.user.id),
-                        'is_typing': True
-                    }
-                )
-        
-        elif message_type == 'typing_stop':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                await self.channel_layer.group_send(
-                    f"instagram_conv_{conversation_id}",
-                    {
-                        'type': 'typing_indicator',
-                        'conversation_id': conversation_id,
-                        'user_id': str(self.user.id),
-                        'is_typing': False
-                    }
-                )
+        try:
+            message_type = content.get('type')
+
+            if message_type == 'ping':
+                await self.send_json({'type': 'pong'})
+
+            elif message_type == 'subscribe_conversation':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    has_access = await self.verify_conversation_access(conversation_id)
+                    if not has_access:
+                        await self.send_json({'type': 'error', 'error_code': 'forbidden', 'conversation_id': conversation_id})
+                        return
+                    group_name = f"instagram_conv_{conversation_id}"
+                    await self.channel_layer.group_add(group_name, self.channel_name)
+                    self.conversation_groups.add(group_name)
+                    await self.send_json({'type': 'subscribed', 'conversation_id': conversation_id})
+
+            elif message_type == 'unsubscribe_conversation':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    group_name = f"instagram_conv_{conversation_id}"
+                    await self.channel_layer.group_discard(group_name, self.channel_name)
+                    self.conversation_groups.discard(group_name)
+                    await self.send_json({'type': 'unsubscribed', 'conversation_id': conversation_id})
+
+            elif message_type == 'typing_start':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    has_access = await self.verify_conversation_access(conversation_id)
+                    if not has_access:
+                        return
+                    await self.channel_layer.group_send(
+                        f"instagram_conv_{conversation_id}",
+                        {
+                            'type': 'typing_indicator',
+                            'conversation_id': conversation_id,
+                            'user_id': str(self.user.id),
+                            'is_typing': True
+                        }
+                    )
+
+            elif message_type == 'typing_stop':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    has_access = await self.verify_conversation_access(conversation_id)
+                    if not has_access:
+                        return
+                    await self.channel_layer.group_send(
+                        f"instagram_conv_{conversation_id}",
+                        {
+                            'type': 'typing_indicator',
+                            'conversation_id': conversation_id,
+                            'user_id': str(self.user.id),
+                            'is_typing': False
+                        }
+                    )
+
+        except Exception as e:
+            logger.error("Instagram WS handle_message error: %s", e, exc_info=True)
+            try:
+                await self.send_json({'type': 'error', 'error_code': 'internal_error'})
+            except Exception:
+                pass
     
     # === Event handlers (called by channel_layer.group_send) ===
     
@@ -216,18 +227,28 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         })
     
     @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        from .models import InstagramConversation
+        try:
+            conv = InstagramConversation.objects.get(id=conversation_id)
+            if self.user.is_staff or self.user.is_superuser:
+                return True
+            return str(conv.account_id) == str(self.account_id)
+        except InstagramConversation.DoesNotExist:
+            return False
+
+    @database_sync_to_async
     def verify_account_access(self, account_id: str) -> bool:
         """Verify user has access to the Instagram account."""
-        from .models import IGAccount
-        
+        from .models import InstagramAccount
+
         if not account_id:
             return False
-        
+
         try:
-            # Check if user owns the account or is superuser
-            account = IGAccount.objects.get(id=account_id)
-            return account.owner == self.user or self.user.is_superuser
-        except IGAccount.DoesNotExist:
+            account = InstagramAccount.objects.get(id=account_id)
+            return account.user_id == self.user.id or self.user.is_superuser or self.user.is_staff
+        except InstagramAccount.DoesNotExist:
             return False
 
 
