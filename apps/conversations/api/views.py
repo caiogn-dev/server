@@ -182,6 +182,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
             sessions = sessions.filter(company__store=context.store)
         elif context.profile:
             sessions = sessions.filter(company=context.profile)
+        else:
+            # Fallback: scope to companies linked to this conversation's account to
+            # prevent cross-tenant data exposure when resolve() returns no store/profile.
+            sessions = sessions.filter(company__account=conversation.account)
 
         session = sessions.order_by('-updated_at').first()
         messages = conversation.messages.order_by('-created_at')[:10]

@@ -174,19 +174,21 @@ class PaymentService:
         gateway_response: Optional[Dict] = None,
     ) -> StorePayment:
         """Confirm a payment as completed."""
-        payment = StorePayment.objects.select_related('order').get(id=payment_id)
+        with transaction.atomic():
+            payment = StorePayment.objects.select_related('order').select_for_update().get(id=payment_id)
 
-        if not payment.can_confirm():
-            raise ValueError(f"Payment cannot be confirmed. Current status: {payment.status}")
+            if not payment.can_confirm():
+                raise ValueError(f"Payment cannot be confirmed. Current status: {payment.status}")
 
-        payment.status = StorePayment.PaymentStatus.COMPLETED
-        payment.external_id = external_id or payment.external_id
-        payment.paid_at = timezone.now()
-        
-        if gateway_response:
-            payment.gateway_response.update(gateway_response)
-        
-        payment.save()
+            payment.status = StorePayment.PaymentStatus.COMPLETED
+            payment.external_id = external_id or payment.external_id
+            if not payment.paid_at:
+                payment.paid_at = timezone.now()
+
+            if gateway_response:
+                payment.gateway_response.update(gateway_response)
+
+            payment.save()
 
         self.logger.info(f"Payment {payment.payment_id} confirmed")
         return payment
@@ -199,29 +201,31 @@ class PaymentService:
         gateway_response: Optional[Dict] = None,
     ) -> StorePayment:
         """Mark a payment as failed."""
-        payment = StorePayment.objects.get(id=payment_id)
+        with transaction.atomic():
+            payment = StorePayment.objects.select_for_update().get(id=payment_id)
 
-        payment.status = StorePayment.PaymentStatus.FAILED
-        payment.error_code = error_code
-        payment.error_message = error_message
-        
-        if gateway_response:
-            payment.gateway_response.update(gateway_response)
-        
-        payment.save()
+            payment.status = StorePayment.PaymentStatus.FAILED
+            payment.error_code = error_code
+            payment.error_message = error_message
+
+            if gateway_response:
+                payment.gateway_response.update(gateway_response)
+
+            payment.save()
 
         self.logger.warning(f"Payment {payment.payment_id} failed: {error_code} - {error_message}")
         return payment
 
     def cancel_payment(self, payment_id: str) -> StorePayment:
         """Cancel a payment."""
-        payment = StorePayment.objects.get(id=payment_id)
+        with transaction.atomic():
+            payment = StorePayment.objects.select_for_update().get(id=payment_id)
 
-        if not payment.can_cancel():
-            raise ValueError(f"Payment cannot be cancelled. Current status: {payment.status}")
+            if not payment.can_cancel():
+                raise ValueError(f"Payment cannot be cancelled. Current status: {payment.status}")
 
-        payment.status = StorePayment.PaymentStatus.CANCELLED
-        payment.save()
+            payment.status = StorePayment.PaymentStatus.CANCELLED
+            payment.save()
 
         self.logger.info(f"Payment {payment.payment_id} cancelled")
         return payment
@@ -233,30 +237,31 @@ class PaymentService:
         reason: str = '',
     ) -> StorePayment:
         """Refund a payment (partial or full)."""
-        payment = StorePayment.objects.select_related('order', 'gateway').get(id=payment_id)
+        with transaction.atomic():
+            payment = StorePayment.objects.select_related('order', 'gateway').select_for_update().get(id=payment_id)
 
-        if not payment.can_refund():
-            raise ValueError(f"Payment cannot be refunded. Status: {payment.status}, Refunded: {payment.refunded_amount}")
+            if not payment.can_refund():
+                raise ValueError(f"Payment cannot be refunded. Status: {payment.status}, Refunded: {payment.refunded_amount}")
 
-        refund_amount = amount or payment.get_refundable_amount()
-        
-        if refund_amount > payment.get_refundable_amount():
-            raise ValueError(f"Refund amount {refund_amount} exceeds refundable amount {payment.get_refundable_amount()}")
+            refund_amount = amount or payment.get_refundable_amount()
 
-        # Process refund through gateway if needed
-        if payment.gateway and payment.gateway.gateway_type == StorePaymentGateway.GatewayType.MERCADOPAGO:
-            self._refund_mercadopago(payment, refund_amount)
+            if refund_amount > payment.get_refundable_amount():
+                raise ValueError(f"Refund amount {refund_amount} exceeds refundable amount {payment.get_refundable_amount()}")
 
-        payment.refunded_amount += refund_amount
-        
-        if payment.refunded_amount >= payment.amount:
-            payment.status = StorePayment.PaymentStatus.REFUNDED
-        else:
-            payment.status = StorePayment.PaymentStatus.PARTIALLY_REFUNDED
-        
-        payment.refunded_at = timezone.now()
-        payment.metadata['refund_reason'] = reason
-        payment.save()
+            # Process refund through gateway if needed
+            if payment.gateway and payment.gateway.gateway_type == StorePaymentGateway.GatewayType.MERCADOPAGO:
+                self._refund_mercadopago(payment, refund_amount)
+
+            payment.refunded_amount += refund_amount
+
+            if payment.refunded_amount >= payment.amount:
+                payment.status = StorePayment.PaymentStatus.REFUNDED
+            else:
+                payment.status = StorePayment.PaymentStatus.PARTIALLY_REFUNDED
+
+            payment.refunded_at = timezone.now()
+            payment.metadata['refund_reason'] = reason
+            payment.save()
 
         self.logger.info(f"Payment {payment.payment_id} refunded: {refund_amount}")
         return payment
