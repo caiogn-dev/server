@@ -56,45 +56,53 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         logger.info("WhatsApp WS: Disconnected from account %s", self.account_id)
 
     async def handle_message(self, content):
-        message_type = content.get('type')
+        try:
+            message_type = content.get('type')
 
-        if message_type == 'ping':
-            await self.send_json({'type': 'pong'})
+            if message_type == 'ping':
+                await self.send_json({'type': 'pong'})
 
-        elif message_type == 'subscribe_conversation':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                group_name = f"whatsapp_conv_{conversation_id}"
-                await self.channel_layer.group_add(group_name, self.channel_name)
-                self.conversation_groups.add(group_name)
-                await self.send_json({'type': 'subscribed', 'conversation_id': conversation_id})
+            elif message_type == 'subscribe_conversation':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    has_access = await self.verify_conversation_access(conversation_id)
+                    if not has_access:
+                        await self.send_json({'type': 'error', 'error_code': 4003, 'error_message': 'Access denied'})
+                        return
+                    group_name = f"whatsapp_conv_{conversation_id}"
+                    await self.channel_layer.group_add(group_name, self.channel_name)
+                    self.conversation_groups.add(group_name)
+                    await self.send_json({'type': 'subscribed', 'conversation_id': conversation_id})
 
-        elif message_type == 'unsubscribe_conversation':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                group_name = f"whatsapp_conv_{conversation_id}"
-                await self.channel_layer.group_discard(group_name, self.channel_name)
-                self.conversation_groups.discard(group_name)
-                await self.send_json({'type': 'unsubscribed', 'conversation_id': conversation_id})
+            elif message_type == 'unsubscribe_conversation':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    group_name = f"whatsapp_conv_{conversation_id}"
+                    await self.channel_layer.group_discard(group_name, self.channel_name)
+                    self.conversation_groups.discard(group_name)
+                    await self.send_json({'type': 'unsubscribed', 'conversation_id': conversation_id})
 
-        elif message_type == 'typing':
-            conversation_id = content.get('conversation_id')
-            is_typing = content.get('is_typing', False)
-            if conversation_id:
-                await self.channel_layer.group_send(
-                    f"whatsapp_conv_{conversation_id}",
-                    {
-                        'type': 'whatsapp_typing',
-                        'user_id': self.user.id,
-                        'conversation_id': conversation_id,
-                        'is_typing': is_typing,
-                    }
-                )
+            elif message_type == 'typing':
+                conversation_id = content.get('conversation_id')
+                is_typing = content.get('is_typing', False)
+                if conversation_id:
+                    await self.channel_layer.group_send(
+                        f"whatsapp_conv_{conversation_id}",
+                        {
+                            'type': 'whatsapp_typing',
+                            'user_id': self.user.id,
+                            'conversation_id': conversation_id,
+                            'is_typing': is_typing,
+                        }
+                    )
 
-        elif message_type == 'mark_read':
-            message_ids = content.get('message_ids', [])
-            if message_ids:
-                await self.send_json({'type': 'read_receipt_sent', 'message_ids': message_ids})
+            elif message_type == 'mark_read':
+                message_ids = content.get('message_ids', [])
+                if message_ids:
+                    await self.send_json({'type': 'read_receipt_sent', 'message_ids': message_ids})
+
+        except Exception as e:
+            logger.exception("WhatsApp WS: Error handling message type=%s: %s", content.get('type'), e)
 
     # ==================== Event Handlers ====================
 
@@ -145,6 +153,17 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         })
 
     @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        from apps.conversations.models import Conversation
+        try:
+            conv = Conversation.objects.select_related('account').get(id=conversation_id)
+            if self.user.is_staff or self.user.is_superuser:
+                return True
+            return str(conv.account_id) == str(self.account_id)
+        except Conversation.DoesNotExist:
+            return False
+
+    @database_sync_to_async
     def verify_account_access(self, account_id: str) -> bool:
         from .models import WhatsAppAccount
         try:
@@ -189,40 +208,48 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
             await self.channel_layer.group_discard(f"user_{self.user.id}_whatsapp", self.channel_name)
 
     async def handle_message(self, content):
-        message_type = content.get('type')
+        try:
+            message_type = content.get('type')
 
-        if message_type == 'ping':
-            await self.send_json({'type': 'pong'})
+            if message_type == 'ping':
+                await self.send_json({'type': 'pong'})
 
-        elif message_type == 'subscribe_conversation':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                group_name = f"whatsapp_conv_{conversation_id}"
-                await self.channel_layer.group_add(group_name, self.channel_name)
-                self.account_groups.add(group_name)
-                await self.send_json({'type': 'subscribed', 'conversation_id': conversation_id})
+            elif message_type == 'subscribe_conversation':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    has_access = await self.verify_conversation_access_dashboard(conversation_id)
+                    if not has_access:
+                        await self.send_json({'type': 'error', 'error_code': 4003, 'error_message': 'Access denied'})
+                        return
+                    group_name = f"whatsapp_conv_{conversation_id}"
+                    await self.channel_layer.group_add(group_name, self.channel_name)
+                    self.account_groups.add(group_name)
+                    await self.send_json({'type': 'subscribed', 'conversation_id': conversation_id})
 
-        elif message_type == 'unsubscribe_conversation':
-            conversation_id = content.get('conversation_id')
-            if conversation_id:
-                group_name = f"whatsapp_conv_{conversation_id}"
-                await self.channel_layer.group_discard(group_name, self.channel_name)
-                self.account_groups.discard(group_name)
-                await self.send_json({'type': 'unsubscribed', 'conversation_id': conversation_id})
+            elif message_type == 'unsubscribe_conversation':
+                conversation_id = content.get('conversation_id')
+                if conversation_id:
+                    group_name = f"whatsapp_conv_{conversation_id}"
+                    await self.channel_layer.group_discard(group_name, self.channel_name)
+                    self.account_groups.discard(group_name)
+                    await self.send_json({'type': 'unsubscribed', 'conversation_id': conversation_id})
 
-        elif message_type == 'typing':
-            conversation_id = content.get('conversation_id')
-            is_typing = content.get('is_typing', False)
-            if conversation_id:
-                await self.channel_layer.group_send(
-                    f"whatsapp_conv_{conversation_id}",
-                    {
-                        'type': 'whatsapp_typing',
-                        'user_id': self.user.id,
-                        'conversation_id': conversation_id,
-                        'is_typing': is_typing,
-                    }
-                )
+            elif message_type == 'typing':
+                conversation_id = content.get('conversation_id')
+                is_typing = content.get('is_typing', False)
+                if conversation_id:
+                    await self.channel_layer.group_send(
+                        f"whatsapp_conv_{conversation_id}",
+                        {
+                            'type': 'whatsapp_typing',
+                            'user_id': self.user.id,
+                            'conversation_id': conversation_id,
+                            'is_typing': is_typing,
+                        }
+                    )
+
+        except Exception as e:
+            logger.exception("WhatsApp Dashboard WS: Error handling message type=%s: %s", content.get('type'), e)
 
     async def whatsapp_message_received(self, event):
         await self.send_json({
@@ -271,6 +298,18 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
             'message_id': event.get('message_id'),
             'account_id': event.get('account_id'),
         })
+
+    @database_sync_to_async
+    def verify_conversation_access_dashboard(self, conversation_id: str) -> bool:
+        from apps.conversations.models import Conversation
+        from .models import WhatsAppAccount
+        try:
+            conv = Conversation.objects.select_related('account').get(id=conversation_id)
+            if self.user.is_staff or self.user.is_superuser:
+                return True
+            return WhatsAppAccount.objects.filter(id=conv.account_id, owner=self.user).exists()
+        except Conversation.DoesNotExist:
+            return False
 
     @database_sync_to_async
     def get_user_account_ids(self) -> list:
