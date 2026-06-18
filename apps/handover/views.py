@@ -16,6 +16,7 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Q
 from apps.conversations.models import Conversation
+from apps.core.permissions import accessible_whatsapp_account_ids
 from apps.conversations.repositories.conversation_repository import ConversationRepository
 from .models import (
     ConversationHandover,
@@ -55,8 +56,14 @@ class HandoverViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_conversation(self, pk):
-        """Obtém a conversa pelo ID."""
-        return get_object_or_404(Conversation, pk=pk)
+        """Obtém a conversa pelo ID, verificando acesso do usuário."""
+        conversation = get_object_or_404(Conversation, pk=pk)
+        user = self.request.user
+        if not (user.is_staff or user.is_superuser):
+            if conversation.account_id not in accessible_whatsapp_account_ids(user):
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied()
+        return conversation
     
     def get_or_create_handover(self, conversation):
         """Obtém ou cria o registro de handover."""
@@ -234,10 +241,12 @@ class HandoverRequestViewSet(viewsets.ModelViewSet):
         if user.is_superuser:
             return HandoverRequest.objects.all()
         
-        # Se é operador, vê solicitações pendentes da loja
-        # e solicitações atribuídas a ele
+        # Escopa as solicitações pendentes às contas WhatsApp acessíveis
+        # para evitar vazamento cross-tenant.
+        allowed_accounts = accessible_whatsapp_account_ids(user)
         return HandoverRequest.objects.filter(
-            Q(status=HandoverRequestStatus.PENDING) |
+            Q(conversation__account_id__in=allowed_accounts,
+              status=HandoverRequestStatus.PENDING) |
             Q(assigned_to=user) |
             Q(requested_by=user)
         ).distinct()
@@ -319,8 +328,7 @@ class HandoverLogViewSet(viewsets.ReadOnlyModelViewSet):
         if user.is_superuser:
             return HandoverLog.objects.all()
         
-        # Logs de conversas da loja do usuário
-        # (assumindo que o usuário tem uma loja associada)
+        # Conversation tem FK para WhatsAppAccount, não para Store.
         return HandoverLog.objects.filter(
-            conversation__store__members=user
+            conversation__account_id__in=accessible_whatsapp_account_ids(user)
         )
