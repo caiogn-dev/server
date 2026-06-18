@@ -3,6 +3,7 @@ WebSocket consumers for automation real-time updates.
 """
 import logging
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
+from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 
 from apps.core.base_consumer import FirstMessageAuthMixin
@@ -41,6 +42,10 @@ class AutomationConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         elif message_type == 'subscribe_company':
             company_id = content.get('company_id')
             if company_id:
+                has_access = await self.verify_company_access(company_id)
+                if not has_access:
+                    await self.send_json({'type': 'error', 'error_code': 'forbidden', 'company_id': company_id})
+                    return
                 group_name = f"company_{company_id}_automation"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.company_groups.add(group_name)
@@ -111,7 +116,23 @@ class AutomationConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             'type': 'report_generated',
             'report': event['report']
         })
-    
+
+    @database_sync_to_async
+    def verify_company_access(self, company_id: str) -> bool:
+        from apps.automation.models import CompanyProfile
+        from apps.core.permissions import accessible_store_ids
+        try:
+            profile = CompanyProfile.objects.select_related('store').get(id=company_id)
+            if self.user.is_staff or self.user.is_superuser:
+                return True
+            if profile.store_id:
+                return profile.store_id in accessible_store_ids(self.user)
+            if profile.account_id:
+                from apps.core.permissions import accessible_whatsapp_account_ids
+                return profile.account_id in accessible_whatsapp_account_ids(self.user)
+            return False
+        except CompanyProfile.DoesNotExist:
+            return False
 
 
 # Utility functions to send WebSocket events

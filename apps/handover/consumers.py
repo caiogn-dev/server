@@ -69,9 +69,15 @@ class HandoverConsumer(AsyncWebsocketConsumer):
         message_type = data.get('type')
         
         if message_type == 'subscribe_conversation':
-            # Cliente quer receber updates de uma conversa específica
             conversation_id = data.get('conversation_id')
             if conversation_id:
+                has_access = await self.verify_conversation_access(conversation_id)
+                if not has_access:
+                    await self.send(text_data=json.dumps({
+                        'type': 'error', 'error_code': 'forbidden',
+                        'conversation_id': conversation_id
+                    }))
+                    return
                 await self.channel_layer.group_add(
                     f"conversation_{conversation_id}",
                     self.channel_name
@@ -111,6 +117,18 @@ class HandoverConsumer(AsyncWebsocketConsumer):
             'priority': event.get('priority'),
         }))
     
+    @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        from apps.conversations.models import Conversation
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        try:
+            conv = Conversation.objects.get(id=conversation_id)
+            if self.user.is_staff or self.user.is_superuser:
+                return True
+            return conv.account_id in accessible_whatsapp_account_ids(self.user)
+        except Conversation.DoesNotExist:
+            return False
+
     @database_sync_to_async
     def get_user_store_ids(self):
         """Retorna IDs das lojas que o usuário é membro."""

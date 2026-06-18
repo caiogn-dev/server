@@ -168,17 +168,17 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             await self.send_json({'type': 'pong', 'timestamp': content.get('timestamp')})
         
         elif message_type == 'subscribe_order':
-            # Subscribe to specific order updates
             order_id = content.get('order_id')
             if order_id:
+                belongs = await self.verify_order_belongs_to_store(order_id)
+                if not belongs:
+                    await self.send_json({'type': 'error', 'error_code': 'forbidden', 'order_id': order_id})
+                    return
                 await self.channel_layer.group_add(
                     f"order_{order_id}",
                     self.channel_name
                 )
-                await self.send_json({
-                    'type': 'subscribed',
-                    'order_id': order_id
-                })
+                await self.send_json({'type': 'subscribed', 'order_id': order_id})
                 logger.debug(f"WebSocket subscribed to order: {order_id}")
     
     # Event handlers (called by channel_layer.group_send)
@@ -236,6 +236,14 @@ class StoreOrdersConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
             return user_can_access_store_orders(self.scope.get('user'), self.store_slug)
         except Exception as e:
             logger.error(f"WebSocket access check error: {e}")
+            return False
+
+    @database_sync_to_async
+    def verify_order_belongs_to_store(self, order_id: str) -> bool:
+        from apps.stores.models import StoreOrder
+        try:
+            return StoreOrder.objects.filter(id=order_id, store__slug=self.store_slug).exists()
+        except Exception:
             return False
 
 

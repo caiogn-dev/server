@@ -83,6 +83,11 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         if not self.conversation_id:
             await self.close(code=4000)
             return
+        has_access = await self.verify_conversation_access(self.conversation_id)
+        if not has_access:
+            logger.warning("Chat WS: User %s denied access to conversation %s", self.user.id, self.conversation_id)
+            await self.close(code=4003)
+            return
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.send_json({
             'type': 'connection_established',
@@ -133,10 +138,24 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         })
 
     @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        from apps.conversations.models import Conversation
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        try:
+            conv = Conversation.objects.get(id=conversation_id)
+            if self.user.is_staff or self.user.is_superuser:
+                return True
+            return conv.account_id in accessible_whatsapp_account_ids(self.user)
+        except Conversation.DoesNotExist:
+            return False
+
+    @database_sync_to_async
     def mark_message_read(self, message_id):
         from apps.whatsapp.models import Message
         try:
-            message = Message.objects.get(id=message_id)
+            message = Message.objects.select_related('conversation').get(id=message_id)
+            if str(message.conversation_id) != str(self.conversation_id):
+                return
             if message.status != 'read':
                 message.status = 'read'
                 message.save(update_fields=['status'])
@@ -177,6 +196,10 @@ class DashboardConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         if message_type == 'subscribe_account':
             account_id = content.get('account_id')
             if account_id:
+                has_access = await self.verify_whatsapp_account_access(account_id)
+                if not has_access:
+                    await self.send_json({'type': 'error', 'error_code': 'forbidden', 'account_id': account_id})
+                    return
                 if self.account_group:
                     await self.channel_layer.group_discard(self.account_group, self.channel_name)
                 self.account_group = f"account_{account_id}"
@@ -196,6 +219,13 @@ class DashboardConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
 
     async def new_message(self, event):
         await self.send_json({'type': 'new_message', 'message': event['message']})
+
+    @database_sync_to_async
+    def verify_whatsapp_account_access(self, account_id: str) -> bool:
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        if self.user.is_staff or self.user.is_superuser:
+            return True
+        return account_id in accessible_whatsapp_account_ids(self.user)
 
     async def new_order(self, event):
         await self.send_json({'type': 'new_order', 'order': event['order']})
