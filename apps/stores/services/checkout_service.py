@@ -1053,8 +1053,16 @@ class CheckoutService:
         update_fields = ['updated_at']
 
         if status == 'approved':
+            if order.payment_status == StoreOrder.PaymentStatus.PAID:
+                # Idempotente: webhook duplicado ou retry após confirmação manual
+                logger.info(
+                    "Order %s already PAID — skipping duplicate webhook (payment_id=%s)",
+                    order.order_number, payment_id,
+                )
+                return order
             order.payment_status = StoreOrder.PaymentStatus.PAID
-            order.paid_at = timezone.now()
+            if not order.paid_at:
+                order.paid_at = timezone.now()
             if order.status in {
                 StoreOrder.OrderStatus.PENDING,
                 StoreOrder.OrderStatus.PROCESSING,

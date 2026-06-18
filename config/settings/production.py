@@ -27,7 +27,9 @@ SECURE_CROSS_ORIGIN_OPENER_POLICY = 'same-origin'
 # Disable SSL redirect - Cloudflare/Nginx handles HTTPS at the proxy level
 SECURE_SSL_REDIRECT = False
 SESSION_COOKIE_SECURE = True
+SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_HTTPONLY = True  # seguro porque a API usa Token auth; o admin lê o token do HTML
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
 SECURE_HSTS_SECONDS = 31536000
