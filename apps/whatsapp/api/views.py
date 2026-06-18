@@ -300,6 +300,61 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_502_BAD_GATEWAY
             )
 
+    @action(detail=False, methods=['post'])
+    def embedded_signup(self, request):
+        """Onboard via Meta Embedded Signup (Coexistence).
+
+        Body: code, waba_id, phone_number_id, pin (6 díg), store_id (opcional).
+        Troca code->token, registra o número, inscreve o app na WABA, cria/atualiza
+        o WhatsAppAccount e VINCULA à loja (respostas/status passam a ir pra loja certa).
+        """
+        from apps.whatsapp.services.embedded_signup_service import (
+            EmbeddedSignupService, EmbeddedSignupError,
+        )
+        from apps.stores.models import Store
+
+        data = request.data
+        code = data.get('code')
+        waba_id = data.get('waba_id')
+        phone_number_id = data.get('phone_number_id')
+        store_id = data.get('store_id')
+        pin = str(data.get('pin') or '').strip()
+
+        if not all([code, waba_id, phone_number_id]):
+            return Response(
+                {'error': 'code, waba_id e phone_number_id são obrigatórios'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        # PIN é opcional: na coexistência (whatsapp_business_app_onboarding) a
+        # verificação é via QR no app, não há PIN. Só validamos se for informado
+        # (fluxo de migração com SMS, que ainda usa /register com PIN).
+        if pin and not (pin.isdigit() and len(pin) == 6):
+            return Response(
+                {'error': 'pin, se informado, deve ter 6 dígitos'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        store = None
+        if store_id:
+            store = Store.objects.filter(id=store_id).first()
+            if not store:
+                return Response({'error': 'Loja não encontrada'}, status=status.HTTP_404_NOT_FOUND)
+            if not (request.user.is_superuser or store.owner_id == request.user.id):
+                return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            acc = EmbeddedSignupService().onboard(
+                code=code, waba_id=waba_id, phone_number_id=phone_number_id,
+                store=store, owner=request.user, pin=pin,
+            )
+        except EmbeddedSignupError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception('Embedded Signup falhou')
+            return Response({'error': f'Falha no onboarding: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+
+        return Response(WhatsAppAccountSerializer(acc).data, status=status.HTTP_201_CREATED)
+
 
 @extend_schema_view(
     list=extend_schema(summary="List messages"),
