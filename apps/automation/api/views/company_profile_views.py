@@ -82,14 +82,32 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         
         try:
             from apps.stores.models import Store
-            
+
+            user = request.user
+            allowed_account_ids = (
+                None if (user.is_staff or user.is_superuser)
+                else accessible_whatsapp_account_ids(user)
+            )
+            allowed_store_ids = (
+                None if (user.is_staff or user.is_superuser)
+                else Store.objects.filter(
+                    models.Q(owner=user) | models.Q(staff=user)
+                ).values_list('id', flat=True)
+            )
+
             # Try to find store by slug first
             if store_slug:
-                store = Store.objects.get(slug=store_slug, is_active=True)
+                qs = Store.objects.filter(slug=store_slug, is_active=True)
+                if allowed_store_ids is not None:
+                    qs = qs.filter(id__in=allowed_store_ids)
+                store = qs.get()
             else:
                 # Try to find store by WhatsApp account
                 from apps.whatsapp.models import WhatsAppAccount
-                account = WhatsAppAccount.objects.get(id=account_id)
+                acct_qs = WhatsAppAccount.objects.filter(id=account_id)
+                if allowed_account_ids is not None:
+                    acct_qs = acct_qs.filter(id__in=allowed_account_ids)
+                account = acct_qs.get()
                 
                 # Look for store with matching whatsapp_number
                 store = Store.objects.filter(
