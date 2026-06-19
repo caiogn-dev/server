@@ -5,7 +5,13 @@ import logging
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
+from rest_framework.throttling import AnonRateThrottle
 from django.shortcuts import get_object_or_404
+
+
+class _GeoThrottle(AnonRateThrottle):
+    """Rate limit p/ endpoints geo não-auth que chamam Google Maps (pago)."""
+    scope = 'geo'
 
 from apps.stores.models import Store
 from apps.stores.services.delivery_quote_service import delivery_quote_service
@@ -16,9 +22,10 @@ logger = logging.getLogger(__name__)
 
 class StoreGeocodeView(APIView):
     """Geocode an address."""
-    
+
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [_GeoThrottle]
+
     def get(self, request):
         """
         GET /api/v1/stores/maps/geocode/?address=...
@@ -41,9 +48,10 @@ class StoreGeocodeView(APIView):
 
 class StoreReverseGeocodeView(APIView):
     """Reverse geocode coordinates to address."""
-    
+
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [_GeoThrottle]
+
     def get(self, request):
         """
         GET /api/v1/stores/maps/reverse-geocode/?lat=...&lng=...
@@ -74,9 +82,10 @@ class StoreReverseGeocodeView(APIView):
 
 class StoreRouteView(APIView):
     """Calculate route between two points."""
-    
+
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [_GeoThrottle]
+
     def get(self, request, store_slug):
         """
         GET /api/v1/stores/{store_slug}/route/?dest_lat=...&dest_lng=...
@@ -150,9 +159,10 @@ class StoreRouteView(APIView):
 
 class StoreValidateDeliveryView(APIView):
     """Validate if delivery address is within service area."""
-    
+
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [_GeoThrottle]
+
     def post(self, request, store_slug):
         """
         POST /api/v1/stores/{store_slug}/validate-delivery/
@@ -254,10 +264,11 @@ class StoreValidateDeliveryView(APIView):
 
 class StoreDeliveryZonesView(APIView):
     """Get delivery zones as isolines."""
-    
+
     authentication_classes = []
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [_GeoThrottle]
+
     def get(self, request, store_slug):
         """
         GET /api/v1/stores/{store_slug}/delivery-zones/
@@ -297,9 +308,10 @@ class StoreDeliveryZonesView(APIView):
 
 class StoreAutosuggestView(APIView):
     """Address autocomplete suggestions."""
-    
+
     permission_classes = [permissions.AllowAny]
-    
+    throttle_classes = [_GeoThrottle]
+
     def get(self, request, store_slug=None):
         """
         GET /api/v1/stores/{store_slug}/autosuggest/?q=...

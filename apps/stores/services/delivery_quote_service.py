@@ -37,6 +37,16 @@ class DeliveryQuoteService:
 
     @staticmethod
     def calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
+        """FONTE ÚNICA da matemática de taxa dinâmica por distância.
+
+        GeoService e CheckoutService afunilam tudo aqui — não reimplementar fórmula
+        de taxa em outro lugar. Regra:
+          base = metadata['delivery_base_fee'] OU store.default_delivery_fee OU 9.00
+          taxa = base                              se distância <= flat_km (default 4 km)
+          taxa = base + (distância - flat_km)*per_km   acima disso (per_km default 1.00)
+          distância > max_km (default 16) → fee=None (a combinar), salvo se delivery_max_fee
+            estiver setado (nesse caso a taxa é limitada por ele em vez de virar None).
+        """
         metadata = store.metadata or {}
         base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or '9.00')))
         fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', '1.00')))
