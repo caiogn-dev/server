@@ -93,6 +93,9 @@ class Message(BaseModel):
             models.Index(fields=['account', 'from_number', '-created_at']),
             models.Index(fields=['account', 'to_number', '-created_at']),
             models.Index(fields=['status', '-created_at']),
+            # Dashboard/pipeline filtram por account + janela de tempo (e direção).
+            models.Index(fields=['account', '-created_at'], name='wamsg_acct_created_idx'),
+            models.Index(fields=['account', 'direction', '-created_at'], name='wamsg_acct_dir_created_idx'),
         ]
 
     def __str__(self):

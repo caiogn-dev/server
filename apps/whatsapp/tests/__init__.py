@@ -1,5 +1,8 @@
 """
 Testes do serviço de webhook do WhatsApp — assinatura e verificação de subscribe.
+
+Este pacote substitui o antigo módulo ``apps/whatsapp/tests.py``. O conteúdo
+original (assinatura/verify) foi preservado aqui sem alterações de comportamento.
 """
 import hashlib
 import hmac

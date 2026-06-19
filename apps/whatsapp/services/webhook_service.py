@@ -389,8 +389,6 @@ class WebhookService:
         - pipeline.timeout: se o orquestrador excedeu o limite de tempo
         - pipeline.dropped: se a mensagem não recebeu resposta alguma (alerta crítico)
         """
-        from apps.conversations.services import ConversationService
-        from apps.automation.services import LLMOrchestratorService, UnifiedResponse
         from apps.automation.services.context_service import AutomationContextService
 
         # Mensagens de áudio: sem transcrição disponível, silêncio é melhor que
@@ -402,19 +400,88 @@ class WebhookService:
         payload = event.payload
         contact_info = payload.get('contact', {})
 
-        if not message.conversation:
-            try:
-                conversation_service = ConversationService()
-                conversation = conversation_service.get_or_create_conversation(
-                    account=event.account,
-                    phone_number=message.from_number,
-                    contact_name=contact_info.get('profile', {}).get('name', '')
-                )
-                message.conversation = conversation
-                message.save(update_fields=['conversation'])
-            except Exception as exc:
-                logger.error(f'[post_process] Failed to create conversation: {exc}')
+        self._ensure_conversation_attached(event, message, contact_info)
+        self._update_contact_name(message, contact_info)
 
+        context = AutomationContextService.resolve(
+            account=event.account,
+            conversation=message.conversation,
+            create_profile=False,
+        )
+        llm_enabled = AutomationContextService.is_ai_enabled(
+            context=context,
+            conversation=message.conversation,
+        )
+
+        # Extrair dados estruturados do payload (reply interativo / localização).
+        interactive_reply = self._extract_interactive_reply(message)
+        location_data = self._extract_location_data(message)
+
+        # Imagem-comprovante (sessão PAYMENT_PENDING) é tratada de forma determinística.
+        if self._try_handle_payment_proof(event, message, context, interactive_reply):
+            return
+
+        # Pedido nativo do catálogo é tratado sem LLM.
+        if self._try_handle_catalog_order(event, message, context):
+            return
+
+        # Modo humano suprime chat geral, mas NÃO eventos transacionais determinísticos.
+        if self._should_suppress_for_human_mode(message, interactive_reply, location_data):
+            return
+
+        # Orquestrador (UnifiedService) com timeout, em thread daemon.
+        orchestrator_response, orchestrator_error, orchestrator_ms, timed_out = (
+            self._run_orchestrator_with_timeout(
+                event, message, llm_enabled, interactive_reply, location_data,
+            )
+        )
+
+        response_sent, orchestrator_error = self._dispatch_orchestrator_response(
+            event, message,
+            orchestrator_response=orchestrator_response,
+            orchestrator_error=orchestrator_error,
+            orchestrator_ms=orchestrator_ms,
+            timed_out=timed_out,
+        )
+
+        # Fallback: agente LLM direto quando o orquestrador não respondeu.
+        if not response_sent:
+            response_sent = self._try_fallback_agent(event, message, context, llm_enabled)
+
+        # Alerta crítico: mensagem sem resposta alguma.
+        if not response_sent:
+            logger.error(
+                '[pipeline] MESSAGE DROPPED — no response path succeeded. '
+                'message_id=%s account=%s timed_out=%s orchestrator_error=%s',
+                message.id, event.account.id, timed_out, orchestrator_error,
+                extra={'pipeline.dropped': True, 'message_id': str(message.id)},
+            )
+
+    def _mark_processed_by_agent(self, message) -> None:
+        """Marca a mensagem como processada pelo agente (idempotente)."""
+        if not message.processed_by_agent:
+            message.processed_by_agent = True
+            message.save(update_fields=['processed_by_agent'])
+
+    def _ensure_conversation_attached(self, event, message, contact_info) -> None:
+        """Garante que a mensagem tenha uma conversa vinculada (get_or_create)."""
+        if message.conversation:
+            return
+        from apps.conversations.services import ConversationService
+        try:
+            conversation_service = ConversationService()
+            conversation = conversation_service.get_or_create_conversation(
+                account=event.account,
+                phone_number=message.from_number,
+                contact_name=contact_info.get('profile', {}).get('name', '')
+            )
+            message.conversation = conversation
+            message.save(update_fields=['conversation'])
+        except Exception as exc:
+            logger.error(f'[post_process] Failed to create conversation: {exc}')
+
+    def _update_contact_name(self, message, contact_info) -> None:
+        """Atualiza o nome do contato a partir do perfil ou do texto da mensagem."""
         try:
             contact_name = contact_info.get('profile', {}).get('name', '')
             if message.conversation and contact_name and not message.conversation.contact_name:
@@ -430,157 +497,172 @@ class WebhookService:
         except Exception as exc:
             logger.warning(f'[post_process] Error updating contact name: {exc}')
 
-        context = AutomationContextService.resolve(
-            account=event.account,
-            conversation=message.conversation,
-            create_profile=False,
+    def _extract_interactive_reply(self, message):
+        """Extrai dados de reply interativo (clique em botão / item de lista)."""
+        interactive_reply = None
+        msg_content = message.content or {}
+        interactive = msg_content.get('interactive', {})
+        if not interactive:
+            return None
+        if 'list_reply' in interactive:
+            lr = interactive['list_reply']
+            interactive_reply = {
+                'type': 'list_reply',
+                'id': lr.get('id', ''),
+                'title': lr.get('title', ''),
+            }
+        elif 'button_reply' in interactive:
+            br = interactive['button_reply']
+            interactive_reply = {
+                'type': 'button_reply',
+                'id': br.get('id', ''),
+                'title': br.get('title', ''),
+            }
+        if interactive_reply:
+            logger.info(
+                '[pipeline] Interactive reply detected: type=%s id=%s',
+                interactive_reply['type'], interactive_reply['id'],
+                extra={'pipeline.interactive_reply': True, 'message_id': str(message.id)},
+            )
+        return interactive_reply
+
+    def _extract_location_data(self, message):
+        """Extrai localização (mensagem de localização nativa do WhatsApp)."""
+        msg_content = message.content or {}
+        loc = msg_content.get('location')
+        if not loc:
+            return None
+        lat = loc.get('latitude')
+        lng = loc.get('longitude')
+        if lat is None or lng is None:
+            return None
+        location_data = {
+            'lat': float(lat),
+            'lng': float(lng),
+            'address': loc.get('address', ''),
+            'name': loc.get('name', ''),
+        }
+        logger.info(
+            '[pipeline] Location message detected: lat=%.6f lng=%.6f',
+            location_data['lat'], location_data['lng'],
+            extra={'message_id': str(message.id)},
         )
-        llm_enabled = AutomationContextService.is_ai_enabled(
-            context=context,
-            conversation=message.conversation,
-        )
+        return location_data
 
-        # Extrair dados de reply interativo (clique em botão / item de lista)
-        _interactive_reply = None
-        _location_data = None
-        _msg_content = message.content or {}
-        _interactive = _msg_content.get('interactive', {})
-        if _interactive:
-            if 'list_reply' in _interactive:
-                _lr = _interactive['list_reply']
-                _interactive_reply = {
-                    'type': 'list_reply',
-                    'id': _lr.get('id', ''),
-                    'title': _lr.get('title', ''),
-                }
-            elif 'button_reply' in _interactive:
-                _br = _interactive['button_reply']
-                _interactive_reply = {
-                    'type': 'button_reply',
-                    'id': _br.get('id', ''),
-                    'title': _br.get('title', ''),
-                }
-            if _interactive_reply:
-                logger.info(
-                    '[pipeline] Interactive reply detected: type=%s id=%s',
-                    _interactive_reply['type'], _interactive_reply['id'],
-                    extra={'pipeline.interactive_reply': True, 'message_id': str(message.id)},
-                )
-
-        # Extrair localização (mensagem de localização nativa do WhatsApp)
-        _loc = _msg_content.get('location')
-        if _loc:
-            _lat = _loc.get('latitude')
-            _lng = _loc.get('longitude')
-            if _lat is not None and _lng is not None:
-                _location_data = {
-                    'lat': float(_lat),
-                    'lng': float(_lng),
-                    'address': _loc.get('address', ''),
-                    'name': _loc.get('name', ''),
-                }
-                logger.info(
-                    '[pipeline] Location message detected: lat=%.6f lng=%.6f',
-                    _location_data['lat'], _location_data['lng'],
-                    extra={'message_id': str(message.id)},
-                )
-
-        # Imagem enviada por cliente com sessão PAYMENT_PENDING → tratar como comprovante
-        if (
+    def _try_handle_payment_proof(self, event, message, context, interactive_reply) -> bool:
+        """Imagem com sessão PAYMENT_PENDING → ACK de comprovante. Retorna True se tratou."""
+        if not (
             message.message_type == 'image'
             and not message.text_body
-            and not _interactive_reply
+            and not interactive_reply
         ):
-            from apps.automation.models import CustomerSession
-            _phone = message.from_number or ''
-            _digits = ''.join(filter(str.isdigit, _phone))
-            _phone_candidates = list(dict.fromkeys(v for v in [_phone, _digits, f'+{_digits}'] if v))
-            _pix_session_qs = CustomerSession.objects.filter(
-                phone_number__in=_phone_candidates,
-                status='payment_pending',
-            )
-            if context.profile:
-                _pix_session_qs = _pix_session_qs.filter(company=context.profile)
-            if _pix_session_qs.exists():
-                try:
-                    from .message_service import MessageService
-                    MessageService().send_text_message(
-                        account_id=str(event.account.id),
-                        to=message.from_number,
-                        text=(
-                            "✅ *Comprovante recebido!*\n\n"
-                            "Vou verificar seu pagamento e confirmar o pedido em breve. 🙏\n\n"
-                            "Caso precise de ajuda, é só chamar!"
-                        ),
-                        reply_to=str(message.whatsapp_message_id),
-                    )
-                    if not message.processed_by_agent:
-                        message.processed_by_agent = True
-                        message.save(update_fields=['processed_by_agent'])
-                    logger.info(
-                        '[pipeline] Payment proof image acknowledged for payment_pending session',
-                        extra={'message_id': str(message.id)},
-                    )
-                    return
-                except Exception as exc:
-                    logger.warning('[pipeline] Failed to ack payment proof image: %s', exc)
+            return False
 
+        from apps.automation.models import CustomerSession
+        phone = message.from_number or ''
+        digits = ''.join(filter(str.isdigit, phone))
+        phone_candidates = list(dict.fromkeys(v for v in [phone, digits, f'+{digits}'] if v))
+        pix_session_qs = CustomerSession.objects.filter(
+            phone_number__in=phone_candidates,
+            status='payment_pending',
+        )
+        if context.profile:
+            pix_session_qs = pix_session_qs.filter(company=context.profile)
+        if not pix_session_qs.exists():
+            return False
+
+        try:
+            from .message_service import MessageService
+            MessageService().send_text_message(
+                account_id=str(event.account.id),
+                to=message.from_number,
+                text=(
+                    "✅ *Comprovante recebido!*\n\n"
+                    "Vou verificar seu pagamento e confirmar o pedido em breve. 🙏\n\n"
+                    "Caso precise de ajuda, é só chamar!"
+                ),
+                reply_to=str(message.whatsapp_message_id),
+            )
+            self._mark_processed_by_agent(message)
+            logger.info(
+                '[pipeline] Payment proof image acknowledged for payment_pending session',
+                extra={'message_id': str(message.id)},
+            )
+            return True
+        except Exception as exc:
+            logger.warning('[pipeline] Failed to ack payment proof image: %s', exc)
+            return False
+
+    def _try_handle_catalog_order(self, event, message, context) -> bool:
+        """Pedido nativo do catálogo → resposta determinística. Retorna True se tratou."""
         catalog_order_response = self._build_catalog_order_response(
             event=event,
             message=message,
             company_profile=context.profile,
             store=context.store,
         )
-        if catalog_order_response:
-            try:
-                self._send_unified_interactive(event, message, catalog_order_response)
-                if not message.processed_by_agent:
-                    message.processed_by_agent = True
-                    message.save(update_fields=['processed_by_agent'])
-                logger.info(
-                    '[pipeline] Catalog order handled deterministically',
-                    extra={'pipeline.source': 'catalog_order', 'message_id': str(message.id)},
-                )
-                return
-            except Exception as exc:
-                logger.error(
-                    '[pipeline] Failed to handle catalog order: %s',
-                    exc,
-                    exc_info=True,
-                    extra={'message_id': str(message.id)},
-                )
-
-        # Human mode should suppress general bot chat, but it must not swallow
-        # deterministic order events. Otherwise catalog orders and pending
-        # delivery/payment steps never become StoreOrder rows in the panel.
-        if message.conversation and message.conversation.mode == 'human':
-            transactional_reply_ids = {
-                'order_delivery',
-                'order_pickup',
-                'pay_pix',
-                'pay_card',
-                'pay_pickup',
-            }
-            reply_id = (_interactive_reply or {}).get('id', '')
-            allow_transactional = (
-                reply_id in transactional_reply_ids
-                or reply_id.startswith('add_')
-                or reply_id.startswith('product_')
-                or bool(_location_data)
-            )
-            if not allow_transactional:
-                logger.info(
-                    '[pipeline] Conversation in human mode, skipping automation',
-                    extra={'message_id': str(message.id)},
-                )
-                return
+        if not catalog_order_response:
+            return False
+        try:
+            self._send_unified_interactive(event, message, catalog_order_response)
+            self._mark_processed_by_agent(message)
             logger.info(
-                '[pipeline] Human mode bypass for deterministic order flow',
-                extra={'message_id': str(message.id), 'reply_id': reply_id},
+                '[pipeline] Catalog order handled deterministically',
+                extra={'pipeline.source': 'catalog_order', 'message_id': str(message.id)},
             )
+            return True
+        except Exception as exc:
+            logger.error(
+                '[pipeline] Failed to handle catalog order: %s',
+                exc,
+                exc_info=True,
+                extra={'message_id': str(message.id)},
+            )
+            return False
 
+    def _should_suppress_for_human_mode(self, message, interactive_reply, location_data) -> bool:
+        """Modo humano suprime chat geral, mas libera eventos transacionais.
+
+        Retorna True quando a automação deve ser totalmente ignorada (sem resposta).
+        """
+        if not (message.conversation and message.conversation.mode == 'human'):
+            return False
+
+        transactional_reply_ids = {
+            'order_delivery',
+            'order_pickup',
+            'pay_pix',
+            'pay_card',
+            'pay_pickup',
+        }
+        reply_id = (interactive_reply or {}).get('id', '')
+        allow_transactional = (
+            reply_id in transactional_reply_ids
+            or reply_id.startswith('add_')
+            or reply_id.startswith('product_')
+            or bool(location_data)
+        )
+        if not allow_transactional:
+            logger.info(
+                '[pipeline] Conversation in human mode, skipping automation',
+                extra={'message_id': str(message.id)},
+            )
+            return True
+        logger.info(
+            '[pipeline] Human mode bypass for deterministic order flow',
+            extra={'message_id': str(message.id), 'reply_id': reply_id},
+        )
+        return False
+
+    def _run_orchestrator_with_timeout(self, event, message, llm_enabled,
+                                       interactive_reply, location_data):
+        """Executa o UnifiedService em thread daemon com timeout configurável.
+
+        Retorna (orchestrator_response, orchestrator_error, orchestrator_ms, timed_out).
+        """
         import threading
         import time as _time
+        from apps.automation.services import LLMOrchestratorService
 
         orchestrator_response = None
         orchestrator_error = None
@@ -597,8 +679,8 @@ class WebhookService:
                 )
                 orchestrator_response = service.process_message(
                     message.text_body or '',
-                    interactive_reply=_interactive_reply,
-                    location_data=_location_data,
+                    interactive_reply=interactive_reply,
+                    location_data=location_data,
                 )
                 _source = getattr(getattr(orchestrator_response, 'source', None), 'value', 'unknown')
                 logger.info(
@@ -618,10 +700,10 @@ class WebhookService:
         _thread.start()
         _thread.join(timeout=_orchestrator_timeout_s)
 
-        _orchestrator_ms = round((_time.monotonic() - _t0) * 1000, 1)
-        _timed_out = _thread.is_alive()
+        orchestrator_ms = round((_time.monotonic() - _t0) * 1000, 1)
+        timed_out = _thread.is_alive()
 
-        if _timed_out:
+        if timed_out:
             orchestrator_error = TimeoutError(f'UnifiedService timeout after {_orchestrator_timeout_s}s')
             logger.warning(
                 '[pipeline] UnifiedService timeout after %ss',
@@ -629,90 +711,96 @@ class WebhookService:
                 extra={'pipeline.timeout': True, 'message_id': str(message.id)},
             )
 
-        # -- Tentar enviar resposta do orquestrador ----------------------------
-        _response_sent = False
+        return orchestrator_response, orchestrator_error, orchestrator_ms, timed_out
 
-        if isinstance(orchestrator_response, UnifiedResponse) and not _timed_out:
-            # Caminho A: resposta interativa (botões / lista)
-            if orchestrator_response.buttons or orchestrator_response.interactive_type:
-                try:
-                    self._send_unified_interactive(event, message, orchestrator_response)
-                    if not message.processed_by_agent:
-                        message.processed_by_agent = True
-                        message.save(update_fields=['processed_by_agent'])
-                    logger.info(
-                        '[pipeline] Interactive response sent (%.0fms)', _orchestrator_ms,
-                        extra={
-                            'pipeline.source': getattr(getattr(orchestrator_response, 'source', None), 'value', 'handler'),
-                            'pipeline.duration_ms': _orchestrator_ms,
-                            'message_id': str(message.id),
-                        },
-                    )
-                    _response_sent = True
-                except Exception as exc:
-                    orchestrator_error = exc
-                    logger.error('[pipeline] Failed to send interactive: %s', exc, extra={'message_id': str(message.id)})
+    def _dispatch_orchestrator_response(self, event, message, orchestrator_response,
+                                        orchestrator_error, orchestrator_ms, timed_out):
+        """Envia a resposta do orquestrador (interativa ou texto enfileirado).
 
-            # Caminho B: resposta de texto (enfileirada)
-            if not _response_sent and orchestrator_response.content:
-                try:
-                    from ..tasks import send_agent_response
-                    response_source = getattr(
-                        getattr(orchestrator_response, 'source', None),
-                        'value',
-                        'handler',
-                    )
-                    if not message.processed_by_agent:
-                        message.processed_by_agent = True
-                        message.save(update_fields=['processed_by_agent'])
-                    send_agent_response.delay(
-                        str(event.account.id),
-                        message.from_number,
-                        orchestrator_response.content,
-                        str(message.whatsapp_message_id),
-                        f'unified_{response_source}',
-                    )
-                    logger.info(
-                        '[pipeline] Text response queued (%.0fms)', _orchestrator_ms,
-                        extra={
-                            'pipeline.source': response_source,
-                            'pipeline.duration_ms': _orchestrator_ms,
-                            'message_id': str(message.id),
-                        },
-                    )
-                    _response_sent = True
-                except Exception as exc:
-                    orchestrator_error = exc
-                    logger.error('[pipeline] Failed to queue text response: %s', exc, extra={'message_id': str(message.id)})
+        Retorna (response_sent, orchestrator_error) — o erro pode ser atualizado
+        por falhas de envio, preservando a semântica original.
+        """
+        from apps.automation.services import UnifiedResponse
 
-        # -- Fallback: agente LLM direto ---------------------------------------
-        # Ativa quando: orquestrador não produziu resposta OU falhou / timed out
-        if not _response_sent and not message.processed_by_agent:
-            agent = AutomationContextService.get_default_agent(context=context)
-            if llm_enabled and agent is not None:
-                try:
-                    current_app.send_task(
-                        'apps.whatsapp.tasks.process_message_with_agent',
-                        args=[str(message.id)],
-                        queue='default',
-                        countdown=0,
-                    )
-                    logger.info(
-                        '[pipeline] Fallback agent enqueued',
-                        extra={'pipeline.source': 'agent_fallback', 'message_id': str(message.id)},
-                    )
-                    _response_sent = True
-                except Exception as exc:
-                    logger.error('[pipeline] Failed to enqueue agent fallback: %s', exc, exc_info=True, extra={'message_id': str(message.id)})
+        response_sent = False
 
-        # -- Alerta crítico: mensagem sem resposta ------------------------------
-        if not _response_sent:
-            logger.error(
-                '[pipeline] MESSAGE DROPPED — no response path succeeded. '
-                'message_id=%s account=%s timed_out=%s orchestrator_error=%s',
-                message.id, event.account.id, _timed_out, orchestrator_error,
-                extra={'pipeline.dropped': True, 'message_id': str(message.id)},
+        if not (isinstance(orchestrator_response, UnifiedResponse) and not timed_out):
+            return response_sent, orchestrator_error
+
+        # Caminho A: resposta interativa (botões / lista)
+        if orchestrator_response.buttons or orchestrator_response.interactive_type:
+            try:
+                self._send_unified_interactive(event, message, orchestrator_response)
+                self._mark_processed_by_agent(message)
+                logger.info(
+                    '[pipeline] Interactive response sent (%.0fms)', orchestrator_ms,
+                    extra={
+                        'pipeline.source': getattr(getattr(orchestrator_response, 'source', None), 'value', 'handler'),
+                        'pipeline.duration_ms': orchestrator_ms,
+                        'message_id': str(message.id),
+                    },
+                )
+                response_sent = True
+            except Exception as exc:
+                orchestrator_error = exc
+                logger.error('[pipeline] Failed to send interactive: %s', exc, extra={'message_id': str(message.id)})
+
+        # Caminho B: resposta de texto (enfileirada)
+        if not response_sent and orchestrator_response.content:
+            try:
+                from ..tasks import send_agent_response
+                response_source = getattr(
+                    getattr(orchestrator_response, 'source', None),
+                    'value',
+                    'handler',
+                )
+                self._mark_processed_by_agent(message)
+                send_agent_response.delay(
+                    str(event.account.id),
+                    message.from_number,
+                    orchestrator_response.content,
+                    str(message.whatsapp_message_id),
+                    f'unified_{response_source}',
+                )
+                logger.info(
+                    '[pipeline] Text response queued (%.0fms)', orchestrator_ms,
+                    extra={
+                        'pipeline.source': response_source,
+                        'pipeline.duration_ms': orchestrator_ms,
+                        'message_id': str(message.id),
+                    },
+                )
+                response_sent = True
+            except Exception as exc:
+                orchestrator_error = exc
+                logger.error('[pipeline] Failed to queue text response: %s', exc, extra={'message_id': str(message.id)})
+
+        return response_sent, orchestrator_error
+
+    def _try_fallback_agent(self, event, message, context, llm_enabled) -> bool:
+        """Fallback: enfileira agente LLM direto. Retorna True se enfileirou."""
+        from apps.automation.services.context_service import AutomationContextService
+
+        if message.processed_by_agent:
+            return False
+        agent = AutomationContextService.get_default_agent(context=context)
+        if not (llm_enabled and agent is not None):
+            return False
+        try:
+            current_app.send_task(
+                'apps.whatsapp.tasks.process_message_with_agent',
+                args=[str(message.id)],
+                queue='default',
+                countdown=0,
             )
+            logger.info(
+                '[pipeline] Fallback agent enqueued',
+                extra={'pipeline.source': 'agent_fallback', 'message_id': str(message.id)},
+            )
+            return True
+        except Exception as exc:
+            logger.error('[pipeline] Failed to enqueue agent fallback: %s', exc, exc_info=True, extra={'message_id': str(message.id)})
+            return False
 
     def _build_catalog_order_response(self, event, message, company_profile=None, store=None):
         """Handle native WhatsApp catalog order payloads without involving the LLM."""
@@ -997,65 +1085,11 @@ class WebhookService:
             logger.info(f"Duplicate message ignored: {whatsapp_message_id}")
             return existing
         
-        # Extract text content based on message type
-        text_body = ''
-        content = {}
-        media_id = ''
-        media_url = ''
-        media_mime_type = ''
-        media_sha256 = ''
-        
-        if message_type == 'text':
-            text_body = message_data.get('text', {}).get('body', '')
-            content = {'text': text_body}
-        elif message_type in ['image', 'video', 'audio', 'document', 'sticker']:
-            media_data = message_data.get(message_type, {})
-            media_id = media_data.get('id', '')
-            media_mime_type = media_data.get('mime_type', '')
-            text_body = media_data.get('caption', '')
-            content = {message_type: media_data}
-            media_url, media_sha256 = self._fetch_and_store_media(event.account, media_id, media_mime_type)
-        elif message_type == 'location':
-            location = message_data.get('location', {})
-            content = {'location': location}
-            location_label = location.get('name') or location.get('address') or 'Localizacao'
-            text_body = f"\U0001f4cd {location_label}"
-            # Salvar pin como UserAddress do cliente (sem bloquear o fluxo)
-            _lat = location.get('latitude')
-            _lng = location.get('longitude')
-            if _lat is not None and _lng is not None:
-                self._save_whatsapp_location_as_address(
-                    phone=from_number,
-                    account=event.account,
-                    lat=float(_lat),
-                    lng=float(_lng),
-                )
-        elif message_type == 'contacts':
-            contacts = message_data.get('contacts', [])
-            content = {'contacts': contacts}
-            text_body = f"\U0001f464 {len(contacts)} contato(s)"
-        elif message_type == 'interactive':
-            interactive = message_data.get('interactive', {})
-            content = {'interactive': interactive}
-            # Extract button/list reply
-            if 'button_reply' in interactive:
-                text_body = interactive['button_reply'].get('title', '')
-            elif 'list_reply' in interactive:
-                text_body = interactive['list_reply'].get('title', '')
-        elif message_type == 'button':
-            button = message_data.get('button', {})
-            text_body = button.get('text', '')
-            content = {'button': button}
-        elif message_type == 'reaction':
-            reaction = message_data.get('reaction', {})
-            content = {'reaction': reaction}
-            text_body = reaction.get('emoji', 'ðŸ‘')
-        elif message_type == 'order':
-            order = message_data.get('order', {})
-            content = {'order': order}
-            text_body = f"ðŸ›’ Order with {len(order.get('product_items', []))} item(s)"
-        else:
-            content = message_data
+        # Extract text content based on message type (parsing + side effects de
+        # media/location ficam encapsulados em _build_message_content).
+        text_body, content, media_id, media_url, media_mime_type, media_sha256 = (
+            self._build_message_content(event, message_data, message_type, from_number)
+        )
 
         logger.info(
             "[_process_inbound_message] Parsed inbound payload: type=%s text_len=%s context_id=%s",
@@ -1136,6 +1170,83 @@ class WebhookService:
         
         logger.info(f"Processed inbound message: {message.id} from {from_number}")
         return message
+
+    def _build_message_content(self, event, message_data, message_type, from_number):
+        """Parse o payload inbound por tipo de mensagem.
+
+        Retorna a tupla (text_body, content, media_id, media_url,
+        media_mime_type, media_sha256). Mantém os efeitos colaterais originais:
+        download de media e persistência do pin de localização como UserAddress.
+        """
+        text_body = ''
+        content = {}
+        media_id = ''
+        media_url = ''
+        media_mime_type = ''
+        media_sha256 = ''
+
+        if message_type == 'text':
+            text_body = message_data.get('text', {}).get('body', '')
+            content = {'text': text_body}
+        elif message_type in ['image', 'video', 'audio', 'document', 'sticker']:
+            media_data = message_data.get(message_type, {})
+            media_id = media_data.get('id', '')
+            media_mime_type = media_data.get('mime_type', '')
+            text_body = media_data.get('caption', '')
+            content = {message_type: media_data}
+            media_url, media_sha256 = self._fetch_and_store_media(event.account, media_id, media_mime_type)
+        elif message_type == 'location':
+            text_body, content = self._parse_location_content(event, message_data, from_number)
+        elif message_type == 'contacts':
+            contacts = message_data.get('contacts', [])
+            content = {'contacts': contacts}
+            text_body = f"\U0001f464 {len(contacts)} contato(s)"
+        elif message_type == 'interactive':
+            interactive = message_data.get('interactive', {})
+            content = {'interactive': interactive}
+            # Extract button/list reply
+            if 'button_reply' in interactive:
+                text_body = interactive['button_reply'].get('title', '')
+            elif 'list_reply' in interactive:
+                text_body = interactive['list_reply'].get('title', '')
+        elif message_type == 'button':
+            button = message_data.get('button', {})
+            text_body = button.get('text', '')
+            content = {'button': button}
+        elif message_type == 'reaction':
+            reaction = message_data.get('reaction', {})
+            content = {'reaction': reaction}
+            text_body = reaction.get('emoji', '\xf0Ÿ‘\x8d')
+        elif message_type == 'order':
+            order = message_data.get('order', {})
+            content = {'order': order}
+            text_body = f"\xf0Ÿ›’ Order with {len(order.get('product_items', []))} item(s)"
+        else:
+            content = message_data
+
+        return text_body, content, media_id, media_url, media_mime_type, media_sha256
+
+    def _parse_location_content(self, event, message_data, from_number):
+        """Parse mensagem de localização e persiste o pin como UserAddress.
+
+        A persistência é best-effort e não bloqueia o fluxo (mesma semântica
+        do código original).
+        """
+        location = message_data.get('location', {})
+        content = {'location': location}
+        location_label = location.get('name') or location.get('address') or 'Localizacao'
+        text_body = f"\U0001f4cd {location_label}"
+        # Salvar pin como UserAddress do cliente (sem bloquear o fluxo)
+        _lat = location.get('latitude')
+        _lng = location.get('longitude')
+        if _lat is not None and _lng is not None:
+            self._save_whatsapp_location_as_address(
+                phone=from_number,
+                account=event.account,
+                lat=float(_lat),
+                lng=float(_lng),
+            )
+        return text_body, content
 
     @staticmethod
     def _save_whatsapp_location_as_address(phone: str, account, lat: float, lng: float) -> None:

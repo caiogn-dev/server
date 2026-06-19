@@ -170,10 +170,15 @@ class MenuRequestHandler(IntentHandler):
         logger.info(f"[MenuRequestHandler] Store: {self.store}")
         if not self.store:
             logger.error("[MenuRequestHandler] Sem store!")
+            # Multi-tenant: NUNCA hardcode de loja. Usa o menu_url do profile.
+            menu_url = self.company_profile.get_menu_url() if self.company_profile else ''
+            if menu_url:
+                return HandlerResult.text(
+                    f"🌿 Veja nosso cardápio completo aqui:\n{menu_url}"
+                )
             return HandlerResult.text(
-                "🌿 Veja nosso cardápio completo aqui:\n"
-                "https://cesaladas.com.br/cardapio\n\n"
-                "Lá você consegue montar sua salada perfeita e fazer o pedido! 🥗"
+                "Desculpe, não consegui carregar o cardápio agora. "
+                "Um atendente já vai te ajudar. 🙏"
             )
         all_products = StoreProduct.objects.filter(
             store=self.store, is_active=True
