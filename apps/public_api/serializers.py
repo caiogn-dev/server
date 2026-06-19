@@ -42,7 +42,7 @@ class PublicCategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StoreCategory
-        fields = ['id', 'name', 'slug', 'description', 'image_url', 'sort_order']
+        fields = ['id', 'name', 'slug', 'description', 'image_url', 'sort_order', 'is_builder_group']
 
     def get_image_url(self, obj):
         request = self.context.get('request')
@@ -94,7 +94,13 @@ class PublicProductSerializer(serializers.ModelSerializer):
 
     def get_variants(self, obj):
         request = self.context.get('request')
-        variants = obj.variants.filter(is_active=True).order_by('sort_order', 'name')
+        # Usa o cache do prefetch (já filtrado is_active + ordenado) quando a view
+        # prefetchou 'variants'; senão cai no filtro direto (ex: product_detail).
+        prefetched = getattr(obj, '_prefetched_objects_cache', {})
+        if 'variants' in prefetched:
+            variants = prefetched['variants']
+        else:
+            variants = obj.variants.filter(is_active=True).order_by('sort_order', 'name')
         data = []
         for variant in variants:
             image_url = None
@@ -122,7 +128,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StoreCombo
-        fields = ['id', 'name', 'description', 'price', 'image_url', 'is_active', 'groups']
+        fields = ['id', 'name', 'slug', 'description', 'price', 'image_url', 'is_active', 'groups']
 
     def get_image_url(self, obj):
         request = self.context.get('request')

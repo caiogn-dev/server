@@ -98,6 +98,10 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'customer',
             ).prefetch_related(
                 'items__product',
+                # combo_items é serializado (get_combo_items) — sem prefetch dava
+                # 1 query por pedido (N+1).
+                'combo_items__combo',
+                'combo_items__order_item',
             )
         else:
             # List view: minimal related data
@@ -106,6 +110,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'customer',
             ).prefetch_related(
                 'items__product',
+                'combo_items__combo',
+                'combo_items__order_item',
             )
 
         return qs.order_by('-created_at')

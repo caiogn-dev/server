@@ -122,6 +122,8 @@ class StoreCustomer(BaseModel):
         indexes = [
             # Phone lookup in checkout identity and signals
             models.Index(fields=['phone'], name='customer_phone_idx'),
+            # whatsapp é usado no OR de resolução de cliente no pipeline (sem índice).
+            models.Index(fields=['whatsapp'], name='customer_whatsapp_idx'),
         ]
 
     def __str__(self):

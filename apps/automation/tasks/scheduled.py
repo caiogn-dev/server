@@ -26,7 +26,7 @@ def send_scheduled_message(self, message_id: str):
     - Se o status já não for PENDING quando o lock é adquirido, a task encerra
       sem enviar — proteção contra duplicatas em caso de retry do Celery
     """
-    from django.db import transaction
+    from django.db import transaction, OperationalError
     from ..models import ScheduledMessage
     from apps.whatsapp.services import MessageService
 
@@ -105,6 +105,13 @@ def send_scheduled_message(self, message_id: str):
 
     except ScheduledMessage.DoesNotExist:
         logger.warning('Scheduled message not found or inactive: %s', message_id)
+    except OperationalError as exc:
+        # Linha já travada por outro worker (select_for_update nowait=True).
+        # NÃO é falha de envio — não marcar FAILED. Apenas reagenda e deixa o
+        # outro worker concluir. (Antes caía no except amplo e marcava FAILED,
+        # perdendo mensagens válidas sob contenção transitória.)
+        logger.info('Scheduled message %s travada por outro worker — reagendando', message_id)
+        raise self.retry(exc=exc, countdown=10)
     except Exception as exc:
         logger.error('Error sending scheduled message %s: %s', message_id, exc, exc_info=True)
         ScheduledMessage.objects.filter(id=message_id).update(

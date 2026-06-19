@@ -30,6 +30,7 @@ class CheckoutThrottle(AnonRateThrottle):
     scope = 'checkout'
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch
+from django.db import transaction
 
 from apps.core.models import UserProfile
 from apps.core.services.customer_identity import CustomerIdentityService
@@ -283,7 +284,8 @@ class StoreCatalogView(APIView):
         # Single query for all active products — evaluated once, grouped in Python
         all_products = list(
             StoreProduct.objects.filter(store=store, status='active')
-            .select_related('category')
+            .select_related('category', 'product_type')
+            .prefetch_related('variants')
             .order_by('sort_order', 'name')
         )
 
@@ -310,7 +312,11 @@ class StoreCatalogView(APIView):
         featured_products = [p for p in all_products if p.featured]
 
         combos = StoreCombo.objects.filter(store=store, is_active=True) \
-            .prefetch_related('groups__product', 'groups__variant_limits__variant') \
+            .prefetch_related(
+                'groups__product',
+                'groups__variant_limits__variant',
+                'groups__product_options__product',
+            ) \
             .order_by('sort_order', 'name')
         combos_destaque = [c for c in combos if c.featured]
 
@@ -658,34 +664,29 @@ class StoreCheckoutView(APIView):
     """Checkout endpoint for creating orders."""
     permission_classes = [permissions.AllowAny]
     throttle_classes = [CheckoutThrottle]
-    
-    def post(self, request, store_slug):
-        """Process checkout and create order."""
-        store = get_active_store(store_slug)
-        
-        # Get cart
-        session_id = get_request_cart_key(request)
-        user = request.user if request.user.is_authenticated else None
-        cart = cart_service.get_or_create_cart(store, user, session_id)
-        
-        if not cart.items.exists() and not cart.combo_items.exists():
-            return Response(
-                {'error': 'Cart is empty'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Extract customer data (checkout_service expects 'name', 'email', 'phone')
-        customer_data = {
+
+    # Aliases de método de pagamento aceitos pelos storefronts.
+    _PAYMENT_METHOD_ALIASES = {
+        'credit_card': 'card',
+        'debit_card': 'card',
+        'cartao': 'card',
+        'cartão': 'card',
+        'dinheiro': 'cash',
+    }
+
+    def _extract_customer_data(self, request):
+        """Extrai os dados do cliente (checkout_service espera name/email/phone)."""
+        return {
             'name': request.data.get('customer_name', ''),
             'email': request.data.get('customer_email', ''),
             'phone': request.data.get('customer_phone', ''),
             'cpf': request.data.get('cpf', ''),
             'accepts_marketing': request.data.get('accepts_marketing'),
         }
-        
-        # Extract delivery data
-        delivery_method = request.data.get('delivery_method') or request.data.get('shipping_method') or 'delivery'
-        delivery_data = {
+
+    def _extract_delivery_data(self, request, delivery_method):
+        """Extrai os dados de entrega do payload."""
+        return {
             'method': delivery_method,
             'address': request.data.get('delivery_address', {}),
             'notes': request.data.get('delivery_notes', ''),
@@ -696,23 +697,142 @@ class StoreCheckoutView(APIView):
             'distance_km': request.data.get('delivery_distance_km'),
             'duration_minutes': request.data.get('delivery_duration_minutes'),
         }
-        
-        coupon_code = request.data.get('coupon_code', '')
-        notes = request.data.get('customer_notes') or request.data.get('notes', '')
-        raw_payment_method = (request.data.get('payment_method') or '').strip()
-        payment_requested = bool(raw_payment_method)
-        payment_method_aliases = {
-            'credit_card': 'card',
-            'debit_card': 'card',
-            'cartao': 'card',
-            'cartão': 'card',
-            'dinheiro': 'cash',
-        }
-        payment_method = payment_method_aliases.get(raw_payment_method, raw_payment_method) or 'pix'
+
+    def _resolve_payment_method(self, raw_payment_method):
+        """Resolve o método de pagamento a partir do alias (default 'pix')."""
+        return self._PAYMENT_METHOD_ALIASES.get(
+            raw_payment_method, raw_payment_method) or 'pix'
+
+    def _build_payment_payload(self, request):
+        """Monta o payload de pagamento, injetando a base de redirect da origem."""
         payment_payload = dict(request.data.get('payment', {}) or {})
         request_origin_base = get_request_origin_base(request)
         if request_origin_base:
             payment_payload['redirect_base_url'] = request_origin_base
+        return payment_payload
+
+    def _persist_customer_session(self, request, order):
+        """Persiste os dados do cliente na sessão para o próximo checkout."""
+        request.session['customer_name'] = order.customer_name or ''
+        request.session['customer_email'] = order.customer_email or ''
+        request.session['customer_phone'] = order.customer_phone or ''
+        request.session.modified = True
+
+    def _maybe_send_meta_purchase(self, request, order, payment_result):
+        """Dispara o evento Meta CAPI Purchase, salvo quando o pagamento falhou."""
+        payment_failed = bool(payment_result and not payment_result.get('success'))
+        if payment_failed:
+            return
+        try:
+            from apps.stores.services.meta_pixel_service import _get_client_ip
+            from apps.stores.tasks import send_meta_purchase_event
+            raw = request.data.get('meta')
+            meta_tracking = dict(raw) if isinstance(raw, dict) else {}
+            # Pré-extrai os dados derivados do request (não-serializável p/ Celery),
+            # replicando o que send_purchase_event lia do request.
+            meta_tracking.setdefault('client_ip', _get_client_ip(request))
+            meta_tracking.setdefault('user_agent', request.META.get('HTTP_USER_AGENT', ''))
+            if not meta_tracking.get('event_source_url'):
+                meta_tracking['event_source_url'] = (
+                    request.headers.get('Referer') or request.headers.get('Origin') or ''
+                )
+            # Envio assíncrono: tira o requests.post(timeout=3) do caminho do response.
+            transaction.on_commit(
+                lambda: send_meta_purchase_event.delay(str(order.id), meta_tracking)
+            )
+        except Exception as exc:
+            logger.warning("Meta CAPI Purchase enqueue failed for %s: %s", order.order_number, exc)
+
+    def _serialize_order_item(self, item):
+        """Serializa um item do pedido para a resposta de checkout."""
+        return {
+            'id': str(item.id),
+            'product_name': item.product_name,
+            'variant_name': item.variant_name,
+            'quantity': item.quantity,
+            'unit_price': float(item.unit_price),
+            'subtotal': float(item.subtotal),
+            'customizations': item.options,
+            'is_custom_salad': bool(
+                isinstance(item.options, dict)
+                and (
+                    item.options.get('is_salad_builder')
+                    or item.options.get('type') == 'custom_salad'
+                )
+            ),
+        }
+
+    def _build_response_data(self, store, order):
+        """Monta o corpo base da resposta de checkout (sem dados de pagamento)."""
+        return {
+            'order_id': str(order.id),
+            'order_number': order.order_number,
+            'total': str(order.total),
+            'total_amount': float(order.total),
+            'payment_status': order.payment_status,
+            'access_token': order.access_token,
+            'items': [self._serialize_order_item(item) for item in order.items.all()],
+            'delivery_quote': (order.metadata or {}).get('delivery_quote', {}),
+            'loyalty': checkout_service.get_loyalty_status(store, order.customer),
+            'loyalty_reward': (order.metadata or {}).get('loyalty_reward', {}),
+            'customer': {
+                'user_id': str(order.customer_id) if order.customer_id else '',
+                'name': order.customer_name,
+                'email': order.customer_email,
+                'phone': order.customer_phone,
+            },
+        }
+
+    def _apply_payment_result(self, response_data, payment_result, payment_method):
+        """Acrescenta os dados de pagamento (sucesso ou erro) à resposta."""
+        if not payment_result:
+            return
+        if payment_result.get('success'):
+            response_data['payment'] = {
+                'status': payment_result.get('status', 'pending'),
+                'payment_id': payment_result.get('payment_id'),
+                'payment_method': payment_result.get('payment_method', payment_method),
+                'status_detail': payment_result.get('status_detail', ''),
+                'requires_redirect': payment_result.get('requires_redirect', False),
+                'init_point': payment_result.get('init_point', ''),
+                'sandbox_init_point': payment_result.get('sandbox_init_point', ''),
+                'checkout_url': payment_result.get('init_point') or payment_result.get('sandbox_init_point') or '',
+            }
+            response_data['pix_code'] = payment_result.get('pix_code', '')
+            response_data['pix_qr_code'] = payment_result.get('pix_qr_code', '')
+            response_data['pix_ticket_url'] = payment_result.get('ticket_url', '')
+            response_data['pix_expiration'] = payment_result.get('expiration', '')
+            response_data['init_point'] = payment_result.get('init_point', '')
+            response_data['sandbox_init_point'] = payment_result.get('sandbox_init_point', '')
+        else:
+            response_data['payment_error'] = payment_result.get('error', 'Erro no pagamento')
+
+    def post(self, request, store_slug):
+        """Process checkout and create order."""
+        store = get_active_store(store_slug)
+
+        # Get cart
+        session_id = get_request_cart_key(request)
+        user = request.user if request.user.is_authenticated else None
+        cart = cart_service.get_or_create_cart(store, user, session_id)
+
+        if not cart.items.exists() and not cart.combo_items.exists():
+            return Response(
+                {'error': 'Cart is empty'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        customer_data = self._extract_customer_data(request)
+
+        delivery_method = request.data.get('delivery_method') or request.data.get('shipping_method') or 'delivery'
+        delivery_data = self._extract_delivery_data(request, delivery_method)
+
+        coupon_code = request.data.get('coupon_code', '')
+        notes = request.data.get('customer_notes') or request.data.get('notes', '')
+        raw_payment_method = (request.data.get('payment_method') or '').strip()
+        payment_requested = bool(raw_payment_method)
+        payment_method = self._resolve_payment_method(raw_payment_method)
+        payment_payload = self._build_payment_payload(request)
 
         # Validate checkout data
         checkout_data = {
@@ -743,11 +863,8 @@ class StoreCheckoutView(APIView):
                 ),
             )
 
-            request.session['customer_name'] = order.customer_name or ''
-            request.session['customer_email'] = order.customer_email or ''
-            request.session['customer_phone'] = order.customer_phone or ''
-            request.session.modified = True
-            
+            self._persist_customer_session(request, order)
+
             # Process payment if method specified
             payment_result = None
             if payment_requested:
@@ -755,79 +872,16 @@ class StoreCheckoutView(APIView):
                     order, payment_method, payment_payload
                 )
 
-            payment_failed = bool(payment_result and not payment_result.get('success'))
-            if not payment_failed:
-                try:
-                    from apps.stores.services.meta_pixel_service import send_purchase_event
-                    meta_tracking = request.data.get('meta') if isinstance(request.data.get('meta'), dict) else {}
-                    send_purchase_event(order, request=request, tracking_data=meta_tracking)
-                except Exception as exc:
-                    logger.warning("Meta CAPI Purchase failed for %s: %s", order.order_number, exc)
+            self._maybe_send_meta_purchase(request, order, payment_result)
 
             broadcast_order_event(order, event_type='order.created')
-             
+
             # Clear cart after successful order
             cart_service.clear_cart(cart)
-            
-            response_data = {
-                'order_id': str(order.id),
-                'order_number': order.order_number,
-                'total': str(order.total),
-                'total_amount': float(order.total),
-                'payment_status': order.payment_status,
-                'access_token': order.access_token,
-                'items': [
-                    {
-                        'id': str(item.id),
-                        'product_name': item.product_name,
-                        'variant_name': item.variant_name,
-                        'quantity': item.quantity,
-                        'unit_price': float(item.unit_price),
-                        'subtotal': float(item.subtotal),
-                        'customizations': item.options,
-                        'is_custom_salad': bool(
-                            isinstance(item.options, dict)
-                            and (
-                                item.options.get('is_salad_builder')
-                                or item.options.get('type') == 'custom_salad'
-                            )
-                        ),
-                    }
-                    for item in order.items.all()
-                ],
-                'delivery_quote': (order.metadata or {}).get('delivery_quote', {}),
-                'loyalty': checkout_service.get_loyalty_status(store, order.customer),
-                'loyalty_reward': (order.metadata or {}).get('loyalty_reward', {}),
-                'customer': {
-                    'user_id': str(order.customer_id) if order.customer_id else '',
-                    'name': order.customer_name,
-                    'email': order.customer_email,
-                    'phone': order.customer_phone,
-                },
-            }
-            
-            # Include payment data if available
-            if payment_result:
-                if payment_result.get('success'):
-                    response_data['payment'] = {
-                        'status': payment_result.get('status', 'pending'),
-                        'payment_id': payment_result.get('payment_id'),
-                        'payment_method': payment_result.get('payment_method', payment_method),
-                        'status_detail': payment_result.get('status_detail', ''),
-                        'requires_redirect': payment_result.get('requires_redirect', False),
-                        'init_point': payment_result.get('init_point', ''),
-                        'sandbox_init_point': payment_result.get('sandbox_init_point', ''),
-                        'checkout_url': payment_result.get('init_point') or payment_result.get('sandbox_init_point') or '',
-                    }
-                    response_data['pix_code'] = payment_result.get('pix_code', '')
-                    response_data['pix_qr_code'] = payment_result.get('pix_qr_code', '')
-                    response_data['pix_ticket_url'] = payment_result.get('ticket_url', '')
-                    response_data['pix_expiration'] = payment_result.get('expiration', '')
-                    response_data['init_point'] = payment_result.get('init_point', '')
-                    response_data['sandbox_init_point'] = payment_result.get('sandbox_init_point', '')
-                else:
-                    response_data['payment_error'] = payment_result.get('error', 'Erro no pagamento')
-            
+
+            response_data = self._build_response_data(store, order)
+            self._apply_payment_result(response_data, payment_result, payment_method)
+
             return Response(response_data, status=status.HTTP_201_CREATED)
         except Exception as e:
             logger.error(f"Checkout error: {e}")

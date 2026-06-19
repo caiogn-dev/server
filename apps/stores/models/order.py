@@ -254,6 +254,8 @@ class StoreOrder(BaseModel):
             models.Index(fields=['customer_email']),
             models.Index(fields=['customer', 'store'], name='order_customer_store_idx'),
             models.Index(fields=['store', 'created_at'], name='order_store_created_idx'),
+            # Dashboard filtra status + janela (pending/cancelled_7d) por loja.
+            models.Index(fields=['store', 'status', 'created_at'], name='order_store_stat_created_idx'),
             models.Index(fields=['delivery_provider']),
             models.Index(fields=['uber_delivery_request_id']),
         ]

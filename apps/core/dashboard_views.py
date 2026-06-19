@@ -374,7 +374,11 @@ class DashboardProjectHealthView(APIView):
         ).distinct().count()
 
         pipeline = get_pipeline_stats(hours=24)
-        api_health = health_check()
+        # health_check() faz um inspect.active() no broker Celery que bloqueia até 3s.
+        # É diagnóstico e muda devagar — cacheia 30s pra tirar o broker round-trip do
+        # caminho do request (project-health caía ~2.9s nisso).
+        from django.core.cache import cache as _cache
+        api_health = _cache.get_or_set('dashboard:api_health', health_check, 30)
 
         central_webhooks_24h = CentralWebhookEvent.objects.filter(created_at__gte=day_start)
         if store_ids:

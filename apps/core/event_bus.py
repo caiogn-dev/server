@@ -44,7 +44,9 @@ class EventBus:
     def __init__(self):
         """Initialize event bus."""
         self._subscribers: Dict[str, List[Callable]] = {}
-        self._subscription_ids: Dict[str, str] = {}
+        # subscription_id -> (event_type, handler) — precisamos do handler pra
+        # remover a inscrição certa no unsubscribe.
+        self._subscription_ids: Dict[str, tuple] = {}
 
     def subscribe(self, event_type: str, handler: Callable) -> str:
         """
@@ -62,7 +64,7 @@ class EventBus:
 
         subscription_id = str(uuid.uuid4())
         self._subscribers[event_type].append(handler)
-        self._subscription_ids[subscription_id] = event_type
+        self._subscription_ids[subscription_id] = (event_type, handler)
 
         return subscription_id
 
@@ -79,12 +81,13 @@ class EventBus:
         if subscription_id not in self._subscription_ids:
             return False
 
-        event_type = self._subscription_ids.pop(subscription_id)
-        # Find and remove the handler (simplified - tracks by position)
+        event_type, handler = self._subscription_ids.pop(subscription_id)
+        # Remove a instância exata do handler dessa inscrição.
         if event_type in self._subscribers:
-            self._subscribers[event_type] = [
-                h for h in self._subscribers[event_type]
-            ]
+            try:
+                self._subscribers[event_type].remove(handler)
+            except ValueError:
+                pass
         return True
 
     def publish(self, event: Event) -> None:

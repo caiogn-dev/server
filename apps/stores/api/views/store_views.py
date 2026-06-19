@@ -8,9 +8,40 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
-from apps.stores.models import Store, StoreIntegration, StoreWebhook
+from django.db.models import Subquery, OuterRef, Count, Avg, IntegerField, FloatField
+from django.db.models.functions import Coalesce
+from apps.stores.models import (
+    Store, StoreIntegration, StoreWebhook, StoreReview, StoreProduct, StoreOrder,
+)
 from apps.stores.services import store_service, webhook_service
 from apps.core.permissions import accessible_store_ids
+
+
+def _count_sq(model, **filters):
+    """Subquery de COUNT por loja (isolada — não cria JOIN cartesiano)."""
+    return Coalesce(
+        Subquery(
+            model.objects.filter(store=OuterRef('pk'), **filters)
+            .order_by().values('store').annotate(c=Count('*')).values('c')[:1],
+            output_field=IntegerField(),
+        ),
+        0,
+    )
+
+
+def _annotate_store_counts(qs):
+    """Anota os 5 contadores do StoreSerializer (anno_*) numa query só."""
+    return qs.annotate(
+        anno_reviews_count=_count_sq(StoreReview, is_public=True),
+        anno_integrations_count=_count_sq(StoreIntegration, is_active=True),
+        anno_products_count=_count_sq(StoreProduct, status='active'),
+        anno_orders_count=_count_sq(StoreOrder),
+        anno_avg_rating=Subquery(
+            StoreReview.objects.filter(store=OuterRef('pk'), is_public=True)
+            .order_by().values('store').annotate(a=Avg('rating')).values('a')[:1],
+            output_field=FloatField(),
+        ),
+    )
 from ..serializers import (
     StoreSerializer, StoreCreateSerializer,
     StoreIntegrationSerializer, StoreIntegrationCreateSerializer,
@@ -30,10 +61,11 @@ class StoreViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
-            return Store.objects.all()
-        store_ids = accessible_store_ids(user)
-        return Store.objects.filter(id__in=store_ids)
+        if user.is_superuser:
+            qs = Store.objects.all()
+        else:
+            qs = Store.objects.filter(id__in=accessible_store_ids(user))
+        return _annotate_store_counts(qs)
     
     def get_object(self):
         """Override to support both UUID and slug lookups."""

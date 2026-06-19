@@ -72,29 +72,34 @@ def process_outbox_entry(self, entry_id: str):
     """
     from .models import WebhookOutbox
     
-    try:
-        entry = WebhookOutbox.objects.select_for_update().get(id=entry_id)
-    except WebhookOutbox.DoesNotExist:
-        logger.warning(f"Outbox entry not found: {entry_id}")
-        return {'status': 'not_found'}
-    
-    # Check if already processed
-    if entry.status == WebhookOutbox.Status.SENT:
-        return {'status': 'already_sent'}
-    
-    # Check idempotency
-    if entry.idempotency_key:
-        existing = WebhookOutbox.objects.filter(
-            idempotency_key=entry.idempotency_key,
-            status=WebhookOutbox.Status.SENT
-        ).exclude(id=entry_id).first()
-        
-        if existing:
-            entry.mark_sent(existing.http_status, existing.response_body)
-            return {'status': 'deduplicated'}
-    
-    entry.mark_processing()
-    
+    # Claim da entry sob lock CURTO. select_for_update exige transação — sem o
+    # atomic() dá TransactionManagementError (crash garantido em autocommit).
+    # O commit libera o lock ANTES do I/O de rede (requests.post abaixo), que
+    # não pode segurar lock de linha por 30s.
+    with transaction.atomic():
+        try:
+            entry = WebhookOutbox.objects.select_for_update().get(id=entry_id)
+        except WebhookOutbox.DoesNotExist:
+            logger.warning(f"Outbox entry not found: {entry_id}")
+            return {'status': 'not_found'}
+
+        # Check if already processed
+        if entry.status == WebhookOutbox.Status.SENT:
+            return {'status': 'already_sent'}
+
+        # Check idempotency
+        if entry.idempotency_key:
+            existing = WebhookOutbox.objects.filter(
+                idempotency_key=entry.idempotency_key,
+                status=WebhookOutbox.Status.SENT
+            ).exclude(id=entry_id).first()
+
+            if existing:
+                entry.mark_sent(existing.http_status, existing.response_body)
+                return {'status': 'deduplicated'}
+
+        entry.mark_processing()
+
     try:
         # Prepare headers
         headers = {
