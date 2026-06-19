@@ -163,6 +163,11 @@ class AgentConversation(BaseModel):
         verbose_name = 'Conversa do Agente'
         verbose_name_plural = 'Conversas dos Agentes'
         ordering = ['-last_message_at']
+        indexes = [
+            # Lookup por (agent, phone_number) em toda mensagem do pipeline.
+            models.Index(fields=['agent', 'phone_number', '-last_message_at'],
+                         name='agconv_agent_phone_idx'),
+        ]
 
     def __str__(self):
         return f"Sessão {self.session_id} - {self.agent.name}"
