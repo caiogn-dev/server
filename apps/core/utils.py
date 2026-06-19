@@ -6,7 +6,7 @@ import hashlib
 import secrets
 from typing import Optional
 from django.conf import settings
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, MultiFernet
 import base64
 
 
@@ -34,10 +34,21 @@ class TokenEncryption:
     """Encrypt and decrypt sensitive tokens."""
 
     def __init__(self):
-        # Prefer dedicated ENCRYPTION_KEY; fall back to SECRET_KEY for backwards compatibility.
+        # Rotação de chave SEM quebrar tokens já gravados (MultiFernet):
+        #  - ENCRYPTION_KEY_V2 (chave Fernet REAL, ex.: Fernet.generate_key())
+        #    quando definida vira a chave PRIMÁRIA — usada p/ criptografar daqui
+        #    pra frente (entropia cheia, sem o truncate/pad fraco).
+        #  - A chave legada derivada de ENCRYPTION_KEY/SECRET_KEY continua como
+        #    fallback de DEScriptografia, então tokens antigos seguem legíveis.
+        # Sem ENCRYPTION_KEY_V2 definida, o comportamento é idêntico ao anterior.
+        keys = []
+        v2 = getattr(settings, 'ENCRYPTION_KEY_V2', '') or ''
+        if v2:
+            keys.append(Fernet(v2.encode() if isinstance(v2, str) else v2))
         raw = getattr(settings, 'ENCRYPTION_KEY', '') or settings.SECRET_KEY
-        key = base64.urlsafe_b64encode(raw[:32].encode().ljust(32)[:32])
-        self.cipher = Fernet(key)
+        legacy_key = base64.urlsafe_b64encode(raw[:32].encode().ljust(32)[:32])
+        keys.append(Fernet(legacy_key))
+        self.cipher = MultiFernet(keys)
 
     def encrypt(self, token: str) -> str:
         """Encrypt a token."""

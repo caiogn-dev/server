@@ -32,14 +32,9 @@ class CSRFExemptMiddleware:
         # If request has Authorization header with Token, mark as CSRF-safe
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
 
-        # Debug: log auth header for /stores/*/orders/ endpoints
-        if '/stores/' in request.path and '/orders/' in request.path:
-            auth_type = 'none'
-            if auth_header.startswith('Token '):
-                auth_type = f'token: {auth_header[6:46]}...'
-            elif auth_header.startswith('Bearer '):
-                auth_type = f'bearer: {auth_header[7:37]}...'
-            logger.info(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_type}')
+        # (Removido: log [ORDER_AUTH] que vazava 40 chars do token em todo
+        # request de /stores/*/orders/ — credencial parcial em log + ruído no
+        # caminho mais quente do dashboard.)
 
         if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
             # Mark this request as CSRF-exempt
@@ -190,8 +185,19 @@ class TokenExpirationMiddleware:
 class RequestLoggingMiddleware:
     """Middleware for structured request logging."""
 
+    # Endpoints de polling de alta frequência: os 2xx poluem o log (vários/seg) e
+    # afogam o sinal real. Em sucesso eles vão pra DEBUG (não emite em prod);
+    # erros (>=400) continuam em WARNING. Override via settings.REQUEST_LOG_QUIET_PATHS.
+    DEFAULT_QUIET_PATHS = (
+        '/api/v1/stores/print/agent/claim-next',
+        '/api/sse/health',
+    )
+
     def __init__(self, get_response):
         self.get_response = get_response
+        self.quiet_paths = tuple(
+            getattr(settings, 'REQUEST_LOG_QUIET_PATHS', self.DEFAULT_QUIET_PATHS)
+        )
 
     def __call__(self, request):
         start_time = time.time()
@@ -229,6 +235,8 @@ class RequestLoggingMiddleware:
 
         if response.status_code >= 400:
             logger.warning("Request completed with error", extra=log_data)
+        elif request.path.startswith(self.quiet_paths):
+            logger.debug("Request completed", extra=log_data)
         else:
             logger.info("Request completed", extra=log_data)
 
@@ -445,36 +453,52 @@ class TenantMiddleware:
         
         return response
     
+    @staticmethod
+    def _cached_active_store(Store, slug):
+        """Resolve Store ativa por slug com cache curto.
+
+        Evita 1-4 queries de Store por request (este middleware roda em quase
+        todo request). Cache positivo 60s, negativo 30s. Staleness máxima de
+        60s — aceitável p/ roteamento de tenant (mudança de config/is_active
+        propaga em <=60s).
+        """
+        if not slug:
+            return None
+        key = f"tenant:slug:{slug}"
+        cached = cache.get(key)
+        if cached is not None:
+            return cached or None  # False (negativo) -> None
+        try:
+            store = Store.objects.get(slug=slug, is_active=True)
+        except Store.DoesNotExist:
+            cache.set(key, False, 30)
+            return None
+        cache.set(key, store, 60)
+        return store
+
     def _detect_tenant(self, request, Store):
         """Detect tenant from various sources."""
-        from django.core.exceptions import ObjectDoesNotExist
-        
         # 1. Check subdomain
         host = request.get_host().split(':')[0]
         if '.' in host and not host.startswith(('localhost', '127.0.0.1', 'web-production')):
             subdomain = host.split('.')[0]
             if subdomain not in ['www', 'api', 'admin', 'app']:
-                try:
-                    return Store.objects.get(slug=subdomain, is_active=True)
-                except ObjectDoesNotExist:
-                    pass
-        
+                store = self._cached_active_store(Store, subdomain)
+                if store:
+                    return store
+
         # 2. Check header
         tenant_slug = request.headers.get('X-Tenant-ID') or request.headers.get('X-Store-Slug')
-        if tenant_slug:
-            try:
-                return Store.objects.get(slug=tenant_slug, is_active=True)
-            except ObjectDoesNotExist:
-                pass
-        
+        store = self._cached_active_store(Store, tenant_slug)
+        if store:
+            return store
+
         # 3. Check query parameter
         tenant_slug = request.GET.get('tenant') or request.GET.get('store')
-        if tenant_slug:
-            try:
-                return Store.objects.get(slug=tenant_slug, is_active=True)
-            except ObjectDoesNotExist:
-                pass
-        
+        store = self._cached_active_store(Store, tenant_slug)
+        if store:
+            return store
+
         # 4. Check path (for store-scoped URLs)
         path_parts = request.path.strip('/').split('/')
         if len(path_parts) >= 3 and path_parts[0] == 'api':
@@ -482,12 +506,10 @@ class TenantMiddleware:
             if 'stores' in path_parts:
                 store_index = path_parts.index('stores')
                 if len(path_parts) > store_index + 1:
-                    tenant_slug = path_parts[store_index + 1]
-                    try:
-                        return Store.objects.get(slug=tenant_slug, is_active=True)
-                    except ObjectDoesNotExist:
-                        pass
-        
+                    store = self._cached_active_store(Store, path_parts[store_index + 1])
+                    if store:
+                        return store
+
         return None
 
 

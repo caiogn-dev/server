@@ -1,4 +1,14 @@
 # ─────────────────────────────────────────────────────────────────────────────
+# Log rotation — sem isto o driver json-file cresce sem limite e enche o disco.
+# 50m x 5 = no máx 250MB de log por container. Aplicado em todos os serviços.
+# ─────────────────────────────────────────────────────────────────────────────
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Common Django environment — shared by web, celery, celery-beat
 # ─────────────────────────────────────────────────────────────────────────────
 x-django-env: &django-env
@@ -8,11 +18,17 @@ x-django-env: &django-env
   DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
   DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-backend.pastita.com.br}
   DEBUG: "False"
+  # Error monitoring (GlitchTip self-hosted, compatível com sentry-sdk).
+  # Ativa só se SENTRY_DSN estiver no .env. GlitchTip alcançável via pastita_network.
+  SENTRY_DSN: ${SENTRY_DSN:-}
+  SENTRY_ENVIRONMENT: ${SENTRY_ENVIRONMENT:-production}
+  SENTRY_TRACES_SAMPLE_RATE: ${SENTRY_TRACES_SAMPLE_RATE:-0.05}
   # Database / Cache
   DATABASE_URL: ${DATABASE_URL}
-  # CONN_MAX_AGE=600 (10min): reuse connections, prevents pool exhaustion
-  # Myth: ASGI requires CONN_MAX_AGE=0. False. Pool timeout handles async properly.
-  DB_CONN_MAX_AGE: "600"
+  # App conecta via pgbouncer (transaction pooling). CONN_MAX_AGE=0: Django devolve
+  # a conexão ao pgbouncer a cada request; o pooler multiplexa e limita o Postgres
+  # ao default_pool_size. Evita o vazamento de conexões idle do contexto ASGI.
+  DB_CONN_MAX_AGE: "0"
   REDIS_URL: ${REDIS_URL}
   CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
   CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -28,6 +44,9 @@ x-django-env: &django-env
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: ${WHATSAPP_WEBHOOK_VERIFY_TOKEN}
   WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET}
   WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v18.0}
+  # Embedded Signup (OAuth code->token): App ID público + secret do app Meta.
+  META_APP_ID: ${META_APP_ID}
+  META_APP_SECRET: ${META_APP_SECRET}
   DEFAULT_WHATSAPP_ACCOUNT_ID: ${DEFAULT_WHATSAPP_ACCOUNT_ID}
   DEFAULT_WHATSAPP_ACCOUNT_ACCESS_TOKEN: ${DEFAULT_WHATSAPP_ACCOUNT_ACCESS_TOKEN}
   DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER_ID: ${DEFAULT_WHATSAPP_ACCOUNT_PHONE_NUMBER_ID}
@@ -54,6 +73,7 @@ x-django-env: &django-env
   MERCADO_PAGO_ACCESS_TOKEN: ${MERCADO_PAGO_ACCESS_TOKEN}
   MERCADO_PAGO_PUBLIC_KEY: ${MERCADO_PAGO_PUBLIC_KEY}
   MERCADO_PAGO_WEBHOOK_SECRET: ${MERCADO_PAGO_WEBHOOK_SECRET}
+  MERCADO_PAGO_SANDBOX_TOKEN: ${MERCADO_PAGO_SANDBOX_TOKEN:-}
   # Email
   RESEND_API_KEY: ${RESEND_API_KEY}
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL}
@@ -96,6 +116,7 @@ services:
     image: postgres:15-alpine
     container_name: pastita_db
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: pastita
       POSTGRES_USER: postgres
@@ -111,11 +132,18 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    # IP fixo: o pgbouncer aponta p/ 172.20.0.2 via extra_hosts (c-ares não
+    # resolve DNS Docker). Sem isto, se o db pegar outro IP no recreate, o
+    # pooler perde o banco = outage. Subnet pastita_network = 172.20.0.0/16.
+    networks:
+      default:
+        ipv4_address: 172.20.0.2
 
   redis:
     image: redis:7-alpine
     container_name: pastita_redis
     restart: unless-stopped
+    logging: *default-logging
     entrypoint: >
       sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
              redis-server --appendonly yes"
@@ -131,8 +159,11 @@ services:
     image: pgbouncer/pgbouncer:latest
     container_name: pastita_pgbouncer
     restart: unless-stopped
+    logging: *default-logging
     environment:
-      DATABASES_HOST: db
+      # c-ares (resolver do pgbouncer 1.15) não resolve o alias 'db' no DNS do Docker;
+      # usar o nome canônico do container resolve o "server DNS lookup failed".
+      DATABASES_HOST: pastita_db
       DATABASES_PORT: 5432
       DATABASES_USER: postgres
       DATABASES_PASSWORD: ${DB_PASSWORD:-postgres123}
@@ -145,10 +176,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # c-ares do pgbouncer não resolve nomes via DNS do Docker (search '.'/ndots:0);
+    # /etc/hosts é lido antes do DNS, então mapeamos o container do db aqui.
+    extra_hosts:
+      - "pastita_db:172.20.0.2"
     ports:
       - "6432:6432"
+    # imagem do pgbouncer não tem psql; checa a porta com nc
     healthcheck:
-      test: ["CMD-SHELL", "psql -h localhost -p 6432 -U postgres -d pastita -c 'SELECT 1'"]
+      test: ["CMD-SHELL", "nc -z localhost 6432 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -160,8 +196,11 @@ services:
     image: pastita_backend:latest
     container_name: pastita_web
     restart: unless-stopped
+    logging: *default-logging
     environment:
       <<: *django-env
+      # Só o web roda migrate/collectstatic/seed no boot (gate anti-race).
+      RUN_INIT_TASKS: "1"
     volumes:
       - static_files:/app/staticfiles
       - media_files:/app/media
@@ -187,6 +226,7 @@ services:
     image: pastita_backend:latest
     container_name: pastita_celery
     restart: unless-stopped
+    logging: *default-logging
     environment:
       <<: *django-env
     depends_on:
@@ -208,6 +248,7 @@ services:
     image: pastita_backend:latest
     container_name: pastita_celery_beat
     restart: unless-stopped
+    logging: *default-logging
     environment:
       <<: *django-env
     depends_on:
@@ -221,10 +262,34 @@ services:
       retries: 3
       start_period: 60s
 
+  # Flower — dashboard de monitoramento do Celery (filas, workers, backlog, tasks).
+  # Bind só em 127.0.0.1 (acesso via túnel/SSH); protegido por basic auth.
+  # Usa a mesma imagem baked; requer 'flower' no requirements.txt (rebuild).
+  flower:
+    image: pastita_backend:latest
+    container_name: pastita_flower
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      <<: *django-env
+    command: celery -A config.celery flower --port=5555 --url_prefix=flower --basic_auth=${FLOWER_BASIC_AUTH:-admin:pastita123}
+    ports:
+      - "127.0.0.1:5556:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1:5555/flower/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   nginx:
     image: nginx:alpine
     container_name: pastita_nginx
     restart: unless-stopped
+    logging: *default-logging
     entrypoint: >
       sh -c "ln -sf /bin/ls /usr/bin/ls 2>/dev/null || true &&
              nginx -g 'daemon off;'"
@@ -250,6 +315,7 @@ services:
     profiles:
       - internal-tunnel
     restart: unless-stopped
+    logging: *default-logging
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     command: tunnel --no-autoupdate run --url http://nginx:80
