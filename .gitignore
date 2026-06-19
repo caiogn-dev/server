@@ -17,6 +17,12 @@ htmlcov/
 .venv/
 .idea/
 
+# Credentials and secrets — NEVER commit these
+new_token.txt
+*_token.txt
+*.token
+secrets/
+
 # AI coding assistant generated files (all tools)
 .adal/
 .agents/
