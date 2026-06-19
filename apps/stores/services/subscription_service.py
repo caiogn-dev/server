@@ -84,9 +84,9 @@ def create_subscription(store, plan_key, payer_email, back_url):
             'mp_preapproval_id': preapproval_id,
         },
     )
-    # Reflete o plano escolhido na loja (limites passam a valer ao ativar a assinatura)
-    store.plan = plan_key
-    store.save(update_fields=['plan'])
+    # NÃO aplica o plano na loja aqui: o dono ainda precisa abrir o init_point e
+    # pagar. O plano escolhido fica só na assinatura; store.plan (que governa os
+    # feature-gates) só muda quando o preapproval for autorizado (apply_preapproval_event).
 
     logger.info('Preapproval criado p/ loja %s plano %s: %s', store.slug, plan_key, preapproval_id)
     return {'init_point': init_point, 'preapproval_id': preapproval_id}
@@ -111,11 +111,21 @@ def apply_preapproval_event(preapproval_id, mp_status):
         return {'processed': False, 'reason': f'unknown_status:{mp_status}'}
 
     sub.status = new_status
-    if new_status == StoreSubscription.Status.ACTIVE and not sub.started_at:
-        sub.started_at = timezone.now()
-        sub.setup_fee_paid = True
+    store = sub.store
+    if new_status == StoreSubscription.Status.ACTIVE:
+        if not sub.started_at:
+            sub.started_at = timezone.now()
+            sub.setup_fee_paid = True
+        # Pagamento autorizado: AGORA o plano pago vale na loja (feature-gates).
+        if store.plan != sub.plan:
+            store.plan = sub.plan
+            store.save(update_fields=['plan'])
     if new_status == StoreSubscription.Status.CANCELED:
         sub.canceled_at = timezone.now()
+        # Assinatura cancelada: loja perde o plano pago e volta pro default.
+        if store.plan != billing.DEFAULT_PLAN:
+            store.plan = billing.DEFAULT_PLAN
+            store.save(update_fields=['plan'])
     sub.save()
-    logger.info('Subscription %s → %s (loja %s)', preapproval_id, new_status, sub.store.slug)
+    logger.info('Subscription %s → %s (loja %s)', preapproval_id, new_status, store.slug)
     return {'processed': True, 'status': new_status}

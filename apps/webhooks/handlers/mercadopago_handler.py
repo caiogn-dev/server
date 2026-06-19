@@ -108,12 +108,14 @@ class MercadoPagoHandler(BaseHandler):
         if not preapproval_id:
             return {'processed': False, 'reason': 'no_preapproval_id'}
         try:
-            from django.conf import settings
-            import mercadopago
-            sdk = mercadopago.SDK(settings.MERCADO_PAGO_ACCESS_TOKEN)
+            from apps.stores.services import subscription_service
+            # Mesma seleção de token da criação (prefere SANDBOX_TOKEN se setado).
+            # Usar settings.MERCADO_PAGO_ACCESS_TOKEN direto quebra a paridade em
+            # sandbox: a assinatura é criada com o token sandbox (conta do test
+            # user) e o GET do webhook com o token prod (outra conta) → 400.
+            sdk = subscription_service._sdk()
             resp = sdk.preapproval().get(str(preapproval_id))
             mp_status = (resp.get('response') or {}).get('status', '')
-            from apps.stores.services import subscription_service
             return subscription_service.apply_preapproval_event(str(preapproval_id), mp_status)
         except Exception as e:
             logger.error(f"Erro no webhook de preapproval {preapproval_id}: {e}")

@@ -119,11 +119,15 @@ def _build_user_data(order, request=None, tracking_data=None):
     if fbc:
         user_data['fbc'] = fbc
 
-    client_ip = _get_client_ip(request)
+    # Fallback p/ tracking_data quando não há request (ex.: envio via Celery).
+    client_ip = _get_client_ip(request) or tracking_data.get('client_ip', '')
     if client_ip:
         user_data['client_ip_address'] = client_ip
 
-    user_agent = request.META.get('HTTP_USER_AGENT', '') if request is not None else ''
+    if request is not None:
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+    else:
+        user_agent = tracking_data.get('user_agent', '')
     if user_agent:
         user_data['client_user_agent'] = user_agent[:1000]
 
