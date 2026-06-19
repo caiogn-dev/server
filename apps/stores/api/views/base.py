@@ -67,10 +67,13 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
         return True
 
     def has_object_permission(self, request, view, obj):
-        if hasattr(obj, 'store'):
-            store = obj.store
-        elif isinstance(obj, Store):
+        if isinstance(obj, Store):
             store = obj
+        elif getattr(obj, 'store', None) is not None:
+            store = obj.store
+        # Objetos filhos sem .store direto (ex.: StoreProductVariant → product.store)
+        elif getattr(obj, 'product', None) is not None and getattr(obj.product, 'store', None) is not None:
+            store = obj.product.store
         else:
             return False
         return self._user_can_access_store(request.user, store)

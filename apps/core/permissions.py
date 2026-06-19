@@ -249,7 +249,7 @@ class StoreQuerysetMixin:
         from django.db.models import Q
         from apps.stores.models import Store
         user = self.request.user
-        if user.is_superuser or user.is_staff:
+        if user.is_superuser:
             return None  # unrestricted
         return Store.objects.filter(
             Q(owner=user) | Q(staff=user), is_active=True
@@ -295,7 +295,7 @@ def accessible_store_ids(user):
     from django.db.models import Q
     from apps.stores.models import Store
     qs = Store.objects.filter(is_active=True)
-    if user.is_superuser or user.is_staff:
+    if user.is_superuser:
         return qs.values_list('id', flat=True)
     return qs.filter(Q(owner=user) | Q(staff=user)).values_list('id', flat=True)
 
@@ -309,7 +309,7 @@ def accessible_whatsapp_account_ids(user):
     from django.db.models import Q
     from apps.whatsapp.models import WhatsAppAccount
     qs = WhatsAppAccount.objects.filter(is_active=True)
-    if user.is_superuser or user.is_staff:
+    if user.is_superuser:
         return qs.values_list('id', flat=True)
     return qs.filter(
         Q(owner=user) |

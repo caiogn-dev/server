@@ -7,6 +7,7 @@ from rest_framework.permissions import AllowAny
 from apps.postado.models import PostadoClient, PostadoPack
 from apps.postado.api.serializers import PostadoClientCreateSerializer
 from apps.postado.tasks import generate_pack
+from apps.webhooks.handlers.mercadopago_handler import _verify_mercadopago_signature
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,15 @@ class PostadoMPWebhookView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        payload = request.data or {}
+
+        # Verifica assinatura HMAC do Mercado Pago — sem isso qualquer um forja
+        # "pagamento" e dispara generate_pack (geração de conteúdo não paga).
+        if not _verify_mercadopago_signature(request, payload):
+            logger.warning("Postado MP webhook: assinatura inválida — rejeitado")
+            return Response({'status': 'invalid_signature'}, status=403)
+
         preapproval_id = request.query_params.get('preapproval_id', '')
-        payload = request.data
 
         action = payload.get('action', '')
         if action not in ('payment.created', 'payment.updated'):

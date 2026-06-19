@@ -22,9 +22,11 @@ def get_member_role(user, store) -> str | None:
     """
     Retorna o role do usuário na loja, ou None se não for membro.
 
-    Superusers e staff Django recebem role 'owner' automaticamente.
+    Apenas superusers recebem role 'owner' automaticamente. is_staff (flag do
+    admin Django) NÃO concede acesso cross-tenant — senão qualquer conta com
+    acesso ao /admin enxergaria/editaria dados de todas as lojas.
     """
-    if user.is_superuser or user.is_staff:
+    if user.is_superuser:
         return 'owner'
     from apps.stores.models import StoreTeamMember
     member = StoreTeamMember.objects.filter(

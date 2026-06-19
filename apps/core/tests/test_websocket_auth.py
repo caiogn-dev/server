@@ -12,6 +12,7 @@ class WebSocketAuthTest(TestCase):
     def setUp(self):
         """Set up test user and token."""
         self.user = User.objects.create_user(
+            username='ws-test',
             email='test@example.com',
             password='pass123'
         )
