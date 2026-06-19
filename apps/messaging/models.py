@@ -28,6 +28,7 @@ DB TABLES: messenger_accounts, messenger_profiles, messenger_conversations,
 from django.db import models
 from django.conf import settings
 import uuid
+from apps.core.fields import EncryptedCharField
 
 
 class MessengerAccount(models.Model):
@@ -38,11 +39,11 @@ class MessengerAccount(models.Model):
     # Identificadores
     page_id = models.CharField(max_length=255, unique=True)
     page_name = models.CharField(max_length=255)
-    page_access_token = models.TextField()
-    
+    page_access_token = EncryptedCharField(max_length=1000, help_text='Page Access Token (encrypted)')
+
     # Configurações
     app_id = models.CharField(max_length=255, null=True, blank=True)
-    app_secret = models.CharField(max_length=255, null=True, blank=True)
+    app_secret = EncryptedCharField(max_length=500, null=True, blank=True, help_text='App Secret (encrypted)')
     
     # IA
     default_agent = models.ForeignKey(
