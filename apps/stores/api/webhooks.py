@@ -52,11 +52,15 @@ class MercadoPagoWebhookView(APIView):
             
             # Get notification type
             topic = request.data.get('type') or request.query_params.get('topic')
-            
+
             if topic == 'payment':
                 return self._handle_payment(request, store_slug)
             elif topic == 'merchant_order':
                 return self._handle_merchant_order(request, store_slug)
+            elif topic in ('subscription_preapproval', 'subscription_authorized_payment') \
+                    or (topic and 'preapproval' in topic):
+                # Assinatura SaaS: o notification_url do preapproval aponta pra cá.
+                return self._handle_preapproval(request)
             else:
                 logger.info(f"Ignoring webhook topic: {topic}")
                 return Response({'status': 'ignored'}, status=status.HTTP_200_OK)
@@ -66,6 +70,25 @@ class MercadoPagoWebhookView(APIView):
             # Always return 200 to prevent retries
             return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_200_OK)
     
+    def _handle_preapproval(self, request):
+        """
+        Webhook de assinatura SaaS (preapproval recorrente da plataforma).
+        Diferente dos pagamentos de pedido (que são por-loja), o preapproval usa
+        o secret GLOBAL da plataforma (MERCADO_PAGO_WEBHOOK_SECRET) e busca o
+        status atual no MP antes de aplicar na StoreSubscription.
+        """
+        from apps.webhooks.handlers.mercadopago_handler import (
+            _verify_mercadopago_signature,
+            MercadoPagoHandler,
+        )
+        if not _verify_mercadopago_signature(request, request.data):
+            logger.warning("Preapproval webhook signature inválida — rejeitando")
+            return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        data_id = (request.data.get('data') or {}).get('id')
+        result = MercadoPagoHandler()._handle_preapproval_webhook(data_id)
+        return Response(result, status=status.HTTP_200_OK)
+
     def _validate_signature(self, request, store_slug):
         """
         Validate Mercado Pago webhook signature.

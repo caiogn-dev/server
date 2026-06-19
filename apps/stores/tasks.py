@@ -273,3 +273,26 @@ def database_integrity_check():
         logger.error('database_integrity_check: failed: %s', exc)
         # Don't retry on failure, just log it
         return f'failed: {exc}'
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=30)
+def send_meta_purchase_event(self, order_id: str, tracking_data: dict = None):
+    """Envia o evento Meta CAPI Purchase fora do request (não bloqueia o checkout).
+
+    Os dados derivados do request (client_ip, user_agent, event_source_url, fbc/fbp)
+    são pré-extraídos em tracking_data pelo caller, já que request não é serializável.
+    """
+    try:
+        from apps.stores.models import StoreOrder
+        from apps.stores.services.meta_pixel_service import send_purchase_event
+
+        try:
+            order = StoreOrder.objects.select_related('store').get(id=order_id)
+        except StoreOrder.DoesNotExist:
+            logger.warning('send_meta_purchase_event: order %s not found', order_id)
+            return
+
+        send_purchase_event(order, request=None, tracking_data=tracking_data or {})
+    except Exception as exc:
+        logger.warning('send_meta_purchase_event failed for %s: %s', order_id, exc)
+        raise self.retry(exc=exc)
