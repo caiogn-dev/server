@@ -64,6 +64,33 @@ def _ingredient_lines(ingredients: Iterable[dict]) -> list[str]:
     return lines
 
 
+def _combo_selection_lines(display_data: dict) -> list[str]:
+    """Linhas das opções escolhidas no combo (saladas/sabores) p/ a comanda.
+
+    Lê display_data['groups'] (snapshot do checkout). Cada item pode ser uma
+    VARIANTE (variant_name) ou um PRODUTO (product_name) — antes a comanda só
+    olhava 'ingredients' e não mostrava nada do que o cliente escolheu.
+    """
+    lines: list[str] = []
+    groups = display_data.get('groups') if isinstance(display_data, dict) else None
+    for group in (groups or []):
+        if not isinstance(group, dict):
+            continue
+        g_name = str(group.get('group_name') or '').strip()
+        group_items = [it for it in (group.get('items') or []) if isinstance(it, dict)]
+        if not group_items:
+            continue
+        if g_name:
+            lines.append(f"{g_name}:")
+        for it in group_items:
+            name = str(it.get('product_name') or it.get('variant_name') or '').strip()
+            if not name:
+                continue
+            qty = it.get('quantity') or 1
+            lines.append(f"  {qty}x {name}")
+    return lines
+
+
 def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:
     items = []
     for item in order.items.all():
@@ -94,7 +121,11 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'name': display_data.get('combo_name') or (combo.combo.name if combo.combo else 'Combo'),
             'unit_price': _money(unit_price),
             'subtotal': _money(combo.subtotal),
-            'details': ['COMBO', *_ingredient_lines(customizations.get('ingredients') or [])],
+            'details': [
+                'COMBO',
+                *_combo_selection_lines(display_data),
+                *_ingredient_lines(customizations.get('ingredients') or []),
+            ],
             'notes': '',
         })
 

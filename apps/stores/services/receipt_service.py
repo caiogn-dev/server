@@ -206,6 +206,23 @@ def generate_order_receipt_pdf(order: "StoreOrder") -> bytes:
                 ingredient_parts.append(f"{role}: {ing_name}" if role else ing_name)
             if ingredient_parts:
                 name += "\n" + ", ".join(ingredient_parts)
+        else:
+            # Combo com seleção de produtos/variantes (ex: "escolha 5 saladas").
+            # Lê display_data['groups'] (snapshot) — antes não mostrava nada.
+            selection_parts = []
+            for group in (display_data.get('groups') or []):
+                if not isinstance(group, dict):
+                    continue
+                for it in (group.get('items') or []):
+                    if not isinstance(it, dict):
+                        continue
+                    it_name = str(it.get('product_name') or it.get('variant_name') or '').strip()
+                    if not it_name:
+                        continue
+                    qty = it.get('quantity') or 1
+                    selection_parts.append(f"{qty}x {it_name}")
+            if selection_parts:
+                name += "\n" + ", ".join(selection_parts)
         if ci.notes:
             name += f"\nObs: {ci.notes}"
         item_rows.append([
