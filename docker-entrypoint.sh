@@ -34,26 +34,32 @@ if [ -d "/seed" ]; then
     chmod -R 755 /app/media/stores/products/
 fi
 
-# Executar Django migrations
-echo "🔄 Running migrations..."
-python manage.py migrate --noinput
+# Init (migrate/collectstatic/seed) roda SÓ no web (RUN_INIT_TASKS=1).
+# Antes os 3 containers (web/celery/beat) rodavam isto no boot ao mesmo tempo:
+# - migrate concorrente = race quando há migration nova
+# - collectstatic 3x = corrida no volume de estáticos
+# - auto-seed --force em prod se o db_healthcheck falhar no boot (perigoso)
+if [ "${RUN_INIT_TASKS:-0}" = "1" ]; then
+    echo "🔄 Running migrations..."
+    python manage.py migrate --noinput
 
-# Collect static files
-echo "🔄 Collecting static files..."
-python manage.py collectstatic --noinput
+    echo "🔄 Collecting static files..."
+    python manage.py collectstatic --noinput
 
-# Database integrity check with auto-seed on failure
-echo "🔍 Verificando integridade do banco de dados..."
-if ! python manage.py db_healthcheck --auto-seed 2>/dev/null; then
-    echo "⚠️  Auto-seed failed or stores missing, attempting seed..."
-    python manage.py populate_ce_saladas_menu --force || true
-    python manage.py populate_pastita_menu --force || true
-    python manage.py populate_kero_kero_menu --force || true
-    python manage.py populate_delivery_zones || true
-    echo "✅ Seed automático completado"
+    echo "🔍 Verificando integridade do banco de dados..."
+    if ! python manage.py db_healthcheck --auto-seed 2>/dev/null; then
+        echo "⚠️  Auto-seed failed or stores missing, attempting seed..."
+        python manage.py populate_ce_saladas_menu --force || true
+        python manage.py populate_pastita_menu --force || true
+        python manage.py populate_kero_kero_menu --force || true
+        python manage.py populate_delivery_zones || true
+        echo "✅ Seed automático completado"
+    fi
+else
+    echo "⏭️  RUN_INIT_TASKS!=1 — pulando migrate/collectstatic/seed (init só no web)"
 fi
 
-echo "✅ Iniciando Gunicorn..."
+echo "✅ Iniciando processo principal..."
 
 # Executar comando passado (gunicorn por padrão)
 exec "$@"

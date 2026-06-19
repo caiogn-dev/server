@@ -57,3 +57,6 @@ new_token.txt
 recovery_*
 *.sql.bak
 *_dump.sql
+
+# backups de .env (nunca commitar)
+.env.bak*
