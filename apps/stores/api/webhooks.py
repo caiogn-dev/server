@@ -2,6 +2,7 @@
 Unified Payment Webhooks for all stores.
 Handles Mercado Pago webhooks and routes to correct store.
 """
+import hmac as _hmac
 import logging
 import json
 from decimal import Decimal
@@ -16,6 +17,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+
+
+def _tokens_equal(a: str, b: str) -> bool:
+    """Constant-time comparison to prevent timing attacks on token values."""
+    return bool(a and b and _hmac.compare_digest(a, b))
 
 from apps.stores.models import Store, StoreOrder, StoreIntegration
 from apps.stores.services import checkout_service
@@ -330,8 +336,8 @@ class PaymentStatusView(APIView):
                 user.is_superuser
             )
             
-            has_valid_token = token and order.access_token and token == order.access_token
-            
+            has_valid_token = _tokens_equal(token, order.access_token or '')
+
             if not has_valid_token and not is_authenticated_owner:
                 logger.warning(f"Unauthorized access attempt to order {order.order_number}")
                 return Response(
@@ -607,7 +613,7 @@ class CustomerOrderDetailView(APIView):
                 user.is_authenticated
                 and (order.customer_id == user.id or user.is_staff or user.is_superuser)
             )
-            has_valid_token = bool(token and order.access_token and token == order.access_token)
+            has_valid_token = _tokens_equal(token, order.access_token or '')
 
             if not is_owner and not has_valid_token:
                 return Response(
@@ -821,7 +827,7 @@ class OrderReceiptView(APIView):
         # Authorization: token OR authenticated owner/staff
         user = request.user if request.user and request.user.is_authenticated else None
         if token:
-            if order.access_token != token:
+            if not _tokens_equal(token, order.access_token or ''):
                 return Response({"error": "Token inválido"}, status=status.HTTP_403_FORBIDDEN)
         elif user:
             store = order.store
