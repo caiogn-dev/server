@@ -102,13 +102,13 @@ class WhatsAppWebhookView(APIView):
             entry_count = len(payload.get('entry', []))
             logger.info(f"Webhook POST received - Object: {object_type}, Entries: {entry_count}")
             
-            # Validate signature using the raw body we captured earlier
+            # Validate signature using the raw body we captured earlier.
+            # validate_signature() returns True when WHATSAPP_APP_SECRET is not
+            # configured (safe for local dev). Never bypass validation in any mode —
+            # if a secret IS configured, an invalid signature must always be rejected.
             if not service.validate_signature(raw_body, signature):
-                if settings.DEBUG:
-                    logger.warning("Invalid webhook signature — continuing in DEBUG mode only")
-                else:
-                    logger.error("Invalid webhook signature — rejecting request")
-                    return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
+                logger.error("Invalid webhook signature — rejecting request")
+                return Response({'status': 'error', 'message': 'Invalid signature'}, status=403)
             
             # Convert headers to simple dict
             headers = {}
