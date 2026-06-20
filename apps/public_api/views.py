@@ -50,18 +50,6 @@ def _get_active_store(slug):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
-def store_by_domain(request):
-    domain = request.query_params.get('domain', '').strip()
-    if not domain:
-        return Response({'error': 'Parâmetro domain é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
-    domain = domain.split(':')[0]  # strip port
-    store = get_object_or_404(Store, custom_domain=domain, status='active')
-    return Response(PublicStoreSerializer(store, context={'request': request}).data)
-
-
-@api_view(['GET'])
-@permission_classes([AllowAny])
-@throttle_classes([_PublicReadThrottle])
 def public_store_detail(request, slug):
     store = _get_active_store(slug)
     return Response(PublicStoreSerializer(store, context={'request': request}).data)
