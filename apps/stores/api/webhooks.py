@@ -347,12 +347,12 @@ class PaymentStatusView(APIView):
             # 2. User is authenticated and owns the order
             # 3. Request is from authenticated admin/staff
             user = request.user
+            from apps.core.permissions import user_can_access_store
             is_authenticated_owner = user.is_authenticated and (
-                order.customer == user or 
-                user.is_staff or 
-                user.is_superuser
+                order.customer == user
+                or user_can_access_store(user, order.store)
             )
-            
+
             has_valid_token = token and order.access_token and token == order.access_token
             
             if not has_valid_token and not is_authenticated_owner:
@@ -617,9 +617,10 @@ class CustomerOrderDetailView(APIView):
 
             token = request.query_params.get('token', '')
             user = request.user
+            from apps.core.permissions import user_can_access_store
             is_owner = (
                 user.is_authenticated
-                and (order.customer_id == user.id or user.is_staff or user.is_superuser)
+                and (order.customer_id == user.id or user_can_access_store(user, order.store))
             )
             has_valid_token = bool(token and order.access_token and token == order.access_token)
 
@@ -821,11 +822,9 @@ class OrderReceiptView(APIView):
             if order.access_token != token:
                 return Response({"error": "Token inválido"}, status=status.HTTP_403_FORBIDDEN)
         elif user:
-            store = order.store
-            is_owner = getattr(store, "owner_id", None) == user.id
-            is_staff = user.is_staff or user.is_superuser
-            is_store_staff = store.staff.filter(id=user.id).exists() if not is_staff else False
-            if not (is_owner or is_staff or is_store_staff):
+            # is_staff NÃO concede acesso cross-tenant (só superuser).
+            from apps.core.permissions import user_can_access_store
+            if not user_can_access_store(user, order.store):
                 return Response({"error": "Sem permissão"}, status=status.HTTP_403_FORBIDDEN)
         else:
             return Response(

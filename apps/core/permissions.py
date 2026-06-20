@@ -63,21 +63,14 @@ class IsStoreStaff(permissions.BasePermission):
         except Store.DoesNotExist:
             return False
 
-        return (
-            store.owner == request.user or
-            store.staff.filter(id=request.user.id).exists()
-        )
-    
+        return user_can_access_store(request.user, store)
+
     def has_object_permission(self, request: Request, view: View, obj) -> bool:
         if hasattr(obj, 'store'):
-            store = obj.store
-            return (
-                store.owner == request.user or 
-                store.staff.filter(id=request.user.id).exists()
-            )
+            return user_can_access_store(request.user, obj.store)
         elif hasattr(obj, 'owner'):
             return obj.owner == request.user
-        
+
         return False
 
 
@@ -106,25 +99,18 @@ class HasStoreAccess(permissions.BasePermission):
             store = Store.objects.get(slug=store_slug, is_active=True)
         except Store.DoesNotExist:
             return False
-        
-        return (
-            store.owner == request.user or
-            store.staff.filter(id=request.user.id).exists()
-        )
-    
+
+        return user_can_access_store(request.user, store)
+
     def has_object_permission(self, request: Request, view: View, obj) -> bool:
         if request.user.is_superuser:
             return True
-        
+
         if hasattr(obj, 'store'):
-            store = obj.store
-            return (
-                store.owner == request.user or
-                store.staff.filter(id=request.user.id).exists()
-            )
+            return user_can_access_store(request.user, obj.store)
         elif hasattr(obj, 'owner'):
             return obj.owner == request.user
-        
+
         return False
 
 
@@ -246,14 +232,10 @@ class StoreQuerysetMixin:
     store_field: str = 'store'
 
     def _get_user_store_ids(self):
-        from django.db.models import Q
-        from apps.stores.models import Store
         user = self.request.user
         if user.is_superuser:
             return None  # unrestricted
-        return Store.objects.filter(
-            Q(owner=user) | Q(staff=user), is_active=True
-        ).values_list('id', flat=True)
+        return accessible_store_ids(user)
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -290,14 +272,34 @@ class StorePermissionMixin(StoreQuerysetMixin):
 def accessible_store_ids(user):
     """
     Return a QuerySet of store IDs the user can access.
-    Staff/superusers get all stores. Regular users get stores they own or staff.
+
+    SÓ superuser vê todas as lojas. is_staff (acesso ao /admin) NÃO concede
+    acesso cross-tenant. Usuário comum acessa lojas onde é owner, está no
+    staff M2M (legado) OU tem StoreTeamMember ativo (sistema de roles).
     """
     from django.db.models import Q
     from apps.stores.models import Store
     qs = Store.objects.filter(is_active=True)
     if user.is_superuser:
         return qs.values_list('id', flat=True)
-    return qs.filter(Q(owner=user) | Q(staff=user)).values_list('id', flat=True)
+    return qs.filter(
+        Q(owner=user)
+        | Q(staff=user)
+        | Q(storeteammember_set__user=user, storeteammember_set__is_active=True)
+    ).distinct().values_list('id', flat=True)
+
+
+def user_can_access_store(user, store) -> bool:
+    """True se o usuário pode acessar a loja (owner, staff M2M, StoreTeamMember ou superuser).
+
+    is_staff NÃO concede acesso — senão qualquer conta do /admin vaza todas as lojas.
+    """
+    if user.is_superuser:
+        return True
+    if store.owner_id == user.id or store.staff.filter(id=user.id).exists():
+        return True
+    from apps.stores.permissions import get_member_role
+    return get_member_role(user, store) is not None
 
 
 def accessible_whatsapp_account_ids(user):
@@ -332,5 +334,6 @@ __all__ = [
     'StoreQuerysetMixin',
     'StorePermissionMixin',
     'accessible_store_ids',
+    'user_can_access_store',
     'accessible_whatsapp_account_ids',
 ]

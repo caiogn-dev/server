@@ -5,7 +5,7 @@ import logging
 import uuid as uuid_module
 from rest_framework import permissions
 from apps.stores.models import Store
-from apps.core.permissions import accessible_store_ids
+from apps.core.permissions import accessible_store_ids, user_can_access_store
 
 logger = logging.getLogger(__name__)
 
@@ -31,21 +31,15 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
     """
 
     def _user_can_access_store(self, user, store):
-        if user.is_staff or user.is_superuser:
-            return True
-        if store.owner == user or user in store.staff.all():
-            return True
-        # Fallback: checar StoreTeamMember com o novo sistema de roles
-        from apps.stores.permissions import get_member_role
-        if get_member_role(user, store) is not None:
-            return True
-        return False
+        # is_staff NÃO concede acesso cross-tenant (só superuser); owner, staff
+        # M2M legado e StoreTeamMember ativo são checados em user_can_access_store.
+        return user_can_access_store(user, store)
 
     def has_permission(self, request, view):
         if not (request.user and request.user.is_authenticated):
             return False
 
-        if request.user.is_staff or request.user.is_superuser:
+        if request.user.is_superuser:
             return True
 
         # When accessing via nested router (stores/{store_pk}/...), verify ownership
@@ -80,8 +74,11 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
 
 
 def get_user_stores_queryset(user, queryset_class):
-    """Get queryset filtered by user's accessible stores."""
-    if user.is_staff:
+    """Get queryset filtered by user's accessible stores.
+
+    Só superuser vê todas; is_staff NÃO vaza cross-tenant.
+    """
+    if user.is_superuser:
         return queryset_class.objects.all()
     store_ids = accessible_store_ids(user)
     return queryset_class.objects.filter(id__in=store_ids)
