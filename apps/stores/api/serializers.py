@@ -5,8 +5,11 @@ This is the UNIFIED e-commerce serializer module supporting all stores.
 All product types are DYNAMIC - stores can create their own types with custom fields.
 Products store type-specific values in the type_attributes JSONField.
 """
+import ipaddress
+import socket
 import uuid as uuid_module
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlparse
 from django.db import transaction
 from rest_framework import serializers
 from django.utils import timezone
@@ -177,9 +180,47 @@ class StoreIntegrationCreateSerializer(serializers.ModelSerializer):
         return instance
 
 
+def _validate_webhook_url(url: str) -> None:
+    """Reject webhook URLs targeting private/loopback addresses (SSRF prevention)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        raise serializers.ValidationError('Only http and https webhook URLs are allowed.')
+    hostname = parsed.hostname
+    if not hostname:
+        raise serializers.ValidationError('Invalid webhook URL: missing host.')
+    try:
+        # Direct IP literal — check immediately without DNS lookup
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_unspecified:
+            raise serializers.ValidationError(
+                'Webhook URL cannot target a private, loopback, or reserved IP address.'
+            )
+    except ValueError:
+        # Hostname — resolve and check all returned addresses
+        try:
+            results = socket.getaddrinfo(hostname, None)
+        except socket.gaierror:
+            raise serializers.ValidationError('Webhook URL hostname could not be resolved.')
+        for _family, _type, _proto, _canonname, sockaddr in results:
+            ip_str = sockaddr[0]
+            try:
+                addr = ipaddress.ip_address(ip_str)
+                if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved or addr.is_unspecified:
+                    raise serializers.ValidationError(
+                        f'Webhook URL resolves to a private or reserved address ({ip_str}). '
+                        'Use a publicly-reachable URL.'
+                    )
+            except ValueError:
+                pass
+
+
 class StoreWebhookSerializer(serializers.ModelSerializer):
     """Serializer for StoreWebhook model."""
-    
+
+    def validate_url(self, value: str) -> str:
+        _validate_webhook_url(value)
+        return value
+
     class Meta:
         model = StoreWebhook
         fields = [
