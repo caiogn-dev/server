@@ -950,10 +950,10 @@ class WebhookService:
         
         # Patterns to match name introductions
         patterns = [
-            r'meu nome [Ã©|e]\s+(.+)',
+            r'meu nome (?:é|e)\s+(.+)',
             r'meu nome eh\s+(.+)',
             r'sou (?:o|a)\s+(.+)',
-            r'(?:o|a) meu nome [Ã©|e]\s+(.+)',
+            r'(?:o|a) meu nome (?:é|e)\s+(.+)',
             r'pode me chamar de\s+(.+)',
             r'(?:eu sou|sou)\s+(.+)',
         ]
@@ -1045,11 +1045,11 @@ class WebhookService:
         elif message_type == 'reaction':
             reaction = message_data.get('reaction', {})
             content = {'reaction': reaction}
-            text_body = reaction.get('emoji', 'ðŸ‘')
+            text_body = reaction.get('emoji', '👍')
         elif message_type == 'order':
             order = message_data.get('order', {})
             content = {'order': order}
-            text_body = f"ðŸ›’ Order with {len(order.get('product_items', []))} item(s)"
+            text_body = f"🛒 Order with {len(order.get('product_items', []))} item(s)"
         else:
             content = message_data
 

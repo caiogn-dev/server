@@ -230,11 +230,16 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    # Pastita dashboard
+    # Cardapidex dashboard (produção)
+    "https://painel.cardapidex.com.br",
+    # Pastita dashboard (legado — manter enquanto DNS não migrar)
     "https://painel.pastita.com.br",
     # Pastita main site / pastita-3d storefront (custom domains)
     "https://pastita.com.br",
     "https://www.pastita.com.br",
+    # Cardapidex storefront
+    "https://cardapidex.com.br",
+    "https://www.cardapidex.com.br",
     # pastita-3d storefront — Vercel deployment
     "https://pastita-3d.vercel.app",
     # ce-saladas storefront — Vercel deployment

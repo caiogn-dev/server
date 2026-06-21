@@ -41,6 +41,11 @@ USE_X_FORWARDED_PORT = True
 
 # Production domains always allowed (supplement ENV-configured hosts)
 ALLOWED_HOSTS += [
+    # Cardapidex (branding atual)
+    'painel.cardapidex.com.br',
+    'cardapidex.com.br',
+    'api.cardapidex.com.br',
+    # Pastita (legado — manter enquanto DNS não migrar)
     'backend.pastita.com.br',
     'painel.pastita.com.br',
     'pastita.com.br',
@@ -56,6 +61,14 @@ if not ALLOWED_HOSTS or ALLOWED_HOSTS == ['localhost', '127.0.0.1']:
 
 if not WHATSAPP_WEBHOOK_VERIFY_TOKEN:
     raise ImproperlyConfigured('WHATSAPP_WEBHOOK_VERIFY_TOKEN must be set in production.')
+
+if not WHATSAPP_APP_SECRET:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        'WHATSAPP_APP_SECRET não configurado — validação de assinatura HMAC dos webhooks do '
+        'WhatsApp desativada. Qualquer requisição POST para /webhooks/v1/whatsapp será aceita. '
+        'Configure WHATSAPP_APP_SECRET para proteger o endpoint de webhook.'
+    )
 
 if not INSTAGRAM_WEBHOOK_VERIFY_TOKEN:
     import logging as _logging
