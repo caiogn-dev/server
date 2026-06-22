@@ -32,13 +32,13 @@ class CSRFExemptMiddleware:
         # If request has Authorization header with Token, mark as CSRF-safe
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
 
-        # Debug: log auth header for /stores/*/orders/ endpoints
+        # Log auth presence (not the token value) for /stores/*/orders/ endpoints
         if '/stores/' in request.path and '/orders/' in request.path:
             auth_type = 'none'
             if auth_header.startswith('Token '):
-                auth_type = f'token: {auth_header[6:46]}...'
+                auth_type = 'token: [presente]'
             elif auth_header.startswith('Bearer '):
-                auth_type = f'bearer: {auth_header[7:37]}...'
+                auth_type = 'bearer: [presente]'
             logger.info(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_type}')
 
         if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
