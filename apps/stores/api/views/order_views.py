@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from datetime import timedelta
@@ -331,43 +332,44 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def update_payment_status(self, request, pk=None):
         """Update order payment status."""
-        order = self.get_object()
         new_status = request.data.get('payment_status')
-        
+
         if not new_status:
             return Response(
                 {'error': 'payment_status is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         valid_statuses = [s[0] for s in StoreOrder.PaymentStatus.choices]
         if new_status not in valid_statuses:
             return Response(
                 {'error': f'Invalid status. Valid options: {valid_statuses}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        order.payment_status = new_status
-        if new_status == 'paid':
-            order.paid_at = timezone.now()
-        order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
-        
+
+        with transaction.atomic():
+            order = StoreOrder.objects.select_for_update().get(pk=self.get_object().pk)
+            order.payment_status = new_status
+            if new_status == 'paid':
+                order.paid_at = timezone.now()
+            order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+
         return Response(StoreOrderSerializer(order).data)
-    
+
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
         """Mark order as paid (convenience endpoint)."""
-        order = self.get_object()
-        
-        order.payment_status = StoreOrder.PaymentStatus.PAID
-        order.paid_at = timezone.now()
-        order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
-        
+        with transaction.atomic():
+            order = StoreOrder.objects.select_for_update().get(pk=self.get_object().pk)
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.paid_at = timezone.now()
+            order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+
         logger.info(f"Order {order.order_number} marked as paid")
-        
+
         # Notify via WebSocket
         self._notify_order_update(order, 'order.paid')
-        
+
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'])
