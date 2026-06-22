@@ -6,6 +6,7 @@ import uuid as uuid_module
 from django.db.models import Count, Q
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 
@@ -143,7 +144,36 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
         if self.action in ['create', 'update', 'partial_update']:
             return StoreIntegrationCreateSerializer
         return StoreIntegrationSerializer
-    
+
+    def _resolve_store_from_kwargs(self):
+        """Return Store from URL kwargs (nested router), or None for flat route."""
+        store_pk = self.kwargs.get('store_pk')
+        if not store_pk:
+            return None
+        try:
+            uuid_module.UUID(str(store_pk))
+            return Store.objects.get(pk=store_pk)
+        except (ValueError, Store.DoesNotExist):
+            pass
+        try:
+            return Store.objects.get(slug=store_pk)
+        except Store.DoesNotExist:
+            return None
+
+    def perform_create(self, serializer):
+        store = self._resolve_store_from_kwargs()
+        if store:
+            serializer.save(store=store)
+            return
+        # Flat route: validate the caller owns the store they're assigning
+        store = serializer.validated_data.get('store')
+        if not store:
+            raise ValidationError({'store': 'Este campo é obrigatório.'})
+        user = self.request.user
+        if not user.is_staff and store.id not in list(accessible_store_ids(user)):
+            raise PermissionDenied('Você não tem acesso a esta loja.')
+        serializer.save()
+
     @action(detail=True, methods=['post'])
     def toggle(self, request, pk=None):
         """Toggle integration enabled/disabled."""
@@ -162,21 +192,48 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
 
 class StoreWebhookViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store webhooks."""
-    
+
     serializer_class = StoreWebhookSerializer
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
-    
+
     def get_queryset(self):
         store_id = self.kwargs.get('store_pk')
         if store_id:
             return StoreWebhook.objects.filter(store_id=store_id)
-        
+
         user = self.request.user
         if user.is_staff:
             return StoreWebhook.objects.all()
         store_ids = accessible_store_ids(user)
         return StoreWebhook.objects.filter(store_id__in=store_ids)
-    
+
+    def _resolve_store_from_kwargs(self):
+        store_pk = self.kwargs.get('store_pk')
+        if not store_pk:
+            return None
+        try:
+            uuid_module.UUID(str(store_pk))
+            return Store.objects.get(pk=store_pk)
+        except (ValueError, Store.DoesNotExist):
+            pass
+        try:
+            return Store.objects.get(slug=store_pk)
+        except Store.DoesNotExist:
+            return None
+
+    def perform_create(self, serializer):
+        store = self._resolve_store_from_kwargs()
+        if store:
+            serializer.save(store=store)
+            return
+        store = serializer.validated_data.get('store')
+        if not store:
+            raise ValidationError({'store': 'Este campo é obrigatório.'})
+        user = self.request.user
+        if not user.is_staff and store.id not in list(accessible_store_ids(user)):
+            raise PermissionDenied('Você não tem acesso a esta loja.')
+        serializer.save()
+
     @action(detail=True, methods=['post'])
     def test(self, request, pk=None):
         """Send a test webhook."""
