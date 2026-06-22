@@ -60,13 +60,16 @@ class StoreSerializer(serializers.ModelSerializer):
         return obj.is_open()
     
     def get_integrations_count(self, obj):
-        return obj.integrations.filter(is_active=True).count()
-    
+        v = getattr(obj, '_integrations_count', None)
+        return v if v is not None else obj.integrations.filter(is_active=True).count()
+
     def get_products_count(self, obj):
-        return obj.products.filter(status='active').count()
-    
+        v = getattr(obj, '_products_count', None)
+        return v if v is not None else obj.products.filter(status='active').count()
+
     def get_orders_count(self, obj):
-        return obj.orders.count()
+        v = getattr(obj, '_orders_count', None)
+        return v if v is not None else obj.orders.count()
 
 
 class StoreCreateSerializer(serializers.ModelSerializer):
@@ -483,7 +486,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         ]
     
     def get_items_count(self, obj):
-        return obj.items.count()
+        # Use prefetch cache when items are already loaded (avoids extra COUNT query)
+        return len(obj.items.all())
 
 
 class StorePrintAgentSerializer(serializers.ModelSerializer):
@@ -1348,7 +1352,8 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
         ]
     
     def get_items_count(self, obj):
-        return obj.items.count()
+        # Use prefetch cache when items are already loaded (avoids extra COUNT query)
+        return len(obj.items.all())
 
 
 # =============================================================================

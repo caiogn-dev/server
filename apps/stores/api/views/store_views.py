@@ -3,6 +3,7 @@ Store management API views.
 """
 import logging
 import uuid as uuid_module
+from django.db.models import Count, Q
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -24,16 +25,30 @@ logger = logging.getLogger(__name__)
 
 class StoreViewSet(viewsets.ModelViewSet):
     """ViewSet for managing stores."""
-    
+
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     lookup_field = 'pk'
-    
+
     def get_queryset(self):
         user = self.request.user
         if user.is_staff:
-            return Store.objects.all()
-        store_ids = accessible_store_ids(user)
-        return Store.objects.filter(id__in=store_ids)
+            qs = Store.objects.all()
+        else:
+            store_ids = accessible_store_ids(user)
+            qs = Store.objects.filter(id__in=store_ids)
+        return qs.annotate(
+            _integrations_count=Count(
+                'integrations',
+                filter=Q(integrations__is_active=True),
+                distinct=True,
+            ),
+            _products_count=Count(
+                'products',
+                filter=Q(products__status='active'),
+                distinct=True,
+            ),
+            _orders_count=Count('orders', distinct=True),
+        )
     
     def get_object(self):
         """Override to support both UUID and slug lookups."""
