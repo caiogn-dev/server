@@ -35,6 +35,18 @@ from .cart_service import cart_service
 logger = logging.getLogger(__name__)
 
 
+def _invalidate_agent_menu_safe(store_id) -> None:
+    """Invalida o cardápio cacheado do agente sem nunca quebrar o checkout.
+
+    Import tardio p/ evitar ciclo (langchain_service importa models de stores).
+    """
+    try:
+        from apps.agents.services.langchain_service import invalidate_menu_context
+        invalidate_menu_context(store_id)
+    except Exception as e:
+        logger.warning("Falha ao invalidar menu_ctx do agente no checkout: %s", e)
+
+
 def _normalize_address_text(value: str) -> str:
     if not value:
         return ''
@@ -850,6 +862,7 @@ class CheckoutService:
                     logger.warning('Loyalty redeem sem saldo no pedido %s', order.id)
         
         # Create order items and decrement stock
+        stock_changed = False
         for item in cart.items.select_related('product', 'variant').all():
             StoreOrderItem.objects.create(
                 order=order,
@@ -876,7 +889,12 @@ class CheckoutService:
                         stock_quantity=F('stock_quantity') - item.quantity,
                         sold_count=F('sold_count') + item.quantity
                     )
-        
+                    # Estoque a nível de produto mudou → o cardápio cacheado do
+                    # agente (nota [ESGOTADO]/[últimas N]) precisa ser invalidado.
+                    # O .update()/F() acima NÃO dispara post_save, então a
+                    # invalidação por signal não cobre este caminho.
+                    stock_changed = True
+
         # Handle combo items (real and virtual)
         for combo_item in cart.combo_items.select_related('combo').all():
             is_virtual = combo_item.combo is None
@@ -925,6 +943,14 @@ class CheckoutService:
                     stock_quantity=F('stock_quantity') - combo_item.quantity
                 )
         
+        # Invalida o cardápio cacheado do agente quando o estoque de produto
+        # mudou (só após o commit, p/ não invalidar se a transação reverter).
+        if stock_changed:
+            store_id = order.store_id
+            transaction.on_commit(
+                lambda: _invalidate_agent_menu_safe(store_id)
+            )
+
         # Mark coupon as used (atomic)
         if coupon:
             coupon.increment_usage()
