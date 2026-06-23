@@ -298,6 +298,19 @@ class DashboardProjectHealthView(APIView):
         account_ids = list(accounts_qs.values_list('id', flat=True))
         store_ids = list(stores_qs.values_list('id', flat=True))
 
+        # Cache do PAYLOAD inteiro por escopo (~30s). O health é diagnóstico e muda
+        # devagar; sem isto as ~24 queries de contagem + o inspect() do Celery rodavam
+        # TODA chamada (a home congelava esperando). A resolução de escopo acima
+        # (permissão) fica FORA do cache de propósito — a chave é o escopo já resolvido
+        # (store_ids+account_ids), então o cache é seguro entre usuários do mesmo escopo.
+        import hashlib
+        from django.core.cache import cache as _cache
+        _scope_sig = f"{sorted(str(s) for s in store_ids)}|{sorted(str(a) for a in account_ids)}"
+        _health_cache_key = 'dashboard:project_health:' + hashlib.md5(_scope_sig.encode()).hexdigest()
+        _cached_payload = _cache.get(_health_cache_key)
+        if _cached_payload is not None:
+            return Response(_cached_payload)
+
         orders_qs = StoreOrder.objects.filter(is_active=True, store_id__in=store_ids)
         messages_qs = Message.objects.filter(account_id__in=account_ids)
         conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
@@ -450,7 +463,7 @@ class DashboardProjectHealthView(APIView):
         elif issues or api_health.get('status') == 'degraded':
             status_value = 'attention'
 
-        return Response({
+        payload = {
             'status': status_value,
             'generated_at': now.isoformat(),
             'scope': {
@@ -500,7 +513,10 @@ class DashboardProjectHealthView(APIView):
                 'pending': webhook_pending,
             },
             'issues': issues[:10],
-        })
+        }
+
+        _cache.set(_health_cache_key, payload, 30)
+        return Response(payload)
 
 
 class DashboardStatsView(APIView):
