@@ -875,12 +875,19 @@ class LangchainService:
 
                     pending_items = cart_data.get('pending_items') or []
                     if pending_items:
+                        # Batch: 1 query para TODOS os produtos do carrinho (evita N+1 —
+                        # antes era 1 query por item). Mesma saída de antes.
+                        product_ids = [it.get('product_id') for it in pending_items if it.get('product_id')]
+                        products_by_id = {
+                            str(p.id): p
+                            for p in _SP.objects.filter(id__in=product_ids).only('id', 'name', 'price')
+                        }
                         item_lines = []
                         for it in pending_items:
-                            try:
-                                prod = _SP.objects.get(id=it['product_id'])
+                            prod = products_by_id.get(str(it.get('product_id')))
+                            if prod is not None:
                                 item_lines.append(f"  - {it['quantity']}x {prod.name} (R$ {prod.price})")
-                            except Exception:
+                            else:
                                 item_lines.append(f"  - {it['quantity']}x produto #{it.get('product_id','?')}")
                         session_parts.append("Itens no carrinho atual:\n" + "\n".join(item_lines))
 
