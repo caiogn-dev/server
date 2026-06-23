@@ -161,13 +161,18 @@ class AgentViewSet(viewsets.ModelViewSet):
     def conversations(self, request, pk=None):
         """Get agent conversations."""
         agent = self.get_object()
-        conversations = AgentConversation.objects.filter(agent=agent).order_by('-last_message_at')
-        
+        conversations = (
+            AgentConversation.objects
+            .filter(agent=agent)
+            .prefetch_related('messages')
+            .order_by('-last_message_at')
+        )
+
         page = self.paginate_queryset(conversations)
         if page is not None:
             serializer = AgentConversationSerializer(page, many=True)
             return self.get_paginated_response(serializer.data)
-        
+
         serializer = AgentConversationSerializer(conversations, many=True)
         return Response(serializer.data)
     
