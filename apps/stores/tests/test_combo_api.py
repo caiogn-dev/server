@@ -2,9 +2,15 @@
 Integration tests for Combo API endpoints.
 
 Test coverage:
-- ComboDetailView: GET /api/v1/stores/{store_slug}/combos/{combo_id}/
-- ComboListView: GET /api/v1/stores/{store_slug}/combos/?is_active=true
-- AddComboToCartView: POST /api/v1/stores/{store_slug}/cart/add-combo/
+- Combo detail (dashboard): GET /api/v1/stores/combos/{combo_id}/
+- Combo list (dashboard):   GET /api/v1/stores/combos/?store=<slug>&is_active=true
+- AddComboToCartView:       POST /api/v1/stores/{store_slug}/cart/add-combo/
+
+Note: the combo CRUD routes the dashboard consumes are the global DRF router
+routes (/api/v1/stores/combos/, see apps/stores/urls.py ~line 132). The
+storefront catch-all <slug:store_slug>/ does NOT expose a nested combos route;
+public storefront combos are served by apps.public_api at
+/api/v1/public/<slug>/combos/.
 
 Tests:
 - List combos with pagination and filtering
@@ -35,16 +41,26 @@ User = get_user_model()
 
 
 class ComboDetailViewTestCase(APITestCase):
-    """Tests for GET /api/v1/stores/{store_slug}/combos/{combo_id}/"""
+    """Tests for GET /api/v1/stores/combos/{combo_id}/ (admin/dashboard route).
+
+    The combo CRUD endpoints the dashboard actually consumes are the global
+    DRF router routes mounted at /api/v1/stores/combos/ (see
+    apps/stores/urls.py line ~132 and pastita-dash storesApi.getCombo). The
+    storefront catch-all <slug:store_slug>/ does NOT expose a combos route;
+    public combo listing lives under /api/v1/public/<slug>/combos/.
+    """
 
     def setUp(self):
         """Create test stores, products, variants, and combos."""
         self.client = APIClient()
 
-        # Create stores
+        # Create stores. The owner is staff because the dashboard combo screens
+        # run as authenticated admins — that is what lets them see inactive
+        # combos (StoreComboViewSet.get_queryset hides inactive from non-staff).
         self.owner = User.objects.create_user(
             username='store-owner',
-            password='testpass123'
+            password='testpass123',
+            is_staff=True,
         )
         self.store1 = Store.objects.create(
             name='Store 1',
@@ -142,10 +158,12 @@ class ComboDetailViewTestCase(APITestCase):
             is_active=True
         )
 
+        self.client.force_authenticate(user=self.owner)
+
     def test_get_combo_detail_success(self):
         """Test successful retrieval of combo detail with groups and variants."""
         response = self.client.get(
-            f'/api/v1/stores/{self.store1.slug}/combos/{self.combo1.id}/'
+            f'/api/v1/stores/combos/{self.combo1.id}/'
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -173,19 +191,19 @@ class ComboDetailViewTestCase(APITestCase):
         self.assertIn('stock', variant_limit)
         self.assertIn('max_selections', variant_limit)
 
-    def test_get_combo_detail_with_slug_resolution(self):
-        """Test that combo detail works with store slug."""
+    def test_get_combo_detail_with_store_filter(self):
+        """Test that combo detail can be scoped with the ?store= filter."""
         response = self.client.get(
-            f'/api/v1/stores/{self.store1.slug}/combos/{self.combo1.id}/'
+            f'/api/v1/stores/combos/{self.combo1.id}/?store={self.store1.slug}'
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['name'], 'Compre 3 Leve 4')
 
-    def test_get_combo_detail_tenant_isolation(self):
-        """Test that combo from other store returns 404."""
-        # Try to access store2's combo via store1's slug
+    def test_get_combo_detail_tenant_isolation_via_store_filter(self):
+        """Combo from another store is not returned when scoped to store1."""
+        # Scope the lookup to store1; store2's combo must not resolve.
         response = self.client.get(
-            f'/api/v1/stores/{self.store1.slug}/combos/{self.combo_store2.id}/'
+            f'/api/v1/stores/combos/{self.combo_store2.id}/?store={self.store1.slug}'
         )
         self.assertEqual(response.status_code, 404)
 
@@ -193,29 +211,26 @@ class ComboDetailViewTestCase(APITestCase):
         """Test 404 when combo doesn't exist."""
         fake_id = uuid_module.uuid4()
         response = self.client.get(
-            f'/api/v1/stores/{self.store1.slug}/combos/{fake_id}/'
+            f'/api/v1/stores/combos/{fake_id}/'
         )
         self.assertEqual(response.status_code, 404)
-
-    def test_get_combo_detail_store_not_found(self):
-        """Test 404 when store doesn't exist."""
-        response = self.client.get(
-            f'/api/v1/stores/fake-store/combos/{self.combo1.id}/'
-        )
-        self.assertEqual(response.status_code, 404)
-        self.assertEqual(response.json()['detail'], 'Loja não encontrada.')
 
     def test_get_combo_detail_invalid_combo_id(self):
-        """Test 404 when combo_id is invalid (URL routing rejects non-UUID format)."""
+        """Test 404 when combo_id is not a valid UUID."""
         response = self.client.get(
-            f'/api/v1/stores/{self.store1.slug}/combos/invalid-id/'
+            '/api/v1/stores/combos/invalid-id/'
         )
-        # Django's URL router returns 404 for non-UUID format strings
+        # Lookup by a non-UUID pk yields no row -> 404.
         self.assertEqual(response.status_code, 404)
 
 
 class ComboListViewTestCase(APITestCase):
-    """Tests for GET /api/v1/stores/{store_slug}/combos/"""
+    """Tests for GET /api/v1/stores/combos/?store=<slug> (admin/dashboard route).
+
+    This is the route pastita-dash actually calls (storesApi.getCombos passes
+    the store slug as the ?store= query param). The viewset hides inactive
+    combos from non-staff callers, so the admin client authenticates as staff.
+    """
 
     def setUp(self):
         """Create test store with multiple combos."""
@@ -223,7 +238,8 @@ class ComboListViewTestCase(APITestCase):
 
         self.owner = User.objects.create_user(
             username='store-owner',
-            password='testpass123'
+            password='testpass123',
+            is_staff=True,
         )
         self.store = Store.objects.create(
             name='Test Store',
@@ -260,10 +276,12 @@ class ComboListViewTestCase(APITestCase):
             sort_order=3
         )
 
+        self.client.force_authenticate(user=self.owner)
+
     def test_list_combos_all(self):
-        """Test listing all combos without filter."""
+        """Test listing all combos (active + inactive) for the store."""
         response = self.client.get(
-            f'/api/v1/stores/{self.store.slug}/combos/'
+            f'/api/v1/stores/combos/?store={self.store.slug}'
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -274,7 +292,7 @@ class ComboListViewTestCase(APITestCase):
     def test_list_combos_filter_active(self):
         """Test listing only active combos."""
         response = self.client.get(
-            f'/api/v1/stores/{self.store.slug}/combos/?is_active=true'
+            f'/api/v1/stores/combos/?store={self.store.slug}&is_active=true'
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -285,7 +303,7 @@ class ComboListViewTestCase(APITestCase):
     def test_list_combos_filter_inactive(self):
         """Test listing only inactive combos."""
         response = self.client.get(
-            f'/api/v1/stores/{self.store.slug}/combos/?is_active=false'
+            f'/api/v1/stores/combos/?store={self.store.slug}&is_active=false'
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -305,30 +323,42 @@ class ComboListViewTestCase(APITestCase):
             )
 
         response = self.client.get(
-            f'/api/v1/stores/{self.store.slug}/combos/?page_size=10'
+            f'/api/v1/stores/combos/?store={self.store.slug}&page_size=10'
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(len(data['results']), 10)
         self.assertIsNotNone(data['next'])
 
-    def test_list_combos_store_not_found(self):
-        """Test 404 when store doesn't exist."""
-        response = self.client.get(
-            '/api/v1/stores/fake-store/combos/'
+    def test_list_combos_store_filter_isolation(self):
+        """Combos are scoped to the requested store via ?store=."""
+        other = Store.objects.create(
+            name='Other Store',
+            slug='other-store',
+            owner=self.owner,
+            status='active',
         )
-        self.assertEqual(response.status_code, 404)
-
-    def test_list_combos_includes_count(self):
-        """Test that list includes groups_count."""
+        StoreCombo.objects.create(
+            store=other, name='Other Combo', slug='other-combo',
+            price=Decimal('10.00'), is_active=True,
+        )
         response = self.client.get(
-            f'/api/v1/stores/{self.store.slug}/combos/'
+            f'/api/v1/stores/combos/?store={self.store.slug}'
+        )
+        self.assertEqual(response.status_code, 200)
+        # Only this store's combos, not the other store's.
+        self.assertEqual(len(response.json()['results']), 3)
+
+    def test_list_combos_includes_groups(self):
+        """Test that each combo exposes its groups structure."""
+        response = self.client.get(
+            f'/api/v1/stores/combos/?store={self.store.slug}'
         )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         combo = data['results'][0]
-        self.assertIn('groups_count', combo)
-        self.assertEqual(combo['groups_count'], 0)  # Our test combos have no groups
+        self.assertIn('groups', combo)
+        self.assertEqual(combo['groups'], [])  # Our test combos have no groups
 
 
 class AddComboToCartViewTestCase(APITestCase):

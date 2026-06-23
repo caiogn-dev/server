@@ -253,6 +253,9 @@ class StoreComboViewSet(viewsets.ModelViewSet):
 
     serializer_class = StoreComboSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    # Mesmo paginador do catálogo: suporta ?page_size= (o painel pagina a
+    # listagem de combos). Sem isso o page_size do request era ignorado.
+    pagination_class = StoreCatalogPagination
 
     @classmethod
     def queryset_for_test(cls, store):
@@ -311,9 +314,18 @@ class StoreComboViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(store__slug=store_param)
 
         # Only hide inactive combos for unauthenticated / non-staff public requests
-        if self.action == 'list' and not (self.request.user.is_authenticated and
-                                          (self.request.user.is_staff or self.request.user.is_superuser)):
+        is_admin = self.request.user.is_authenticated and (
+            self.request.user.is_staff or self.request.user.is_superuser
+        )
+        if self.action == 'list' and not is_admin:
             queryset = queryset.filter(is_active=True)
+
+        # Filtro explícito ?is_active=true|false (usado pelo painel). Só admins
+        # conseguem pedir os inativos; para os demais o filtro acima já restringe.
+        is_active_param = self.request.query_params.get('is_active')
+        if is_active_param is not None:
+            wants_active = is_active_param.lower() in ('1', 'true', 'yes')
+            queryset = queryset.filter(is_active=wants_active)
 
         return queryset.select_related('store').prefetch_related(*COMBO_PREFETCH)
 
