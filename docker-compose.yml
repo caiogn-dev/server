@@ -126,7 +126,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Bind só em loopback — Postgres NÃO deve ser alcançável pela internet.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -181,7 +182,8 @@ services:
     extra_hosts:
       - "pastita_db:172.20.0.2"
     ports:
-      - "6432:6432"
+      # Bind só em loopback — pgbouncer NÃO deve ser alcançável pela internet.
+      - "127.0.0.1:6432:6432"
     # imagem do pgbouncer não tem psql; checa a porta com nc
     healthcheck:
       test: ["CMD-SHELL", "nc -z localhost 6432 || exit 1"]
