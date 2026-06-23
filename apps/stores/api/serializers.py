@@ -1127,13 +1127,17 @@ def build_combo_groups(obj):
         variants = []
         for limit in group.variant_limits.all():
             variant = limit.variant
+            v_prod = getattr(variant, 'product', None)
+            v_tracks = bool(getattr(v_prod, 'track_stock', False)) and not bool(getattr(v_prod, 'allow_backorder', False))
             variants.append({
                 'variant_id': str(variant.id),
                 'name': variant.name,
                 'variant_name': variant.name,
                 'price': float(variant.price or anchor_price),
                 'price_override': float(limit.price_override) if limit.price_override else None,
-                'stock': variant.stock_quantity,
+                # stock=None (ilimitado) quando não rastreia estoque/permite backorder;
+                # senão o modal desabilita a opção achando que está esgotada.
+                'stock': (variant.stock_quantity if v_tracks else None),
                 'max_selections': limit.max_selections,
                 'image_url': variant.image.url if variant.image else variant.image_url,
             })
@@ -1143,12 +1147,15 @@ def build_combo_groups(obj):
         for opt in group.product_options.all().order_by('position'):
             p = opt.product
             p_img = (p.main_image.url if getattr(p, 'main_image', None) else None) or getattr(p, 'main_image_url', None)
+            p_tracks = bool(getattr(p, 'track_stock', False)) and not bool(getattr(p, 'allow_backorder', False))
             product_options.append({
                 'product_id': str(p.id),
                 'name': p.name,
                 'price': float(opt.price_override) if opt.price_override is not None else float(p.price),
                 'price_override': float(opt.price_override) if opt.price_override is not None else None,
-                'stock': p.stock_quantity,
+                # stock=None (ilimitado) p/ produto sob encomenda (track_stock=False) —
+                # senão o modal trata como esgotado e desabilita a opção do combo.
+                'stock': (p.stock_quantity if p_tracks else None),
                 'max_selections': opt.max_selections,
                 'image_url': p_img,
             })
