@@ -474,7 +474,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         queryset = StoreOrder.objects.all()
 
         if store_id:
-            queryset = queryset.filter(store_id=store_id)
+            # Aceita slug OU UUID (antes só UUID → slug dava 500 no painel).
+            queryset, _ = filter_by_store(queryset, store_id)
 
         now = timezone.now()
         today = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -483,8 +484,11 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         # Single aggregation query combines all counts
         agg = queryset.aggregate(
-            # Total counts by period
-            total=Count('id'),
+            # Total counts by period.
+            # 'count_total' (não 'total') p/ não colidir com o FIELD 'total' usado
+            # nos Sum('total') abaixo — o alias 'total' fazia o Django tratar o
+            # campo como agregado ("'total' is an aggregate") e estourava 500.
+            count_total=Count('id'),
             today=Count(Case(When(created_at__gte=today, then=1))),
             this_week=Count(Case(When(created_at__gte=week_ago, then=1))),
             this_month=Count(Case(When(created_at__gte=month_ago, then=1))),
@@ -493,6 +497,13 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             revenue_total=Sum('total', filter=Q(payment_status='paid')),
             revenue_today=Sum('total', filter=Q(payment_status='paid', created_at__gte=today)),
             revenue_week=Sum('total', filter=Q(payment_status='paid', created_at__gte=week_ago)),
+            revenue_pending=Sum('total', filter=Q(payment_status='pending')),
+
+            # Counts por payment_status (o painel de pagamentos precisa do
+            # nº exato de pagos/pendentes — by_status é STATUS do pedido, não
+            # do pagamento; um pedido pode estar 'pago' mas ainda 'confirmed').
+            paid_count=Count('id', filter=Q(payment_status='paid')),
+            pending_count=Count('id', filter=Q(payment_status='pending')),
 
             # By-status counts
             **{
@@ -503,7 +514,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         # Build response from single aggregation
         stats = {
-            'total': agg['total'],
+            'total': agg['count_total'],
             'today': agg['today'],
             'this_week': agg['this_week'],
             'this_month': agg['this_month'],
@@ -511,10 +522,15 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 status: agg.get(f'status_{status}', 0)
                 for status, _ in StoreOrder.OrderStatus.choices
             },
+            'by_payment_status': {
+                'paid': agg['paid_count'],
+                'pending': agg['pending_count'],
+            },
             'revenue': {
                 'total': agg['revenue_total'] or 0,
                 'today': agg['revenue_today'] or 0,
                 'week': agg['revenue_week'] or 0,
+                'pending': agg['revenue_pending'] or 0,
             }
         }
 
