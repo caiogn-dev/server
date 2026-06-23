@@ -1,0 +1,13 @@
+# Dependências de desenvolvimento / CI (não vão pra imagem de produção).
+# Instalar com: pip install -r requirements-dev.txt
+-r requirements.txt
+
+# Complexidade ciclomática (gate no CI) + relatório
+xenon>=0.9
+radon>=6.0
+
+# Cobertura — opt-in. NÃO está no addopts do pytest.ini porque o container de
+# produção/teste não traz pytest-cov (quebraria `pytest` lá dentro). Rodar com:
+#   pip install -r requirements-dev.txt && pytest --cov=apps --cov-report=term-missing
+coverage>=7.0
+pytest-cov>=4.1

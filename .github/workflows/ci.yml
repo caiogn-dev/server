@@ -33,3 +33,23 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           DJANGO_SETTINGS_MODULE: config.settings.development
         run: python manage.py makemigrations --check --dry-run
+
+  complexity:
+    # Gate de complexidade ciclomática (xenon). Estático, não precisa de banco.
+    # Calibrado para PASSAR no estado atual (média A, módulos ≤ C, 9 blocos F
+    # pré-existentes tolerados) e BLOQUEAR regressões: se a média passar de A,
+    # algum módulo piorar de C, ou surgir bloco pior que F, o build falha.
+    # Ratchet: quando os 9 blocos F forem refatorados (ver plano de refactor LLM —
+    # _build_dynamic_context/_build_customer_context/process_message etc.),
+    # apertar --max-absolute para E.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Instala xenon
+        run: pip install "xenon>=0.9" "radon>=6.0"
+      - name: Gate de complexidade (xenon)
+        run: xenon --max-absolute F --max-modules C --max-average A apps
