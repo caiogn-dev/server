@@ -252,7 +252,10 @@ class StoreProductVariant(models.Model):
         db_table = 'store_product_variants'
         verbose_name = 'Product Variant'
         verbose_name_plural = 'Product Variants'
-        ordering = ['product', 'sort_order']
+        # sort_order desempata por created_at: quando todas as variantes têm
+        # sort_order=0 (dashboard não seta), preserva a ordem de cadastro em vez
+        # da ordem arbitrária de UUID do Postgres.
+        ordering = ['product', 'sort_order', 'created_at']
 
     def __str__(self):
         return f"{self.product.name} - {self.name}"
