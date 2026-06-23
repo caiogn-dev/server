@@ -18,6 +18,7 @@ class WebSocketAuthTest(TestCase):
     def setUp(self):
         """Create test user and token."""
         self.user = User.objects.create_user(
+            username='ws-test',
             email='ws-test@example.com',
             password='pass123'
         )
@@ -45,6 +46,7 @@ class WebSocketListenerDeduplicationTest(TestCase):
     def setUp(self):
         """Create test user."""
         self.user = User.objects.create_user(
+            username='dedup-test',
             email='dedup-test@example.com',
             password='pass123'
         )
@@ -102,6 +104,7 @@ class WebSocketEventBroadcastTest(TestCase):
     def setUp(self):
         """Create test data."""
         self.user = User.objects.create_user(
+            username='broadcast-test',
             email='broadcast-test@example.com',
             password='pass123'
         )
@@ -124,7 +127,7 @@ class WebSocketEventBroadcastTest(TestCase):
         # Simulate event that would be broadcast
         event_data = {
             'type': 'order.created',
-            'order_id': order.id,
+            'order_id': str(order.id),
             'status': order.status,
             'total': str(order.total),
         }
@@ -133,7 +136,7 @@ class WebSocketEventBroadcastTest(TestCase):
         parsed = json.loads(json_str)
 
         self.assertEqual(parsed['type'], 'order.created')
-        self.assertEqual(parsed['order_id'], order.id)
+        self.assertEqual(parsed['order_id'], str(order.id))
         self.assertEqual(parsed['status'], 'pending')
 
     def test_order_updated_event_format(self):
@@ -149,7 +152,7 @@ class WebSocketEventBroadcastTest(TestCase):
         # Simulate status change event
         event_data = {
             'type': 'order.updated',
-            'order_id': order.id,
+            'order_id': str(order.id),
             'status': 'confirmed',
             'updated_at': '2026-06-04T14:00:00Z',
         }
@@ -175,6 +178,7 @@ class WebSocketChannelGroupNamingTest(TestCase):
     def test_group_name_from_real_store(self):
         """GREEN: Real store should generate correct group name."""
         user = User.objects.create_user(
+            username='group-test',
             email='group-test@example.com',
             password='pass123'
         )
