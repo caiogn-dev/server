@@ -27,6 +27,7 @@ from asgiref.sync import sync_to_async
 
 from apps.stores.models import Store, StoreOrder
 from apps.stores.consumers import StoreOrdersConsumer
+from apps.stores.services.realtime_service import store_orders_group
 
 User = get_user_model()
 
@@ -125,7 +126,7 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         order_id = str(order.id)
         channel_layer = get_channel_layer()
         await channel_layer.group_send(
-            f'store_{self.store.slug}',
+            store_orders_group(self.store.slug),
             {
                 'type': 'order.created',  # -> order_created handler
                 'order_id': order_id,
@@ -152,7 +153,7 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
 
         channel_layer = get_channel_layer()
         await channel_layer.group_send(
-            f'store_{self.store.slug}',
+            store_orders_group(self.store.slug),
             {
                 'type': 'order.updated',  # -> order_updated handler
                 'order_id': 789,
@@ -192,7 +193,7 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
 
         channel_layer = get_channel_layer()
         await channel_layer.group_send(
-            f'store_{self.store.slug}',
+            store_orders_group(self.store.slug),
             {
                 'type': 'order.created',
                 'order_id': 123,
@@ -234,7 +235,7 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         # consumer did not error out or drop the connection.
         channel_layer = get_channel_layer()
         await channel_layer.group_send(
-            f'store_{self.store.slug}',
+            store_orders_group(self.store.slug),
             {'type': 'order.updated', 'order_id': 1, 'status': 'paid'},
         )
         response = await asyncio.wait_for(communicator.receive_json_from(), timeout=5)

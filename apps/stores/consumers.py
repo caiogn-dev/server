@@ -10,6 +10,7 @@ from django.contrib.auth import get_user_model
 from apps.core.websocket_auth import validate_websocket_token
 from apps.core.websocket_listeners import generate_listener_id
 from apps.core.websocket_heartbeat import create_heartbeat_message
+from apps.stores.services.realtime_service import store_orders_group
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -57,7 +58,10 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
         # Generate dedup listener ID and join group
         self.listener_id = generate_listener_id(self.user.id, self.store_slug)
-        self.group_name = f'store_{self.store_slug}'
+        # Mesmo grupo que o broadcaster usa (store_orders_group) — antes era
+        # `store_{slug}` e divergia de `store_{slug}_orders`, então os eventos
+        # de pedido não chegavam ao painel pelo WebSocket.
+        self.group_name = store_orders_group(self.store_slug)
         await self.channel_layer.group_add(self.group_name, self.channel_name)
 
         # Start heartbeat task

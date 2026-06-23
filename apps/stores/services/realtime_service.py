@@ -8,6 +8,18 @@ from channels.layers import get_channel_layer
 
 logger = logging.getLogger(__name__)
 
+
+def store_orders_group(slug: str) -> str:
+    """Nome canônico do channel group de pedidos de uma loja.
+
+    Fonte ÚNICA da verdade: o consumer (StoreOrdersConsumer) entra neste grupo e
+    o broadcaster envia para ele. Antes os dois divergiam (`store_{slug}` no
+    consumer vs `store_{slug}_orders` no broadcaster) → os pushes de pedido NUNCA
+    chegavam ao painel pelo WebSocket. Manter os dois lados usando esta função.
+    """
+    return f"store_{slug}_orders"
+
+
 SUPPORTED_ORDER_EVENTS = {
     'order.created',
     'order.updated',
@@ -81,7 +93,7 @@ def broadcast_order_event(order, event_type: str | None = None, reason: str | No
             payload['reason'] = reason
 
         async_to_sync(channel_layer.group_send)(
-            f"store_{order.store.slug}_orders",
+            store_orders_group(order.store.slug),
             {key: value for key, value in payload.items() if value is not None},
         )
 
