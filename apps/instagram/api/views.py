@@ -589,6 +589,18 @@ class InstagramWebhookViewSet(viewsets.ViewSet):
     permission_classes = []
 
     def create(self, request):
+        from apps.core.utils import verify_webhook_signature
+
+        app_secret = getattr(settings, "INSTAGRAM_APP_SECRET", "")
+        if app_secret:
+            signature = request.headers.get("X-Hub-Signature-256", "")
+            raw_body = request.body
+            if not signature or not verify_webhook_signature(raw_body, signature, app_secret):
+                logger.warning("InstagramWebhook: assinatura inválida ou ausente — rejeitando request")
+                return Response({"status": "invalid_signature"}, status=403)
+        else:
+            logger.warning("InstagramWebhook: INSTAGRAM_APP_SECRET não configurado — validação de assinatura ignorada")
+
         from ..services.instagram_webhook_service import InstagramWebhookService
 
         payload = request.data

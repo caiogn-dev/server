@@ -1,3 +1,6 @@
+import hmac
+import logging
+
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -5,6 +8,8 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+
+logger = logging.getLogger(__name__)
 
 from ..models import (
     MessengerAccount,
@@ -351,7 +356,22 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
     permission_classes = []
 
     def create(self, request):
+        from apps.core.utils import verify_webhook_signature
         from ..tasks import process_messenger_webhook
+
+        # Messenger shares the same Facebook app secret as Instagram.
+        app_secret = (
+            getattr(settings, "MESSENGER_APP_SECRET", "")
+            or getattr(settings, "INSTAGRAM_APP_SECRET", "")
+        )
+        if app_secret:
+            signature = request.headers.get("X-Hub-Signature-256", "")
+            raw_body = request.body
+            if not signature or not verify_webhook_signature(raw_body, signature, app_secret):
+                logger.warning("MessengerWebhook: assinatura inválida ou ausente — rejeitando request")
+                return Response({"status": "invalid_signature"}, status=403)
+        else:
+            logger.warning("MessengerWebhook: MESSENGER_APP_SECRET não configurado — validação de assinatura ignorada")
 
         payload = request.data
         process_messenger_webhook.delay(payload)
@@ -365,8 +385,11 @@ class MessengerWebhookViewSet(viewsets.ViewSet):
         verify_token = (
             getattr(settings, "MESSENGER_WEBHOOK_VERIFY_TOKEN", None)
             or getattr(settings, "MESSENGER_VERIFY_TOKEN", "")
-        )
+        ) or ""
 
-        if mode == "subscribe" and token == verify_token:
+        tokens_match = bool(verify_token) and hmac.compare_digest(
+            (token or "").encode(), verify_token.encode()
+        )
+        if mode == "subscribe" and tokens_match:
             return Response(int(challenge))
         return Response("Verification failed", status=403)
