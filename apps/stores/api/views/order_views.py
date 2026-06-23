@@ -3,6 +3,7 @@ Order management API views.
 """
 import logging
 import uuid as uuid_module
+from decimal import Decimal
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
@@ -554,6 +555,28 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             )
         return qs.select_related('user', 'store')
     
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        """KPIs agregados dos clientes no escopo da loja (1 query).
+
+        Evita que o painel baixe centenas de clientes só para calcular
+        contadores no JS. O escopo reusa o get_queryset do viewset
+        (StoreQuerysetMixin + ?store=), garantindo isolamento por tenant.
+        """
+        agg = self.get_queryset().aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(is_active=True)),
+            with_orders=Count('id', filter=Q(total_orders__gt=0)),
+            total_revenue=Sum('total_spent'),
+        )
+        revenue = agg['total_revenue'] or Decimal('0.00')
+        return Response({
+            'total': agg['total'],
+            'active': agg['active'],
+            'with_orders': agg['with_orders'],
+            'total_revenue': f"{revenue:.2f}",
+        })
+
     @action(detail=True, methods=['post'])
     def update_stats(self, request, pk=None):
         """Recalculate customer statistics."""
