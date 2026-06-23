@@ -48,10 +48,28 @@ def _search_token_variants(token):
 
 
 def _accessible_conversations(user):
+    from django.db.models import Count, Q, Subquery, OuterRef
+    from apps.whatsapp.models.message import Message
+    from apps.users.models import UnifiedUser
+
+    # Sem isto o serializer fazia, POR conversa: 3 queries em whatsapp_messages
+    # (count/preview/unread) + 1 no handover (OneToOne) + 1 no unified_users = N+1.
+    # handover via select_related; o resto via annotate/Subquery (1 query total).
+    _last_msg = Message.objects.filter(conversation=OuterRef('pk')).order_by('-created_at')
+    _unified = UnifiedUser.objects.filter(phone_number=OuterRef('phone_number')).values('id')
     queryset = Conversation.objects.select_related(
-        'account', 'assigned_agent'
+        'account', 'assigned_agent', 'handover'
     ).prefetch_related(
         'account__stores', 'account__company_profile'
+    ).annotate(
+        anno_message_count=Count('messages', distinct=True),
+        anno_unread_count=Count(
+            'messages',
+            filter=Q(messages__direction='inbound', messages__read_at__isnull=True),
+            distinct=True,
+        ),
+        anno_last_text=Subquery(_last_msg.values('text_body')[:1]),
+        anno_unified_user_id=Subquery(_unified[:1]),
     )
     if user.is_superuser or user.is_staff:
         return queryset

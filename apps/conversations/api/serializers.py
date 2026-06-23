@@ -50,6 +50,10 @@ class ConversationSerializer(serializers.ModelSerializer):
         ]
 
     def get_unified_user_id(self, obj):
+        # Subquery do viewset evita 1 query/linha em unified_users.
+        if hasattr(obj, 'anno_unified_user_id'):
+            anno = obj.anno_unified_user_id
+            return str(anno) if anno else None
         from apps.users.models import UnifiedUser
         if not obj.phone_number:
             return None
@@ -64,10 +68,18 @@ class ConversationSerializer(serializers.ModelSerializer):
         return obj.profile_picture_url or ''
 
     def get_message_count(self, obj):
+        # Lê a annotation do viewset (1 query agregada) p/ não contar por linha.
+        anno = getattr(obj, 'anno_message_count', None)
+        if anno is not None:
+            return anno
         return obj.messages.count() if hasattr(obj, 'messages') else 0
 
     def get_last_message_preview(self, obj):
         """Get preview of the last message in the conversation."""
+        # Subquery do viewset traz o texto da última msg sem query por linha.
+        if hasattr(obj, 'anno_last_text'):
+            text = obj.anno_last_text or ''
+            return text[:50] + '...' if len(text) > 50 else text
         if hasattr(obj, 'messages'):
             last_msg = obj.messages.order_by('-created_at').first()
             if last_msg:
@@ -77,6 +89,9 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     def get_unread_count(self, obj):
         """Count unread inbound messages."""
+        anno = getattr(obj, 'anno_unread_count', None)
+        if anno is not None:
+            return anno
         if hasattr(obj, 'messages'):
             return obj.messages.filter(
                 direction='inbound',
