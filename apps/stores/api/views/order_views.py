@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from datetime import timedelta
@@ -255,8 +256,15 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(order).data)
     
     def _notify_order_update(self, order, event_type='order.updated'):
-        """Send WebSocket notification for order updates."""
-        broadcast_order_event(order, event_type=event_type)
+        """Send WebSocket notification for order updates.
+
+        Disparado via on_commit p/ rodar após o commit e fora do caminho do
+        response. Fora de um bloco atomic o callback executa imediatamente,
+        mantendo o comportamento idêntico (uma vez por evento de pedido).
+        """
+        transaction.on_commit(
+            lambda: broadcast_order_event(order, event_type=event_type)
+        )
 
     @action(detail=True, methods=['post'], url_path='add_tracking')
     def add_tracking(self, request, pk=None):

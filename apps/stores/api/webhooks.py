@@ -232,8 +232,13 @@ class MercadoPagoWebhookView(APIView):
         return Response({'status': 'acknowledged'}, status=status.HTTP_200_OK)
     
     def _notify_order_update(self, order):
-        """Send WebSocket notification for order update."""
-        broadcast_order_event(order)
+        """Send WebSocket notification for order update.
+
+        Disparado via on_commit p/ rodar após o commit e fora do caminho do
+        response. Fora de um bloco atomic o callback executa imediatamente,
+        mantendo o comportamento idêntico (uma vez por evento de pedido).
+        """
+        transaction.on_commit(lambda: broadcast_order_event(order))
     
     def _send_payment_confirmation_whatsapp(self, order):
         """

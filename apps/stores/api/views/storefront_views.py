@@ -874,7 +874,12 @@ class StoreCheckoutView(APIView):
 
             self._maybe_send_meta_purchase(request, order, payment_result)
 
-            broadcast_order_event(order, event_type='order.created')
+            # Dispara o broadcast após o commit, fora do caminho do response.
+            # Fora de um bloco atomic o Django executa o callback imediatamente,
+            # então o comportamento é idêntico (uma vez por pedido criado).
+            transaction.on_commit(
+                lambda: broadcast_order_event(order, event_type='order.created')
+            )
 
             # Clear cart after successful order
             cart_service.clear_cart(cart)
