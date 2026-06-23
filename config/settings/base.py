@@ -653,6 +653,13 @@ WHITENOISE_MANIFEST_STRICT = False
 POSTADO_ADMIN_TOKEN = os.environ.get('POSTADO_ADMIN_TOKEN', '')
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Request size limits — prevent DoS via oversized POST bodies
+# ─────────────────────────────────────────────────────────────────────────────
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(10 * 1024 * 1024)))  # 10 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(10 * 1024 * 1024)))  # 10 MB
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 500
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Admin URL — configurável via env var para segurança
 # ─────────────────────────────────────────────────────────────────────────────
 ADMIN_URL = os.environ.get('DJANGO_ADMIN_URL', 'django-admin') + '/'

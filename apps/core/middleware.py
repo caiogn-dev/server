@@ -29,22 +29,9 @@ class CSRFExemptMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        # If request has Authorization header with Token, mark as CSRF-safe
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-
-        # Debug: log auth header for /stores/*/orders/ endpoints
-        if '/stores/' in request.path and '/orders/' in request.path:
-            auth_type = 'none'
-            if auth_header.startswith('Token '):
-                auth_type = f'token: {auth_header[6:46]}...'
-            elif auth_header.startswith('Bearer '):
-                auth_type = f'bearer: {auth_header[7:37]}...'
-            logger.info(f'[ORDER_AUTH] {request.method} {request.path} - Auth: {auth_type}')
-
         if auth_header.startswith('Token ') or auth_header.startswith('Bearer '):
-            # Mark this request as CSRF-exempt
             request._dont_enforce_csrf_checks = True
-
         return self.get_response(request)
 
 
@@ -247,18 +234,20 @@ class RateLimitMiddleware:
             if request.method == 'POST':
                 client_ip = self.get_client_ip(request)
                 wh_key = f"rate_limit:webhook:{client_ip}"
-                wh_count = cache.get(wh_key, 0)
                 wh_max = getattr(settings, 'WEBHOOK_RATE_LIMIT_REQUESTS', 300)
-                if wh_count >= wh_max:
+                # Atomic add+incr: prevents race condition and preserves the original TTL window.
+                cache.add(wh_key, 0, 60)
+                wh_count = cache.incr(wh_key)
+                if wh_count > wh_max:
                     logger.warning(
-                        f"Webhook flood guard triggered for IP: {client_ip}",
+                        "Webhook flood guard triggered for IP: %s",
+                        client_ip,
                         extra={'ip': client_ip, 'count': wh_count},
                     )
                     return JsonResponse(
                         {'error': {'code': 'rate_limit_exceeded', 'message': 'Too many requests.'}},
                         status=429,
                     )
-                cache.set(wh_key, wh_count + 1, 60)
             return self.get_response(request)
 
         if request.path.startswith('/admin/'):
@@ -282,11 +271,16 @@ class RateLimitMiddleware:
 
         cache_key = f"rate_limit:{client_ip}"
 
-        request_count = cache.get(cache_key, 0)
+        # Atomic add+incr: cache.add only sets the key (with TTL) if it doesn't exist,
+        # preserving the original window. cache.incr is atomic, preventing race conditions
+        # where concurrent requests could both read count=0 and both proceed.
+        cache.add(cache_key, 0, self.window)
+        request_count = cache.incr(cache_key)
 
-        if request_count >= self.max_requests:
+        if request_count > self.max_requests:
             logger.warning(
-                f"Rate limit exceeded for IP: {client_ip}",
+                "Rate limit exceeded for IP: %s",
+                client_ip,
                 extra={'ip': client_ip, 'count': request_count}
             )
             return JsonResponse(
@@ -302,11 +296,9 @@ class RateLimitMiddleware:
                 status=429
             )
 
-        cache.set(cache_key, request_count + 1, self.window)
-
         response = self.get_response(request)
         response['X-RateLimit-Limit'] = str(self.max_requests)
-        response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count - 1))
+        response['X-RateLimit-Remaining'] = str(max(0, self.max_requests - request_count))
         response['X-RateLimit-Reset'] = str(self.window)
 
         return response
@@ -321,9 +313,12 @@ class RateLimitMiddleware:
             window = int(rule.get('window') or self.window)
             identity = self._rate_limit_identity(request, client_ip, rule.get('key_by', 'ip'))
             cache_key = f"rate_limit:scoped:{prefix}:{identity}"
-            request_count = cache.get(cache_key, 0)
 
-            if request_count >= max_requests:
+            # Atomic add+incr: preserves the original window TTL and prevents races.
+            cache.add(cache_key, 0, window)
+            request_count = cache.incr(cache_key)
+
+            if request_count > max_requests:
                 logger.warning(
                     "Scoped rate limit exceeded for %s identity=%s",
                     prefix,
@@ -349,10 +344,9 @@ class RateLimitMiddleware:
                     status=429
                 )
 
-            cache.set(cache_key, request_count + 1, window)
             response = self.get_response(request)
             response['X-RateLimit-Limit'] = str(max_requests)
-            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count - 1))
+            response['X-RateLimit-Remaining'] = str(max(0, max_requests - request_count))
             response['X-RateLimit-Reset'] = str(window)
             response['X-RateLimit-Scope'] = prefix
             return response
