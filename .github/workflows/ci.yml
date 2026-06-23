@@ -36,12 +36,14 @@ jobs:
 
   complexity:
     # Gate de complexidade ciclomática (xenon). Estático, não precisa de banco.
-    # Calibrado para PASSAR no estado atual (média A, módulos ≤ C, 9 blocos F
-    # pré-existentes tolerados) e BLOQUEAR regressões: se a média passar de A,
-    # algum módulo piorar de C, ou surgir bloco pior que F, o build falha.
-    # Ratchet: quando os 9 blocos F forem refatorados (ver plano de refactor LLM —
-    # _build_dynamic_context/_build_customer_context/process_message etc.),
-    # apertar --max-absolute para E.
+    # Calibrado para PASSAR no estado atual (média A/3.56, módulos ≤ C, 9 blocos F
+    # pré-existentes). Gates EFETIVOS hoje: --max-average A (trava degradação da
+    # média além de A) e --max-modules C (trava qualquer módulo piorar de C).
+    # --max-absolute F é simbólico (F já é o pior grau, então NÃO bloqueia um novo
+    # bloco F) — fica documentando o teto e vira o knob do ratchet: quando os 9
+    # blocos F forem refatorados (plano de refactor LLM — _build_dynamic_context/
+    # _build_customer_context/process_message etc.), apertar para --max-absolute E,
+    # que aí sim passa a barrar QUALQUER novo bloco F.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

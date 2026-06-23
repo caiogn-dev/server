@@ -781,6 +781,14 @@ class LangchainService:
         # 1. Load customer identity/order context (scoped to the resolved store).
         # Keep this factual and guarded: history is useful for CRM answers, but
         # must never become the current cart without explicit confirmation.
+        #
+        # MUDANÇA INTENCIONAL (isolamento multi-tenant): montamos o contexto do
+        # cliente UMA vez, já com escopo na store resolvida. O fluxo antigo fazia
+        # uma 1ª passada com store=None e só a descartava se a passada com escopo
+        # tivesse conteúdo — ou seja, quando o cliente só tinha histórico em OUTRA
+        # loja, dados de outro tenant (nome/endereço/pedidos) vazavam pro prompt
+        # desta loja. Agora, se não há contexto desta loja, nada é anexado. Ver
+        # test_dynamic_context.test_no_cross_store_customer_leak.
         try:
             customer_context = self._build_customer_context(
                 phone_number=phone_number,

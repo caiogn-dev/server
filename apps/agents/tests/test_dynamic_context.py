@@ -83,6 +83,34 @@ def test_customer_context_built_once_when_store_resolves(agent, store_with_produ
     )
 
 
+def test_no_cross_store_customer_leak(agent, store_with_products):
+    """
+    Isolamento multi-tenant: quando o contexto do cliente com escopo NESTA loja é
+    vazio (cliente só tem histórico em outra loja), NADA de cliente entra no prompt.
+    Lockdown da mudança intencional vs. o fluxo antigo (store=None) que vazava dados
+    de outro tenant. _build_customer_context retornando '' não deve anexar bloco.
+    """
+    svc = _make_service(agent)
+
+    accounts_qs = _patch_store_resolution(store_with_products)
+    agent_accounts = Mock()
+    agent_accounts.all.return_value = accounts_qs
+
+    # _build_customer_context com escopo na loja → vazio (sem dados desta loja)
+    with patch.object(svc, 'agent') as agent_mock:
+        agent_mock.context_prompt = "CTX ESTÁTICO"
+        agent_mock.accounts = agent_accounts
+        with patch.object(svc, '_build_customer_context', return_value=""):
+            out = svc._build_dynamic_context(
+                phone_number="5511999999999", conversation_id=None
+            )
+
+    assert "CONTEXTO DO CLIENTE" not in out, (
+        "Sem contexto desta loja, nenhum bloco de cliente deve aparecer "
+        "(não pode vazar dado de outro tenant)."
+    )
+
+
 def test_output_identical_snapshot(agent, store_with_products):
     """
     Snapshot: a saída completa, com store resolvida e customer context fixo,

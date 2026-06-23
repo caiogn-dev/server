@@ -5,7 +5,7 @@ import logging
 from django.core.cache import cache
 from django.db import transaction
 from django.db.models import Q
-from django.db.models.signals import post_save, pre_save
+from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 
 logger = logging.getLogger(__name__)
@@ -25,8 +25,14 @@ def invalidate_store_slug_cache(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender='stores.StoreProduct')
+@receiver(post_delete, sender='stores.StoreProduct')
 def invalidate_catalog_on_product_change(sender, instance, **kwargs):
-    """Bust the catalog cache whenever a product is saved."""
+    """Bust the catalog + agent menu cache whenever a product is saved OR deleted.
+
+    O delete é essencial: o cardápio do agente lista só produtos e o bot oferece
+    APENAS o que está nele; sem post_delete um produto removido continuaria sendo
+    oferecido por até 30min (TTL do cache).
+    """
     try:
         slug = instance.store.slug if instance.store_id else None
         if slug:
@@ -41,8 +47,9 @@ def invalidate_catalog_on_product_change(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender='stores.StoreCategory')
+@receiver(post_delete, sender='stores.StoreCategory')
 def invalidate_catalog_on_category_change(sender, instance, **kwargs):
-    """Bust the catalog cache whenever a category is saved."""
+    """Bust the catalog + agent menu cache whenever a category is saved OR deleted."""
     try:
         slug = instance.store.slug if instance.store_id else None
         if slug:

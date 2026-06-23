@@ -254,9 +254,6 @@ class StoreComboViewSet(viewsets.ModelViewSet):
     serializer_class = StoreComboSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
-    def get_queryset(self):
-        return StoreCombo.objects.prefetch_related(*COMBO_PREFETCH)
-
     @classmethod
     def queryset_for_test(cls, store):
         """Queryset filtrado por loja com o mesmo prefetch do get_queryset."""
@@ -318,9 +315,7 @@ class StoreComboViewSet(viewsets.ModelViewSet):
                                           (self.request.user.is_staff or self.request.user.is_superuser)):
             queryset = queryset.filter(is_active=True)
 
-        return queryset.select_related('store').prefetch_related(
-            'groups__product', 'groups__variant_limits__variant'
-        )
+        return queryset.select_related('store').prefetch_related(*COMBO_PREFETCH)
 
 
 class StoreProductTypeViewSet(viewsets.ModelViewSet):

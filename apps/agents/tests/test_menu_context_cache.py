@@ -76,6 +76,24 @@ def test_product_save_invalidates(agent, store_with_product):
     assert cache.get(menu_context_cache_key(store.id)) is None
 
 
+def test_product_delete_invalidates(agent, store_with_product):
+    """post_delete: produto removido NÃO pode continuar no cardápio cacheado.
+
+    O bot oferece só itens do menu; sem invalidar no delete, um produto removido
+    seria oferecido por até 30min (TTL).
+    """
+    cache.clear()
+    store, p = store_with_product
+    svc = _make_service(agent)
+
+    svc._build_menu_text(store)
+    assert cache.get(menu_context_cache_key(store.id)) is not None
+
+    p.delete()
+
+    assert cache.get(menu_context_cache_key(store.id)) is None
+
+
 def test_menu_text_identical_to_uncached(agent, store_with_product):
     cache.clear()
     store, p = store_with_product

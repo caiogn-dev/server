@@ -7,6 +7,8 @@ pequeno (count_large > count_small). Como ambos têm o MESMO número de queries
 (batch IN do prefetch_related), provamos constância em relação ao número de
 grupos G — um único data point não distinguiria O(1) de O(G).
 """
+from types import SimpleNamespace
+from django.contrib.auth.models import AnonymousUser
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 from django.db import connection
@@ -15,21 +17,34 @@ from apps.stores.api.views.product_views import StoreComboViewSet
 from apps.stores.tests.factories import make_combo_with_groups
 
 
-def _serialize_and_count(combo):
-    """Serializa um combo (queryset com prefetch) e conta as queries disparadas.
-
-    Força a avaliação completa dos grupos aninhados (variants + options) dentro
-    do bloco de captura, senão o prefetch lazy não dispara.
-    """
-    qs = StoreComboViewSet.queryset_for_test(store=combo.store).filter(id=combo.id)
+def _count_for_queryset(qs):
+    """Conta as queries de serializar `qs`, forçando avaliação do prefetch aninhado."""
     with CaptureQueriesContext(connection) as ctx:
         data = StoreComboSerializer(qs, many=True).data
         for c in data:
             for g in c["groups"]:
-                # tocar nas listas aninhadas garante avaliação do prefetch
                 list(g["variant_limits"])
                 list(g["product_options"])
     return len(ctx.captured_queries)
+
+
+def _serialize_and_count(combo):
+    """O(1) via o helper de teste (queryset_for_test, mesmo prefetch do get_queryset)."""
+    qs = StoreComboViewSet.queryset_for_test(store=combo.store).filter(id=combo.id)
+    return _count_for_queryset(qs)
+
+
+def _real_get_queryset_for(store):
+    """Dirige o get_queryset REAL do viewset (caminho de produção), não o helper.
+
+    Garante que o prefetch que efetivamente roda em produção é o COMBO_PREFETCH
+    completo — pega regressões como um get_queryset duplicado/sombreado.
+    """
+    view = StoreComboViewSet()
+    view.kwargs = {'store_slug': store.slug}
+    view.action = 'list'
+    view.request = SimpleNamespace(user=AnonymousUser(), query_params={})
+    return view.get_queryset()
 
 
 class ComboQueryCountTest(TestCase):
@@ -66,3 +81,19 @@ class ComboQueryCountTest(TestCase):
         assert count_large <= 9, (
             f"Esperado ≤9 queries (constante), obtido {count_large}."
         )
+
+    def test_real_get_queryset_path_is_also_constant(self):
+        """O caminho de PRODUÇÃO (get_queryset do viewset) também é O(1).
+
+        Cobre o furo de um get_queryset duplicado/sombreado servir um prefetch
+        incompleto (N+1 em variant.product / product_options) enquanto o helper
+        de teste continua verde.
+        """
+        qs_small = _real_get_queryset_for(self.store).filter(id=self.combo_small.id)
+        qs_large = _real_get_queryset_for(self.store).filter(id=self.combo_large.id)
+        count_small = _count_for_queryset(qs_small)
+        count_large = _count_for_queryset(qs_large)
+        assert count_small == count_large, (
+            f"N+1 no get_queryset real: 3 grupos={count_small}, 6 grupos={count_large}."
+        )
+        assert count_large <= 9, f"get_queryset real: esperado ≤9, obtido {count_large}."
