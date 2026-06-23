@@ -577,8 +577,11 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 Q(phone__icontains=search) |
                 Q(whatsapp__icontains=search)
             )
-        return qs.select_related('user', 'store')
-    
+        # prefetch_related('address_list'): get_default_address() e o campo
+        # 'addresses' do serializer eram lidos por linha → N+1 em
+        # store_customer_addresses. Com o prefetch, é 1 query p/ todos os endereços.
+        return qs.select_related('user', 'store').prefetch_related('address_list')
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """KPIs agregados dos clientes no escopo da loja (1 query).

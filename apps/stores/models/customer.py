@@ -130,9 +130,12 @@ class StoreCustomer(BaseModel):
         return f"{self.store.name} - {self.user.email}"
 
     def get_default_address(self):
-        addr = self.address_list.filter(is_default=True).first()
-        if addr is None:
-            addr = self.address_list.order_by('-created_at').first()
+        # Usa address_list.all() (não .filter/.order_by) para aproveitar o
+        # prefetch_related('address_list') da listagem e evitar N+1. O Meta.ordering
+        # de StoreCustomerAddress já é ['-is_default', '-created_at'], então o
+        # primeiro item é o default (ou, na falta, o mais recente) — mesma semântica
+        # do filter(is_default=True).first() / order_by('-created_at').first() antigo.
+        addr = next(iter(self.address_list.all()), None)
         if addr is None:
             return None
         return {
