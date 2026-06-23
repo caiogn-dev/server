@@ -244,10 +244,19 @@ class StoreCategorySerializer(serializers.ModelSerializer):
         return obj.get_image_url()
     
     def get_products_count(self, obj):
+        # Lê a annotation do viewset (1 query no JOIN) p/ não contar por categoria.
+        anno = getattr(obj, 'anno_products_count', None)
+        if anno is not None:
+            return anno
         return obj.products.filter(status='active').count()
-    
+
     def get_children(self, obj):
-        children = obj.children.filter(is_active=True)
+        # Usa o Prefetch('children', is_active) do viewset quando presente (sem query
+        # por linha); fallback p/ a query direta fora do contexto do viewset.
+        if 'children' in getattr(obj, '_prefetched_objects_cache', {}):
+            children = obj.children.all()
+        else:
+            children = obj.children.filter(is_active=True)
         return StoreCategorySerializer(children, many=True).data
 
 

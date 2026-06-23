@@ -52,11 +52,24 @@ class StoreCategoryViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return super().initialize_request(request, *args, **kwargs)
 
     def get_queryset(self):
+        from django.db.models import Count, Q, Prefetch
         qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
             qs, _ = filter_by_store(qs, store_param)
-        return qs.order_by('sort_order', 'name')
+        # products_count vinha de products.count() POR categoria e get_children de
+        # children.filter() POR categoria → N+1. Annotate conta os produtos ativos no
+        # JOIN (1 query) e o Prefetch dos filhos ativos (já anotados) elimina a query
+        # por linha. O serializer lê a annotation/o cache do prefetch.
+        active_products = Count('products', filter=Q(products__status='active'))
+        children_qs = qs.model.objects.filter(is_active=True).annotate(
+            anno_products_count=active_products,
+        ).order_by('sort_order', 'name')
+        return qs.annotate(
+            anno_products_count=active_products,
+        ).prefetch_related(
+            Prefetch('children', queryset=children_qs),
+        ).order_by('sort_order', 'name')
 
 
 class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
@@ -122,10 +135,16 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'combos',
             )
         else:
-            # List view: minimal related data (images is JSONField, not a relation)
+            # List view: o serializer SEMPRE serializa `variants` (reverse FK) e lê
+            # `product_type` (FK) por linha → sem isto era 1 query de variants por
+            # produto (N+1, até ~500 no page_size cheio). prefetch/select_related
+            # tornam O(1). images é JSONField (não é relação).
             qs = qs.select_related(
                 'category',
                 'store',
+                'product_type',
+            ).prefetch_related(
+                'variants',
             )
 
         return qs
