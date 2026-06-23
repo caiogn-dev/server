@@ -57,19 +57,25 @@ def make_variant(product, name=None, price=None):
     )
 
 
-def make_combo_with_groups(groups=3, variants=2, options=2):
+def make_combo_with_groups(groups=3, variants=2, options=2, store=None):
     """
-    Create a Store + StoreCombo with `groups` ComboProductGroups,
+    Create a StoreCombo with `groups` ComboProductGroups,
     each having `variants` variant_limits and `options` product_options.
+
+    If `store` is None, a fresh Store is created; pass an existing `store` to
+    create multiple combos in the same tenant (necessário para provar O(1) em
+    relação ao número de grupos serializando combos de tamanhos diferentes).
 
     Returns (store, combo).
     """
-    store = make_store()
+    if store is None:
+        store = make_store()
 
+    n = _uid()
     combo = StoreCombo.objects.create(
         store=store,
-        name="Test Combo",
-        slug="test-combo",
+        name=f"Test Combo {n}",
+        slug=f"test-combo-{n}",
         price=Decimal("50.00"),
         is_active=True,
     )
