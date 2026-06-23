@@ -59,7 +59,7 @@ class StorePrintAgentViewSet(viewsets.ModelViewSet):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
             queryset, _ = filter_by_store(queryset, store_param)
-        if self.request.user.is_staff or self.request.user.is_superuser:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(Q(store__owner=self.request.user) | Q(store__staff=self.request.user)).distinct()
 
@@ -91,7 +91,7 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
             queryset, _ = filter_by_store(queryset, store_param)
-        if self.request.user.is_staff or self.request.user.is_superuser:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(Q(store__owner=self.request.user) | Q(store__staff=self.request.user)).distinct()
 

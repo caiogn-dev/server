@@ -151,8 +151,7 @@ class StoreIntegrationViewSet(viewsets.ModelViewSet):
             return StoreIntegration.objects.filter(store_id=store_id)
         
         user = self.request.user
-        if user.is_staff:
-            return StoreIntegration.objects.all()
+        # is_staff NÃO concede acesso cross-tenant; accessible_store_ids já trata superuser.
         store_ids = accessible_store_ids(user)
         return StoreIntegration.objects.filter(store_id__in=store_ids)
     
@@ -189,8 +188,7 @@ class StoreWebhookViewSet(viewsets.ModelViewSet):
             return StoreWebhook.objects.filter(store_id=store_id)
         
         user = self.request.user
-        if user.is_staff:
-            return StoreWebhook.objects.all()
+        # is_staff NÃO concede acesso cross-tenant; accessible_store_ids já trata superuser.
         store_ids = accessible_store_ids(user)
         return StoreWebhook.objects.filter(store_id__in=store_ids)
     

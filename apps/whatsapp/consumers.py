@@ -149,7 +149,7 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         from .models import WhatsAppAccount
         try:
             account = WhatsAppAccount.objects.get(id=account_id)
-            return account.owner_id == self.user.id or self.user.is_staff or self.user.is_superuser
+            return account.owner_id == self.user.id or self.user.is_superuser
         except WhatsAppAccount.DoesNotExist:
             return False
 
@@ -275,6 +275,7 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
     @database_sync_to_async
     def get_user_account_ids(self) -> list:
         from .models import WhatsAppAccount
-        if self.user.is_staff:
+        # is_staff NÃO concede acesso cross-tenant — só superuser vê todas as contas.
+        if self.user.is_superuser:
             return [str(pk) for pk in WhatsAppAccount.objects.values_list('id', flat=True)]
         return [str(pk) for pk in WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)]
