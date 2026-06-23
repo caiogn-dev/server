@@ -1,4 +1,4 @@
-﻿"""Aggregated dashboard metrics helper."""
+"""Aggregated dashboard metrics helper."""
 from __future__ import annotations
 
 from dataclasses import dataclass

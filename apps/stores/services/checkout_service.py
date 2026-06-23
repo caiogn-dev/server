@@ -1,4 +1,4 @@
-﻿"""
+"""
 Checkout Service - Unified checkout for all stores.
 Handles order creation, payment processing, and stock management.
 """
