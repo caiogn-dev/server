@@ -72,15 +72,25 @@ def send_whatsapp_auth_code(request):
     """
     phone = request.data.get('phone_number')
     account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
-    
-    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
-    
-    if not phone:
+
+    if not phone or not str(phone).strip():
         return Response(
             {'error': 'phone_number é obrigatório'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
+    # Validate phone: must contain 8–15 digits (E.164 range) after stripping non-digits.
+    # Rejects garbage strings, empty-after-strip inputs, and overly long payloads
+    # before an unnecessary WhatsApp API call is made.
+    phone_digits = ''.join(filter(str.isdigit, str(phone)))
+    if len(phone_digits) < 8 or len(phone_digits) > 15:
+        return Response(
+            {'error': 'phone_number inválido — informe um número com DDD e código do país'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    logger.info("[WHATSAPP AUTH API] Request to send code — digits=%d", len(phone_digits))
+
     if not account_id:
         return Response(
             {'error': 'Nenhuma conta WhatsApp disponível para autenticação'},
@@ -145,14 +155,29 @@ def verify_whatsapp_auth_code(request):
     """
     phone = request.data.get('phone_number')
     code = request.data.get('code')
-    
-    if not phone or not code:
+
+    if not phone or not str(phone).strip() or not code:
         return Response(
             {'error': 'phone_number e code são obrigatórios'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
-    result = WhatsAppAuthService.verify_code(phone, code)
+
+    phone_digits = ''.join(filter(str.isdigit, str(phone)))
+    if len(phone_digits) < 8 or len(phone_digits) > 15:
+        return Response(
+            {'error': 'phone_number inválido'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    # OTP code must be exactly 6 digits
+    code_str = str(code).strip()
+    if not code_str.isdigit() or len(code_str) != 6:
+        return Response(
+            {'valid': False, 'error': 'invalid_code', 'message': 'Código deve ter 6 dígitos'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    result = WhatsAppAuthService.verify_code(phone, code_str)
     
     if result['valid']:
         whatsapp_user = result.get('user') or {}

@@ -651,6 +651,7 @@ WHITENOISE_MANIFEST_STRICT = False
 # Postado — AI social media posts admin
 # ─────────────────────────────────────────────────────────────────────────────
 POSTADO_ADMIN_TOKEN = os.environ.get('POSTADO_ADMIN_TOKEN', '')
+POSTADO_MP_WEBHOOK_SECRET = os.environ.get('POSTADO_MP_WEBHOOK_SECRET', '')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Admin URL — configurável via env var para segurança
