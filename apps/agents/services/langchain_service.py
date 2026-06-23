@@ -18,6 +18,7 @@ from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from apps.core.exceptions import BaseAPIException
 from ..models import Agent, AgentConversation, AgentMessage
+from .llm_cost import accumulate_usage, estimate_cost_brl
 
 logger = logging.getLogger(__name__)
 
@@ -1641,9 +1642,11 @@ class LangchainService:
 
             # Agentic loop: invoke → handle tool calls → repeat (max 5 iterations)
             response_text = ""
+            usage_acc = {}
             max_iterations = 2 if allowed_tools else 5
             for _iteration in range(max_iterations):
                 response = llm_with_tools.invoke(current_messages)
+                usage_acc = accumulate_usage(usage_acc, response)
                 tool_calls = getattr(response, 'tool_calls', [])
 
                 if not tool_calls:
@@ -1682,6 +1685,7 @@ class LangchainService:
                         HumanMessage(content="Com base nas informações acima, responda ao cliente agora.")
                     )
                     final_response = self.llm.invoke(current_messages)
+                    usage_acc = accumulate_usage(usage_acc, final_response)
                     content = final_response.content
                     if isinstance(content, bytes):
                         content = content.decode('utf-8')
@@ -1712,12 +1716,28 @@ class LangchainService:
                     logger.warning(f"Error saving to memory: {e}")
 
             processing_time = time.time() - start_time
+
+            model_name = self.agent.model_name
+            input_tokens = usage_acc.get('input_tokens', 0)
+            output_tokens = usage_acc.get('output_tokens', 0)
+            total_tokens = usage_acc.get('total_tokens', 0)
+            cost_brl = estimate_cost_brl(model_name, input_tokens, output_tokens)
+
+            logger.info(
+                "[LLM COST] model=%s in=%s out=%s total=%s cost_brl=%s agent=%s session=%s",
+                model_name, input_tokens, output_tokens, total_tokens,
+                cost_brl, self.agent.id, session_id,
+            )
+
             return {
                 'response': response_text,
                 'session_id': session_id,
                 'processing_time': processing_time,
-                'model': self.agent.model_name,
-                'tokens_used': getattr(response, 'usage_metadata', {}).get('total_tokens', 0),
+                'model': model_name,
+                'tokens_used': total_tokens,        # agora soma de TODAS as iterações
+                'input_tokens': input_tokens,
+                'output_tokens': output_tokens,
+                'cost_brl': str(cost_brl),          # str p/ serialização JSON segura
                 'order_created': created_order,
             }
 
