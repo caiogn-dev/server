@@ -314,7 +314,7 @@ class StoreCatalogView(APIView):
         combos = StoreCombo.objects.filter(store=store, is_active=True) \
             .prefetch_related(
                 'groups__product',
-                'groups__variant_limits__variant',
+                'groups__variant_limits__variant__product',
                 'groups__product_options__product',
             ) \
             .order_by('sort_order', 'name')

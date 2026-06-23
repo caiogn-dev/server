@@ -1122,7 +1122,7 @@ def build_combo_groups(obj):
     (storefront) para garantir paridade do contrato de exibição.
     """
     groups_data = []
-    for group in obj.groups.all().order_by('position'):
+    for group in sorted(obj.groups.all(), key=lambda g: g.position):
         anchor_price = group.product.price if group.product_id else 0
         variants = []
         for limit in group.variant_limits.all():
@@ -1144,7 +1144,7 @@ def build_combo_groups(obj):
 
         # Opções de PRODUTO (escolha entre vários produtos no grupo)
         product_options = []
-        for opt in group.product_options.all().order_by('position'):
+        for opt in sorted(group.product_options.all(), key=lambda o: o.position):
             p = opt.product
             p_img = (p.main_image.url if getattr(p, 'main_image', None) else None) or getattr(p, 'main_image_url', None)
             p_tracks = bool(getattr(p, 'track_stock', False)) and not bool(getattr(p, 'allow_backorder', False))

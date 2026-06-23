@@ -241,11 +241,26 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
         return qs
 
 
+COMBO_PREFETCH = (
+    'groups__product',
+    'groups__variant_limits__variant__product',
+    'groups__product_options__product',
+)
+
+
 class StoreComboViewSet(viewsets.ModelViewSet):
     """ViewSet for managing store combos."""
 
     serializer_class = StoreComboSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        return StoreCombo.objects.prefetch_related(*COMBO_PREFETCH)
+
+    @classmethod
+    def queryset_for_test(cls, store):
+        """Queryset filtrado por loja com o mesmo prefetch do get_queryset."""
+        return StoreCombo.objects.filter(store=store).prefetch_related(*COMBO_PREFETCH)
 
     def _assert_store_access(self, store):
         from rest_framework.exceptions import PermissionDenied
