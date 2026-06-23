@@ -663,6 +663,48 @@ class LangchainService:
         except Exception as exc:
             return {'found': False, 'message': f'Erro ao consultar pagamento: {exc}'}
 
+    def _resolve_store(self, conversation_id) -> Optional['Store']:
+        """
+        Resolve a store for the current conversation, guarded so it never raises.
+
+        Primeiro tenta o contexto canônico de automação (via Conversation), depois
+        cai para a primeira conta associada ao agente. Retorna a store ou None.
+        """
+        store = None
+
+        if conversation_id:
+            try:
+                from apps.conversations.models import Conversation
+                from apps.automation.services.context_service import AutomationContextService
+                conv = Conversation.objects.select_related('account').get(id=conversation_id)
+                store = AutomationContextService.resolve(conversation=conv).store
+                if store:
+                    logger.info(f"[AGENT CONTEXT] Found store via automation context: {store.name}")
+            except Conversation.DoesNotExist:
+                logger.warning(f"[AGENT CONTEXT] Conversation {conversation_id} not found")
+            except Exception as e:
+                logger.error(f"[AGENT CONTEXT] Error loading store from automation context: {e}")
+
+        # If not found, try from agent's associated accounts
+        if not store:
+            try:
+                agent_accounts = self.agent.accounts.all()
+                first_account = agent_accounts.first()
+                if first_account:
+                    if hasattr(first_account, 'store') and first_account.store:
+                        store = first_account.store
+                        logger.info(f"[AGENT CONTEXT] Found store via account.store: {store.name}")
+                    elif hasattr(first_account, 'stores') and first_account.stores.exists():
+                        store = first_account.stores.first()
+                        logger.info(f"[AGENT CONTEXT] Found store via account.stores: {store.name}")
+            except Exception as e:
+                logger.error(f"[AGENT CONTEXT] Error loading store from accounts: {e}")
+
+        if not store:
+            logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
+
+        return store
+
     def _build_dynamic_context(self, phone_number: str, conversation_id: Optional[str] = None) -> str:
         """
         Build dynamic context with store data for the current conversation.
@@ -677,14 +719,19 @@ class LangchainService:
         if self.agent.context_prompt:
             context_parts.append(self.agent.context_prompt)
 
-        # 1. Load customer identity/order context.
+        # Resolve the store ONCE, before building customer context — assim o
+        # contexto do cliente já é montado com escopo na store certa numa única
+        # chamada (antes resolvíamos depois e refazíamos o contexto, desperdício).
+        store = self._resolve_store(conversation_id)
+
+        # 1. Load customer identity/order context (scoped to the resolved store).
         # Keep this factual and guarded: history is useful for CRM answers, but
         # must never become the current cart without explicit confirmation.
         try:
             customer_context = self._build_customer_context(
                 phone_number=phone_number,
                 conversation_id=conversation_id,
-                store=None,
+                store=store,
             )
             if customer_context:
                 context_parts.append(customer_context)
@@ -693,54 +740,6 @@ class LangchainService:
 
         # 2. Load store menu/catalog
         try:
-            # Try to get store from the canonical automation context first.
-            store = None
-
-            if conversation_id:
-                try:
-                    from apps.conversations.models import Conversation
-                    from apps.automation.services.context_service import AutomationContextService
-                    conv = Conversation.objects.select_related('account').get(id=conversation_id)
-                    store = AutomationContextService.resolve(conversation=conv).store
-                    if store:
-                        logger.info(f"[AGENT CONTEXT] Found store via automation context: {store.name}")
-                except Conversation.DoesNotExist:
-                    logger.warning(f"[AGENT CONTEXT] Conversation {conversation_id} not found")
-                except Exception as e:
-                    logger.error(f"[AGENT CONTEXT] Error loading store from automation context: {e}")
-
-            # If not found, try from agent's associated accounts
-            if not store:
-                try:
-                    agent_accounts = self.agent.accounts.all()
-                    first_account = agent_accounts.first()
-                    if first_account:
-                        if hasattr(first_account, 'store') and first_account.store:
-                            store = first_account.store
-                            logger.info(f"[AGENT CONTEXT] Found store via account.store: {store.name}")
-                        elif hasattr(first_account, 'stores') and first_account.stores.exists():
-                            store = first_account.stores.first()
-                            logger.info(f"[AGENT CONTEXT] Found store via account.stores: {store.name}")
-                except Exception as e:
-                    logger.error(f"[AGENT CONTEXT] Error loading store from accounts: {e}")
-
-            if not store:
-                logger.warning("[AGENT CONTEXT] No store found — context will be incomplete")
-
-            # Rebuild customer context scoped to the resolved store when possible.
-            if store:
-                scoped_customer_context = self._build_customer_context(
-                    phone_number=phone_number,
-                    conversation_id=conversation_id,
-                    store=store,
-                )
-                if scoped_customer_context:
-                    context_parts = [
-                        part for part in context_parts
-                        if not part.startswith("👤 CONTEXTO DO CLIENTE")
-                    ]
-                    context_parts.append(scoped_customer_context)
-
             # Add operational guidance scoped to the current store context.
             if store:
                 context_parts.append(
