@@ -33,6 +33,11 @@ def invalidate_catalog_on_product_change(sender, instance, **kwargs):
             cache.delete(f'catalog:{slug}')
     except Exception as e:
         logger.warning("Failed to invalidate catalog cache on product save: %s", e)
+    try:
+        from apps.agents.services.langchain_service import invalidate_menu_context
+        invalidate_menu_context(instance.store_id)
+    except Exception as e:
+        logger.warning("Failed to invalidate agent menu_ctx: %s", e)
 
 
 @receiver(post_save, sender='stores.StoreCategory')
@@ -44,6 +49,11 @@ def invalidate_catalog_on_category_change(sender, instance, **kwargs):
             cache.delete(f'catalog:{slug}')
     except Exception as e:
         logger.warning("Failed to invalidate catalog cache on category save: %s", e)
+    try:
+        from apps.agents.services.langchain_service import invalidate_menu_context
+        invalidate_menu_context(instance.store_id)
+    except Exception as e:
+        logger.warning("Failed to invalidate agent menu_ctx: %s", e)
 
 
 @receiver(post_save, sender='stores.StoreCombo')

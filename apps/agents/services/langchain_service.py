@@ -21,6 +21,17 @@ from ..models import Agent, AgentConversation, AgentMessage
 
 logger = logging.getLogger(__name__)
 
+_MENU_CTX_TTL = 60 * 30  # 30 min; invalidação por signal garante frescor
+
+
+def menu_context_cache_key(store_id) -> str:
+    return f"agent:menu_ctx:{store_id}"
+
+
+def invalidate_menu_context(store_id) -> None:
+    if store_id:
+        cache.delete(menu_context_cache_key(store_id))
+
 
 def remove_accents(text):
     """Remove combining diacritics from text to avoid encoding issues with some LLM APIs."""
@@ -705,6 +716,48 @@ class LangchainService:
 
         return store
 
+    def _build_menu_text(self, store) -> str:
+        """Formata o CARDÁPIO INTERNO da loja. Cacheado em Redis por store.id
+        (invalidado no save de produto/categoria). Retorna '' quando não há produtos."""
+        key = menu_context_cache_key(store.id)
+        cached = cache.get(key)
+        if cached is not None:        # '' é um hit válido (loja sem produtos)
+            return cached
+
+        from apps.stores.models import StoreProduct
+        products = StoreProduct.objects.filter(
+            store=store,
+            is_active=True,
+        ).select_related('category').order_by(
+            'category__sort_order', 'category__name', 'name'
+        ).exclude(tags__contains=['ingrediente'])
+
+        menu_text = ''
+        if products:
+            menu_text = (
+                f"\n📋 CARDÁPIO INTERNO - {store.name} "
+                "(use para consultar e resumir, sem colar tudo ao cliente):\n"
+            )
+            current_category = None
+
+            for product in products:
+                cat_name = product.category.name if product.category else 'Outros'
+                if cat_name != current_category:
+                    current_category = cat_name
+                    menu_text += f"\n【{current_category}】\n"
+
+                stock_note = ''
+                if product.track_stock:
+                    if product.stock_quantity <= 0:
+                        stock_note = ' [ESGOTADO]'
+                    elif product.stock_quantity <= 3:
+                        stock_note = f' [últimas {product.stock_quantity} unidades]'
+
+                menu_text += f"• {product.name} - R$ {product.price}{stock_note}\n"
+
+        cache.set(key, menu_text, _MENU_CTX_TTL)
+        return menu_text
+
     def _build_dynamic_context(self, phone_number: str, conversation_id: Optional[str] = None) -> str:
         """
         Build dynamic context with store data for the current conversation.
@@ -761,36 +814,9 @@ class LangchainService:
             # Load products from store — all active, grouped by category, with stock status
             if store:
                 try:
-                    from apps.stores.models import StoreProduct
-                    products = StoreProduct.objects.filter(
-                        store=store,
-                        is_active=True,
-                    ).select_related('category').order_by(
-                        'category__sort_order', 'category__name', 'name'
-                    ).exclude(tags__contains=['ingrediente'])
+                    menu_text = self._build_menu_text(store)
 
-                    if products:
-                        menu_text = (
-                            f"\n📋 CARDÁPIO INTERNO - {store.name} "
-                            "(use para consultar e resumir, sem colar tudo ao cliente):\n"
-                        )
-                        current_category = None
-
-                        for product in products:
-                            cat_name = product.category.name if product.category else 'Outros'
-                            if cat_name != current_category:
-                                current_category = cat_name
-                                menu_text += f"\n【{current_category}】\n"
-
-                            stock_note = ''
-                            if product.track_stock:
-                                if product.stock_quantity <= 0:
-                                    stock_note = ' [ESGOTADO]'
-                                elif product.stock_quantity <= 3:
-                                    stock_note = f' [últimas {product.stock_quantity} unidades]'
-
-                            menu_text += f"• {product.name} - R$ {product.price}{stock_note}\n"
-
+                    if menu_text:
                         context_parts.append(menu_text)
 
                         # Delivery info
