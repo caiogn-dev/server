@@ -64,10 +64,13 @@ class ConversationSerializer(serializers.ModelSerializer):
         return obj.profile_picture_url or ''
 
     def get_message_count(self, obj):
+        # Use annotation from _accessible_conversations when available (avoids N+1 COUNT query)
+        annotated = getattr(obj, '_message_count', None)
+        if annotated is not None:
+            return annotated
         return obj.messages.count() if hasattr(obj, 'messages') else 0
 
     def get_last_message_preview(self, obj):
-        """Get preview of the last message in the conversation."""
         if hasattr(obj, 'messages'):
             last_msg = obj.messages.order_by('-created_at').first()
             if last_msg:
@@ -76,7 +79,10 @@ class ConversationSerializer(serializers.ModelSerializer):
         return ''
 
     def get_unread_count(self, obj):
-        """Count unread inbound messages."""
+        # Use annotation from _accessible_conversations when available (avoids N+1 COUNT query)
+        annotated = getattr(obj, '_unread_count', None)
+        if annotated is not None:
+            return annotated
         if hasattr(obj, 'messages'):
             return obj.messages.filter(
                 direction='inbound',

@@ -3,7 +3,7 @@ Conversation API views.
 """
 import logging
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Count, Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
@@ -51,7 +51,16 @@ def _accessible_conversations(user):
     queryset = Conversation.objects.select_related(
         'account', 'assigned_agent'
     ).prefetch_related(
-        'account__stores', 'account__company_profile'
+        'account__stores', 'account__company_profile',
+    ).annotate(
+        # Resolve N+1: get_message_count and get_unread_count in
+        # ConversationSerializer issued one COUNT query per conversation.
+        _message_count=Count('messages', distinct=True),
+        _unread_count=Count(
+            'messages',
+            filter=Q(messages__direction='inbound', messages__read_at__isnull=True),
+            distinct=True,
+        ),
     )
     if user.is_superuser or user.is_staff:
         return queryset
