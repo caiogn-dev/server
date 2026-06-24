@@ -5,6 +5,7 @@ Handles order creation, payment processing, and stock management.
 import logging
 import re
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import urlparse
 from django.db import models, transaction
