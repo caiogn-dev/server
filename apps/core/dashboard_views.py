@@ -3,10 +3,11 @@ Dashboard API views - Aggregated metrics and statistics.
 """
 import logging
 import uuid
-from datetime import timedelta
+from datetime import timedelta, timezone as dt_timezone
 from typing import Optional
 from django.utils import timezone
 from django.db.models import Count, Sum, Avg, Q, F
+from django.db.models.functions import TruncDate
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -688,80 +689,102 @@ class DashboardChartsView(APIView):
         
         now = timezone.now()
         start_date = now - timedelta(days=days)
-        
-        # Messages per day
-        messages_per_day = []
-        for i in range(days):
-            day_start = (now - timedelta(days=days-1-i)).replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day_start + timedelta(days=1)
-            
-            inbound = Message.objects.filter(
+
+        # Janela = [primeiro dia 00:00 UTC, agora]. TruncDate em UTC p/ bater
+        # com os buckets de meia-noite UTC que o código antigo montava no Python.
+        utc = dt_timezone.utc
+        window_start = (now - timedelta(days=days - 1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        day_keys = [
+            (window_start + timedelta(days=i)).strftime('%Y-%m-%d')
+            for i in range(days)
+        ]
+
+        # Messages per day — 1 query agregada (era days*2 .count())
+        msg_rows = (
+            Message.objects.filter(
                 account_id__in=account_ids,
-                direction='inbound',
-                created_at__gte=day_start,
-                created_at__lt=day_end
-            ).count()
-            
-            outbound = Message.objects.filter(
+                created_at__gte=window_start,
+            )
+            .annotate(day=TruncDate('created_at', tzinfo=utc))
+            .values('day', 'direction')
+            .annotate(c=Count('id'))
+        )
+        msg_in = {}
+        msg_out = {}
+        for row in msg_rows:
+            key = row['day'].strftime('%Y-%m-%d')
+            if row['direction'] == 'inbound':
+                msg_in[key] = row['c']
+            elif row['direction'] == 'outbound':
+                msg_out[key] = row['c']
+        messages_per_day = [
+            {
+                'date': k,
+                'inbound': msg_in.get(k, 0),
+                'outbound': msg_out.get(k, 0),
+                'total': msg_in.get(k, 0) + msg_out.get(k, 0),
+            }
+            for k in day_keys
+        ]
+
+        # Orders per day — 2 queries agregadas (era days*2)
+        order_count_rows = (
+            orders_qs.filter(created_at__gte=window_start)
+            .annotate(day=TruncDate('created_at', tzinfo=utc))
+            .values('day')
+            .annotate(c=Count('id'))
+        )
+        order_counts = {r['day'].strftime('%Y-%m-%d'): r['c'] for r in order_count_rows}
+        revenue_rows = (
+            orders_qs.filter(paid_at__gte=window_start)
+            .annotate(day=TruncDate('paid_at', tzinfo=utc))
+            .values('day')
+            .annotate(total=Sum('total'))
+        )
+        revenue_by_day = {
+            r['day'].strftime('%Y-%m-%d'): float(r['total'] or 0) for r in revenue_rows
+        }
+        orders_per_day = [
+            {
+                'date': k,
+                'count': order_counts.get(k, 0),
+                'revenue': revenue_by_day.get(k, 0.0),
+            }
+            for k in day_keys
+        ]
+
+        # Conversations per day — 2 queries agregadas (era days*2)
+        conv_new_rows = (
+            Conversation.objects.filter(
                 account_id__in=account_ids,
-                direction='outbound',
-                created_at__gte=day_start,
-                created_at__lt=day_end
-            ).count()
-            
-            messages_per_day.append({
-                'date': day_start.strftime('%Y-%m-%d'),
-                'inbound': inbound,
-                'outbound': outbound,
-                'total': inbound + outbound,
-            })
-        
-        # Orders per day
-        orders_per_day = []
-        for i in range(days):
-            day_start = (now - timedelta(days=days-1-i)).replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day_start + timedelta(days=1)
-            
-            count = orders_qs.filter(
-                created_at__gte=day_start,
-                created_at__lt=day_end
-            ).count()
-            
-            revenue = orders_qs.filter(
-                paid_at__gte=day_start,
-                paid_at__lt=day_end
-            ).aggregate(total=Sum('total'))['total'] or 0
-            
-            orders_per_day.append({
-                'date': day_start.strftime('%Y-%m-%d'),
-                'count': count,
-                'revenue': float(revenue),
-            })
-        
-        # Conversations per day
-        conversations_per_day = []
-        for i in range(days):
-            day_start = (now - timedelta(days=days-1-i)).replace(hour=0, minute=0, second=0, microsecond=0)
-            day_end = day_start + timedelta(days=1)
-            
-            new_conversations = Conversation.objects.filter(
+                created_at__gte=window_start,
+            )
+            .annotate(day=TruncDate('created_at', tzinfo=utc))
+            .values('day')
+            .annotate(c=Count('id'))
+        )
+        conv_new = {r['day'].strftime('%Y-%m-%d'): r['c'] for r in conv_new_rows}
+        conv_resolved_rows = (
+            Conversation.objects.filter(
                 account_id__in=account_ids,
-                created_at__gte=day_start,
-                created_at__lt=day_end
-            ).count()
-            
-            resolved = Conversation.objects.filter(
-                account_id__in=account_ids,
-                resolved_at__gte=day_start,
-                resolved_at__lt=day_end
-            ).count()
-            
-            conversations_per_day.append({
-                'date': day_start.strftime('%Y-%m-%d'),
-                'new': new_conversations,
-                'resolved': resolved,
-            })
-        
+                resolved_at__gte=window_start,
+            )
+            .annotate(day=TruncDate('resolved_at', tzinfo=utc))
+            .values('day')
+            .annotate(c=Count('id'))
+        )
+        conv_resolved = {r['day'].strftime('%Y-%m-%d'): r['c'] for r in conv_resolved_rows}
+        conversations_per_day = [
+            {
+                'date': k,
+                'new': conv_new.get(k, 0),
+                'resolved': conv_resolved.get(k, 0),
+            }
+            for k in day_keys
+        ]
+
         # Message types distribution
         message_types = dict(
             Message.objects.filter(
