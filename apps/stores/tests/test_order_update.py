@@ -59,3 +59,33 @@ class OrderUpdateSchedulingTestCase(APITestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         self.order.refresh_from_db()
         self.assertEqual(str(self.order.total), '10.00')
+
+    # -----------------------------------------------------------------------
+    # M-1 + M-2: delivery_address validation
+    # -----------------------------------------------------------------------
+
+    def test_m2_patch_delivery_address_null_persists_empty_dict(self):
+        """M-2: PATCH com delivery_address: null → 200 e persiste {} no banco."""
+        resp = self.client.patch(self.url, {'delivery_address': None}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.order.refresh_from_db()
+        # Deve ser um dict (vazio ou {}) — nunca None
+        self.assertIsInstance(self.order.delivery_address, dict)
+
+    def test_m1_patch_delivery_address_string_returns_400(self):
+        """M-1: PATCH com delivery_address como string → 400 (não persiste)."""
+        resp = self.client.patch(self.url, {'delivery_address': 'rua invalida'}, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_m1_patch_delivery_address_list_returns_400(self):
+        """M-1: PATCH com delivery_address como lista → 400."""
+        resp = self.client.patch(self.url, {'delivery_address': ['a', 'b']}, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_patch_valid_delivery_address_dict_persists(self):
+        """Sanidade: PATCH com dict válido → 200 e persiste."""
+        addr = {'street': 'Rua das Flores', 'number': '42'}
+        resp = self.client.patch(self.url, {'delivery_address': addr}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.delivery_address.get('street'), 'Rua das Flores')

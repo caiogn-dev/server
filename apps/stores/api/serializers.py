@@ -906,9 +906,20 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
             'scheduled_time': {'required': False, 'allow_blank': True},
             'customer_name': {'required': False},
             'customer_phone': {'required': False},
-            'delivery_address': {'required': False},
+            # M-2: aceitar null explícito sem 400; M-1: rejeitar não-dicionário
+            'delivery_address': {'required': False, 'allow_null': True},
             'customer_notes': {'required': False, 'allow_blank': True},
         }
+
+    def validate_delivery_address(self, value):
+        """M-1+M-2: null vira {}; não-dicionário é rejeitado com 400."""
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                'delivery_address deve ser um objeto JSON (dicionário), não um valor escalar.'
+            )
+        return value
 
 
 class StoreCustomerSerializer(serializers.ModelSerializer):
@@ -955,7 +966,14 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
                 create=True,
             )
             validated_data['user'] = user
-            return StoreCustomer.objects.create(**validated_data)
+            # M-4: unique_together(store, user) — get_or_create evita IntegrityError
+            # (500) quando o mesmo cliente é enviado duas vezes pelo dashboard.
+            customer, _created = StoreCustomer.objects.get_or_create(
+                store=store,
+                user=user,
+                defaults=validated_data,
+            )
+            return customer
 
     def update(self, instance, validated_data):
         name = validated_data.pop('name', None)

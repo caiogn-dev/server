@@ -6,7 +6,7 @@ import uuid as uuid_module
 from decimal import Decimal
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError as DRFValidationError
+from rest_framework.exceptions import ValidationError as DRFValidationError, PermissionDenied
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -19,7 +19,7 @@ from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.stores.services.order_service import OrderService
 from apps.stores.services.print_service import enqueue_order_print_job
-from apps.core.permissions import StoreQuerysetMixin
+from apps.core.permissions import StoreQuerysetMixin, user_can_access_store
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
     StoreCustomerSerializer, StorePrintJobSerializer,
@@ -584,21 +584,32 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return qs.select_related('user', 'store').prefetch_related('address_list')
 
     def perform_create(self, serializer):
-        """Injeta a store do path no create para garantir isolamento por tenant."""
+        """Injeta a store no create garantindo isolamento por tenant.
+
+        I-1: Na rota flat (?store=<slug>), IsStoreOwnerOrStaff não pode checar
+        o store_pk (não existe no kwargs), então verificamos aqui explicitamente
+        se o usuário tem acesso à loja resolvida antes de salvar.
+        M-3: A branch sem store foi removida — sem store resolvida é 400/403,
+        nunca um save silencioso storeless.
+        """
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
-        store = None
-        if store_param:
-            try:
-                uuid_module.UUID(str(store_param))
-                store = Store.objects.filter(pk=store_param).first()
-            except (ValueError, AttributeError):
-                store = Store.objects.filter(slug=store_param).first()
-            if store is None:
-                raise DRFValidationError({'store': 'Loja não encontrada.'})
-        if store is not None:
-            serializer.save(store=store)
-        else:
-            serializer.save()
+        if not store_param:
+            raise DRFValidationError({'store': 'Parâmetro store é obrigatório.'})
+
+        try:
+            uuid_module.UUID(str(store_param))
+            store = Store.objects.filter(pk=store_param).first()
+        except (ValueError, AttributeError):
+            store = Store.objects.filter(slug=store_param).first()
+
+        if store is None:
+            raise DRFValidationError({'store': 'Loja não encontrada.'})
+
+        # I-1: verificar acesso ao store resolvido (cobre a rota flat sem store_pk)
+        if not self.request.user.is_superuser and not user_can_access_store(self.request.user, store):
+            raise PermissionDenied('Você não tem permissão para criar clientes nesta loja.')
+
+        serializer.save(store=store)
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
