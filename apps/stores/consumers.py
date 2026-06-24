@@ -281,10 +281,13 @@ class CustomerOrderConsumer(AsyncJsonWebsocketConsumer):
     
     async def disconnect(self, close_code):
         """Handle WebSocket disconnection."""
-        await self.channel_layer.group_discard(
-            self.room_group_name,
-            self.channel_name
-        )
+        try:
+            await self.channel_layer.group_discard(
+                self.room_group_name,
+                self.channel_name
+            )
+        except Exception as e:
+            logger.error(f"CustomerOrderConsumer group_discard error: {e}")
     
     async def receive_json(self, content):
         """Handle incoming messages from client."""
@@ -336,7 +339,7 @@ class CustomerOrderConsumer(AsyncJsonWebsocketConsumer):
                 'delivery_method': order.delivery_method,
                 'created_at': order.created_at.isoformat(),
                 'updated_at': order.updated_at.isoformat(),
-                'estimated_delivery': order.metadata.get('estimated_minutes'),
+                'estimated_delivery': (order.metadata or {}).get('estimated_minutes'),
             }
         except StoreOrder.DoesNotExist:
             return None
