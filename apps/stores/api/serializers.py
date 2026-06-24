@@ -890,14 +890,25 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
 
 class StoreOrderUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating order status."""
-    
+    """Serializer para atualizar status + dados editáveis do pedido (sem itens)."""
+
     class Meta:
         model = StoreOrder
         fields = [
             'status', 'payment_status', 'internal_notes',
-            'tracking_code', 'tracking_url', 'carrier'
+            'tracking_code', 'tracking_url', 'carrier',
+            # Fase 2 — agendamento + dados do pedido (sem itens/total)
+            'scheduled_date', 'scheduled_time',
+            'customer_name', 'customer_phone', 'delivery_address', 'customer_notes',
         ]
+        extra_kwargs = {
+            'scheduled_date': {'required': False, 'allow_null': True},
+            'scheduled_time': {'required': False, 'allow_blank': True},
+            'customer_name': {'required': False},
+            'customer_phone': {'required': False},
+            'delivery_address': {'required': False},
+            'customer_notes': {'required': False, 'allow_blank': True},
+        }
 
 
 class StoreCustomerSerializer(serializers.ModelSerializer):
