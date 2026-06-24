@@ -5,9 +5,11 @@ These views handle cart, checkout, catalog, and wishlist functionality
 for the public-facing storefront.
 """
 import logging
+from datetime import datetime
 from decimal import Decimal
 from urllib.parse import urlparse
 from django.conf import settings
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import viewsets, status, permissions
@@ -28,6 +30,24 @@ class PublicWriteThrottle(AnonRateThrottle):
 class CheckoutThrottle(AnonRateThrottle):
     """20/min per IP — protects against bot ordering while allowing legitimate retries."""
     scope = 'checkout'
+
+
+def _parse_scheduling(data):
+    """Retorna (scheduled_date|None, scheduled_time:str) de forma defensiva.
+    Nunca levanta — agendamento malformado vira (None, '')."""
+    raw_date = (data.get('scheduled_date') or '').strip()
+    slot = (data.get('scheduled_time_slot') or '').strip()[:50]
+    parsed_date = None
+    if raw_date:
+        try:
+            d = datetime.strptime(raw_date, '%Y-%m-%d').date()
+            if d >= timezone.localdate():   # hoje é válido; passado é ignorado
+                parsed_date = d
+        except (ValueError, TypeError):
+            parsed_date = None
+    if parsed_date is None:
+        slot = ''   # sem data válida, não faz sentido manter o slot
+    return parsed_date, slot
 from django.shortcuts import get_object_or_404
 from django.db.models import Prefetch
 from django.db import transaction
@@ -850,6 +870,7 @@ class StoreCheckoutView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        scheduled_date, scheduled_time = _parse_scheduling(request.data)
         try:
             order = checkout_service.create_order(
                 cart=cart,
@@ -861,6 +882,8 @@ class StoreCheckoutView(APIView):
                     request.data.get('use_loyalty_reward')
                     or request.data.get('loyalty_reward')
                 ),
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
             )
 
             self._persist_customer_session(request, order)

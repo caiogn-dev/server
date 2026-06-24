@@ -372,3 +372,42 @@ class CheckoutStockTestCase(CheckoutTestBase):
         self.assertIn(resp.status_code, [200, 201], msg=str(resp.data))
         exact_product.refresh_from_db()
         self.assertEqual(exact_product.stock_quantity, 0)
+
+
+# ─── Scheduling tests ─────────────────────────────────────────────────────────
+
+
+class CheckoutSchedulingTestCase(CheckoutTestBase):
+    """Tests for order scheduling (scheduled_date / scheduled_time_slot)."""
+
+    slug = "checkout-store-scheduling"
+    owner_username = "scheduling_owner"
+    owner_email = "scheduling@example.com"
+
+    def test_checkout_persists_same_day_scheduling(self):
+        """Checkout with valid scheduled_date + scheduled_time_slot persists both fields."""
+        self._add_to_cart(self.product, quantity=1)
+        resp = self._checkout(
+            extra={
+                'scheduled_date': '2026-06-25',
+                'scheduled_time_slot': '16:00-18:00',
+            }
+        )
+        self.assertIn(resp.status_code, [200, 201], msg=str(resp.data))
+        order = self._get_order_from_response(resp.data)
+        self.assertEqual(str(order.scheduled_date), '2026-06-25')
+        self.assertEqual(order.scheduled_time, '16:00-18:00')
+
+    def test_checkout_with_garbage_scheduling_does_not_break(self):
+        """Malformed scheduled_date must not cause 4xx/5xx — order is created without scheduling."""
+        self._add_to_cart(self.product, quantity=1)
+        resp = self._checkout(
+            extra={
+                'scheduled_date': 'lixo',
+                'scheduled_time_slot': '',
+            }
+        )
+        self.assertIn(resp.status_code, [200, 201], msg=str(resp.data))
+        order = self._get_order_from_response(resp.data)
+        self.assertIsNone(order.scheduled_date)
+        self.assertEqual(order.scheduled_time, '')
