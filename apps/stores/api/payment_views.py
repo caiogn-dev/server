@@ -4,6 +4,7 @@ Payment API Views.
 ViewSets for StorePayment and StorePaymentGateway.
 """
 import logging
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -74,8 +75,11 @@ class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     def set_default(self, request, pk=None):
         """Set this gateway as the default for its store."""
         gateway = self.get_object()
-        gateway.is_default = True
-        gateway.save()
+        with transaction.atomic():
+            StorePaymentGateway.objects.filter(store=gateway.store).update(is_default=False)
+            gateway.is_default = True
+            gateway.save(update_fields=['is_default'])
+        gateway.refresh_from_db()
         return Response(StorePaymentGatewaySerializer(gateway).data)
 
 

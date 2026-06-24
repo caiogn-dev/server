@@ -29,6 +29,7 @@ class CheckoutThrottle(AnonRateThrottle):
     """20/min per IP — protects against bot ordering while allowing legitimate retries."""
     scope = 'checkout'
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Prefetch
 
 from apps.core.models import UserProfile
@@ -457,21 +458,22 @@ class StoreCustomerProfileView(APIView):
                         'formatted': formatted,
                     })
 
-                store_customer.address_list.all().delete()
-                if normalized_addresses:
-                    default_index = min(
-                        max(requested_default, 0),
-                        len(normalized_addresses) - 1,
-                    )
-                    for i, addr_dict in enumerate(normalized_addresses):
-                        StoreCustomerAddress.objects.create(
-                            customer=store_customer,
-                            is_default=(i == default_index),
-                            **addr_dict,
+                with transaction.atomic():
+                    store_customer.address_list.all().delete()
+                    if normalized_addresses:
+                        default_index = min(
+                            max(requested_default, 0),
+                            len(normalized_addresses) - 1,
                         )
-                    store_customer.default_address_index = default_index
-                else:
-                    store_customer.default_address_index = 0
+                        for i, addr_dict in enumerate(normalized_addresses):
+                            StoreCustomerAddress.objects.create(
+                                customer=store_customer,
+                                is_default=(i == default_index),
+                                **addr_dict,
+                            )
+                        store_customer.default_address_index = default_index
+                    else:
+                        store_customer.default_address_index = 0
             elif 'default_address_index' in data:
                 try:
                     default_index = int(data.get('default_address_index', 0))
@@ -712,10 +714,14 @@ class StoreCheckoutView(APIView):
                     logger.warning("Meta CAPI Purchase failed for %s: %s", order.order_number, exc)
 
             broadcast_order_event(order, event_type='order.created')
-             
+
             # Clear cart after successful order
             cart_service.clear_cart(cart)
-            
+
+            # Reload with prefetch to avoid N+1 in response serialisation
+            from apps.stores.models import StoreOrder
+            order = StoreOrder.objects.prefetch_related('items').get(pk=order.pk)
+
             response_data = {
                 'order_id': str(order.id),
                 'order_number': order.order_number,
