@@ -912,16 +912,17 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
 
 
 class StoreCustomerSerializer(serializers.ModelSerializer):
-    """Serializer for StoreCustomer model."""
-    
+    """Serializer do StoreCustomer. `name` é gravável e resolve o auth.User."""
+
     user_email = serializers.CharField(source='user.email', read_only=True)
     user_name = serializers.SerializerMethodField()
     default_address = serializers.SerializerMethodField()
-    
+    name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
     class Meta:
         model = StoreCustomer
         fields = [
-            'id', 'store', 'user', 'user_email', 'user_name',
+            'id', 'store', 'user', 'user_email', 'user_name', 'name',
             'phone', 'whatsapp',
             'instagram', 'twitter', 'facebook',
             'addresses', 'default_address_index', 'default_address',
@@ -931,15 +932,40 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
-            'id', 'total_orders', 'total_spent', 'last_order_at',
+            'id', 'store', 'user', 'total_orders', 'total_spent', 'last_order_at',
             'created_at', 'updated_at'
         ]
-    
+
     def get_user_name(self, obj):
         return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.email
-    
+
     def get_default_address(self, obj):
         return obj.get_default_address()
+
+    def create(self, validated_data):
+        name = validated_data.pop('name', '')
+        store = validated_data.get('store')
+        phone = validated_data.get('phone', '') or validated_data.get('whatsapp', '')
+        with transaction.atomic():
+            # Reusa CustomerIdentityService para criar User interno com padrão
+            # consistente (username único, email @pastita.local) — CLAUDE.md
+            user, _profile, _created = CustomerIdentityService.resolve_user(
+                phone=phone or '',
+                full_name=name or '',
+                create=True,
+            )
+            validated_data['user'] = user
+            return StoreCustomer.objects.create(**validated_data)
+
+    def update(self, instance, validated_data):
+        name = validated_data.pop('name', None)
+        if name is not None:
+            first, last = CustomerIdentityService.split_name(name)
+            with transaction.atomic():
+                instance.user.first_name = first
+                instance.user.last_name = last
+                instance.user.save(update_fields=['first_name', 'last_name'])
+        return super().update(instance, validated_data)
 
 
 class StoreStatsSerializer(serializers.Serializer):

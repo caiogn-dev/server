@@ -582,6 +582,21 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         # store_customer_addresses. Com o prefetch, é 1 query p/ todos os endereços.
         return qs.select_related('user', 'store').prefetch_related('address_list')
 
+    def perform_create(self, serializer):
+        """Injeta a store do path no create para garantir isolamento por tenant."""
+        store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
+        store = None
+        if store_param:
+            try:
+                uuid_module.UUID(str(store_param))
+                store = Store.objects.filter(pk=store_param).first()
+            except (ValueError, AttributeError):
+                store = Store.objects.filter(slug=store_param).first()
+        if store is not None:
+            serializer.save(store=store)
+        else:
+            serializer.save()
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """KPIs agregados dos clientes no escopo da loja (1 query).
