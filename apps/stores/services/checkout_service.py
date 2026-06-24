@@ -683,6 +683,8 @@ class CheckoutService:
         notes: str = '',
         use_loyalty_reward: bool = False,
         trusted_delivery_fee: "Decimal | None" = None,
+        scheduled_date=None,
+        scheduled_time='',
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -832,6 +834,8 @@ class CheckoutService:
             delivery_address=delivery_payload.get('address', {}) if delivery_payload else {},
             delivery_notes=delivery_payload.get('notes', '') if delivery_payload else '',
             customer_notes=notes,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time or '',
             metadata={
                 'delivery_zone': delivery_info.get('zone_name'),
                 'delivery_quote': delivery_info,

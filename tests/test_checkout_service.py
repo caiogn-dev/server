@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, date
 
 from apps.stores.models import (
     Store, StoreCart, StoreCartItem, StoreOrder,
@@ -303,6 +303,26 @@ class CheckoutCreateOrderTest(TestCase):
         }
         order = CheckoutService.create_order(cart, customer_data, delivery_data=delivery_data)
         self.assertNotEqual(order.delivery_fee, Decimal('999.00'))
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_create_order_persists_scheduling(self, _mock_email):
+        cart = self._make_cart_with_item()
+        customer_data = {'name': 'Ana', 'email': 'a@a.com', 'phone': '63999999999'}
+        order = CheckoutService.create_order(
+            cart, customer_data,
+            scheduled_date=date(2026, 6, 25),
+            scheduled_time='16:00-18:00',
+        )
+        self.assertEqual(order.scheduled_date, date(2026, 6, 25))
+        self.assertEqual(order.scheduled_time, '16:00-18:00')
+
+    @patch('apps.stores.services.checkout_service.trigger_order_email_automation')
+    def test_create_order_without_scheduling_defaults_empty(self, _mock_email):
+        cart = self._make_cart_with_item()
+        customer_data = {'name': 'Ana', 'email': 'a@a.com', 'phone': '63999999999'}
+        order = CheckoutService.create_order(cart, customer_data)
+        self.assertIsNone(order.scheduled_date)
+        self.assertEqual(order.scheduled_time, '')
 
 
 class CheckoutProcessWebhookTest(TestCase):
