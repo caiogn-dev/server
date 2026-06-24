@@ -92,11 +92,13 @@ class SessionContext:
     def reset(self):
         """Reseta o contexto"""
         if self.session:
-            self.session.status = CustomerSession.SessionStatus.ACTIVE
-            self.session.cart_data = {}
-            self.session.cart_total = 0
-            self.session.cart_items_count = 0
-            self.session.save()
+            CustomerSession.objects.filter(pk=self.session.pk).update(
+                status=CustomerSession.SessionStatus.ACTIVE,
+                cart_data={},
+                cart_total=0,
+                cart_items_count=0,
+            )
+            self.session.refresh_from_db()
         self.current_flow = None
         self.flow_step = 0
         self.temp_data = {}
@@ -432,12 +434,14 @@ class SessionManager:
         """Atualiza dados do carrinho"""
         session = self.get_or_create_session()
         if session:
-            session.cart_data = {'items': items}
-            session.cart_total = total
-            session.cart_items_count = len(items)
-            session.cart_updated_at = timezone.now()
-            session.status = CustomerSession.SessionStatus.CART_CREATED
-            session.save()
+            CustomerSession.objects.filter(pk=session.pk).update(
+                cart_data={'items': items},
+                cart_total=total,
+                cart_items_count=len(items),
+                cart_updated_at=timezone.now(),
+                status=CustomerSession.SessionStatus.CART_CREATED,
+            )
+            self._session = None  # invalida cache para forçar reload
             logger.info(f"[SessionManager] Cart updated: {len(items)} items, R$ {total}")
     
     def set_payment_pending(self, pix_code: str, pix_qr_code: str = '', payment_id: str = ''):
