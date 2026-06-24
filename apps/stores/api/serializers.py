@@ -959,13 +959,13 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         name = validated_data.pop('name', None)
-        if name is not None:
-            first, last = CustomerIdentityService.split_name(name)
-            with transaction.atomic():
+        with transaction.atomic():
+            if name is not None:
+                first, last = CustomerIdentityService.split_name(name)
                 instance.user.first_name = first
                 instance.user.last_name = last
                 instance.user.save(update_fields=['first_name', 'last_name'])
-        return super().update(instance, validated_data)
+            return super().update(instance, validated_data)
 
 
 class StoreStatsSerializer(serializers.Serializer):

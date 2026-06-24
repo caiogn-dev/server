@@ -59,3 +59,12 @@ class CustomerCrudTestCase(APITestCase):
         cust = StoreCustomer.objects.get(id=resp.data['id'])
         self.assertEqual(cust.store_id, self.store.id)
         self.assertNotEqual(cust.store_id, other.id)
+
+    def test_create_with_nonexistent_store_slug_returns_4xx(self):
+        """I-2: POST para slug inexistente retorna 4xx (não 500)."""
+        bad_url = '/api/v1/stores/stores/slug-que-nao-existe-nunca/customers/'
+        resp = self.client.post(bad_url, {
+            'name': 'Cliente X', 'phone': '63999994444',
+        }, format='json')
+        self.assertGreaterEqual(resp.status_code, 400)
+        self.assertLess(resp.status_code, 500)

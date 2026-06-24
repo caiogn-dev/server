@@ -6,6 +6,7 @@ import uuid as uuid_module
 from decimal import Decimal
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -592,6 +593,8 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 store = Store.objects.filter(pk=store_param).first()
             except (ValueError, AttributeError):
                 store = Store.objects.filter(slug=store_param).first()
+            if store is None:
+                raise DRFValidationError({'store': 'Loja não encontrada.'})
         if store is not None:
             serializer.save(store=store)
         else:
