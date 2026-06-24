@@ -1109,7 +1109,7 @@ class CheckoutService:
     @staticmethod
     def _restore_stock(order: StoreOrder):
         """Restore stock for cancelled/refunded orders."""
-        for item in order.items.all():
+        for item in order.items.select_related('product', 'variant').all():
             if item.product and item.product.track_stock:
                 if item.variant:
                     from apps.stores.models import StoreProductVariant
