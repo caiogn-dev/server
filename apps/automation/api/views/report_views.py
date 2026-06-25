@@ -18,10 +18,37 @@ from apps.automation.api.serializers import (
     GeneratedReportSerializer,
     GenerateReportSerializer,
 )
-from apps.core.permissions import accessible_whatsapp_account_ids
+from apps.core.permissions import accessible_whatsapp_account_ids, user_can_access_store
 from .base import StandardResultsSetPagination
 
 logger = logging.getLogger(__name__)
+
+
+def _user_can_use_report_targets(user, account_id, company_id):
+    """Valida que o usuário pode gerar relatório para a conta/empresa pedidas.
+
+    Sem isso (IDOR), qualquer autenticado podia disparar a geração de um
+    relatório sobre os dados de OUTRO tenant (account_id/company_id arbitrário)
+    e mandar por email para destinatários que ele controla — exfiltração.
+    """
+    if user.is_superuser:
+        return True
+    if account_id:
+        if str(account_id) not in {str(i) for i in accessible_whatsapp_account_ids(user)}:
+            return False
+    if company_id:
+        from apps.automation.models import CompanyProfile
+        try:
+            profile = CompanyProfile.objects.select_related('store').get(id=company_id)
+        except CompanyProfile.DoesNotExist:
+            return False
+        account_ok = profile.account_id and (
+            str(profile.account_id) in {str(i) for i in accessible_whatsapp_account_ids(user)}
+        )
+        store_ok = profile.store and user_can_access_store(user, profile.store)
+        if not (account_ok or store_ok):
+            return False
+    return True
 
 
 class ReportScheduleViewSet(viewsets.ModelViewSet):
@@ -67,7 +94,13 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
         data = serializer.validated_data
         account_id = data.pop('account_id', None)
         company_id = data.pop('company_id', None)
-        
+
+        if not _user_can_use_report_targets(request.user, account_id, company_id):
+            return Response(
+                {'error': 'Sem permissão para esta conta/empresa'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         schedule = ReportSchedule.objects.create(
             account_id=account_id,
             company_id=company_id,
@@ -93,7 +126,14 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
         data = serializer.validated_data
         account_id = data.pop('account_id', None)
         company_id = data.pop('company_id', None)
-        
+
+        if (account_id is not None or company_id is not None) and not \
+                _user_can_use_report_targets(request.user, account_id, company_id):
+            return Response(
+                {'error': 'Sem permissão para esta conta/empresa'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         if account_id is not None:
             instance.account_id = account_id
         if company_id is not None:
@@ -206,7 +246,15 @@ class GeneratedReportViewSet(viewsets.ReadOnlyModelViewSet):
         serializer.is_valid(raise_exception=True)
         
         data = serializer.validated_data
-        
+
+        if not _user_can_use_report_targets(
+            request.user, data.get('account_id'), data.get('company_id')
+        ):
+            return Response(
+                {'error': 'Sem permissão para esta conta/empresa'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         from apps.automation.tasks import generate_report
         task = generate_report.delay(
             report_type=data.get('report_type', 'full'),
