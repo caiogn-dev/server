@@ -21,7 +21,7 @@ Para resolver, verifique no Meta Business Manager:
 4. Se os componentes enviados correspondem ao template
 """
 import logging
-import random
+import secrets
 import string
 from datetime import datetime, timedelta
 from django.core.cache import cache
@@ -159,8 +159,8 @@ class WhatsAppAuthService:
     
     @staticmethod
     def generate_code() -> str:
-        """Gera código numérico aleatório de 6 dígitos"""
-        return ''.join(random.choices(string.digits, k=WhatsAppAuthService.CODE_LENGTH))
+        """Gera código numérico OTP de 6 dígitos usando gerador criptograficamente seguro."""
+        return ''.join(secrets.choice(string.digits) for _ in range(WhatsAppAuthService.CODE_LENGTH))
     
     @staticmethod
     def _normalize_phone(phone: str) -> str:
