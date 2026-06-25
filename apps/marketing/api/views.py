@@ -8,6 +8,23 @@ from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from django.shortcuts import get_object_or_404
 from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 
+
+def _user_can_use_store(user, store_id):
+    """True se o usuário pode operar sobre a loja informada.
+
+    Sem essa checagem (IDOR), qualquer autenticado disparava emails, importava
+    contatos, lia estatísticas e acionava automações de OUTRO tenant passando
+    store_id arbitrário.
+    """
+    if not store_id:
+        return False
+    if user.is_superuser:
+        return True
+    try:
+        return str(store_id) in {str(i) for i in accessible_store_ids(user)}
+    except (ValueError, TypeError):
+        return False
+
 from apps.marketing.models import (
     EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
     EmailAutomation, EmailAutomationLog
@@ -121,7 +138,11 @@ class EmailCampaignViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Send a campaign."""
         import logging
         logger = logging.getLogger(__name__)
-        
+
+        # Escopo de tenant (IDOR): 404 fora do escopo — fora do try p/ não virar 500
+        campaign = self.get_object()
+        pk = str(campaign.id)
+
         try:
             logger.info(f"Sending campaign {pk}")
             result = email_marketing_service.send_campaign(pk)
@@ -229,13 +250,16 @@ class SubscriberViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Import subscribers from CSV."""
         store_id = request.data.get('store')
         contacts = request.data.get('contacts', [])
-        
+
         if not store_id:
             return Response(
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
         created = 0
         updated = 0
         
@@ -454,7 +478,10 @@ class CustomersViewSet(viewsets.ViewSet):
         store_id = request.query_params.get('store')
         if not store_id:
             return Response({'count': 0})
-        
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'count': 0})
+
         # Count users with a StoreCustomer record for this store only
         from apps.stores.models import StoreCustomer
         user_count = User.objects.filter(
@@ -539,7 +566,10 @@ class MarketingStatsViewSet(viewsets.ViewSet):
                 {'error': 'store parameter is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
         stats = email_marketing_service.get_stats(store_id)
         return Response(stats)
 
@@ -561,7 +591,10 @@ class QuickActionsViewSet(viewsets.ViewSet):
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
         result = email_marketing_service.send_coupon_email(
             store_id=store_id,
             to_email=serializer.validated_data['to_email'],
@@ -587,7 +620,10 @@ class QuickActionsViewSet(viewsets.ViewSet):
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
         result = email_marketing_service.send_welcome_email(
             store_id=store_id,
             to_email=serializer.validated_data['to_email'],
@@ -660,7 +696,10 @@ class EmailAutomationViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 {'error': 'store is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
         result = email_automation_service.trigger(
             store_id=store_id,
             trigger_type=serializer.validated_data['trigger_type'],
@@ -692,7 +731,14 @@ class EmailAutomationViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 {'error': 'Automation not found'},
                 status=status.HTTP_404_NOT_FOUND
             )
-        
+
+        # Escopo de tenant (IDOR): não pode testar automação de outra loja
+        if not _user_can_use_store(request.user, str(automation.store_id)):
+            return Response(
+                {'error': 'Automation not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
         # Send test email
         result = email_automation_service.trigger(
             store_id=str(automation.store_id),
