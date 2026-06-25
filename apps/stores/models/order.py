@@ -277,6 +277,27 @@ class StoreOrder(BaseModel):
             self.access_token = self.generate_access_token()
         super().save(*args, **kwargs)
 
+    def recalculate_totals(self, save=True):
+        """Fonte da verdade do total. Soma os itens em subtotal e aplica a
+        fórmula canônica: total = subtotal - discount + tax + delivery_fee
+        + surcharge_value, com piso em 0. Não aceita total do cliente."""
+        from decimal import Decimal
+        subtotal = sum((item.subtotal for item in self.items.all()), Decimal('0.00'))
+        self.subtotal = subtotal
+        total = (
+            subtotal
+            - (self.discount or Decimal('0.00'))
+            + (self.tax or Decimal('0.00'))
+            + (self.delivery_fee or Decimal('0.00'))
+            + (self.surcharge_value or Decimal('0.00'))
+        )
+        if total < Decimal('0.00'):
+            total = Decimal('0.00')
+        self.total = total
+        if save:
+            self.save(update_fields=['subtotal', 'total', 'updated_at'])
+        return self.total
+
     def generate_order_number(self):
         """Generate unique order number."""
         import random

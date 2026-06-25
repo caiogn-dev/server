@@ -15,7 +15,7 @@ from apps.stores.models import (
     StoreProduct, StoreProductVariant, StoreOrder, StoreOrderItem,
     StoreCustomer, StoreWishlist, StoreProductType,
     StorePaymentGateway, StorePayment, StorePaymentWebhookEvent,
-    StorePrintAgent, StorePrintJob,
+    StorePrintAgent, StorePrintJob, StoreCustomerAddress,
 )
 from apps.core.services.customer_identity import CustomerIdentityService
 
@@ -527,6 +527,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
+            'surcharge_value', 'surcharge_reason',
+            'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
             'payment_method', 'payment_id', 'payment_preference_id',
             'pix_code', 'pix_qr_code', 'pix_ticket_url', 'pix_expires_at',
             'delivery_method', 'delivery_method_display',
@@ -552,6 +554,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
             'uber_driver_phone', 'uber_vehicle_info', 'uber_eta_minutes',
             'uber_pickup_instructions', 'uber_created_at',
+            'surcharge_value', 'surcharge_reason',
+            'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
         ]
     
     def get_items_count(self, obj):
@@ -922,6 +926,49 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
+class StoreOrderItemOpSerializer(serializers.Serializer):
+    """Uma operação sobre itens do pedido na edição."""
+    op = serializers.ChoiceField(choices=['add', 'update', 'remove'])
+    item_id = serializers.UUIDField(required=False)
+    product_id = serializers.UUIDField(required=False)
+    quantity = serializers.IntegerField(min_value=1, required=False)
+
+    def validate(self, attrs):
+        op = attrs['op']
+        if op == 'add' and not attrs.get('product_id'):
+            raise serializers.ValidationError("op 'add' exige product_id.")
+        if op in ('update', 'remove') and not attrs.get('item_id'):
+            raise serializers.ValidationError(f"op '{op}' exige item_id.")
+        if op in ('add', 'update') and not attrs.get('quantity'):
+            raise serializers.ValidationError(f"op '{op}' exige quantity.")
+        return attrs
+
+
+class StoreOrderAdjustSerializer(serializers.Serializer):
+    """Valida o corpo do POST /orders/{id}/adjust/ (todos os campos opcionais)."""
+    discount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, min_value=Decimal('0.00'))
+    discount_reason = serializers.CharField(required=False, allow_blank=True)
+    surcharge_value = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, min_value=Decimal('0.00'))
+    surcharge_reason = serializers.CharField(required=False, allow_blank=True)
+    delivery_fee = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, min_value=Decimal('0.00'))
+    item_ops = StoreOrderItemOpSerializer(many=True, required=False)
+
+
+class StoreCustomerAddressSerializer(serializers.ModelSerializer):
+    """Endereço relacional do cliente (StoreCustomerAddress)."""
+    id = serializers.UUIDField(required=False)
+
+    class Meta:
+        model = StoreCustomerAddress
+        fields = [
+            'id', 'label', 'street', 'number', 'complement',
+            'neighborhood', 'city', 'state', 'zip_code', 'reference', 'is_default',
+        ]
+
+
 class StoreCustomerSerializer(serializers.ModelSerializer):
     """Serializer do StoreCustomer. `name` é gravável e resolve o auth.User."""
 
@@ -929,6 +976,7 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
     user_name = serializers.SerializerMethodField()
     default_address = serializers.SerializerMethodField()
     name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    address_list = StoreCustomerAddressSerializer(many=True, required=False)
 
     class Meta:
         model = StoreCustomer
@@ -937,6 +985,7 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
             'phone', 'whatsapp',
             'instagram', 'twitter', 'facebook',
             'addresses', 'default_address_index', 'default_address',
+            'address_list',
             'total_orders', 'total_spent', 'last_order_at',
             'tags', 'notes',
             'accepts_marketing', 'marketing_opt_in_at',
@@ -953,7 +1002,30 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
     def get_default_address(self, obj):
         return obj.get_default_address()
 
+    def _sync_address_list(self, customer, addresses):
+        """Replace-all por id: atualiza os com id, cria os sem id, apaga os ausentes."""
+        existing = {str(a.id): a for a in customer.address_list.all()}
+        incoming_ids = set()
+        for addr in addresses:
+            addr_id = addr.get('id')
+            if addr_id and str(addr_id) in existing:
+                obj = existing[str(addr_id)]
+                for field, value in addr.items():
+                    if field == 'id':
+                        continue
+                    setattr(obj, field, value)
+                obj.save()
+                incoming_ids.add(str(addr_id))
+            else:
+                payload = {k: v for k, v in addr.items() if k != 'id'}
+                StoreCustomerAddress.objects.create(customer=customer, **payload)
+        # apaga os que sumiram do payload
+        for old_id, obj in existing.items():
+            if old_id not in incoming_ids:
+                obj.delete()
+
     def create(self, validated_data):
+        address_list = validated_data.pop('address_list', None)
         name = validated_data.pop('name', '')
         store = validated_data.get('store')
         phone = validated_data.get('phone', '') or validated_data.get('whatsapp', '')
@@ -973,9 +1045,12 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
                 user=user,
                 defaults=validated_data,
             )
+            if address_list is not None:
+                self._sync_address_list(customer, address_list)
             return customer
 
     def update(self, instance, validated_data):
+        address_list = validated_data.pop('address_list', None)
         name = validated_data.pop('name', None)
         with transaction.atomic():
             if name is not None:
@@ -983,7 +1058,10 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
                 instance.user.first_name = first
                 instance.user.last_name = last
                 instance.user.save(update_fields=['first_name', 'last_name'])
-            return super().update(instance, validated_data)
+            instance = super().update(instance, validated_data)
+            if address_list is not None:
+                self._sync_address_list(instance, address_list)
+            return instance
 
 
 class StoreStatsSerializer(serializers.Serializer):
