@@ -55,8 +55,22 @@ class HandoverViewSet(viewsets.ViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_conversation(self, pk):
-        """Obtém a conversa pelo ID."""
-        return get_object_or_404(Conversation, pk=pk)
+        """Obtém a conversa pelo ID, restrita às contas acessíveis ao usuário.
+
+        Segurança (IDOR cross-tenant): sem esse escopo, qualquer usuário
+        autenticado podia ler/transferir o handover de QUALQUER conversa só
+        sabendo o UUID. Conversa pertence a uma WhatsAppAccount; o usuário só
+        pode acessá-la se a conta estiver entre as suas (owner/staff/membro)
+        ou se for superuser.
+        """
+        from apps.core.permissions import accessible_whatsapp_account_ids
+
+        queryset = Conversation.objects.all()
+        user = self.request.user
+        if not user.is_superuser:
+            account_ids = accessible_whatsapp_account_ids(user)
+            queryset = queryset.filter(account_id__in=account_ids)
+        return get_object_or_404(queryset, pk=pk)
     
     def get_or_create_handover(self, conversation):
         """Obtém ou cria o registro de handover."""
@@ -234,10 +248,13 @@ class HandoverRequestViewSet(viewsets.ModelViewSet):
         if user.is_superuser:
             return HandoverRequest.objects.all()
         
-        # Se é operador, vê solicitações pendentes da loja
-        # e solicitações atribuídas a ele
+        # Operador vê solicitações pendentes das SUAS contas (não cross-tenant)
+        # e solicitações que ele criou/que lhe foram atribuídas.
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        account_ids = accessible_whatsapp_account_ids(user)
         return HandoverRequest.objects.filter(
-            Q(status=HandoverRequestStatus.PENDING) |
+            Q(status=HandoverRequestStatus.PENDING,
+              conversation__account_id__in=account_ids) |
             Q(assigned_to=user) |
             Q(requested_by=user)
         ).distinct()
