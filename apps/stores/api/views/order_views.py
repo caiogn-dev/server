@@ -15,7 +15,7 @@ from django.db.models import Q, Sum, Count
 from django.utils import timezone
 from datetime import timedelta
 
-from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer
+from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer, StoreProduct
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.stores.services.order_service import OrderService
 from apps.stores.services.print_service import enqueue_order_print_job
@@ -276,7 +276,47 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         with transaction.atomic():
             order = StoreOrder.objects.select_for_update().get(pk=order.pk)
 
-            # (Task 4 insere aqui o processamento de item_ops)
+            item_ops = data.get('item_ops', [])
+            for op in item_ops:
+                kind = op['op']
+                if kind == 'add':
+                    product = StoreProduct.objects.filter(
+                        id=op['product_id'], store=order.store,
+                        status=StoreProduct.ProductStatus.ACTIVE,
+                    ).first()
+                    if not product:
+                        raise DRFValidationError(
+                            {'error': 'Produto não encontrado ou inativo.',
+                             'code': 'product_not_found'})
+                    qty = op['quantity']
+                    unit_price = product.price or Decimal('0.00')
+                    StoreOrderItem.objects.create(
+                        order=order, product=product, variant=None,
+                        product_name=product.name, variant_name='', sku=product.sku,
+                        unit_price=unit_price, quantity=qty,
+                        subtotal=unit_price * qty, options={}, notes='',
+                    )
+                elif kind == 'update':
+                    item = order.items.filter(id=op['item_id']).first()
+                    if not item:
+                        raise DRFValidationError(
+                            {'error': 'Item não pertence a este pedido.',
+                             'code': 'item_not_found'})
+                    item.quantity = op['quantity']
+                    item.subtotal = item.unit_price * item.quantity
+                    item.save(update_fields=['quantity', 'subtotal'])
+                elif kind == 'remove':
+                    item = order.items.filter(id=op['item_id']).first()
+                    if not item:
+                        raise DRFValidationError(
+                            {'error': 'Item não pertence a este pedido.',
+                             'code': 'item_not_found'})
+                    item.delete()
+
+            if not order.items.exists():
+                raise DRFValidationError(
+                    {'error': 'O pedido precisa manter pelo menos um item.',
+                     'code': 'order_empty'})
 
             if 'discount' in data:
                 order.discount = data['discount']
@@ -296,9 +336,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                            + (order.tax or _D('0.00')) + (order.delivery_fee or _D('0.00'))
                            + (order.surcharge_value or _D('0.00')))
             if prospective < _D('0.00'):
-                return Response(
-                    {'error': 'Desconto deixa o total negativo.', 'code': 'total_negative'},
-                    status=status.HTTP_400_BAD_REQUEST,
+                raise DRFValidationError(
+                    {'error': 'Desconto deixa o total negativo.', 'code': 'total_negative'}
                 )
 
             order.save(update_fields=[

@@ -122,3 +122,101 @@ class OrderAdjustMoneyTestCase(APITestCase):
         self.client.credentials()  # remove token
         resp = self.client.post(self.url, {'discount': '1.00'}, format='json')
         self.assertIn(resp.status_code, (401, 403))
+
+
+class OrderAdjustItemsTestCase(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username='o4', email='o4@x.com', password='x')
+        self.store = Store.objects.create(name='L4', slug='l4', owner=self.owner, status='active')
+        self.token = Token.objects.create(user=self.owner)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='C', customer_phone='6300000000',
+            subtotal=Decimal('10.00'), total=Decimal('10.00'),
+        )
+        self.p10 = _make_product(self.store, '10.00', 'P10')
+        self.p25 = _make_product(self.store, '25.00', 'P25')
+        self.item = StoreOrderItem.objects.create(
+            order=self.order, product=self.p10, product_name='P10', sku='',
+            unit_price=Decimal('10.00'), quantity=1, subtotal=Decimal('10.00'),
+        )
+        self.url = f'/api/v1/stores/{self.store.slug}/orders/{self.order.id}/adjust/'
+
+    def test_add_item_recomputes_subtotal_and_total(self):
+        resp = self.client.post(self.url, {
+            'item_ops': [{'op': 'add', 'product_id': str(self.p25.id), 'quantity': 2}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.order.refresh_from_db()
+        # 10 (existente) + 25*2 = 60
+        self.assertEqual(self.order.subtotal, Decimal('60.00'))
+        self.assertEqual(self.order.total, Decimal('60.00'))
+        self.assertEqual(self.order.items.count(), 2)
+
+    def test_update_item_quantity(self):
+        resp = self.client.post(self.url, {
+            'item_ops': [{'op': 'update', 'item_id': str(self.item.id), 'quantity': 3}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.quantity, 3)
+        self.assertEqual(self.item.subtotal, Decimal('30.00'))
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.total, Decimal('30.00'))
+
+    def test_remove_item(self):
+        extra = StoreOrderItem.objects.create(
+            order=self.order, product=self.p25, product_name='P25', sku='',
+            unit_price=Decimal('25.00'), quantity=1, subtotal=Decimal('25.00'),
+        )
+        resp = self.client.post(self.url, {
+            'item_ops': [{'op': 'remove', 'item_id': str(extra.id)}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.items.count(), 1)
+        self.assertEqual(self.order.total, Decimal('10.00'))
+
+    def test_cannot_remove_last_item(self):
+        resp = self.client.post(self.url, {
+            'item_ops': [{'op': 'remove', 'item_id': str(self.item.id)}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.items.count(), 1)
+
+    def test_add_unknown_product_rejected(self):
+        import uuid
+        resp = self.client.post(self.url, {
+            'item_ops': [{'op': 'add', 'product_id': str(uuid.uuid4()), 'quantity': 1}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_update_item_from_another_order_rejected(self):
+        other = StoreOrder.objects.create(
+            store=self.store, customer_name='X', customer_phone='6311112222',
+            subtotal=Decimal('10.00'), total=Decimal('10.00'),
+        )
+        alien = StoreOrderItem.objects.create(
+            order=other, product=self.p10, product_name='P10', sku='',
+            unit_price=Decimal('10.00'), quantity=1, subtotal=Decimal('10.00'),
+        )
+        resp = self.client.post(self.url, {
+            'item_ops': [{'op': 'update', 'item_id': str(alien.id), 'quantity': 2}],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_failed_op_rolls_back_earlier_ops(self):
+        """Um add válido seguido de um op inválido NÃO pode persistir o add
+        (rollback do atomic via raise, não return)."""
+        import uuid
+        resp = self.client.post(self.url, {
+            'item_ops': [
+                {'op': 'add', 'product_id': str(self.p25.id), 'quantity': 1},
+                {'op': 'remove', 'item_id': str(uuid.uuid4())},  # falha → rollback
+            ],
+        }, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.items.count(), 1)  # add desfeito
+        self.assertEqual(self.order.total, Decimal('10.00'))  # total intacto
