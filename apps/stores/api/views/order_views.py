@@ -62,6 +62,17 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
+        # Fase 3 — anti-N+1: soma das cobranças 'completed' por pedido numa
+        # única query. O model lê `amount_paid_agg` na property amount_paid.
+        from django.db.models import DecimalField as _DecimalField
+        from django.db.models.functions import Coalesce
+        qs = qs.annotate(
+            amount_paid_agg=Coalesce(
+                Sum('payments__amount', filter=Q(payments__status='completed')),
+                Decimal('0.00'),
+                output_field=_DecimalField(max_digits=10, decimal_places=2),
+            )
+        )
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
 
         if store_param:
