@@ -926,6 +926,37 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
         return value
 
 
+class StoreOrderItemOpSerializer(serializers.Serializer):
+    """Uma operação sobre itens do pedido na edição."""
+    op = serializers.ChoiceField(choices=['add', 'update', 'remove'])
+    item_id = serializers.UUIDField(required=False)
+    product_id = serializers.UUIDField(required=False)
+    quantity = serializers.IntegerField(min_value=1, required=False)
+
+    def validate(self, attrs):
+        op = attrs['op']
+        if op == 'add' and not attrs.get('product_id'):
+            raise serializers.ValidationError("op 'add' exige product_id.")
+        if op in ('update', 'remove') and not attrs.get('item_id'):
+            raise serializers.ValidationError(f"op '{op}' exige item_id.")
+        if op in ('add', 'update') and not attrs.get('quantity'):
+            raise serializers.ValidationError(f"op '{op}' exige quantity.")
+        return attrs
+
+
+class StoreOrderAdjustSerializer(serializers.Serializer):
+    """Valida o corpo do POST /orders/{id}/adjust/ (todos os campos opcionais)."""
+    discount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, min_value=Decimal('0.00'))
+    discount_reason = serializers.CharField(required=False, allow_blank=True)
+    surcharge_value = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, min_value=Decimal('0.00'))
+    surcharge_reason = serializers.CharField(required=False, allow_blank=True)
+    delivery_fee = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, min_value=Decimal('0.00'))
+    item_ops = StoreOrderItemOpSerializer(many=True, required=False)
+
+
 class StoreCustomerSerializer(serializers.ModelSerializer):
     """Serializer do StoreCustomer. `name` é gravável e resolve o auth.User."""
 

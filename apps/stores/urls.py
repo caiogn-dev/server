@@ -57,6 +57,15 @@ def store_order_detail(request, store_slug, pk):
     })
     return view(request, store_pk=store_slug, pk=pk)
 
+def store_order_adjust(request, store_slug, pk):
+    """Wrapper para POST /orders/{pk}/adjust/ — injeta store_slug como store_pk."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_pk'] = store_slug
+        request.resolver_match.kwargs['pk'] = pk
+
+    view = StoreOrderViewSet.as_view({'post': 'adjust'})
+    return view(request, store_pk=store_slug, pk=pk)
+
 def my_addresses_list(request, store_slug):
     """Wrapper to inject store_slug for address list/create."""
     if request.resolver_match:
@@ -208,6 +217,7 @@ store_frontend_patterns = [
     # Wrapper injects store_slug as store_pk for viewset kwargs
     path('orders/', store_orders_list, name='store-orders-list'),
     path('orders/<uuid:pk>/', store_order_detail, name='store-order-detail'),
+    path('orders/<uuid:pk>/adjust/', store_order_adjust, name='store-order-adjust'),
 
     # CRM
     path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),

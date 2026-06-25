@@ -71,3 +71,54 @@ class OrderReadFieldsTestCase(APITestCase):
         self.assertEqual(resp.data['manual_discount_reason'], 'promo')
         self.assertEqual(Decimal(resp.data['manual_discount_value']), Decimal('5.00'))
         self.assertEqual(resp.data['manual_discount_type'], 'fixed')
+
+
+class OrderAdjustMoneyTestCase(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username='o3', email='o3@x.com', password='x')
+        self.store = Store.objects.create(name='L3', slug='l3', owner=self.owner, status='active')
+        self.token = Token.objects.create(user=self.owner)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='C', customer_phone='6300000000',
+            subtotal=Decimal('20.00'), total=Decimal('20.00'),
+        )
+        self.p = _make_product(self.store, '10.00', 'P10')
+        StoreOrderItem.objects.create(
+            order=self.order, product=self.p, product_name='P10', sku='',
+            unit_price=Decimal('10.00'), quantity=2, subtotal=Decimal('20.00'),
+        )
+        self.url = f'/api/v1/stores/{self.store.slug}/orders/{self.order.id}/adjust/'
+
+    def test_apply_discount_surcharge_delivery_recalculates_total(self):
+        resp = self.client.post(self.url, {
+            'discount': '5.00', 'discount_reason': 'fiel',
+            'surcharge_value': '3.00', 'surcharge_reason': 'embalagem',
+            'delivery_fee': '8.00',
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.discount, Decimal('5.00'))
+        self.assertEqual(self.order.manual_discount_reason, 'fiel')
+        self.assertEqual(self.order.surcharge_value, Decimal('3.00'))
+        self.assertEqual(self.order.surcharge_reason, 'embalagem')
+        self.assertEqual(self.order.delivery_fee, Decimal('8.00'))
+        # 20 - 5 + 8 + 3 = 26
+        self.assertEqual(self.order.total, Decimal('26.00'))
+
+    def test_discount_bigger_than_subtotal_is_rejected(self):
+        resp = self.client.post(self.url, {'discount': '999.00'}, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.total, Decimal('20.00'))  # inalterado
+
+    def test_cannot_adjust_cancelled_order(self):
+        self.order.status = StoreOrder.OrderStatus.CANCELLED
+        self.order.save(update_fields=['status'])
+        resp = self.client.post(self.url, {'discount': '1.00'}, format='json')
+        self.assertEqual(resp.status_code, 400, resp.content)
+
+    def test_requires_authentication(self):
+        self.client.credentials()  # remove token
+        resp = self.client.post(self.url, {'discount': '1.00'}, format='json')
+        self.assertIn(resp.status_code, (401, 403))

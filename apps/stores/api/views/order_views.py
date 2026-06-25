@@ -22,7 +22,7 @@ from apps.stores.services.print_service import enqueue_order_print_job
 from apps.core.permissions import StoreQuerysetMixin, user_can_access_store
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
-    StoreCustomerSerializer, StorePrintJobSerializer,
+    StoreCustomerSerializer, StorePrintJobSerializer, StoreOrderAdjustSerializer,
 )
 from .base import IsStoreOwnerOrStaff, filter_by_store
 
@@ -256,6 +256,61 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         
         return Response(StoreOrderSerializer(order).data)
     
+    _ADJUST_BLOCKED = {'cancelled', 'refunded', 'failed'}
+
+    @action(detail=True, methods=['post'])
+    def adjust(self, request, pk=None, **kwargs):
+        """Edita desconto/acréscimo/taxa de entrega e itens de um pedido,
+        recalculando o total no backend. Corpo parcial."""
+        order = self.get_object()
+        if order.status in self._ADJUST_BLOCKED:
+            return Response(
+                {'error': f'Pedido em status "{order.status}" não pode ser editado.',
+                 'code': 'order_not_editable'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = StoreOrderAdjustSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        with transaction.atomic():
+            order = StoreOrder.objects.select_for_update().get(pk=order.pk)
+
+            # (Task 4 insere aqui o processamento de item_ops)
+
+            if 'discount' in data:
+                order.discount = data['discount']
+            if 'discount_reason' in data:
+                order.manual_discount_reason = data['discount_reason']
+            if 'surcharge_value' in data:
+                order.surcharge_value = data['surcharge_value']
+            if 'surcharge_reason' in data:
+                order.surcharge_reason = data['surcharge_reason']
+            if 'delivery_fee' in data:
+                order.delivery_fee = data['delivery_fee']
+
+            # Guard: desconto não pode tornar o total negativo
+            from decimal import Decimal as _D
+            subtotal = sum((i.subtotal for i in order.items.all()), _D('0.00'))
+            prospective = (subtotal - (order.discount or _D('0.00'))
+                           + (order.tax or _D('0.00')) + (order.delivery_fee or _D('0.00'))
+                           + (order.surcharge_value or _D('0.00')))
+            if prospective < _D('0.00'):
+                return Response(
+                    {'error': 'Desconto deixa o total negativo.', 'code': 'total_negative'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            order.save(update_fields=[
+                'discount', 'manual_discount_reason', 'surcharge_value',
+                'surcharge_reason', 'delivery_fee', 'updated_at',
+            ])
+            order.recalculate_totals(save=True)
+
+        order.refresh_from_db()
+        self._notify_order_update(order, 'order.updated')
+        return Response(StoreOrderSerializer(order).data)
+
     def _notify_order_update(self, order, event_type='order.updated'):
         """Send WebSocket notification for order updates.
 
