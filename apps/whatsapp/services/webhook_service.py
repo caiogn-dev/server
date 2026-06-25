@@ -156,12 +156,23 @@ class WebhookService:
         if not account and display_phone:
             normalized = normalize_phone_number(display_phone)
             if normalized:
+                # Usa match exato para evitar colisão entre números semelhantes
+                # (ex.: +5511999990001 não deve bater em +5511999990000 via icontains).
                 account = WhatsAppAccount.objects.filter(
                     is_active=True
                 ).filter(
-                    Q(display_phone_number__icontains=normalized) |
-                    Q(phone_number__icontains=normalized)
+                    Q(display_phone_number=normalized) |
+                    Q(phone_number=normalized)
                 ).first()
+                # Fallback: tenta com o número sem normalização caso o banco guarde
+                # formatos alternativos (ex.: "+55 11 99999-0001").
+                if not account:
+                    account = WhatsAppAccount.objects.filter(
+                        is_active=True
+                    ).filter(
+                        Q(display_phone_number=display_phone) |
+                        Q(phone_number=display_phone)
+                    ).first()
         
         if not account and waba_id:
             account = WhatsAppAccount.objects.filter(
@@ -828,7 +839,7 @@ class WebhookService:
         if delivery_enabled:
             buttons.append({'id': 'order_delivery', 'title': '🛵 Entrega'})
         if pickup_enabled:
-            buttons.append({'id': 'order_pickup', 'title': '🏪 Retirada'})
+            buttons.append({'id': 'order_pickup', 'title': '🏢 Retirada'})
         if not buttons:
             buttons = [{'id': 'order_delivery', 'title': '🛵 Entrega'}]
 
@@ -1045,11 +1056,11 @@ class WebhookService:
         elif message_type == 'reaction':
             reaction = message_data.get('reaction', {})
             content = {'reaction': reaction}
-            text_body = reaction.get('emoji', 'ðŸ‘')
+            text_body = reaction.get('emoji', '👍')
         elif message_type == 'order':
             order = message_data.get('order', {})
             content = {'order': order}
-            text_body = f"ðŸ›’ Order with {len(order.get('product_items', []))} item(s)"
+            text_body = f"🛒 Order with {len(order.get('product_items', []))} item(s)"
         else:
             content = message_data
 
