@@ -14,6 +14,7 @@ from django.db.models import Sum, Count, Q
 from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_protect
 
@@ -89,7 +90,13 @@ def panel_login(request):
         user = authenticate(request, username=user_obj.username if user_obj else '', password=password)
         if user and user.is_active:
             login(request, user)
-            return redirect(request.GET.get('next') or 'panel:stores')
+            # Evita open redirect: só aceita next interno (mesmo host/esquema).
+            next_url = request.GET.get('next')
+            if next_url and url_has_allowed_host_and_scheme(
+                next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+            ):
+                return redirect(next_url)
+            return redirect('panel:stores')
         error = 'E-mail ou senha inválidos.'
 
     return render(request, 'panel/login.html', {'error': error})
