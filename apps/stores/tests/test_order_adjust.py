@@ -59,6 +59,7 @@ class OrderReadFieldsTestCase(APITestCase):
             subtotal=Decimal('20.00'), total=Decimal('23.00'),
             surcharge_value=Decimal('3.00'), surcharge_reason='taxa',
             manual_discount_reason='promo',
+            manual_discount_value=Decimal('5.00'), manual_discount_type='fixed',
         )
 
     def test_read_exposes_surcharge_and_discount_reason(self):
@@ -68,3 +69,5 @@ class OrderReadFieldsTestCase(APITestCase):
         self.assertEqual(Decimal(resp.data['surcharge_value']), Decimal('3.00'))
         self.assertEqual(resp.data['surcharge_reason'], 'taxa')
         self.assertEqual(resp.data['manual_discount_reason'], 'promo')
+        self.assertEqual(Decimal(resp.data['manual_discount_value']), Decimal('5.00'))
+        self.assertEqual(resp.data['manual_discount_type'], 'fixed')
