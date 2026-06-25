@@ -4,6 +4,7 @@ Payment API Views.
 ViewSets for StorePayment and StorePaymentGateway.
 """
 import logging
+from django.core.exceptions import ValidationError
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -257,6 +258,75 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
+    @extend_schema(summary="Create standalone PIX payment link (cobrança avulsa)")
+    @action(detail=False, methods=['post'], url_path='create_link')
+    def create_link(self, request):
+        """Fase 3 — gera uma cobrança PIX AVULSA (valor arbitrário, sem pedido).
+
+        Body: {store, amount, description?, payer_name?, payer_email?}.
+        Escopada por loja (o usuário precisa ter acesso à loja).
+        """
+        from decimal import Decimal, InvalidOperation
+        from apps.stores.models import Store
+        from apps.core.permissions import user_can_access_store
+        from apps.stores.services.checkout_service import CheckoutService
+
+        store_id = request.data.get('store')
+        if not store_id:
+            return Response({'error': 'store é obrigatório.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        store = Store.objects.filter(id=store_id).first()
+        if not store:
+            return Response({'error': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        if not user_can_access_store(request.user, store):
+            return Response({'error': 'Sem acesso a esta loja.'}, status=status.HTTP_403_FORBIDDEN)
+
+        raw_amount = request.data.get('amount')
+        try:
+            amount = Decimal(str(raw_amount)).quantize(Decimal('0.01'))
+        except (InvalidOperation, ValueError, TypeError):
+            return Response({'error': 'Valor inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+        if amount <= Decimal('0.00'):
+            return Response({'error': 'O valor deve ser maior que zero.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        description = request.data.get('description', '')
+        payment_data = {
+            'payer_name': request.data.get('payer_name', ''),
+            'payer_email': request.data.get('payer_email', ''),
+        }
+
+        try:
+            result = CheckoutService.create_payment(
+                None, 'pix', payment_data,
+                amount=amount, store=store, description=description,
+            )
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Falha ao gerar cobrança avulsa para loja %s', store.id)
+            return Response({'error': 'Erro ao gerar cobrança.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        if not result.get('success'):
+            return Response(
+                {'error': result.get('error', 'Erro ao gerar cobrança.')},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payment = None
+        if result.get('payment_db_id'):
+            try:
+                payment = StorePayment.objects.filter(id=result['payment_db_id']).first()
+            except (ValueError, ValidationError):
+                payment = None
+
+        return Response(
+            {
+                'payment': result,
+                'store_payment': StorePaymentSerializer(payment).data if payment else None,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
     @extend_schema(summary="Get payments by order")
     @action(detail=False, methods=['get'])
     def by_order(self, request):

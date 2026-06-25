@@ -519,7 +519,11 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
     store_slug = serializers.CharField(source='store.slug', read_only=True)
     items_count = serializers.SerializerMethodField()
-    
+    # Fase 3 — derivados da soma dos StorePayment 'completed' (read-only).
+    amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    amount_due = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    is_fully_paid = serializers.BooleanField(read_only=True)
+
     class Meta:
         model = StoreOrder
         fields = [
@@ -527,6 +531,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
+            'amount_paid', 'amount_due', 'is_fully_paid',
             'surcharge_value', 'surcharge_reason',
             'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
             'payment_method', 'payment_id', 'payment_preference_id',

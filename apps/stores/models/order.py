@@ -277,6 +277,35 @@ class StoreOrder(BaseModel):
             self.access_token = self.generate_access_token()
         super().save(*args, **kwargs)
 
+    @property
+    def amount_paid(self):
+        """Total efetivamente recebido = soma dos StorePayment 'completed'.
+
+        DERIVADO (sem campo físico) — fonte da verdade das cobranças é o
+        StorePayment (Fase 3, Opção A). Usa a annotation `amount_paid_agg` do
+        queryset quando presente (anti-N+1 em listas); senão agrega on-demand.
+        """
+        annotated = getattr(self, 'amount_paid_agg', None)
+        if annotated is not None:
+            return Decimal(annotated).quantize(Decimal('0.01'))
+        total = self.payments.filter(status='completed').aggregate(
+            t=models.Sum('amount')
+        )['t']
+        return (total or Decimal('0.00')).quantize(Decimal('0.01'))
+
+    @property
+    def amount_due(self):
+        """Quanto ainda falta receber = max(0, total - amount_paid)."""
+        due = (self.total or Decimal('0.00')) - self.amount_paid
+        if due < Decimal('0.00'):
+            due = Decimal('0.00')
+        return due.quantize(Decimal('0.01'))
+
+    @property
+    def is_fully_paid(self):
+        """True quando o recebido cobre o total do pedido."""
+        return self.amount_paid >= (self.total or Decimal('0.00'))
+
     def recalculate_totals(self, save=True):
         """Fonte da verdade do total. Soma os itens em subtotal e aplica a
         fórmula canônica: total = subtotal - discount + tax + delivery_fee
