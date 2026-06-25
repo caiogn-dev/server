@@ -527,6 +527,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
+            'surcharge_value', 'surcharge_reason',
+            'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
             'payment_method', 'payment_id', 'payment_preference_id',
             'pix_code', 'pix_qr_code', 'pix_ticket_url', 'pix_expires_at',
             'delivery_method', 'delivery_method_display',
@@ -552,6 +554,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
             'uber_driver_phone', 'uber_vehicle_info', 'uber_eta_minutes',
             'uber_pickup_instructions', 'uber_created_at',
+            'surcharge_value', 'surcharge_reason',
+            'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
         ]
     
     def get_items_count(self, obj):

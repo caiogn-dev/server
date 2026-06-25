@@ -46,3 +46,25 @@ class RecalculateTotalsTestCase(APITestCase):
         self.order.recalculate_totals()
         self.order.refresh_from_db()
         self.assertEqual(self.order.total, Decimal('0.00'))
+
+
+class OrderReadFieldsTestCase(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username='o2', email='o2@x.com', password='x')
+        self.store = Store.objects.create(name='L2', slug='l2', owner=self.owner, status='active')
+        self.token = Token.objects.create(user=self.owner)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {self.token.key}')
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='C', customer_phone='6300000000',
+            subtotal=Decimal('20.00'), total=Decimal('23.00'),
+            surcharge_value=Decimal('3.00'), surcharge_reason='taxa',
+            manual_discount_reason='promo',
+        )
+
+    def test_read_exposes_surcharge_and_discount_reason(self):
+        url = f'/api/v1/stores/{self.store.slug}/orders/{self.order.id}/'
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(Decimal(resp.data['surcharge_value']), Decimal('3.00'))
+        self.assertEqual(resp.data['surcharge_reason'], 'taxa')
+        self.assertEqual(resp.data['manual_discount_reason'], 'promo')
