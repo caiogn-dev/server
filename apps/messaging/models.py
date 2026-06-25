@@ -29,6 +29,8 @@ from django.db import models
 from django.conf import settings
 import uuid
 
+from apps.core.fields import EncryptedCharField
+
 
 class MessengerAccount(models.Model):
     """Conta do Messenger/Facebook conectada"""
@@ -38,11 +40,13 @@ class MessengerAccount(models.Model):
     # Identificadores
     page_id = models.CharField(max_length=255, unique=True)
     page_name = models.CharField(max_length=255)
-    page_access_token = models.TextField()
-    
+    # Segredo em repouso: criptografado via Fernet (lê plaintext legado e
+    # re-criptografa no próximo save).
+    page_access_token = EncryptedCharField(max_length=1000)
+
     # Configurações
     app_id = models.CharField(max_length=255, null=True, blank=True)
-    app_secret = models.CharField(max_length=255, null=True, blank=True)
+    app_secret = EncryptedCharField(max_length=1000, null=True, blank=True)
     
     # IA
     default_agent = models.ForeignKey(

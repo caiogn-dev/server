@@ -64,3 +64,41 @@ class MessengerConversationApiTests(TestCase):
         self.assertFalse(
             MessengerMessage.objects.filter(conversation=self.conversation, is_read=False).exists()
         )
+
+
+class MessengerAccountEncryptionTests(TestCase):
+    """A2 — segredos do Messenger criptografados em repouso."""
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="enc-tester", email="enc@example.com", password="pass",
+        )
+
+    def test_secrets_stored_encrypted_but_read_plaintext(self):
+        from django.db import connection
+
+        account = MessengerAccount.objects.create(
+            user=self.user,
+            page_id="page-enc",
+            page_name="Enc Page",
+            page_access_token="EAAG-super-secret-page-token",
+            app_secret="my-app-secret",
+            is_active=True,
+        )
+
+        # Leitura via ORM devolve o plaintext.
+        account.refresh_from_db()
+        self.assertEqual(account.page_access_token, "EAAG-super-secret-page-token")
+        self.assertEqual(account.app_secret, "my-app-secret")
+
+        # No banco, o valor cru está criptografado (Fernet → começa com gAAA).
+        with connection.cursor() as cur:
+            cur.execute(
+                "SELECT page_access_token, app_secret FROM messenger_accounts WHERE id = %s",
+                [str(account.id)],
+            )
+            raw_token, raw_secret = cur.fetchone()
+        self.assertTrue(raw_token.startswith("gAAA"), raw_token)
+        self.assertNotIn("super-secret", raw_token)
+        self.assertTrue(raw_secret.startswith("gAAA"), raw_secret)
+        self.assertNotIn("my-app-secret", raw_secret)
