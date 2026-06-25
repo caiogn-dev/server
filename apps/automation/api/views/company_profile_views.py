@@ -19,7 +19,7 @@ from apps.automation.api.serializers import (
     CreateCompanyProfileSerializer,
     UpdateCompanyProfileSerializer,
 )
-from apps.core.permissions import accessible_whatsapp_account_ids
+from apps.core.permissions import accessible_whatsapp_account_ids, user_can_access_store
 from .base import StandardResultsSetPagination
 
 logger = logging.getLogger(__name__)
@@ -109,7 +109,16 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
                     {'error': 'Store not found'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
+
+            # Segurança (IDOR): só pode pré-preencher com dados de uma loja
+            # que o usuário possa acessar. Sem isso, qualquer autenticado lia
+            # nome/endereço/telefone/email de QUALQUER loja pelo slug.
+            if not user_can_access_store(request.user, store):
+                return Response(
+                    {'error': 'Store not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
             # Build business hours from store.operating_hours
             business_hours = {}
             if store.operating_hours:
@@ -177,7 +186,15 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
             try:
                 from apps.stores.models import Store
                 store = Store.objects.get(id=store_id, is_active=True)
-                
+
+                # Segurança (IDOR): impede criar/anexar um CompanyProfile
+                # (config de automação) a uma loja de outro tenant.
+                if not user_can_access_store(request.user, store):
+                    return Response(
+                        {'error': 'Store not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+
                 # Auto-populate from store if not manually provided
                 if not data.get('company_name'):
                     data['company_name'] = store.name
