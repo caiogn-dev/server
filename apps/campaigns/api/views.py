@@ -36,6 +36,19 @@ from .serializers import (
 logger = logging.getLogger(__name__)
 
 
+def _user_can_use_account(user, account_id):
+    """True se o usuário pode operar sobre a WhatsAppAccount informada.
+
+    Sem essa checagem (IDOR), qualquer autenticado criava campanhas/listas e
+    importava contatos em contas de OUTRO tenant passando account_id arbitrário.
+    """
+    if not account_id:
+        return False
+    if user.is_superuser:
+        return True
+    return str(account_id) in {str(i) for i in accessible_whatsapp_account_ids(user)}
+
+
 class SystemContactsView(APIView):
     """
     Get contacts from the system (conversations, orders, subscribers).
@@ -239,7 +252,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
         """Create a new campaign."""
         serializer = CampaignCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        if not _user_can_use_account(request.user, serializer.validated_data.get('account_id')):
+            return Response({'error': 'Sem permissão nesta conta'}, status=status.HTTP_403_FORBIDDEN)
+
         service = CampaignService()
         campaign = service.create_campaign(
             **serializer.validated_data,
@@ -319,13 +335,14 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def schedule(self, request, pk=None):
         """Schedule a campaign."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR): 404 se não acessível
         scheduled_at = request.data.get('scheduled_at')
         if not scheduled_at:
             return Response(
                 {'error': 'scheduled_at is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         service = CampaignService()
         try:
             from django.utils.dateparse import parse_datetime
@@ -339,6 +356,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def start(self, request, pk=None):
         """Start a campaign immediately."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR)
         service = CampaignService()
         try:
             campaign = service.start_campaign(str(pk))
@@ -364,6 +382,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def pause(self, request, pk=None):
         """Pause a running campaign."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR)
         service = CampaignService()
         try:
             campaign = service.pause_campaign(str(pk))
@@ -381,6 +400,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def resume(self, request, pk=None):
         """Resume a paused campaign."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR)
         service = CampaignService()
         try:
             campaign = service.resume_campaign(str(pk))
@@ -398,6 +418,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         """Cancel a campaign."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR)
         service = CampaignService()
         try:
             campaign = service.cancel_campaign(str(pk))
@@ -415,6 +436,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):
         """Get campaign statistics."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR)
         service = CampaignService()
         stats = service.get_campaign_stats(str(pk))
         return Response(stats)
@@ -428,8 +450,8 @@ class CampaignViewSet(viewsets.ModelViewSet):
         """
         service = CampaignService()
         try:
-            campaign = Campaign.objects.get(id=pk)
-            
+            campaign = self.get_object()  # escopo de tenant (IDOR)
+
             if campaign.status in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
                 campaign.status = Campaign.CampaignStatus.RUNNING
                 campaign.started_at = timezone.now()
@@ -480,9 +502,10 @@ class CampaignViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def add_recipients(self, request, pk=None):
         """Add recipients to a campaign."""
+        pk = str(self.get_object().id)  # escopo de tenant (IDOR)
         serializer = AddRecipientsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
         service = CampaignService()
         try:
             count = service.add_recipients(str(pk), serializer.validated_data['contacts'])
@@ -519,7 +542,10 @@ class ContactListViewSet(viewsets.ModelViewSet):
         """Create a new contact list."""
         serializer = ContactListCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        if not _user_can_use_account(request.user, serializer.validated_data.get('account_id')):
+            return Response({'error': 'Sem permissão nesta conta'}, status=status.HTTP_403_FORBIDDEN)
+
         service = CampaignService()
         contact_list = service.create_contact_list(
             **serializer.validated_data,
@@ -537,11 +563,18 @@ class ContactListViewSet(viewsets.ModelViewSet):
         """Import contacts from CSV."""
         serializer = ImportContactsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+
+        account_id = serializer.validated_data['account_id']
+        if not _user_can_use_account(request.user, account_id):
+            return Response(
+                {'error': 'Sem permissão nesta conta'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         service = CampaignService()
         try:
             contact_list = service.import_contacts_from_csv(
-                account_id=serializer.validated_data['account_id'],
+                account_id=account_id,
                 name=serializer.validated_data['name'],
                 csv_content=serializer.validated_data['csv_content'],
                 created_by=request.user
