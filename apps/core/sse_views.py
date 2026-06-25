@@ -6,6 +6,7 @@ Este módulo fornece endpoints SSE para quando WebSocket não está disponível.
 import json
 import time
 import logging
+import secrets
 import uuid as uuid_module
 from datetime import timedelta
 from django.http import StreamingHttpResponse, JsonResponse
@@ -13,11 +14,56 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.authtoken.models import Token
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from django.core.cache import cache
 from django.db import connection
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+# Ticket de SSE: credencial efêmera de uso único para abrir o stream sem
+# expor o token permanente na query string (EventSource não permite headers).
+SSE_TICKET_TTL = 60  # segundos
+_SSE_TICKET_PREFIX = "sse:ticket:"
+
+
+def issue_sse_ticket(user) -> str:
+    """Gera um ticket de uso único (TTL curto) ligado ao usuário."""
+    ticket = secrets.token_urlsafe(32)
+    cache.set(f"{_SSE_TICKET_PREFIX}{ticket}", user.pk, SSE_TICKET_TTL)
+    return ticket
+
+
+def consume_sse_ticket(ticket: str):
+    """Resolve e invalida (uso único) um ticket de SSE. Retorna o user ou None."""
+    if not ticket:
+        return None
+    cache_key = f"{_SSE_TICKET_PREFIX}{ticket}"
+    user_pk = cache.get(cache_key)
+    if user_pk is None:
+        return None
+    cache.delete(cache_key)  # uso único
+    from django.contrib.auth import get_user_model
+    try:
+        return get_user_model().objects.get(pk=user_pk)
+    except get_user_model().DoesNotExist:
+        return None
+
+
+class SSETicketView(APIView):
+    """Emite um ticket de SSE de uso único para o usuário autenticado.
+
+    O cliente autentica normalmente (header Token) neste POST e usa o
+    ticket retornado em /api/sse/...?ticket=<t>, evitando o token permanente
+    na URL do EventSource.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        return Response({'ticket': issue_sse_ticket(request.user), 'ttl': SSE_TICKET_TTL})
 
 
 class SSEEvent:
@@ -78,22 +124,47 @@ class BaseSSEView(View):
             return None
     
     def check_authentication(self, request):
-        """Check if request is authenticated."""
-        # Try query parameter
-        token = request.GET.get('token')
-        if token:
-            return self.get_user_from_token(token)
-        
-        # Try Authorization header
+        """Check if request is authenticated.
+
+        Ordem de preferência (do mais seguro ao legado):
+        1. ?ticket=  — credencial efêmera de uso único (não vaza em logs de
+           forma reutilizável).
+        2. Header Authorization: Token <key>.
+        3. Cookie sse_token (idealmente HttpOnly, setado pelo frontend).
+        4. Sessão autenticada.
+        5. ?token=  — DEPRECADO: token permanente na URL vaza em logs/histórico.
+        """
+        # 1. Ticket de uso único
+        ticket = request.GET.get('ticket')
+        if ticket:
+            user = consume_sse_ticket(ticket)
+            if user:
+                return user
+
+        # 2. Authorization header
         auth_header = request.headers.get('Authorization', '')
         if auth_header.startswith('Token '):
-            token = auth_header[6:]
+            return self.get_user_from_token(auth_header[6:])
+
+        # 3. Cookie
+        cookie_token = request.COOKIES.get('sse_token')
+        if cookie_token:
+            return self.get_user_from_token(cookie_token)
+
+        # 4. Sessão
+        session_user = getattr(request, 'user', None)
+        if session_user is not None and session_user.is_authenticated:
+            return session_user
+
+        # 5. Query token (DEPRECADO — mantido p/ compat com clientes antigos)
+        token = request.GET.get('token')
+        if token:
+            logger.warning(
+                "SSE autenticado via ?token= (deprecado, vaza em logs). "
+                "Migrar para ?ticket= ou cookie sse_token."
+            )
             return self.get_user_from_token(token)
-        
-        # Try session
-        if request.user.is_authenticated:
-            return request.user
-        
+
         return None
     
     def get_event_stream(self, request, user, last_event_id=None):

@@ -22,9 +22,10 @@ from django.views.static import serve
 
 from apps.core.dashboard_views import DashboardStatsView
 from apps.core.sse_views import (
-    OrderSSEView, 
-    WhatsAppSSEView, 
-    WebSocketHealthCheckView
+    OrderSSEView,
+    WhatsAppSSEView,
+    WebSocketHealthCheckView,
+    SSETicketView,
 )
 from apps.core.auth_views import CSRFTokenView, ProfileView
 from apps.stores.api.webhooks import MercadoPagoWebhookView
@@ -109,6 +110,7 @@ urlpatterns = [
 
     # SSE (Server-Sent Events) - Fallback for WebSocket
     path('api/sse/', include([
+        path('ticket/', SSETicketView.as_view(), name='sse_ticket'),
         path('orders/', OrderSSEView.as_view(), name='sse_orders'),
         path('whatsapp/', WhatsAppSSEView.as_view(), name='sse_whatsapp'),
         path('health/', WebSocketHealthCheckView.as_view(), name='sse_health'),
