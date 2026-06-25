@@ -5,13 +5,24 @@ import logging
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404
 
 from apps.stores.models import Store, StoreOrder
+from apps.core.permissions import user_can_access_store
 from apps.orders.services.uber_delivery import UberDeliveryClient
 from apps.orders.tasks import create_uber_delivery_request
 
 logger = logging.getLogger(__name__)
+
+
+def _get_store_for_user(user, store_slug):
+    """Resolve a loja e garante que o usuário tem acesso (tenant check)."""
+    store = get_object_or_404(Store, slug=store_slug)
+    if not user_can_access_store(user, store):
+        raise PermissionDenied('Você não tem acesso a esta loja.')
+    return store
 
 
 class CreateDeliveryRequestView(APIView):
@@ -20,11 +31,12 @@ class CreateDeliveryRequestView(APIView):
     Create a delivery request on Uber.
     Returns 202 ACCEPTED (task queued).
     """
-    def post(self, request, store_slug, order_id):
-        try:
-            store = get_object_or_404(Store, slug=store_slug)
-            order = get_object_or_404(StoreOrder, id=order_id, store=store)
+    permission_classes = [IsAuthenticated]
 
+    def post(self, request, store_slug, order_id):
+        store = _get_store_for_user(request.user, store_slug)
+        order = get_object_or_404(StoreOrder, id=order_id, store=store)
+        try:
             # Check order status
             if order.status not in ['confirmed', 'preparing']:
                 return Response(
@@ -59,11 +71,12 @@ class DeliveryRequestStatusView(APIView):
     GET /api/v1/stores/{store_slug}/orders/{order_id}/delivery-request-status/
     Poll the status of a delivery request.
     """
-    def get(self, request, store_slug, order_id):
-        try:
-            store = get_object_or_404(Store, slug=store_slug)
-            order = get_object_or_404(StoreOrder, id=order_id, store=store)
+    permission_classes = [IsAuthenticated]
 
+    def get(self, request, store_slug, order_id):
+        store = _get_store_for_user(request.user, store_slug)
+        order = get_object_or_404(StoreOrder, id=order_id, store=store)
+        try:
             if not order.uber_delivery_request_id:
                 return Response(
                     {'detail': 'No delivery request found for this order'},
@@ -89,11 +102,12 @@ class CancelDeliveryRequestView(APIView):
     DELETE /api/v1/stores/{store_slug}/orders/{order_id}/delivery-request/
     Cancel a delivery request.
     """
-    def delete(self, request, store_slug, order_id):
-        try:
-            store = get_object_or_404(Store, slug=store_slug)
-            order = get_object_or_404(StoreOrder, id=order_id, store=store)
+    permission_classes = [IsAuthenticated]
 
+    def delete(self, request, store_slug, order_id):
+        store = _get_store_for_user(request.user, store_slug)
+        order = get_object_or_404(StoreOrder, id=order_id, store=store)
+        try:
             if not order.uber_delivery_request_id:
                 return Response(
                     {'detail': 'No delivery request found for this order'},
