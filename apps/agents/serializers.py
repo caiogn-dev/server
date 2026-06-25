@@ -41,7 +41,7 @@ class AgentDetailSerializer(serializers.ModelSerializer):
 
 class AgentCreateUpdateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating agents."""
-    
+
     class Meta:
         model = Agent
         fields = [
@@ -50,6 +50,9 @@ class AgentCreateUpdateSerializer(serializers.ModelSerializer):
             'timeout', 'system_prompt', 'context_prompt',
             'status', 'use_memory', 'memory_ttl', 'accounts'
         ]
+        extra_kwargs = {
+            'api_key': {'write_only': True},
+        }
 
 
 class AgentMessageSerializer(serializers.ModelSerializer):
