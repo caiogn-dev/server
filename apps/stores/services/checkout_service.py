@@ -1030,11 +1030,35 @@ class CheckoutService:
         return None
     
     @staticmethod
-    def create_payment(order: StoreOrder, payment_method: str = 'pix', payment_data: dict = None) -> dict:
-        """Create a payment for an order using Mercado Pago."""
+    def create_payment(
+        order: StoreOrder,
+        payment_method: str = 'pix',
+        payment_data: dict = None,
+        amount=None,
+        store: Store = None,
+        description: str = None,
+    ) -> dict:
+        """Create a payment for an order using Mercado Pago.
+
+        Fase 3 (Opção A): para PIX cria um StorePayment (fonte da verdade das
+        cobranças) e espelha order.pix_* (compat storefront/print/bot).
+
+        - `amount` opcional: valor da cobrança PIX (default = order.amount_due).
+        - `order=None` + `store` + `amount`: cobrança AVULSA (sem pedido).
+        - Idempotência: reusa StorePayment PENDING não-expirada (mesmo valor).
+        """
         import mercadopago
+        from decimal import Decimal
+        from apps.stores.models import StorePayment
+
+        # Loja-alvo: do pedido quando há order, senão o store explícito (avulso).
+        target_store = order.store if order else store
+        if target_store is None:
+            raise ValueError("Loja obrigatoria para a cobranca")
 
         if payment_method == 'cash':
+            if order is None:
+                raise ValueError("Pagamento em dinheiro requer pedido")
             order.payment_method = 'cash'
             order.payment_status = StoreOrder.PaymentStatus.PENDING
             order.save(update_fields=['payment_method', 'payment_status', 'updated_at'])
@@ -1047,28 +1071,77 @@ class CheckoutService:
                 'message': 'Pagamento em dinheiro na entrega/retirada'
             }
 
-        credentials = CheckoutService.get_payment_credentials(order.store)
+        credentials = CheckoutService.get_payment_credentials(target_store)
         if not credentials:
             raise ValueError("Credenciais de pagamento nao configuradas")
 
         sdk = mercadopago.SDK(credentials['access_token'])
-        payer_email = get_valid_email_for_payment(order)
-        logger.info(f"Using email for payment: {payer_email} (original: {order.customer_email})")
-
         payment_payload = payment_data or {}
+        # payer_email para os fluxos baseados em pedido (cartão). PIX recomputa
+        # o seu próprio (suporta avulso sem order).
+        payer_email = get_valid_email_for_payment(order) if order is not None else None
 
         if payment_method == 'pix':
-            name = order.customer_name or 'Cliente'
+            # Valor da cobrança: explícito > amount_due do pedido. Avulso exige amount.
+            if amount is None:
+                if order is None:
+                    raise ValueError("Valor obrigatorio para cobranca avulsa")
+                amount = order.amount_due
+            amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+            if amount <= Decimal('0.00'):
+                raise ValueError("Valor da cobranca deve ser maior que zero")
+
+            # Idempotência: reusa cobrança PIX pendente não-expirada de mesmo valor.
+            existing = StorePayment.objects.filter(
+                order=order,
+                store=target_store,
+                payment_method=StorePayment.PaymentMethod.PIX,
+                status=StorePayment.PaymentStatus.PENDING,
+                amount=amount,
+            ).filter(
+                Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
+            ).order_by('-created_at').first()
+            if existing:
+                return {
+                    'success': True,
+                    'payment_id': existing.external_id,
+                    'status': 'pending',
+                    'payment_method': 'pix',
+                    'pix_code': existing.qr_code,
+                    'pix_qr_code': existing.qr_code_base64,
+                    'ticket_url': existing.ticket_url,
+                    'amount': str(existing.amount),
+                    'payment_db_id': str(existing.id),
+                    'requires_redirect': False,
+                    'reused': True,
+                }
+
+            if order is not None:
+                payer_email = get_valid_email_for_payment(order)
+                name = order.customer_name or 'Cliente'
+                mp_description = f"Pedido #{order.order_number} - {target_store.name}"
+                external_reference = str(order.id)
+            else:
+                payer_email = (
+                    payment_payload.get('payer_email')
+                    or (target_store.owner.email if target_store.owner else None)
+                    or 'cliente@noreply.com'
+                )
+                name = payment_payload.get('payer_name') or 'Cliente'
+                mp_description = description or f"Cobranca - {target_store.name}"
+                external_reference = f"avulso:{target_store.id}"
+            logger.info(f"Using email for payment: {payer_email}")
+
             pix_payment_data = {
-                "transaction_amount": float(order.total),
-                "description": f"Pedido #{order.order_number} - {order.store.name}",
+                "transaction_amount": float(amount),
+                "description": mp_description,
                 "payment_method_id": "pix",
                 "payer": {
                     "email": payer_email,
                     "first_name": name.split()[0],
                     "last_name": " ".join(name.split()[1:]) if len(name.split()) > 1 else "",
                 },
-                "external_reference": str(order.id),
+                "external_reference": external_reference,
                 "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
             }
 
@@ -1076,35 +1149,56 @@ class CheckoutService:
 
             if result["status"] == 201:
                 payment = result["response"]
-                order.payment_id = str(payment["id"])
-                order.payment_method = 'pix'
-                order.payment_status = StoreOrder.PaymentStatus.PENDING
-
                 pix_data = payment.get("point_of_interaction", {}).get("transaction_data", {})
-                order.pix_code = pix_data.get("qr_code", "")
-                order.pix_qr_code = pix_data.get("qr_code_base64", "")
-                ticket_url = pix_data.get("ticket_url", "")
-                order.pix_ticket_url = ticket_url
-                order.pix_expires_at = timezone.now() + timedelta(hours=24)
-                order.save(update_fields=[
-                    'payment_id',
-                    'payment_method',
-                    'payment_status',
-                    'pix_code',
-                    'pix_qr_code',
-                    'pix_ticket_url',
-                    'pix_expires_at',
-                    'updated_at',
-                ])
+                expires_at = timezone.now() + timedelta(hours=24)
+
+                # StorePayment é a fonte da verdade da cobrança.
+                store_payment = StorePayment.objects.create(
+                    order=order,
+                    store=target_store,
+                    amount=amount,
+                    payment_method=StorePayment.PaymentMethod.PIX,
+                    status=StorePayment.PaymentStatus.PENDING,
+                    external_id=str(payment["id"]),
+                    external_reference=external_reference,
+                    qr_code=pix_data.get("qr_code", ""),
+                    qr_code_base64=pix_data.get("qr_code_base64", ""),
+                    ticket_url=pix_data.get("ticket_url", ""),
+                    payer_email=payer_email or "",
+                    payer_name=name,
+                    expires_at=expires_at,
+                )
+
+                # Espelho no pedido (cobrança ativa) — compat storefront/print/bot.
+                if order is not None:
+                    order.payment_id = str(payment["id"])
+                    order.payment_method = 'pix'
+                    order.payment_status = StoreOrder.PaymentStatus.PENDING
+                    order.pix_code = pix_data.get("qr_code", "")
+                    order.pix_qr_code = pix_data.get("qr_code_base64", "")
+                    order.pix_ticket_url = pix_data.get("ticket_url", "")
+                    order.pix_expires_at = expires_at
+                    order.save(update_fields=[
+                        'payment_id',
+                        'payment_method',
+                        'payment_status',
+                        'pix_code',
+                        'pix_qr_code',
+                        'pix_ticket_url',
+                        'pix_expires_at',
+                        'updated_at',
+                    ])
 
                 return {
                     'success': True,
                     'payment_id': payment["id"],
                     'status': payment["status"],
                     'payment_method': 'pix',
-                    'pix_code': order.pix_code,
-                    'pix_qr_code': order.pix_qr_code,
-                    'ticket_url': ticket_url,
+                    'pix_code': store_payment.qr_code,
+                    'pix_qr_code': store_payment.qr_code_base64,
+                    'ticket_url': store_payment.ticket_url,
+                    'amount': str(amount),
+                    'payment_db_id': str(store_payment.id),
                     'expiration': pix_data.get("expiration_date"),
                     'requires_redirect': False,
                 }
