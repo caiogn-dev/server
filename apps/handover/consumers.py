@@ -72,6 +72,15 @@ class HandoverConsumer(AsyncWebsocketConsumer):
             # Cliente quer receber updates de uma conversa específica
             conversation_id = data.get('conversation_id')
             if conversation_id:
+                # Segurança (IDOR): só assina conversas de contas acessíveis ao
+                # usuário. Sem isso, qualquer autenticado recebia updates de
+                # handover de QUALQUER conversa só sabendo o UUID.
+                if not await self.user_can_access_conversation(conversation_id):
+                    await self.send(text_data=json.dumps({
+                        'type': 'error',
+                        'message': 'Sem acesso a esta conversa',
+                    }))
+                    return
                 await self.channel_layer.group_add(
                     f"conversation_{conversation_id}",
                     self.channel_name
@@ -111,6 +120,18 @@ class HandoverConsumer(AsyncWebsocketConsumer):
             'priority': event.get('priority'),
         }))
     
+    @database_sync_to_async
+    def user_can_access_conversation(self, conversation_id):
+        """True se a conversa pertence a uma conta acessível ao usuário."""
+        from apps.conversations.models import Conversation
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        if self.user and self.user.is_superuser:
+            return Conversation.objects.filter(id=conversation_id).exists()
+        account_ids = accessible_whatsapp_account_ids(self.user)
+        return Conversation.objects.filter(
+            id=conversation_id, account_id__in=account_ids
+        ).exists()
+
     @database_sync_to_async
     def get_user_store_ids(self):
         """Retorna IDs das lojas que o usuário é membro."""

@@ -64,6 +64,12 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
         elif message_type == 'subscribe_conversation':
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                # Segurança (IDOR): só pode assinar conversas DA conta conectada.
+                # Sem isso, o usuário recebia eventos em tempo real de conversas
+                # de outra conta/tenant só sabendo o UUID.
+                if not await self.verify_conversation_access(conversation_id):
+                    await self.send_error('Sem acesso a esta conversa', 'forbidden')
+                    return
                 group_name = f"whatsapp_conv_{conversation_id}"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.conversation_groups.add(group_name)
@@ -152,6 +158,16 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
             return account.owner_id == self.user.id or self.user.is_superuser
         except WhatsAppAccount.DoesNotExist:
             return False
+
+    @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        """A conversa deve pertencer à conta conectada (já autorizada)."""
+        from apps.conversations.models import Conversation
+        if self.user and self.user.is_superuser:
+            return Conversation.objects.filter(id=conversation_id).exists()
+        return Conversation.objects.filter(
+            id=conversation_id, account_id=self.account_id
+        ).exists()
 
 
 class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
