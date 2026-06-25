@@ -479,46 +479,88 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         events.sort(key=lambda event: event['created_at'], reverse=True)
         return Response(events)
     
+    @staticmethod
+    def _pix_expired(order) -> bool:
+        """True se o pedido é PIX e o código já expirou (não deve ser confirmado)."""
+        return bool(
+            order.payment_method == 'pix'
+            and order.pix_expires_at
+            and order.pix_expires_at < timezone.now()
+        )
+
     @action(detail=True, methods=['post'])
     def update_payment_status(self, request, pk=None):
         """Update order payment status."""
         order = self.get_object()
         new_status = request.data.get('payment_status')
-        
+
         if not new_status:
             return Response(
                 {'error': 'payment_status is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         valid_statuses = [s[0] for s in StoreOrder.PaymentStatus.choices]
         if new_status not in valid_statuses:
             return Response(
                 {'error': f'Invalid status. Valid options: {valid_statuses}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        order.payment_status = new_status
-        if new_status == 'paid':
-            order.paid_at = timezone.now()
-        order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
-        
+
+        paid = StoreOrder.PaymentStatus.PAID
+        # Trava a linha sob transação: evita confirmação dupla concorrente (race).
+        with transaction.atomic():
+            order = StoreOrder.objects.select_for_update().get(pk=order.pk)
+
+            # PIX expirado não pode ser confirmado manualmente.
+            if new_status == paid and order.payment_status != paid and self._pix_expired(order):
+                return Response(
+                    {'error': 'PIX expirado — gere uma nova cobrança antes de confirmar o pagamento.',
+                     'code': 'pix_expired'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            update_fields = ['payment_status', 'updated_at']
+            order.payment_status = new_status
+            # paid_at só no 1º pagamento confirmado — não sobrescreve o original.
+            if new_status == paid and not order.paid_at:
+                order.paid_at = timezone.now()
+                update_fields.append('paid_at')
+            order.save(update_fields=update_fields)
+
         return Response(StoreOrderSerializer(order).data)
-    
+
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None):
         """Mark order as paid (convenience endpoint)."""
         order = self.get_object()
-        
-        order.payment_status = StoreOrder.PaymentStatus.PAID
-        order.paid_at = timezone.now()
-        order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
-        
+        paid = StoreOrder.PaymentStatus.PAID
+
+        # Trava a linha sob transação: evita confirmação dupla concorrente (race).
+        with transaction.atomic():
+            order = StoreOrder.objects.select_for_update().get(pk=order.pk)
+
+            # PIX expirado não pode ser confirmado manualmente.
+            if order.payment_status != paid and self._pix_expired(order):
+                return Response(
+                    {'error': 'PIX expirado — gere uma nova cobrança antes de confirmar o pagamento.',
+                     'code': 'pix_expired'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            update_fields = ['payment_status', 'updated_at']
+            order.payment_status = paid
+            # paid_at só no 1º pagamento confirmado — não sobrescreve o original.
+            if not order.paid_at:
+                order.paid_at = timezone.now()
+                update_fields.append('paid_at')
+            order.save(update_fields=update_fields)
+
         logger.info(f"Order {order.order_number} marked as paid")
-        
+
         # Notify via WebSocket
         self._notify_order_update(order, 'order.paid')
-        
+
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'])
