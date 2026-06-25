@@ -174,21 +174,39 @@ class MercadoPagoWebhookView(APIView):
         
         # Find order by payment_id
         order = StoreOrder.objects.filter(payment_id=str(payment_id)).first()
-        
+
+        # Fase 3: casa a cobrança (StorePayment) por external_id — cobre
+        # multi-charge E cobrança avulsa (order=None, escopada por loja).
+        store_payment = None
         if not order:
+            from apps.stores.models import StorePayment
+            store_payment = StorePayment.objects.filter(
+                external_id=str(payment_id)
+            ).select_related('order', 'store').order_by('-created_at').first()
+            if store_payment and store_payment.order_id:
+                order = store_payment.order
+
+        if not order and not store_payment:
             # Try to find by external_reference (order ID)
             external_ref = request.data.get('data', {}).get('external_reference')
             if external_ref:
                 order = StoreOrder.objects.filter(id=external_ref).first()
-        
-        if not order:
-            logger.warning(f"Order not found for payment {payment_id}")
+
+        # Loja para resolver credenciais: do pedido ou da cobrança avulsa.
+        resolved_store = None
+        if order:
+            resolved_store = order.store
+        elif store_payment:
+            resolved_store = store_payment.store
+
+        if resolved_store is None:
+            logger.warning(f"Order/charge not found for payment {payment_id}")
             return Response({'status': 'order_not_found'}, status=status.HTTP_200_OK)
-        
+
         # Get store credentials
-        credentials = checkout_service.get_payment_credentials(order.store)
+        credentials = checkout_service.get_payment_credentials(resolved_store)
         if not credentials:
-            logger.error(f"No payment credentials for store {order.store.slug}")
+            logger.error(f"No payment credentials for store {resolved_store.slug}")
             return Response({'status': 'no_credentials'}, status=status.HTTP_200_OK)
         
         # Fetch payment details from Mercado Pago

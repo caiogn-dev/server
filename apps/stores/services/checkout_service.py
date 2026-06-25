@@ -1363,15 +1363,103 @@ class CheckoutService:
     @staticmethod
     @transaction.atomic
     def process_payment_webhook(payment_id: str, status: str) -> StoreOrder:
-        """Process payment webhook and update order status."""
+        """Process payment webhook and update order/charge status.
+
+        Fase 3 (Opção A): casa primeiro o StorePayment por external_id
+        (multi-charge nativo). Mantém o FALLBACK LEGADO por order.payment_id
+        para pedidos antigos sem StorePayment (prod cobra de verdade desde
+        17/jun — não pode regressar).
+        """
+        from apps.stores.models import StorePayment
+
+        store_payment = StorePayment.objects.select_for_update().filter(
+            external_id=str(payment_id)
+        ).order_by('-created_at').first()
+
+        if store_payment is not None:
+            return CheckoutService._handle_storepayment_webhook(store_payment, status)
+
+        # Fallback legado: casa o pedido diretamente pelo payment_id.
         order = StoreOrder.objects.select_for_update().filter(
-            payment_id=payment_id
+            payment_id=str(payment_id)
         ).first()
-        
+
         if not order:
             logger.warning(f"Order not found for payment {payment_id}")
             return None
-        
+
+        return CheckoutService._apply_order_webhook_status(order, status)
+
+    @staticmethod
+    def _handle_storepayment_webhook(store_payment, status: str):
+        """Atualiza UMA cobrança (StorePayment) e reconcilia o pedido.
+
+        - approved: marca a cobrança completed; pedido só vira paid quando
+          amount_paid >= total (parcial fica PROCESSING). Avulso (order=None)
+          só marca a cobrança.
+        - rejected/cancelled/refunded/pending/in_process: atualiza a cobrança;
+          aplica a transição legada no pedido apenas quando NÃO há outra
+          cobrança já completed (preserva o fluxo single-charge de produção).
+        """
+        from apps.stores.models import StorePayment
+
+        _MAP = {
+            'approved': StorePayment.PaymentStatus.COMPLETED,
+            'pending': StorePayment.PaymentStatus.PENDING,
+            'in_process': StorePayment.PaymentStatus.PROCESSING,
+            'rejected': StorePayment.PaymentStatus.FAILED,
+            'cancelled': StorePayment.PaymentStatus.CANCELLED,
+            'refunded': StorePayment.PaymentStatus.REFUNDED,
+        }
+        target = _MAP.get(status)
+        if target is None:
+            return store_payment.order
+
+        order = store_payment.order
+
+        if status == 'approved':
+            # Idempotência: cobrança já confirmada → não reprocessa.
+            if store_payment.status == StorePayment.PaymentStatus.COMPLETED:
+                return order
+            store_payment.status = StorePayment.PaymentStatus.COMPLETED
+            if not store_payment.paid_at:
+                store_payment.paid_at = timezone.now()
+            store_payment.save()  # _sync_with_order espelha pix/paid_at (se houver order)
+
+            if order is None:
+                return None
+
+            order.refresh_from_db()
+            if order.amount_paid >= order.total:
+                # Totalmente pago → confirma o pedido (email/pixel/etc).
+                return CheckoutService._apply_order_webhook_status(order, 'approved')
+            # Parcial: ainda falta receber — não marca pago.
+            order.payment_status = StoreOrder.PaymentStatus.PROCESSING
+            order.paid_at = None
+            order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+            return order
+
+        # Demais status: atualiza a cobrança.
+        store_payment.status = target
+        store_payment.save()
+
+        if order is None:
+            return None
+
+        order.refresh_from_db()
+        # Se já há outra cobrança confirmada, não derruba o pedido por causa de
+        # uma cobrança extra rejeitada/estornada.
+        if order.payments.filter(status=StorePayment.PaymentStatus.COMPLETED).exists():
+            return order
+        return CheckoutService._apply_order_webhook_status(order, status)
+
+    @staticmethod
+    def _apply_order_webhook_status(order: StoreOrder, status: str) -> StoreOrder:
+        """Transições de status no PEDIDO a partir do status do gateway.
+
+        Lógica legada (single-charge) preservada — usada tanto pelo fallback
+        legado quanto pela reconciliação de StorePayment.
+        """
         old_status = order.status
         # Estados em que o estoque já foi devolvido — evita restaurar 2x em webhooks repetidos.
         _STOCK_RESTORED_STATUSES = {
