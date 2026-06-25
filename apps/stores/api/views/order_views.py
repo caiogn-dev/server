@@ -3,7 +3,7 @@ Order management API views.
 """
 import logging
 import uuid as uuid_module
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError as DRFValidationError, PermissionDenied
@@ -543,7 +543,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'], url_path='generate_payment')
-    def generate_payment(self, request, pk=None):
+    def generate_payment(self, request, pk=None, **kwargs):
         """Generate a real PIX/card payment link for an admin-created order."""
         from apps.stores.services.checkout_service import CheckoutService
 
@@ -551,8 +551,37 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         payment_method = request.data.get('payment_method', order.payment_method or 'pix')
         payment_data = request.data.get('payment_data', {})
 
+        # Bloqueia cobrança em pedidos encerrados (não há o que receber).
+        _BLOCKED = {
+            StoreOrder.OrderStatus.CANCELLED,
+            StoreOrder.OrderStatus.REFUNDED,
+            StoreOrder.OrderStatus.FAILED,
+        }
+        if order.status in _BLOCKED:
+            return Response(
+                {'error': f'Não é possível gerar cobrança para pedido {order.get_status_display()}.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Valor da cobrança: explícito (usuário escolhe) ou default = amount_due.
+        raw_amount = request.data.get('amount')
+        if raw_amount is not None and raw_amount != '':
+            try:
+                amount = Decimal(str(raw_amount)).quantize(Decimal('0.01'))
+            except (InvalidOperation, ValueError, TypeError):
+                return Response({'error': 'Valor inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+            if amount <= Decimal('0.00'):
+                return Response({'error': 'O valor deve ser maior que zero.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            amount = order.amount_due
+            if amount <= Decimal('0.00'):
+                return Response(
+                    {'error': 'Pedido já está integralmente pago. Informe um valor para cobrar a mais.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         try:
-            result = CheckoutService.create_payment(order, payment_method, payment_data)
+            result = CheckoutService.create_payment(order, payment_method, payment_data, amount=amount)
         except ValueError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception:
