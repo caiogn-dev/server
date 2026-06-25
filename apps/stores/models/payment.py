@@ -137,11 +137,23 @@ class StorePayment(BaseModel):
         OTHER = 'other', 'Other'
 
     # Relationships
+    # order é NULLABLE: cobrança avulsa (link de pagamento de valor arbitrário
+    # SEM pedido) é escopada por `store`. Quando há pedido, store é inferido.
     order = models.ForeignKey(
         'stores.StoreOrder',
         on_delete=models.CASCADE,
         related_name='payments',
-        help_text='Order this payment belongs to'
+        null=True,
+        blank=True,
+        help_text='Order this payment belongs to (null para cobrança avulsa)'
+    )
+    store = models.ForeignKey(
+        'stores.Store',
+        on_delete=models.CASCADE,
+        related_name='store_payments',
+        null=True,
+        blank=True,
+        help_text='Loja dona da cobrança (obrigatório; inferido do pedido quando há order)'
     )
     gateway = models.ForeignKey(
         StorePaymentGateway,
@@ -267,22 +279,37 @@ class StorePayment(BaseModel):
         # Generate payment_id if not set or empty
         if not self.payment_id:
             self.payment_id = str(uuid.uuid4())
-        
+
+        # Infere a loja do pedido quando há order; cobrança avulsa precisa de
+        # store explícito. Invariante: toda cobrança pertence a uma loja.
+        if not self.store_id and self.order_id:
+            self.store_id = self.order.store_id
+        if not self.store_id:
+            raise ValueError(
+                "StorePayment requer 'store' (diretamente ou via order)."
+            )
+
         # Calculate net amount
         if not self.net_amount and self.amount:
             self.net_amount = self.amount - self.fee
-        
+
         super().save(*args, **kwargs)
-        
+
         # Sync with StoreOrder
         self._sync_with_order()
 
     def _sync_with_order(self):
-        """Sync payment status with StoreOrder."""
+        """Sync payment status with StoreOrder.
+
+        Cobrança avulsa (order=None) não tem pedido a sincronizar — retorna.
+        """
+        if not self.order_id:
+            return
+
         from .order import StoreOrder
-        
+
         order = self.order
-        
+
         # Update StoreOrder payment fields based on this payment
         if self.status == self.PaymentStatus.COMPLETED:
             order.payment_status = StoreOrder.PaymentStatus.PAID
