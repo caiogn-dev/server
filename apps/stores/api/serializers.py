@@ -206,7 +206,16 @@ class StoreIntegrationCreateSerializer(serializers.ModelSerializer):
 
 class StoreWebhookSerializer(serializers.ModelSerializer):
     """Serializer for StoreWebhook model."""
-    
+
+    def validate_url(self, value):
+        # Guard anti-SSRF: o backend chama essa URL server-side depois.
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from apps.core.url_security import validate_public_webhook_url
+        try:
+            return validate_public_webhook_url(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages[0] if exc.messages else str(exc))
+
     class Meta:
         model = StoreWebhook
         fields = [
