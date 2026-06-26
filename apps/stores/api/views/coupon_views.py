@@ -2,6 +2,7 @@
 Coupon management API views.
 """
 import uuid as uuid_module
+from decimal import Decimal, InvalidOperation
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -53,54 +54,44 @@ class StoreCouponViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def validate(self, request):
-        """Validate a coupon code."""
+        """Validate a coupon code.
+
+        SEGURANÇA: usa self.get_queryset() (tenant-scoped) em vez de
+        StoreCoupon.objects para evitar IDOR cross-tenant.
+        """
         code = request.query_params.get('code')
         store_id = request.query_params.get('store')
-        subtotal = request.query_params.get('subtotal', 0)
-        
+        subtotal_raw = request.query_params.get('subtotal', '0')
+
         if not code or not store_id:
             return Response(
                 {'valid': False, 'error': 'code and store are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         try:
-            coupon = StoreCoupon.objects.get(
-                code__iexact=code,
-                store_id=store_id
-            )
+            subtotal = Decimal(str(subtotal_raw))
+        except (InvalidOperation, ValueError):
+            subtotal = Decimal('0')
+
+        try:
+            # get_queryset() já filtra por loja (store query param) e por
+            # lojas acessíveis ao usuário autenticado — impede IDOR.
+            coupon = self.get_queryset().get(code__iexact=code)
         except StoreCoupon.DoesNotExist:
             return Response({'valid': False, 'error': 'Cupom não encontrado'})
-        
-        # Check if coupon is valid
-        now = timezone.now()
-        
-        if not coupon.is_active:
-            return Response({'valid': False, 'error': 'Cupom inativo'})
-        
-        if coupon.valid_from and now < coupon.valid_from:
-            return Response({'valid': False, 'error': 'Cupom ainda não é válido'})
-        
-        if coupon.valid_until and now > coupon.valid_until:
-            return Response({'valid': False, 'error': 'Cupom expirado'})
-        
-        if coupon.max_uses and coupon.used_count >= coupon.max_uses:
-            return Response({'valid': False, 'error': 'Limite de uso atingido'})
-        
-        if coupon.min_order_value and float(subtotal) < float(coupon.min_order_value):
-            return Response({
-                'valid': False, 
-                'error': f'Valor mínimo: R$ {coupon.min_order_value}'
-            })
-        
-        # Calculate discount
-        discount = coupon.calculate_discount(float(subtotal))
-        
+
+        is_valid, error_msg = coupon.is_valid(subtotal=subtotal)
+        if not is_valid:
+            return Response({'valid': False, 'error': error_msg})
+
+        discount = coupon.calculate_discount(subtotal)
+
         return Response({
             'valid': True,
             'coupon': StoreCouponSerializer(coupon).data,
             'discount': discount,
-            'discount_formatted': f'R$ {discount:.2f}'
+            'discount_formatted': f'R$ {discount:.2f}',
         })
     
     @action(detail=False, methods=['get'])
