@@ -1358,23 +1358,137 @@ class CheckoutService:
                 'error': result.get('response', {}).get('message', 'Erro ao criar preferencia'),
             }
 
+        if payment_method == 'link':
+            # Link de pagamento (Checkout Pro / preference): página hospedada onde
+            # o cliente escolhe cartão/PIX/boleto. Funciona avulso (sem pedido) ou
+            # sobre um pedido. O payment id real só existe quando o cliente paga —
+            # por isso a cobrança guarda o preference id em external_id e um
+            # external_reference único (`splink:<token>`) pra o webhook reconciliar.
+            import uuid
+
+            if amount is None:
+                if order is None:
+                    raise ValueError("Valor obrigatorio para link avulso")
+                amount = order.amount_due
+            amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+            if amount <= Decimal('0.00'):
+                raise ValueError("Valor da cobranca deve ser maior que zero")
+
+            if order is not None:
+                link_payer_email = get_valid_email_for_payment(order)
+                link_payer_name = order.customer_name or 'Cliente'
+                mp_title = f"Pedido #{order.order_number} - {target_store.name}"
+            else:
+                link_payer_email = (
+                    payment_payload.get('payer_email')
+                    or (target_store.owner.email if target_store.owner else None)
+                    or 'cliente@noreply.com'
+                )
+                link_payer_name = payment_payload.get('payer_name') or 'Cliente'
+                mp_title = description or f"Cobranca - {target_store.name}"
+
+            external_reference = f"splink:{uuid.uuid4().hex}"
+            storefront_base_url = CheckoutService.get_storefront_base_url(target_store, payment_payload)
+            # notification_url COM slug: o webhook resolve a loja (credenciais) pela
+            # URL, já que a cobrança-link não casa por external_id antes do pagto.
+            notification_url = f"{settings.BASE_URL}/webhooks/payments/mercadopago/{target_store.slug}/"
+
+            preference_data = {
+                "items": [
+                    {
+                        "title": mp_title,
+                        "quantity": 1,
+                        "unit_price": float(amount),
+                        "currency_id": "BRL",
+                    }
+                ],
+                "payer": {"email": link_payer_email, "name": link_payer_name},
+                "external_reference": external_reference,
+                "back_urls": {
+                    "success": f"{storefront_base_url}/sucesso",
+                    "failure": f"{storefront_base_url}/erro",
+                    "pending": f"{storefront_base_url}/pendente",
+                },
+                "auto_return": "approved",
+                "notification_url": notification_url,
+            }
+
+            result = sdk.preference().create(preference_data)
+
+            if result["status"] == 201:
+                preference = result["response"]
+                init_point = preference.get("init_point")
+
+                store_payment = StorePayment.objects.create(
+                    order=order,
+                    store=target_store,
+                    amount=amount,
+                    payment_method=StorePayment.PaymentMethod.OTHER,
+                    status=StorePayment.PaymentStatus.PENDING,
+                    external_id=str(preference["id"]),
+                    external_reference=external_reference,
+                    payment_url=init_point or "",
+                    payer_email=link_payer_email or "",
+                    payer_name=link_payer_name,
+                )
+
+                if order is not None:
+                    order.payment_preference_id = preference["id"]
+                    order.payment_status = StoreOrder.PaymentStatus.PENDING
+                    order.save(update_fields=[
+                        'payment_preference_id',
+                        'payment_status',
+                        'updated_at',
+                    ])
+
+                return {
+                    'success': True,
+                    'payment_method': 'link',
+                    'status': 'pending',
+                    'payment_url': init_point,
+                    'init_point': init_point,
+                    'sandbox_init_point': preference.get('sandbox_init_point'),
+                    'preference_id': preference['id'],
+                    'payment_db_id': str(store_payment.id),
+                    'amount': str(amount),
+                    'requires_redirect': True,
+                }
+
+            logger.error(f"Link preference creation failed: {result}")
+            return {
+                'success': False,
+                'error': result.get('response', {}).get('message', 'Erro ao criar link de pagamento'),
+            }
+
         raise ValueError(f"Metodo de pagamento nao suportado: {payment_method}")
 
     @staticmethod
     @transaction.atomic
-    def process_payment_webhook(payment_id: str, status: str) -> StoreOrder:
+    def process_payment_webhook(payment_id: str, status: str, external_reference: str = None) -> StoreOrder:
         """Process payment webhook and update order/charge status.
 
         Fase 3 (Opção A): casa primeiro o StorePayment por external_id
         (multi-charge nativo). Mantém o FALLBACK LEGADO por order.payment_id
         para pedidos antigos sem StorePayment (prod cobra de verdade desde
         17/jun — não pode regressar).
+
+        Link de pagamento: a cobrança-link guarda o preference id em external_id
+        (o payment id real só existe quando o cliente paga). Casa pelo
+        external_reference único (`splink:<token>`) e grava o payment id.
         """
         from apps.stores.models import StorePayment
 
         store_payment = StorePayment.objects.select_for_update().filter(
             external_id=str(payment_id)
         ).order_by('-created_at').first()
+
+        if store_payment is None and external_reference and str(external_reference).startswith('splink:'):
+            store_payment = StorePayment.objects.select_for_update().filter(
+                external_reference=str(external_reference)
+            ).order_by('-created_at').first()
+            if store_payment is not None and store_payment.external_id != str(payment_id):
+                store_payment.external_id = str(payment_id)
+                store_payment.save(update_fields=['external_id', 'updated_at'])
 
         if store_payment is not None:
             return CheckoutService._handle_storepayment_webhook(store_payment, status)

@@ -121,6 +121,9 @@ urlpatterns = [
     path('webhooks/v1/', include('apps.webhooks.urls')),
     path('webhooks/payments/mercadopago', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_no_slash'),
     path('webhooks/payments/mercadopago/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook'),
+    # Slug-scoped: usado pelo link de pagamento (notification_url com slug) p/ o
+    # webhook resolver a loja e reconciliar a cobrança por external_reference.
+    path('webhooks/payments/mercadopago/<slug:store_slug>/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_slug'),
     
     # Direct WhatsApp verification endpoint (no trailing slash required by Meta)
     # Regular webhook POSTs with trailing slash are already handled by webhooks/v1/ above.

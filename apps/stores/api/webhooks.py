@@ -192,12 +192,16 @@ class MercadoPagoWebhookView(APIView):
             if external_ref:
                 order = StoreOrder.objects.filter(id=external_ref).first()
 
-        # Loja para resolver credenciais: do pedido ou da cobrança avulsa.
+        # Loja para resolver credenciais: do pedido, da cobrança avulsa, ou — para
+        # link de pagamento (a cobrança não casa por external_id antes do pagto) —
+        # da própria URL (notification_url com slug).
         resolved_store = None
         if order:
             resolved_store = order.store
         elif store_payment:
             resolved_store = store_payment.store
+        elif store_slug:
+            resolved_store = Store.objects.filter(slug=store_slug).first()
 
         if resolved_store is None:
             logger.warning(f"Order/charge not found for payment {payment_id}")
@@ -219,6 +223,8 @@ class MercadoPagoWebhookView(APIView):
         
         payment = payment_response['response']
         payment_status = payment.get('status')
+        # external_reference vem do payment buscado na MP — reconcilia link de pagamento.
+        payment_external_reference = payment.get('external_reference')
         
         # Idempotency: prevent double processing if MP resends the webhook
         from django.core.cache import cache
@@ -228,7 +234,9 @@ class MercadoPagoWebhookView(APIView):
             return Response({'status': 'duplicate'}, status=status.HTTP_200_OK)
 
         # Process payment status
-        order = checkout_service.process_payment_webhook(str(payment_id), payment_status)
+        order = checkout_service.process_payment_webhook(
+            str(payment_id), payment_status, external_reference=payment_external_reference,
+        )
 
         if order:
             logger.info(f"Order {order.order_number} updated to status: {order.status}")

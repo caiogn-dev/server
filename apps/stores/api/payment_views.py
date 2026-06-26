@@ -261,8 +261,10 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     @extend_schema(summary="Create standalone PIX payment link (cobrança avulsa)")
     @action(detail=False, methods=['post'], url_path='create_link')
     def create_link(self, request):
-        """Fase 3 — gera uma cobrança PIX AVULSA (valor arbitrário, sem pedido).
+        """Fase 3 — gera um LINK DE PAGAMENTO AVULSO (valor arbitrário, sem pedido).
 
+        Cria uma preference do Mercado Pago (Checkout Pro): página hospedada onde
+        o cliente escolhe cartão/PIX/boleto. Devolve `payment_url` (init_point).
         Body: {store, amount, description?, payer_name?, payer_email?}.
         Escopada por loja (o usuário precisa ter acesso à loja).
         """
@@ -297,7 +299,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         try:
             result = CheckoutService.create_payment(
-                None, 'pix', payment_data,
+                None, 'link', payment_data,
                 amount=amount, store=store, description=description,
             )
         except ValueError as exc:
