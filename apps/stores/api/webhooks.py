@@ -649,6 +649,7 @@ class CustomerOrderDetailView(APIView):
             token = request.query_params.get('token', '')
             user = request.user
             from apps.core.permissions import user_can_access_store
+            from apps.core.services.customer_identity import CustomerIdentityService
             is_owner = (
                 user.is_authenticated
                 and (order.customer_id == user.id or user_can_access_store(user, order.store))
@@ -710,8 +711,10 @@ class CustomerOrderDetailView(APIView):
                     'phone': order.store.phone,
                     'whatsapp_number': order.store.whatsapp_number,
                 },
-                'customer_name': order.customer_name,
-                'customer_email': order.customer_email,
+                # Não expor identidade-placeholder interna ({phone}@pastita.local,
+                # cliente_...) como dado real do cliente (LGPD / CLAUDE.md).
+                'customer_name': CustomerIdentityService.public_name(order.customer_name),
+                'customer_email': CustomerIdentityService.public_email(order.customer_email),
                 'customer_phone': order.customer_phone,
                 'status': order.status,
                 'payment_status': order.payment_status,

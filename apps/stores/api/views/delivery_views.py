@@ -5,11 +5,10 @@ import uuid as uuid_module
 from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from django.shortcuts import get_object_or_404
 from django.db.models import Avg
 
-from apps.stores.models import StoreDeliveryZone
-from apps.core.permissions import StoreQuerysetMixin
+from apps.stores.models import StoreDeliveryZone, Store
+from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 from ..serializers import StoreDeliveryZoneSerializer, StoreDeliveryZoneCreateSerializer
 from .base import IsStoreOwnerOrStaff
 
@@ -89,12 +88,24 @@ class StoreDeliveryZoneViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         
         if not store_id:
             return Response({'error': 'store is required'}, status=400)
-        
-        zones = StoreDeliveryZone.objects.filter(
-            store_id=store_id,
+
+        # Segurança: resolve a loja dentro do escopo de tenant do usuário.
+        # Sem isso, qualquer usuário autenticado calcularia (e vazaria) a taxa
+        # de entrega de lojas concorrentes — inclusive a default_delivery_fee
+        # no fallback. accessible_store_ids() retorna None para superuser.
+        accessible = accessible_store_ids(request.user)
+        store_qs = Store.objects.filter(id=store_id)
+        if accessible is not None:
+            store_qs = store_qs.filter(id__in=accessible)
+        store = store_qs.first()
+        if store is None:
+            return Response({'error': 'Loja não encontrada'}, status=404)
+
+        zones = self.get_queryset().filter(
+            store_id=store.id,
             is_active=True
         ).order_by('sort_order')
-        
+
         for zone in zones:
             if distance_km and zone.matches_distance(distance_km):
                 return Response({
@@ -113,7 +124,6 @@ class StoreDeliveryZoneViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                     'available': True
                 })
         
-        store = get_object_or_404(Store, id=store_id)
         return Response({
             'fee': str(store.default_delivery_fee),
             'zone_id': None,

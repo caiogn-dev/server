@@ -27,6 +27,33 @@ class CustomerIdentityService:
         return "".join(ch for ch in str(value or "") if ch.isdigit())
 
     @classmethod
+    def is_placeholder_email(cls, email: str) -> bool:
+        """True para e-mails de fallback interno (não devem ir ao cliente)."""
+        value = (email or "").strip().lower()
+        return (
+            not value
+            or value.endswith(cls.PLACEHOLDER_DOMAIN)
+            or value.endswith("@cardapidex.local")
+            or value.endswith("@anonimizado.local")
+        )
+
+    @classmethod
+    def public_email(cls, email: str):
+        """E-mail seguro para exibição: None se for placeholder interno (LGPD)."""
+        return None if cls.is_placeholder_email(email) else email
+
+    @staticmethod
+    def is_placeholder_name(name: str) -> bool:
+        """True para nomes de fallback (cliente_..., desconhecido, vazio)."""
+        value = (name or "").strip().lower()
+        return not value or value.startswith("cliente_") or value == "desconhecido"
+
+    @classmethod
+    def public_name(cls, name: str):
+        """Nome seguro para exibição: None se for placeholder interno."""
+        return None if cls.is_placeholder_name(name) else name
+
+    @classmethod
     def phone_candidates(cls, phone_number: str) -> list[str]:
         digits = cls.digits_only(phone_number)
         if not digits:
