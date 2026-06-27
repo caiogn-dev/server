@@ -57,7 +57,7 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(user=self.request.user)
 
@@ -292,7 +292,7 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(account__user=self.request.user)
 
@@ -385,7 +385,7 @@ class InstagramShoppingViewSet(viewsets.ViewSet):
     def get_account(self):
         account_id = self.request.query_params.get("account_id")
         queryset = InstagramAccount.objects.all()
-        if not (self.request.user.is_superuser or self.request.user.is_staff):
+        if not self.request.user.is_superuser:
             queryset = queryset.filter(user=self.request.user)
         return get_object_or_404(queryset, id=account_id)
 
@@ -408,7 +408,7 @@ class InstagramShoppingViewSet(viewsets.ViewSet):
     def tag_product(self, request):
         account_id = request.data.get("account_id") or request.query_params.get("account_id")
         queryset = InstagramAccount.objects.all()
-        if not (request.user.is_superuser or request.user.is_staff):
+        if not request.user.is_superuser:
             queryset = queryset.filter(user=request.user)
         account = get_object_or_404(queryset, id=account_id)
 
@@ -443,7 +443,7 @@ class InstagramLiveViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(account__user=self.request.user)
 
@@ -487,12 +487,12 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset.filter(is_active=True)
+        if not self.request.user.is_superuser:
+            queryset = queryset.filter(account__user=self.request.user)
         account_id = self.request.query_params.get("account")
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        if self.request.user.is_superuser or self.request.user.is_staff:
-            return queryset
-        return queryset.filter(account__user=self.request.user)
+        return queryset
 
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):
