@@ -8,6 +8,7 @@ from django.db.models import QuerySet
 from django.utils import timezone
 from rest_framework.exceptions import ValidationError
 
+from apps.core.pii import mask_phone
 from apps.whatsapp.models import WhatsAppAccount, MessageTemplate
 from apps.whatsapp.services import MessageService
 # Import unified messaging service for integration
@@ -318,7 +319,7 @@ class CampaignService:
         
         for recipient in recipients:
             try:
-                logger.debug(f"Sending message to {recipient.phone_number}")
+                logger.debug("Sending message to %s", mask_phone(recipient.phone_number))
                 
                 # Send message
                 if campaign.template:
@@ -377,10 +378,12 @@ class CampaignService:
                 campaign.messages_sent += 1
                 processed += 1
                 
-                logger.info(f"Campaign {campaign_id}: Sent to {recipient.phone_number} (msg_id: {message.whatsapp_message_id})")
+                logger.info("Campaign %s: Sent to %s (msg_id: %s)",
+                            campaign_id, mask_phone(recipient.phone_number), message.whatsapp_message_id)
                 
             except Exception as e:
-                logger.error(f"Campaign {campaign_id}: Error sending to {recipient.phone_number}: {e}", exc_info=True)
+                logger.error("Campaign %s: Error sending to %s: %s",
+                             campaign_id, mask_phone(recipient.phone_number), e, exc_info=True)
                 recipient.status = CampaignRecipient.RecipientStatus.FAILED
                 recipient.failed_at = timezone.now()
                 recipient.error_message = str(e)

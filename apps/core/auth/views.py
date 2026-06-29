@@ -16,6 +16,7 @@ class WhatsAppAuthThrottle(AnonRateThrottle):
     """10 requests/minute per IP — same scope as other auth endpoints."""
     scope = 'auth'
 
+from apps.core.pii import mask_phone
 from apps.core.services.customer_identity import CustomerIdentityService
 
 from .whatsapp_auth import WhatsAppAuthService, WhatsAppAuthError
@@ -73,7 +74,7 @@ def send_whatsapp_auth_code(request):
     phone = request.data.get('phone_number')
     account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
     
-    logger.info(f"[WHATSAPP AUTH API] Request to send code to: {phone}")
+    logger.info("[WHATSAPP AUTH API] Request to send code to: %s", mask_phone(phone))
     
     if not phone:
         return Response(

@@ -14,6 +14,7 @@ from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.db import transaction
 from celery import current_app
+from apps.core.pii import mask_phone
 from apps.core.utils import (
     verify_webhook_signature,
     generate_idempotency_key,
@@ -1105,7 +1106,8 @@ class WebhookService:
             )
         
         # Get or create conversation
-        logger.info(f"[_process_inbound_message] About to create conversation: account={event.account.id}, phone={from_number}, contact_name={contact_data.get('profile', {}).get('name', '')}")
+        logger.info("[_process_inbound_message] About to create conversation: account=%s, phone=%s",
+                    event.account.id, mask_phone(from_number))
         try:
             conversation = self._get_or_create_conversation(
                 account=event.account,
@@ -1439,7 +1441,8 @@ class WebhookService:
         from apps.conversations.models import Conversation
         from django.db import IntegrityError
         phone_number = normalize_phone_number(phone_number)
-        logger.info(f"[_get_or_create_conversation] START - account={account.id}, phone={phone_number}, contact_name={contact_name}")
+        logger.info("[_get_or_create_conversation] START - account=%s, phone=%s",
+                    account.id, mask_phone(phone_number))
         
         try:
             logger.info(f"[_get_or_create_conversation] Calling get_or_create...")
@@ -1485,7 +1488,8 @@ class WebhookService:
         except IntegrityError as ie:
             # Race condition: another request created the conversation first
             # This can happen with unique_together constraint on (account, phone_number)
-            logger.warning(f"[_get_or_create_conversation] IntegrityError on get_or_create for {phone_number}: {ie}, retrying get...")
+            logger.warning("[_get_or_create_conversation] IntegrityError on get_or_create for %s: %s, retrying get...",
+                           mask_phone(phone_number), ie)
             try:
                 conversation = Conversation.objects.get(
                     account=account,
@@ -1495,7 +1499,8 @@ class WebhookService:
                 return conversation
             except Conversation.DoesNotExist:
                 # This shouldn't happen but handle it gracefully
-                logger.error(f"[_get_or_create_conversation] Conversation not found after IntegrityError for {phone_number}")
+                logger.error("[_get_or_create_conversation] Conversation not found after IntegrityError for %s",
+                             mask_phone(phone_number))
                 raise
         except Exception as e:
             logger.error(f"[_get_or_create_conversation] Unexpected error: {e}", exc_info=True)

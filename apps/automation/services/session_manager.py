@@ -15,6 +15,7 @@ import re
 from django.utils import timezone
 
 from apps.automation.models import CompanyProfile, CustomerSession
+from apps.core.pii import mask_phone
 from apps.stores.models import Store
 from apps.whatsapp.models import WhatsAppAccount
 
@@ -257,7 +258,7 @@ class SessionManager:
             # Sincroniza objeto local com os valores gravados
             self._session.refresh_from_db()
 
-        logger.info(f"[SessionManager] Session reset for {self.phone_number}")
+        logger.info("[SessionManager] Session reset for %s", mask_phone(self.phone_number))
     
     def save_pending_order_items(self, items: list) -> None:
         """Salva itens pendentes na sessão enquanto espera escolha de entrega/pagamento."""
@@ -464,7 +465,7 @@ class SessionManager:
                     pix_expires_at=_pix_expires,
                 )
             session.save()
-            logger.info(f"[SessionManager] Payment pending set for {self.phone_number}")
+            logger.info("[SessionManager] Payment pending set for %s", mask_phone(self.phone_number))
     
     def confirm_payment(self, order_id: str = ''):
         """Confirma pagamento e atualiza sessão"""
@@ -474,7 +475,7 @@ class SessionManager:
             if order_id:
                 session.external_order_id = order_id
             session.save()
-            logger.info(f"[SessionManager] Payment confirmed for {self.phone_number}")
+            logger.info("[SessionManager] Payment confirmed for %s", mask_phone(self.phone_number))
     
     def complete_order(self, order_id: str = ''):
         """Completa pedido e finaliza sessão"""
@@ -484,7 +485,7 @@ class SessionManager:
             if order_id:
                 session.external_order_id = order_id
             session.save()
-            logger.info(f"[SessionManager] Order completed for {self.phone_number}")
+            logger.info("[SessionManager] Order completed for %s", mask_phone(self.phone_number))
     
     def is_order_in_progress(self) -> bool:
         """Verifica se há pedido em andamento"""
