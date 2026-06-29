@@ -140,22 +140,118 @@ class WhatsAppWebhookView(APIView):
 
 
 class WebhookDebugView(APIView):
-    """Debug endpoint to check webhook status. Only available in DEBUG mode."""
+    """Diagnóstico de webhooks WhatsApp consumido pela WebhookDiagnosticsPage.
+
+    Antes retornava só celery_status/verify_token e 404 fora de DEBUG — a página,
+    que espera contas, eventos recentes/falhos, mensagens inbound e contadores,
+    nunca funcionava. Aqui montamos o payload completo (escopado às contas do
+    usuário p/ não vazar dados de outros tenants) + ações de reprocesso.
+    """
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
-        if not settings.DEBUG:
-            return Response({'detail': 'Not found.'}, status=404)
-
+    @staticmethod
+    def _celery_status():
         try:
             from celery import current_app
-            inspector = current_app.control.inspect()
-            stats = inspector.stats()
-            celery_status = 'running' if stats else 'not running'
+            stats = current_app.control.inspect().stats()
+            return 'running' if stats else 'not running'
         except Exception as e:
-            celery_status = f'error: {str(e)}'
+            return f'error: {str(e)}'
+
+    def get(self, request):
+        from datetime import timedelta
+        from django.db.models import Count, Q
+        from apps.core.dashboard_views import _accessible_accounts
+
+        accounts_qs = _accessible_accounts(request.user)
+        account_ids = list(accounts_qs.values_list('id', flat=True))
+        now = timezone.now()
+        last_24h = now - timedelta(hours=24)
+        last_hour = now - timedelta(hours=1)
+
+        events = WebhookEvent.objects.filter(account_id__in=account_ids)
+        ev = events.aggregate(
+            total=Count('id'),
+            pending=Count('id', filter=Q(processing_status='pending')),
+            processing=Count('id', filter=Q(processing_status='processing')),
+            completed=Count('id', filter=Q(processing_status='completed')),
+            failed=Count('id', filter=Q(processing_status='failed')),
+            last_24h=Count('id', filter=Q(created_at__gte=last_24h)),
+            last_hour=Count('id', filter=Q(created_at__gte=last_hour)),
+        )
+        msgs = Message.objects.filter(account_id__in=account_ids)
+        mg = msgs.aggregate(
+            total_inbound=Count('id', filter=Q(direction='inbound')),
+            total_outbound=Count('id', filter=Q(direction='outbound')),
+            inbound_last_24h=Count('id', filter=Q(direction='inbound', created_at__gte=last_24h)),
+            inbound_last_hour=Count('id', filter=Q(direction='inbound', created_at__gte=last_hour)),
+        )
+        celery_status = self._celery_status()
+
+        accounts = [{
+            'id': str(a.id), 'name': a.name, 'phone_number': a.phone_number,
+            'phone_number_id': a.phone_number_id, 'status': a.status,
+            'is_active': a.is_active, 'auto_response_enabled': a.auto_response_enabled,
+        } for a in accounts_qs]
+        recent_events = [{
+            'id': str(e.id), 'event_type': e.event_type, 'processing_status': e.processing_status,
+            'created_at': e.created_at.isoformat(), 'error_message': e.error_message or None,
+            'account_id': str(e.account_id) if e.account_id else None, 'retry_count': e.retry_count,
+        } for e in events.order_by('-created_at')[:20]]
+        recent_inbound = [{
+            'id': str(m.id), 'from_number': m.from_number, 'text_body': m.text_body or None,
+            'message_type': m.message_type, 'created_at': m.created_at.isoformat(),
+            'account_id': str(m.account_id),
+        } for m in msgs.filter(direction='inbound').order_by('-created_at')[:20]]
+        failed_events = [{
+            'id': str(e.id), 'event_type': e.event_type, 'error_message': e.error_message or None,
+            'retry_count': e.retry_count, 'created_at': e.created_at.isoformat(),
+        } for e in events.filter(processing_status='failed').order_by('-created_at')[:20]]
+
+        diagnosis = {
+            'has_active_accounts': accounts_qs.filter(is_active=True).exists(),
+            'has_pending_events': ev['pending'] > 0,
+            'has_failed_events': ev['failed'] > 0,
+            'celery_connected': celery_status == 'running',
+            'receiving_webhooks': ev['last_24h'] > 0,
+            'receiving_messages': mg['inbound_last_24h'] > 0,
+        }
 
         return Response({
+            'status': 'ok',
+            'server_time': now.isoformat(),
             'celery_status': celery_status,
-            'verify_token_configured': bool(getattr(settings, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN', None)),
+            'stats': {'webhook_events': ev, 'messages': mg},
+            'accounts': accounts,
+            'recent_events': recent_events,
+            'recent_inbound_messages': recent_inbound,
+            'failed_events': failed_events,
+            'diagnosis': diagnosis,
         })
+
+    def post(self, request):
+        from apps.core.dashboard_views import _accessible_accounts
+
+        action = request.data.get('action')
+        try:
+            limit = max(1, min(int(request.data.get('limit', 50)), 200))
+        except (TypeError, ValueError):
+            limit = 50
+
+        account_ids = list(_accessible_accounts(request.user).values_list('id', flat=True))
+        status_map = {'reprocess_pending': 'pending', 'reprocess_failed': 'failed'}
+        target_status = status_map.get(action)
+        if not target_status:
+            return Response(
+                {'detail': 'Ação inválida. Use reprocess_pending ou reprocess_failed.'},
+                status=400,
+            )
+
+        target = WebhookEvent.objects.filter(
+            account_id__in=account_ids, processing_status=target_status,
+        ).order_by('-created_at')[:limit]
+        results = {'async': 0, 'sync': 0, 'error': 0}
+        for event in target:
+            r = process_event_sync_or_async(event)
+            results[r] = results.get(r, 0) + 1
+        return Response({'action': action, 'processed': sum(results.values()), 'results': results})
