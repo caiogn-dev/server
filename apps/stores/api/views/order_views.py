@@ -11,7 +11,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.db import transaction
-from django.db.models import Q, Sum, Count
+from django.db.models import Q, Sum, Count, Func, F, Value, CharField
 from django.utils import timezone
 from datetime import timedelta
 
@@ -102,7 +102,24 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         customer = self.request.query_params.get('customer')
         if customer:
-            qs = qs.filter(customer_phone=customer)
+            import re
+            digits = re.sub(r'\D', '', customer)
+            if digits:
+                # O telefone do cadastro (phone/whatsapp) e o customer_phone gravado
+                # no checkout divergem em formato (+55, espaços, parênteses, traço);
+                # igualdade exata zerava o histórico. Compara só dígitos casando pelo
+                # sufixo nacional (DDD+número, 11 díg.), tolerando DDI 55 ausente/extra.
+                suffix = digits[-11:] if len(digits) >= 11 else digits
+                qs = qs.annotate(
+                    _phone_digits=Func(
+                        F('customer_phone'),
+                        Value(r'[^0-9]'), Value(''), Value('g'),
+                        function='regexp_replace',
+                        output_field=CharField(),
+                    )
+                ).filter(_phone_digits__endswith=suffix)
+            else:
+                qs = qs.filter(customer_phone=customer)
 
         # Optimize querysets by action (different needs for list vs. retrieve)
         if self.action in ['retrieve']:
