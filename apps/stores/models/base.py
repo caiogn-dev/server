@@ -94,7 +94,8 @@ class Store(BaseModel):
         ELEGANT = 'elegant', 'Elegant'
 
     class StorePlan(models.TextChoices):
-        STARTER = 'starter', 'Starter'
+        FREE = 'free', 'Grátis'
+        STARTER = 'starter', 'Essencial'
         PRO = 'pro', 'Pro'
         PREMIUM = 'premium', 'Premium'
 
