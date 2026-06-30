@@ -127,7 +127,9 @@ class MercadoPagoHandler(BaseHandler):
         from apps.stores.models import StoreOrder
         from apps.stores.services.checkout_service import CheckoutService, checkout_service
 
-        # Pagamento da PLATAFORMA (adesão SaaS): external_reference começa com 'setup:'.
+        # Pagamento da PLATAFORMA (adesão SaaS) com external_reference inline.
+        # Alguns payloads do MP já trazem external_reference/status; quando trazem
+        # e começam com 'setup:', desvia direto sem custo de fetch.
         ext_ref = str(payload.get('external_reference')
                       or payload.get('data', {}).get('external_reference') or '')
         if ext_ref.startswith('setup:'):
@@ -161,6 +163,13 @@ class MercadoPagoHandler(BaseHandler):
                     'reason': 'order_lookup_failed',
                 }
             if not order:
+                # Sem pedido de loja com esse payment_id: o webhook cru do MP só
+                # traz data.id (sem external_reference), então pode ser o pagamento
+                # da adesão SaaS na conta da PLATAFORMA. Busca no token da plataforma
+                # pra descobrir external_reference/status antes de desistir.
+                setup_result = self._try_platform_setup_payment(payment_id)
+                if setup_result is not None:
+                    return setup_result
                 return {
                     'processed': False,
                     'payment_id': payment_id,
@@ -208,6 +217,31 @@ class MercadoPagoHandler(BaseHandler):
             'action': 'payment_updated',
         }
     
+    def _try_platform_setup_payment(self, payment_id: str):
+        """
+        Verifica se um payment sem pedido de loja é, na verdade, o pagamento da
+        adesão SaaS (preference da PLATAFORMA). Busca o payment no token da
+        plataforma (mesma fonte que criou a preference) e, se o external_reference
+        começar com 'setup:', marca a setup_fee_paid.
+
+        Retorna o dict de resultado quando É um pagamento de adesão; retorna None
+        quando não é (aí o chamador segue o fluxo normal de 'order_not_found').
+        """
+        try:
+            from apps.stores.services import subscription_service
+            sdk = subscription_service._sdk()
+            response = sdk.payment().get(str(payment_id))
+        except Exception as exc:
+            logger.warning("Falha ao buscar payment %s no token da plataforma: %s", payment_id, exc)
+            return None
+        if response.get('status') != 200:
+            return None
+        body = response.get('response') or {}
+        ext = str(body.get('external_reference') or '')
+        if not ext.startswith('setup:'):
+            return None
+        return subscription_service.mark_setup_fee_paid(ext, body.get('status') or '')
+
     def _handle_order_webhook(self, payload: dict) -> Dict[str, Any]:
         """Handle order-related webhooks."""
         data_id = payload.get('data', {}).get('id')
