@@ -92,22 +92,29 @@ def create_subscription(store, plan_key, payer_email, back_url):
 
     # Taxa de adesão: preference one-off, gated por killswitch global + toggle do plano.
     setup_enabled = getattr(settings, 'BILLING_SETUP_FEE_ENABLED', False)
-    if setup_enabled and billing.charges_setup_fee(plan_key):
-        pref = sdk.preference().create({
+    setup_fee = plan.get('setup_fee')
+    if setup_enabled and billing.charges_setup_fee(plan_key) and setup_fee is not None:
+        pref_data = {
             'items': [{
                 'title': f"Adesão Cardapidex {plan['name']} — {store.name}",
                 'quantity': 1,
-                'unit_price': float(plan['setup_fee']),
+                'unit_price': float(setup_fee),
                 'currency_id': 'BRL',
             }],
             'back_urls': {'success': back_url, 'pending': back_url, 'failure': back_url},
             'external_reference': f"setup:{store.slug}",
-        })
+        }
+        # Sem notification_url, o evento do pagamento da adesão dependeria só do
+        # webhook global no painel MP. Com ele, o mesmo endpoint da assinatura
+        # recebe o evento e a Task 7 desvia por external_reference 'setup:'.
+        if notification_url:
+            pref_data['notification_url'] = notification_url
+        pref = sdk.preference().create(pref_data)
         if pref.get('status') in (200, 201):
-            body = pref['response']
-            sub.mp_setup_payment_id = body.get('id', '')
+            pref_body = pref['response']
+            sub.mp_setup_payment_id = pref_body.get('id', '')
             sub.save(update_fields=['mp_setup_payment_id'])
-            result['setup_init_point'] = body.get('init_point') or body.get('sandbox_init_point', '')
+            result['setup_init_point'] = pref_body.get('init_point') or pref_body.get('sandbox_init_point', '')
         else:
             logger.error('MP setup-fee preference falhou p/ loja %s: %s', store.slug, pref)
 

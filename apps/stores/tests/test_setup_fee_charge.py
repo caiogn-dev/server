@@ -1,4 +1,3 @@
-from decimal import Decimal
 from unittest.mock import patch, MagicMock
 from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
@@ -54,3 +53,18 @@ class SetupFeeChargeTest(TestCase):
         out = subscription_service.create_subscription(
             self.store, 'pro', 'dono@x.com', 'https://painel/plano')
         self.assertNotIn('setup_init_point', out)
+
+    @patch('apps.stores.billing.charges_setup_fee', return_value=True)
+    @patch('apps.stores.services.subscription_service._sdk')
+    def test_preference_failure_does_not_crash(self, sdk_p, _fee):
+        # MP recusa a preference da adesão: a assinatura deve seguir sem quebrar,
+        # sem setup_init_point e sem gravar mp_setup_payment_id.
+        sdk = _mp_mock()
+        sdk.preference().create.return_value = {'status': 500, 'response': {}}
+        sdk_p.return_value = sdk
+        out = subscription_service.create_subscription(
+            self.store, 'pro', 'dono@x.com', 'https://painel/plano')
+        self.assertNotIn('setup_init_point', out)
+        self.assertEqual(out['preapproval_id'], 'PRE-1')
+        sub = StoreSubscription.objects.get(store=self.store)
+        self.assertEqual(sub.mp_setup_payment_id, '')
