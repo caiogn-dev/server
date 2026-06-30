@@ -87,6 +87,14 @@ def within_product_limit(store, current_count):
     return cap is None or current_count < cap
 
 
+def store_accepts_orders(store):
+    """False só se a assinatura está 'suspended' e a loja NÃO é isenta."""
+    if is_billing_exempt(store):
+        return True
+    sub = getattr(store, 'subscription', None)
+    return not (sub is not None and sub.status == 'suspended')
+
+
 def charges_setup_fee(plan_key):
     """True se ESTE plano deve cobrar a taxa de adesão (setup_fee). Toggle por plano."""
     return bool(get_plan(plan_key).get('charges_setup_fee', False))

@@ -62,6 +62,7 @@ from apps.stores.models import (
 )
 from apps.users.models import UserAddress
 from apps.stores.services import cart_service, checkout_service
+from apps.stores import billing as billing_service
 from apps.stores.services.delivery_quote_service import delivery_quote_service
 from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
@@ -830,6 +831,12 @@ class StoreCheckoutView(APIView):
     def post(self, request, store_slug):
         """Process checkout and create order."""
         store = get_active_store(store_slug)
+
+        if not billing_service.store_accepts_orders(store):
+            return Response(
+                {'detail': 'Loja temporariamente indisponível.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # Get cart
         session_id = get_request_cart_key(request)
