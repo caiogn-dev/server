@@ -161,6 +161,38 @@ def apply_preapproval_event(preapproval_id, mp_status):
     return {'processed': True, 'status': new_status}
 
 
+def cancel_subscription(store):
+    """Cancela o preapproval no MP e marca a assinatura como canceled."""
+    sub = StoreSubscription.objects.filter(store=store).first()
+    if not sub:
+        raise SubscriptionError('Loja sem assinatura.')
+    if sub.mp_preapproval_id:
+        try:
+            _sdk().preapproval().update(sub.mp_preapproval_id, {'status': 'cancelled'})
+        except Exception as e:
+            logger.error('Falha ao cancelar preapproval %s: %s', sub.mp_preapproval_id, e)
+    sub.status = StoreSubscription.Status.CANCELED
+    sub.canceled_at = timezone.now()
+    sub.save(update_fields=['status', 'canceled_at'])
+    if store.plan != billing.DEFAULT_PLAN:
+        store.plan = billing.DEFAULT_PLAN
+        store.save(update_fields=['plan'])
+    return sub
+
+
+def change_plan(store, new_plan, payer_email, back_url):
+    """Troca de plano = cancela o preapproval atual e cria um novo do plano alvo."""
+    if new_plan not in ('starter', 'pro', 'premium'):
+        raise SubscriptionError('Plano inválido.')
+    existing = StoreSubscription.objects.filter(store=store).first()
+    if existing and existing.mp_preapproval_id:
+        try:
+            _sdk().preapproval().update(existing.mp_preapproval_id, {'status': 'cancelled'})
+        except Exception as e:
+            logger.error('Falha ao cancelar preapproval antigo: %s', e)
+    return create_subscription(store, new_plan, payer_email, back_url)
+
+
 def mark_setup_fee_paid(external_reference, mp_status):
     """Marca setup_fee_paid=True quando o pagamento da adesão é aprovado.
     external_reference no formato 'setup:<store_slug>'."""

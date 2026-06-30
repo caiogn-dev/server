@@ -111,7 +111,12 @@ from .api.webhooks import (
     OrderReceiptView,
 )
 from .api.views.review_views import OrderReviewByTokenView, StoreReviewListView
-from .api.views.subscription_views import StoreSubscribeView
+from .api.views.subscription_views import (
+    StoreSubscribeView,
+    StoreSubscriptionDetailView,
+    StoreSubscriptionCancelView,
+    StoreSubscriptionChangePlanView,
+)
 from .api.views.cash_views import CashOpenView, CashCurrentView, CashMovementView, CashCloseView
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
@@ -204,6 +209,9 @@ store_frontend_patterns = [
     path('checkout/', StoreCheckoutView.as_view(), name='store-checkout'),
     path('delivery-fee/', StoreDeliveryFeeView.as_view(), name='store-delivery-fee'),
     path('subscribe/', StoreSubscribeView.as_view(), name='store-subscribe'),
+    path('subscription/', StoreSubscriptionDetailView.as_view(), name='store-subscription-detail'),
+    path('subscription/cancel/', StoreSubscriptionCancelView.as_view(), name='store-subscription-cancel'),
+    path('subscription/change-plan/', StoreSubscriptionChangePlanView.as_view(), name='store-subscription-change-plan'),
     path('validate-coupon/', StoreCouponValidateView.as_view(), name='store-validate-coupon'),
     path('wishlist/', StoreWishlistViewSet.as_view({'get': 'list'}), name='store-wishlist'),
     path('wishlist/add/', StoreWishlistViewSet.as_view({'post': 'add'}), name='store-wishlist-add'),
