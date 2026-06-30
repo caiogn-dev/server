@@ -25,25 +25,25 @@ def _fake_create_sdk(pid='pre_x'):
 
 @override_settings(BILLING_GRACE_DAYS=3, BILLING_DUNNING_DAYS=3, BILLING_ENFORCEMENT_ENABLED=True)
 class EnforceSubscriptionTaskTest(TestCase):
-    def test_expired_trial_starts_grace(self):
+    def test_expired_trial_downgrades_to_free(self):
         store = mk('s1', trial_ends_at=timezone.now() - timedelta(hours=1))
         sub = StoreSubscription.objects.create(store=store, status='trialing')
         res = enforce_subscription_lifecycle()
         sub.refresh_from_db()
-        self.assertIsNotNone(sub.grace_until)
-        self.assertEqual(sub.status, 'trialing')
-        self.assertEqual(res['grace_started'], 1)
+        store.refresh_from_db()
+        self.assertEqual(store.plan, 'free')
+        self.assertEqual(sub.status, 'canceled')
+        self.assertEqual(res['downgraded_free'], 1)
 
-    def test_grace_over_suspends(self):
+    def test_trial_vencido_rebaixa_para_free(self):
         store = mk('s2', trial_ends_at=timezone.now() - timedelta(days=5))
-        StoreSubscription.objects.create(
-            store=store, status='trialing',
-            grace_until=timezone.now() - timedelta(hours=1),
-        )
-        res = enforce_subscription_lifecycle()
-        sub = StoreSubscription.objects.get(store=store)
-        self.assertEqual(sub.status, 'suspended')
-        self.assertEqual(res['suspended'], 1)
+        sub = StoreSubscription.objects.create(store=store, status='trialing')
+        with self.settings(BILLING_ENFORCEMENT_ENABLED=True):
+            enforce_subscription_lifecycle()
+        sub.refresh_from_db()
+        store.refresh_from_db()
+        self.assertEqual(store.plan, 'free')
+        self.assertEqual(sub.status, 'canceled')
 
     def test_exempt_store_untouched(self):
         store = mk('s3', trial_ends_at=timezone.now() - timedelta(days=99),
@@ -78,6 +78,18 @@ class EnforceSubscriptionTaskTest(TestCase):
         self.assertEqual(sub.status, 'past_due', 'status não deve mudar na primeira varredura')
         self.assertEqual(res['grace_started'], 1)
 
+    def test_past_due_dunning_vencido_ainda_suspende(self):
+        """O caminho past_due → dunning → suspend permanece intacto (não muda nesta task)."""
+        store = mk('s6')
+        sub = StoreSubscription.objects.create(
+            store=store, status='past_due',
+            dunning_since=timezone.now() - timedelta(days=10),
+        )
+        res = enforce_subscription_lifecycle()
+        sub.refresh_from_db()
+        self.assertEqual(sub.status, 'suspended')
+        self.assertEqual(res['suspended'], 1)
+
 
 # ---------------------------------------------------------------------------
 # Fix 2: Gate BILLING_ENFORCEMENT_ENABLED
@@ -105,19 +117,20 @@ class EnforcementGateTest(TestCase):
         self.assertEqual(res.get('skipped'), 'enforcement_disabled')
 
     @override_settings(BILLING_ENFORCEMENT_ENABLED=True)
-    def test_flag_on_suspende_normalmente(self):
-        """Flag ON: loja com carência vencida DEVE ser suspensa."""
+    def test_flag_on_rebaixa_normalmente(self):
+        """Flag ON: loja com trial vencido DEVE ser rebaixada para o plano Grátis."""
         store = mk('gate2',
                    trial_ends_at=timezone.now() - timedelta(days=10))
         StoreSubscription.objects.create(
             store=store,
             status='trialing',
-            grace_until=timezone.now() - timedelta(hours=1),
         )
         res = enforce_subscription_lifecycle()
         sub = StoreSubscription.objects.get(store=store)
-        self.assertEqual(sub.status, 'suspended')
-        self.assertEqual(res['suspended'], 1)
+        store.refresh_from_db()
+        self.assertEqual(sub.status, 'canceled')
+        self.assertEqual(store.plan, 'free')
+        self.assertEqual(res['downgraded_free'], 1)
 
     @override_settings(BILLING_ENFORCEMENT_ENABLED=False)
     def test_flag_off_loja_isenta_continua_intocada(self):
