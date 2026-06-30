@@ -14,7 +14,7 @@ PLAN_CATALOG = {
         'name': 'Starter',
         'setup_fee': Decimal('99.00'),
         'monthly_price': Decimal('59.00'),
-        'charges_setup_fee': False,
+        'charges_setup_fee': True,
         'limits': {
             'max_products': 50,
             'custom_domain': False,
@@ -27,7 +27,7 @@ PLAN_CATALOG = {
         'name': 'Pro',
         'setup_fee': Decimal('149.00'),
         'monthly_price': Decimal('99.00'),
-        'charges_setup_fee': False,
+        'charges_setup_fee': True,
         'limits': {
             'max_products': None,
             'custom_domain': True,
@@ -40,7 +40,7 @@ PLAN_CATALOG = {
         'name': 'Premium',
         'setup_fee': Decimal('199.00'),
         'monthly_price': Decimal('159.00'),
-        'charges_setup_fee': False,
+        'charges_setup_fee': True,
         'limits': {
             'max_products': None,
             'custom_domain': True,
