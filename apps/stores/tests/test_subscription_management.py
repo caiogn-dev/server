@@ -42,6 +42,13 @@ class SubscriptionManagementAPITest(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(StoreSubscription.objects.get(store=self.store).status, 'canceled')
 
+    def test_non_owner_receives_403(self):
+        outro = User.objects.create_user(username='outro', email='outro@x.com', password='x')
+        client2 = APIClient()
+        client2.force_authenticate(outro)
+        r = client2.get(f'/api/v1/stores/{self.store.slug}/subscription/')
+        self.assertEqual(r.status_code, 403)
+
     @patch('apps.stores.services.subscription_service.create_subscription')
     def test_change_plan_creates_new_preapproval(self, create_p):
         create_p.return_value = {'init_point': 'https://mp/new', 'preapproval_id': 'PRE-2'}

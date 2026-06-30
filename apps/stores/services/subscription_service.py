@@ -182,7 +182,7 @@ def cancel_subscription(store):
 
 def change_plan(store, new_plan, payer_email, back_url):
     """Troca de plano = cancela o preapproval atual e cria um novo do plano alvo."""
-    if new_plan not in ('starter', 'pro', 'premium'):
+    if new_plan not in billing.PLAN_CATALOG:
         raise SubscriptionError('Plano inválido.')
     existing = StoreSubscription.objects.filter(store=store).first()
     if existing and existing.mp_preapproval_id:
