@@ -48,3 +48,20 @@ class EnforceSubscriptionTaskTest(TestCase):
         enforce_subscription_lifecycle()
         sub = StoreSubscription.objects.get(store=store)
         self.assertEqual(sub.status, 'active')
+
+    def test_past_due_starts_dunning(self):
+        """past_due sem dunning_since → grava dunning_since=now; NÃO toca grace_until."""
+        store = mk('s5')
+        before = timezone.now()
+        sub = StoreSubscription.objects.create(
+            store=store, status='past_due', dunning_since=None,
+        )
+        res = enforce_subscription_lifecycle()
+        sub.refresh_from_db()
+        after = timezone.now()
+        self.assertIsNotNone(sub.dunning_since, 'dunning_since deve ser gravado')
+        self.assertGreaterEqual(sub.dunning_since, before)
+        self.assertLessEqual(sub.dunning_since, after)
+        self.assertIsNone(sub.grace_until, 'grace_until não deve ser tocado para past_due')
+        self.assertEqual(sub.status, 'past_due', 'status não deve mudar na primeira varredura')
+        self.assertEqual(res['grace_started'], 1)
