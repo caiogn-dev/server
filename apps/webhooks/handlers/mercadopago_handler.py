@@ -126,7 +126,16 @@ class MercadoPagoHandler(BaseHandler):
         from django.db import DatabaseError
         from apps.stores.models import StoreOrder
         from apps.stores.services.checkout_service import CheckoutService, checkout_service
-        
+
+        # Pagamento da PLATAFORMA (adesão SaaS): external_reference começa com 'setup:'.
+        ext_ref = str(payload.get('external_reference')
+                      or payload.get('data', {}).get('external_reference') or '')
+        if ext_ref.startswith('setup:'):
+            from apps.stores.services import subscription_service
+            mp_status = (payload.get('status')
+                         or payload.get('data', {}).get('status') or '')
+            return subscription_service.mark_setup_fee_paid(ext_ref, mp_status)
+
         data_id = payload.get('data', {}).get('id')
         if not data_id:
             return {'processed': False, 'error': 'Missing data.id'}

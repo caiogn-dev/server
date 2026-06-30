@@ -152,3 +152,19 @@ def apply_preapproval_event(preapproval_id, mp_status):
     sub.save()
     logger.info('Subscription %s → %s (loja %s)', preapproval_id, new_status, store.slug)
     return {'processed': True, 'status': new_status}
+
+
+def mark_setup_fee_paid(external_reference, mp_status):
+    """Marca setup_fee_paid=True quando o pagamento da adesão é aprovado.
+    external_reference no formato 'setup:<store_slug>'."""
+    if mp_status != 'approved' or not (external_reference or '').startswith('setup:'):
+        return {'processed': False, 'reason': 'not_approved_or_not_setup'}
+    slug = external_reference.split(':', 1)[1]
+    sub = StoreSubscription.objects.filter(store__slug=slug).first()
+    if not sub:
+        return {'processed': False, 'reason': 'subscription_not_found'}
+    if not sub.setup_fee_paid:
+        sub.setup_fee_paid = True
+        sub.save(update_fields=['setup_fee_paid'])
+    logger.info('Setup fee paga p/ loja %s', slug)
+    return {'processed': True}
