@@ -838,6 +838,19 @@ class StoreCheckoutView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # Limite de pedidos/mês (plano Grátis). Isento e planos ilimitados passam.
+        from django.utils import timezone as _tz
+        from apps.stores.models import StoreOrder
+        _now = _tz.now()
+        _month_count = StoreOrder.objects.filter(
+            store=store, created_at__year=_now.year, created_at__month=_now.month,
+        ).count()
+        if not billing_service.within_order_limit(store, _month_count):
+            return Response(
+                {'detail': 'Limite do plano atingido (30 pedidos/mês). Faça upgrade do plano.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         # Get cart
         session_id = get_request_cart_key(request)
         user = request.user if request.user.is_authenticated else None
