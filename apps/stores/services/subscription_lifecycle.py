@@ -22,8 +22,17 @@ class Transition:
     set_grace_until: Optional[datetime] = None
 
 
-def decide_transition(*, status, trial_ends_at, grace_until, dunning_since,
-                      now, grace_days, dunning_days, billing_exempt) -> Transition:
+def decide_transition(
+    *,
+    status: str,
+    trial_ends_at: Optional[datetime],
+    grace_until: Optional[datetime],
+    dunning_since: Optional[datetime],
+    now: datetime,
+    grace_days: int,
+    dunning_days: int,
+    billing_exempt: bool,
+) -> Transition:
     if billing_exempt:
         return Transition('none')
 
