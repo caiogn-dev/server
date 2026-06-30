@@ -29,6 +29,11 @@ class StoreSubscription(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     canceled_at = models.DateTimeField(null=True, blank=True)
 
+    # Ciclo de vida do billing (Fase 1)
+    grace_until = models.DateTimeField(null=True, blank=True)      # fim da carência pós-trial
+    dunning_since = models.DateTimeField(null=True, blank=True)    # início do past_due
+    mp_setup_payment_id = models.CharField(max_length=255, blank=True, default='')  # pagamento da adesão
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
