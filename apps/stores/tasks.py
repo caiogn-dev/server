@@ -3,8 +3,55 @@ Celery tasks for the stores app.
 """
 import logging
 from celery import shared_task
+from django.conf import settings
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(name='stores.enforce_subscription_lifecycle')
+def enforce_subscription_lifecycle():
+    """
+    Varredura diária: aplica trial→carência→suspensão e past_due→dunning→suspensão.
+    Loja isenta é ignorada (decide_transition retorna 'none').
+    """
+    from apps.stores.models import StoreSubscription
+    from apps.stores.services.subscription_lifecycle import decide_transition
+
+    now = timezone.now()
+    grace_days = getattr(settings, 'BILLING_GRACE_DAYS', 3)
+    dunning_days = getattr(settings, 'BILLING_DUNNING_DAYS', 3)
+    counts = {'scanned': 0, 'suspended': 0, 'grace_started': 0}
+
+    qs = (StoreSubscription.objects
+          .exclude(status__in=['suspended', 'canceled'])
+          .select_related('store'))
+    for sub in qs:
+        counts['scanned'] += 1
+        store = sub.store
+        t = decide_transition(
+            status=sub.status,
+            trial_ends_at=store.trial_ends_at,
+            grace_until=sub.grace_until,
+            dunning_since=sub.dunning_since,
+            now=now,
+            grace_days=grace_days,
+            dunning_days=dunning_days,
+            billing_exempt=bool(getattr(store, 'billing_exempt', False)),
+        )
+        if t.action == 'start_grace':
+            if sub.status == 'past_due':
+                sub.dunning_since = now
+                sub.save(update_fields=['dunning_since'])
+            else:
+                sub.grace_until = t.set_grace_until
+                sub.save(update_fields=['grace_until'])
+            counts['grace_started'] += 1
+        elif t.action == 'suspend':
+            sub.status = StoreSubscription.Status.SUSPENDED
+            sub.save(update_fields=['status'])
+            counts['suspended'] += 1
+    return counts
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
