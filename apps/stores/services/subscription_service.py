@@ -82,6 +82,10 @@ def create_subscription(store, plan_key, payer_email, back_url):
             'plan': plan_key,
             'status': StoreSubscription.Status.TRIALING,
             'mp_preapproval_id': preapproval_id,
+            # Relógios e timestamps zerados: re-assinar começa limpo.
+            'grace_until': None,
+            'dunning_since': None,
+            'canceled_at': None,
         },
     )
     # NÃO aplica o plano na loja aqui: o dono ainda precisa abrir o init_point e
@@ -146,17 +150,24 @@ def apply_preapproval_event(preapproval_id, mp_status):
         if not sub.started_at:
             sub.started_at = timezone.now()
             sub.setup_fee_paid = True
+        # Relógios de carência/dunning: zerados na recuperação para evitar
+        # suspensão instantânea na próxima varredura do ciclo de vida.
+        sub.grace_until = None
+        sub.dunning_since = None
         # Pagamento autorizado: AGORA o plano pago vale na loja (feature-gates).
         if store.plan != sub.plan:
             store.plan = sub.plan
             store.save(update_fields=['plan'])
-    if new_status == StoreSubscription.Status.CANCELED:
+        sub.save(update_fields=['status', 'started_at', 'setup_fee_paid', 'grace_until', 'dunning_since'])
+    elif new_status == StoreSubscription.Status.CANCELED:
         sub.canceled_at = timezone.now()
+        sub.save(update_fields=['status', 'canceled_at'])
         # Assinatura cancelada: loja perde o plano pago e volta pro default.
         if store.plan != billing.DEFAULT_PLAN:
             store.plan = billing.DEFAULT_PLAN
             store.save(update_fields=['plan'])
-    sub.save()
+    else:
+        sub.save(update_fields=['status'])
     logger.info('Subscription %s → %s (loja %s)', preapproval_id, new_status, store.slug)
     return {'processed': True, 'status': new_status}
 

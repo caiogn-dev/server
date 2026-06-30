@@ -15,7 +15,12 @@ def enforce_subscription_lifecycle():
     """
     Varredura diária: aplica trial→carência→suspensão e past_due→dunning→suspensão.
     Loja isenta é ignorada (decide_transition retorna 'none').
+
+    Gate: BILLING_ENFORCEMENT_ENABLED (default OFF) — mantém o deploy no-op até go-live.
     """
+    if not getattr(settings, 'BILLING_ENFORCEMENT_ENABLED', False):
+        return {'scanned': 0, 'suspended': 0, 'grace_started': 0, 'skipped': 'enforcement_disabled'}
+
     from apps.stores.models import StoreSubscription
     from apps.stores.services.subscription_lifecycle import decide_transition
 

@@ -23,6 +23,8 @@ class StoreSubscription(models.Model):
 
     # MercadoPago (preenchidos quando a cobrança for ligada)
     mp_preapproval_id = models.CharField(max_length=255, blank=True, default='')
+    # INFORMACIONAL apenas — nunca usado como portão/guard de acesso ou feature.
+    # O sinal canônico de adesão aprovada é mark_setup_fee_paid() (via webhook).
     setup_fee_paid = models.BooleanField(default=False)
 
     current_period_end = models.DateTimeField(null=True, blank=True)
