@@ -83,6 +83,6 @@ class SubscriptionServiceTestCase(TestCase):
         subscription_service.apply_preapproval_event('pre_123', 'cancelled')
         sub = StoreSubscription.objects.get(store=self.store)
         self.assertEqual(sub.status, StoreSubscription.Status.CANCELED)
-        # Ao cancelar, a loja perde o plano pago e volta pro starter.
+        # Ao cancelar, a loja perde o plano pago e volta pro free.
         self.store.refresh_from_db()
-        self.assertEqual(self.store.plan, 'starter')
+        self.assertEqual(self.store.plan, 'free')
