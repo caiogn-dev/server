@@ -117,6 +117,7 @@ from .api.views.subscription_views import (
     StoreSubscriptionCancelView,
     StoreSubscriptionChangePlanView,
 )
+from .api.views.onboarding_views import StoreOnboardingChecklistView
 from .api.views.cash_views import CashOpenView, CashCurrentView, CashMovementView, CashCloseView
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
@@ -212,6 +213,7 @@ store_frontend_patterns = [
     path('subscription/', StoreSubscriptionDetailView.as_view(), name='store-subscription-detail'),
     path('subscription/cancel/', StoreSubscriptionCancelView.as_view(), name='store-subscription-cancel'),
     path('subscription/change-plan/', StoreSubscriptionChangePlanView.as_view(), name='store-subscription-change-plan'),
+    path('onboarding/checklist/', StoreOnboardingChecklistView.as_view(), name='store-onboarding-checklist'),
     path('validate-coupon/', StoreCouponValidateView.as_view(), name='store-validate-coupon'),
     path('wishlist/', StoreWishlistViewSet.as_view({'get': 'list'}), name='store-wishlist'),
     path('wishlist/add/', StoreWishlistViewSet.as_view({'post': 'add'}), name='store-wishlist-add'),
