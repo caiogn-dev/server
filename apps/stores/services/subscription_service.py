@@ -88,8 +88,31 @@ def create_subscription(store, plan_key, payer_email, back_url):
     # pagar. O plano escolhido fica só na assinatura; store.plan (que governa os
     # feature-gates) só muda quando o preapproval for autorizado (apply_preapproval_event).
 
+    result = {'init_point': init_point, 'preapproval_id': preapproval_id}
+
+    # Taxa de adesão: preference one-off, gated por killswitch global + toggle do plano.
+    setup_enabled = getattr(settings, 'BILLING_SETUP_FEE_ENABLED', False)
+    if setup_enabled and billing.charges_setup_fee(plan_key):
+        pref = sdk.preference().create({
+            'items': [{
+                'title': f"Adesão Cardapidex {plan['name']} — {store.name}",
+                'quantity': 1,
+                'unit_price': float(plan['setup_fee']),
+                'currency_id': 'BRL',
+            }],
+            'back_urls': {'success': back_url, 'pending': back_url, 'failure': back_url},
+            'external_reference': f"setup:{store.slug}",
+        })
+        if pref.get('status') in (200, 201):
+            body = pref['response']
+            sub.mp_setup_payment_id = body.get('id', '')
+            sub.save(update_fields=['mp_setup_payment_id'])
+            result['setup_init_point'] = body.get('init_point') or body.get('sandbox_init_point', '')
+        else:
+            logger.error('MP setup-fee preference falhou p/ loja %s: %s', store.slug, pref)
+
     logger.info('Preapproval criado p/ loja %s plano %s: %s', store.slug, plan_key, preapproval_id)
-    return {'init_point': init_point, 'preapproval_id': preapproval_id}
+    return result
 
 
 def apply_preapproval_event(preapproval_id, mp_status):
