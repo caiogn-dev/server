@@ -134,6 +134,11 @@ def apply_preapproval_event(preapproval_id, mp_status):
     sub = StoreSubscription.objects.filter(mp_preapproval_id=preapproval_id).select_related('store').first()
     if not sub:
         return {'processed': False, 'reason': 'subscription_not_found'}
+    # Defesa em profundidade: loja isenta nunca tem status/plano mexidos por
+    # evento de preapproval (não deveria ter assinatura viva, mas se tiver linha
+    # legada com mp_preapproval_id, ignoramos o evento).
+    if billing.is_billing_exempt(sub.store):
+        return {'processed': False, 'reason': 'billing_exempt'}
 
     mapping = {
         'authorized': StoreSubscription.Status.ACTIVE,
@@ -174,6 +179,10 @@ def apply_preapproval_event(preapproval_id, mp_status):
 
 def cancel_subscription(store):
     """Cancela o preapproval no MP e marca a assinatura como canceled."""
+    # Loja isenta NÃO pode ter o preapproval no MP tocado nem o plano resetado:
+    # guarda ANTES de qualquer chamada ao MP (mesma proteção de create/change_plan).
+    if billing.is_billing_exempt(store):
+        raise SubscriptionError('Loja isenta de cobrança (grandfather).')
     sub = StoreSubscription.objects.filter(store=store).first()
     if not sub:
         raise SubscriptionError('Loja sem assinatura.')

@@ -70,6 +70,25 @@ class SubscriptionManagementAPITest(TestCase):
         self.assertEqual(r.status_code, 400)
 
     @patch('apps.stores.services.subscription_service._sdk')
+    def test_exempt_store_cancel_blocked_without_touching_mp(self, sdk_p):
+        # Loja isenta NÃO pode ter o preapproval cancelado no MP nem o plano
+        # resetado: cancel deve recusar (400) ANTES de qualquer chamada ao MP.
+        sdk = MagicMock()
+        sdk_p.return_value = sdk
+        self.store.billing_exempt = True
+        self.store.plan = 'pro'
+        self.store.save(update_fields=['billing_exempt', 'plan'])
+        StoreSubscription.objects.create(
+            store=self.store, plan='pro', status='active', mp_preapproval_id='PRE-EXEMPT')
+        r = self.client.post(f'/api/v1/stores/{self.store.slug}/subscription/cancel/')
+        self.assertEqual(r.status_code, 400)
+        sdk.preapproval().update.assert_not_called()
+        sub = StoreSubscription.objects.get(store=self.store)
+        self.assertEqual(sub.status, 'active')
+        self.store.refresh_from_db()
+        self.assertEqual(self.store.plan, 'pro')
+
+    @patch('apps.stores.services.subscription_service._sdk')
     def test_exempt_store_change_plan_blocked_without_canceling(self, sdk_p):
         # Loja isenta NÃO pode ser afetada: change-plan deve recusar (400) ANTES
         # de cancelar qualquer preapproval no MP, sem corromper o estado.
