@@ -55,7 +55,7 @@ class StoreSubscriptionDetailView(APIView):
 
         sub = StoreSubscription.objects.filter(store=store).first()
         if not sub:
-            return Response({'status': 'none'})
+            return Response({'status': 'none'}, status=status.HTTP_200_OK)
 
         return Response({
             'plan': sub.plan,

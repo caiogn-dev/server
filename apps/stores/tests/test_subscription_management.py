@@ -58,3 +58,31 @@ class SubscriptionManagementAPITest(TestCase):
             {'plan': 'pro'}, format='json')
         self.assertEqual(r.status_code, 201)
         self.assertEqual(r.json()['init_point'], 'https://mp/new')
+
+    def test_cancel_without_subscription_returns_400(self):
+        r = self.client.post(f'/api/v1/stores/{self.store.slug}/subscription/cancel/')
+        self.assertEqual(r.status_code, 400)
+
+    def test_change_plan_invalid_plan_returns_400(self):
+        r = self.client.post(
+            f'/api/v1/stores/{self.store.slug}/subscription/change-plan/',
+            {'plan': 'inexistente'}, format='json')
+        self.assertEqual(r.status_code, 400)
+
+    @patch('apps.stores.services.subscription_service._sdk')
+    def test_exempt_store_change_plan_blocked_without_canceling(self, sdk_p):
+        # Loja isenta NÃO pode ser afetada: change-plan deve recusar (400) ANTES
+        # de cancelar qualquer preapproval no MP, sem corromper o estado.
+        sdk = MagicMock()
+        sdk_p.return_value = sdk
+        self.store.billing_exempt = True
+        self.store.save(update_fields=['billing_exempt'])
+        StoreSubscription.objects.create(
+            store=self.store, plan='pro', status='active', mp_preapproval_id='PRE-X')
+        r = self.client.post(
+            f'/api/v1/stores/{self.store.slug}/subscription/change-plan/',
+            {'plan': 'premium'}, format='json')
+        self.assertEqual(r.status_code, 400)
+        sdk.preapproval().update.assert_not_called()
+        self.assertEqual(
+            StoreSubscription.objects.get(store=self.store).status, 'active')

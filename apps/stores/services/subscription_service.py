@@ -182,6 +182,11 @@ def cancel_subscription(store):
 
 def change_plan(store, new_plan, payer_email, back_url):
     """Troca de plano = cancela o preapproval atual e cria um novo do plano alvo."""
+    # Loja isenta NÃO entra no fluxo de cobrança: guarda ANTES de cancelar o
+    # preapproval no MP, senão a loja ficaria sem autorização de pagamento e
+    # create_subscription levantaria depois (estado meio-cancelado).
+    if billing.is_billing_exempt(store):
+        raise SubscriptionError('Loja isenta de cobrança (grandfather).')
     if new_plan not in billing.PLAN_CATALOG:
         raise SubscriptionError('Plano inválido.')
     existing = StoreSubscription.objects.filter(store=store).first()
