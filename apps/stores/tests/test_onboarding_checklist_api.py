@@ -26,3 +26,9 @@ class OnboardingChecklistAPITest(TestCase):
         self.client.force_authenticate(outro)
         r = self.client.get('/api/v1/stores/loja/onboarding/checklist/')
         self.assertEqual(r.status_code, 403)
+
+    def test_checklist_inclui_wizard_seen(self):
+        self.client.force_authenticate(self.owner)
+        r = self.client.get('/api/v1/stores/loja/onboarding/checklist/')
+        self.assertIn('wizard_seen', r.json())
+        self.assertFalse(r.json()['wizard_seen'])  # default

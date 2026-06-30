@@ -128,6 +128,10 @@ class Store(BaseModel):
         default=False,
         help_text="Wizard de onboarding concluído (passos mínimos).",
     )
+    onboarding_wizard_seen = models.BooleanField(
+        default=False,
+        help_text="True após o dono ver/fechar o wizard de setup a 1ª vez (controla o auto-open).",
+    )
     billing_exempt = models.BooleanField(
         default=False,
         help_text="Isenta de cobrança e limites de plano (grandfather: lojas pré-SaaS).",

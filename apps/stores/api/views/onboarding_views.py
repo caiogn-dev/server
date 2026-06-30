@@ -16,4 +16,19 @@ class StoreOnboardingChecklistView(APIView):
         store = get_object_or_404(Store, slug=store_slug)
         if not _can_manage(store, request.user):
             return Response({'detail': 'Sem permissão.'}, status=403)
-        return Response(build_checklist(store))
+        data = build_checklist(store)
+        data['wizard_seen'] = store.onboarding_wizard_seen
+        return Response(data)
+
+
+class StoreOnboardingSeenView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, store_slug):
+        store = get_object_or_404(Store, slug=store_slug)
+        if not _can_manage(store, request.user):
+            return Response({'detail': 'Sem permissão.'}, status=403)
+        if not store.onboarding_wizard_seen:
+            store.onboarding_wizard_seen = True
+            store.save(update_fields=['onboarding_wizard_seen'])
+        return Response({'wizard_seen': True})
