@@ -621,6 +621,12 @@ MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCR
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
 # URL do painel (back_url do checkout de assinatura). FRONTEND_URL é lista p/ CORS, não serve.
 BILLING_PANEL_URL = os.environ.get('BILLING_PANEL_URL', 'https://painel.cardapidex.com.br').rstrip('/')
+# Dias de carência após o fim do trial antes de suspender a loja.
+BILLING_GRACE_DAYS = int(os.environ.get('BILLING_GRACE_DAYS', '3'))
+# Dias em past_due (cobrança falhou) antes de suspender.
+BILLING_DUNNING_DAYS = int(os.environ.get('BILLING_DUNNING_DAYS', '3'))
+# Kill-switch global da cobrança de adesão (além do toggle por plano).
+BILLING_SETUP_FEE_ENABLED = os.environ.get('BILLING_SETUP_FEE_ENABLED', 'false').lower() == 'true'
 # Token de SANDBOX (TEST-...) só para a assinatura SaaS. Se setado, billing usa ele
 # em vez do token de produção — permite testar sem cobrar de verdade e sem mexer
 # no token dos pedidos. Vazio = usa produção (cobrança real).
