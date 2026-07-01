@@ -68,7 +68,7 @@ class WhatsAppWebhookView(APIView):
             logger.info(f"Webhook verified with challenge: {challenge}")
             return HttpResponse(challenge)
         else:
-            logger.warning(f"Webhook verification failed: mode={mode}, token={token}")
+            logger.warning("Webhook verification failed: mode=%s", mode)
             return Response({'error': 'Verification failed'}, status=403)
 
     @extend_schema(

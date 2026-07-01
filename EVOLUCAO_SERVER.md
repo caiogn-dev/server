@@ -22,7 +22,7 @@ Suíte completa não executável neste container; testes que usam migrações Po
   escopo acidentalmente, poderia retornar dados cross-tenant (IDOR).
 - **Correção:** Substituído por `accessible_whatsapp_account_ids(user)` que já estava importada
   na linha 15 e retorna exatamente o mesmo conjunto de IDs, corretamente escopados por tenant.
-- **PR:** `bot/server-2026-06-28-audit-export-idor`
+- **PR:** `bot/server-2026-06-28-audit-export-idor` (aberto, aguardando merge)
 
 **Outros achados (backlog para próximas execuções):**
 
@@ -40,13 +40,50 @@ Suíte completa não executável neste container; testes que usam migrações Po
 
 ---
 
+### 2026-06-29
+
+**Baseline de testes:** 13 testes do módulo `test_pii_log_enforcement` rodados com Django instalado
+localmente (sem Docker). Testes de regressão `test_pii_masking` e `test_customer_pii_sanitize`
+também passam (13/13). Docker indisponível; suíte de integração não executável.
+
+**Bug encontrado e corrigido:** PII (telefones) em logs — violação de LGPD art. 46
+
+- **Tipo:** P0 — Vazamento de dado pessoal sensível em logs de produção
+- **Arquivos corrigidos (7):**
+  - `apps/core/auth/views.py:76` — OTP send: `{phone}` → `mask_phone(phone)`
+  - `apps/core/auth/whatsapp_auth.py:235,281` — `clean_phone` → `mask_phone(clean_phone)`
+  - `apps/automation/services/session_manager.py:260,467,477,487` — `self.phone_number` mascarado
+  - `apps/whatsapp/services/webhook_service.py:1108,1442,1488,1498` — `from_number`/`phone_number` mascarados; `contact_name` removido do log
+  - `apps/whatsapp/services/order_service.py:33,397,401,405,491,548` — `phone_number` mascarado; `pix_code` não logado mais em claro (8 chars truncados, sem expor código completo)
+  - `apps/campaigns/services/campaign_service.py:321,380,383` — `recipient.phone_number` mascarado
+  - `apps/whatsapp/webhooks/views.py:71` — `token` de credencial **removido** do log de falha de verificação
+- **Testes:** 13 novos casos em `apps/core/tests/test_pii_log_enforcement.py` (RED→GREEN confirmado)
+- **PR:** `bot/server-2026-06-29-pii-logs`
+
+---
+
+## Backlog priorizado
+
+| Prioridade | Arquivo | Linha | Problema | Status |
+|---|---|---|---|---|
+| P0 | apps/audit/api/views.py | 140 | NameError + IDOR em export conversas | PR #281 aberto |
+| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
+| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | **Pendente** |
+| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Pendente** |
+
+---
+
 ## Próximo passo priorizado
 
-**P0 — Sanitização de PII em logs**: Múltiplos arquivos logam números de telefone em texto plano.
-Violação de LGPD. Fix: substituir `{phone}` nos f-strings de log por `{phone[:4]}***` ou por um
-hash de 8 chars (`hashlib.sha256(phone.encode()).hexdigest()[:8]`).
+**P1 — IDOR em company_profile_views.py:92-98**: `account_id` recebido na request não é validado
+contra o tenant do usuário autenticado antes de ser usado para buscar configuração. Um usuário de
+Tenant A pode consultar/alterar dados do Tenant B se conhecer o `account_id`.
 
-Arquivos prioritários (maior volume de chamadas de produção):
-1. `apps/core/auth/views.py:76` (autenticação OTP — alto tráfego)
-2. `apps/core/auth/whatsapp_auth.py:235,281`
-3. `apps/automation/services/session_manager.py:260,467,477,487`
+Fix: adicionar verificação `get_object_or_404(WhatsAppAccount, id=account_id, store=user_store)`
+antes de qualquer operação, semelhante ao padrão já usado em outros ViewSets.

@@ -13,6 +13,7 @@ from django.db.models import F
 from django.utils import timezone
 from django.db import transaction
 
+from apps.core.pii import mask_phone
 from apps.stores.models import Store, StoreCart, StoreCartItem, StoreOrder, StoreOrderItem, StoreProduct
 from apps.stores.services.checkout_service import CheckoutService
 from apps.stores.services.realtime_service import broadcast_order_event
@@ -30,7 +31,7 @@ class WhatsAppOrderService:
         self.store = store
         self.phone_number = phone_number
         self.customer_name = customer_name or 'Cliente WhatsApp'
-        logger.info(f"[WhatsAppOrderService] Inicializado para {phone_number} na loja {store.slug}")
+        logger.info("[WhatsAppOrderService] Inicializado para %s na loja %s", mask_phone(phone_number), store.slug)
     
     @transaction.atomic
     def create_order_from_cart(
@@ -394,15 +395,15 @@ class WhatsAppOrderService:
                 payment_method='pix'
             )
             
-            logger.info(f"[_generate_pix] Resultado do CheckoutService: {result}")
-            
+            logger.info("[_generate_pix] Resultado do CheckoutService: success=%s", result.get('success'))
+
             if result.get('success'):
                 pix_code = result.get('pix_code', '')
-                logger.info(f"[_generate_pix] PIX gerado com sucesso. Código: {pix_code[:30]}...")
-                
+                logger.info("[_generate_pix] PIX gerado com sucesso. Código: %s...", pix_code[:8])
+
                 # Verifica se o código não é vazio ou fake
                 if not pix_code or pix_code == '12345678':
-                    logger.error(f"[_generate_pix] Código PIX inválido ou fake: {pix_code}")
+                    logger.error("[_generate_pix] Código PIX inválido ou fake (len=%d)", len(pix_code))
                     return {
                         'success': False,
                         'error': 'Código PIX inválido retornado'
@@ -488,7 +489,7 @@ class WhatsAppOrderService:
             
             session = session_manager.get_or_create_session()
             if not session:
-                logger.warning(f"[_update_session] Sessão não encontrada para {self.phone_number}")
+                logger.warning("[_update_session] Sessão não encontrada para %s", mask_phone(self.phone_number))
                 return
 
             order_items = [
@@ -545,7 +546,7 @@ class WhatsAppOrderService:
                     pix_qr_code=_pix_qr_code,
                     pix_expires_at=_pix_expires,
                 )
-                logger.info(f"[_update_session] Sessão atualizada com PIX para {self.phone_number}")
+                logger.info("[_update_session] Sessão atualizada com PIX para %s", mask_phone(self.phone_number))
             else:
                 session.status = type(session).SessionStatus.ORDER_PLACED
 

@@ -25,6 +25,8 @@ import hmac as _hmac
 import logging
 import secrets
 import string
+
+from apps.core.pii import mask_phone
 from datetime import datetime, timedelta
 from django.core.cache import cache
 from django.conf import settings
@@ -232,7 +234,7 @@ class WhatsAppAuthService:
         # Gera novo código
         code = cls.generate_code()
 
-        logger.info("[WHATSAPP AUTH] Generated code for %s", clean_phone)
+        logger.info("[WHATSAPP AUTH] Generated code for %s", mask_phone(clean_phone))
 
         # Salva no cache — apenas o hash, nunca o código em texto puro
         cache_data = {
@@ -278,7 +280,7 @@ class WhatsAppAuthService:
             try:
                 logger.info(f"[WHATSAPP AUTH] Calling send_template_message...")
                 logger.info(f"[WHATSAPP AUTH]   account_id={whatsapp_account_id}")
-                logger.info(f"[WHATSAPP AUTH]   to={clean_phone}")
+                logger.info("[WHATSAPP AUTH]   to=%s", mask_phone(clean_phone))
                 logger.info(f"[WHATSAPP AUTH]   template_name={template_data['name']}")
                 
                 result = message_service.send_template_message(
