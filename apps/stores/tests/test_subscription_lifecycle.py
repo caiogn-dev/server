@@ -32,21 +32,9 @@ class DecideTransitionTest(SimpleTestCase):
         t = call(status='trialing', trial_ends_at=NOW + timedelta(days=5))
         self.assertEqual(t.action, 'none')
 
-    def test_trial_expired_no_grace_yet_starts_grace(self):
-        t = call(status='trialing', trial_ends_at=NOW - timedelta(hours=1),
-                 grace_until=None)
-        self.assertEqual(t.action, 'start_grace')
-        self.assertEqual(t.set_grace_until, NOW + timedelta(days=GRACE))
-
-    def test_grace_not_over_keeps_waiting(self):
-        t = call(status='trialing', trial_ends_at=NOW - timedelta(days=1),
-                 grace_until=NOW + timedelta(days=1))
-        self.assertEqual(t.action, 'none')
-
-    def test_grace_over_suspends(self):
-        t = call(status='trialing', trial_ends_at=NOW - timedelta(days=5),
-                 grace_until=NOW - timedelta(hours=1))
-        self.assertEqual(t.action, 'suspend')
+    def test_trial_expired_downgrades_to_free(self):
+        t = call(status='trialing', trial_ends_at=NOW - timedelta(hours=1))
+        self.assertEqual(t.action, 'downgrade_free')
 
     def test_past_due_starts_dunning_clock(self):
         t = call(status='past_due', dunning_since=None)
@@ -71,14 +59,44 @@ class DecideTransitionTest(SimpleTestCase):
 
     # --- boundary temporal ---
 
-    def test_trial_ends_exactly_now_starts_grace(self):
-        """`trial_ends_at == now` não é 'ainda no trial' → inicia carência."""
-        t = call(status='trialing', trial_ends_at=NOW, grace_until=None)
-        self.assertEqual(t.action, 'start_grace')
-        self.assertEqual(t.set_grace_until, NOW + timedelta(days=GRACE))
+    def test_trial_ends_exactly_now_downgrades_to_free(self):
+        """`trial_ends_at == now` não é 'ainda no trial' → rebaixa pro Grátis."""
+        t = call(status='trialing', trial_ends_at=NOW)
+        self.assertEqual(t.action, 'downgrade_free')
 
-    def test_grace_until_exactly_now_suspends(self):
-        """`grace_until == now` significa carência vencida → suspende."""
-        t = call(status='trialing', trial_ends_at=NOW - timedelta(days=5),
-                 grace_until=NOW)
+
+class TrialEndsToFreeTest(SimpleTestCase):
+    def test_trial_vencido_vira_free(self):
+        t = decide_transition(
+            status='trialing', trial_ends_at=NOW - timedelta(days=1),
+            grace_until=None, dunning_since=None, now=NOW,
+            grace_days=3, dunning_days=3, billing_exempt=False)
+        self.assertEqual(t.action, 'downgrade_free')
+
+    def test_trial_vigente_nao_mexe(self):
+        t = decide_transition(
+            status='trialing', trial_ends_at=NOW + timedelta(days=2),
+            grace_until=None, dunning_since=None, now=NOW,
+            grace_days=3, dunning_days=3, billing_exempt=False)
+        self.assertEqual(t.action, 'none')
+
+    def test_loja_isenta_nao_mexe(self):
+        t = decide_transition(
+            status='trialing', trial_ends_at=NOW - timedelta(days=10),
+            grace_until=None, dunning_since=None, now=NOW,
+            grace_days=3, dunning_days=3, billing_exempt=True)
+        self.assertEqual(t.action, 'none')
+
+    def test_past_due_ainda_inicia_dunning(self):
+        t = decide_transition(
+            status='past_due', trial_ends_at=None,
+            grace_until=None, dunning_since=None, now=NOW,
+            grace_days=3, dunning_days=3, billing_exempt=False)
+        self.assertEqual(t.action, 'start_grace')
+
+    def test_past_due_dunning_vencido_suspende(self):
+        t = decide_transition(
+            status='past_due', trial_ends_at=None, grace_until=None,
+            dunning_since=NOW - timedelta(days=3), now=NOW,
+            grace_days=3, dunning_days=3, billing_exempt=False)
         self.assertEqual(t.action, 'suspend')

@@ -19,7 +19,7 @@ def enforce_subscription_lifecycle():
     Gate: BILLING_ENFORCEMENT_ENABLED (default OFF) — mantém o deploy no-op até go-live.
     """
     if not getattr(settings, 'BILLING_ENFORCEMENT_ENABLED', False):
-        return {'scanned': 0, 'suspended': 0, 'grace_started': 0, 'skipped': 'enforcement_disabled'}
+        return {'scanned': 0, 'suspended': 0, 'grace_started': 0, 'downgraded_free': 0, 'skipped': 'enforcement_disabled'}
 
     from apps.stores.models import StoreSubscription
     from apps.stores.services.subscription_lifecycle import decide_transition
@@ -27,7 +27,7 @@ def enforce_subscription_lifecycle():
     now = timezone.now()
     grace_days = getattr(settings, 'BILLING_GRACE_DAYS', 3)
     dunning_days = getattr(settings, 'BILLING_DUNNING_DAYS', 3)
-    counts = {'scanned': 0, 'suspended': 0, 'grace_started': 0}
+    counts = {'scanned': 0, 'suspended': 0, 'grace_started': 0, 'downgraded_free': 0}
 
     with transaction.atomic():
         qs = (StoreSubscription.objects
@@ -55,6 +55,13 @@ def enforce_subscription_lifecycle():
                     sub.grace_until = t.set_grace_until
                     sub.save(update_fields=['grace_until'])
                 counts['grace_started'] += 1
+            elif t.action == 'downgrade_free':
+                sub.status = StoreSubscription.Status.CANCELED
+                sub.save(update_fields=['status'])
+                if store.plan != 'free':
+                    store.plan = 'free'
+                    store.save(update_fields=['plan'])
+                counts['downgraded_free'] += 1
             elif t.action == 'suspend':
                 sub.status = StoreSubscription.Status.SUSPENDED
                 sub.save(update_fields=['status'])

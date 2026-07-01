@@ -58,7 +58,7 @@ from apps.stores.models import (
     Store, StoreProduct, StoreCategory, StoreCart, StoreCartItem,
     StoreCombo, StoreProductType, StoreCoupon, StoreDeliveryZone,
     StoreCustomer, StorePaymentGateway,
-    StoreWishlist, StoreCustomerAddress,
+    StoreWishlist, StoreCustomerAddress, StoreOrder,
 )
 from apps.users.models import UserAddress
 from apps.stores.services import cart_service, checkout_service
@@ -836,6 +836,17 @@ class StoreCheckoutView(APIView):
             return Response(
                 {'detail': 'Loja temporariamente indisponível.'},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Limite de pedidos/mês (plano Grátis). Isento e planos ilimitados passam.
+        _now = timezone.now()
+        _month_count = StoreOrder.objects.filter(
+            store=store, created_at__year=_now.year, created_at__month=_now.month,
+        ).count()
+        if not billing_service.within_order_limit(store, _month_count):
+            return Response(
+                {'detail': 'Limite do plano atingido (30 pedidos/mês). Faça upgrade do plano.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         # Get cart
