@@ -118,10 +118,11 @@ class StoreCouponViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         stats = {
             'total': queryset.count(),
             'active': queryset.filter(
-                is_active=True, 
-                valid_from__lte=now, 
+                is_active=True,
+                valid_from__lte=now,
                 valid_until__gte=now
             ).count(),
+            'inactive': queryset.filter(is_active=False).count(),
             'expired': queryset.filter(valid_until__lt=now).count(),
             'total_usage': queryset.aggregate(total=Sum('used_count'))['total'] or 0,
         }

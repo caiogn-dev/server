@@ -58,7 +58,9 @@ class EmailMarketingService:
         thirty_days_ago = timezone.now() - timezone.timedelta(days=30)
         recent_campaigns = campaigns.filter(created_at__gte=thirty_days_ago).count()
         new_subscribers = subscribers.filter(created_at__gte=thirty_days_ago).count()
-        
+
+        whatsapp_stats = self._get_whatsapp_stats(store_id)
+
         return {
             'campaigns': {
                 'total': total_campaigns,
@@ -85,9 +87,70 @@ class EmailMarketingService:
                     email_stats['total_clicked'] or 0,
                     email_stats['total_opened'] or 0
                 ),
-            }
+            },
+            'whatsapp': whatsapp_stats,
         }
-    
+
+    def _get_whatsapp_stats(self, store_id: str) -> Dict[str, Any]:
+        """Agrega métricas das campanhas de WhatsApp da loja.
+
+        As campanhas (apps.campaigns.Campaign) são escopadas por WhatsAppAccount,
+        que não tem FK direta pra Store — o vínculo é via StoreIntegration
+        (phone_number_id / waba_id). Antes o painel de Marketing zerava o card de
+        WhatsApp (total_sent/read_rate hardcoded em 0 no front) por falta deste bloco.
+        """
+        try:
+            from apps.campaigns.models import Campaign
+            from apps.whatsapp.models.account import WhatsAppAccount
+            from apps.stores.models import StoreIntegration
+        except ImportError:
+            return self._empty_whatsapp_stats()
+
+        integrations = StoreIntegration.objects.filter(store_id=store_id)
+        phone_ids = [p for p in integrations.values_list('phone_number_id', flat=True) if p]
+        waba_ids = [w for w in integrations.values_list('waba_id', flat=True) if w]
+        if not phone_ids and not waba_ids:
+            return self._empty_whatsapp_stats()
+
+        account_filter = Q()
+        if phone_ids:
+            account_filter |= Q(phone_number_id__in=phone_ids)
+        if waba_ids:
+            account_filter |= Q(waba_id__in=waba_ids)
+        account_ids = list(
+            WhatsAppAccount.objects.filter(account_filter).values_list('id', flat=True)
+        )
+        if not account_ids:
+            return self._empty_whatsapp_stats()
+
+        campaigns = Campaign.objects.filter(account_id__in=account_ids)
+        agg = campaigns.aggregate(
+            total_sent=Sum('messages_sent'),
+            total_delivered=Sum('messages_delivered'),
+            total_read=Sum('messages_read'),
+        )
+        total_sent = agg['total_sent'] or 0
+        total_delivered = agg['total_delivered'] or 0
+        total_read = agg['total_read'] or 0
+        return {
+            'total_campaigns': campaigns.count(),
+            'total_sent': total_sent,
+            'total_delivered': total_delivered,
+            'total_read': total_read,
+            'delivery_rate': self._calculate_rate(total_delivered, total_sent),
+            'read_rate': self._calculate_rate(total_read, total_delivered),
+        }
+
+    def _empty_whatsapp_stats(self) -> Dict[str, Any]:
+        return {
+            'total_campaigns': 0,
+            'total_sent': 0,
+            'total_delivered': 0,
+            'total_read': 0,
+            'delivery_rate': 0,
+            'read_rate': 0,
+        }
+
     def _calculate_rate(self, numerator: int, denominator: int) -> float:
         if denominator == 0:
             return 0

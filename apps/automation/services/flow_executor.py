@@ -272,5 +272,9 @@ class FlowExecutor:
                 success=result.get('type') != 'error',
                 error_message=result.get('content', '') if result.get('type') == 'error' else '',
             )
+            # Em evento terminal (fim do fluxo ou erro), atualiza os contadores do
+            # fluxo (eram sempre 0 no painel). Só aqui p/ não recalcular a cada nó.
+            if result.get('type') in ('end', 'error'):
+                self.flow.refresh_execution_stats()
         except Exception as e:
             logger.error(f"[FlowExecutor] Erro ao logar: {e}")

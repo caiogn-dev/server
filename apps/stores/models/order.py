@@ -365,10 +365,24 @@ class StoreOrder(BaseModel):
             self.out_for_delivery_at = timezone.now()
         elif new_status == self.OrderStatus.DELIVERED:
             self.delivered_at = timezone.now()
-        elif new_status == self.OrderStatus.PICKED_UP:
-            self.picked_up_at = timezone.now()
         elif new_status == self.OrderStatus.CANCELLED:
             self.cancelled_at = timezone.now()
+
+        # Pagamento na entrega/retirada: pedidos em dinheiro nascem 'pending' e nunca
+        # passam pelo status PAID; ao serem entregues/concluídos o dinheiro foi recebido
+        # → marca pago p/ entrarem no faturamento (a receita filtra payment_status=paid,
+        # então sem isto a venda em dinheiro zerava nos relatórios). NÃO toca pedidos
+        # online (pix/cartão), que pagam via webhook antes da entrega.
+        OFFLINE_PAYMENT_METHODS = {'cash'}
+        RECEIVED_STATUSES = {self.OrderStatus.DELIVERED, self.OrderStatus.COMPLETED}
+        if (
+            new_status in RECEIVED_STATUSES
+            and self.payment_method in OFFLINE_PAYMENT_METHODS
+            and self.payment_status != self.PaymentStatus.PAID
+        ):
+            self.payment_status = self.PaymentStatus.PAID
+            if not self.paid_at:
+                self.paid_at = timezone.now()
 
         self.save()
 

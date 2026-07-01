@@ -94,7 +94,8 @@ class Store(BaseModel):
         ELEGANT = 'elegant', 'Elegant'
 
     class StorePlan(models.TextChoices):
-        STARTER = 'starter', 'Starter'
+        FREE = 'free', 'Grátis'
+        STARTER = 'starter', 'Essencial'
         PRO = 'pro', 'Pro'
         PREMIUM = 'premium', 'Premium'
 
@@ -127,6 +128,10 @@ class Store(BaseModel):
     onboarding_completed = models.BooleanField(
         default=False,
         help_text="Wizard de onboarding concluído (passos mínimos).",
+    )
+    onboarding_wizard_seen = models.BooleanField(
+        default=False,
+        help_text="True após o dono ver/fechar o wizard de setup a 1ª vez (controla o auto-open).",
     )
     billing_exempt = models.BooleanField(
         default=False,

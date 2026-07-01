@@ -46,6 +46,24 @@ class AgentFlow(BaseModel):
         self.is_default = True
         self.save()
 
+    def refresh_execution_stats(self):
+        """Recalcula total_executions e success_rate a partir das sessões/logs.
+
+        Os campos nasciam 0 e nunca eram populados → painel de Automação mostrava
+        '0 execuções / 0% sucesso' sempre. total_executions = nº de sessões que
+        entraram no fluxo; success_rate = % de nós executados com sucesso (mesma
+        ideia do success_rate de campanhas). Driftless: recalcula dos dados.
+        """
+        from django.db.models import Count, Q
+        agg = FlowExecutionLog.objects.filter(flow=self).aggregate(
+            total=Count('id'),
+            ok=Count('id', filter=Q(success=True)),
+        )
+        total_nodes = agg['total'] or 0
+        self.total_executions = self.sessions.count()
+        self.success_rate = round(agg['ok'] / total_nodes * 100, 1) if total_nodes else 0.0
+        self.save(update_fields=['total_executions', 'success_rate', 'updated_at'])
+
 
 class FlowSession(BaseModel):
     """

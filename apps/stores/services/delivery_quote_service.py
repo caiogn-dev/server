@@ -51,7 +51,13 @@ class DeliveryQuoteService:
         base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or '9.00')))
         fee_per_km = Decimal(str(metadata.get('delivery_fee_per_km', '1.00')))
         flat_km = Decimal(str(metadata.get('delivery_flat_km') or metadata.get('delivery_free_km') or '4.0'))
-        max_km_raw = metadata.get('delivery_max_km') or metadata.get('max_delivery_distance_km')
+        # `delivery_max_distance` é a chave que o painel (StoreSettingsPage) grava;
+        # sem ela aqui, a "Distância Máxima" configurada não limitava a taxa dinâmica.
+        max_km_raw = (
+            metadata.get('delivery_max_km')
+            or metadata.get('max_delivery_distance_km')
+            or metadata.get('delivery_max_distance')
+        )
         max_km = Decimal(str(max_km_raw)) if max_km_raw is not None else Decimal('16.0')
         max_fee_raw = metadata.get('delivery_max_fee')
         max_fee = Decimal(str(max_fee_raw)) if max_fee_raw not in (None, '') else None

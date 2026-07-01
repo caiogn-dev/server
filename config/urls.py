@@ -85,6 +85,9 @@ urlpatterns = [
 
         # WhatsApp, Instagram & Automation (Unified)
         path('whatsapp/', include('apps.whatsapp.urls')),
+        # Diagnóstico de webhooks WhatsApp (WebhookDiagnosticsPage do painel) — a
+        # rota não estava montada, então a página dava erro além do payload errado.
+        path('webhooks/whatsapp/', include('apps.whatsapp.webhooks.urls')),
         path('instagram/', include('apps.instagram.urls')),
         path('messaging/', include('apps.messaging.urls')),
         path('conversations/', include('apps.conversations.urls')),

@@ -24,6 +24,20 @@ Suíte completa não executável neste container; testes que usam migrações Po
   na linha 15 e retorna exatamente o mesmo conjunto de IDs, corretamente escopados por tenant.
 - **PR:** `bot/server-2026-06-28-audit-export-idor` (aberto, aguardando merge)
 
+**Outros achados (backlog para próximas execuções):**
+
+| Prioridade | Arquivo | Linha | Problema |
+|---|---|---|---|
+| P0 | apps/core/auth/views.py | 76 | PII em log — telefone em texto plano |
+| P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone |
+| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone |
+| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone |
+| P0 | apps/whatsapp/services/order_service.py | 401 | PII em log — código PIX parcial |
+| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso |
+| P1 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log |
+| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ |
+
 ---
 
 ### 2026-06-29

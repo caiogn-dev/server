@@ -145,6 +145,11 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.database_integrity_check',
         'schedule': 21600.0,  # Every 6 hours
     },
+    # Billing: ciclo de vida de assinaturas — diário às 4h
+    'enforce-subscription-lifecycle': {
+        'task': 'stores.enforce_subscription_lifecycle',
+        'schedule': crontab(hour=4, minute=0),  # diário 04:00
+    },
 }
 
 
