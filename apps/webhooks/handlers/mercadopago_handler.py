@@ -58,19 +58,49 @@ def _verify_mercadopago_signature(request, payload: dict) -> bool:
         logger.warning("Mercado Pago x-signature malformed: %s", x_signature)
         return False
 
-    data_id = str(payload.get('data', {}).get('id') or '')
-    template = f"id:{data_id};request-id:{x_request_id};ts:{ts}"
+    # O `data.id` que o MP assina vem da QUERY STRING (?data.id=...), não do
+    # corpo. Nos webhooks de subscription_preapproval o corpo pode vir vazio, o
+    # que zerava o data_id e quebrava o HMAC (bug do 401). Preferimos a query e
+    # caímos pro corpo como fallback. MP normaliza id alfanumérico p/ minúsculas.
+    qp = getattr(request, 'query_params', None)
+    if qp is None:
+        qp = getattr(request, 'GET', {})
+    query_id = (qp.get('data.id') or '').strip()
+    body_id = str((payload or {}).get('data', {}).get('id') or '').strip()
 
-    expected = hmac.new(
-        secret.encode('utf-8'),
-        template.encode('utf-8'),
-        hashlib.sha256,
-    ).hexdigest()
+    # Candidatos de manifesto: a doc do MP varia quanto ao ';' final entre
+    # versões e o id pode vir da query ou do corpo. Todos exigem o secret, então
+    # aceitar qualquer variante NÃO enfraquece a segurança (atacante sem o secret
+    # não forja nenhuma). Se nenhuma bater, é secret errado — logamos p/ diagnóstico.
+    ids = []
+    for did in (query_id, query_id.lower(), body_id, body_id.lower()):
+        if did and did not in ids:
+            ids.append(did)
+    ids = ids or ['']
 
-    valid = hmac.compare_digest(v1, expected)
-    if not valid:
-        logger.warning("Mercado Pago webhook HMAC mismatch — rejecting")
-    return valid
+    candidates = []
+    for did in ids:
+        base = f"id:{did};request-id:{x_request_id};ts:{ts}"
+        candidates.append(base + ";")
+        candidates.append(base)
+
+    for template in candidates:
+        expected = hmac.new(
+            secret.encode('utf-8'),
+            template.encode('utf-8'),
+            hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(v1, expected):
+            return True
+
+    # Nenhum candidato bateu: log diagnóstico (sem secret nem hashes completos)
+    # pra identificar, no próximo webhook real, se é formato ou secret.
+    logger.warning(
+        "Mercado Pago webhook HMAC mismatch — rejecting "
+        "(query_id=%r body_id=%r x_request_id=%r ts=%r v1_pre=%s)",
+        query_id, body_id, x_request_id, ts, (v1 or '')[:8],
+    )
+    return False
 
 
 class MercadoPagoHandler(BaseHandler):

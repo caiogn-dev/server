@@ -243,3 +243,31 @@ class WebhookSignatureTestCase(TestCase):
         payload = {'data': {'id': 'pre_123'}}
         req = self.factory.post('/webhooks/payments/mercadopago/')
         self.assertFalse(_verify_mercadopago_signature(req, payload))
+
+    @patch.dict('os.environ', {'MERCADO_PAGO_WEBHOOK_SECRET': 'shh'}, clear=False)
+    def test_preapproval_data_id_na_query_corpo_vazio(self):
+        """Regressão do 401: no subscription_preapproval o MP manda data.id só na
+        query (corpo vazio) e assina o manifesto no formato oficial com ';' final
+        e id em minúsculas. O verificador antigo lia data.id do corpo → HMAC vazio
+        → 401 → assinatura presa em trialing."""
+        ts, rid = '1704908010', 'req-abc'
+        real_id = 'AB12cd34'  # alfanumérico com maiúsculas → MP normaliza p/ lower
+        manifest = f"id:{real_id.lower()};request-id:{rid};ts:{ts};"
+        v1 = hmac.new(b'shh', manifest.encode(), hashlib.sha256).hexdigest()
+        req = self.factory.post(
+            f'/webhooks/payments/mercadopago/?data.id={real_id}&type=subscription_preapproval',
+            HTTP_X_SIGNATURE=f"ts={ts},v1={v1}",
+            HTTP_X_REQUEST_ID=rid,
+        )
+        # payload (corpo) vazio — como o MP realmente envia nesses eventos.
+        self.assertTrue(_verify_mercadopago_signature(req, {}))
+
+    @patch.dict('os.environ', {'MERCADO_PAGO_WEBHOOK_SECRET': 'shh'}, clear=False)
+    def test_preapproval_query_id_errado_rejeita(self):
+        """Segurança: com o secret certo mas data.id/assinatura forjados, rejeita."""
+        req = self.factory.post(
+            '/webhooks/payments/mercadopago/?data.id=forjado&type=subscription_preapproval',
+            HTTP_X_SIGNATURE="ts=1,v1=deadbeef",
+            HTTP_X_REQUEST_ID='req-x',
+        )
+        self.assertFalse(_verify_mercadopago_signature(req, {}))

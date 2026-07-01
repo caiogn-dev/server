@@ -50,8 +50,12 @@ class MercadoPagoWebhookView(APIView):
                 logger.warning("Webhook signature validation failed for store: %s", store_slug)
                 return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
             
-            # Get notification type
-            topic = request.data.get('type') or request.query_params.get('topic')
+            # Get notification type. O MP manda `type` na QUERY (?type=payment,
+            # ?type=subscription_preapproval) além do corpo; `topic` é o nome
+            # legado. Cobrimos os três pra roteamento não silenciar em 'ignored'.
+            topic = (request.data.get('type')
+                     or request.query_params.get('type')
+                     or request.query_params.get('topic'))
 
             if topic == 'payment':
                 return self._handle_payment(request, store_slug)
@@ -85,7 +89,9 @@ class MercadoPagoWebhookView(APIView):
             logger.warning("Preapproval webhook signature inválida — rejeitando")
             return Response({'status': 'invalid_signature'}, status=status.HTTP_401_UNAUTHORIZED)
 
-        data_id = (request.data.get('data') or {}).get('id')
+        # data.id do preapproval vem na QUERY (?data.id=...); corpo pode ser vazio.
+        data_id = (request.query_params.get('data.id')
+                   or (request.data.get('data') or {}).get('id'))
         result = MercadoPagoHandler()._handle_preapproval_webhook(data_id)
         return Response(result, status=status.HTTP_200_OK)
 
