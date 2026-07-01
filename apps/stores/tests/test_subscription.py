@@ -23,6 +23,23 @@ class SubscriptionServiceTestCase(TestCase):
         }
         return sdk
 
+    def test_apply_preapproval_event_ignora_loja_isenta(self):
+        # Loja isenta com linha de assinatura legada: evento de preapproval NÃO
+        # pode mexer no status nem no plano (defesa em profundidade).
+        self.store.billing_exempt = True
+        self.store.plan = 'pro'
+        self.store.save(update_fields=['billing_exempt', 'plan'])
+        StoreSubscription.objects.create(
+            store=self.store, plan='pro', status=StoreSubscription.Status.ACTIVE,
+            mp_preapproval_id='pre_legacy')
+        r = subscription_service.apply_preapproval_event('pre_legacy', 'cancelled')
+        self.assertFalse(r['processed'])
+        self.assertEqual(r['reason'], 'billing_exempt')
+        sub = StoreSubscription.objects.get(store=self.store)
+        self.assertEqual(sub.status, StoreSubscription.Status.ACTIVE)
+        self.store.refresh_from_db()
+        self.assertEqual(self.store.plan, 'pro')
+
     def test_create_subscription_gera_init_point_e_persiste(self):
         with patch.object(subscription_service, '_sdk', return_value=self._fake_sdk()):
             res = subscription_service.create_subscription(
@@ -66,6 +83,6 @@ class SubscriptionServiceTestCase(TestCase):
         subscription_service.apply_preapproval_event('pre_123', 'cancelled')
         sub = StoreSubscription.objects.get(store=self.store)
         self.assertEqual(sub.status, StoreSubscription.Status.CANCELED)
-        # Ao cancelar, a loja perde o plano pago e volta pro starter.
+        # Ao cancelar, a loja perde o plano pago e volta pro free.
         self.store.refresh_from_db()
-        self.assertEqual(self.store.plan, 'starter')
+        self.assertEqual(self.store.plan, 'free')

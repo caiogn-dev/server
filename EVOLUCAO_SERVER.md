@@ -1,86 +1,86 @@
-# EVOLUCAO_SERVER.md — Backlog & Histórico do backend `server`
+# Evolução do Backend server (Cardapidex/Pastita)
 
-> Atualizado em: 2026-06-30
-> Branch trunk: `development` (NUNCA `main` — congelada desde 29/mai)
-
----
-
-## PRs Abertos (não mergeados em `development`)
-
-| PR | Título | Prioridade |
-|----|--------|------------|
-| #282 | fix(lgpd): mascara telefones e credenciais em logs — 7 arquivos | P0 |
-| #281 | fix(seguranca): NameError + IDOR no export de conversas do audit | P0 |
+Documento de rastreamento do loop diário de evolução. Mantido pelo bot de revisão automática.
+Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ---
 
-## Histórico de Fixes (já em `development`)
+## Histórico de execuções
 
-| Commit | Fix |
-|--------|-----|
-| `0f871b4` | feat(webhooks): endpoint de diagnóstico WhatsApp completo |
-| `5db9e3f` | fix(seguranca): IDOR em calculate_fee de entrega (P0) + sanitiza PII-placeholder |
-| `a95a896` | fix(seguranca): IDOR is_staff no Instagram (P0) + IDOR em cupom (P1) |
-| `7f9a841` | feat(pagamento): link de pagamento real no avulso |
-| `e3c0519` | fix(seguranca): criptografa page_access_token/app_secret do Messenger |
-| `fb7d075` | fix(seguranca): valida URL de webhook contra SSRF |
-| `1a64db6` | fix(seguranca): escopa store_data/create do CompanyProfile (IDOR) |
-| `b7facfc` | fix(seguranca): escopa handover por tenant (IDOR) |
-| `239d881` | fix(seguranca): escopa endpoints de Marketing (IDOR) |
-| `f3d6e21` | fix(seguranca): escopa actions de Campaigns (IDOR) |
-| `9c7b2fa` | fix(seguranca): valida ownership de account/company em relatórios |
-| `7a8e028` | fix(seguranca): verifica acesso no subscribe_conversation dos WS (IDOR) |
-| `1d7e1ad` | fix(seguranca): valida ownership da conta nas actions send_* WhatsApp |
+### 2026-06-28
 
----
+**Baseline de testes:** Ambiente de checkout limpo sem Docker (sem PostgreSQL/Redis).
+Suíte completa não executável neste container; testes que usam migrações PostgreSQL-específicas
+(add_index concurrently) falham por design. Isso é pré-existente, não regressão.
 
-## Sessão 2026-06-30 — Fix atual nesta branch
+**Bug encontrado e corrigido:** `apps/audit/api/views.py` linha 140 — `NameError` em produção
 
-**Problema**: `StoreComboViewSet` e `StoreProductTypeViewSet` registrados no router plano
-(`GET /api/v1/stores/combos/` e `GET /api/v1/stores/product-types/`) retornavam
-`objects.all()` quando nenhum parâmetro de loja era fornecido — expondo dados de todos
-os tenants a qualquer usuário autenticado. IDOR cross-tenant.
+- **Tipo:** P0 — Bug de runtime + IDOR potencial
+- **Descrição:** O branch `conversations` do `ExportViewSet.export()` chamava `_accessible_accounts()`
+  que **não existe e não está importada** no módulo. Causa `NameError` em produção sempre que
+  qualquer usuário tenta exportar conversas. Adicionalmente, se a função fosse resolvida de outro
+  escopo acidentalmente, poderia retornar dados cross-tenant (IDOR).
+- **Correção:** Substituído por `accessible_whatsapp_account_ids(user)` que já estava importada
+  na linha 15 e retorna exatamente o mesmo conjunto de IDs, corretamente escopados por tenant.
+- **PR:** `bot/server-2026-06-28-audit-export-idor`
 
-**Fix**: `else` branch adicionado em `get_queryset()` de ambos os ViewSets:
-- Sem escopo + anônimo → `queryset.none()`
-- Sem escopo + autenticado não-superuser → filtra por `accessible_store_ids(user)`
-- Superuser → visão global mantida (cross-tenant intencional)
+**Outros achados (backlog para próximas execuções):**
 
-Quando `?store=<slug>` ou `store_slug` via URL aninhada está presente, o comportamento
-anterior é preservado (sem impacto no dashboard nem no storefront público via `public_api`).
+| Prioridade | Arquivo | Linha | Problema |
+|---|---|---|---|
+| P0 | apps/core/auth/views.py | 76 | PII em log — telefone em texto plano |
+| P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone |
+| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone |
+| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone |
+| P0 | apps/whatsapp/services/order_service.py | 401 | PII em log — código PIX parcial |
+| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso |
+| P1 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log |
+| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ |
 
 ---
 
-## Backlog Priorizado (próximas sessões)
+### 2026-06-30
 
-### P0 — Segurança crítica
+**Bug encontrado e corrigido:** `StoreComboViewSet` e `StoreProductTypeViewSet` — IDOR cross-tenant
 
-1. **timing-attack em comparação de tokens** — `webhooks.py:387,657`,
-   `whatsapp/webhooks/views.py:67`, `messaging/api/views.py:390`,
-   `whatsapp/services/webhook_service.py:45`: todas usam `==` em vez de
-   `hmac.compare_digest()` para verificar `verify_token` e `access_token`.
-   Risco real baixo (256-bit token + jitter de rede), mas trivial de corrigir.
+- **Tipo:** P0 — Vazamento de dado cross-tenant
+- **Descrição:** Ambos os ViewSets, registrados no router plano
+  (`GET /api/v1/stores/combos/` e `GET /api/v1/stores/product-types/`), retornavam
+  `objects.all()` quando nenhum parâmetro de loja era fornecido — expondo dados de
+  todos os tenants a qualquer usuário autenticado.
+- **Correção:** `else` branch adicionado em `get_queryset()` de ambos os ViewSets:
+  - Sem escopo + anônimo → `queryset.none()`
+  - Sem escopo + autenticado não-superuser → filtra por `accessible_store_ids(user)`
+  - Superuser → visão global mantida (cross-tenant intencional)
 
-2. **`str(e)` exposto ao cliente** — `company_profile_views.py:168`:
+  Quando `?store=<slug>` ou `store_slug` via URL aninhada está presente, o comportamento
+  anterior é preservado (sem impacto no dashboard nem no storefront público via `public_api`).
+- **Testes:** `apps/stores/tests/test_combo_product_type_idor.py` (RED→GREEN confirmado)
+- **PR:** `bot/server-2026-06-30-idor-combo-product-type`
+
+---
+
+## Próximo passo priorizado
+
+**P0 — timing-attack em comparação de tokens**: `webhooks.py:387,657`,
+`whatsapp/webhooks/views.py:67`, `messaging/api/views.py:390`,
+`whatsapp/services/webhook_service.py:45` usam `==` em vez de
+`hmac.compare_digest()` para verificar `verify_token`/`access_token`.
+Risco real baixo (256-bit token + jitter de rede), mas trivial de corrigir.
+
+Outros achados relevantes para as próximas sessões:
+
+1. **`str(e)` exposto ao cliente** — `company_profile_views.py:168`:
    `Response({'error': str(e)})` vaza mensagens internas de exceção.
-
-### P1 — Bugs de fluxo
-
-3. **Testes de regressão críticos ausentes**: OTP, delivery zones, route calculation,
+2. **Testes de regressão críticos ausentes**: OTP, delivery zones, route calculation,
    checkout payload, orders by token, agent guardrails (citados no CLAUDE.md como
    `Critical pending work #3`).
-
-4. **Namespace mobile para pedidos**: criar/verificar namespace limpo
+3. **Namespace mobile para pedidos**: criar/verificar namespace limpo
    `/api/v1/mobile/` para detail/status/tracking/reorder sem conflito com rotas
    administrativas (citado no CLAUDE.md como `Critical pending work #1`).
-
-### P2 — Performance
-
-5. **N+1 em `CustomerOrdersView`** — `order.items.count()` dentro de loop (linha 614
+4. **N+1 em `CustomerOrdersView`** — `order.items.count()` dentro de loop (linha 614
    de `webhooks.py`). O `Count` via `annotate` é aplicado, mas o slice `[:3]` ainda
    itera os items sem o prefetch completo.
-
-### P3 — Limpeza
-
-6. **TODO de combo_items** em `CustomerOrdersView` (linha 611-613) — comentado mas
+5. **TODO de combo_items** em `CustomerOrdersView` (linha 611-613) — comentado mas
    nunca implementado. Avaliar se o modelo `StoreOrder.combo_items` existe.

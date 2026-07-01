@@ -7,15 +7,31 @@ sub-projeto Billing — este módulo só define o catálogo e os helpers de leit
 """
 from decimal import Decimal
 
-# Catálogo dos 3 planos. limits.max_products=None => ilimitado.
+# Catálogo dos 4 planos. limits.max_products / max_orders_per_month = None => ilimitado.
 PLAN_CATALOG = {
+    'free': {
+        'key': 'free',
+        'name': 'Grátis',
+        'setup_fee': Decimal('0.00'),
+        'monthly_price': Decimal('0.00'),
+        'charges_setup_fee': False,
+        'limits': {
+            'max_products': 40,
+            'max_orders_per_month': 30,
+            'custom_domain': False,
+            'whatsapp_bot': False,
+            'ai_agent': False,
+        },
+    },
     'starter': {
         'key': 'starter',
-        'name': 'Starter',
-        'setup_fee': Decimal('99.00'),
-        'monthly_price': Decimal('59.00'),
+        'name': 'Essencial',
+        'setup_fee': Decimal('0.00'),
+        'monthly_price': Decimal('99.90'),
+        'charges_setup_fee': False,
         'limits': {
-            'max_products': 50,
+            'max_products': None,
+            'max_orders_per_month': None,
             'custom_domain': False,
             'whatsapp_bot': False,
             'ai_agent': False,
@@ -24,11 +40,13 @@ PLAN_CATALOG = {
     'pro': {
         'key': 'pro',
         'name': 'Pro',
-        'setup_fee': Decimal('149.00'),
-        'monthly_price': Decimal('99.00'),
+        'setup_fee': Decimal('0.00'),
+        'monthly_price': Decimal('249.00'),
+        'charges_setup_fee': False,
         'limits': {
             'max_products': None,
-            'custom_domain': True,
+            'max_orders_per_month': None,
+            'custom_domain': False,
             'whatsapp_bot': True,
             'ai_agent': False,
         },
@@ -36,10 +54,12 @@ PLAN_CATALOG = {
     'premium': {
         'key': 'premium',
         'name': 'Premium',
-        'setup_fee': Decimal('199.00'),
-        'monthly_price': Decimal('159.00'),
+        'setup_fee': Decimal('149.00'),
+        'monthly_price': Decimal('349.00'),
+        'charges_setup_fee': True,
         'limits': {
             'max_products': None,
+            'max_orders_per_month': None,
             'custom_domain': True,
             'whatsapp_bot': True,
             'ai_agent': True,
@@ -47,7 +67,7 @@ PLAN_CATALOG = {
     },
 }
 
-DEFAULT_PLAN = 'starter'
+DEFAULT_PLAN = 'free'
 
 
 def get_plan(plan_key):
@@ -66,10 +86,13 @@ def is_billing_exempt(store):
 
 def plan_allows(store, feature):
     """
-    True se o plano da loja permite a feature.
+    True se o plano permite a feature.
+    Aceita uma instância de Store OU diretamente uma plan_key (str).
     NÃO é enforcement automático — chamadores decidem quando aplicar.
     Features booleanas: custom_domain, whatsapp_bot, ai_agent.
     """
+    if isinstance(store, str):
+        return bool(plan_limits(store).get(feature, False))
     if is_billing_exempt(store):
         return True
     limits = plan_limits(getattr(store, 'plan', DEFAULT_PLAN))
@@ -82,6 +105,27 @@ def within_product_limit(store, current_count):
         return True
     cap = plan_limits(getattr(store, 'plan', DEFAULT_PLAN)).get('max_products')
     return cap is None or current_count < cap
+
+
+def within_order_limit(store, current_month_count):
+    """True se a loja ainda pode receber pedido neste mês (None = ilimitado)."""
+    if is_billing_exempt(store):
+        return True
+    cap = plan_limits(getattr(store, 'plan', DEFAULT_PLAN)).get('max_orders_per_month')
+    return cap is None or current_month_count < cap
+
+
+def store_accepts_orders(store):
+    """False só se a assinatura está 'suspended' e a loja NÃO é isenta."""
+    if is_billing_exempt(store):
+        return True
+    sub = getattr(store, 'subscription', None)
+    return not (sub is not None and sub.status == 'suspended')
+
+
+def charges_setup_fee(plan_key):
+    """True se ESTE plano deve cobrar a taxa de adesão (setup_fee). Toggle por plano."""
+    return bool(get_plan(plan_key).get('charges_setup_fee', False))
 
 
 def public_catalog():

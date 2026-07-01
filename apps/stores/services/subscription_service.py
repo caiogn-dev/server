@@ -82,14 +82,48 @@ def create_subscription(store, plan_key, payer_email, back_url):
             'plan': plan_key,
             'status': StoreSubscription.Status.TRIALING,
             'mp_preapproval_id': preapproval_id,
+            # Relógios e timestamps zerados: re-assinar começa limpo.
+            'grace_until': None,
+            'dunning_since': None,
+            'canceled_at': None,
         },
     )
     # NÃO aplica o plano na loja aqui: o dono ainda precisa abrir o init_point e
     # pagar. O plano escolhido fica só na assinatura; store.plan (que governa os
     # feature-gates) só muda quando o preapproval for autorizado (apply_preapproval_event).
 
+    result = {'init_point': init_point, 'preapproval_id': preapproval_id}
+
+    # Taxa de adesão: preference one-off, gated por killswitch global + toggle do plano.
+    setup_enabled = getattr(settings, 'BILLING_SETUP_FEE_ENABLED', False)
+    setup_fee = plan.get('setup_fee')
+    if setup_enabled and billing.charges_setup_fee(plan_key) and setup_fee is not None:
+        pref_data = {
+            'items': [{
+                'title': f"Adesão Cardapidex {plan['name']} — {store.name}",
+                'quantity': 1,
+                'unit_price': float(setup_fee),
+                'currency_id': 'BRL',
+            }],
+            'back_urls': {'success': back_url, 'pending': back_url, 'failure': back_url},
+            'external_reference': f"setup:{store.slug}",
+        }
+        # Sem notification_url, o evento do pagamento da adesão dependeria só do
+        # webhook global no painel MP. Com ele, o mesmo endpoint da assinatura
+        # recebe o evento e a Task 7 desvia por external_reference 'setup:'.
+        if notification_url:
+            pref_data['notification_url'] = notification_url
+        pref = sdk.preference().create(pref_data)
+        if pref.get('status') in (200, 201):
+            pref_body = pref['response']
+            sub.mp_setup_payment_id = pref_body.get('id', '')
+            sub.save(update_fields=['mp_setup_payment_id'])
+            result['setup_init_point'] = pref_body.get('init_point') or pref_body.get('sandbox_init_point', '')
+        else:
+            logger.error('MP setup-fee preference falhou p/ loja %s: %s', store.slug, pref)
+
     logger.info('Preapproval criado p/ loja %s plano %s: %s', store.slug, plan_key, preapproval_id)
-    return {'init_point': init_point, 'preapproval_id': preapproval_id}
+    return result
 
 
 def apply_preapproval_event(preapproval_id, mp_status):
@@ -100,6 +134,11 @@ def apply_preapproval_event(preapproval_id, mp_status):
     sub = StoreSubscription.objects.filter(mp_preapproval_id=preapproval_id).select_related('store').first()
     if not sub:
         return {'processed': False, 'reason': 'subscription_not_found'}
+    # Defesa em profundidade: loja isenta nunca tem status/plano mexidos por
+    # evento de preapproval (não deveria ter assinatura viva, mas se tiver linha
+    # legada com mp_preapproval_id, ignoramos o evento).
+    if billing.is_billing_exempt(sub.store):
+        return {'processed': False, 'reason': 'billing_exempt'}
 
     mapping = {
         'authorized': StoreSubscription.Status.ACTIVE,
@@ -116,16 +155,82 @@ def apply_preapproval_event(preapproval_id, mp_status):
         if not sub.started_at:
             sub.started_at = timezone.now()
             sub.setup_fee_paid = True
+        # Relógios de carência/dunning: zerados na recuperação para evitar
+        # suspensão instantânea na próxima varredura do ciclo de vida.
+        sub.grace_until = None
+        sub.dunning_since = None
         # Pagamento autorizado: AGORA o plano pago vale na loja (feature-gates).
         if store.plan != sub.plan:
             store.plan = sub.plan
             store.save(update_fields=['plan'])
-    if new_status == StoreSubscription.Status.CANCELED:
+        sub.save(update_fields=['status', 'started_at', 'setup_fee_paid', 'grace_until', 'dunning_since'])
+    elif new_status == StoreSubscription.Status.CANCELED:
         sub.canceled_at = timezone.now()
+        sub.save(update_fields=['status', 'canceled_at'])
         # Assinatura cancelada: loja perde o plano pago e volta pro default.
         if store.plan != billing.DEFAULT_PLAN:
             store.plan = billing.DEFAULT_PLAN
             store.save(update_fields=['plan'])
-    sub.save()
+    else:
+        sub.save(update_fields=['status'])
     logger.info('Subscription %s → %s (loja %s)', preapproval_id, new_status, store.slug)
     return {'processed': True, 'status': new_status}
+
+
+def cancel_subscription(store):
+    """Cancela o preapproval no MP e marca a assinatura como canceled."""
+    # Loja isenta NÃO pode ter o preapproval no MP tocado nem o plano resetado:
+    # guarda ANTES de qualquer chamada ao MP (mesma proteção de create/change_plan).
+    if billing.is_billing_exempt(store):
+        raise SubscriptionError('Loja isenta de cobrança (grandfather).')
+    sub = StoreSubscription.objects.filter(store=store).first()
+    if not sub:
+        raise SubscriptionError('Loja sem assinatura.')
+    if sub.mp_preapproval_id:
+        try:
+            _sdk().preapproval().update(sub.mp_preapproval_id, {'status': 'cancelled'})
+        except Exception as e:
+            logger.error('Falha ao cancelar preapproval %s: %s', sub.mp_preapproval_id, e)
+    sub.status = StoreSubscription.Status.CANCELED
+    sub.canceled_at = timezone.now()
+    sub.save(update_fields=['status', 'canceled_at'])
+    if store.plan != billing.DEFAULT_PLAN:
+        store.plan = billing.DEFAULT_PLAN
+        store.save(update_fields=['plan'])
+    return sub
+
+
+def change_plan(store, new_plan, payer_email, back_url):
+    """Troca de plano = cancela o preapproval atual e cria um novo do plano alvo."""
+    # Loja isenta NÃO entra no fluxo de cobrança: guarda ANTES de cancelar o
+    # preapproval no MP, senão a loja ficaria sem autorização de pagamento e
+    # create_subscription levantaria depois (estado meio-cancelado).
+    if billing.is_billing_exempt(store):
+        raise SubscriptionError('Loja isenta de cobrança (grandfather).')
+    if new_plan not in billing.PLAN_CATALOG:
+        raise SubscriptionError('Plano inválido.')
+    existing = StoreSubscription.objects.filter(store=store).first()
+    if existing and existing.mp_preapproval_id:
+        try:
+            _sdk().preapproval().update(existing.mp_preapproval_id, {'status': 'cancelled'})
+        except Exception as e:
+            logger.error('Falha ao cancelar preapproval antigo: %s', e)
+    return create_subscription(store, new_plan, payer_email, back_url)
+
+
+def mark_setup_fee_paid(external_reference, mp_status):
+    """Marca setup_fee_paid=True quando o pagamento da adesão é aprovado.
+    external_reference no formato 'setup:<store_slug>'."""
+    if not (external_reference or '').startswith('setup:'):
+        return {'processed': False, 'reason': 'not_setup_ref'}
+    if mp_status != 'approved':
+        return {'processed': False, 'reason': 'not_approved'}
+    slug = external_reference.split(':', 1)[1]
+    sub = StoreSubscription.objects.filter(store__slug=slug).first()
+    if not sub:
+        return {'processed': False, 'reason': 'subscription_not_found'}
+    if not sub.setup_fee_paid:
+        sub.setup_fee_paid = True
+        sub.save(update_fields=['setup_fee_paid'])
+        logger.info('Setup fee paga p/ loja %s', slug)
+    return {'processed': True, 'slug': slug}

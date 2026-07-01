@@ -362,6 +362,12 @@ def owner_signup(request):
             onboarding_completed=False,
             whatsapp_number=whatsapp or '',
         )
+        from apps.stores.models import StoreSubscription
+        StoreSubscription.objects.create(
+            store=store,
+            plan=store.plan,
+            status=StoreSubscription.Status.TRIALING,
+        )
         token = Token.objects.create(user=user)
 
     return Response({
