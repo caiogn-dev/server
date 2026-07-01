@@ -254,7 +254,8 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
             return StoreProductVariant.objects.none()
         qs = StoreProductVariant.objects.filter(product_id=product_id)
         user = self.request.user
-        if not (user.is_staff or user.is_superuser):
+        # is_staff NÃO concede acesso cross-tenant — apenas is_superuser.
+        if not user.is_superuser:
             from apps.core.permissions import accessible_store_ids
             qs = qs.filter(product__store__id__in=accessible_store_ids(user))
         return qs
@@ -286,7 +287,8 @@ class StoreComboViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             raise PermissionDenied("Autenticação necessária.")
-        if user.is_staff or user.is_superuser:
+        # is_staff NÃO concede acesso cross-tenant — apenas is_superuser.
+        if user.is_superuser:
             return
         perm = IsStoreOwnerOrStaff()
         if not perm._user_can_access_store(user, store):
@@ -370,7 +372,8 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             raise PermissionDenied("Autenticação necessária.")
-        if user.is_staff or user.is_superuser:
+        # is_staff NÃO concede acesso cross-tenant — apenas is_superuser.
+        if user.is_superuser:
             return
         perm = IsStoreOwnerOrStaff()
         if not perm._user_can_access_store(user, store):
