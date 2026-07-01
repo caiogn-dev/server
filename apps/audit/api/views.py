@@ -137,7 +137,7 @@ class ExportViewSet(viewsets.ReadOnlyModelViewSet):
             response = export_service.export_orders(queryset, export_format, request.user)
 
         elif export_type == 'conversations':
-            accessible_account_ids = list(_accessible_accounts().values_list('id', flat=True))
+            accessible_account_ids = list(accessible_whatsapp_account_ids(user))
             queryset = Conversation.objects.filter(is_active=True, account_id__in=accessible_account_ids)
             if filters.get('account'):
                 queryset = queryset.filter(account_id=filters['account'])
