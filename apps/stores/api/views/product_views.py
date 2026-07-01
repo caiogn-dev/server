@@ -331,6 +331,16 @@ class StoreComboViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(store_id=store_param)
             except (ValueError, AttributeError):
                 queryset = queryset.filter(store__slug=store_param)
+        else:
+            # Sem escopo de loja explícito na URL ou nos query params:
+            # restringir por tenant para evitar IDOR cross-tenant.
+            # Superuser mantém visão global; anônimo recebe queryset vazio.
+            user = self.request.user
+            if not user.is_authenticated:
+                queryset = queryset.none()
+            elif not user.is_superuser:
+                from apps.core.permissions import accessible_store_ids
+                queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 
         # Only hide inactive combos for unauthenticated / non-staff public requests
         is_admin = self.request.user.is_authenticated and (
@@ -384,9 +394,9 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
         import uuid as uuid_module
         store_param = self.request.query_params.get('store')
         store_slug = self.kwargs.get('store_slug')
-        
+
         queryset = StoreProductType.objects.all()
-        
+
         if store_slug:
             queryset = queryset.filter(store__slug=store_slug)
         elif store_param:
@@ -395,10 +405,18 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(store_id=store_param)
             except (ValueError, AttributeError):
                 queryset = queryset.filter(store__slug=store_param)
-        
+        else:
+            # Sem escopo de loja explícito: restringir por tenant (IDOR fix).
+            user = self.request.user
+            if not user.is_authenticated:
+                queryset = queryset.none()
+            elif not user.is_superuser:
+                from apps.core.permissions import accessible_store_ids
+                queryset = queryset.filter(store_id__in=accessible_store_ids(user))
+
         if self.action == 'list' and not self.request.user.is_staff:
             queryset = queryset.filter(is_active=True)
-        
+
         return queryset.select_related('store').order_by('sort_order', 'name')
 
 
