@@ -82,28 +82,41 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         
         try:
             from apps.stores.models import Store
-            
+
             # Try to find store by slug first
             if store_slug:
-                store = Store.objects.get(slug=store_slug, is_active=True)
+                try:
+                    store = Store.objects.get(slug=store_slug, is_active=True)
+                except Store.DoesNotExist:
+                    return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
             else:
                 # Try to find store by WhatsApp account
                 from apps.whatsapp.models import WhatsAppAccount
-                account = WhatsAppAccount.objects.get(id=account_id)
-                
+                try:
+                    account = WhatsAppAccount.objects.get(id=account_id)
+                except WhatsAppAccount.DoesNotExist:
+                    return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
+                # Tenant gate: a conta WhatsApp deve pertencer ao tenant do usuário.
+                # Sem isso, qualquer autenticado buscava dados de contas alheias.
+                if not request.user.is_superuser:
+                    accessible_ids = accessible_whatsapp_account_ids(request.user)
+                    if account.id not in accessible_ids:
+                        return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+
                 # Look for store with matching whatsapp_number
                 store = Store.objects.filter(
                     whatsapp_number=account.phone_number,
                     is_active=True
                 ).first()
-                
+
                 if not store:
                     # Try by owner
                     store = Store.objects.filter(
                         owner=account.owner,
                         is_active=True
                     ).first()
-            
+
             if not store:
                 return Response(
                     {'error': 'Store not found'},
@@ -162,10 +175,10 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
             
             return Response(data)
             
-        except Exception as e:
-            logger.error(f"Error fetching store data: {e}", exc_info=True)
+        except Exception:
+            logger.error("Erro inesperado em store_data", exc_info=True)
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro interno ao buscar dados da loja'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     

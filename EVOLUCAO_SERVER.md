@@ -62,6 +62,40 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 
 ---
 
+---
+
+### 2026-07-02
+
+**Baseline de testes:** Sem Docker/PostgreSQL disponível — suíte de integração não executável
+(SQLite não suporta `add_index concurrently`). Pré-existente, não regressão.
+
+**Bug encontrado e corrigido:** IDOR via `account_id` em `store_data` + info-disclosure em erros
+
+- **Tipo:** P1 — IDOR cross-tenant (caminho `account_id`) + info-disclosure via `str(e)` em 500
+- **Arquivo:** `apps/automation/api/views/company_profile_views.py`
+- **Problema 1 (linha 92):** `WhatsAppAccount.objects.get(id=account_id)` sem escopo de tenant.
+  Um atacante autenticado passava o `account_id` de outro tenant e o objeto era carregado antes de
+  qualquer verificação. Embora o check `user_can_access_store` downstream bloqueasse a resposta
+  final, o acesso não autorizado ao objeto já ocorria.
+- **Problema 2 (linha 88):** `Store.objects.get(slug=...)` lançava `DoesNotExist` → capturado
+  pelo `except Exception as e` genérico → retornava HTTP 500 com `str(e)` (mensagem interna do
+  Django) em vez de 404.
+- **Problema 3 (linha 165):** `except Exception as e: return Response({'error': str(e)}, 500)` —
+  expunha mensagens internas do ORM para clientes não-autenticados.
+- **Correção:**
+  - `Store.DoesNotExist` e `WhatsAppAccount.DoesNotExist` agora são capturados explicitamente → 404
+  - Tenant gate inserido logo após `WhatsAppAccount.objects.get()`: compara `account.id` com
+    `accessible_whatsapp_account_ids(request.user)` → 404 se não pertencer ao tenant
+  - `except Exception` genérico: `str(e)` removido da resposta; erro apenas no log interno
+- **Testes:** 4 novos casos em `test_company_profile_security.py`:
+  - `test_attacker_cannot_probe_victim_account_id` (RED→GREEN — confirmado antes do fix)
+  - `test_nonexistent_account_id_returns_404_not_500` (RED→GREEN)
+  - `test_nonexistent_slug_returns_404_not_500` (RED→GREEN)
+  - `test_owner_can_access_via_own_account_id` (GREEN desde o início)
+- **PR:** `bot/server-2026-07-02-store-data-idor-account`
+
+---
+
 ## Backlog priorizado
 
 | Prioridade | Arquivo | Linha | Problema | Status |
@@ -74,16 +108,14 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 | P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
 | P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
 | P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | **Pendente** |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR account_id + info-disclosure str(e) | **Corrigido 2026-07-02** |
 | P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Pendente** |
 
 ---
 
 ## Próximo passo priorizado
 
-**P1 — IDOR em company_profile_views.py:92-98**: `account_id` recebido na request não é validado
-contra o tenant do usuário autenticado antes de ser usado para buscar configuração. Um usuário de
-Tenant A pode consultar/alterar dados do Tenant B se conhecer o `account_id`.
-
-Fix: adicionar verificação `get_object_or_404(WhatsAppAccount, id=account_id, store=user_store)`
-antes de qualquer operação, semelhante ao padrão já usado em outros ViewSets.
+**P2 — Rate limiting em `/orders/by-token/`**: endpoint `GET /api/v1/mobile/orders/by-token/{token}/`
+não tem throttling. Um atacante pode brutar tokens de pedido para acessar detalhes de clientes
+(nome, endereço de entrega, itens) sem autenticação. Fix: aplicar `AnonRateThrottle` ou throttle
+customizado (ex.: 20 req/min por IP) no `ByTokenOrderView`.
