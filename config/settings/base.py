@@ -232,6 +232,9 @@ REST_FRAMEWORK = {
         # Geo (autosuggest / delivery-zones): proxy não-auth p/ Google Maps PAGO.
         # Protege a conta de billing contra DoS financeiro.
         'geo': '30/minute',
+        # Pedido por token: endpoint AllowAny — limita varredura de tokens e DoS no DB.
+        # Defesa em profundidade; o token tem 256-bit de entropia (brute-force inviável).
+        'order_token': '30/minute',
     },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.custom_exception_handler',
 }
