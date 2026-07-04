@@ -26,7 +26,9 @@ logger = logging.getLogger(__name__)
 def _accessible_accounts(user):
     """WhatsApp accounts visible to current user."""
     queryset = WhatsAppAccount.objects.filter(is_active=True)
-    if user.is_superuser or user.is_staff:
+    # is_staff NÃO concede acesso cross-tenant (só superuser) — senão qualquer
+    # conta do /admin vê métricas de todos os tenants no dashboard.
+    if user.is_superuser:
         return queryset
 
     return queryset.filter(
@@ -41,7 +43,8 @@ def _accessible_accounts(user):
 def _accessible_stores(user, accounts_qs=None):
     """Stores visible to current user."""
     queryset = Store.objects.filter(is_active=True)
-    if user.is_superuser or user.is_staff:
+    # is_staff NÃO vaza pedidos/receita cross-tenant — só superuser vê tudo.
+    if user.is_superuser:
         return queryset
 
     filters = Q(owner=user) | Q(staff=user)
