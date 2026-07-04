@@ -18,8 +18,18 @@ class StoreSubscription(models.Model):
     store = models.OneToOneField(
         'stores.Store', on_delete=models.CASCADE, related_name='subscription'
     )
+    class BillingCycle(models.TextChoices):
+        MONTHLY = "monthly", "Mensal"
+        ANNUAL = "annual", "Anual"
+
     plan = models.CharField(max_length=20, default='starter')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.TRIALING)
+    billing_cycle = models.CharField(
+        max_length=10, choices=BillingCycle.choices, default=BillingCycle.MONTHLY
+    )
+    # Distingue quem caiu pro Grátis por inadimplência (mostra aviso) de quem
+    # escolheu o Grátis.
+    downgraded_for_nonpayment = models.BooleanField(default=False)
 
     # MercadoPago (preenchidos quando a cobrança for ligada)
     mp_preapproval_id = models.CharField(max_length=255, blank=True, default='')
