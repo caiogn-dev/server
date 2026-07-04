@@ -359,6 +359,112 @@ class CustomersReportView(BaseExportView):
         })
 
 
+class CustomerInsightsReportView(BaseExportView):
+    """Insights de clientes: LTV, inatividade/churn e distribuição de frequência.
+
+    Usa StoreCustomer (identidade deduplicada por loja, stats denormalizados
+    total_orders/total_spent/last_order_at) para as métricas lifetime — mais
+    confiável que agrupar pedidos por string de telefone/email. O range de datas
+    aplica-se apenas à série "novos clientes ao longo do tempo".
+    """
+
+    @staticmethod
+    def _customer_name(customer):
+        # Preferir nome real; nunca expor email placeholder (@pastita.local) nem
+        # 'cliente_...' como nome (ver CLAUDE.md).
+        user = customer.user
+        full = (user.get_full_name() or '').strip()
+        if full:
+            return full
+        unified = getattr(customer, 'unified_user', None)
+        uname = (getattr(unified, 'name', '') or '').strip() if unified else ''
+        if uname:
+            return uname
+        email = (user.email or '').strip()
+        if email and '@pastita.local' not in email and not email.startswith('cliente_'):
+            return email
+        return customer.phone or customer.whatsapp or 'Cliente'
+
+    def get(self, request):
+        store = self.get_store(request)
+        if not store:
+            return Response({'error': 'Store parameter required'}, status=400)
+
+        start_date, end_date = self.get_date_range(request)
+        group_by = request.query_params.get('group_by', 'day')
+        now = timezone.now()
+        cutoff_30 = now - timedelta(days=30)
+        cutoff_60 = now - timedelta(days=60)
+
+        customers = StoreCustomer.objects.filter(store=store)
+
+        summary = customers.aggregate(
+            total_customers=Count('id'),
+            avg_ltv=Avg('total_spent'),
+            avg_orders=Avg('total_orders'),
+            active_30d=Count('id', filter=Q(last_order_at__gte=cutoff_30)),
+            at_risk=Count('id', filter=Q(last_order_at__lt=cutoff_30, last_order_at__gte=cutoff_60)),
+            inactive=Count('id', filter=Q(last_order_at__lt=cutoff_60) | Q(last_order_at__isnull=True)),
+        )
+        total = summary['total_customers'] or 0
+        inactive = summary['inactive'] or 0
+
+        freq = customers.aggregate(
+            b1=Count('id', filter=Q(total_orders=1)),
+            b2=Count('id', filter=Q(total_orders=2)),
+            b35=Count('id', filter=Q(total_orders__gte=3, total_orders__lte=5)),
+            b6=Count('id', filter=Q(total_orders__gte=6)),
+        )
+
+        top = customers.select_related('user', 'unified_user').order_by('-total_spent')[:20]
+        top_ltv = [
+            {
+                'name': self._customer_name(c),
+                'phone': c.phone or c.whatsapp or '',
+                'total_spent': float(c.total_spent or 0),
+                'total_orders': c.total_orders or 0,
+                'last_order_at': c.last_order_at.isoformat() if c.last_order_at else None,
+            }
+            for c in top
+        ]
+
+        trunc = {'week': TruncWeek, 'month': TruncMonth}.get(group_by, TruncDate)
+        new_rows = (
+            customers
+            .filter(created_at__date__gte=start_date, created_at__date__lte=end_date)
+            .annotate(bucket=trunc('created_at'))
+            .values('bucket')
+            .annotate(count=Count('id'))
+            .order_by('bucket')
+        )
+        new_over_time = [
+            {'period': r['bucket'].isoformat() if r['bucket'] else None, 'count': r['count']}
+            for r in new_rows
+        ]
+
+        return Response({
+            'generated_at': now.isoformat(),
+            'period': {'start': start_date.isoformat(), 'end': end_date.isoformat(), 'group_by': group_by},
+            'summary': {
+                'total_customers': total,
+                'avg_ltv': float(summary['avg_ltv'] or 0),
+                'avg_orders': float(summary['avg_orders'] or 0),
+                'active_30d': summary['active_30d'] or 0,
+                'at_risk_30_60d': summary['at_risk'] or 0,
+                'inactive_60d': inactive,
+                'churn_rate': round((inactive / total * 100) if total else 0, 2),
+            },
+            'frequency': [
+                {'bucket': '1 pedido', 'count': freq['b1'] or 0},
+                {'bucket': '2 pedidos', 'count': freq['b2'] or 0},
+                {'bucket': '3-5 pedidos', 'count': freq['b35'] or 0},
+                {'bucket': '6+ pedidos', 'count': freq['b6'] or 0},
+            ],
+            'top_ltv': top_ltv,
+            'new_over_time': new_over_time,
+        })
+
+
 class StoreDashboardStatsView(BaseExportView):
     """Per-store dashboard statistics (orders, revenue, stock). See core.DashboardStatsView for the global one."""
     
