@@ -64,8 +64,13 @@ Sempre com **copia-e-cola** (funciona em qualquer app de banco, sem cartão). Fa
 - No painel e no WhatsApp: oferta "economize 2 meses no anual".
 - 1 PIX único; ao pagar (`kind='annual'`), `current_period_end = +12 meses`. Zero cobrança no restante do ano.
 
-### 6. Não-pagamento → cai pro Grátis
-Ajustar `subscription_lifecycle.decide_transition`: fatura vencida + carência esgotada retorna **`downgrade_free`** (hoje já é o caminho do trial vencido) em vez de `suspend`. A loja continua vendendo; `store.plan` volta pra `free` (perde domínio/bot/limites). WhatsApp: "voltamos você pro Grátis; quando quiser, é só pagar pra reativar o Pro". (`suspend` deixa de ser acionado pelo fluxo normal de billing; permanece disponível para casos manuais/abuso.)
+### 6. Não-pagamento → cai pro Grátis (com aviso de reativar)
+Ajustar `subscription_lifecycle.decide_transition`: fatura vencida + carência esgotada retorna **`downgrade_free`** (hoje já é o caminho do trial vencido) em vez de `suspend`. A loja continua vendendo; `store.plan` volta pra `free` (perde domínio/bot/limites). (`suspend` deixa de ser acionado pelo fluxo normal de billing; permanece disponível para casos manuais/abuso.)
+
+**Aviso de reativação (persistente até resolver):**
+- **Dash:** banner persistente no topo (`TrialBanner.tsx`, novo caso `downgraded`) — "Você voltou pro plano Grátis. Reative o {plano} pra ter {recursos} de volta." + CTA "Reativar" → `/assinatura` (que já mostra a fatura PIX pronta). Não-dismissível enquanto no Grátis por inadimplência (diferente do trial, que é dismissível).
+- **WhatsApp:** "Voltamos você pro Grátis pra não perder sua loja 🙏 Quando quiser reativar o {plano}, é só pagar 👇" + copia-e-cola da fatura pendente.
+- Estado: marcar em `StoreSubscription.metadata`/campo que o downgrade foi por inadimplência (distingue de quem escolheu o Grátis), pra o banner só aparecer nesse caso. Ao pagar a fatura pendente → `apply_invoice_paid` reativa o plano e some o aviso.
 
 ### 7. Dash — tela de fatura (`pastita-dash`)
 - `src/services/billing.ts`: novas funções `getCurrentInvoice(slug)`, `listInvoices(slug)`, `setBillingCycle(slug, 'monthly'|'annual')`; tipo `Invoice { id, amount, status, kind, period_start, period_end, due_date, pix_code, pix_qr_code, paid_at }`. `subscribe`/`changePlan` passam a retornar/abrir a **fatura PIX** em vez de `init_point` de cartão.
