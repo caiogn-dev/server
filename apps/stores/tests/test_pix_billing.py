@@ -2,6 +2,7 @@ from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone as dtz
 from django.test import TestCase
 from django.contrib.auth.models import User
+from django.utils import timezone
 from apps.stores.models import Store, StoreSubscription, StorePayment
 from apps.stores.services import pix_billing_service
 
@@ -79,3 +80,40 @@ class GenerateInvoiceTest(TestCase):
         self.store.billing_exempt = True; self.store.save()
         self.assertIsNone(pix_billing_service.generate_invoice(self.sub, now=self.now))
         self.assertEqual(StorePayment.objects.filter(store=self.store).count(), 0)
+
+
+class ApplyInvoicePaidTest(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user('owner_pix_apply', 'owner_pix_apply@x.com', 'x')
+        self.store = Store.objects.create(name="Loja Y", slug="loja-y", plan="free", owner=self.owner)
+        self.sub = StoreSubscription.objects.create(
+            store=self.store, plan="pro", status=StoreSubscription.Status.PAST_DUE,
+            dunning_since=timezone.now(), downgraded_for_nonpayment=True,
+        )
+        self.inv = StorePayment.objects.create(
+            store=self.store, order=None, amount=249, currency="BRL",
+            payment_method=StorePayment.PaymentMethod.PIX,
+            status=StorePayment.PaymentStatus.COMPLETED,
+            external_reference=f"subpix:{self.sub.id}:2026-07",
+            metadata={"kind": "monthly", "subscription_id": str(self.sub.id)},
+        )
+
+    def test_paid_invoice_activates_and_applies_plan(self):
+        pix_billing_service.apply_invoice_paid(self.inv)
+        self.sub.refresh_from_db(); self.store.refresh_from_db()
+        self.assertEqual(self.sub.status, StoreSubscription.Status.ACTIVE)
+        self.assertIsNone(self.sub.dunning_since)
+        self.assertFalse(self.sub.downgraded_for_nonpayment)
+        self.assertEqual(self.store.plan, "pro")
+        self.assertIsNotNone(self.sub.current_period_end)
+
+    def test_apply_is_idempotent(self):
+        pix_billing_service.apply_invoice_paid(self.inv)
+        first_end = StoreSubscription.objects.get(pk=self.sub.pk).current_period_end
+        pix_billing_service.apply_invoice_paid(self.inv)
+        self.assertEqual(StoreSubscription.objects.get(pk=self.sub.pk).current_period_end, first_end)
+
+    def test_exempt_store_ignored(self):
+        self.store.billing_exempt = True; self.store.save()
+        res = pix_billing_service.apply_invoice_paid(self.inv)
+        self.assertEqual(res.get("processed"), False)

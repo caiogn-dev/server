@@ -6,6 +6,7 @@ de vida reaproveitam a infra existente.
 """
 import logging
 from decimal import Decimal
+from dateutil.relativedelta import relativedelta
 from django.conf import settings
 from django.utils import timezone
 from apps.stores import billing
@@ -81,3 +82,43 @@ def generate_invoice(subscription, now=None):
             "period_key": period_key, "sent_steps": [],
         },
     )
+
+
+def apply_invoice_paid(store_payment):
+    """Fatura PIX paga → avança a assinatura. Idempotente."""
+    meta = store_payment.metadata or {}
+    sub_id = meta.get("subscription_id")
+    if not sub_id:
+        return {"processed": False, "reason": "no_subscription"}
+    if meta.get("applied"):
+        return {"processed": False, "reason": "already_applied"}
+    sub = StoreSubscription.objects.select_related("store").filter(pk=sub_id).first()
+    if not sub:
+        return {"processed": False, "reason": "subscription_not_found"}
+    store = sub.store
+    if billing.is_billing_exempt(store):
+        return {"processed": False, "reason": "billing_exempt"}
+
+    now = timezone.now()
+    base = sub.current_period_end if (sub.current_period_end and sub.current_period_end > now) else now
+    months = 12 if meta.get("kind") == "annual" else 1
+    sub.current_period_end = base + relativedelta(months=months)
+    sub.status = StoreSubscription.Status.ACTIVE
+    sub.dunning_since = None
+    sub.grace_until = None
+    sub.downgraded_for_nonpayment = False
+    if not sub.started_at:
+        sub.started_at = now
+    sub.save(update_fields=[
+        "current_period_end", "status", "dunning_since", "grace_until",
+        "downgraded_for_nonpayment", "started_at",
+    ])
+    if store.plan != sub.plan:
+        store.plan = sub.plan
+        store.save(update_fields=["plan"])
+
+    meta["applied"] = True
+    store_payment.metadata = meta
+    store_payment.save(update_fields=["metadata"])
+    logger.info("Fatura %s paga → assinatura %s ACTIVE até %s", store_payment.id, sub.id, sub.current_period_end)
+    return {"processed": True, "period_end": sub.current_period_end}
