@@ -151,7 +151,9 @@ class StorePayment(BaseModel):
         'stores.Store',
         on_delete=models.CASCADE,
         related_name='store_payments',
-        null=True,
+        null=False,
+        # blank=True: o store é INFERIDO no save() (via order) — forms/serializers
+        # não precisam exigi-lo, mas o banco garante NOT NULL contra bypass.
         blank=True,
         help_text='Loja dona da cobrança (obrigatório; inferido do pedido quando há order)'
     )

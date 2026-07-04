@@ -674,7 +674,6 @@ class CheckoutService:
         }
     
     @staticmethod
-    @transaction.atomic
     def create_order(
         cart: StoreCart,
         customer_data: dict,
@@ -685,6 +684,65 @@ class CheckoutService:
         trusted_delivery_fee: "Decimal | None" = None,
         scheduled_date=None,
         scheduled_time='',
+    ) -> StoreOrder:
+        """Create an order from a cart.
+
+        A taxa de entrega (que pode disparar geocode/route HTTP no
+        UnifiedDeliveryService) é calculada AQUI, FORA de qualquer transação,
+        para não segurar a conexão do banco durante I/O de rede. A escrita
+        (estoque + pedido) roda em `_create_order_atomic`, que recebe a taxa
+        já pronta via `precomputed_delivery_info`.
+        """
+        store = cart.store
+        delivery_payload = dict(delivery_data or {})
+
+        precomputed_delivery_info = None
+        needs_fee_calc = (
+            trusted_delivery_fee is None
+            and delivery_payload.get('method') == 'delivery'
+            and delivery_payload.get('fee') is None
+        )
+        if needs_fee_calc:
+            # Espelha a sanitização/defaults do corpo atômico só para computar a
+            # taxa; o endereço definitivo é re-sanitizado lá dentro.
+            addr = _sanitize_delivery_address_coordinates(dict(delivery_payload.get('address') or {}))
+            if store.city and not addr.get('city'):
+                addr['city'] = store.city
+            if store.state and not addr.get('state'):
+                addr['state'] = store.state
+            info = CheckoutService.calculate_delivery_fee_for_payload(
+                store, {**delivery_payload, 'address': addr},
+            )
+            precomputed_delivery_info = CheckoutService.normalize_delivery_quote(info)
+            # Não levanta aqui: o corpo atômico valida fee None → ValueError,
+            # mantendo mensagem/rollback idênticos ao comportamento anterior.
+
+        return CheckoutService._create_order_atomic(
+            cart=cart,
+            customer_data=customer_data,
+            delivery_data=delivery_data,
+            coupon_code=coupon_code,
+            notes=notes,
+            use_loyalty_reward=use_loyalty_reward,
+            trusted_delivery_fee=trusted_delivery_fee,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
+            precomputed_delivery_info=precomputed_delivery_info,
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def _create_order_atomic(
+        cart: StoreCart,
+        customer_data: dict,
+        delivery_data: dict = None,
+        coupon_code: str = None,
+        notes: str = '',
+        use_loyalty_reward: bool = False,
+        trusted_delivery_fee: "Decimal | None" = None,
+        scheduled_date=None,
+        scheduled_time='',
+        precomputed_delivery_info: dict = None,
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -735,7 +793,14 @@ class CheckoutService:
                     'is_valid': True,
                     'available': True,
                 })
+            elif precomputed_delivery_info is not None:
+                # Taxa já calculada FORA da transação pelo create_order público
+                # (evita geocode/route HTTP segurando a conexão do banco).
+                delivery_info = precomputed_delivery_info
             else:
+                # Fallback defensivo: chamada direta a _create_order_atomic sem
+                # taxa pré-computada — calcula inline (raro; caminho público
+                # sempre passa precomputed_delivery_info).
                 delivery_info = CheckoutService.calculate_delivery_fee_for_payload(
                     store,
                     delivery_payload,

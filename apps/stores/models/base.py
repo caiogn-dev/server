@@ -194,9 +194,11 @@ class Store(BaseModel):
     operating_hours = models.JSONField(default=dict, blank=True)
 
     # Owner
+    # PROTECT (não CASCADE): deletar 1 User NÃO pode evaporar a loja + todo o
+    # histórico financeiro. A exclusão é bloqueada até a loja ser reatribuída.
     owner = models.ForeignKey(
         User,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name='owned_stores'
     )
 

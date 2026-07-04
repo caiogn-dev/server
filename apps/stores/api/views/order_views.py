@@ -665,7 +665,13 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         store_id = request.query_params.get('store')
         # Use fresh queryset without prefetch for aggregation (incompatible with .values())
+        # IDOR: sempre escopar às lojas do usuário ANTES de qualquer filtro por
+        # param. Sem isto, `?store=<loja-alheia>` vazava a receita da concorrente
+        # e a ausência de `store` agregava os números de TODAS as lojas.
+        store_ids = self._get_user_store_ids()  # None => superuser (sem restrição)
         queryset = StoreOrder.objects.all()
+        if store_ids is not None:
+            queryset = queryset.filter(store_id__in=store_ids)
 
         if store_id:
             # Aceita slug OU UUID (antes só UUID → slug dava 500 no painel).

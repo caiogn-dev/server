@@ -501,7 +501,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         if store_id:
             from apps.core.permissions import accessible_store_ids
             store_qs = Store.objects.all()
-            if not (request.user.is_staff or request.user.is_superuser):
+            # is_staff NÃO concede seleção de loja cross-tenant (vazaria o
+            # catálogo/preços de qualquer loja); só superuser é irrestrito.
+            if not request.user.is_superuser:
                 store_qs = store_qs.filter(id__in=accessible_store_ids(request.user))
             try:
                 store = store_qs.get(id=store_id)

@@ -184,7 +184,9 @@ class SendCatalogMenuSerializer(serializers.Serializer):
     """Serializer for sending native WhatsApp catalog (product_list) for a store."""
     account_id = serializers.UUIDField()
     to = serializers.CharField(max_length=20)
-    store_id = serializers.IntegerField(required=False, allow_null=True)
+    # Store.id é UUID — IntegerField rejeitava qualquer loja real, deixando o
+    # path store_id inutilizável (e mascarando o bypass de escopo corrigido na view).
+    store_id = serializers.UUIDField(required=False, allow_null=True)
     header_text = serializers.CharField(max_length=60, required=False, allow_blank=True)
     body_text = serializers.CharField(max_length=1024, required=False, allow_blank=True)
     footer = serializers.CharField(max_length=60, required=False, allow_blank=True)
