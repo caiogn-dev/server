@@ -147,10 +147,15 @@ class DashboardOverviewView(APIView):
 
         orders_qs = StoreOrder.objects.filter(is_active=True, store__in=stores_qs)
         
-        # Messages metrics
-        messages_today = messages_qs.filter(created_at__gte=today_start).count()
-        messages_week = messages_qs.filter(created_at__gte=week_start).count()
-        messages_month = messages_qs.filter(created_at__gte=month_start).count()
+        # Messages metrics — counts do mesmo queryset num único aggregate.
+        _msg = messages_qs.aggregate(
+            today=Count('id', filter=Q(created_at__gte=today_start)),
+            week=Count('id', filter=Q(created_at__gte=week_start)),
+            month=Count('id', filter=Q(created_at__gte=month_start)),
+        )
+        messages_today = _msg['today']
+        messages_week = _msg['week']
+        messages_month = _msg['month']
         
         messages_by_status = dict(
             messages_qs.filter(created_at__gte=today_start)
@@ -167,10 +172,12 @@ class DashboardOverviewView(APIView):
         )
 
         # Conversations metrics
-        conversations_active = conversations_qs.filter(
-            status__in=['open', 'pending']
-        ).count()
-        
+        _conv = conversations_qs.aggregate(
+            active=Count('id', filter=Q(status__in=['open', 'pending'])),
+            resolved_today=Count('id', filter=Q(resolved_at__gte=today_start)),
+        )
+        conversations_active = _conv['active']
+
         conversations_by_status = dict(
             conversations_qs.values('status')
             .annotate(count=Count('id'))
@@ -184,9 +191,7 @@ class DashboardOverviewView(APIView):
             .values_list('mode', 'count')
         )
         
-        conversations_resolved_today = conversations_qs.filter(
-            resolved_at__gte=today_start
-        ).count()
+        conversations_resolved_today = _conv['resolved_today']
 
         # Orders metrics
         orders_by_status = dict(
@@ -195,25 +200,19 @@ class DashboardOverviewView(APIView):
             .values_list('status', 'count')
         )
         
-        orders_today = orders_qs.filter(created_at__gte=today_start).count()
-        
-        revenue_today = orders_qs.filter(
-            paid_at__gte=today_start
-        ).aggregate(total=Sum('total'))['total'] or 0
-        
-        revenue_month = orders_qs.filter(
-            paid_at__gte=month_start
-        ).aggregate(total=Sum('total'))['total'] or 0
-
-        # Payments metrics (derived from store orders)
-        payments_pending = orders_qs.filter(
-            payment_status__in=['pending', 'processing']
-        ).count()
-        
-        payments_completed_today = orders_qs.filter(
-            payment_status='paid',
-            paid_at__gte=today_start
-        ).count()
+        # Orders + payments — todos os aggregates do mesmo queryset num só.
+        _ord = orders_qs.aggregate(
+            today=Count('id', filter=Q(created_at__gte=today_start)),
+            revenue_today=Sum('total', filter=Q(paid_at__gte=today_start)),
+            revenue_month=Sum('total', filter=Q(paid_at__gte=month_start)),
+            payments_pending=Count('id', filter=Q(payment_status__in=['pending', 'processing'])),
+            payments_completed_today=Count('id', filter=Q(payment_status='paid', paid_at__gte=today_start)),
+        )
+        orders_today = _ord['today']
+        revenue_today = _ord['revenue_today'] or 0
+        revenue_month = _ord['revenue_month'] or 0
+        payments_pending = _ord['payments_pending']
+        payments_completed_today = _ord['payments_completed_today']
 
         # Agent metrics (replaces Langflow)
         agent_messages_qs = AgentMessage.objects.filter(
@@ -231,10 +230,15 @@ class DashboardOverviewView(APIView):
         ).aggregate(avg=Avg('response_time_ms'))['avg'] or 0
 
         # Accounts summary
+        _acc = accounts_qs.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status='active')),
+            inactive=Count('id', filter=Q(status='inactive')),
+        )
         accounts_summary = {
-            'total': accounts_qs.count(),
-            'active': accounts_qs.filter(status='active').count(),
-            'inactive': accounts_qs.filter(status='inactive').count(),
+            'total': _acc['total'],
+            'active': _acc['active'],
+            'inactive': _acc['inactive'],
         }
 
         return Response({
