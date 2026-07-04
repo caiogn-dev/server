@@ -62,6 +62,27 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 
 ---
 
+### 2026-07-04
+
+**Baseline de testes:** 10 testes `test_order_number_csprng` passando localmente (SimpleTestCase, sem DB).
+Testes com DB (test_order_amount_paid, test_order_adjust, test_order_stats_idor) erram com TypeError
+em `add_index concurrently` — pré-existente, não regressão.
+
+**Bug encontrado e corrigido:** `StoreOrder.generate_order_number` usava `random.choices` (não-CSPRNG)
+
+- **Tipo:** P2 — Geração de número de pedido não criptograficamente segura
+- **Arquivo:** `apps/stores/models/order.py:336`
+- **Descrição:** `random.choices(string.digits, k=4)` gera apenas 10.000 sufixos possíveis por
+  prefixo+data (e.g. `CES260704XXXX`). Um atacante com acesso ao padrão de numeração pode enumerar
+  pedidos de um tenant por força bruta dos sufixos. Substituído por `secrets.randbelow(10000)` que
+  mantém o mesmo formato e cardinalidade mas com CSPRNG do módulo `secrets`.
+- **Testes:** 10 casos em `apps/stores/tests/test_order_number_csprng.py` (RED→GREEN): formato,
+  zero-padding (0000/9999), uso exclusivo de `secrets.randbelow`, ausência de `random.choices`/
+  `random.randint`, unicidade probabilística em 100 amostras.
+- **PR:** `bot/server-2026-07-04-order-number-csprng`
+
+---
+
 ## Backlog priorizado
 
 | Prioridade | Arquivo | Linha | Problema | Status |
@@ -74,16 +95,16 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 | P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
 | P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
 | P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | **Pendente** |
-| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Pendente** |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | **Corrigido PR #291** |
+| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Corrigido PR #292** |
+| P2 | apps/stores/models/order.py | 336 | order_number com random.choices (não-CSPRNG) | **Corrigido 2026-07-04** |
 
 ---
 
 ## Próximo passo priorizado
 
-**P1 — IDOR em company_profile_views.py:92-98**: `account_id` recebido na request não é validado
-contra o tenant do usuário autenticado antes de ser usado para buscar configuração. Um usuário de
-Tenant A pode consultar/alterar dados do Tenant B se conhecer o `account_id`.
-
-Fix: adicionar verificação `get_object_or_404(WhatsAppAccount, id=account_id, store=user_store)`
-antes de qualquer operação, semelhante ao padrão já usado em outros ViewSets.
+**Varredura de novas vulnerabilidades** — com P0/P1/P2 conhecidos resolvidos, próxima execução deve
+fazer sweep nos endpoints de checkout, webhook handlers e serializers por:
+1. Qualquer uso remanescente de `random` em contexto de segurança (tokens, OTPs, sufixos de ID)
+2. Endpoints `AllowAny` sem throttle explícito além dos já corrigidos
+3. Serializers de escrita que não validam `store` no contexto do usuário autenticado (IDOR de escrita)
