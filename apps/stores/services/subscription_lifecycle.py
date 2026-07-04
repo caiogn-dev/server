@@ -8,7 +8,9 @@ Regras:
   (downgrade_free) — não há mais carência/suspensão no fim do trial.
 - 'past_due' (cobrança falhou): se não há relógio de dunning → inicia
   (set_grace_until = now + dunning_days, gravado em dunning_since pela task).
-  Se o dunning venceu → suspende.
+  Se o dunning venceu → cai no plano Grátis (downgrade_free), marcando o
+  motivo (downgraded_for_nonpayment) — não suspende mais (loja continua
+  vendendo, perde recursos pagos).
 - 'suspended'/'canceled' são terminais.
 """
 from dataclasses import dataclass
@@ -52,7 +54,7 @@ def decide_transition(
         if dunning_since is None:
             return Transition('start_grace', set_grace_until=now + timedelta(days=dunning_days))
         if now - dunning_since >= timedelta(days=dunning_days):
-            return Transition('suspend')
+            return Transition('downgrade_free')
         return Transition('none')
 
     return Transition('none')

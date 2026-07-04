@@ -78,8 +78,8 @@ class EnforceSubscriptionTaskTest(TestCase):
         self.assertEqual(sub.status, 'past_due', 'status não deve mudar na primeira varredura')
         self.assertEqual(res['grace_started'], 1)
 
-    def test_past_due_dunning_vencido_ainda_suspende(self):
-        """O caminho past_due → dunning → suspend permanece intacto (não muda nesta task)."""
+    def test_past_due_dunning_vencido_rebaixa_para_free(self):
+        """past_due → dunning esgotado → cai pro Grátis (não suspende mais) e marca a razão."""
         store = mk('s6')
         sub = StoreSubscription.objects.create(
             store=store, status='past_due',
@@ -87,8 +87,12 @@ class EnforceSubscriptionTaskTest(TestCase):
         )
         res = enforce_subscription_lifecycle()
         sub.refresh_from_db()
-        self.assertEqual(sub.status, 'suspended')
-        self.assertEqual(res['suspended'], 1)
+        store.refresh_from_db()
+        self.assertEqual(sub.status, 'canceled')
+        self.assertEqual(store.plan, 'free')
+        self.assertTrue(sub.downgraded_for_nonpayment)
+        self.assertEqual(res['downgraded_free'], 1)
+        self.assertEqual(res['suspended'], 0)
 
 
 # ---------------------------------------------------------------------------

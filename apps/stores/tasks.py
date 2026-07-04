@@ -13,7 +13,9 @@ logger = logging.getLogger(__name__)
 @shared_task(name='stores.enforce_subscription_lifecycle')
 def enforce_subscription_lifecycle():
     """
-    Varredura diária: aplica trial→carência→suspensão e past_due→dunning→suspensão.
+    Varredura diária: aplica trial→carência→rebaixamento p/ Grátis e
+    past_due→dunning→rebaixamento p/ Grátis (não suspende mais por
+    inadimplência; a loja continua vendendo, perde recursos pagos).
     Loja isenta é ignorada (decide_transition retorna 'none').
 
     Gate: BILLING_ENFORCEMENT_ENABLED (default OFF) — mantém o deploy no-op até go-live.
@@ -57,8 +59,10 @@ def enforce_subscription_lifecycle():
                 counts['grace_started'] += 1
             elif t.action == 'downgrade_free':
                 sub.status = StoreSubscription.Status.CANCELED
-                sub.save(update_fields=['status'])
-                if store.plan != 'free':
+                was_paid_plan = store.plan != 'free'
+                sub.downgraded_for_nonpayment = was_paid_plan  # veio de plano pago não pago
+                sub.save(update_fields=['status', 'downgraded_for_nonpayment'])
+                if was_paid_plan:
                     store.plan = 'free'
                     store.save(update_fields=['plan'])
                 counts['downgraded_free'] += 1

@@ -41,9 +41,9 @@ class DecideTransitionTest(SimpleTestCase):
         self.assertEqual(t.action, 'start_grace')  # reaproveita set de relógio
         self.assertEqual(t.set_grace_until, NOW + timedelta(days=DUN))
 
-    def test_past_due_dunning_over_suspends(self):
+    def test_past_due_dunning_over_downgrades_to_free(self):
         t = call(status='past_due', dunning_since=NOW - timedelta(days=DUN + 1))
-        self.assertEqual(t.action, 'suspend')
+        self.assertEqual(t.action, 'downgrade_free')
 
     def test_already_suspended_or_canceled_is_terminal(self):
         self.assertEqual(call(status='suspended').action, 'none')
@@ -94,9 +94,19 @@ class TrialEndsToFreeTest(SimpleTestCase):
             grace_days=3, dunning_days=3, billing_exempt=False)
         self.assertEqual(t.action, 'start_grace')
 
-    def test_past_due_dunning_vencido_suspende(self):
+    def test_past_due_dunning_vencido_rebaixa_para_free(self):
         t = decide_transition(
             status='past_due', trial_ends_at=None, grace_until=None,
             dunning_since=NOW - timedelta(days=3), now=NOW,
             grace_days=3, dunning_days=3, billing_exempt=False)
-        self.assertEqual(t.action, 'suspend')
+        self.assertEqual(t.action, 'downgrade_free')
+
+    def test_past_due_after_dunning_downgrades_not_suspends(self):
+        from datetime import datetime, timezone as dtz
+        now = datetime(2026, 7, 10, tzinfo=dtz.utc)
+        t = decide_transition(
+            status="past_due", trial_ends_at=None,
+            grace_until=None, dunning_since=now - timedelta(days=5),
+            now=now, grace_days=3, dunning_days=3, billing_exempt=False,
+        )
+        self.assertEqual(t.action, "downgrade_free")
