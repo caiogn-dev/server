@@ -39,7 +39,7 @@ class MessengerAccountViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(user=self.request.user)
 
@@ -76,7 +76,7 @@ class MessengerProfileViewSet(viewsets.ViewSet):
     def get_account(self):
         account_id = self.request.query_params.get("account_id")
         queryset = MessengerAccount.objects.all()
-        if not (self.request.user.is_superuser or self.request.user.is_staff):
+        if not (self.request.user.is_superuser):
             queryset = queryset.filter(user=self.request.user)
         return get_object_or_404(queryset, id=account_id)
 
@@ -166,7 +166,7 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
         account_id = self.request.query_params.get("account")
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(account__user=self.request.user)
 
@@ -271,7 +271,7 @@ class MessengerBroadcastViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(account__user=self.request.user)
 
@@ -297,7 +297,7 @@ class MessengerBroadcastViewSet(viewsets.ModelViewSet):
     def tags(self, request):
         account_id = request.query_params.get("account_id")
         queryset = MessengerAccount.objects.all()
-        if not (request.user.is_superuser or request.user.is_staff):
+        if not (request.user.is_superuser):
             queryset = queryset.filter(user=request.user)
         account = get_object_or_404(queryset, id=account_id)
 
@@ -316,7 +316,7 @@ class MessengerSponsoredViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = self.queryset
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        if self.request.user.is_superuser:
             return queryset
         return queryset.filter(account__user=self.request.user)
 

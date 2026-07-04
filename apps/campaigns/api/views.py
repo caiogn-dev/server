@@ -238,7 +238,8 @@ class CampaignViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Campaign.objects.filter(is_active=True)
-        if user.is_superuser or user.is_staff:
+        # is_staff NÃO vê campanhas/contatos (PII) cross-tenant — só superuser.
+        if user.is_superuser:
             return qs
         account_ids = accessible_whatsapp_account_ids(user)
         return qs.filter(account_id__in=account_ids).distinct()
@@ -528,7 +529,8 @@ class ContactListViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = ContactList.objects.filter(is_active=True)
-        if user.is_superuser or user.is_staff:
+        # is_staff NÃO vê campanhas/contatos (PII) cross-tenant — só superuser.
+        if user.is_superuser:
             return qs
         account_ids = accessible_whatsapp_account_ids(user)
         return qs.filter(account_id__in=account_ids).distinct()

@@ -71,7 +71,8 @@ def _accessible_conversations(user):
         anno_last_text=Subquery(_last_msg.values('text_body')[:1]),
         anno_unified_user_id=Subquery(_unified[:1]),
     )
-    if user.is_superuser or user.is_staff:
+    # is_staff NÃO vê conversas (mensagens de clientes) cross-tenant — só superuser.
+    if user.is_superuser:
         return queryset
 
     account_ids = accessible_whatsapp_account_ids(user)
@@ -514,7 +515,7 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if not (request.user.is_superuser or request.user.is_staff):
+        if not request.user.is_superuser:
             allowed_ids = accessible_whatsapp_account_ids(request.user)
             if not WhatsAppAccount.objects.filter(id=account_id, id__in=allowed_ids).exists():
                 return Response(

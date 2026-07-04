@@ -18,12 +18,13 @@ def _accessible_unified_users(user):
     """
     Retorna queryset de UnifiedUser acessíveis ao usuário logado.
 
-    - Superusuários/staff: acesso irrestrito.
+    - Superusuário: acesso irrestrito.
     - Usuários regulares (donos/equipe de lojas): apenas clientes das suas
       lojas (via StoreCustomer) ou cujo telefone aparece em conversas das
-      suas contas WhatsApp.
+      suas contas WhatsApp. is_staff (acesso ao /admin) NÃO vaza PII de
+      clientes de todos os tenants.
     """
-    if user.is_superuser or user.is_staff:
+    if user.is_superuser:
         return UnifiedUser.objects.all()
 
     from apps.core.permissions import accessible_store_ids, accessible_whatsapp_account_ids
@@ -39,8 +40,11 @@ def _accessible_unified_users(user):
         .distinct()
     )
 
+    # StoreCustomer.unified_user tem related_name='store_customers'. A travessia
+    # antiga `django_user__storecustomer__...` era inválida (FieldError) e só não
+    # estourava porque is_staff/superuser curto-circuitavam antes deste path.
     return UnifiedUser.objects.filter(
-        Q(django_user__storecustomer__store_id__in=store_ids)
+        Q(store_customers__store_id__in=store_ids)
         | Q(phone_number__in=phones_in_conversations)
     ).distinct()
 
