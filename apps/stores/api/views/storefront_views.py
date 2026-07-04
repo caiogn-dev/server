@@ -1100,7 +1100,13 @@ class StoreWishlistViewSet(viewsets.ViewSet):
                 'count': 0
             })
         
-        wishlist_items = StoreWishlist.objects.filter(store=store, **customer_id)
+        # select_related/prefetch espelham o catálogo: evita N+1 de product +
+        # category/product_type/variants ao serializar a wishlist.
+        wishlist_items = (
+            StoreWishlist.objects.filter(store=store, **customer_id)
+            .select_related('product', 'product__category', 'product__product_type')
+            .prefetch_related('product__variants')
+        )
         products = [item.product for item in wishlist_items]
         
         return Response({
