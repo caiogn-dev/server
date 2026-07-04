@@ -107,6 +107,31 @@ def within_product_limit(store, current_count):
     return cap is None or current_count < cap
 
 
+def orders_in_current_month(store) -> int:
+    """Conta pedidos da loja no mês corrente (fuso local).
+
+    Usa um range [início_do_mês, início_do_próximo_mês) em vez de
+    created_at__year/__month — o `__month` gera EXTRACT(MONTH ...) que impede o
+    índice (store, created_at) de restringir ao mês (só restringia ao ano). O
+    range é montado em horário LOCAL (timezone.localtime) para casar com a
+    semântica de "mês" que o cliente enxerga, e comparado contra created_at
+    (UTC no banco); o Django converte os limites aware para UTC.
+    """
+    from datetime import timedelta
+    from django.utils import timezone
+    from apps.stores.models import StoreOrder
+    now_local = timezone.localtime(timezone.now())
+    month_start = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    next_month = (month_start + timedelta(days=32)).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0,
+    )
+    return StoreOrder.objects.filter(
+        store=store,
+        created_at__gte=month_start,
+        created_at__lt=next_month,
+    ).count()
+
+
 def within_order_limit(store, current_month_count):
     """True se a loja ainda pode receber pedido neste mês (None = ilimitado)."""
     if is_billing_exempt(store):

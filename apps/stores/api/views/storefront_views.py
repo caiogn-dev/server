@@ -839,13 +839,9 @@ class StoreCheckoutView(APIView):
             )
 
         # Limite de pedidos/mês (plano Grátis). Isento e planos ilimitados passam.
-        # localtime(): os lookups __year/__month extraem em TIME_ZONE local, então o
-        # ano/mês de referência também precisa ser local — senão, na virada de mês
-        # UTC×local, o filtro procura o mês errado e a contagem zera (gate não dispara).
-        _now = timezone.localtime(timezone.now())
-        _month_count = StoreOrder.objects.filter(
-            store=store, created_at__year=_now.year, created_at__month=_now.month,
-        ).count()
+        # SSOT da contagem: billing.orders_in_current_month (range indexável,
+        # semântica de mês em fuso local — ver docstring).
+        _month_count = billing_service.orders_in_current_month(store)
         if not billing_service.within_order_limit(store, _month_count):
             return Response(
                 {'detail': 'Limite do plano atingido (30 pedidos/mês). Faça upgrade do plano.'},
