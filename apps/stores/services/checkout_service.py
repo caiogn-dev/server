@@ -1605,6 +1605,10 @@ class CheckoutService:
                 store_payment.paid_at = timezone.now()
             store_payment.save()  # _sync_with_order espelha pix/paid_at (se houver order)
 
+            if (store_payment.external_reference or "").startswith("subpix:"):
+                from apps.stores.services import pix_billing_service
+                pix_billing_service.apply_invoice_paid(store_payment)
+
             if order is None:
                 return None
 

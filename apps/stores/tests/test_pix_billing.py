@@ -117,3 +117,25 @@ class ApplyInvoicePaidTest(TestCase):
         self.store.billing_exempt = True; self.store.save()
         res = pix_billing_service.apply_invoice_paid(self.inv)
         self.assertEqual(res.get("processed"), False)
+
+
+class WebhookAdvancesSubscriptionTest(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user('owner_pix_webhook', 'owner_pix_webhook@x.com', 'x')
+        self.store = Store.objects.create(name="Loja Z", slug="loja-z", plan="free", owner=self.owner)
+        self.sub = StoreSubscription.objects.create(store=self.store, plan="pro",
+            status=StoreSubscription.Status.PAST_DUE)
+        self.inv = StorePayment.objects.create(
+            store=self.store, order=None, amount=249, currency="BRL",
+            payment_method=StorePayment.PaymentMethod.PIX,
+            status=StorePayment.PaymentStatus.PENDING,
+            external_id="777", external_reference=f"subpix:{self.sub.id}:2026-07",
+            metadata={"kind": "monthly", "subscription_id": str(self.sub.id)},
+        )
+
+    def test_approved_webhook_activates_subscription(self):
+        from apps.stores.services.checkout_service import CheckoutService
+        CheckoutService().process_payment_webhook("777", "approved", external_reference=f"subpix:{self.sub.id}:2026-07")
+        self.sub.refresh_from_db(); self.store.refresh_from_db()
+        self.assertEqual(self.sub.status, StoreSubscription.Status.ACTIVE)
+        self.assertEqual(self.store.plan, "pro")
