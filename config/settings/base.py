@@ -630,6 +630,9 @@ BILLING_SETUP_FEE_ENABLED = os.environ.get('BILLING_SETUP_FEE_ENABLED', 'false')
 # Kill-switch para trial→carência→suspensão (enforce_subscription_lifecycle).
 # Permanece OFF até o go-live do billing para que o deploy seja no-op em produção.
 BILLING_ENFORCEMENT_ENABLED = os.environ.get('BILLING_ENFORCEMENT_ENABLED', 'false').lower() == 'true'
+# Kill-switch para geração automática de fatura PIX (enforce_subscription_lifecycle).
+# Permanece OFF até o go-live do billing PIX para que o deploy seja no-op em produção.
+BILLING_PIX_ENABLED = os.environ.get('BILLING_PIX_ENABLED', 'false').lower() == 'true'
 # Token de SANDBOX (TEST-...) só para a assinatura SaaS. Se setado, billing usa ele
 # em vez do token de produção — permite testar sem cobrar de verdade e sem mexer
 # no token dos pedidos. Vazio = usa produção (cobrança real).

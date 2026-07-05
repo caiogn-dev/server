@@ -70,6 +70,18 @@ def enforce_subscription_lifecycle():
                 sub.status = StoreSubscription.Status.SUSPENDED
                 sub.save(update_fields=['status'])
                 counts['suspended'] += 1
+
+            if getattr(settings, 'BILLING_PIX_ENABLED', False) and not store.billing_exempt:
+                from apps.stores.services import pix_billing_service
+                due = sub.current_period_end or store.trial_ends_at
+                if due and (due - now).days <= 3 and sub.status in (
+                    StoreSubscription.Status.TRIALING, StoreSubscription.Status.ACTIVE,
+                    StoreSubscription.Status.PAST_DUE,
+                ):
+                    try:
+                        pix_billing_service.generate_invoice(sub, now=now)
+                    except Exception:
+                        logger.exception('Falha ao gerar fatura PIX p/ %s', store.slug)
     return counts
 
 

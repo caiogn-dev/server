@@ -1,6 +1,6 @@
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone as dtz
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from django.utils import timezone
 from apps.stores.models import Store, StoreSubscription, StorePayment
@@ -139,3 +139,57 @@ class WebhookAdvancesSubscriptionTest(TestCase):
         self.sub.refresh_from_db(); self.store.refresh_from_db()
         self.assertEqual(self.sub.status, StoreSubscription.Status.ACTIVE)
         self.assertEqual(self.store.plan, "pro")
+
+
+class AutoInvoiceGenerationTest(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user('owner_pix_auto', 'owner_pix_auto@x.com', 'x')
+        self.store = Store.objects.create(
+            name="Loja W", slug="loja-w", plan="pro", owner=self.owner,
+            trial_ends_at=timezone.now() + timezone.timedelta(days=2),
+        )
+        self.sub = StoreSubscription.objects.create(
+            store=self.store, plan="pro", status=StoreSubscription.Status.TRIALING,
+        )
+
+    @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
+    @patch.object(pix_billing_service.subscription_service, "_sdk")
+    def test_task_generates_invoice_near_trial_end(self, mock_sdk):
+        mock_sdk.return_value = _fake_pix_sdk()
+        from apps.stores.tasks import enforce_subscription_lifecycle
+        enforce_subscription_lifecycle()
+        self.assertTrue(StorePayment.objects.filter(
+            store=self.store, external_reference__startswith="subpix:").exists())
+
+    @override_settings(BILLING_PIX_ENABLED=False, BILLING_ENFORCEMENT_ENABLED=True)
+    @patch.object(pix_billing_service.subscription_service, "_sdk")
+    def test_flag_off_generates_nothing(self, mock_sdk):
+        mock_sdk.return_value = _fake_pix_sdk()
+        from apps.stores.tasks import enforce_subscription_lifecycle
+        enforce_subscription_lifecycle()
+        self.assertFalse(StorePayment.objects.filter(
+            store=self.store, external_reference__startswith="subpix:").exists())
+
+    @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
+    @patch.object(pix_billing_service.subscription_service, "_sdk")
+    def test_exempt_store_never_invoiced_by_task(self, mock_sdk):
+        mock_sdk.return_value = _fake_pix_sdk()
+        self.store.billing_exempt = True
+        self.store.save(update_fields=["billing_exempt"])
+        from apps.stores.tasks import enforce_subscription_lifecycle
+        enforce_subscription_lifecycle()
+        self.assertFalse(StorePayment.objects.filter(
+            store=self.store, external_reference__startswith="subpix:").exists())
+
+    @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
+    @patch.object(pix_billing_service.subscription_service, "_sdk")
+    def test_task_is_idempotent_across_runs(self, mock_sdk):
+        mock_sdk.return_value = _fake_pix_sdk()
+        from apps.stores.tasks import enforce_subscription_lifecycle
+        enforce_subscription_lifecycle()
+        enforce_subscription_lifecycle()
+        self.assertEqual(
+            StorePayment.objects.filter(
+                store=self.store, external_reference__startswith="subpix:").count(),
+            1,
+        )
