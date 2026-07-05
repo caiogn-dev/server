@@ -5,6 +5,7 @@ ViewSets for StorePayment and StorePaymentGateway.
 """
 import logging
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -96,10 +97,17 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     store_field = 'order__store'
 
     def get_queryset(self):
-        qs = super().get_queryset().select_related('order', 'order__store', 'gateway')
+        # Não usa o super().get_queryset() do StoreQuerysetMixin (que só filtra por
+        # um único store_field='order__store') porque cobranças avulsas/subpix
+        # (order=None) são escopadas por `store` diretamente — precisa dos DOIS
+        # caminhos via Q(), senão essas cobranças ficam invisíveis no dash.
+        qs = StorePayment.objects.select_related('order', 'order__store', 'store', 'gateway')
+        store_ids = self._get_user_store_ids()
+        if store_ids is not None:
+            qs = qs.filter(Q(order__store_id__in=store_ids) | Q(store_id__in=store_ids))
         store_id = self.request.query_params.get('store')
         if store_id:
-            qs = qs.filter(order__store_id=store_id)
+            qs = qs.filter(Q(order__store_id=store_id) | Q(store_id=store_id))
         order_number = self.request.query_params.get('order_number')
         if order_number:
             qs = qs.filter(order__order_number__icontains=order_number)

@@ -3,6 +3,7 @@ from datetime import datetime, timezone as dtz
 from django.test import TestCase, override_settings
 from django.contrib.auth.models import User
 from django.utils import timezone
+from rest_framework.test import APIClient
 from apps.stores.models import Store, StoreSubscription, StorePayment
 from apps.stores.services import pix_billing_service
 
@@ -193,3 +194,61 @@ class AutoInvoiceGenerationTest(TestCase):
                 store=self.store, external_reference__startswith="subpix:").count(),
             1,
         )
+
+
+class InvoiceEndpointTest(TestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user('owner_pix_invoice_ep', 'owner_pix_invoice_ep@x.com', 'x')
+        self.store = Store.objects.create(name="Loja E", slug="loja-e", plan="pro", owner=self.owner)
+        self.sub = StoreSubscription.objects.create(store=self.store, plan="pro")
+        self.period_key = pix_billing_service._period_key(self.sub, timezone.now())
+        self.invoice = StorePayment.objects.create(
+            store=self.store, order=None, amount=249, currency="BRL",
+            payment_method=StorePayment.PaymentMethod.PIX,
+            status=StorePayment.PaymentStatus.PENDING,
+            external_reference=f"subpix:{self.sub.id}:{self.period_key}",
+            qr_code="COPIACOLA", qr_code_base64="B64",
+            metadata={"kind": "monthly", "subscription_id": str(self.sub.id), "period_key": self.period_key},
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.owner)
+
+    def test_list_invoices_returns_subpix_charges(self):
+        r = self.client.get(f"/api/v1/stores/{self.store.slug}/invoices/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data["invoices"]), 1)
+        self.assertEqual(r.data["invoices"][0]["pix_code"], "COPIACOLA")
+
+    def test_current_invoice_returns_existing_period_invoice(self):
+        r = self.client.get(f"/api/v1/stores/{self.store.slug}/invoices/current/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNotNone(r.data["invoice"])
+        self.assertEqual(r.data["invoice"]["pix_code"], "COPIACOLA")
+        self.assertEqual(r.data["invoice"]["period_key"], self.period_key)
+
+    def test_current_invoice_none_when_billing_exempt(self):
+        self.store.billing_exempt = True
+        self.store.save(update_fields=["billing_exempt"])
+        r = self.client.get(f"/api/v1/stores/{self.store.slug}/invoices/current/")
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(r.data["invoice"])
+
+    def test_invoice_endpoints_require_permission(self):
+        other = User.objects.create_user('outsider_invoice', 'outsider_invoice@x.com', 'x')
+        client = APIClient()
+        client.force_authenticate(other)
+        r = client.get(f"/api/v1/stores/{self.store.slug}/invoices/")
+        self.assertEqual(r.status_code, 403)
+
+    def test_public_plans_expose_annual_price(self):
+        r = self.client.get("/api/v1/public/plans/")
+        pro = next(p for p in r.data["plans"] if p["key"] == "pro")
+        self.assertEqual(float(pro["annual_price"]), 2490.0)
+        free = next(p for p in r.data["plans"] if p["key"] == "free")
+        self.assertNotIn("annual_price", free)
+
+    def test_payment_viewset_lists_avulso_store_payments(self):
+        r = self.client.get(f"/api/v1/stores/payments/?store={self.store.id}")
+        self.assertEqual(r.status_code, 200)
+        ids = [p["id"] for p in r.data] if isinstance(r.data, list) else [p["id"] for p in r.data.get("results", [])]
+        self.assertIn(str(self.invoice.id), ids)

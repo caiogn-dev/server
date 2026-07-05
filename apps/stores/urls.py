@@ -116,6 +116,8 @@ from .api.views.subscription_views import (
     StoreSubscriptionDetailView,
     StoreSubscriptionCancelView,
     StoreSubscriptionChangePlanView,
+    StoreInvoiceListView,
+    StoreInvoiceCurrentView,
 )
 from .api.views.onboarding_views import StoreOnboardingChecklistView, StoreOnboardingSeenView
 from .api.views.cash_views import CashOpenView, CashCurrentView, CashMovementView, CashCloseView
@@ -213,6 +215,8 @@ store_frontend_patterns = [
     path('subscription/', StoreSubscriptionDetailView.as_view(), name='store-subscription-detail'),
     path('subscription/cancel/', StoreSubscriptionCancelView.as_view(), name='store-subscription-cancel'),
     path('subscription/change-plan/', StoreSubscriptionChangePlanView.as_view(), name='store-subscription-change-plan'),
+    path('invoices/', StoreInvoiceListView.as_view(), name='store-invoice-list'),
+    path('invoices/current/', StoreInvoiceCurrentView.as_view(), name='store-invoice-current'),
     path('onboarding/checklist/', StoreOnboardingChecklistView.as_view(), name='store-onboarding-checklist'),
     path('onboarding/seen/', StoreOnboardingSeenView.as_view(), name='store-onboarding-seen'),
     path('validate-coupon/', StoreCouponValidateView.as_view(), name='store-validate-coupon'),

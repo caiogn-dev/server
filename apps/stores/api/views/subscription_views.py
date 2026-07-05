@@ -4,6 +4,8 @@ Endpoints de assinatura SaaS:
   GET  /api/v1/stores/{store_slug}/subscription/        → status da assinatura
   POST /api/v1/stores/{store_slug}/subscription/cancel/ → cancela assinatura
   POST /api/v1/stores/{store_slug}/subscription/change-plan/ → troca de plano
+  GET  /api/v1/stores/{store_slug}/invoices/            → lista faturas PIX (subpix:)
+  GET  /api/v1/stores/{store_slug}/invoices/current/    → fatura vigente (gera se necessário)
 """
 from django.conf import settings
 from django.shortcuts import get_object_or_404
@@ -11,7 +13,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.stores.models import Store, StoreSubscription
+from apps.stores.models import Store, StorePayment, StoreSubscription
 from apps.stores.services import subscription_service
 
 
@@ -97,3 +99,54 @@ class StoreSubscriptionChangePlanView(APIView):
         except subscription_service.SubscriptionError as e:
             return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(result, status=status.HTTP_201_CREATED)
+
+
+def _invoice_dict(p):
+    meta = p.metadata or {}
+    return {
+        'id': p.payment_id,
+        'amount': float(p.amount),
+        'status': p.status,
+        'kind': meta.get('kind'),
+        'pix_code': p.qr_code,
+        'pix_qr_code': p.qr_code_base64,
+        'ticket_url': p.ticket_url,
+        'expires_at': p.expires_at,
+        'period_key': meta.get('period_key'),
+        'paid_at': p.paid_at,
+    }
+
+
+class StoreInvoiceListView(APIView):
+    """GET /api/v1/stores/{store_slug}/invoices/ — lista faturas de assinatura (subpix:) da loja."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, store_slug):
+        store = get_object_or_404(Store, slug=store_slug)
+        if not _can_manage(store, request.user):
+            return Response({'detail': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+        qs = StorePayment.objects.filter(
+            store=store, external_reference__startswith='subpix:',
+        ).order_by('-created_at')
+        return Response({'invoices': [_invoice_dict(p) for p in qs]})
+
+
+class StoreInvoiceCurrentView(APIView):
+    """GET /api/v1/stores/{store_slug}/invoices/current/ — fatura vigente (gera se ainda não existir)."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, store_slug):
+        store = get_object_or_404(Store, slug=store_slug)
+        if not _can_manage(store, request.user):
+            return Response({'detail': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
+
+        sub = StoreSubscription.objects.filter(store=store).first()
+        if not sub:
+            return Response({'invoice': None})
+
+        from apps.stores.services import pix_billing_service
+        invoice = pix_billing_service.generate_invoice(sub)  # idempotente; None se isenta
+        return Response({'invoice': _invoice_dict(invoice) if invoice else None})

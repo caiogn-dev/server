@@ -153,15 +153,23 @@ def charges_setup_fee(plan_key):
     return bool(get_plan(plan_key).get('charges_setup_fee', False))
 
 
+def annual_price(plan_key):
+    """Preço anual do plano (mensal × 10 — paga 10, leva 12). Decimal."""
+    return Decimal(str(get_plan(plan_key)['monthly_price'])) * 10
+
+
 def public_catalog():
     """Catálogo serializável (para landing/dash). Decimals viram float/str."""
     out = []
     for p in PLAN_CATALOG.values():
-        out.append({
+        entry = {
             'key': p['key'],
             'name': p['name'],
             'setup_fee': float(p['setup_fee']),
             'monthly_price': float(p['monthly_price']),
             'limits': p['limits'],
-        })
+        }
+        if p['monthly_price'] > 0:
+            entry['annual_price'] = float(annual_price(p['key']))
+        out.append(entry)
     return out
