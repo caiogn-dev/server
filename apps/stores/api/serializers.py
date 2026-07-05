@@ -743,7 +743,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store:
             raise serializers.ValidationError({'store': 'Store not found'})
 
-        if request and request.user.is_authenticated and not request.user.is_staff:
+        if request and request.user.is_authenticated and not request.user.is_superuser:
             has_access = (
                 store.owner_id == request.user.id
                 or store.staff.filter(id=request.user.id).exists()
@@ -1501,25 +1501,32 @@ class StoreSlugOrIdField(serializers.Field):
     def to_internal_value(self, data):
         import uuid as uuid_module
         from apps.stores.models import Store
-        
+        from apps.core.permissions import user_can_access_store
+
         if not data:
             return None
-        
-        # Try UUID first
+
+        store = None
         try:
             uuid_module.UUID(str(data))
             store = Store.objects.filter(id=data).first()
-            if store:
-                return store
         except (ValueError, AttributeError):
             pass
-        
-        # Try slug
-        store = Store.objects.filter(slug=data).first()
-        if store:
-            return store
-        
-        raise serializers.ValidationError(f"Loja não encontrada: {data}")
+
+        if not store:
+            store = Store.objects.filter(slug=data).first()
+
+        if not store:
+            raise serializers.ValidationError(f"Loja não encontrada: {data}")
+
+        # Tenant gate: bloqueia acesso cross-tenant para usuários comuns.
+        # is_staff não bypassa — apenas is_superuser tem acesso irrestrito.
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, store):
+                raise serializers.ValidationError('Loja não encontrada')
+
+        return store
 
 
 class StoreCouponCreateSerializer(serializers.ModelSerializer):
@@ -1600,7 +1607,7 @@ class StoreDeliveryZoneSerializer(serializers.ModelSerializer):
 
 class StoreDeliveryZoneCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating delivery zones."""
-    
+
     class Meta:
         model = StoreDeliveryZone
         fields = [
@@ -1613,6 +1620,15 @@ class StoreDeliveryZoneCreateSerializer(serializers.ModelSerializer):
             'estimated_minutes', 'estimated_days',
             'color', 'is_active', 'sort_order'
         ]
+
+    def validate_store(self, value):
+        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        from apps.core.permissions import user_can_access_store
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
 
 
 class DeliveryFeeRequestSerializer(serializers.Serializer):
