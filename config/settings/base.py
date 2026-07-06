@@ -616,6 +616,9 @@ SPECTACULAR_SETTINGS = {
 MERCADO_PAGO_ACCESS_TOKEN = os.environ.get('MERCADO_PAGO_ACCESS_TOKEN', '')
 MERCADO_PAGO_WEBHOOK_SECRET = os.environ.get('MERCADO_PAGO_WEBHOOK_SECRET', '')
 MERCADO_PAGO_STATEMENT_DESCRIPTOR = os.environ.get('MERCADO_PAGO_STATEMENT_DESCRIPTOR', 'CARDAPIDEX')
+# Nome do titular da conta coletora exibido no aviso do PIX (o banco do pagador
+# mostra o titular real da chave via DICT, não o merchant name do QR).
+MERCADO_PAGO_RECIPIENT_NAME = os.environ.get('MERCADO_PAGO_RECIPIENT_NAME', '')
 # SaaS billing: cobrança automática no fim do trial (Celery). OFF até validar em sandbox.
 # A assinatura iniciada pelo dono (botão "Assinar") NÃO depende deste flag.
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'

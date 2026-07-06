@@ -5,6 +5,7 @@ Handles Mercado Pago webhooks and routes to correct store.
 import logging
 import json
 from decimal import Decimal
+from django.conf import settings
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -544,6 +545,9 @@ class OrderByTokenView(APIView):
                 response_data['pix_code'] = order.pix_code or ''
                 response_data['pix_qr_code'] = order.pix_qr_code or ''
                 response_data['pix_expires_at'] = order.pix_expires_at.isoformat() if order.pix_expires_at else None
+                # Titular da conta coletora — o banco do pagador exibe esse nome
+                # (DICT), não o nome da loja; o storefront avisa o cliente.
+                response_data['pix_recipient_name'] = getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', '')
             
             return Response(response_data)
         

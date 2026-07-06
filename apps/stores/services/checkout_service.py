@@ -1177,6 +1177,7 @@ class CheckoutService:
                     'ticket_url': existing.ticket_url,
                     'amount': str(existing.amount),
                     'payment_db_id': str(existing.id),
+                    'pix_recipient_name': getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', ''),
                     'requires_redirect': False,
                     'reused': True,
                 }
@@ -1264,6 +1265,7 @@ class CheckoutService:
                     'ticket_url': store_payment.ticket_url,
                     'amount': str(amount),
                     'payment_db_id': str(store_payment.id),
+                    'pix_recipient_name': getattr(settings, 'MERCADO_PAGO_RECIPIENT_NAME', ''),
                     'expiration': pix_data.get("expiration_date"),
                     'requires_redirect': False,
                 }
