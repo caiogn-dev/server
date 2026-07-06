@@ -62,28 +62,57 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 
 ---
 
+### 2026-07-06
+
+**Baseline de testes:** 15 novos testes `test_integration_webhook_print_idor` rodados sem Docker
+(SimpleTestCase + mocks). 15/15 passando após o fix. Pré-existente: suíte completa requer
+PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando por design.
+
+**Bug encontrado e corrigido:** IDOR de escrita em serializers — Onda 2 (P1)
+
+- **Tipo:** P1 — IDOR de escrita cross-tenant em três serializers
+- **Descrição:** Continuação do sweep do PR #294 (Onda 1). Três serializers em
+  `apps/stores/api/serializers.py` expunham o campo `store` como writable sem `validate_store`,
+  permitindo que um usuário com acesso à loja A passasse `store=<UUID da loja B>` no body e
+  criasse recursos no tenant alheio, mesmo a permissão `IsStoreOwnerOrStaff` validando apenas
+  o `store_slug` da URL.
+- **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
+  - `StoreIntegrationCreateSerializer` — integração WA/meta criada em tenant alheio
+  - `StoreWebhookSerializer` — webhook criado em tenant alheio (risco de exfiltração de pedidos)
+  - `StorePrintAgentCreateSerializer` — print agent criado em tenant alheio
+- **Padrão do fix** (idêntico ao PR #294): `validate_store` com `user_can_access_store`
+  + `is_superuser` como único bypass cross-tenant + info-hiding ('Loja não encontrada')
+- **Testes:** 15 novos casos em `apps/stores/tests/test_integration_webhook_print_idor.py`
+  (RED→GREEN confirmado)
+- **PR:** `bot/server-2026-07-06-serializer-idor-integration-webhook-print`
+
+---
+
 ## Backlog priorizado
 
-| Prioridade | Arquivo | Linha | Problema | Status |
+| Prioridade | Arquivo/Área | Linha | Problema | Status |
 |---|---|---|---|---|
 | P0 | apps/audit/api/views.py | 140 | NameError + IDOR em export conversas | PR #281 aberto |
-| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** (PR merged) |
 | P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
-| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | **Pendente** |
-| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Pendente** |
+| P0 | apps/automation/services/session_manager.py | 260+ | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/services/webhook_service.py | 1108+ | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/services/order_service.py | 401+ | PII em log — PIX | **Corrigido 2026-06-29** |
+| P0 | apps/campaigns/services/campaign_service.py | 321+ | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial em log | **Corrigido 2026-06-29** |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR store_data via account_id | **Corrigido 2026-07-02** (PR #291) |
+| P1 | apps/stores/api/views/product_views.py | 257,290,374 | IDOR is_staff em variantes/combos | **Corrigido 2026-07-01** (PR #290) |
+| P1 | apps/stores/api/serializers.py | StoreSlugOrIdField+Delivery+Order | IDOR write Onda 1 | **Corrigido 2026-07-05** (PR #294) |
+| P1 | apps/stores/api/serializers.py | Integration+Webhook+PrintAgent | IDOR write Onda 2 | **Corrigido 2026-07-06** (este PR) |
+| P2 | apps/mobile_api/ | — | Throttle em /orders/by-token/ | **Corrigido 2026-07-03** (PR #292) |
+| P2 | apps/stores/models/order.py | 336 | order_number não CSPRNG | **Corrigido 2026-07-04** (PR #293) |
 
 ---
 
 ## Próximo passo priorizado
 
-**P1 — IDOR em company_profile_views.py:92-98**: `account_id` recebido na request não é validado
-contra o tenant do usuário autenticado antes de ser usado para buscar configuração. Um usuário de
-Tenant A pode consultar/alterar dados do Tenant B se conhecer o `account_id`.
-
-Fix: adicionar verificação `get_object_or_404(WhatsAppAccount, id=account_id, store=user_store)`
-antes de qualquer operação, semelhante ao padrão já usado em outros ViewSets.
+**Sweep de outros serializers com campo writable sem `validate_store`** — a varredura das duas ondas
+cobriu `apps/stores/api/serializers.py`. Verificar se outros apps têm o mesmo padrão:
+- `apps/automation/api/serializers.py` — campos de store/account sem validate
+- `apps/whatsapp/api/serializers.py` — idem
+- Testes de contrato para OTP, zonas de entrega, checkout e agent guardrails (item crítico do CLAUDE.md)
