@@ -31,6 +31,13 @@ class SubscriptionManagementAPITest(TestCase):
         self.assertEqual(r.json()['plan'], 'pro')
         self.assertEqual(r.json()['status'], 'active')
 
+    def test_subscription_detail_expoe_downgraded_flag(self):
+        StoreSubscription.objects.create(
+            store=self.store, plan='pro', downgraded_for_nonpayment=True)
+        r = self.client.get(f'/api/v1/stores/{self.store.slug}/subscription/')
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data['downgraded_for_nonpayment'])
+
     @patch('apps.stores.services.subscription_service._sdk')
     def test_cancel_sets_canceled(self, sdk_p):
         sdk = MagicMock()

@@ -65,6 +65,7 @@ class StoreSubscriptionDetailView(APIView):
             'current_period_end': sub.current_period_end,
             'setup_fee_paid': sub.setup_fee_paid,
             'grace_until': sub.grace_until,
+            'downgraded_for_nonpayment': sub.downgraded_for_nonpayment,
         })
 
 
