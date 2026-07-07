@@ -65,7 +65,7 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         company_id = data.pop('company_id')
 
         company_qs = CompanyProfile.objects.filter(id=company_id, is_active=True)
-        if not (request.user.is_superuser or request.user.is_staff):
+        if not request.user.is_superuser:
             company_qs = company_qs.filter(
                 Q(store__owner=request.user) |
                 Q(store__staff=request.user) |

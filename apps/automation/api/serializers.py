@@ -563,7 +563,7 @@ class AgentFlowSerializer(serializers.ModelSerializer):
 
 class CreateAgentFlowSerializer(serializers.ModelSerializer):
     """Serializer for creating AgentFlow."""
-    
+
     class Meta:
         model = AgentFlow
         fields = [
@@ -572,6 +572,15 @@ class CreateAgentFlowSerializer(serializers.ModelSerializer):
             'is_active', 'is_default',
             'version',
         ]
+
+    def validate_store(self, value):
+        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        from apps.core.permissions import user_can_access_store
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
 
 
 class UpdateAgentFlowSerializer(serializers.ModelSerializer):
