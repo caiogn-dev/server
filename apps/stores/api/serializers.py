@@ -140,12 +140,12 @@ class StoreIntegrationSerializer(serializers.ModelSerializer):
 
 class StoreIntegrationCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating integrations with credentials."""
-    
+
     api_key = serializers.CharField(write_only=True, required=False, allow_blank=True)
     api_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
     access_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
     refresh_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    
+
     class Meta:
         model = StoreIntegration
         fields = [
@@ -155,7 +155,16 @@ class StoreIntegrationCreateSerializer(serializers.ModelSerializer):
             'webhook_url', 'webhook_secret', 'webhook_verify_token',
             'settings'
         ]
-    
+
+    def validate_store(self, value):
+        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        from apps.core.permissions import user_can_access_store
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
+
     def create(self, validated_data):
         # Extract credential fields
         api_key = validated_data.pop('api_key', None)
@@ -215,6 +224,15 @@ class StoreWebhookSerializer(serializers.ModelSerializer):
             return validate_public_webhook_url(value)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages[0] if exc.messages else str(exc))
+
+    def validate_store(self, value):
+        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        from apps.core.permissions import user_can_access_store
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
 
     class Meta:
         model = StoreWebhook
@@ -619,6 +637,15 @@ class StorePrintAgentCreateSerializer(serializers.ModelSerializer):
             'metadata', 'api_key', 'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'api_key', 'created_at', 'updated_at']
+
+    def validate_store(self, value):
+        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        from apps.core.permissions import user_can_access_store
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
 
     def create(self, validated_data):
         raw_key, prefix, hashed = StorePrintAgent.generate_api_key()

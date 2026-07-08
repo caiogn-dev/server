@@ -62,55 +62,57 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 
 ---
 
-### 2026-07-05
+### 2026-07-06
 
-**Baseline de testes:** `SimpleTestCase` com `config.settings.test_serializer` (sem PostgreSQL/langchain).
-12 testes do módulo `test_serializer_write_idor` passando (12/12). Suite de integração (Docker) indisponível no container — pré-existente, não regressão.
+**Baseline de testes:** 15 novos testes `test_integration_webhook_print_idor` rodados sem Docker
+(SimpleTestCase + mocks). 15/15 passando após o fix. Pré-existente: suíte completa requer
+PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando por design.
 
-**Bugs encontrados e corrigidos:** IDOR de escrita em serializers — store cross-tenant [P1]
+**Bug encontrado e corrigido:** IDOR de escrita em serializers — Onda 2 (P1)
 
-- **Tipo:** P1 — IDOR de escrita permitindo criar/editar dados em lojas de outros tenants
+- **Tipo:** P1 — IDOR de escrita cross-tenant em três serializers
+- **Descrição:** Continuação do sweep do PR #294 (Onda 1). Três serializers em
+  `apps/stores/api/serializers.py` expunham o campo `store` como writable sem `validate_store`,
+  permitindo que um usuário com acesso à loja A passasse `store=<UUID da loja B>` no body e
+  criasse recursos no tenant alheio, mesmo a permissão `IsStoreOwnerOrStaff` validando apenas
+  o `store_slug` da URL.
 - **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
-- **Pontos corrigidos (3):**
-  1. `StoreSlugOrIdField.to_internal_value` — adicionado tenant gate via `user_can_access_store`
-     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupons em loja alheia
-  2. `StoreDeliveryZoneCreateSerializer.validate_store` — método adicionado com mesmo tenant gate
-     - Campo `store` era `PrimaryKeyRelatedField` sem check; qualquer autenticado criava zonas em loja alheia
-  3. `StoreOrderCreateSerializer._resolve_store` — `not is_staff` → `not is_superuser`
-     - is_staff bypassa completamente o check de tenant; padrão já fixado em todos os outros places
-- **Testes:** 12 novos casos em `apps/stores/tests/test_serializer_write_idor.py` (RED→GREEN confirmado)
-- **PR:** #294 aberto
+  - `StoreIntegrationCreateSerializer` — integração WA/meta criada em tenant alheio
+  - `StoreWebhookSerializer` — webhook criado em tenant alheio (risco de exfiltração de pedidos)
+  - `StorePrintAgentCreateSerializer` — print agent criado em tenant alheio
+- **Padrão do fix** (idêntico ao PR #294): `validate_store` com `user_can_access_store`
+  + `is_superuser` como único bypass cross-tenant + info-hiding ('Loja não encontrada')
+- **Testes:** 15 novos casos em `apps/stores/tests/test_integration_webhook_print_idor.py`
+  (RED→GREEN confirmado)
+- **PR:** `bot/server-2026-07-06-serializer-idor-integration-webhook-print`
 
 ---
 
 ## Backlog priorizado
 
-| Prioridade | Arquivo | Linha | Problema | Status |
+| Prioridade | Arquivo/Área | Linha | Problema | Status |
 |---|---|---|---|---|
 | P0 | apps/audit/api/views.py | 140 | NameError + IDOR em export conversas | PR #281 aberto |
-| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** (PR merged) |
 | P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
-| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | PR #291 aberto |
-| P1 | apps/stores/api/serializers.py | 746, 1501, 1608 | IDOR escrita — store cross-tenant em serializers | **PR #294 aberto** |
-| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | PR #292 aberto |
-| P2 | apps/stores/models/order.py | 336 | order_number gerado com random não-CSPRNG | PR #293 aberto |
-| P1 | apps/stores/api/serializers.py | — | StoreIntegrationCreateSerializer.store sem validate_store | **Pendente** |
-| P2 | — | — | Testes de contrato (regressão) para OTP, zonas de entrega, checkout | **Pendente** |
+| P0 | apps/automation/services/session_manager.py | 260+ | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/services/webhook_service.py | 1108+ | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/services/order_service.py | 401+ | PII em log — PIX | **Corrigido 2026-06-29** |
+| P0 | apps/campaigns/services/campaign_service.py | 321+ | PII em log — telefone | **Corrigido 2026-06-29** |
+| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial em log | **Corrigido 2026-06-29** |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR store_data via account_id | **Corrigido 2026-07-02** (PR #291) |
+| P1 | apps/stores/api/views/product_views.py | 257,290,374 | IDOR is_staff em variantes/combos | **Corrigido 2026-07-01** (PR #290) |
+| P1 | apps/stores/api/serializers.py | StoreSlugOrIdField+Delivery+Order | IDOR write Onda 1 | **Corrigido 2026-07-05** (PR #294) |
+| P1 | apps/stores/api/serializers.py | Integration+Webhook+PrintAgent | IDOR write Onda 2 | **Corrigido 2026-07-06** (este PR) |
+| P2 | apps/mobile_api/ | — | Throttle em /orders/by-token/ | **Corrigido 2026-07-03** (PR #292) |
+| P2 | apps/stores/models/order.py | 336 | order_number não CSPRNG | **Corrigido 2026-07-04** (PR #293) |
 
 ---
 
 ## Próximo passo priorizado
 
-**P1 — StoreIntegrationCreateSerializer.store sem validate_store** (`apps/stores/api/serializers.py:141`):
-Campo `store` em `StoreIntegrationCreateSerializer` é um `PrimaryKeyRelatedField` padrão sem
-verificação de tenant — mesmo padrão corrigido nesta PR em `StoreDeliveryZoneCreateSerializer`.
-Permite criar/atualizar integrações (WhatsApp, credenciais de API) em lojas de outros tenants.
-
-Fix: adicionar `validate_store()` com `user_can_access_store` seguindo o mesmo padrão.
-
-PRs aguardando merge: #290, #291, #292, #293, #294.
+**Sweep de outros serializers com campo writable sem `validate_store`** — a varredura das duas ondas
+cobriu `apps/stores/api/serializers.py`. Verificar se outros apps têm o mesmo padrão:
+- `apps/automation/api/serializers.py` — campos de store/account sem validate
+- `apps/whatsapp/api/serializers.py` — idem
+- Testes de contrato para OTP, zonas de entrega, checkout e agent guardrails (item crítico do CLAUDE.md)
