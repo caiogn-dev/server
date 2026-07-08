@@ -62,24 +62,24 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 
 ---
 
-### 2026-07-04
+### 2026-07-05
 
-**Baseline de testes:** 10 testes `test_order_number_csprng` passando localmente (SimpleTestCase, sem DB).
-Testes com DB (test_order_amount_paid, test_order_adjust, test_order_stats_idor) erram com TypeError
-em `add_index concurrently` — pré-existente, não regressão.
+**Baseline de testes:** `SimpleTestCase` com `config.settings.test_serializer` (sem PostgreSQL/langchain).
+12 testes do módulo `test_serializer_write_idor` passando (12/12). Suite de integração (Docker) indisponível no container — pré-existente, não regressão.
 
-**Bug encontrado e corrigido:** `StoreOrder.generate_order_number` usava `random.choices` (não-CSPRNG)
+**Bugs encontrados e corrigidos:** IDOR de escrita em serializers — store cross-tenant [P1]
 
-- **Tipo:** P2 — Geração de número de pedido não criptograficamente segura
-- **Arquivo:** `apps/stores/models/order.py:336`
-- **Descrição:** `random.choices(string.digits, k=4)` gera apenas 10.000 sufixos possíveis por
-  prefixo+data (e.g. `CES260704XXXX`). Um atacante com acesso ao padrão de numeração pode enumerar
-  pedidos de um tenant por força bruta dos sufixos. Substituído por `secrets.randbelow(10000)` que
-  mantém o mesmo formato e cardinalidade mas com CSPRNG do módulo `secrets`.
-- **Testes:** 10 casos em `apps/stores/tests/test_order_number_csprng.py` (RED→GREEN): formato,
-  zero-padding (0000/9999), uso exclusivo de `secrets.randbelow`, ausência de `random.choices`/
-  `random.randint`, unicidade probabilística em 100 amostras.
-- **PR:** `bot/server-2026-07-04-order-number-csprng`
+- **Tipo:** P1 — IDOR de escrita permitindo criar/editar dados em lojas de outros tenants
+- **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
+- **Pontos corrigidos (3):**
+  1. `StoreSlugOrIdField.to_internal_value` — adicionado tenant gate via `user_can_access_store`
+     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupons em loja alheia
+  2. `StoreDeliveryZoneCreateSerializer.validate_store` — método adicionado com mesmo tenant gate
+     - Campo `store` era `PrimaryKeyRelatedField` sem check; qualquer autenticado criava zonas em loja alheia
+  3. `StoreOrderCreateSerializer._resolve_store` — `not is_staff` → `not is_superuser`
+     - is_staff bypassa completamente o check de tenant; padrão já fixado em todos os outros places
+- **Testes:** 12 novos casos em `apps/stores/tests/test_serializer_write_idor.py` (RED→GREEN confirmado)
+- **PR:** #294 aberto
 
 ---
 
@@ -95,16 +95,22 @@ em `add_index concurrently` — pré-existente, não regressão.
 | P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
 | P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
 | P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | **Corrigido PR #291** |
-| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Corrigido PR #292** |
-| P2 | apps/stores/models/order.py | 336 | order_number com random.choices (não-CSPRNG) | **Corrigido 2026-07-04** |
+| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso | PR #291 aberto |
+| P1 | apps/stores/api/serializers.py | 746, 1501, 1608 | IDOR escrita — store cross-tenant em serializers | **PR #294 aberto** |
+| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | PR #292 aberto |
+| P2 | apps/stores/models/order.py | 336 | order_number gerado com random não-CSPRNG | PR #293 aberto |
+| P1 | apps/stores/api/serializers.py | — | StoreIntegrationCreateSerializer.store sem validate_store | **Pendente** |
+| P2 | — | — | Testes de contrato (regressão) para OTP, zonas de entrega, checkout | **Pendente** |
 
 ---
 
 ## Próximo passo priorizado
 
-**Varredura de novas vulnerabilidades** — com P0/P1/P2 conhecidos resolvidos, próxima execução deve
-fazer sweep nos endpoints de checkout, webhook handlers e serializers por:
-1. Qualquer uso remanescente de `random` em contexto de segurança (tokens, OTPs, sufixos de ID)
-2. Endpoints `AllowAny` sem throttle explícito além dos já corrigidos
-3. Serializers de escrita que não validam `store` no contexto do usuário autenticado (IDOR de escrita)
+**P1 — StoreIntegrationCreateSerializer.store sem validate_store** (`apps/stores/api/serializers.py:141`):
+Campo `store` em `StoreIntegrationCreateSerializer` é um `PrimaryKeyRelatedField` padrão sem
+verificação de tenant — mesmo padrão corrigido nesta PR em `StoreDeliveryZoneCreateSerializer`.
+Permite criar/atualizar integrações (WhatsApp, credenciais de API) em lojas de outros tenants.
+
+Fix: adicionar `validate_store()` com `user_can_access_store` seguindo o mesmo padrão.
+
+PRs aguardando merge: #290, #291, #292, #293, #294.
