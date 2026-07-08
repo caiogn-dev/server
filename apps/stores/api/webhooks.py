@@ -17,12 +17,22 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle
 
 from apps.stores.models import Store, StoreOrder, StoreIntegration
 from apps.stores.services import checkout_service
 from apps.stores.services.realtime_service import broadcast_order_event
 
 logger = logging.getLogger(__name__)
+
+
+class _OrderTokenThrottle(AnonRateThrottle):
+    """30/min por IP — defesa em profundidade para endpoints públicos de pedido por token.
+
+    Esses endpoints não exigem autenticação; o access_token é a única barreira.
+    Um limite explícito impede DoS por varredura de tokens e deixa a intenção auditável.
+    """
+    scope = 'order_token'
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -340,17 +350,18 @@ class PaymentStatusView(APIView):
     """
     SECURE payment status endpoint.
     Requires access_token for public access.
-    
+
     Usage:
     - GET /orders/{order_number}/payment-status/?token={access_token}
     - GET /orders/by-token/{access_token}/
-    
+
     The access_token is a secure random string generated when the order is created.
     This prevents unauthorized access to order details.
     """
-    
+
     authentication_classes = []
     permission_classes = []
+    throttle_classes = [_OrderTokenThrottle]
     
     def get(self, request, order_id):
         """Get payment status for an order (requires token)."""
@@ -471,12 +482,13 @@ class OrderByTokenView(APIView):
     """
     Get order details by access token.
     This is the SECURE way to access order details publicly.
-    
+
     Usage: GET /orders/by-token/{access_token}/
     """
-    
+
     authentication_classes = []
     permission_classes = []
+    throttle_classes = [_OrderTokenThrottle]
     
     def get(self, request, access_token):
         """Get order by access token."""

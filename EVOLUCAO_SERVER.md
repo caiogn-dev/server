@@ -16,131 +16,108 @@ Suíte completa não executável neste container; testes que usam migrações Po
 **Bug encontrado e corrigido:** `apps/audit/api/views.py` linha 140 — `NameError` em produção
 
 - **Tipo:** P0 — Bug de runtime + IDOR potencial
-- **Descrição:** O branch `conversations` do `ExportViewSet.export()` chamava `_accessible_accounts()`
-  que **não existe e não está importada** no módulo. Causa `NameError` em produção sempre que
-  qualquer usuário tenta exportar conversas. Adicionalmente, se a função fosse resolvida de outro
-  escopo acidentalmente, poderia retornar dados cross-tenant (IDOR).
-- **Correção:** Substituído por `accessible_whatsapp_account_ids(user)` que já estava importada
-  na linha 15 e retorna exatamente o mesmo conjunto de IDs, corretamente escopados por tenant.
-- **PR:** `bot/server-2026-06-28-audit-export-idor` (aberto, aguardando merge)
-
-**Outros achados (backlog para próximas execuções):**
-
-| Prioridade | Arquivo | Linha | Problema |
-|---|---|---|---|
-| P0 | apps/core/auth/views.py | 76 | PII em log — telefone em texto plano |
-| P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone |
-| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone |
-| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone |
-| P0 | apps/whatsapp/services/order_service.py | 401 | PII em log — código PIX parcial |
-| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR — account_id não validado antes de uso |
-| P1 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log |
-| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ |
+- **Correção:** Substituído `_accessible_accounts()` (inexistente) por `accessible_whatsapp_account_ids(user)`.
+- **PR:** #281 (mergeado)
 
 ---
 
 ### 2026-06-29
 
-**Baseline de testes:** 13 testes do módulo `test_pii_log_enforcement` rodados com Django instalado
-localmente (sem Docker). Testes de regressão `test_pii_masking` e `test_customer_pii_sanitize`
-também passam (13/13). Docker indisponível; suíte de integração não executável.
+**Baseline de testes:** 13 testes do módulo `test_pii_log_enforcement` rodados localmente. Docker indisponível.
 
 **Bug encontrado e corrigido:** PII (telefones) em logs — violação de LGPD art. 46
 
 - **Tipo:** P0 — Vazamento de dado pessoal sensível em logs de produção
-- **Arquivos corrigidos (7):**
-  - `apps/core/auth/views.py:76` — OTP send: `{phone}` → `mask_phone(phone)`
-  - `apps/core/auth/whatsapp_auth.py:235,281` — `clean_phone` → `mask_phone(clean_phone)`
-  - `apps/automation/services/session_manager.py:260,467,477,487` — `self.phone_number` mascarado
-  - `apps/whatsapp/services/webhook_service.py:1108,1442,1488,1498` — `from_number`/`phone_number` mascarados; `contact_name` removido do log
-  - `apps/whatsapp/services/order_service.py:33,397,401,405,491,548` — `phone_number` mascarado; `pix_code` não logado mais em claro (8 chars truncados, sem expor código completo)
-  - `apps/campaigns/services/campaign_service.py:321,380,383` — `recipient.phone_number` mascarado
-  - `apps/whatsapp/webhooks/views.py:71` — `token` de credencial **removido** do log de falha de verificação
-- **Testes:** 13 novos casos em `apps/core/tests/test_pii_log_enforcement.py` (RED→GREEN confirmado)
-- **PR:** `bot/server-2026-06-29-pii-logs`
+- **Arquivos corrigidos (7):** `core/auth/views.py`, `whatsapp_auth.py`, `session_manager.py`,
+  `webhook_service.py`, `order_service.py`, `campaign_service.py`, `whatsapp/webhooks/views.py`
+- **Testes:** 13 novos casos em `test_pii_log_enforcement.py` (RED→GREEN)
+- **PR:** #282 (mergeado)
 
 ---
 
 ### 2026-07-01
 
-**Baseline de testes:** 15 testes rodados localmente (sem Docker/PostgreSQL).
-`--no-migrations` necessário (migração `add_index concurrently` não roda em SQLite).
-Pré-existente, não regressão.
+**Baseline:** IDOR P1 em product_views.py confirmado.
 
-**Bugs encontrados e corrigidos:** IDOR via `is_staff` em variantes e combos (P1)
+**Bug encontrado e corrigido:** `is_staff` bypassa isolamento de tenant em variantes e combos
 
-- **Tipo:** P1 — IDOR de leitura + escrita cross-tenant via flag `is_staff`
-- **Contexto:** Convenção do projeto: `is_staff` (acesso ao Django `/admin`) NÃO concede
-  acesso cross-tenant; apenas `is_superuser` pode ver/editar dados de qualquer tenant.
-- **Arquivos corrigidos (1):** `apps/stores/api/views/product_views.py`
-  - `StoreProductVariantViewSet.get_queryset:257` — `is_staff or is_superuser` → `is_superuser`
-    (leitura de variantes de qualquer produto sem ser dono)
-  - `StoreComboViewSet._assert_store_access:290` — mesmo bypass em create/update/delete de combos
-  - `StoreProductTypeViewSet._assert_store_access:374` — mesmo bypass em product-types
-- **Testes:** 8 novos casos em `apps/stores/tests/test_is_staff_idor.py` (RED→GREEN confirmado).
-  Regressão: `test_combo_product_type_idor` 7/7 mantidos. Total: 15/15.
-- **PR:** `bot/server-2026-07-01-idor-variant-combo-write` (a abrir)
+- **Tipo:** P1 — IDOR de leitura e escrita (is_staff ≠ is_superuser per convenção do projeto)
+- **Arquivos corrigidos:** `apps/stores/api/views/product_views.py` (3 checkpoints)
+- **Testes:** 8 novos casos em `test_is_staff_idor.py` (RED→GREEN) + 7 regressões mantidas
+- **PR:** #290 (aberto)
 
 ---
 
 ### 2026-07-02
 
-**Baseline de testes:** Sem Docker/PostgreSQL disponível — suíte de integração não executável
-(SQLite não suporta `add_index concurrently`). Pré-existente, não regressão.
+**Baseline:** IDOR P1 em company_profile_views.py confirmado.
 
-**Bug encontrado e corrigido:** IDOR via `account_id` em `store_data` + info-disclosure em erros
+**Bug encontrado e corrigido:** IDOR via `account_id` + info-disclosure em `store_data`
 
-- **Tipo:** P1 — IDOR cross-tenant (caminho `account_id`) + info-disclosure via `str(e)` em 500
-- **Arquivo:** `apps/automation/api/views/company_profile_views.py`
-- **Problema 1 (linha 92):** `WhatsAppAccount.objects.get(id=account_id)` sem escopo de tenant.
-  Um atacante autenticado passava o `account_id` de outro tenant e o objeto era carregado antes de
-  qualquer verificação. Embora o check `user_can_access_store` downstream bloqueasse a resposta
-  final, o acesso não autorizado ao objeto já ocorria.
-- **Problema 2 (linha 88):** `Store.objects.get(slug=...)` lançava `DoesNotExist` → capturado
-  pelo `except Exception as e` genérico → retornava HTTP 500 com `str(e)` (mensagem interna do
-  Django) em vez de 404.
-- **Problema 3 (linha 165):** `except Exception as e: return Response({'error': str(e)}, 500)` —
-  expunha mensagens internas do ORM para clientes não-autenticados.
+- **Tipo:** P1 — IDOR cross-tenant em endpoint de configuração de automação + `str(e)` exposto
+- **Arquivo corrigido:** `apps/automation/api/views/company_profile_views.py` (linhas 92-116)
+- **Testes:** 4 novos casos em `test_company_profile_security.py` (RED→GREEN)
+- **PR:** #291 (aberto)
+
+---
+
+### 2026-07-03
+
+**Baseline de testes:** 9/9 testes novos GREEN em `SimpleTestCase` (sem DB/Redis/Docker).
+34 testes `test_pii_log_enforcement` e afins continuam passando. Erros pré-existentes
+de `add_index concurrently` (PostgreSQL) mantidos — não são regressão desta execução.
+
+**PRs abertos no gate anti-acúmulo:** #290 (is_staff IDOR) e #291 (store_data IDOR) —
+ambos P1, aguardando merge. Não há duplicata a evitar.
+
+**Fix implementado:** Throttle dedicado para endpoints públicos de pedido por token
+
+- **Tipo:** P2 — Defesa em profundidade em endpoints AllowAny com dados sensíveis
+- **Problema:** `OrderByTokenView` (`GET /api/v1/mobile/orders/by-token/{token}/`) e
+  `PaymentStatusView` (`GET /api/v1/mobile/orders/{id}/payment-status/`) herdavam apenas o
+  `AnonRateThrottle` global (120/min) sem throttle explícito. 120/min = 7.200/hora por IP —
+  alto para endpoints que expõem itens, endereço e código PIX sem autenticação.
 - **Correção:**
-  - `Store.DoesNotExist` e `WhatsAppAccount.DoesNotExist` agora são capturados explicitamente → 404
-  - Tenant gate inserido logo após `WhatsAppAccount.objects.get()`: compara `account.id` com
-    `accessible_whatsapp_account_ids(request.user)` → 404 se não pertencer ao tenant
-  - `except Exception` genérico: `str(e)` removido da resposta; erro apenas no log interno
-- **Testes:** 4 novos casos em `test_company_profile_security.py`:
-  - `test_attacker_cannot_probe_victim_account_id` (RED→GREEN — confirmado antes do fix)
-  - `test_nonexistent_account_id_returns_404_not_500` (RED→GREEN)
-  - `test_nonexistent_slug_returns_404_not_500` (RED→GREEN)
-  - `test_owner_can_access_via_own_account_id` (GREEN desde o início)
-- **PR:** `bot/server-2026-07-02-store-data-idor-account`
+  - `apps/stores/api/webhooks.py`: importa `AnonRateThrottle`, define `_OrderTokenThrottle`
+    (`scope='order_token'`), adiciona `throttle_classes = [_OrderTokenThrottle]` nas duas views.
+  - `config/settings/base.py`: adiciona `'order_token': '30/minute'` em `DEFAULT_THROTTLE_RATES`.
+- **Análise de risco:** `access_token` é `secrets.token_urlsafe(32)` (256-bit entropy).
+  Brute-force é computacionalmente inviável. O throttle é defesa em profundidade contra DoS
+  no DB e varredura estatística. Reduz para 1.800 req/hora/IP (vs 7.200 antes).
+- **Testes:** 9 novos casos em `apps/stores/tests/test_order_token_throttle.py`:
+  - 5 testes de configuração (`SimpleTestCase`) — scope, herança, presença nas views, rate
+  - 4 testes funcionais com `patch.dict(SimpleRateThrottle.THROTTLE_RATES)` — confirma 429
+    na 2ª request com rate=1/min, sem dependência de DB ou Redis
+- **PR:** `bot/server-2026-07-03-order-token-throttle` (abrindo agora)
 
 ---
 
 ## Backlog priorizado
 
-| Prioridade | Arquivo | Linha | Problema | Status |
-|---|---|---|---|---|
-| P0 | apps/audit/api/views.py | 140 | NameError + IDOR em export conversas | **Corrigido (PR #281 merged)** |
-| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/webhook_service.py | 1108, 1442, 1488, 1498 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/order_service.py | 33, 401, 405, 491, 548 | PII em log — telefone + PIX parcial | **Corrigido 2026-06-29** |
-| P0 | apps/campaigns/services/campaign_service.py | 321, 380, 383 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial (verify_token) em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR account_id + info-disclosure str(e) | **Corrigido 2026-07-02** |
-| P1 | apps/stores/api/views/product_views.py | 257, 290, 374 | IDOR — is_staff bypassa tenant em variantes/combos | **Corrigido 2026-07-01** |
-| P2 | apps/mobile_api/urls.py | — | Sem rate limiting em /orders/by-token/ | **Pendente** (token 128-bit mitiga risco) |
+| Prioridade | Arquivo/Endpoint | Problema | Status |
+|---|---|---|---|
+| P0 | apps/audit/api/views.py:140 | NameError + IDOR em export conversas | **Corrigido PR #281** |
+| P0 | apps/core/auth/ + whatsapp + campaigns | PII em logs (telefones, PIX, credenciais) | **Corrigido PR #282** |
+| P1 | apps/stores/api/views/product_views.py | IDOR is_staff em variantes e combos | **PR #290 aberto** |
+| P1 | apps/automation/api/views/company_profile_views.py | IDOR account_id + str(e) exposto | **PR #291 aberto** |
+| P2 | apps/stores/api/webhooks.py | Rate limiting explícito em by-token endpoints | **Corrigido 2026-07-03** |
+| P2 | apps/stores/models/order.py:generate_order_number | `random.choices` em order_number (4 dígitos, apenas 10k possibilidades por dia) | **Pendente** |
+| P3 | apps/stores/api/webhooks.py | `str(e)` em linha 72 (`str(e)` no status de erro de webhook) — info-disclosure menor | **Pendente** |
 
 ---
 
 ## Próximo passo priorizado
 
-**P2 — Rate limiting em /orders/by-token/**: Endpoint `OrderByTokenView` (AllowAny, sem auth)
-expõe dados de pedido (endereço, código PIX) para quem tem o token. O token é `secrets.token_urlsafe(32)`
-(128 bits de entropia), então brute force é inviável. Risco residual: scanning de tokens vazados.
-Mesmo assim, throttling é boa prática defensiva.
+**P2 — `order_number` gerado com `random.choices` (não CSPRNG):**
 
-Fix: adicionar `throttle_classes = [AnonRateThrottle]` com scope `order_by_token`
-(ex: 60/min por IP) em `OrderByTokenView`, reutilizando o padrão de `_GeoThrottle` em
-`maps_views.py`. Adicionar `REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['order_by_token']` em settings.
+`StoreOrder.generate_order_number()` usa `random.choices(string.digits, k=4)` — apenas 10.000
+possibilidades por prefixo+data. Combinado com o fato de que o prefixo e a data são previsíveis,
+o espaço de enumeração é pequeno. Embora isso não conceda acesso direto (o access_token ainda é
+necessário para ler dados), é inconsistente com as práticas de segurança do projeto.
+
+Fix: substituir `random.choices` por `secrets.token_hex(2)` ou `secrets.randbelow(10000)` para
+garantir CSPRNG no identificador público do pedido.
+
+**Alternativa (caso os P1 ainda estejam abertos):** aguardar merge dos PRs #290 e #291 e
+fazer um sweep de todos os `random.choices` no codebase para garantir que nenhum é usado
+em contexto de segurança.
