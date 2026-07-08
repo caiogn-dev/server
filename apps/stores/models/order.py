@@ -3,6 +3,7 @@ Store order models - StoreOrder, StoreOrderItem.
 StoreOrderComboItem has been moved to order_combo_item.py.
 """
 import uuid
+import secrets
 import logging
 from decimal import Decimal
 from django.conf import settings
@@ -328,12 +329,10 @@ class StoreOrder(BaseModel):
         return self.total
 
     def generate_order_number(self):
-        """Generate unique order number."""
-        import random
-        import string
+        """Generate unique order number using CSPRNG suffix (10k possibilities)."""
         prefix = self.store.slug[:3].upper() if self.store else 'ORD'
         timestamp = timezone.now().strftime('%y%m%d')
-        random_suffix = ''.join(random.choices(string.digits, k=4))
+        random_suffix = f'{secrets.randbelow(10000):04d}'
         return f"{prefix}{timestamp}{random_suffix}"
 
     @staticmethod
