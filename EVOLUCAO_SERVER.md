@@ -3,6 +3,9 @@
 Documento de rastreamento do loop diário de evolução. Mantido pelo bot de revisão automática.
 Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
+> **2026-07-08:** os 7 branches `bot/server-2026-07-01`…`07-07` foram mergeados na `development`
+> (merges d494c6c…a5843da) e deployados. PRs correspondentes (#290–#295) podem ser fechados.
+
 ---
 
 ## Histórico de execuções
@@ -62,6 +65,140 @@ também passam (13/13). Docker indisponível; suíte de integração não execut
 
 ---
 
+---
+
+### 2026-07-01
+
+**Baseline de testes:** 15 testes rodados localmente (sem Docker/PostgreSQL).
+`--no-migrations` necessário (migração `add_index concurrently` não roda em SQLite).
+Pré-existente, não regressão.
+
+**Bugs encontrados e corrigidos:** IDOR via `is_staff` em variantes e combos (P1)
+
+- **Tipo:** P1 — IDOR de leitura + escrita cross-tenant via flag `is_staff`
+- **Contexto:** Convenção do projeto: `is_staff` (acesso ao Django `/admin`) NÃO concede
+  acesso cross-tenant; apenas `is_superuser` pode ver/editar dados de qualquer tenant.
+- **Arquivos corrigidos (1):** `apps/stores/api/views/product_views.py`
+  - `StoreProductVariantViewSet.get_queryset:257` — `is_staff or is_superuser` → `is_superuser`
+    (leitura de variantes de qualquer produto sem ser dono)
+  - `StoreComboViewSet._assert_store_access:290` — mesmo bypass em create/update/delete de combos
+  - `StoreProductTypeViewSet._assert_store_access:374` — mesmo bypass em product-types
+- **Testes:** 8 novos casos em `apps/stores/tests/test_is_staff_idor.py` (RED→GREEN confirmado).
+  Regressão: `test_combo_product_type_idor` 7/7 mantidos. Total: 15/15.
+- **PR:** `bot/server-2026-07-01-idor-variant-combo-write` (a abrir)
+
+
+---
+
+### 2026-07-02
+
+**Baseline de testes:** Sem Docker/PostgreSQL disponível — suíte de integração não executável
+(SQLite não suporta `add_index concurrently`). Pré-existente, não regressão.
+
+**Bug encontrado e corrigido:** IDOR via `account_id` em `store_data` + info-disclosure em erros
+
+- **Tipo:** P1 — IDOR cross-tenant (caminho `account_id`) + info-disclosure via `str(e)` em 500
+- **Arquivo:** `apps/automation/api/views/company_profile_views.py`
+- **Problema 1 (linha 92):** `WhatsAppAccount.objects.get(id=account_id)` sem escopo de tenant.
+  Um atacante autenticado passava o `account_id` de outro tenant e o objeto era carregado antes de
+  qualquer verificação. Embora o check `user_can_access_store` downstream bloqueasse a resposta
+  final, o acesso não autorizado ao objeto já ocorria.
+- **Problema 2 (linha 88):** `Store.objects.get(slug=...)` lançava `DoesNotExist` → capturado
+  pelo `except Exception as e` genérico → retornava HTTP 500 com `str(e)` (mensagem interna do
+  Django) em vez de 404.
+- **Problema 3 (linha 165):** `except Exception as e: return Response({'error': str(e)}, 500)` —
+  expunha mensagens internas do ORM para clientes não-autenticados.
+- **Correção:**
+  - `Store.DoesNotExist` e `WhatsAppAccount.DoesNotExist` agora são capturados explicitamente → 404
+  - Tenant gate inserido logo após `WhatsAppAccount.objects.get()`: compara `account.id` com
+    `accessible_whatsapp_account_ids(request.user)` → 404 se não pertencer ao tenant
+  - `except Exception` genérico: `str(e)` removido da resposta; erro apenas no log interno
+- **Testes:** 4 novos casos em `test_company_profile_security.py`:
+  - `test_attacker_cannot_probe_victim_account_id` (RED→GREEN — confirmado antes do fix)
+  - `test_nonexistent_account_id_returns_404_not_500` (RED→GREEN)
+  - `test_nonexistent_slug_returns_404_not_500` (RED→GREEN)
+  - `test_owner_can_access_via_own_account_id` (GREEN desde o início)
+- **PR:** `bot/server-2026-07-02-store-data-idor-account`
+
+
+---
+
+### 2026-07-03
+
+**Baseline de testes:** 9/9 testes novos GREEN em `SimpleTestCase` (sem DB/Redis/Docker).
+34 testes `test_pii_log_enforcement` e afins continuam passando. Erros pré-existentes
+de `add_index concurrently` (PostgreSQL) mantidos — não são regressão desta execução.
+
+**PRs abertos no gate anti-acúmulo:** #290 (is_staff IDOR) e #291 (store_data IDOR) —
+ambos P1, aguardando merge. Não há duplicata a evitar.
+
+**Fix implementado:** Throttle dedicado para endpoints públicos de pedido por token
+
+- **Tipo:** P2 — Defesa em profundidade em endpoints AllowAny com dados sensíveis
+- **Problema:** `OrderByTokenView` (`GET /api/v1/mobile/orders/by-token/{token}/`) e
+  `PaymentStatusView` (`GET /api/v1/mobile/orders/{id}/payment-status/`) herdavam apenas o
+  `AnonRateThrottle` global (120/min) sem throttle explícito. 120/min = 7.200/hora por IP —
+  alto para endpoints que expõem itens, endereço e código PIX sem autenticação.
+- **Correção:**
+  - `apps/stores/api/webhooks.py`: importa `AnonRateThrottle`, define `_OrderTokenThrottle`
+    (`scope='order_token'`), adiciona `throttle_classes = [_OrderTokenThrottle]` nas duas views.
+  - `config/settings/base.py`: adiciona `'order_token': '30/minute'` em `DEFAULT_THROTTLE_RATES`.
+- **Análise de risco:** `access_token` é `secrets.token_urlsafe(32)` (256-bit entropy).
+  Brute-force é computacionalmente inviável. O throttle é defesa em profundidade contra DoS
+  no DB e varredura estatística. Reduz para 1.800 req/hora/IP (vs 7.200 antes).
+- **Testes:** 9 novos casos em `apps/stores/tests/test_order_token_throttle.py`:
+  - 5 testes de configuração (`SimpleTestCase`) — scope, herança, presença nas views, rate
+  - 4 testes funcionais com `patch.dict(SimpleRateThrottle.THROTTLE_RATES)` — confirma 429
+    na 2ª request com rate=1/min, sem dependência de DB ou Redis
+- **PR:** `bot/server-2026-07-03-order-token-throttle` (abrindo agora)
+
+
+---
+
+### 2026-07-04
+
+**Baseline de testes:** 10 testes `test_order_number_csprng` passando localmente (SimpleTestCase, sem DB).
+Testes com DB (test_order_amount_paid, test_order_adjust, test_order_stats_idor) erram com TypeError
+em `add_index concurrently` — pré-existente, não regressão.
+
+**Bug encontrado e corrigido:** `StoreOrder.generate_order_number` usava `random.choices` (não-CSPRNG)
+
+- **Tipo:** P2 — Geração de número de pedido não criptograficamente segura
+- **Arquivo:** `apps/stores/models/order.py:336`
+- **Descrição:** `random.choices(string.digits, k=4)` gera apenas 10.000 sufixos possíveis por
+  prefixo+data (e.g. `CES260704XXXX`). Um atacante com acesso ao padrão de numeração pode enumerar
+  pedidos de um tenant por força bruta dos sufixos. Substituído por `secrets.randbelow(10000)` que
+  mantém o mesmo formato e cardinalidade mas com CSPRNG do módulo `secrets`.
+- **Testes:** 10 casos em `apps/stores/tests/test_order_number_csprng.py` (RED→GREEN): formato,
+  zero-padding (0000/9999), uso exclusivo de `secrets.randbelow`, ausência de `random.choices`/
+  `random.randint`, unicidade probabilística em 100 amostras.
+- **PR:** `bot/server-2026-07-04-order-number-csprng`
+
+
+---
+
+### 2026-07-05
+
+**Baseline de testes:** `SimpleTestCase` com `config.settings.test_serializer` (sem PostgreSQL/langchain).
+12 testes do módulo `test_serializer_write_idor` passando (12/12). Suite de integração (Docker) indisponível no container — pré-existente, não regressão.
+
+**Bugs encontrados e corrigidos:** IDOR de escrita em serializers — store cross-tenant [P1]
+
+- **Tipo:** P1 — IDOR de escrita permitindo criar/editar dados em lojas de outros tenants
+- **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
+- **Pontos corrigidos (3):**
+  1. `StoreSlugOrIdField.to_internal_value` — adicionado tenant gate via `user_can_access_store`
+     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupons em loja alheia
+  2. `StoreDeliveryZoneCreateSerializer.validate_store` — método adicionado com mesmo tenant gate
+     - Campo `store` era `PrimaryKeyRelatedField` sem check; qualquer autenticado criava zonas em loja alheia
+  3. `StoreOrderCreateSerializer._resolve_store` — `not is_staff` → `not is_superuser`
+     - is_staff bypassa completamente o check de tenant; padrão já fixado em todos os outros places
+- **Testes:** 12 novos casos em `apps/stores/tests/test_serializer_write_idor.py` (RED→GREEN confirmado)
+- **PR:** #294 aberto
+
+
+---
+
 ### 2026-07-06
 
 **Baseline de testes:** 15 novos testes `test_integration_webhook_print_idor` rodados sem Docker
@@ -86,33 +223,42 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
   (RED→GREEN confirmado)
 - **PR:** `bot/server-2026-07-06-serializer-idor-integration-webhook-print`
 
----
-
-## Backlog priorizado
-
-| Prioridade | Arquivo/Área | Linha | Problema | Status |
-|---|---|---|---|---|
-| P0 | apps/audit/api/views.py | 140 | NameError + IDOR em export conversas | PR #281 aberto |
-| P0 | apps/core/auth/views.py | 76 | PII em log — telefone | **Corrigido 2026-06-29** (PR merged) |
-| P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/automation/services/session_manager.py | 260+ | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/webhook_service.py | 1108+ | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/services/order_service.py | 401+ | PII em log — PIX | **Corrigido 2026-06-29** |
-| P0 | apps/campaigns/services/campaign_service.py | 321+ | PII em log — telefone | **Corrigido 2026-06-29** |
-| P0 | apps/whatsapp/webhooks/views.py | 71 | Credencial em log | **Corrigido 2026-06-29** |
-| P1 | apps/automation/api/views/company_profile_views.py | 92-98 | IDOR store_data via account_id | **Corrigido 2026-07-02** (PR #291) |
-| P1 | apps/stores/api/views/product_views.py | 257,290,374 | IDOR is_staff em variantes/combos | **Corrigido 2026-07-01** (PR #290) |
-| P1 | apps/stores/api/serializers.py | StoreSlugOrIdField+Delivery+Order | IDOR write Onda 1 | **Corrigido 2026-07-05** (PR #294) |
-| P1 | apps/stores/api/serializers.py | Integration+Webhook+PrintAgent | IDOR write Onda 2 | **Corrigido 2026-07-06** (este PR) |
-| P2 | apps/mobile_api/ | — | Throttle em /orders/by-token/ | **Corrigido 2026-07-03** (PR #292) |
-| P2 | apps/stores/models/order.py | 336 | order_number não CSPRNG | **Corrigido 2026-07-04** (PR #293) |
 
 ---
 
-## Próximo passo priorizado
+### 2026-07-07
 
-**Sweep de outros serializers com campo writable sem `validate_store`** — a varredura das duas ondas
-cobriu `apps/stores/api/serializers.py`. Verificar se outros apps têm o mesmo padrão:
-- `apps/automation/api/serializers.py` — campos de store/account sem validate
-- `apps/whatsapp/api/serializers.py` — idem
-- Testes de contrato para OTP, zonas de entrega, checkout e agent guardrails (item crítico do CLAUDE.md)
+**Fix implementado:** IDOR write em `CreateAgentFlowSerializer` + is_staff bypass em `AutoMessageViewSet.create`
+
+### O que estava errado
+
+1. **`CreateAgentFlowSerializer` (apps/automation/api/serializers.py:564)**
+   - Campo `store` era writable via ModelSerializer sem `validate_store`.
+   - Vetor: `POST /api/v1/automation/flows/` com `{"store": "<uuid_loja_alheia>"}` criava
+     AgentFlow no tenant da vítima. A view escopa leitura (get_queryset) mas não escopa
+     criação (usa DRF ModelViewSet.create padrão que não verifica o campo `store` do body).
+
+2. **`AutoMessageViewSet.create` (apps/automation/api/views/auto_message_views.py:68)**
+   - Guard de tenant: `if not (request.user.is_superuser or request.user.is_staff):`
+   - `is_staff` = acesso ao /admin Django, NÃO acesso cross-tenant.
+   - Usuário com `is_staff=True` podia criar AutoMessage em company de outro tenant.
+
+### O que foi corrigido
+
+- Adicionado `validate_store` em `CreateAgentFlowSerializer` com padrão estabelecido:
+  `user_can_access_store`, mensagem genérica "Loja não encontrada", is_superuser como único bypass.
+- Corrigido `is_superuser or is_staff` → `is_superuser` em `AutoMessageViewSet.create`.
+- 8 testes SimpleTestCase (sem DB/Docker): RED→GREEN.
+
+### Próximo backlog (prioridade)
+
+1. **P0** — Varredura de `str(e)` em handlers de exceção que vazam mensagens internas do ORM
+   (já coberto parcialmente pelo PR #291 ainda aberto — verificar se foi mesclado).
+2. **P1** — Varredura de `is_staff` como bypass cross-tenant nas demais views de `apps/whatsapp/`
+   e `apps/instagram/` (prosseguir o sweep iniciado nesta sessão).
+3. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+   (item crítico do CLAUDE.md ainda pendente).
+4. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md).
+5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
