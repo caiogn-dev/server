@@ -698,9 +698,9 @@ class StoreCheckoutView(APIView):
     def _extract_customer_data(self, request):
         """Extrai os dados do cliente (checkout_service espera name/email/phone)."""
         return {
-            'name': request.data.get('customer_name', ''),
-            'email': request.data.get('customer_email', ''),
-            'phone': request.data.get('customer_phone', ''),
+            'name': request.data.get('customer_name') or '',
+            'email': request.data.get('customer_email') or '',
+            'phone': request.data.get('customer_phone') or '',
             'cpf': request.data.get('cpf', ''),
             'accepts_marketing': request.data.get('accepts_marketing'),
         }

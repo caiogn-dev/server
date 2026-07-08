@@ -672,7 +672,9 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 
     store = serializers.CharField(required=False)
     customer_name = serializers.CharField(max_length=255)
-    customer_email = serializers.EmailField(required=False, allow_blank=True)
+    # allow_null: o PDV manda null quando o cliente selecionado (ex.: cadastrado
+    # em outra loja) não tem email — o fallback @local.invalid cobre depois
+    customer_email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     customer_phone = serializers.CharField(max_length=20)
     customer_notes = serializers.CharField(required=False, allow_blank=True)
 
@@ -816,7 +818,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if isinstance(delivery_address, str):
             delivery_address = {'address': delivery_address}
 
-        customer_email = validated_data.get('customer_email', '').strip()
+        customer_email = (validated_data.get('customer_email') or '').strip()
         if not customer_email:
             digits = ''.join(ch for ch in validated_data.get('customer_phone', '') if ch.isdigit())
             suffix = digits[-8:] if digits else 'cliente'
@@ -1205,7 +1207,7 @@ class CheckoutSerializer(serializers.Serializer):
 
     # Customer info
     customer_name = serializers.CharField(max_length=255)
-    customer_email = serializers.EmailField(required=False, allow_blank=True)
+    customer_email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
     customer_phone = serializers.CharField(max_length=20)
     
     # Delivery info

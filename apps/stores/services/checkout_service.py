@@ -880,9 +880,9 @@ class CheckoutService:
         order = StoreOrder.objects.create(
             store=store,
             customer=customer_user or cart.user,
-            customer_name=customer_data.get('name', ''),
-            customer_email=customer_data.get('email', ''),
-            customer_phone=customer_data.get('phone', ''),
+            customer_name=customer_data.get('name') or '',
+            customer_email=customer_data.get('email') or '',
+            customer_phone=customer_data.get('phone') or '',
             status=StoreOrder.OrderStatus.PENDING,
             payment_status=StoreOrder.PaymentStatus.PENDING,
             subtotal=subtotal,
