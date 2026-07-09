@@ -476,7 +476,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.exception(f"Error processing campaign {pk}: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao processar lote de campanha.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
@@ -588,6 +588,6 @@ class ContactListViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.exception("Error importing contacts from CSV")
             return Response(
-                {'error': f'Failed to import contacts: {str(e)}'},
+                {'error': 'Erro ao importar contatos do CSV.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
