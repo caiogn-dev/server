@@ -1,7 +1,10 @@
 """
 API Views for Agents
 """
+import logging
 from rest_framework import viewsets, status
+
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -30,7 +33,8 @@ from .serializers import (
 def _accessible_agents(user):
     queryset = Agent.objects.filter(is_active=True)
 
-    if user.is_superuser or user.is_staff:
+    # is_staff (acesso ao /admin) NÃO concede acesso cross-tenant — só superuser.
+    if user.is_superuser:
         return queryset
 
     account_ids = list(accessible_whatsapp_account_ids(user))
@@ -67,7 +71,8 @@ class AgentViewSet(viewsets.ModelViewSet):
 
     def _enforce_account_scope(self, serializer):
         """Non-admin users can only attach agents to accessible WhatsApp accounts."""
-        if self.request.user.is_superuser or self.request.user.is_staff:
+        # is_staff NÃO bypassa escopo de conta — só superuser tem acesso cross-tenant.
+        if self.request.user.is_superuser:
             return
 
         accounts = serializer.validated_data.get('accounts')
@@ -120,8 +125,9 @@ class AgentViewSet(viewsets.ModelViewSet):
             )
             return Response(result)
         except Exception as e:
+            logger.exception('Erro ao processar mensagem no agente %s', pk)
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao processar mensagem.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     

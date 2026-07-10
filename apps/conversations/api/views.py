@@ -311,7 +311,9 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if not agent.is_superuser and not agent.is_staff:
+        # is_staff NÃO concede acesso cross-tenant; só superuser pode ser
+        # atribuído a conversas de qualquer conta sem verificação.
+        if not agent.is_superuser:
             agent_account_ids = set(accessible_whatsapp_account_ids(agent))
             if conversation.account_id not in agent_account_ids:
                 return Response(
