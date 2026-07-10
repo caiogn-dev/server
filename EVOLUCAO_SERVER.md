@@ -252,13 +252,43 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
 
 ### Próximo backlog (prioridade)
 
-1. **P0** — Varredura de `str(e)` em handlers de exceção que vazam mensagens internas do ORM
-   (já coberto parcialmente pelo PR #291 ainda aberto — verificar se foi mesclado).
-2. **P1** — Varredura de `is_staff` como bypass cross-tenant nas demais views de `apps/whatsapp/`
-   e `apps/instagram/` (prosseguir o sweep iniciado nesta sessão).
-3. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+1. **P0** — Varredura de `str(e)` em handlers de exceção que vazam mensagens internas
+   (PR #297 aberto: cobre `apps/orders/views.py` e `apps/campaigns/api/views.py` — aguarda merge).
+   Bônus desta execução: `agents/views.py:process` também corrigido.
+2. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
    (item crítico do CLAUDE.md ainda pendente).
-4. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+3. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
    (item crítico do CLAUDE.md).
-5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
+---
+
+### 2026-07-10
+
+**Baseline de testes:** 18 testes SimpleTestCase rodados localmente (sem Docker/PostgreSQL).
+18/18 passando após o fix. Pré-existente: testes que importam `langchain_core` falham
+no container por dependência não instalada — não é regressão desta execução.
+
+**PRs abertos no gate anti-acúmulo:** #297 (info-disclosure str(e)) — aguardando merge.
+Sweep `is_staff` anterior cobrira: stores, serializers, automation, whatsapp consumers.
+Itens restantes nesta execução: `apps/agents/views.py` e `apps/conversations/`.
+
+**Fix implementado:** is_staff bypassa isolamento de tenant em agentes e conversas [P1]
+
+### O que estava errado
+
+| Arquivo | Linha | Bug |
+|---|---|---|
+| `apps/agents/views.py` | 33 | `_accessible_agents`: `is_staff` vê todos os agentes IA cross-tenant (IDOR leitura) |
+| `apps/agents/views.py` | 70 | `_enforce_account_scope`: `is_staff` cria/edita agentes em contas alheias (IDOR escrita) |
+| `apps/conversations/services/universal_conversation_service.py` | 165 | `_is_staff()` retorna True para `is_staff` → conversas de Instagram/Messenger de todos os tenants visíveis (PII leak) |
+| `apps/conversations/api/views.py` | 314 | `assign_agent`: `is_staff` pode ser atribuído a conversas de outros tenants sem verificação |
+| `apps/agents/views.py` | 122 | Bônus: `str(e)` na ação `process` expunha erros internos do LLM (info-disclosure) |
+
+### O que foi corrigido
+
+- `is_superuser or is_staff` → `is_superuser` em todos os quatro pontos de bypass.
+- Logger adicionado em `agents/views.py`; mensagem genérica na resposta HTTP do `process`.
+- **Testes:** 18 novos casos (RED→GREEN) em `test_is_staff_idor.py` (agents e conversations).
+- **PR:** `bot/server-2026-07-10-is-staff-idor-agents-conversations` (a abrir)
 
