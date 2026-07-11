@@ -1180,7 +1180,16 @@ class StoreCartComboItemSerializer(serializers.ModelSerializer):
         if not obj.combo_id:
             return []
         from apps.stores.services.checkout_service import CheckoutService
-        return CheckoutService.build_combo_selection_snapshot(obj)['selected_variants_data']
+        # Resolve o snapshot de TODOS os combos do carrinho de uma vez (nº
+        # constante de queries) e cacheia — este método roda por item.
+        cache = getattr(self, '_selection_snapshot_cache', None)
+        if cache is None or obj.id not in cache:
+            siblings = [ci for ci in obj.cart.combo_items.all() if ci.combo_id] if obj.cart_id else []
+            if obj.id not in {ci.id for ci in siblings}:
+                siblings.append(obj)
+            cache = CheckoutService.build_combo_selection_snapshots(siblings)
+            self._selection_snapshot_cache = cache
+        return cache[obj.id]['selected_variants_data']
 
 
 class StoreCartSerializer(serializers.ModelSerializer):

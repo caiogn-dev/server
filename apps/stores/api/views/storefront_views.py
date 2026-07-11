@@ -534,7 +534,11 @@ class StoreCartViewSet(viewsets.ViewSet):
     def get_cart_with_prefetch(self, request, store):
         """Get cart with prefetched related objects to avoid N+1 queries."""
         cart = self.get_cart(request, store)
-        # Prefetch related objects to avoid N+1 queries when serializing
+        return self.refetch_with_prefetch(cart)
+
+    def refetch_with_prefetch(self, cart):
+        """Reload a cart with the relations the serializer touches, so the
+        response serialization is O(1) em queries (itens e combos)."""
         return StoreCart.objects.prefetch_related(
             'items__product',
             'items__variant',
@@ -634,7 +638,7 @@ class StoreCartViewSet(viewsets.ViewSet):
                 options = request.data.get('options', {})
                 cart_service.add_item(cart, product_id, quantity, variant_id, options, notes)
 
-            return Response(StoreCartSerializer(cart).data)
+            return Response(StoreCartSerializer(self.refetch_with_prefetch(cart)).data)
         except StoreCombo.DoesNotExist:
             return Response(
                 {'error': 'Combo not found or inactive'},
@@ -660,8 +664,8 @@ class StoreCartViewSet(viewsets.ViewSet):
                 cart_service.remove_item(cart, item_id)
             else:
                 cart_service.update_item_quantity(cart, item_id, quantity)
-        
-        return Response(StoreCartSerializer(cart).data)
+
+        return Response(StoreCartSerializer(self.refetch_with_prefetch(cart)).data)
     
     @action(detail=False, methods=['delete'], url_path='item/(?P<item_id>[^/.]+)')
     def remove_item(self, request, store_slug=None, item_id=None):
@@ -669,7 +673,7 @@ class StoreCartViewSet(viewsets.ViewSet):
         store = self.get_store(store_slug)
         cart = self.get_cart(request, store)
         cart_service.remove_item(cart, item_id)
-        return Response(StoreCartSerializer(cart).data)
+        return Response(StoreCartSerializer(self.refetch_with_prefetch(cart)).data)
     
     @action(detail=False, methods=['delete'])
     def clear_cart(self, request, store_slug=None):
@@ -677,7 +681,7 @@ class StoreCartViewSet(viewsets.ViewSet):
         store = self.get_store(store_slug)
         cart = self.get_cart(request, store)
         cart_service.clear_cart(cart)
-        return Response(StoreCartSerializer(cart).data)
+        return Response(StoreCartSerializer(self.refetch_with_prefetch(cart)).data)
 
 
 @method_decorator(csrf_exempt, name='dispatch')

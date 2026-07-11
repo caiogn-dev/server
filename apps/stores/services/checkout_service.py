@@ -193,8 +193,12 @@ class CheckoutService:
     @staticmethod
     def build_combo_selection_snapshot(combo_item) -> dict:
         """Resolve combo variant UUID selections into an order-time display snapshot."""
+        return CheckoutService.build_combo_selection_snapshots([combo_item])[combo_item.id]
+
+    @staticmethod
+    def _normalize_group_selections(combo_item) -> dict:
         group_selections = combo_item.group_selections or combo_item.customizations.get('selections', {})
-        normalized_groups = {
+        return {
             str(group_id): [
                 str(variant_id)
                 for variant_id in (variant_ids if isinstance(variant_ids, list) else [variant_ids])
@@ -202,26 +206,59 @@ class CheckoutService:
             ]
             for group_id, variant_ids in (group_selections or {}).items()
         }
+
+    @staticmethod
+    def build_combo_selection_snapshots(combo_items) -> dict:
+        """Versão em lote do snapshot: resolve grupos/variantes/produtos de
+        TODOS os combo_items em nº constante de queries (serialização do
+        carrinho é O(1) em relação ao nº de combos)."""
+        from apps.stores.models.combo_group import ComboProductGroup
+
+        combo_items = list(combo_items)
+        normalized_by_item = {
+            combo_item.id: CheckoutService._normalize_group_selections(combo_item)
+            for combo_item in combo_items
+        }
+        all_selected_ids = sorted({
+            variant_id
+            for normalized in normalized_by_item.values()
+            for variant_ids in normalized.values()
+            for variant_id in variant_ids
+        })
+        combo_ids = {ci.combo_id for ci in combo_items if ci.combo_id}
+
+        groups_by_combo = {}
+        if combo_ids:
+            for group in ComboProductGroup.objects.filter(combo_id__in=combo_ids).select_related('product'):
+                groups_by_combo.setdefault(group.combo_id, {})[str(group.id)] = group
+
+        variants = StoreProductVariant.objects.filter(id__in=all_selected_ids).select_related('product')
+        variants_by_id = {str(variant.id): variant for variant in variants}
+        # IDs que NÃO são variantes -> resolver como PRODUTO (opções de produto
+        # no grupo). UUID de variante e de produto não colidem, então dá pra
+        # misturar no mesmo group_selections sem quebrar combos de variante.
+        product_only_ids = [i for i in all_selected_ids if i not in variants_by_id]
+        products_by_id = {
+            str(p.id): p for p in StoreProduct.objects.filter(id__in=product_only_ids)
+        }
+
+        return {
+            combo_item.id: CheckoutService._assemble_selection_snapshot(
+                normalized_by_item[combo_item.id],
+                groups_by_combo.get(combo_item.combo_id, {}),
+                variants_by_id,
+                products_by_id,
+            )
+            for combo_item in combo_items
+        }
+
+    @staticmethod
+    def _assemble_selection_snapshot(normalized_groups, groups_by_id, variants_by_id, products_by_id) -> dict:
         selected_variant_ids = [
             variant_id
             for variant_ids in normalized_groups.values()
             for variant_id in variant_ids
         ]
-
-        groups_by_id = {}
-        if combo_item.combo_id:
-            for group in combo_item.combo.groups.select_related('product').prefetch_related('variant_limits__variant').all():
-                groups_by_id[str(group.id)] = group
-
-        variants = StoreProductVariant.objects.filter(id__in=selected_variant_ids).select_related('product')
-        variants_by_id = {str(variant.id): variant for variant in variants}
-        # IDs que NÃO são variantes -> resolver como PRODUTO (opções de produto
-        # no grupo). UUID de variante e de produto não colidem, então dá pra
-        # misturar no mesmo group_selections sem quebrar combos de variante.
-        product_only_ids = [i for i in selected_variant_ids if i not in variants_by_id]
-        products_by_id = {
-            str(p.id): p for p in StoreProduct.objects.filter(id__in=product_only_ids)
-        }
 
         def _group_label(grp):
             if not grp:
