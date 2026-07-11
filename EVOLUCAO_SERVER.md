@@ -262,3 +262,44 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-11
+
+**Baseline de testes:** 22 novos testes `test_payment_storefront_str_e_leak` GREEN (SimpleTestCase,
+sem Docker). Testes existentes `test_order_token_throttle`, `test_serializer_write_idor`,
+`test_integration_webhook_print_idor`, `test_order_number_csprng` continuam OK. `test_is_staff_idor`
+falha por `psycopg2` ausente (migração concurrent-index) — pré-existente.
+PRs abertos no gate: #297 (str(e) em orders/campaigns) e #298 (is_staff em agents/conversations)
+— ambos ainda pendentes de merge; não houve duplicata.
+
+**Bugs encontrados e corrigidos:** info-disclosure via `str(e)` em pagamentos e storefront [P0]
+
+- **Tipo:** P0 — Info-disclosure de mensagens internas do Mercado Pago e de serviços internos
+  para usuários autenticados e, nos endpoints AllowAny, para qualquer usuário anônimo
+- **Arquivos corrigidos (2):**
+  1. `apps/stores/api/payment_views.py` — 6 endpoints autenticados de pagamento:
+     `create`, `process`, `confirm`, `fail`, `cancel`, `refund` — todos retornavam `str(e)`
+     direto na resposta. O `str(e)` vindo de `Exception(f"Failed to create preference: {preference_response}")`
+     expunha o corpo bruto da resposta da API do Mercado Pago (preference IDs, credenciais internas).
+     Substituído por mensagens genéricas em pt-BR; detalhe preservado no `logger.error` já existente.
+  2. `apps/stores/api/views/storefront_views.py` — 4 pontos em endpoints **AllowAny**
+     (qualquer usuário anônimo sem autenticação):
+     - `StoreCartViewSet.add_item` (linha 645): `str(e)` → `'Erro ao adicionar item ao carrinho.'`
+     - `StoreCheckoutView.post` (linha 934): `str(e)` → `'Erro ao processar checkout.'`
+     - `StoreDeliveryFeeView._calculate` x2 (linhas 966, 1001): `str(e)` → `'Erro ao calcular taxa de entrega.'`
+- **Testes:** 22 casos em `apps/stores/tests/test_payment_storefront_str_e_leak.py` (RED→GREEN).
+  Também adicionadas rates `public_write`, `checkout`, `order_token` em `config/settings/test_serializer.py`.
+- **PR:** `bot/server-2026-07-11-str-e-payment-storefront`
+
+**Próximo backlog priorizado:**
+
+1. **P0** — `str(e)` restante: `apps/automation/api/views/unified_views.py:127` (endpoint de
+   mensagem unificada), `apps/automation/api/views/auto_message_views.py:173,216`,
+   `apps/agents/views.py:124` (coberto pelo PR #298 aberto — não duplicar).
+2. **P1** — Merge dos PRs abertos #297 e #298 (aguardando revisão).
+3. **P1** — Testes de contrato para OTP WhatsApp, zonas de entrega, checkout e pedido por token
+   (pendência crítica do CLAUDE.md).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
