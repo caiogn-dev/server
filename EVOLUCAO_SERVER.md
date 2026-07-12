@@ -262,3 +262,50 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-12
+
+**Baseline de testes:** Django não instalado no container — instalado via pip3 durante a sessão.
+15 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN. Falha pré-existente em
+`test_order_token_rate_definida_no_settings` (settings de teste não tem `order_token`) confirmada
+via `git stash` — não é regressão desta sessão.
+
+**PRs abertos no gate anti-acúmulo:** #297 (str/e orders/campaigns), #298 (is_staff agents/conversations),
+#299 (str/e payments/storefront) — aguardando merge. Nenhuma duplicata gerada.
+
+**Bug encontrado e corrigido:** `str(e)` em combo (AllowAny), subscription, print-SSE e webhook [P0/P1]
+
+- **Tipo:** P0 (combo AllowAny) + P1 (subscription IsAuthenticated + print SSE + webhook externo)
+- **Arquivos corrigidos (4):**
+  1. `apps/stores/api/views/combo_views.py` — `POST /cart/add-combo/` (AllowAny) expunha ORM errors para anônimos
+  2. `apps/stores/api/views/subscription_views.py` — 3 endpoints expunham `SubscriptionError` com mensagens
+     internas (`'Token MercadoPago não configurado.'`, `'MercadoPago recusou: {status}'`)
+  3. `apps/stores/api/views/print_views.py` — SSE generator emitia `str(e)` no stream de dashboard
+  4. `apps/stores/api/webhooks.py` — handler enviava `{'message': str(e)}` para o Mercado Pago
+- **Testes:** 15 SimpleTestCase (análise estática + mocks) em `test_combo_subscription_webhook_str_e_leak.py`
+- **PR:** #300 — `bot/server-2026-07-12-str-e-combo-subscription-print-webhook`
+
+**Varredura de str(e) restante em views (após este PR):**
+
+| Arquivo | Tipo | Risco |
+|---|---|---|
+| `apps/stores/services/order_service.py` | Service interno | Baixo (não retorna HTTP direto) |
+| `apps/stores/services/payment_service.py` | Service interno | Baixo |
+| `apps/agents/services/agent_service.py` | Service interno | Baixo |
+| `apps/automation/services/automation_service.py` | Service interno | Baixo |
+| `apps/automation/tasks/scheduled.py` | Task Celery | Baixo (não retorna HTTP) |
+
+As ocorrências restantes são em services e tasks internos (não retornam respostas HTTP diretamente).
+O sweep de views HTTP está essencialmente completo após os PRs #297, #298, #299 e #300.
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+   (item crítico do CLAUDE.md há várias sessões, ainda pendente).
+2. **P1** — Varredura de `is_staff` como bypass cross-tenant em `apps/whatsapp/` e `apps/instagram/`
+   (comentários de fix já existem, confirmar que não há pontos faltantes).
+3. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md).
+4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
