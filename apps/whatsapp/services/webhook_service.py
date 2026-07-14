@@ -728,6 +728,16 @@ class WebhookService:
         if not (isinstance(orchestrator_response, UnifiedResponse) and not timed_out):
             return response_sent, orchestrator_error
 
+        # Modo restrito (allowed_intents): silêncio intencional — conta como
+        # tratado para não disparar fallback de LLM nem alerta MESSAGE DROPPED.
+        from apps.automation.services import ResponseSource as _RS
+        if orchestrator_response.source == _RS.SUPPRESSED:
+            logger.debug(
+                '[pipeline] Response suppressed by restricted mode',
+                extra={'pipeline.source': 'suppressed', 'message_id': str(message.id)},
+            )
+            return True, orchestrator_error
+
         # Caminho A: resposta interativa (botões / lista)
         if orchestrator_response.buttons or orchestrator_response.interactive_type:
             try:

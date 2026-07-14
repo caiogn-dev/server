@@ -501,8 +501,11 @@ class StoreOrder(BaseModel):
                 if account:
                     logger.info(f"[WhatsAppNotification] ✓ Got account from store: {account.id}")
             
-            if not account:
-                logger.info(f"[WhatsAppNotification] → No store account, trying default...")
+            if not account and self.store is None:
+                # Default global SÓ para pedido sem loja (legado). Pedido de
+                # loja sem conta vinculada NÃO pode sair pelo número de outro
+                # tenant (o default aponta pro número de uma loja real).
+                logger.info(f"[WhatsAppNotification] → No store, trying default...")
                 account = get_default_whatsapp_account(create_if_missing=False)
                 if account:
                     logger.info(f"[WhatsAppNotification] ✓ Got default account: {account.id}")

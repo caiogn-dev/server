@@ -67,6 +67,9 @@ class ResponseSource(Enum):
     LLM = 'llm'
     HANDLER = 'handler'
     FALLBACK = 'fallback'
+    # Modo restrito (allowed_intents): intent fora da allow-list é silenciada
+    # de propósito — o dispatcher trata como resposta OK (sem fallback/alerta).
+    SUPPRESSED = 'suppressed'
 
 
 @dataclass
@@ -129,6 +132,30 @@ class UnifiedService:
         )
         self.detector = IntentDetector(use_llm_fallback=self.use_llm)
         self.stats = {'template': 0, 'llm': 0, 'handler': 0, 'fallback': 0}
+
+    def _allowed_intents(self):
+        """Allow-list de intents do modo restrito (None = modo desligado).
+
+        profile.settings['allowed_intents'] = ['menu_request', ...] faz o
+        pipeline responder SOMENTE essas intents e silenciar todo o resto
+        (IA, fluxos interativos de pedido, mensagens automáticas).
+        """
+        settings_data = getattr(self.company, 'settings', None) or {}
+        allowed = settings_data.get('allowed_intents')
+        if isinstance(allowed, (list, tuple)) and allowed:
+            return {str(item) for item in allowed}
+        return None
+
+    def _suppressed(self, reason: str) -> 'UnifiedResponse':
+        logger.info(
+            '[unified] restricted mode: suprimido (%s)', reason,
+            extra={'unified.source': 'suppressed', 'unified.intent': reason},
+        )
+        return UnifiedResponse(
+            content='',
+            source=ResponseSource.SUPPRESSED,
+            metadata={'suppressed': True, 'reason': reason},
+        )
 
     def _map_intent_to_event(self, intent: IntentType) -> str:
         mapping = {
@@ -689,6 +716,12 @@ class UnifiedService:
         _t0 = time.monotonic()
         _store_id = str(self.store.id) if self.store else None
 
+        # ── Modo restrito: fluxos de bot (cliques/listas/localização) ficam
+        # desligados; só intents da allow-list respondem, mais abaixo. ──
+        _restricted = self._allowed_intents()
+        if _restricted is not None and (interactive_reply or location_data):
+            return self._suppressed('interactive_or_location')
+
         # ── Caminho rápido: resposta interativa (clique em botão / lista) ──
         if interactive_reply:
             from apps.whatsapp.intents.handlers import InteractiveReplyHandler
@@ -798,7 +831,7 @@ class UnifiedService:
             r'|desisti|desistir|n[ãa]o quero|pode cancelar|pode esquecer)\.?$',
             normalized,
         ))
-        if not _early_cancel and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
+        if not _early_cancel and _restricted is None and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
             from apps.whatsapp.intents.handlers import UnknownHandler
             try:
                 handler = UnknownHandler(self.account, self.conversation, self.company)
@@ -847,6 +880,9 @@ class UnifiedService:
             intent_data['intent'] = intent
             intent_data['method'] = 'catalog_match'
             intent_data['confidence'] = 0.98
+
+        if _restricted is not None and intent.value not in _restricted:
+            return self._suppressed(intent.value)
 
         intent_data['llm_available'] = bool(self.use_llm and self.agent)
 
