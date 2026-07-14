@@ -148,9 +148,11 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        with transaction.atomic():
-            Token.objects.filter(user=user).delete()
-            token = Token.objects.create(user=user)
+        # NÃO rotacionar o token a cada login: TokenAuthentication não expira e
+        # a rotação matava a sessão de todas as outras abas/dispositivos do
+        # usuário (incidente COEX 14/jul: aba morta burnou o code do Embedded
+        # Signup com 401). Logout continua sendo o único invalidador.
+        token, _ = Token.objects.get_or_create(user=user)
 
         return Response({
             'token': token.key,
