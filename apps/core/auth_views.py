@@ -148,11 +148,25 @@ class LoginView(APIView):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        # NÃO rotacionar o token a cada login: TokenAuthentication não expira e
-        # a rotação matava a sessão de todas as outras abas/dispositivos do
-        # usuário (incidente COEX 14/jul: aba morta burnou o code do Embedded
-        # Signup com 401). Logout continua sendo o único invalidador.
-        token, _ = Token.objects.get_or_create(user=user)
+        # NÃO rotacionar o token a cada login: a rotação matava a sessão de
+        # todas as outras abas/dispositivos do usuário (incidente COEX 14/jul:
+        # aba morta burnou o code do Embedded Signup com 401). Rotaciona SÓ se
+        # o token existente já venceu o TTL do TokenExpirationMiddleware —
+        # senão o login devolveria um token que o middleware rejeita (loop 401
+        # que o 4df413b tentou consertar rotacionando sempre).
+        from datetime import timedelta
+        from django.conf import settings as dj_settings
+        from django.utils import timezone
+
+        token, created = Token.objects.get_or_create(user=user)
+        ttl_days = getattr(dj_settings, 'AUTH_TOKEN_TTL_DAYS', None)
+        if (
+            not created and ttl_days is not None
+            and token.created < timezone.now() - timedelta(days=ttl_days)
+        ):
+            with transaction.atomic():
+                token.delete()
+                token = Token.objects.create(user=user)
 
         return Response({
             'token': token.key,

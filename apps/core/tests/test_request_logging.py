@@ -77,3 +77,41 @@ class RequestLoggingMiddlewareTest(TestCase):
         mw = _middleware(200)
         resp = mw(self.factory.get('/api/sse/health/'))
         assert resp['X-Request-ID']
+
+
+class QuietPathRateLimitAndHeartbeatTest(TestCase):
+    """429 em quiet path é ruído esperado do rate limiter (polling), não sinal.
+
+    Incidente 14/jul: print agent em retry-loop tomando 429 no claim-next
+    inundou o log com milhares de WARNINGs. 429 em quiet path -> DEBUG;
+    demais erros (401/500) continuam WARNING. Heartbeat também é polling.
+    """
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_429_on_quiet_path_logs_debug_not_warning(self):
+        mw = _middleware(429)
+        with mock.patch('apps.core.middleware.logger') as log:
+            mw(self.factory.post('/api/v1/stores/print/agent/claim-next/'))
+        log.debug.assert_called_once()
+        log.warning.assert_not_called()
+
+    def test_429_on_normal_path_still_warns(self):
+        mw = _middleware(429)
+        with mock.patch('apps.core.middleware.logger') as log:
+            mw(self.factory.get('/api/v1/stores/orders/'))
+        log.warning.assert_called_once()
+
+    def test_heartbeat_2xx_is_quiet(self):
+        mw = _middleware(200)
+        with mock.patch('apps.core.middleware.logger') as log:
+            mw(self.factory.post('/api/v1/stores/print/agent/heartbeat/'))
+        log.debug.assert_called_once()
+        log.info.assert_not_called()
+
+    def test_401_on_quiet_path_still_warns(self):
+        mw = _middleware(401)
+        with mock.patch('apps.core.middleware.logger') as log:
+            mw(self.factory.post('/api/v1/stores/print/agent/claim-next/'))
+        log.warning.assert_called_once()

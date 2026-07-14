@@ -190,6 +190,7 @@ class RequestLoggingMiddleware:
     # erros (>=400) continuam em WARNING. Override via settings.REQUEST_LOG_QUIET_PATHS.
     DEFAULT_QUIET_PATHS = (
         '/api/v1/stores/print/agent/claim-next',
+        '/api/v1/stores/print/agent/heartbeat',
         '/api/sse/health',
     )
 
@@ -233,9 +234,12 @@ class RequestLoggingMiddleware:
         if hasattr(request, 'user') and request.user.is_authenticated:
             log_data['user_id'] = str(request.user.id)
 
-        if response.status_code >= 400:
+        is_quiet = request.path.startswith(self.quiet_paths)
+        # 429 em quiet path é o rate limiter segurando polling — ruído esperado,
+        # não sinal (um agent em retry-loop já inundou o log com WARNINGs).
+        if response.status_code >= 400 and not (response.status_code == 429 and is_quiet):
             logger.warning("Request completed with error", extra=log_data)
-        elif request.path.startswith(self.quiet_paths):
+        elif is_quiet:
             logger.debug("Request completed", extra=log_data)
         else:
             logger.info("Request completed", extra=log_data)

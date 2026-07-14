@@ -49,6 +49,29 @@ class LoginMultiDeviceTokenTest(APITestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token_b}')
         self.assertEqual(self.client.get('/api/v1/auth/me/').status_code, 200)
 
+    def test_login_rotates_token_expired_by_ttl(self):
+        """Token além do AUTH_TOKEN_TTL_DAYS deve ser rotacionado no login,
+        senão o login devolve um token que o TokenExpirationMiddleware rejeita
+        (loop de 401)."""
+        from datetime import timedelta
+        from django.conf import settings
+        from django.utils import timezone
+
+        ttl = settings.AUTH_TOKEN_TTL_DAYS
+        if ttl is None:
+            self.skipTest('TTL de token desabilitado')
+
+        old = Token.objects.create(user=self.user)
+        Token.objects.filter(pk=old.pk).update(
+            created=timezone.now() - timedelta(days=ttl + 1)
+        )
+
+        token = self._login()
+        self.assertNotEqual(token, old.key, 'Login deve rotacionar token vencido')
+
+        self.client.credentials(HTTP_AUTHORIZATION=f'Token {token}')
+        self.assertEqual(self.client.get('/api/v1/auth/me/').status_code, 200)
+
     def test_logout_still_invalidates_token(self):
         token = self._login()
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {token}')

@@ -118,6 +118,9 @@ class EmbeddedSignupService:
         acc.access_token = token  # setter encripta
         acc.waba_id = waba_id
         acc.status = WhatsAppAccount.AccountStatus.ACTIVE
+        # Reconexão de número já cadastrado precisa REATIVAR a conta: o
+        # roteamento de mensagens recebidas filtra is_active=True.
+        acc.is_active = True
         if owner and not acc.owner_id:
             acc.owner = owner
         acc.save()
