@@ -260,10 +260,38 @@ class SessionManager:
 
         logger.info("[SessionManager] Session reset for %s", mask_phone(self.phone_number))
     
+    def _clear_stale_payment_state(self, session: CustomerSession) -> None:
+        """Invalida PIX/pagamento de um pedido ANTERIOR quando um carrinho novo começa.
+
+        Sessões terminais recentes são reutilizadas (ver get_or_create_session);
+        sem esta limpeza o pix_code do pedido antigo vaza pro checkout novo.
+        """
+        terminal = {
+            CustomerSession.SessionStatus.PAYMENT_CONFIRMED,
+            CustomerSession.SessionStatus.ORDER_PLACED,
+            CustomerSession.SessionStatus.COMPLETED,
+        }
+        if not (session.pix_code or session.payment_id or session.status in terminal):
+            return
+        CustomerSession.objects.filter(pk=session.pk).update(
+            pix_code='',
+            pix_qr_code='',
+            pix_expires_at=None,
+            payment_id='',
+            order=None,
+            status=CustomerSession.SessionStatus.CART_CREATED,
+        )
+        session.refresh_from_db()
+        logger.info(
+            '[SessionManager] Stale payment state cleared for %s (novo carrinho)',
+            mask_phone(self.phone_number),
+        )
+
     def save_pending_order_items(self, items: list) -> None:
         """Salva itens pendentes na sessão enquanto espera escolha de entrega/pagamento."""
         session = self.get_or_create_session()
         if session:
+            self._clear_stale_payment_state(session)
             data = _append_checkout_snapshot(
                 session.cart_data or {},
                 'items_selected',

@@ -9,6 +9,31 @@ logger = logging.getLogger(__name__)
 class GreetingHandler(IntentHandler):
     """Handler para saudações — retorna boas-vindas com atalhos diretos."""
 
+    @staticmethod
+    def _session_order_is_active(session) -> bool:
+        """True apenas se o pedido vinculado à sessão ainda está em andamento.
+
+        Sessão terminal reutilizada (24h) não pode dizer "sendo processado"
+        depois do pedido entregue/cancelado.
+        """
+        from apps.stores.models import StoreOrder
+        finished = {
+            StoreOrder.OrderStatus.DELIVERED,
+            StoreOrder.OrderStatus.COMPLETED,
+            StoreOrder.OrderStatus.CANCELLED,
+            StoreOrder.OrderStatus.REFUNDED,
+            StoreOrder.OrderStatus.FAILED,
+        }
+        try:
+            order = session.order
+        except Exception:
+            order = None
+        if order is not None:
+            return order.status not in finished
+        # Sem pedido vinculado: só PAYMENT_PENDING justifica "em processamento"
+        from apps.automation.models import CustomerSession
+        return session.status == CustomerSession.SessionStatus.PAYMENT_PENDING
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         order_enabled = self._bot_order_enabled()
         # Se o cliente já tem sessão com pedido/pagamento em andamento,
@@ -38,10 +63,13 @@ class GreetingHandler(IntentHandler):
                         CustomerSession.SessionStatus.ORDER_PLACED,
                         CustomerSession.SessionStatus.COMPLETED,
                     ):
-                        return HandlerResult.text(
-                            f"{hi} Seu pedido está sendo processado. "
-                            "Pode acompanhar aqui ou falar com a gente se precisar de ajuda."
-                        )
+                        if self._session_order_is_active(session):
+                            return HandlerResult.text(
+                                f"{hi} Seu pedido está sendo processado. "
+                                "Pode acompanhar aqui ou falar com a gente se precisar de ajuda."
+                            )
+                        # Pedido já entregue/cancelado (ou sessão concluída sem
+                        # pedido ativo) — segue para boas-vindas normais.
 
                     if order_enabled and session.status in (
                         CustomerSession.SessionStatus.CART_CREATED,

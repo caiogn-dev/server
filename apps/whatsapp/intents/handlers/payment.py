@@ -63,7 +63,9 @@ class ViewQRCodeHandler(IntentHandler):
         session_data = session_manager.get_session_data()
         pix_code = session_data.get('pix_code', '')
         order_id = session_data.get('order_id', '')
-        if not pix_code:
+        # PIX da sessão só vale enquanto o pagamento está pendente — nunca
+        # reenviar código de pedido já pago/entregue.
+        if not pix_code or not session_manager.is_payment_pending():
             return HandlerResult.text("❌ Não encontrei um pagamento pendente.\n\nQuer fazer um pedido novo?")
         try:
             from apps.stores.models import StoreOrder
@@ -93,6 +95,6 @@ class CopyPixHandler(IntentHandler):
         session_manager = self._get_session_manager()
         session_data = session_manager.get_session_data()
         pix_code = session_data.get('pix_code', '')
-        if not pix_code:
+        if not pix_code or not session_manager.is_payment_pending():
             return HandlerResult.text("❌ Não encontrei um pagamento pendente.\n\nQuer fazer um pedido novo?")
         return HandlerResult.text(pix_code)

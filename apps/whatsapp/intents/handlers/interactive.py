@@ -195,11 +195,18 @@ class InteractiveReplyHandler(IntentHandler):
         except Exception:
             session_data = {}
 
-        # Idempotência: se já existe pix_code na sessão, não criar novo pedido/PIX
-        if session_data.get('pix_code'):
+        # Idempotência ESCOPADA ao checkout atual: só reenvia o PIX existente se
+        # for reclique de pay_pix SEM itens novos no carrinho. Com itens novos é
+        # um pedido NOVO — reenviar o código antigo cobraria o valor errado.
+        if (
+            reply_id == 'pay_pix'
+            and session_data.get('pix_code')
+            and not items
+            and session_data.get('status') == 'payment_pending'
+        ):
             if lock_key:
                 cache.delete(lock_key)
-            logger.info('[InteractiveReplyHandler] PIX já existe na sessão — retornando código existente')
+            logger.info('[InteractiveReplyHandler] Reclique de PIX no mesmo checkout — reenviando código')
             return HandlerResult.buttons(
                 body=session_data['pix_code'],
                 buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}],
