@@ -91,13 +91,13 @@ class PixIdempotencyScopeTest(_Base):
         self._terminal_session_with_stale_pix()
         h = self._handler()
         h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
-        with patch.object(
-            InteractiveReplyHandler, '_finalize_order',
-            return_value=HandlerResult.text('PEDIDO NOVO CRIADO'),
-        ) as finalize:
+        with patch(
+            'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.delay'
+        ) as delay:
             result = h.handle({'reply_id': 'pay_pix', 'reply_title': '', 'original_message': ''})
-        finalize.assert_called_once()
+        delay.assert_called_once()
         self.assertNotIn('PIXVELHO', result.response_text or '')
+        self.assertIn('recebido', (result.response_text or '').lower())
 
     def test_pay_pix_duplicate_click_without_items_reuses_pending_pix(self):
         # Sessão AGUARDANDO pagamento (pedido atual, itens já limpos) → reenviar é correto
@@ -125,6 +125,72 @@ class PixIdempotencyScopeTest(_Base):
         result = h.handle({'reply_id': 'pay_card', 'reply_title': '', 'original_message': ''})
         blob = (result.response_text or '') + str(result.interactive_data or {})
         self.assertNotIn('PIXATUAL', blob)
+
+
+class AsyncCheckoutTaskTest(_Base):
+    """finalize_whatsapp_order_task: finaliza, envia e libera o lock."""
+
+    def _seed_cart(self):
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+
+    def test_task_finalizes_and_sends_buttons(self):
+        from django.core.cache import cache
+        from apps.whatsapp.tasks.checkout_tasks import finalize_whatsapp_order_task
+        self._seed_cart()
+        cache.set('lock-teste', '1', timeout=60)
+        fake = HandlerResult.buttons(body='PIXNOVO123', buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}])
+        with patch.object(InteractiveReplyHandler, '_finalize_order', return_value=fake) as fin, \
+             patch('apps.whatsapp.services.message_service.MessageService.send_interactive_buttons') as send_btn:
+            finalize_whatsapp_order_task.apply(kwargs=dict(
+                account_id=str(self.account.id),
+                conversation_id=str(self.conversation.id),
+                profile_id=str(self.profile.id),
+                payment_method='pix',
+                lock_key='lock-teste',
+            ))
+        fin.assert_called_once()
+        send_btn.assert_called_once()
+        self.assertEqual(send_btn.call_args.kwargs['body_text'], 'PIXNOVO123')
+        self.assertIsNone(cache.get('lock-teste'), 'lock não liberado')
+        h = self._handler()
+        self.assertEqual(h._get_session_manager().get_pending_order_items(), [],
+                         'itens pendentes não limpos após finalizar')
+
+    def test_task_sends_text_result(self):
+        from apps.whatsapp.tasks.checkout_tasks import finalize_whatsapp_order_task
+        self._seed_cart()
+        fake = HandlerResult.text('🧾 Pedido #X recebido! Link: https://mp.com/x')
+        with patch.object(InteractiveReplyHandler, '_finalize_order', return_value=fake), \
+             patch('apps.whatsapp.services.message_service.MessageService.send_text_message') as send_txt:
+            finalize_whatsapp_order_task.apply(kwargs=dict(
+                account_id=str(self.account.id),
+                conversation_id=str(self.conversation.id),
+                profile_id=str(self.profile.id),
+                payment_method='card',
+            ))
+        send_txt.assert_called_once()
+        self.assertIn('recebido', send_txt.call_args.kwargs['text'])
+
+
+class FlowPolishTest(_Base):
+    def test_add_more_items_shows_menu_not_error(self):
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+        result = h.handle({'reply_id': 'add_more_items', 'reply_title': '', 'original_message': ''})
+        blob = (result.response_text or '') + str(result.interactive_data or {})
+        self.assertNotIn('Erro ao processar', blob)
+
+    def test_sauce_upsell_confirms_addition(self):
+        sauce = StoreProduct.objects.create(
+            store=self.store, name='Molho Pesto', slug='molho-pesto-pix', price=12, is_active=True,
+        )
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+        result = h.handle({'reply_id': f'sauce_{sauce.id}', 'reply_title': '', 'original_message': ''})
+        blob = (result.response_text or '') + str(result.interactive_data or {})
+        self.assertIn('Molho Pesto', blob)
+        self.assertIn('adicionado', blob)
 
 
 class GreetingAfterDeliveredTest(_Base):

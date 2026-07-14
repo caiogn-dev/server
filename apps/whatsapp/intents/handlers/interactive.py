@@ -37,11 +37,13 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id.startswith('product_'):
             return self._handle_product_selection(reply_id, reply_title)
 
-        if reply_id.startswith('add_'):
-            return self._handle_add_to_cart(reply_id)
-
+        # 'add_more_items' antes do prefixo 'add_' — senão cai no parser de
+        # add_{produto}_{qty} e vira "Erro ao processar pedido".
         if reply_id in ('view_menu', 'view_catalog', 'order_catalog', 'add_more_items'):
             return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
+
+        if reply_id.startswith('add_'):
+            return self._handle_add_to_cart(reply_id)
 
         if reply_id in ('start_order', 'order_quick'):
             return CreateOrderHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
@@ -219,37 +221,53 @@ class InteractiveReplyHandler(IntentHandler):
                 "❌ Não encontrei itens no seu pedido.\n\n"
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
             )
-        delivery_address = addr_info.get('address', '')
-        delivery_fee_override = addr_info.get('fee')
         logger.info(
-            '[InteractiveReplyHandler] Finalizando pedido: delivery=%s payment=%s fee=%s address=%s lat=%s lng=%s notes=%r',
-            delivery_method, payment_method, delivery_fee_override,
-            delivery_address[:40] if delivery_address else '',
-            addr_info.get('lat'), addr_info.get('lng'),
-            customer_notes[:40] if customer_notes else '',
+            '[InteractiveReplyHandler] Enfileirando finalização: delivery=%s payment=%s itens=%d',
+            delivery_method, payment_method, len(items),
         )
+        # Parte lenta (criar pedido + Mercado Pago) roda em task — cliente
+        # recebe ack na hora e o pagamento chega em seguida. O lock segura
+        # recliques até o task terminar (ele libera no finally).
         try:
-            result = self._finalize_order(
-                items,
-                delivery_method=delivery_method,
+            from apps.whatsapp.tasks.checkout_tasks import finalize_whatsapp_order_task
+            finalize_whatsapp_order_task.delay(
+                account_id=str(self.account.id),
+                conversation_id=str(self.conversation.id),
+                profile_id=str(self.company_profile.id) if self.company_profile else None,
                 payment_method=payment_method,
-                delivery_address=delivery_address,
-                customer_notes=customer_notes,
-                delivery_fee_override=delivery_fee_override,
-                addr_info=addr_info,
+                lock_key=lock_key,
             )
-        except Exception as exc:
-            logger.exception('[InteractiveReplyHandler] _finalize_order falhou')
-            result = HandlerResult.text("❌ Erro ao criar pedido. Por favor, tente novamente.")
-        finally:
-            if lock_key:
-                cache.delete(lock_key)
-        if not (result.response_text and result.response_text.startswith(('❌ Erro ao criar pedido', '❌ Loja'))):
+        except Exception:
+            logger.exception('[InteractiveReplyHandler] Falha ao enfileirar — finalizando síncrono')
             try:
-                session_manager.clear_pending_order_items()
-            except Exception as exc:
-                logger.warning('[InteractiveReplyHandler] Erro ao limpar itens pendentes: %s', exc)
-        return result
+                result = self._finalize_order(
+                    items,
+                    delivery_method=delivery_method,
+                    payment_method=payment_method,
+                    delivery_address=addr_info.get('address', ''),
+                    customer_notes=customer_notes,
+                    delivery_fee_override=addr_info.get('fee'),
+                    addr_info=addr_info,
+                )
+            except Exception:
+                logger.exception('[InteractiveReplyHandler] _finalize_order falhou')
+                result = HandlerResult.text("❌ Erro ao criar pedido. Por favor, tente novamente.")
+            finally:
+                if lock_key:
+                    cache.delete(lock_key)
+            if not (result.response_text and result.response_text.startswith(('❌ Erro ao criar pedido', '❌ Loja'))):
+                try:
+                    session_manager.clear_pending_order_items()
+                except Exception as exc:
+                    logger.warning('[InteractiveReplyHandler] Erro ao limpar itens pendentes: %s', exc)
+            return result
+
+        ack_by_method = {
+            'pix': "🧾 *Pedido recebido!*\n\n⏳ Estou gerando seu código PIX — chega aqui em instantes! 🙏",
+            'card': "🧾 *Pedido recebido!*\n\n⏳ Gerando seu link de pagamento seguro do Mercado Pago...",
+            'cash': "🧾 *Pedido recebido!*\n\n⏳ Registrando seu pedido...",
+        }
+        return HandlerResult.text(ack_by_method.get(payment_method, ack_by_method['pix']))
 
     def _handle_product_selection(self, reply_id: str, reply_title: str) -> HandlerResult:
         product_uuid = reply_id[len('product_'):]
@@ -476,7 +494,8 @@ class InteractiveReplyHandler(IntentHandler):
             logger.error('[InteractiveReplyHandler] Erro ao adicionar bebida: %s', exc)
             items = [{'product_id': str(drink.id), 'quantity': 1}]
         sauce_upsell = self._show_sauce_upsell(items)
-        return sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
+        result = sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
+        return self._prepend_body(result, f"✅ *{drink.name}* adicionado ao seu pedido!")
 
     def _handle_skip_upsell(self) -> HandlerResult:
         """Pula bebida e avança para upsell de molho."""
@@ -561,7 +580,21 @@ class InteractiveReplyHandler(IntentHandler):
         except Exception as exc:
             logger.error('[InteractiveReplyHandler] Erro ao adicionar molho: %s', exc)
             items = [{'product_id': str(sauce.id), 'quantity': 1}]
-        return self._ask_delivery_method(items)
+        return self._prepend_body(
+            self._ask_delivery_method(items),
+            f"✅ *{sauce.name}* adicionado ao seu pedido!",
+        )
+
+    @staticmethod
+    def _prepend_body(result: HandlerResult, text: str) -> HandlerResult:
+        """Antepõe uma confirmação ao corpo da próxima mensagem do fluxo."""
+        if result.interactive_data and result.interactive_data.get('body'):
+            result.interactive_data['body'] = f"{text}\n\n{result.interactive_data['body']}"
+        elif result.response_text and result.response_text not in (
+            'BUTTONS_SENT', 'LIST_SENT', 'PRODUCT_LIST_SENT',
+        ):
+            result.response_text = f"{text}\n\n{result.response_text}"
+        return result
 
     def _handle_skip_sauce(self) -> HandlerResult:
         """Pula molho e vai direto para entrega."""

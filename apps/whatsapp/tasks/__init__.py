@@ -511,3 +511,5 @@ from .legacy_tasks import (  # noqa: E402,F401
     send_campaign_message,
     schedule_campaign_messages,
 )
+
+from .checkout_tasks import finalize_whatsapp_order_task  # noqa: E402,F401

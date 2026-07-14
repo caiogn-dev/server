@@ -75,7 +75,12 @@ class WhatsAppAccount(BaseModel):
 
     @property
     def masked_token(self) -> str:
-        return mask_token(self.access_token)
+        # Token ilegível (chave Fernet trocada / registro legado) não pode
+        # derrubar a listagem de contas do painel com 500.
+        try:
+            return mask_token(self.access_token)
+        except Exception:
+            return '<token inválido — reconecte a conta>'
 
     def rotate_token(self, new_token: str):
         self.access_token = new_token

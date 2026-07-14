@@ -321,10 +321,11 @@ class IntentHandler:
             for item in order_items
         )
         msg1 = (
-            f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
+            f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
             f"{items_text}\n\n"
             f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
-            f"💳 Pague via PIX — o código está na próxima mensagem 👇"
+            f"💳 *Para confirmar seu pedido, realize o pagamento via PIX* — "
+            f"o código está na próxima mensagem 👇"
         )
         try:
             self.whatsapp_service.send_text_message(to=self.conversation.phone_number, text=msg1)
@@ -619,20 +620,19 @@ class IntentHandler:
             if payment_data.get('success'):
                 checkout_link = payment_data.get('checkout_link', '')
                 return HandlerResult.text(
-                    f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                    f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
                     f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
-                    f"💳 Clique no link abaixo para pagar com cartão:\n"
-                    f"{checkout_link}\n\n"
-                    f"⏳ O link é seguro e gerado pelo Mercado Pago."
+                    f"💳 *Para confirmar seu pedido, pague com cartão pelo link seguro do Mercado Pago:*\n"
+                    f"{checkout_link}"
                 )
             error_msg = payment_data.get('error', 'Tente novamente')
             return HandlerResult.text(
-                f"✅ *Pedido #{order.order_number} criado!*\n\n"
+                f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
                 f"💰 Total: R$ {float(order.total):.2f}\n"
                 f"⚠️ Erro ao gerar link de pagamento: {error_msg}"
             )
         return HandlerResult.text(
-            f"✅ *Pedido #{order.order_number} confirmado!*\n\n"
+            f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
             f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
             f"💵 Pagamento na retirada — nos vemos em breve! 🏪"
         )
