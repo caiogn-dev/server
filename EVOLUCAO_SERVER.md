@@ -262,3 +262,48 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-14
+
+**Gate anti-acúmulo:** 5 PRs abertos não mergeados (#297-#301) cobrindo str(e) e IDOR.
+Confirmado que `is_staff` em whatsapp/instagram já estava corrigido em `development`.
+Novo código de billing/PIX (23 commits de features) revisado — sem issues de segurança adicionais.
+
+**Bug encontrado e corrigido:** info-disclosure via `str(e)` em `test_integration` e `test_webhook` [P1]
+
+- **Tipo:** P1 — Info-disclosure autenticado em endpoints de diagnóstico de integração
+- **Arquivos corrigidos (2):**
+  - `apps/stores/services/store_service.py` — 7 pontos em `test_integration` e sub-métodos:
+    - `test_integration` (outer handler): `f'Error testing integration: {str(e)}'` → `'Erro ao testar integração.'`
+    - `_test_whatsapp_integration`: `f'Connection error: {str(e)}'` → `'Erro de conexão.'` + logger
+    - `_test_mercadopago_integration`: idem
+    - `_test_instagram_integration`: idem
+    - `_test_webhook_integration`: `f'Webhook connection error: {str(e)}'` → genérico + logger
+    - `_test_email_integration` (Resend API): `f'Connection error: {str(e)}'` → genérico + logger
+    - `_test_email_integration` (SMTP): `f'SMTP connection error: {str(e)}'` → `'Erro de conexão SMTP.'` + logger
+  - `apps/stores/services/webhook_service.py` — 1 ponto em `test_webhook`:
+    - `return {'success': False, 'error': str(e)}` → mensagem genérica + logger
+- **Vetor:** `POST /stores/{slug}/integrations/{id}/test/` e `POST /stores/{slug}/webhooks/{id}/test_webhook/`
+  retornavam erros de rede internos (host SMTP, credenciais, URLs internas, respostas de gateway) para qualquer dono/staff de loja autenticado.
+- **Não coberto pelos PRs #297-#301** (que tratam outros módulos). Este era o ponto remanescente do sweep de `str(e)`.
+- **Testes:** 8 novos casos SimpleTestCase em `test_integration_webhook_str_e_leak.py` (RED→GREEN confirmado). 30 testes combinados OK.
+- **PR:** #302 — `bot/server-2026-07-14-str-e-integration-webhook-test` (base: `development`)
+
+**PRs em aberto (aguardam merge):**
+| PR | Branch | Cobertura | Prioridade |
+|---|---|---|---|
+| #297 | `bot/server-2026-07-09-info-disclosure-str-e` | orders, campaigns | P0 |
+| #298 | `bot/server-2026-07-10-is-staff-idor-agents-conversations` | agents, conversations | P1 |
+| #299 | `bot/server-2026-07-11-str-e-payment-storefront` | payments, storefront AllowAny | P0 |
+| #300 | `bot/server-2026-07-12-str-e-combo-subscription-print-webhook` | combo, subscription, print, webhook | P0/P1 |
+| #301 | `bot/server-2026-07-13-serializer-idor-regression` | IDOR regressão em serializers | P1 |
+| #302 | `bot/server-2026-07-14-str-e-integration-webhook-test` | str(e) em test_integration/test_webhook | P1 |
+
+**Backlog priorizado (próximas execuções):**
+
+1. **P1** — Testes de contrato para OTP WhatsApp, zonas de entrega e checkout (CLAUDE.md item crítico pendente). Já existem testes base em `test_otp_and_agent_guardrails.py` e `test_mobile_contracts.py`, mas faltam cenários de regressão para zonas de entrega centralizadas e checkout com payload custom.
+2. **P1** — Checar `test_order_token_rate_definida_no_settings` em `test_serializer.py`: falta `'order_token': '30/minute'` em `DEFAULT_THROTTLE_RATES` — falha pré-existente no settings de teste.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (CLAUDE.md item crítico).
+4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
