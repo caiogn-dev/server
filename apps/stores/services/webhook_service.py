@@ -169,7 +169,8 @@ class WebhookService:
         except requests.Timeout:
             return {'success': False, 'error': 'Request timed out'}
         except requests.RequestException as e:
-            return {'success': False, 'error': str(e)}
+            logger.error('Erro de conexão ao testar webhook %s: %s', webhook.url, e)
+            return {'success': False, 'error': 'Erro de conexão.'}
 
 
 webhook_service = WebhookService()
