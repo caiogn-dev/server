@@ -146,6 +146,39 @@ class UnifiedService:
             return {str(item) for item in allowed}
         return None
 
+    # Intents que fecham pedido pelo bot — gateadas pelo toggle bot_order_enabled
+    ORDER_FLOW_INTENT_VALUES = {
+        'create_order', 'add_to_cart', 'modify_order', 'confirm_payment',
+        'request_pix', 'view_qr_code', 'copy_pix', 'product_mention',
+    }
+    # Cliques interativos que NÃO são fluxo de pedido (sempre permitidos)
+    NON_ORDER_REPLY_IDS = {
+        'view_menu', 'view_catalog', 'order_catalog', 'contact_support',
+        'show_options', 'montar_salada',
+    }
+
+    def _bot_order_enabled(self) -> bool:
+        settings_data = getattr(self.company, 'settings', None) or {}
+        return bool(settings_data.get('bot_order_enabled', True))
+
+    def _order_disabled_response(self) -> 'UnifiedResponse':
+        menu_url = ''
+        try:
+            menu_url = self.company.get_menu_url() if self.company else ''
+        except Exception:
+            pass
+        link = f"\n\n👉 {menu_url}" if menu_url else ''
+        return UnifiedResponse(
+            content=(
+                "🛒 *Os pedidos são feitos pelo nosso site!*"
+                f"{link}\n\n"
+                "Por lá você monta o pedido completo, acompanha o status e paga "
+                "com PIX ou cartão. Se preferir, é só chamar que um atendente te ajuda! 😊"
+            ),
+            source=ResponseSource.HANDLER,
+            metadata={'intent': 'bot_order_disabled'},
+        )
+
     def _suppressed(self, reason: str) -> 'UnifiedResponse':
         logger.info(
             '[unified] restricted mode: suprimido (%s)', reason,
@@ -718,6 +751,17 @@ class UnifiedService:
 
         # ── Modo restrito: fluxos de bot (cliques/listas/localização) ficam
         # desligados; só intents da allow-list respondem, mais abaixo. ──
+        # Toggle do lojista: bot não fecha pedidos → cliques de fluxo de pedido
+        # e localização viram redirecionamento pro site (antes do modo restrito,
+        # pra dar resposta útil em vez de silêncio).
+        if not self._bot_order_enabled():
+            reply_id = (interactive_reply or {}).get('id', '')
+            is_order_click = bool(interactive_reply) and not (
+                reply_id in self.NON_ORDER_REPLY_IDS or reply_id.startswith('track_')
+            )
+            if is_order_click or location_data:
+                return self._order_disabled_response()
+
         _restricted = self._allowed_intents()
         if _restricted is not None and (interactive_reply or location_data):
             return self._suppressed('interactive_or_location')
@@ -883,6 +927,9 @@ class UnifiedService:
 
         if _restricted is not None and intent.value not in _restricted:
             return self._suppressed(intent.value)
+
+        if intent.value in self.ORDER_FLOW_INTENT_VALUES and not self._bot_order_enabled():
+            return self._order_disabled_response()
 
         intent_data['llm_available'] = bool(self.use_llm and self.agent)
 

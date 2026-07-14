@@ -200,6 +200,23 @@ class IntentHandler:
             return self.company_profile.store
         return None
 
+    def _bot_order_enabled(self) -> bool:
+        """Toggle do lojista: o bot pode fechar pedidos pelo WhatsApp?"""
+        settings_data = getattr(self.company_profile, 'settings', None) or {}
+        return bool(settings_data.get('bot_order_enabled', True))
+
+    def _order_cta_button(self):
+        """CTA de pedido multi-tenant: configurável via settings['bot_cta']
+        (ex.: Cê Saladas usa Montar Salada); default genérico Fazer Pedido.
+        Retorna None quando o lojista desligou pedidos pelo bot."""
+        if not self._bot_order_enabled():
+            return None
+        settings_data = getattr(self.company_profile, 'settings', None) or {}
+        cta = settings_data.get('bot_cta') or {}
+        if cta.get('id') and cta.get('title'):
+            return {'id': str(cta['id']), 'title': str(cta['title'])[:20]}
+        return {'id': 'start_order', 'title': '🛒 Fazer Pedido'}
+
     def _normalize_lookup_text(self, value: str) -> str:
         if not value:
             return ""

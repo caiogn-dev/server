@@ -10,6 +10,7 @@ class GreetingHandler(IntentHandler):
     """Handler para saudações — retorna boas-vindas com atalhos diretos."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        order_enabled = self._bot_order_enabled()
         # Se o cliente já tem sessão com pedido/pagamento em andamento,
         # não reinicia com boas-vindas completas — apenas responde brevemente
         # e mostra o estado atual para evitar perda de contexto.
@@ -42,7 +43,7 @@ class GreetingHandler(IntentHandler):
                             "Pode acompanhar aqui ou falar com a gente se precisar de ajuda."
                         )
 
-                    if session.status in (
+                    if order_enabled and session.status in (
                         CustomerSession.SessionStatus.CART_CREATED,
                         CustomerSession.SessionStatus.CHECKOUT,
                     ):
@@ -68,7 +69,7 @@ class GreetingHandler(IntentHandler):
 
         # Verifica se tem pedido recente (últimos 7 dias) para oferecer repetição
         recent_order = None
-        if self.store:
+        if self.store and order_enabled:
             try:
                 from django.utils import timezone
                 from datetime import timedelta
@@ -109,11 +110,9 @@ class GreetingHandler(IntentHandler):
             f"O que posso fazer por você?"
         )
         logger.info('[GreetingHandler] Saudação com botões diretos para %s', customer_name)
-        return HandlerResult.buttons(
-            body=body,
-            buttons=[
-                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-                {'id': 'montar_salada', 'title': '🥗 Montar Salada'},
-                {'id': 'contact_support', 'title': '👤 Atendente'},
-            ],
-        )
+        buttons = [{'id': 'view_menu', 'title': '📋 Ver Cardápio'}]
+        cta = self._order_cta_button()
+        if cta:
+            buttons.append(cta)
+        buttons.append({'id': 'contact_support', 'title': '👤 Atendente'})
+        return HandlerResult.buttons(body=body, buttons=buttons)

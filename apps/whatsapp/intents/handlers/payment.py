@@ -19,11 +19,7 @@ class PaymentStatusHandler(IntentHandler):
             if pix_code:
                 return HandlerResult.buttons(
                     body=pix_code,
-                    buttons=[
-                        {'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'},
-                        {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
-                        {'id': 'cancel_order', 'title': '❌ Cancelar'},
-                    ],
+                    buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}],
                 )
         # Busca pedido pendente com PIX já gerado
         pending_order = Order.objects.filter(
@@ -39,11 +35,7 @@ class PaymentStatusHandler(IntentHandler):
             )
             return HandlerResult.buttons(
                 body=pending_order.pix_code,
-                buttons=[
-                    {'id': f'pix_copy_{pending_order.id}', 'title': 'COPIAR CODIGO PIX'},
-                    {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
-                    {'id': 'cancel_order', 'title': '❌ Cancelar'},
-                ],
+                buttons=[{'id': f'pix_copy_{pending_order.id}', 'title': 'COPIAR CODIGO PIX'}],
             )
         # Race condition: pedido criado mas PIX ainda sendo gerado (async)
         order_without_pix = Order.objects.filter(

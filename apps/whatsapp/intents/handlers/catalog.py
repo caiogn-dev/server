@@ -210,7 +210,7 @@ class MenuRequestHandler(IntentHandler):
         drink_footer = "🥤 Bebidas disponíveis ao finalizar o pedido!" if has_drinks else None
 
         if not products_by_category:
-            logger.error("[MenuRequestHandler] Nenhum produto de salada encontrado!")
+            logger.error("[MenuRequestHandler] Nenhum produto (não-bebida) encontrado!")
             return HandlerResult.text("Nenhum produto disponível no momento. 😔")
 
         sections = []
@@ -259,7 +259,7 @@ class MenuRequestHandler(IntentHandler):
                         len(product_sections), total_product_items)
             return HandlerResult.product_list(
                 header=f"Cardápio - {self.store.name}",
-                body="Escolha sua salada pelo catálogo abaixo. 🥗",
+                body="Escolha seus produtos no catálogo abaixo. 🛒",
                 footer=drink_footer or "As imagens e preços vêm do catálogo do WhatsApp.",
                 sections=product_sections,
                 fallback_sections=sections,
@@ -267,7 +267,7 @@ class MenuRequestHandler(IntentHandler):
 
         logger.info("[MenuRequestHandler] Enviando lista com %s seções", len(sections))
         return HandlerResult.list_message(
-            body=f"🥗 *Cardápio - {self.store.name}*\n\nEscolha sua salada:",
+            body=f"📋 *Cardápio - {self.store.name}*\n\nEscolha um produto:",
             button="Ver opções",
             sections=sections,
         )

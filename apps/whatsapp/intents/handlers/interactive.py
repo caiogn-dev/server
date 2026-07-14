@@ -40,7 +40,7 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id.startswith('add_'):
             return self._handle_add_to_cart(reply_id)
 
-        if reply_id in ('view_menu', 'view_catalog', 'order_catalog'):
+        if reply_id in ('view_menu', 'view_catalog', 'order_catalog', 'add_more_items'):
             return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
 
         if reply_id in ('start_order', 'order_quick'):
@@ -80,7 +80,6 @@ class InteractiveReplyHandler(IntentHandler):
                     'title': 'Escolha uma opção',
                     'rows': [
                         {'id': 'view_menu',       'title': '📋 Ver Cardápio',        'description': 'Veja nossos pratos e preços'},
-                        {'id': 'montar_salada',   'title': '🥗 Montar Salada',       'description': 'Monte sua salada personalizada'},
                         {'id': 'contact_support', 'title': '👤 Falar com Atendente', 'description': 'Prefere falar com um humano?'},
                     ],
                 }],
@@ -91,11 +90,20 @@ class InteractiveReplyHandler(IntentHandler):
             menu_url = self.company_profile.get_menu_url() if self.company_profile else ''
             link = f"\n\n👉 {menu_url}" if menu_url else ""
             return HandlerResult.text(
-                "🥗 *Monte sua salada personalizada pelo nosso site!*\n\n"
-                "Acesse o cardápio, escolha a base, proteína, toppings e molho do seu jeito:"
+                "🛒 *Monte seu pedido do seu jeito pelo nosso site!*\n\n"
+                "Acesse o cardápio e escolha cada detalhe:"
                 f"{link}\n\n"
                 "Por lá você também faz o pedido completo, acompanha o status e paga com PIX ou cartão. 😊"
             )
+
+        if reply_id.startswith('qty_'):
+            return self._handle_quantity_picker(reply_id)
+
+        if reply_id.startswith('setqty_'):
+            return self._handle_set_quantity(reply_id)
+
+        if reply_id == 'checkout_now':
+            return self._handle_checkout_now()
 
         if reply_id == 'contact_support':
             return HumanHandoffHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
@@ -194,11 +202,7 @@ class InteractiveReplyHandler(IntentHandler):
             logger.info('[InteractiveReplyHandler] PIX já existe na sessão — retornando código existente')
             return HandlerResult.buttons(
                 body=session_data['pix_code'],
-                buttons=[
-                    {'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'},
-                    {'id': 'send_comprovante', 'title': '📤 Enviar Comprovante'},
-                    {'id': 'cancel_order', 'title': '❌ Cancelar'},
-                ],
+                buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}],
             )
 
         if not items:
@@ -275,13 +279,124 @@ class InteractiveReplyHandler(IntentHandler):
     def _create_order_for_product(self, product, quantity: int) -> HandlerResult:
         if not self.store:
             return HandlerResult.text("Loja não disponível no momento. 😔")
-        items = [{'product_id': str(product.id), 'quantity': quantity}]
-        # Upsell de bebida somente quando o item adicionado não é bebida
-        if not _is_drink_product(product):
+        # MULTI-PRODUTO: acumula nos itens pendentes (mesmo produto soma qty);
+        # antes cada seleção descartava o carrinho anterior.
+        try:
+            session_manager = self._get_session_manager()
+            items = session_manager.get_pending_order_items() or []
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao ler itens pendentes: %s', exc)
+            session_manager = None
+            items = []
+        for it in items:
+            if str(it.get('product_id')) == str(product.id):
+                it['quantity'] = int(it.get('quantity', 1)) + quantity
+                break
+        else:
+            items.append({'product_id': str(product.id), 'quantity': quantity})
+        if session_manager:
+            try:
+                session_manager.save_pending_order_items(items)
+            except Exception as exc:
+                logger.warning('[InteractiveReplyHandler] Erro ao salvar itens: %s', exc)
+        return self._cart_summary_result(items, last_product=product)
+
+    def _cart_summary_result(self, items, last_product=None) -> HandlerResult:
+        """Resumo parcial do pedido + ações: adicionar mais, quantidade, fechar."""
+        products = {
+            str(pr.id): pr
+            for pr in StoreProduct.objects.filter(id__in=[i['product_id'] for i in items])
+        }
+        lines, total = [], 0.0
+        for it in items:
+            pr = products.get(str(it['product_id']))
+            if not pr:
+                continue
+            qty = int(it.get('quantity', 1))
+            total += qty * float(pr.price)
+            lines.append(f"• {qty}x {pr.name} — R$ {qty * float(pr.price):.2f}")
+        header = f"✅ *{last_product.name}* adicionado!\n\n" if last_product else ""
+        body = (
+            f"{header}🛒 *Seu pedido até agora:*\n"
+            + "\n".join(lines)
+            + f"\n\n💰 Subtotal: *R$ {total:.2f}*"
+        )
+        buttons = [
+            {'id': 'add_more_items', 'title': '➕ Adicionar mais'},
+        ]
+        if last_product:
+            buttons.append({'id': f'qty_{last_product.id}', 'title': '🔢 Quantidade'})
+        buttons.append({'id': 'checkout_now', 'title': '✅ Fechar pedido'})
+        return HandlerResult.buttons(body=body, buttons=buttons)
+
+    def _handle_quantity_picker(self, reply_id: str) -> HandlerResult:
+        product_id = reply_id[len('qty_'):]
+        try:
+            product = StoreProduct.objects.get(id=product_id, is_active=True)
+        except Exception:
+            return HandlerResult.text("Produto não encontrado. 😕")
+        rows = [
+            {'id': f'setqty_{product.id}_{n}', 'title': f'{n} unidade' + ('s' if n > 1 else ''),
+             'description': f'R$ {n * float(product.price):.2f}'}
+            for n in range(1, 10)
+        ]
+        return HandlerResult.list_message(
+            body=f"Quantas unidades de *{product.name}*?",
+            button="Escolher quantidade",
+            sections=[{'title': 'Quantidade', 'rows': rows}],
+        )
+
+    def _handle_set_quantity(self, reply_id: str) -> HandlerResult:
+        parts = reply_id.split('_')
+        try:
+            quantity = max(1, int(parts[-1]))
+            product_id = '_'.join(parts[1:-1])
+            product = StoreProduct.objects.get(id=product_id, is_active=True)
+        except Exception:
+            return HandlerResult.text("Erro ao ajustar quantidade. Tente novamente.")
+        try:
+            session_manager = self._get_session_manager()
+            items = session_manager.get_pending_order_items() or []
+        except Exception:
+            session_manager, items = None, []
+        for it in items:
+            if str(it.get('product_id')) == str(product.id):
+                it['quantity'] = quantity
+                break
+        else:
+            items.append({'product_id': str(product.id), 'quantity': quantity})
+        if session_manager:
+            try:
+                session_manager.save_pending_order_items(items)
+            except Exception as exc:
+                logger.warning('[InteractiveReplyHandler] Erro ao salvar qty: %s', exc)
+        return self._cart_summary_result(items, last_product=product)
+
+    def _handle_checkout_now(self) -> HandlerResult:
+        try:
+            session_manager = self._get_session_manager()
+            items = session_manager.get_pending_order_items() or []
+        except Exception:
+            items = []
+        if not items:
+            return HandlerResult.text(
+                "❌ Não encontrei itens no seu pedido.\n\nDigite *cardápio* para ver as opções."
+            )
+        product_ids = [i['product_id'] for i in items]
+        has_non_drink = any(
+            not _is_drink_product(pr)
+            for pr in StoreProduct.objects.filter(id__in=product_ids)
+        )
+        already_has_drink = any(
+            _is_drink_product(pr)
+            for pr in StoreProduct.objects.filter(id__in=product_ids)
+        )
+        if has_non_drink and not already_has_drink:
             upsell = self._show_drink_upsell(items)
             if upsell:
                 return upsell
-        return self._ask_delivery_method(items)
+        sauce_upsell = self._show_sauce_upsell(items)
+        return sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
 
     def _get_drink_products(self) -> List:
         """Retorna produtos ativos da categoria bebidas."""
@@ -331,7 +446,7 @@ class InteractiveReplyHandler(IntentHandler):
         ]
         buttons.append({'id': 'skip_upsell', 'title': '✅ Continuar sem bebida'})
         return HandlerResult.buttons(
-            body="🥤 *Quer adicionar uma bebida?*\n\nTemos opções geladas pra acompanhar sua salada 😊",
+            body="🥤 *Quer adicionar uma bebida?*\n\nTemos opções geladas pra acompanhar seu pedido 😊",
             buttons=buttons,
         )
 
