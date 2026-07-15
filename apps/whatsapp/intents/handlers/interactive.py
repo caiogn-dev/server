@@ -51,6 +51,27 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id in ('order_delivery', 'order_pickup'):
             return self._handle_delivery_choice(reply_id)
 
+        if reply_id == 'view_cart':
+            return self._handle_view_cart()
+
+        if reply_id == 'edit_cart':
+            return self._handle_edit_cart()
+
+        if reply_id.startswith('remove_'):
+            return self._handle_remove_item(reply_id[len('remove_'):])
+
+        if reply_id == 'clear_cart':
+            return self._handle_clear_cart()
+
+        if reply_id == 'use_saved_address':
+            return self._handle_use_saved_address()
+
+        if reply_id == 'new_address':
+            return self._handle_new_address()
+
+        if reply_id.startswith('sched_'):
+            return self._handle_schedule_slot(reply_id[len('sched_'):])
+
         if reply_id in ('pay_pix', 'pay_card', 'pay_pickup'):
             return self._handle_payment_choice(reply_id)
 
@@ -135,6 +156,23 @@ class InteractiveReplyHandler(IntentHandler):
             ],
         )
 
+    _ASK_ADDRESS_TEXT = (
+        "📍 *Qual é o seu endereço de entrega?*\n\n"
+        "Você pode:\n\n"
+        "📌 *Compartilhar sua localização* — toque no clipe 📎 e escolha *Localização* (mais rápido e preciso!)\n\n"
+        "✍️ *Ou digitar o endereço*, por exemplo:\n"
+        "_Quadra 304 Sul, Alameda 2, Lote 5_\n"
+        "_ARSE 72, Rua 4, Casa 3_"
+    )
+
+    def _ask_address(self, session_manager) -> HandlerResult:
+        try:
+            session_manager.save_pending_delivery_method('delivery')
+            session_manager.set_waiting_for_address(True)
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao salvar estado de endereço: %s', exc)
+        return HandlerResult.text(self._ASK_ADDRESS_TEXT)
+
     def _handle_delivery_choice(self, reply_id: str) -> HandlerResult:
         delivery_method = 'pickup' if reply_id == 'order_pickup' else 'delivery'
         try:
@@ -149,25 +187,229 @@ class InteractiveReplyHandler(IntentHandler):
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
             )
         if delivery_method == 'delivery':
+            # Cliente recorrente: endereço já validado nesta sessão → oferece reusar
             try:
-                session_manager.save_pending_delivery_method('delivery')
-                session_manager.set_waiting_for_address(True)
-            except Exception as exc:
-                logger.warning('[InteractiveReplyHandler] Erro ao salvar estado de endereço: %s', exc)
-            return HandlerResult.text(
-                "📍 *Qual é o seu endereço de entrega?*\n\n"
-                "Você pode:\n\n"
-                "📌 *Compartilhar sua localização* — toque no clipe 📎 e escolha *Localização* (mais rápido e preciso!)\n\n"
-                "✍️ *Ou digitar o endereço*, por exemplo:\n"
-                "_Quadra 304 Sul, Alameda 2, Lote 5_\n"
-                "_ARSE 72, Rua 4, Casa 3_"
-            )
+                addr = session_manager.get_delivery_address_info()
+            except Exception:
+                addr = {}
+            if addr.get('address') and addr.get('fee') is not None:
+                try:
+                    session_manager.save_pending_delivery_method('delivery')
+                except Exception:
+                    pass
+                fee = float(addr['fee'] or 0)
+                fee_fmt = f"R$ {fee:.2f}".replace('.', ',') if fee > 0 else "Grátis 🎉"
+                return HandlerResult.buttons(
+                    body=(
+                        f"📍 *Entregar no mesmo endereço?*\n\n"
+                        f"{addr['address']}\n"
+                        f"🛵 Taxa: {fee_fmt}"
+                    ),
+                    buttons=[
+                        {'id': 'use_saved_address', 'title': '✅ Usar este'},
+                        {'id': 'new_address', 'title': '✍️ Novo endereço'},
+                    ],
+                )
+            return self._ask_address(session_manager)
         logger.info('[InteractiveReplyHandler] Pickup — mostrando resumo e pedindo observações')
         try:
             session_manager.save_pending_delivery_method('pickup')
         except Exception as exc:
             logger.warning('[InteractiveReplyHandler] Erro ao salvar pickup: %s', exc)
         return self._show_order_summary_and_ask_notes(delivery_method='pickup')
+
+    def _handle_use_saved_address(self) -> HandlerResult:
+        session_manager = self._get_session_manager()
+        try:
+            addr = session_manager.get_delivery_address_info()
+        except Exception:
+            addr = {}
+        if not (addr.get('address') and addr.get('fee') is not None):
+            return self._ask_address(session_manager)
+        try:
+            session_manager.set_waiting_for_address(False)
+        except Exception:
+            pass
+        return self._show_order_summary_and_ask_notes(
+            delivery_method='delivery',
+            delivery_address=addr['address'],
+            delivery_fee=float(addr['fee'] or 0),
+            distance_km=addr.get('distance_km'),
+            duration_minutes=addr.get('duration_minutes'),
+        )
+
+    def _handle_new_address(self) -> HandlerResult:
+        return self._ask_address(self._get_session_manager())
+
+    def _handle_view_cart(self) -> HandlerResult:
+        try:
+            items = self._get_session_manager().get_pending_order_items() or []
+        except Exception:
+            items = []
+        if not items:
+            return HandlerResult.buttons(
+                body="🛒 Seu carrinho está vazio.\n\nQue tal dar uma olhada no cardápio? 😊",
+                buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+            )
+        return self._cart_summary_result(items)
+
+    def _handle_edit_cart(self) -> HandlerResult:
+        try:
+            items = self._get_session_manager().get_pending_order_items() or []
+        except Exception:
+            items = []
+        if not items:
+            return self._handle_view_cart()
+        products = {
+            str(p.id): p
+            for p in StoreProduct.objects.filter(id__in=[i['product_id'] for i in items])
+        }
+        qty_rows, remove_rows = [], []
+        for it in items[:4]:  # lista do WhatsApp: máx 10 linhas no total
+            p = products.get(str(it['product_id']))
+            if not p:
+                continue
+            qty = int(it.get('quantity', 1))
+            qty_rows.append({
+                'id': f'qty_{p.id}', 'title': f'✏️ {p.name}'[:24],
+                'description': f'Alterar quantidade (hoje: {qty})',
+            })
+            remove_rows.append({
+                'id': f'remove_{p.id}', 'title': f'❌ {p.name}'[:24],
+                'description': 'Remover do carrinho',
+            })
+        sections = [
+            {'title': 'Alterar quantidade', 'rows': qty_rows},
+            {'title': 'Remover', 'rows': remove_rows + [
+                {'id': 'clear_cart', 'title': '🗑️ Esvaziar carrinho',
+                 'description': 'Remove todos os itens'},
+            ]},
+        ]
+        return HandlerResult.list_message(
+            body="✏️ *O que você quer ajustar no carrinho?*",
+            button="Editar carrinho",
+            sections=sections,
+        )
+
+    def _handle_remove_item(self, product_id: str) -> HandlerResult:
+        try:
+            session_manager = self._get_session_manager()
+            items = session_manager.get_pending_order_items() or []
+        except Exception:
+            return HandlerResult.text("Erro ao acessar o carrinho. Tente novamente.")
+        items = [i for i in items if str(i.get('product_id')) != str(product_id)]
+        try:
+            session_manager.save_pending_order_items(items)
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao salvar remoção: %s', exc)
+        if not items:
+            return HandlerResult.buttons(
+                body="🗑️ Item removido — seu carrinho ficou vazio.\n\nQuer recomeçar?",
+                buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+            )
+        return self._cart_summary_result(items)
+
+    def _handle_clear_cart(self) -> HandlerResult:
+        try:
+            session_manager = self._get_session_manager()
+            session_manager.save_pending_order_items([])
+            session_manager.clear_pending_order_items()
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao esvaziar carrinho: %s', exc)
+        self._reset_upsell_progress()
+        return HandlerResult.buttons(
+            body="🗑️ *Carrinho esvaziado!*\n\nQuando quiser, é só escolher de novo. 😊",
+            buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+        )
+
+    # ── Agendamento (loja fechada aceita pedido AGENDADO, nunca bloqueia) ────
+
+    def _store_is_open(self) -> bool:
+        try:
+            return bool(self.store.is_open()) if self.store else True
+        except Exception:
+            return True
+
+    def _next_open_slots(self, max_slots: int = 8) -> List[Dict[str, str]]:
+        """Próximos horários de abertura pelo operating_hours da loja."""
+        from datetime import datetime as _dt, timedelta
+        from django.utils import timezone as _tz
+        if not self.store or not getattr(self.store, 'operating_hours', None):
+            return []
+        now = _tz.localtime()
+        weekday_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
+        slots = []
+        for offset in range(7):
+            day = (now + timedelta(days=offset)).date()
+            hours = self.store.operating_hours.get(weekday_names[day.weekday()])
+            if not hours:
+                continue
+            try:
+                open_t = _dt.strptime(hours.get('open') or hours.get('start') or '00:00', '%H:%M').time()
+                close_t = _dt.strptime(hours.get('close') or hours.get('end') or '23:59', '%H:%M').time()
+            except (ValueError, TypeError):
+                continue
+            cursor = _dt.combine(day, open_t)
+            end = _dt.combine(day, close_t)
+            while cursor < end and len(slots) < max_slots:
+                aware = _tz.make_aware(cursor) if _tz.is_naive(cursor) else cursor
+                if aware > now + timedelta(minutes=30):
+                    if offset == 0:
+                        label = f"Hoje {cursor.strftime('%H:%M')}"
+                    elif offset == 1:
+                        label = f"Amanhã {cursor.strftime('%H:%M')}"
+                    else:
+                        label = f"{day_labels[day.weekday()]} {day.strftime('%d/%m')} {cursor.strftime('%H:%M')}"
+                    slots.append({
+                        'id': f"sched_{day.isoformat()}_{cursor.strftime('%H:%M')}",
+                        'title': label[:24],
+                        'description': 'Agendar para este horário',
+                    })
+                cursor += timedelta(hours=1)
+            if len(slots) >= max_slots:
+                break
+        return slots
+
+    def _offer_scheduling(self, items: List[Dict]) -> HandlerResult:
+        slots = self._next_open_slots()
+        if not slots:
+            # Sem horários configurados p/ agendar — segue o fluxo normal
+            self._reset_upsell_progress()
+            return self._show_next_upsell(items)
+        store_name = getattr(self.store, 'name', 'A loja')
+        return HandlerResult.list_message(
+            body=(
+                f"😴 *{store_name} está fechada agora* — mas seu pedido não se perde!\n\n"
+                f"📅 *Escolha quando quer receber* e deixamos tudo agendado:"
+            ),
+            button="📅 Agendar pedido",
+            sections=[{'title': 'Próximos horários', 'rows': slots}],
+        )
+
+    def _handle_schedule_slot(self, slot: str) -> HandlerResult:
+        try:
+            date_str, time_str = slot.rsplit('_', 1)
+            from datetime import date as _date
+            _date.fromisoformat(date_str)  # valida formato
+        except (ValueError, TypeError):
+            return HandlerResult.text("❌ Horário inválido. Tente novamente.")
+        try:
+            session_manager = self._get_session_manager()
+            session_manager.save_scheduling(date_str, time_str)
+            items = session_manager.get_pending_order_items() or []
+        except Exception as exc:
+            logger.error('[InteractiveReplyHandler] Erro ao salvar agendamento: %s', exc)
+            return HandlerResult.text("❌ Erro ao agendar. Tente novamente.")
+        if not items:
+            return HandlerResult.text(
+                "📅 Agendado! Agora escolha os itens — digite *cardápio* para ver as opções."
+            )
+        from datetime import date as _date
+        d = _date.fromisoformat(date_str)
+        confirm = f"📅 *Agendado para {d.strftime('%d/%m')} às {time_str}!*"
+        self._reset_upsell_progress()
+        return self._show_next_upsell(items, confirm=confirm)
 
     def _handle_payment_choice(self, reply_id: str) -> HandlerResult:
         payment_map = {'pay_pix': 'pix', 'pay_card': 'card', 'pay_pickup': 'cash'}
@@ -222,6 +464,16 @@ class InteractiveReplyHandler(IntentHandler):
                 "❌ Não encontrei itens no seu pedido.\n\n"
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
             )
+        # Loja fechada sem agendamento: oferece agendar antes de cobrar
+        if not self._store_is_open():
+            try:
+                has_schedule = bool(session_manager and session_manager.get_scheduling()['date'])
+            except Exception:
+                has_schedule = True
+            if not has_schedule:
+                if lock_key:
+                    cache.delete(lock_key)
+                return self._offer_scheduling(items)
         logger.info(
             '[InteractiveReplyHandler] Enfileirando finalização: delivery=%s payment=%s itens=%d',
             delivery_method, payment_method, len(items),
@@ -349,10 +601,9 @@ class InteractiveReplyHandler(IntentHandler):
         )
         buttons = [
             {'id': 'add_more_items', 'title': '➕ Adicionar mais'},
+            {'id': 'edit_cart', 'title': '✏️ Editar carrinho'},
+            {'id': 'checkout_now', 'title': '✅ Fechar pedido'},
         ]
-        if last_product:
-            buttons.append({'id': f'qty_{last_product.id}', 'title': '🔢 Quantidade'})
-        buttons.append({'id': 'checkout_now', 'title': '✅ Fechar pedido'})
         return HandlerResult.buttons(body=body, buttons=buttons)
 
     def _handle_quantity_picker(self, reply_id: str) -> HandlerResult:
@@ -417,6 +668,13 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text(
                 "❌ Não encontrei itens no seu pedido.\n\nDigite *cardápio* para ver as opções."
             )
+        # Loja fechada: aceita o pedido, mas AGENDADO (nunca bloqueia)
+        if not self._store_is_open():
+            try:
+                if not session_manager.get_scheduling()['date']:
+                    return self._offer_scheduling(items)
+            except Exception:
+                pass
         self._reset_upsell_progress()
         return self._show_next_upsell(items)
 

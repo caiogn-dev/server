@@ -196,13 +196,43 @@ class CancelOrderHandler(IntentHandler):
         logger.info(f"Cancel order intent")
         session_manager = self._get_session_manager()
         if session_manager.is_order_in_progress():
+            cancelled_number = self._cancel_linked_unpaid_order(session_manager)
             session_manager.reset_session()
+            order_line = f"O pedido #{cancelled_number} foi cancelado e " if cancelled_number else ""
             return HandlerResult.text(
                 "❌ *Pedido cancelado!*\n\n"
-                "Seu carrinho foi esvaziado.\n\n"
+                f"{order_line}seu carrinho foi esvaziado.\n\n"
                 "Quer fazer um novo pedido? É só digitar *pedido* ou *cardápio*!"
             )
         return HandlerResult.text(
             "Não encontrei nenhum pedido em andamento para cancelar. ✅\n\n"
             "Quer fazer um pedido?"
         )
+
+    @staticmethod
+    def _cancel_linked_unpaid_order(session_manager) -> str:
+        """Cancela o StoreOrder vinculado à sessão SE ainda não foi pago.
+
+        Antes só a sessão era resetada — o pedido ficava 'pending' no painel
+        para sempre. Pedido pago NUNCA é cancelado por aqui.
+        """
+        try:
+            from apps.stores.models import StoreOrder
+            session = session_manager.get_or_create_session()
+            order = getattr(session, 'order', None)
+            if not order:
+                return ''
+            if (
+                order.status == StoreOrder.OrderStatus.PENDING
+                and order.payment_status == StoreOrder.PaymentStatus.PENDING
+            ):
+                order.status = StoreOrder.OrderStatus.CANCELLED
+                order.save(update_fields=['status', 'updated_at'])
+                logger.info(
+                    "[CancelOrderHandler] StoreOrder %s cancelado pelo cliente",
+                    order.order_number,
+                )
+                return str(order.order_number)
+        except Exception as exc:
+            logger.warning("[CancelOrderHandler] Erro ao cancelar StoreOrder: %s", exc)
+        return ''

@@ -1177,7 +1177,13 @@ class CheckoutService:
         if not credentials:
             raise ValueError("Credenciais de pagamento nao configuradas")
 
-        sdk = mercadopago.SDK(credentials['access_token'])
+        # Timeout explícito: o default (60s x 3 retries) pode segurar o worker
+        # do checkout por minutos se o MP pendurar.
+        from mercadopago.config import RequestOptions
+        sdk = mercadopago.SDK(
+            credentials['access_token'],
+            request_options=RequestOptions(connection_timeout=20.0, max_retries=2),
+        )
         payment_payload = payment_data or {}
         # payer_email para os fluxos baseados em pedido (cartão). PIX recomputa
         # o seu próprio (suporta avulso sem order).

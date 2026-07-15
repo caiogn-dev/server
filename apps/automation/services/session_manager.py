@@ -299,7 +299,10 @@ class SessionManager:
             )
             data['pending_items'] = items
             session.cart_data = data
-            session.save(update_fields=['cart_data'])
+            # Contador sincronizado: o lembrete de carrinho abandonado filtra
+            # cart_items_count>0 — sem isso, carrinhos de botão nunca lembram.
+            session.cart_items_count = sum(int(i.get('quantity', 1) or 1) for i in items)
+            session.save(update_fields=['cart_data', 'cart_items_count'])
             logger.info(f"[SessionManager] Pending items saved: {len(items)} items")
 
     def get_pending_order_items(self) -> list:
@@ -316,8 +319,37 @@ class SessionManager:
             data = _append_checkout_snapshot(session.cart_data or {}, 'order_finalized')
             data.pop('pending_items', None)
             data.pop('pending_delivery_method', None)
+            data.pop('scheduled_date', None)
+            data.pop('scheduled_time', None)
+            session.cart_data = data
+            session.cart_items_count = 0
+            session.save(update_fields=['cart_data', 'cart_items_count'])
+
+    def save_scheduling(self, scheduled_date: str, scheduled_time: str) -> None:
+        """Salva agendamento do pedido (loja fechada aceita pedido agendado)."""
+        session = self.get_or_create_session()
+        if session:
+            data = _append_checkout_snapshot(
+                session.cart_data or {},
+                'order_scheduled',
+                {'date': scheduled_date, 'time': scheduled_time},
+            )
+            data['scheduled_date'] = scheduled_date
+            data['scheduled_time'] = scheduled_time
             session.cart_data = data
             session.save(update_fields=['cart_data'])
+            logger.info(
+                "[SessionManager] Scheduling saved: %s %s", scheduled_date, scheduled_time
+            )
+
+    def get_scheduling(self) -> dict:
+        """Agendamento pendente da sessão: {'date': 'YYYY-MM-DD'|None, 'time': str}."""
+        session = self.get_or_create_session()
+        data = (session.cart_data or {}) if session else {}
+        return {
+            'date': data.get('scheduled_date') or None,
+            'time': data.get('scheduled_time') or '',
+        }
 
     def save_pending_delivery_method(self, delivery_method: str) -> None:
         """Salva método de entrega enquanto espera escolha de pagamento."""

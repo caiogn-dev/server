@@ -313,6 +313,16 @@ class IntentHandler:
             lines.append(f"• E-mail: {self.store.email}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _scheduled_line(order) -> str:
+        """Linha "agendado para" quando o pedido tem scheduled_date."""
+        sd = getattr(order, 'scheduled_date', None)
+        if not sd:
+            return ''
+        st = getattr(order, 'scheduled_time', '') or ''
+        when = sd.strftime('%d/%m') if hasattr(sd, 'strftime') else str(sd)
+        return f"📅 *Agendado para:* {when}{f' às {st}' if st else ''}\n\n"
+
     def _send_pix_confirmation(self, order, pix_code: str) -> 'HandlerResult':
         from apps.stores.models import StoreOrderItem
         order_items = StoreOrderItem.objects.filter(order_id=order.id)
@@ -323,9 +333,11 @@ class IntentHandler:
         msg1 = (
             f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
             f"{items_text}\n\n"
+            f"{self._scheduled_line(order)}"
             f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
             f"💳 *Para confirmar seu pedido, realize o pagamento via PIX* — "
-            f"o código está na próxima mensagem 👇"
+            f"o código está na próxima mensagem 👇\n\n"
+            f"_Mudou de ideia? Responda *cancelar*._"
         )
         try:
             self.whatsapp_service.send_text_message(to=self.conversation.phone_number, text=msg1)
@@ -345,10 +357,13 @@ class IntentHandler:
             from apps.stores.services.geo import geo_service
             geo = geo_service.geocode(address_text, restrict_to_city=True)
             if not geo or not geo.get('lat'):
+                city = getattr(self.store, 'city', '') or ''
+                where = f" em {city}" if city else ""
                 return HandlerResult.text(
-                    "❌ Não consegui localizar esse endereço em Palmas - TO.\n\n"
-                    "Por favor, tente novamente com mais detalhes:\n"
-                    "_Ex: Quadra 304 Sul, Alameda 2, Lote 5, Palmas_"
+                    f"❌ Não consegui localizar esse endereço{where}.\n\n"
+                    "Por favor, tente novamente com mais detalhes "
+                    "(rua/quadra, número e bairro), ou compartilhe sua "
+                    "localização pelo clipe 📎."
                 )
             return self._process_location_and_ask_payment(
                 session_manager=session_manager,
@@ -581,6 +596,15 @@ class IntentHandler:
         store_slug = getattr(self.store, 'slug', '') if self.store else ''
         if not store_slug:
             return HandlerResult.text("❌ Loja não disponível no momento.")
+        scheduled_date, scheduled_time = None, ''
+        try:
+            sched = self._get_session_manager().get_scheduling()
+            if sched.get('date'):
+                from datetime import date as _date
+                scheduled_date = _date.fromisoformat(sched['date'])
+                scheduled_time = sched.get('time') or ''
+        except Exception as exc:
+            logger.warning("[_finalize_order] Erro ao ler agendamento: %s", exc)
         result = create_order_from_whatsapp(
             store_slug=store_slug,
             phone_number=self.conversation.phone_number,
@@ -592,6 +616,8 @@ class IntentHandler:
             payment_method=payment_method,
             delivery_fee_override=delivery_fee_override,
             addr_info=addr_info,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
         )
         if not result.get('success'):
             error = result.get('error', 'Erro desconhecido')
@@ -621,6 +647,7 @@ class IntentHandler:
                 checkout_link = payment_data.get('checkout_link', '')
                 return HandlerResult.text(
                     f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
+                    f"{self._scheduled_line(order)}"
                     f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
                     f"💳 *Para confirmar seu pedido, pague com cartão pelo link seguro do Mercado Pago:*\n"
                     f"{checkout_link}"
@@ -633,6 +660,7 @@ class IntentHandler:
             )
         return HandlerResult.text(
             f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
+            f"{self._scheduled_line(order)}"
             f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
             f"💵 Pagamento na retirada — nos vemos em breve! 🏪"
         )

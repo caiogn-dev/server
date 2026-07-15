@@ -43,6 +43,8 @@ class WhatsAppOrderService:
         payment_method: str = 'pix',
         delivery_fee_override: float = None,
         addr_info: dict = None,
+        scheduled_date=None,
+        scheduled_time: str = '',
     ) -> Dict[str, Any]:
         """Cria pedido a partir dos itens do carrinho.
 
@@ -63,6 +65,8 @@ class WhatsAppOrderService:
             payment_method=payment_method,
             delivery_fee_override=delivery_fee_override,
             addr_info=addr_info,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
         )
         if checkout_result is not None:
             return checkout_result
@@ -150,6 +154,8 @@ class WhatsAppOrderService:
                 delivery_method=delivery_method,
                 delivery_address=delivery_address_payload,
                 customer_notes=customer_notes,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time or '',
                 metadata={
                     'source': 'whatsapp',
                     'created_via': 'whatsapp_automation',
@@ -225,6 +231,8 @@ class WhatsAppOrderService:
         payment_method: str = 'pix',
         delivery_fee_override: float = None,
         addr_info: dict = None,
+        scheduled_date=None,
+        scheduled_time: str = '',
     ) -> Optional[Dict[str, Any]]:
         """Create WhatsApp carts through the canonical CheckoutService.
 
@@ -302,6 +310,8 @@ class WhatsAppOrderService:
                 },
                 delivery_data=delivery_payload,
                 notes=customer_notes,
+                scheduled_date=scheduled_date,
+                scheduled_time=scheduled_time,
             )
 
             if payment_method == 'pix':
@@ -587,6 +597,8 @@ def create_order_from_whatsapp(
     payment_method: str = 'pix',
     delivery_fee_override: float = None,
     addr_info: dict = None,
+    scheduled_date=None,
+    scheduled_time: str = '',
 ) -> Dict[str, Any]:
     """Função utilitária para criar pedido via WhatsApp."""
     logger.info(
@@ -611,6 +623,8 @@ def create_order_from_whatsapp(
             payment_method=payment_method,
             delivery_fee_override=delivery_fee_override,
             addr_info=addr_info,
+            scheduled_date=scheduled_date,
+            scheduled_time=scheduled_time,
         )
         
         logger.info(f"[create_order_from_whatsapp] Resultado: {result.get('success')}")
