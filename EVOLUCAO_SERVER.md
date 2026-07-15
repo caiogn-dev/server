@@ -188,7 +188,7 @@ em `add_index concurrently` — pré-existente, não regressão.
 - **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
 - **Pontos corrigidos (3):**
   1. `StoreSlugOrIdField.to_internal_value` — adicionado tenant gate via `user_can_access_store`
-     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupons em loja alheia
+     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupõens em loja alheia
   2. `StoreDeliveryZoneCreateSerializer.validate_store` — método adicionado com mesmo tenant gate
      - Campo `store` era `PrimaryKeyRelatedField` sem check; qualquer autenticado criava zonas em loja alheia
   3. `StoreOrderCreateSerializer._resolve_store` — `not is_staff` → `not is_superuser`
@@ -250,15 +250,66 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
 - Corrigido `is_superuser or is_staff` → `is_superuser` em `AutoMessageViewSet.create`.
 - 8 testes SimpleTestCase (sem DB/Docker): RED→GREEN.
 
-### Próximo backlog (prioridade)
+---
 
-1. **P0** — Varredura de `str(e)` em handlers de exceção que vazam mensagens internas do ORM
-   (já coberto parcialmente pelo PR #291 ainda aberto — verificar se foi mesclado).
-2. **P1** — Varredura de `is_staff` como bypass cross-tenant nas demais views de `apps/whatsapp/`
-   e `apps/instagram/` (prosseguir o sweep iniciado nesta sessão).
-3. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
-   (item crítico do CLAUDE.md ainda pendente).
-4. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
-   (item crítico do CLAUDE.md).
-5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+### 2026-07-15
 
+**Gate anti-acúmulo:**
+- PRs abertos: #297–#302 (sweeps str(e) e IDOR em stores/agents/conversations/automation).
+- Sweep `is_staff` em `apps/whatsapp/` e `apps/instagram/` já mergeado em `development`
+  (confirmado via search_code: zero hits de is_staff bypass nesses apps).
+- Nenhum PR existente cobre `apps/core/auth/views.py` nem testes de contrato OTP.
+
+**Baseline de testes:** `SimpleTestCase` sem Docker/DB. Suíte de integração não executável
+(PostgreSQL ausente). Pré-existente, não regressão.
+
+**Bug encontrado e corrigido:** info-disclosure via `str(WhatsAppAuthError)` em endpoints AllowAny de OTP + testes de contrato OTP ausentes [P1]
+
+- **Tipo:** P1 — Info-disclosure em endpoints AllowAny + ausência de testes de contrato críticos
+- **Vetor:** `POST /api/v1/auth/whatsapp/send/` e `POST /api/v1/auth/whatsapp/resend/`
+  são AllowAny (qualquer usuário anônimo). Quando o envio do template WhatsApp falha,
+  `WhatsAppAuthError` captura e formata detalhes internos (host da API Meta, códigos de
+  erro, credenciais de template, etc.) e esses detalhes eram retornados diretamente via
+  `'message': str(e)` na resposta HTTP.
+
+  Exemplo do dado exposto:
+  ```json
+  {"error": "send_error", "message": "HTTPSConnectionPool(host='api.interno.meta':443): Max retries exceeded with url: /messages ..."}
+  ```
+
+  Além disso, `resend_whatsapp_auth_code` não tinha `logger.error` — o erro era
+  silenciado nos logs do servidor.
+
+- **Arquivos corrigidos (1):** `apps/core/auth/views.py`
+  - `send_whatsapp_auth_code` (linha ~110): `str(e)` → mensagem genérica; logger.error
+    corrigido de f-string para formato `%s`
+  - `resend_whatsapp_auth_code` (fim da função): `str(e)` → mensagem genérica;
+    `logger.error` adicionado (estava ausente)
+
+- **Testes:** 22 novos casos em `apps/core/tests/test_otp_whatsapp_contract.py` (RED→GREEN):
+
+  | Classe | Testes | O que verifica |
+  |---|---|---|
+  | `TestOTPGenerate` | 3 | CSPRNG, 6 dígitos, variação |
+  | `TestOTPHash` | 2 | HMAC-SHA256, hashes distintos |
+  | `TestOTPVerifyCode` | 7 | Acerto, lockout, expiração, `compare_digest`, limpeza de cache, código não exposto, contagem de tentativas |
+  | `TestOTPSendAuthCode` | 3 | Rate-limit, hash no cache (nunca plaintext), cache limpo em erro |
+  | `TestOTPResendCode` | 2 | Cooldown bloqueado, cooldown expirado reenv ia e limpa |
+  | `TestOTPNormalizePhone` | 3 | Prefixo 55, sem duplo 55, strip de não-dígitos |
+  | `TestOTPViewInfoDisclosure` | 2 | send e resend views não vazam str(WhatsAppAuthError) |
+
+- **PR:** `bot/server-2026-07-15-otp-contract-and-info-disclosure`
+
+---
+
+## Backlog priorizado (próximo loop)
+
+| Prioridade | Item | Status |
+|---|---|---|
+| P1 | Testes de contrato: zonas de entrega (regras de cálculo, cenários fora de área) | ❌ pendente |
+| P1 | Testes de contrato: checkout payload (itens, cupom, frete, itens customizados) | ❌ pendente |
+| P1 | Testes de contrato: `/api/v1/mobile/orders/by-token/{token}/` (contrato mobile) | ❌ pendente |
+| P1 | Testes de contrato: guardrails do agente WhatsApp (Caio) | ❌ pendente |
+| P2 | Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos | ❌ pendente |
+| P2 | Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo | ❌ pendente |
+| P3 | Str(e) remanescente em apps/core/auth/whatsapp_auth.py (logs com f-strings várias) | ❌ pendente |
