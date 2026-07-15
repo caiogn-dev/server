@@ -193,6 +193,71 @@ class FlowPolishTest(_Base):
         self.assertIn('adicionado', blob)
 
 
+class DynamicUpsellTest(_Base):
+    """Upsell 100% dinâmico: categorias-complemento do cardápio DA LOJA."""
+
+    def _category(self, name):
+        from apps.stores.models import StoreCategory
+        return StoreCategory.objects.create(
+            store=self.store, name=name, slug=name.lower().replace(' ', '-'), is_active=True,
+        )
+
+    def test_checkout_without_upsell_categories_goes_straight_to_delivery(self):
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+        result = h.handle({'reply_id': 'checkout_now', 'reply_title': '', 'original_message': ''})
+        ids = {b['id'] for b in (result.interactive_data or {}).get('buttons', [])}
+        self.assertIn('order_delivery', ids, 'Sem categoria-complemento deveria ir direto pra entrega')
+
+    def test_checkout_offers_store_own_categories(self):
+        cat = self._category('Sobremesas')
+        pudim = StoreProduct.objects.create(
+            store=self.store, name='Pudim', slug='pudim-up', price=15, is_active=True, category=cat,
+        )
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+        result = h.handle({'reply_id': 'checkout_now', 'reply_title': '', 'original_message': ''})
+        data = result.interactive_data or {}
+        ids = {b['id'] for b in data.get('buttons', [])}
+        self.assertIn(f'upsell_{pudim.id}', ids)
+        self.assertIn('Sobremesa', data.get('body', ''))
+        self.assertIn('skip_upsell', ids)
+
+    def test_upsell_click_adds_confirms_and_advances(self):
+        cat = self._category('Sobremesas')
+        pudim = StoreProduct.objects.create(
+            store=self.store, name='Pudim', slug='pudim-up2', price=15, is_active=True, category=cat,
+        )
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+        h.handle({'reply_id': 'checkout_now', 'reply_title': '', 'original_message': ''})
+        result = h.handle({'reply_id': f'upsell_{pudim.id}', 'reply_title': '', 'original_message': ''})
+        blob = (result.response_text or '') + str(result.interactive_data or {})
+        self.assertIn('Pudim', blob)
+        self.assertIn('adicionado', blob)
+        ids = {i['product_id'] for i in self._pending()}
+        self.assertIn(str(pudim.id), ids)
+        # Sem mais etapas → pergunta de entrega na mesma mensagem
+        btn_ids = {b['id'] for b in (result.interactive_data or {}).get('buttons', [])}
+        self.assertIn('order_delivery', btn_ids)
+
+    def test_category_already_in_cart_is_skipped(self):
+        cat = self._category('Bebidas')
+        coca = StoreProduct.objects.create(
+            store=self.store, name='Coca', slug='coca-up', price=8, is_active=True, category=cat,
+        )
+        h = self._handler()
+        h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
+        h.handle({'reply_id': f'product_{coca.id}', 'reply_title': '', 'original_message': ''})
+        result = h.handle({'reply_id': 'checkout_now', 'reply_title': '', 'original_message': ''})
+        ids = {b['id'] for b in (result.interactive_data or {}).get('buttons', [])}
+        self.assertIn('order_delivery', ids, 'Já tem bebida no carrinho — não deveria ofertar de novo')
+
+    def _pending(self):
+        h = self._handler()
+        return h._get_session_manager().get_pending_order_items() or []
+
+
 class GreetingAfterDeliveredTest(_Base):
     def _greet(self):
         return GreetingHandler(self.account, self.conversation, self.profile).handle({})

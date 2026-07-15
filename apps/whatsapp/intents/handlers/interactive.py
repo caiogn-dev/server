@@ -6,7 +6,7 @@ from django.core.cache import cache
 from apps.stores.models import StoreProduct
 
 from .base import HandlerResult, IntentHandler
-from .catalog import MenuRequestHandler, _is_drink_product
+from .catalog import MenuRequestHandler
 from .fallback import HumanHandoffHandler
 from .order import CancelOrderHandler, CreateOrderHandler, TrackOrderHandler
 from .payment import CopyPixHandler
@@ -113,17 +113,18 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id == 'repeat_order':
             return self._handle_repeat_order()
 
-        if reply_id.startswith('drink_'):
-            return self._handle_drink_upsell(reply_id)
+        if reply_id.startswith('upsell_'):
+            return self._handle_generic_upsell(reply_id[len('upsell_'):])
 
-        if reply_id == 'skip_upsell':
-            return self._handle_skip_upsell()
+        # Compat: ids antigos de upsell (bebida/molho) em conversas em andamento
+        if reply_id.startswith('drink_'):
+            return self._handle_generic_upsell(reply_id[len('drink_'):])
 
         if reply_id.startswith('sauce_'):
-            return self._handle_sauce_upsell(reply_id)
+            return self._handle_generic_upsell(reply_id[len('sauce_'):])
 
-        if reply_id == 'skip_sauce':
-            return self._handle_skip_sauce()
+        if reply_id in ('skip_upsell', 'skip_sauce'):
+            return self._handle_skip_upsell()
 
         logger.warning('[InteractiveReplyHandler] Unhandled reply_id=%s', reply_id)
         return HandlerResult.buttons(
@@ -397,6 +398,15 @@ class InteractiveReplyHandler(IntentHandler):
                 logger.warning('[InteractiveReplyHandler] Erro ao salvar qty: %s', exc)
         return self._cart_summary_result(items, last_product=product)
 
+    # Palavras-chave de categorias "complemento" que disparam upsell.
+    # Dinâmico por loja: só oferece o que EXISTE no cardápio dela; o lojista
+    # pode fixar as categorias via settings['bot_upsell_categories'].
+    UPSELL_CATEGORY_KEYWORDS = [
+        'bebida', 'molho', 'acompanhamento', 'sobremesa', 'adicional',
+        'extra', 'complemento', 'porção', 'porcao',
+    ]
+    MAX_UPSELL_STAGES = 2
+
     def _handle_checkout_now(self) -> HandlerResult:
         try:
             session_manager = self._get_session_manager()
@@ -407,98 +417,136 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text(
                 "❌ Não encontrei itens no seu pedido.\n\nDigite *cardápio* para ver as opções."
             )
-        product_ids = [i['product_id'] for i in items]
-        has_non_drink = any(
-            not _is_drink_product(pr)
-            for pr in StoreProduct.objects.filter(id__in=product_ids)
-        )
-        already_has_drink = any(
-            _is_drink_product(pr)
-            for pr in StoreProduct.objects.filter(id__in=product_ids)
-        )
-        if has_non_drink and not already_has_drink:
-            upsell = self._show_drink_upsell(items)
-            if upsell:
-                return upsell
-        sauce_upsell = self._show_sauce_upsell(items)
-        return sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
+        self._reset_upsell_progress()
+        return self._show_next_upsell(items)
 
-    def _get_drink_products(self) -> List:
-        """Retorna produtos ativos da categoria bebidas."""
+    def _get_upsell_stages(self, items: List[Dict]) -> List:
+        """[(categoria, produtos)] das categorias-complemento DO CARDÁPIO DA LOJA.
+
+        Pula categorias já representadas no carrinho. Nada de bebida/molho
+        hardcoded: se a loja não tem categoria-complemento, não há upsell.
+        """
         if not self.store:
             return []
         try:
             from apps.stores.models import StoreCategory
-            drink_cats = StoreCategory.objects.filter(
-                store=self.store,
-                is_active=True,
-                name__icontains='bebida',
-            ).values_list('id', flat=True)
-            if not drink_cats:
-                # fallback: busca por tag
-                return list(
+            configured = [
+                str(c).lower()
+                for c in ((getattr(self.company, 'settings', None) or {}).get('bot_upsell_categories') or [])
+            ]
+            categories = list(StoreCategory.objects.filter(store=self.store, is_active=True))
+
+            def is_upsell_category(cat) -> bool:
+                name = (cat.name or '').lower()
+                if configured:
+                    return any(c in name for c in configured)
+                return any(k in name for k in self.UPSELL_CATEGORY_KEYWORDS)
+
+            upsell_cats = [c for c in categories if is_upsell_category(c)]
+            if not upsell_cats:
+                return []
+            cart_ids = [i['product_id'] for i in items]
+            cart_cat_ids = {
+                str(cid)
+                for cid in StoreProduct.objects.filter(id__in=cart_ids).values_list('category_id', flat=True)
+                if cid
+            }
+            stages = []
+            for cat in upsell_cats:
+                if str(cat.id) in cart_cat_ids:
+                    continue
+                products = list(
                     StoreProduct.objects.filter(
-                        store=self.store,
-                        is_active=True,
-                        tags__contains=['bebida'],
-                    ).order_by('sort_order', 'name')[:3]
+                        store=self.store, is_active=True, category=cat,
+                    ).order_by('sort_order', 'name')[:2]
                 )
-            return list(
-                StoreProduct.objects.filter(
-                    store=self.store,
-                    is_active=True,
-                    category__in=drink_cats,
-                ).order_by('sort_order', 'name')[:3]
-            )
+                if products:
+                    stages.append((cat, products))
+            return stages[:self.MAX_UPSELL_STAGES]
         except Exception as exc:
-            logger.warning('[InteractiveReplyHandler] Erro ao buscar bebidas: %s', exc)
+            logger.warning('[InteractiveReplyHandler] Erro ao montar upsell: %s', exc)
             return []
 
-    def _show_drink_upsell(self, items: List[Dict]) -> HandlerResult:
-        """Retorna o upsell de bebida ou None se não houver bebidas cadastradas."""
-        drinks = self._get_drink_products()
-        if not drinks:
-            return None
+    def _upsell_offered(self) -> set:
+        try:
+            session = self._get_session_manager().get_or_create_session()
+            return set((session.cart_data or {}).get('upsell_offered') or [])
+        except Exception:
+            return set()
+
+    def _mark_upsell_offered(self, category_id: str) -> None:
         try:
             session_manager = self._get_session_manager()
-            session_manager.save_pending_order_items(items)
+            session = session_manager.get_or_create_session()
+            data = dict(session.cart_data or {})
+            offered = list(data.get('upsell_offered') or [])
+            if category_id not in offered:
+                offered.append(category_id)
+            data['upsell_offered'] = offered
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
         except Exception as exc:
-            logger.warning('[InteractiveReplyHandler] Erro ao salvar itens antes do upsell: %s', exc)
-        # Até 2 bebidas como botões + "Continuar sem bebida"
-        buttons = [
-            {'id': f'drink_{d.id}', 'title': d.name[:20]}
-            for d in drinks[:2]
-        ]
-        buttons.append({'id': 'skip_upsell', 'title': '✅ Continuar sem bebida'})
-        return HandlerResult.buttons(
-            body="🥤 *Quer adicionar uma bebida?*\n\nTemos opções geladas pra acompanhar seu pedido 😊",
-            buttons=buttons,
-        )
+            logger.warning('[InteractiveReplyHandler] Erro ao marcar upsell: %s', exc)
 
-    def _handle_drink_upsell(self, reply_id: str) -> HandlerResult:
-        """Adiciona bebida ao carrinho e avança para upsell de molho."""
-        drink_id = reply_id[len('drink_'):]
+    def _reset_upsell_progress(self) -> None:
         try:
-            drink = StoreProduct.objects.get(id=drink_id, is_active=True)
+            session_manager = self._get_session_manager()
+            session = session_manager.get_or_create_session()
+            data = dict(session.cart_data or {})
+            if data.pop('upsell_offered', None) is not None:
+                session.cart_data = data
+                session.save(update_fields=['cart_data'])
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro ao resetar upsell: %s', exc)
+
+    def _show_next_upsell(self, items: List[Dict], confirm: str = None) -> HandlerResult:
+        """Mostra a próxima etapa de upsell pendente, ou segue para a entrega."""
+        offered = self._upsell_offered()
+        for cat, products in self._get_upsell_stages(items):
+            if str(cat.id) in offered:
+                continue
+            self._mark_upsell_offered(str(cat.id))
+            try:
+                session_manager = self._get_session_manager()
+                session_manager.save_pending_order_items(items)
+            except Exception as exc:
+                logger.warning('[InteractiveReplyHandler] Erro ao salvar itens antes do upsell: %s', exc)
+            buttons = [{'id': f'upsell_{p.id}', 'title': p.name[:20]} for p in products]
+            buttons.append({'id': 'skip_upsell', 'title': '✅ Não, obrigado'})
+            result = HandlerResult.buttons(
+                body=f"✨ *Que tal adicionar de {cat.name}?*\n\nCombina com o seu pedido 😊",
+                buttons=buttons,
+            )
+            return self._prepend_body(result, confirm) if confirm else result
+        result = self._ask_delivery_method(items)
+        return self._prepend_body(result, confirm) if confirm else result
+
+    def _handle_generic_upsell(self, product_id: str) -> HandlerResult:
+        """Adiciona o item de upsell escolhido e mostra a próxima etapa."""
+        try:
+            product = StoreProduct.objects.get(id=product_id, is_active=True)
         except StoreProduct.DoesNotExist:
             return self._handle_skip_upsell()
         except Exception as exc:
-            logger.error('[InteractiveReplyHandler] Erro ao buscar bebida %s: %s', drink_id, exc)
+            logger.error('[InteractiveReplyHandler] Erro ao buscar upsell %s: %s', product_id, exc)
             return self._handle_skip_upsell()
         try:
             session_manager = self._get_session_manager()
             items = session_manager.get_pending_order_items() or []
-            items.append({'product_id': str(drink.id), 'quantity': 1})
+            for it in items:
+                if str(it.get('product_id')) == str(product.id):
+                    it['quantity'] = int(it.get('quantity', 1)) + 1
+                    break
+            else:
+                items.append({'product_id': str(product.id), 'quantity': 1})
             session_manager.save_pending_order_items(items)
         except Exception as exc:
-            logger.error('[InteractiveReplyHandler] Erro ao adicionar bebida: %s', exc)
-            items = [{'product_id': str(drink.id), 'quantity': 1}]
-        sauce_upsell = self._show_sauce_upsell(items)
-        result = sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
-        return self._prepend_body(result, f"✅ *{drink.name}* adicionado ao seu pedido!")
+            logger.error('[InteractiveReplyHandler] Erro ao adicionar upsell: %s', exc)
+            items = [{'product_id': str(product.id), 'quantity': 1}]
+        return self._show_next_upsell(items, confirm=f"✅ *{product.name}* adicionado ao seu pedido!")
 
     def _handle_skip_upsell(self) -> HandlerResult:
-        """Pula bebida e avança para upsell de molho."""
+        """Pula a etapa atual e mostra a próxima (ou segue para entrega)."""
         try:
             session_manager = self._get_session_manager()
             items = session_manager.get_pending_order_items() or []
@@ -509,81 +557,7 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text(
                 "❌ Não encontrei itens no carrinho.\n\nDigite *cardápio* para ver as opções."
             )
-        sauce_upsell = self._show_sauce_upsell(items)
-        return sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
-
-    def _get_sauce_products(self) -> List:
-        """Retorna produtos de molho/extra do cardápio."""
-        if not self.store:
-            return []
-        try:
-            from apps.stores.models import StoreCategory
-            sauce_cats = StoreCategory.objects.filter(
-                store=self.store,
-                is_active=True,
-                name__icontains='molho',
-            ).values_list('id', flat=True)
-            if sauce_cats:
-                return list(
-                    StoreProduct.objects.filter(
-                        store=self.store,
-                        is_active=True,
-                        category__in=sauce_cats,
-                    ).order_by('sort_order', 'name')[:2]
-                )
-            # fallback: produtos com "molho" no nome
-            return list(
-                StoreProduct.objects.filter(
-                    store=self.store,
-                    is_active=True,
-                    name__icontains='molho',
-                ).order_by('sort_order', 'name')[:2]
-            )
-        except Exception as exc:
-            logger.warning('[InteractiveReplyHandler] Erro ao buscar molhos: %s', exc)
-            return []
-
-    def _show_sauce_upsell(self, items: List[Dict]) -> HandlerResult:
-        """Mostra upsell de molho extra ou retorna None se não houver produtos."""
-        sauces = self._get_sauce_products()
-        if not sauces:
-            return None
-        try:
-            session_manager = self._get_session_manager()
-            session_manager.save_pending_order_items(items)
-        except Exception as exc:
-            logger.warning('[InteractiveReplyHandler] Erro ao salvar itens antes do upsell molho: %s', exc)
-        buttons = [
-            {'id': f'sauce_{s.id}', 'title': s.name[:20]}
-            for s in sauces[:2]
-        ]
-        buttons.append({'id': 'skip_sauce', 'title': '✅ Não, obrigado'})
-        return HandlerResult.buttons(
-            body="🥫 *Quer adicionar um molho extra?*\n\nUm molho especial faz toda diferença! 😋",
-            buttons=buttons,
-        )
-
-    def _handle_sauce_upsell(self, reply_id: str) -> HandlerResult:
-        """Adiciona molho ao carrinho e prossegue para entrega."""
-        sauce_id = reply_id[len('sauce_'):]
-        try:
-            sauce = StoreProduct.objects.get(id=sauce_id, is_active=True)
-        except StoreProduct.DoesNotExist:
-            return self._handle_skip_sauce()
-        except Exception as exc:
-            logger.error('[InteractiveReplyHandler] Erro ao buscar molho %s: %s', sauce_id, exc)
-            return self._handle_skip_sauce()
-        try:
-            session_manager = self._get_session_manager()
-            items = session_manager.get_pending_order_items() or []
-            items.append({'product_id': str(sauce.id), 'quantity': 1})
-        except Exception as exc:
-            logger.error('[InteractiveReplyHandler] Erro ao adicionar molho: %s', exc)
-            items = [{'product_id': str(sauce.id), 'quantity': 1}]
-        return self._prepend_body(
-            self._ask_delivery_method(items),
-            f"✅ *{sauce.name}* adicionado ao seu pedido!",
-        )
+        return self._show_next_upsell(items)
 
     @staticmethod
     def _prepend_body(result: HandlerResult, text: str) -> HandlerResult:
@@ -595,20 +569,6 @@ class InteractiveReplyHandler(IntentHandler):
         ):
             result.response_text = f"{text}\n\n{result.response_text}"
         return result
-
-    def _handle_skip_sauce(self) -> HandlerResult:
-        """Pula molho e vai direto para entrega."""
-        try:
-            session_manager = self._get_session_manager()
-            items = session_manager.get_pending_order_items() or []
-        except Exception as exc:
-            logger.error('[InteractiveReplyHandler] Erro ao recuperar itens na sessão: %s', exc)
-            items = []
-        if not items:
-            return HandlerResult.text(
-                "❌ Não encontrei itens no carrinho.\n\nDigite *cardápio* para ver as opções."
-            )
-        return self._ask_delivery_method(items)
 
     def _handle_repeat_order(self) -> HandlerResult:
         if not self.store:
@@ -665,21 +625,5 @@ class InteractiveReplyHandler(IntentHandler):
         except Exception as exc:
             logger.warning('[InteractiveReplyHandler] Erro ao salvar itens do repeat: %s', exc)
 
-        # Verifica se algum item NÃO é bebida para disparar upsell de bebida
-        has_non_drink = any(
-            not _is_drink_product(StoreProduct.objects.filter(id=it['product_id']).first())
-            for it in items
-            if StoreProduct.objects.filter(id=it['product_id']).exists()
-        )
-        if has_non_drink:
-            drinks = self._get_drink_products()
-            if drinks:
-                buttons = [{'id': f'drink_{d.id}', 'title': d.name[:20]} for d in drinks[:2]]
-                buttons.append({'id': 'skip_upsell', 'title': '✅ Continuar sem bebida'})
-                return HandlerResult.buttons(
-                    body=f"🔁 *Pedido repetido!*\n\nQuer adicionar uma bebida gelada? 🥤",
-                    buttons=buttons,
-                )
-
-        sauce_upsell = self._show_sauce_upsell(items)
-        return sauce_upsell if sauce_upsell else self._ask_delivery_method(items)
+        self._reset_upsell_progress()
+        return self._show_next_upsell(items, confirm="🔁 *Pedido repetido!*")

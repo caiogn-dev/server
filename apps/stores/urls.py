@@ -125,6 +125,7 @@ from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
     StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView
 )
+from .api.ai_insights_views import AIConversationInsightsView, AIDailySummaryView
 from .api.export_views import (
     OrdersExportView, RevenueReportView, ProductsReportView,
     StockReportView, CustomersReportView, StoreDashboardStatsView,
@@ -314,6 +315,10 @@ urlpatterns = [
     # REPORTS & EXPORT ENDPOINTS (require auth)
     # ==========================================================================
     
+    # Insights de IA do painel (resumo diário + análise de conversas)
+    path('ai/daily-summary/', AIDailySummaryView.as_view(), name='ai-daily-summary'),
+    path('ai/conversation-insights/', AIConversationInsightsView.as_view(), name='ai-conversation-insights'),
+
     # Export orders as CSV
     path('reports/orders/export/', OrdersExportView.as_view(), name='orders-export'),
     
