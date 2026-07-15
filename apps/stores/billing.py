@@ -7,6 +7,8 @@ sub-projeto Billing — este módulo só define o catálogo e os helpers de leit
 """
 from decimal import Decimal
 
+from django.utils import timezone
+
 # Catálogo dos 4 planos. limits.max_products / max_orders_per_month = None => ilimitado.
 PLAN_CATALOG = {
     'free': {
@@ -97,6 +99,20 @@ def plan_allows(store, feature):
         return True
     limits = plan_limits(getattr(store, 'plan', DEFAULT_PLAN))
     return bool(limits.get(feature, False))
+
+
+def bot_order_allowed(store):
+    """True se a loja pode usar o BOT DE PEDIDOS do WhatsApp (feature Pro/Premium).
+
+    Isentas passam sempre; trial ativo libera tudo (o lojista precisa provar o
+    produto); fora isso decide o plano (limits.whatsapp_bot).
+    """
+    if is_billing_exempt(store):
+        return True
+    trial_ends = getattr(store, 'trial_ends_at', None)
+    if trial_ends and trial_ends > timezone.now():
+        return True
+    return plan_allows(store, 'whatsapp_bot')
 
 
 def within_product_limit(store, current_count):

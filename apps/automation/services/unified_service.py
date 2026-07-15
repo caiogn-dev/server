@@ -158,6 +158,15 @@ class UnifiedService:
     }
 
     def _bot_order_enabled(self) -> bool:
+        # Gate de PLANO: bot de pedidos é feature Pro/Premium (isenta e trial
+        # ativo passam). Erro interno de billing nunca derruba o bot.
+        try:
+            from apps.stores import billing
+            store = getattr(self.company, 'store', None)
+            if store is not None and not billing.bot_order_allowed(store):
+                return False
+        except Exception:
+            logger.warning('[UnifiedService] Erro no gate de plano do bot', exc_info=True)
         settings_data = getattr(self.company, 'settings', None) or {}
         return bool(settings_data.get('bot_order_enabled', True))
 

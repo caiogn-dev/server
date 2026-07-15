@@ -27,6 +27,7 @@ class _Base(TestCase):
             username='dono3', email='dono3@loja.com', password='x'
         )
         self.store = Store.objects.create(
+            billing_exempt=True,  # bot de pedidos é feature de plano; fixtures = loja grandfather
             name='Cantina Massas', slug='cantina-massas', owner=self.owner,
         )
         self.account = WhatsAppAccount.objects.create(
@@ -119,6 +120,59 @@ class BotOrderToggleTest(_Base):
 
     def test_menu_request_still_works(self):
         from apps.automation.services.unified_service import ResponseSource, UnifiedService
+        svc = UnifiedService(self.account, self.conversation, use_llm=False)
+        resp = svc.process_message('cardápio')
+        self.assertIsNotNone(resp)
+        self.assertNotEqual(resp.source, ResponseSource.SUPPRESSED)
+
+
+class PlanGateBotTest(_Base):
+    """Bot de pedidos é feature Pro/Premium (spec planos 30/jun).
+
+    Loja não-isenta em plano sem `whatsapp_bot` → pedidos redirecionam pro
+    site; isenta e trial ativo passam; cardápio/informações sempre funcionam.
+    """
+
+    def _set_plan(self, plan, exempt=False, trial_ends=None):
+        self.store.plan = plan
+        self.store.billing_exempt = exempt
+        self.store.trial_ends_at = trial_ends
+        self.store.save(update_fields=['plan', 'billing_exempt', 'trial_ends_at'])
+        self.account = WhatsAppAccount.objects.get(pk=self.account.pk)
+
+    def test_free_plan_redirects_order_to_site(self):
+        from apps.automation.services.unified_service import UnifiedService
+        self._set_plan('free')
+        svc = UnifiedService(self.account, self.conversation, use_llm=False)
+        resp = svc.process_message('quero fazer um pedido')
+        self.assertIn('site', resp.content.lower())
+
+    def test_premium_plan_keeps_bot(self):
+        from apps.automation.services.unified_service import UnifiedService
+        self._set_plan('premium')
+        svc = UnifiedService(self.account, self.conversation, use_llm=False)
+        resp = svc.process_message('quero fazer um pedido')
+        self.assertNotIn('pelo nosso site', resp.content.lower())
+
+    def test_exempt_store_keeps_bot_on_any_plan(self):
+        from apps.automation.services.unified_service import UnifiedService
+        self._set_plan('free', exempt=True)
+        svc = UnifiedService(self.account, self.conversation, use_llm=False)
+        resp = svc.process_message('quero fazer um pedido')
+        self.assertNotIn('pelo nosso site', resp.content.lower())
+
+    def test_active_trial_keeps_bot(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from apps.automation.services.unified_service import UnifiedService
+        self._set_plan('free', trial_ends=timezone.now() + timedelta(days=7))
+        svc = UnifiedService(self.account, self.conversation, use_llm=False)
+        resp = svc.process_message('quero fazer um pedido')
+        self.assertNotIn('pelo nosso site', resp.content.lower())
+
+    def test_free_plan_menu_still_works(self):
+        from apps.automation.services.unified_service import ResponseSource, UnifiedService
+        self._set_plan('free')
         svc = UnifiedService(self.account, self.conversation, use_llm=False)
         resp = svc.process_message('cardápio')
         self.assertIsNotNone(resp)

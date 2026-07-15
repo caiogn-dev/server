@@ -33,6 +33,7 @@ class _Base(TestCase):
             username='dono8', email='dono8@loja.com', password='x'
         )
         self.store = Store.objects.create(
+            billing_exempt=True,  # bot de pedidos é feature de plano; fixtures = loja grandfather
             name='Cantina Flow', slug='cantina-flow-v2', owner=self.owner,
             city='Paraíso do Tocantins',
         )

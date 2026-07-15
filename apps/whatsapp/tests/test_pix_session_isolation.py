@@ -31,6 +31,7 @@ class _Base(TestCase):
             username='dono5', email='dono5@loja.com', password='x'
         )
         self.store = Store.objects.create(
+            billing_exempt=True,  # bot de pedidos é feature de plano; fixtures = loja grandfather
             name='Cantina Massas', slug='cantina-massas-pix', owner=self.owner,
         )
         self.account = WhatsAppAccount.objects.create(
