@@ -407,6 +407,15 @@ def notify_order_status_change(self, order_id: str, new_status: str):
             logger.warning(f"No CompanyProfile for store {order.store_id}, skipping status notification")
             return
 
+        # Toggle geral do painel (CompanyProfileDetail): desligado → silêncio
+        # para a loja inteira, template e fallback.
+        if not profile.order_status_notification_enabled:
+            logger.info(
+                "Store %s has order_status_notification_enabled=False — skipping status notification",
+                order.store_id,
+            )
+            return
+
         try:
             template = AutoMessage.objects.get(
                 company=profile,
