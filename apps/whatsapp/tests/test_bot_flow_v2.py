@@ -296,6 +296,128 @@ class SchedulingTest(_Base):
         self.assertIsNone(mgr.get_scheduling()['date'])
 
 
+class FewerClicksTest(_Base):
+    """Redução de cliques (15/jul): quanto menos passos, maior a conversão.
+
+    - Observações viram opt-in: resumo já traz os botões de pagamento.
+    - Checkout expresso: endereço salvo → carrinho vai DIRETO pro pagamento
+      (1 clique), com '✏️ Alterar' para o fluxo completo.
+    """
+
+    def _seed_address(self):
+        SessionManager(self.account, PHONE).save_delivery_address_info(
+            address='Rua das Árvores 100, Centro', fee=7.5,
+            distance_km=2.4, duration_minutes=9, lat=-10.1, lng=-48.3,
+        )
+
+    def test_pickup_summary_has_payment_buttons_inline(self):
+        """Retirada: resumo + pagamento em UMA mensagem (sem pergunta de notas)."""
+        self._add(self.lasanha)
+        result = self._click('order_pickup')
+        blob = self._blob(result)
+        self.assertIn('pay_pix', blob)
+        self.assertIn('pay_pickup', blob)
+        self.assertIn('observa', blob.lower())  # dica opt-in continua visível
+
+    def test_saved_address_summary_has_payment_buttons_inline(self):
+        self._add(self.lasanha)
+        self._seed_address()
+        self._click('order_delivery')
+        result = self._click('use_saved_address')
+        blob = self._blob(result)
+        self.assertIn('pay_pix', blob)
+        self.assertIn('pay_card', blob)
+
+    def test_typed_notes_still_captured_after_inline_buttons(self):
+        self._add(self.lasanha)
+        self._click('order_pickup')
+        mgr = SessionManager(self.account, PHONE)
+        self.assertTrue(mgr.is_waiting_for_notes())
+        h = self._handler()
+        result = h._handle_notes_input('sem cebola')
+        fresh = SessionManager(self.account, PHONE)
+        self.assertEqual(fresh.get_customer_notes(), 'sem cebola')
+        self.assertIn('pay_pix', self._blob(result))
+
+    def test_express_checkout_with_saved_address(self):
+        """Recorrente: fechar pedido pula entrega/endereço → pagamento direto."""
+        self._add(self.lasanha)
+        self._seed_address()
+        result = self._click('checkout_now')
+        blob = self._blob(result)
+        self.assertIn('pay_pix', blob)
+        self.assertIn('change_details', blob)
+        self.assertIn('Rua das Árvores', blob)
+        # método de entrega já assumido
+        mgr = SessionManager(self.account, PHONE)
+        self.assertEqual(mgr.get_pending_delivery_method(), 'delivery')
+
+    def test_express_pay_pix_enqueues_checkout(self):
+        self._add(self.lasanha)
+        self._seed_address()
+        self._click('checkout_now')
+        with patch(
+            'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.delay'
+        ) as delay:
+            result = self._click('pay_pix')
+        delay.assert_called_once()
+        self.assertIn('recebido', (result.response_text or '').lower())
+
+    def test_change_details_falls_back_to_full_flow(self):
+        self._add(self.lasanha)
+        self._seed_address()
+        self._click('checkout_now')
+        result = self._click('change_details')
+        self.assertIn('receber', self._blob(result).lower())
+
+    def test_no_saved_address_keeps_delivery_question(self):
+        self._add(self.lasanha)
+        result = self._click('checkout_now')
+        blob = self._blob(result)
+        self.assertIn('order_delivery', blob)
+        self.assertNotIn('change_details', blob)
+
+
+class UpsellSingleStageTest(_Base):
+    def test_heuristic_upsell_offers_only_one_stage(self):
+        from apps.stores.models import StoreCategory
+        bebidas = StoreCategory.objects.create(store=self.store, name='Bebidas', slug='bebidas-v2', is_active=True)
+        sobremesas = StoreCategory.objects.create(store=self.store, name='Sobremesas', slug='sobremesas-v2', is_active=True)
+        StoreProduct.objects.create(
+            store=self.store, name='Coca', slug='coca-v2', price=6,
+            is_active=True, category=bebidas,
+        )
+        StoreProduct.objects.create(
+            store=self.store, name='Pudim', slug='pudim-v2', price=10,
+            is_active=True, category=sobremesas,
+        )
+        self._add(self.lasanha)
+        first = self._click('checkout_now')
+        self.assertIn('upsell_', self._blob(first))
+        second = self._click('skip_upsell')
+        # heurística: só 1 etapa — a segunda categoria NÃO vira outra pergunta
+        self.assertNotIn('upsell_', self._blob(second))
+
+    def test_configured_categories_allow_two_stages(self):
+        from apps.stores.models import StoreCategory
+        bebidas = StoreCategory.objects.create(store=self.store, name='Bebidas', slug='bebidas-v2b', is_active=True)
+        sobremesas = StoreCategory.objects.create(store=self.store, name='Sobremesas', slug='sobremesas-v2b', is_active=True)
+        StoreProduct.objects.create(
+            store=self.store, name='Coca', slug='coca-v2b', price=6,
+            is_active=True, category=bebidas,
+        )
+        StoreProduct.objects.create(
+            store=self.store, name='Pudim', slug='pudim-v2b', price=10,
+            is_active=True, category=sobremesas,
+        )
+        self.profile.settings = {'bot_upsell_categories': ['bebidas', 'sobremesas']}
+        self.profile.save(update_fields=['settings'])
+        self._add(self.lasanha)
+        self._click('checkout_now')
+        second = self._click('skip_upsell')
+        self.assertIn('upsell_', self._blob(second))
+
+
 class GeoErrorMessageTest(_Base):
     def test_geocode_fail_message_uses_store_city(self):
         h = self._handler()

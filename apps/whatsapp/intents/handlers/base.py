@@ -515,6 +515,7 @@ class IntentHandler:
         delivery_fee: float = 0.0,
         distance_km: float = None,
         duration_minutes: float = None,
+        include_change_button: bool = False,
     ) -> 'HandlerResult':
         try:
             session_manager = self._get_session_manager()
@@ -550,12 +551,29 @@ class IntentHandler:
             lines.append("\n🏪 *Retirada no local*")
         total_fmt = f"R$ {total:.2f}".replace('.', ',')
         lines.append(f"\n💰 *Total: {total_fmt}*")
+        # Observação é OPT-IN (menos 1 passo pra todo mundo): os botões de
+        # pagamento já vêm aqui; texto digitado antes vira observação
+        # (waiting_for_notes segue True → _handle_notes_input captura).
         lines.append(
-            "\n📝 *Alguma observação para o preparo?*\n"
-            "_(ex: sem cebola, ponto da carne, alergia)_\n\n"
-            "Responda *não* para continuar sem observações."
+            "\n📝 Alguma observação? É só digitar _(ex: sem cebola)_.\n"
+            "Ou escolha o pagamento pra fechar:"
         )
-        return HandlerResult.text("\n".join(lines))
+        return HandlerResult.buttons(
+            body="\n".join(lines),
+            buttons=self._payment_buttons(delivery_method, include_change=include_change_button),
+        )
+
+    @staticmethod
+    def _payment_buttons(delivery_method: str, include_change: bool = False) -> List[Dict[str, str]]:
+        buttons = [
+            {'id': 'pay_pix', 'title': '💠 PIX'},
+            {'id': 'pay_card', 'title': '💳 Cartão'},
+        ]
+        if include_change:
+            buttons.append({'id': 'change_details', 'title': '✏️ Alterar'})
+        elif delivery_method == 'pickup':
+            buttons.append({'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'})
+        return buttons
 
     def _handle_notes_input(self, notes_text: str) -> 'HandlerResult':
         _SKIP_WORDS = {
@@ -573,14 +591,11 @@ class IntentHandler:
         except Exception as exc:
             logger.warning("[_handle_notes_input] Erro ao salvar observações: %s", exc)
             delivery_method = 'delivery'
-        buttons = [
-            {'id': 'pay_pix', 'title': '💠 PIX'},
-            {'id': 'pay_card', 'title': '💳 Cartão Crédito/Débito'},
-        ]
-        if delivery_method == 'pickup':
-            buttons.append({'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'})
         note_line = f"✅ _Anotado: {notes}_\n\n" if notes else ""
-        return HandlerResult.buttons(body=f"{note_line}💳 *Como prefere pagar?*", buttons=buttons)
+        return HandlerResult.buttons(
+            body=f"{note_line}💳 *Como prefere pagar?*",
+            buttons=self._payment_buttons(delivery_method),
+        )
 
     def _finalize_order(
         self,

@@ -39,6 +39,9 @@ def get_insights_llm():
                 temperature=0.3,
                 max_tokens=1200,
                 timeout=45,
+                # O default do campo é a URL da Anthropic — zera p/ o factory
+                # resolver a base_url correta do provider escolhido.
+                base_url='',
             )
             return create_llm(agent)
     raise RuntimeError('Nenhum provider LLM configurado no ambiente')

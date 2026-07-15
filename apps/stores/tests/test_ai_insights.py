@@ -77,6 +77,27 @@ class DailySummaryTest(_Base):
         self.assertTrue(resp2.json()['cached'])
 
 
+class ProviderResolutionTest(TestCase):
+    def test_pseudo_agent_does_not_inherit_anthropic_base_url_default(self):
+        """Bug 15/jul: Agent.base_url tem default anthropic — o pseudo-agente
+        OpenAI postava em api.anthropic.com/chat/completions (404) e o resumo
+        caía sempre no template."""
+        from django.test import override_settings
+        from apps.stores.services import ai_insights
+
+        captured = {}
+
+        def fake_create_llm(agent):
+            captured['base_url'] = agent.base_url
+            captured['provider'] = agent.provider
+            return object()
+
+        with override_settings(ANTHROPIC_API_KEY='', KIMI_API_KEY='', OPENAI_API_KEY='sk-test'):
+            with patch('apps.agents.runtime.factory.create_llm', fake_create_llm):
+                ai_insights.get_insights_llm()
+        self.assertEqual(captured['base_url'], '')
+
+
 class ConversationInsightsTest(_Base):
     def _wire_whatsapp(self):
         from apps.conversations.models import Conversation

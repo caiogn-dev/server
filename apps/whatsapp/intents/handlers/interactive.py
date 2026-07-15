@@ -69,6 +69,9 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id == 'new_address':
             return self._handle_new_address()
 
+        if reply_id == 'change_details':
+            return self._handle_change_details()
+
         if reply_id.startswith('sched_'):
             return self._handle_schedule_slot(reply_id[len('sched_'):])
 
@@ -720,7 +723,10 @@ class InteractiveReplyHandler(IntentHandler):
                 )
                 if products:
                     stages.append((cat, products))
-            return stages[:self.MAX_UPSELL_STAGES]
+            # Conversão > upsell: heurística faz UMA pergunta só; duas etapas
+            # apenas quando o lojista configurou as categorias de propósito.
+            max_stages = self.MAX_UPSELL_STAGES if configured else 1
+            return stages[:max_stages]
         except Exception as exc:
             logger.warning('[InteractiveReplyHandler] Erro ao montar upsell: %s', exc)
             return []
@@ -776,8 +782,48 @@ class InteractiveReplyHandler(IntentHandler):
                 buttons=buttons,
             )
             return self._prepend_body(result, confirm) if confirm else result
-        result = self._ask_delivery_method(items)
+        result = self._ask_delivery_or_express(items)
         return self._prepend_body(result, confirm) if confirm else result
+
+    def _ask_delivery_or_express(self, items: List[Dict]) -> HandlerResult:
+        """Checkout expresso: endereço já validado na sessão → pagamento direto.
+
+        Colapsa entrega + endereço + observações em UMA mensagem com botões
+        PIX/Cartão/Alterar. Sem endereço salvo, segue o fluxo normal.
+        """
+        try:
+            session_manager = self._get_session_manager()
+            addr = session_manager.get_delivery_address_info()
+        except Exception:
+            return self._ask_delivery_method(items)
+        delivery_ok = getattr(self.store, 'delivery_enabled', True) if self.store else True
+        if not (delivery_ok and addr.get('address') and addr.get('fee') is not None):
+            return self._ask_delivery_method(items)
+        try:
+            session_manager.save_pending_order_items(items)
+            session_manager.save_pending_delivery_method('delivery')
+            session_manager.set_waiting_for_address(False)
+        except Exception as exc:
+            logger.warning('[InteractiveReplyHandler] Erro no checkout expresso: %s', exc)
+        return self._show_order_summary_and_ask_notes(
+            delivery_method='delivery',
+            delivery_address=addr['address'],
+            delivery_fee=float(addr['fee'] or 0),
+            distance_km=addr.get('distance_km'),
+            duration_minutes=addr.get('duration_minutes'),
+            include_change_button=True,
+        )
+
+    def _handle_change_details(self) -> HandlerResult:
+        try:
+            items = self._get_session_manager().get_pending_order_items() or []
+        except Exception:
+            items = []
+        if not items:
+            return HandlerResult.text(
+                "❌ Não encontrei itens no seu pedido.\n\nDigite *cardápio* para ver as opções."
+            )
+        return self._ask_delivery_method(items)
 
     def _handle_generic_upsell(self, product_id: str) -> HandlerResult:
         """Adiciona o item de upsell escolhido e mostra a próxima etapa."""
