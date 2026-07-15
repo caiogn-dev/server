@@ -738,6 +738,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
     )
     adjustment_reason = serializers.CharField(required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True)
+    # Pedido de balcão: não enviar nenhuma mensagem automática de status
+    suppress_notifications = serializers.BooleanField(required=False)
 
     def _resolve_store(self, validated_data):
         """Resolve store from payload, query params, or nested router kwargs."""
@@ -852,6 +854,8 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             customer_email = f'{suffix}@local.invalid'
 
         metadata = {}
+        if validated_data.get('suppress_notifications'):
+            metadata['suppress_notifications'] = True
         adjustment_reason = (validated_data.get('adjustment_reason') or '').strip()
         if 'delivery_fee' in validated_data:
             metadata['manual_delivery_fee'] = {
@@ -939,6 +943,11 @@ class StoreOrderCreateSerializer(serializers.Serializer):
 class StoreOrderUpdateSerializer(serializers.ModelSerializer):
     """Serializer para atualizar status + dados editáveis do pedido (sem itens)."""
 
+    # Silencia as notificações automáticas de WhatsApp deste pedido (balcão).
+    # Gravado em metadata para não exigir migração nem expor metadata inteiro
+    # à escrita (clobber de manual_payment etc.).
+    suppress_notifications = serializers.BooleanField(required=False, write_only=True)
+
     class Meta:
         model = StoreOrder
         fields = [
@@ -947,6 +956,7 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
             # Fase 2 — agendamento + dados do pedido (sem itens/total)
             'scheduled_date', 'scheduled_time',
             'customer_name', 'customer_phone', 'delivery_address', 'customer_notes',
+            'suppress_notifications',
         ]
         extra_kwargs = {
             'scheduled_date': {'required': False, 'allow_null': True},
@@ -967,6 +977,14 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
                 'delivery_address deve ser um objeto JSON (dicionário), não um valor escalar.'
             )
         return value
+
+    def update(self, instance, validated_data):
+        suppress = validated_data.pop('suppress_notifications', None)
+        if suppress is not None:
+            metadata = instance.metadata if isinstance(instance.metadata, dict) else {}
+            metadata['suppress_notifications'] = suppress
+            instance.metadata = metadata
+        return super().update(instance, validated_data)
 
 
 class StoreOrderItemOpSerializer(serializers.Serializer):

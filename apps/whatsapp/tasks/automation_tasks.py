@@ -25,6 +25,12 @@ def _get_store_profile(store):
     return getattr(store, 'automation_profile', None)
 
 
+def _notifications_suppressed(order) -> bool:
+    """Pedido de balcão silenciado pelo painel (metadata.suppress_notifications)."""
+    metadata = order.metadata if isinstance(order.metadata, dict) else {}
+    return bool(metadata.get('suppress_notifications'))
+
+
 def _get_account_for_profile(profile):
     """Return the first active WhatsAppAccount linked to a CompanyProfile."""
     if profile is None:
@@ -372,6 +378,10 @@ def notify_order_status_change(self, order_id: str, new_status: str):
     try:
         order = Order.objects.select_related('store').get(id=order_id)
 
+        if _notifications_suppressed(order):
+            logger.info("Order %s has suppress_notifications — skipping status notification", order_id)
+            return
+
         status_to_event = {
             'received': 'order_received',
             'processing': 'order_processing',
@@ -465,6 +475,10 @@ def request_feedback(order_id: str):
 
         if order.status != 'delivered':
             logger.info(f"Order {order_id} not delivered, skipping feedback request")
+            return
+
+        if _notifications_suppressed(order):
+            logger.info("Order %s has suppress_notifications — skipping feedback request", order_id)
             return
 
         profile = _get_store_profile(order.store)
