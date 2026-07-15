@@ -470,6 +470,8 @@ ANTHROPIC_MODEL_NAME = os.environ.get('ANTHROPIC_MODEL_NAME', 'claude-3-5-sonnet
 NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
 NVIDIA_API_BASE_URL = os.environ.get('NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1')
 NVIDIA_MODEL_NAME = os.environ.get('NVIDIA_MODEL_NAME', 'nvidia/llama-3.1-nemotron-70b-instruct')
+# Modelo dos insights do painel (resumo diário/análise de conversas)
+NVIDIA_INSIGHTS_MODEL = os.environ.get('NVIDIA_INSIGHTS_MODEL', 'meta/llama-3.1-70b-instruct')
 
 # Unified AI Configuration Helper
 def get_ai_config():

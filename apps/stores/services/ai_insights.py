@@ -24,7 +24,15 @@ def get_insights_llm():
     from apps.agents.models import Agent
     from apps.agents.runtime.factory import create_llm
 
+    # NVIDIA NIM é o provider da casa. O NVIDIA_MODEL_NAME do .env pode estar
+    # aposentado no catálogo (caso do llama-3.1-405b em 15/jul) — estes
+    # insights usam um modelo próprio com default vivo.
+    nvidia_model = (
+        getattr(dj_settings, 'NVIDIA_INSIGHTS_MODEL', '')
+        or 'meta/llama-3.1-70b-instruct'
+    )
     candidates = [
+        (Agent.AgentProvider.NVIDIA, 'NVIDIA_API_KEY', nvidia_model),
         (Agent.AgentProvider.ANTHROPIC, 'ANTHROPIC_API_KEY', 'claude-haiku-4-5-20251001'),
         (Agent.AgentProvider.KIMI, 'KIMI_API_KEY',
          getattr(dj_settings, 'KIMI_MODEL_NAME', '') or 'moonshot-v1-8k'),

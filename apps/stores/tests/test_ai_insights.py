@@ -92,10 +92,35 @@ class ProviderResolutionTest(TestCase):
             captured['provider'] = agent.provider
             return object()
 
-        with override_settings(ANTHROPIC_API_KEY='', KIMI_API_KEY='', OPENAI_API_KEY='sk-test'):
+        with override_settings(
+            NVIDIA_API_KEY='', ANTHROPIC_API_KEY='', KIMI_API_KEY='', OPENAI_API_KEY='sk-test',
+        ):
             with patch('apps.agents.runtime.factory.create_llm', fake_create_llm):
                 ai_insights.get_insights_llm()
         self.assertEqual(captured['base_url'], '')
+
+    def test_nvidia_nim_is_first_choice_with_live_default_model(self):
+        """NVIDIA NIM é o provider da casa; o default do modelo não pode ser o
+        405b aposentado do .env — usa NVIDIA_INSIGHTS_MODEL/llama-3.3."""
+        from django.test import override_settings
+        from apps.agents.models import Agent
+        from apps.stores.services import ai_insights
+
+        captured = {}
+
+        def fake_create_llm(agent):
+            captured['provider'] = agent.provider
+            captured['model'] = agent.model_name
+            return object()
+
+        with override_settings(
+            NVIDIA_API_KEY='nvapi-test', NVIDIA_INSIGHTS_MODEL='',
+            ANTHROPIC_API_KEY='', KIMI_API_KEY='', OPENAI_API_KEY='sk-test',
+        ):
+            with patch('apps.agents.runtime.factory.create_llm', fake_create_llm):
+                ai_insights.get_insights_llm()
+        self.assertEqual(captured['provider'], Agent.AgentProvider.NVIDIA)
+        self.assertEqual(captured['model'], 'meta/llama-3.1-70b-instruct')
 
 
 class ConversationInsightsTest(_Base):
