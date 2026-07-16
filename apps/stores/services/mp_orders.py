@@ -191,6 +191,7 @@ def interpret(status_code, body):
     status = body.get('status', '')
     if status == 'processed':
         return True, 'approved', pid, detail
-    if status in ('pending', 'action_required'):
+    # in_review = análise manual antifraude do MP; segue vivo (webhook decide).
+    if status in ('pending', 'action_required', 'in_review'):
         return True, 'pending', pid, detail
     return False, 'failed', pid, detail

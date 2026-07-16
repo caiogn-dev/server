@@ -89,6 +89,17 @@ class MpOrdersTestCase(TestCase):
                                                      'transactions': {'payments': [{'id': 'PAY1', 'status_detail': 'accredited'}]}})
         self.assertTrue(ok); self.assertEqual(st, 'approved'); self.assertEqual(pid, 'PAY1')
 
+    def test_interpret_in_review_e_pendente(self):
+        """`in_review` = análise manual antifraude do MP — o pagamento segue
+        vivo (pode aprovar depois via webhook). Não pode virar failed."""
+        body = {'status': 'in_review', 'status_detail': 'in_review',
+                'transactions': {'payments': [{'id': 'PAY1', 'status': 'in_review',
+                                               'status_detail': 'pending_review_manual'}]}}
+        ok, status, pid, detail = mp_orders.interpret(201, body)
+        self.assertTrue(ok)
+        self.assertEqual(status, 'pending')
+        self.assertEqual(pid, 'PAY1')
+
     def test_interpret_pendente_e_falha(self):
         ok, st, *_ = mp_orders.interpret(201, {'status': 'action_required', 'transactions': {'payments': [{'id': 'P'}]}})
         self.assertTrue(ok); self.assertEqual(st, 'pending')
