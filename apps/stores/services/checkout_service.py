@@ -1420,19 +1420,32 @@ class CheckoutService:
                     'error': f'Dados do cartao incompletos para pagamento direto ({missing_fields_str}).',
                 }
 
+            # Antifraude: mesma preference rica do link (payer completo, itens
+            # reais quando a soma bate, statement_descriptor).
+            from apps.stores.services import mp_orders
+            card_total = Decimal(str(order.total)).quantize(Decimal('0.01'))
+            card_items = mp_orders.build_preference_items(order)
+            card_items_sum = sum(
+                (Decimal(str(i['unit_price'])) * i['quantity'] for i in card_items),
+                Decimal('0.00'),
+            )
+            if not card_items or card_items_sum.quantize(Decimal('0.01')) != card_total:
+                card_items = [{
+                    "title": f"Pedido #{order.order_number}",
+                    "quantity": 1,
+                    "unit_price": float(order.total),
+                    "currency_id": "BRL",
+                }]
+
             preference_data = {
-                "items": [
-                    {
-                        "title": f"Pedido #{order.order_number}",
-                        "quantity": 1,
-                        "unit_price": float(order.total),
-                        "currency_id": "BRL",
-                    }
-                ],
-                "payer": {
-                    "email": payer_email,
-                    "name": order.customer_name,
-                    "phone": {"number": order.customer_phone},
+                "items": card_items,
+                "payer": mp_orders.build_preference_payer(
+                    order, payer_email, document=identification_number,
+                ),
+                "statement_descriptor": mp_orders.statement_descriptor(order.store),
+                "metadata": {
+                    "store_slug": order.store.slug,
+                    "order_id": str(order.id),
                 },
                 "external_reference": str(order.id),
                 "back_urls": {
@@ -1490,18 +1503,53 @@ class CheckoutService:
             if amount <= Decimal('0.00'):
                 raise ValueError("Valor da cobranca deve ser maior que zero")
 
+            from apps.stores.services import mp_orders
+
+            # Antifraude: preference rica (payer real, itens, statement_descriptor)
+            # derruba o cc_rejected_high_risk. NUNCA usar o e-mail do dono como
+            # payer — o MP lê como auto-pagamento (red flag de fraude).
+            payer_block = None
             if order is not None:
                 link_payer_email = get_valid_email_for_payment(order)
                 link_payer_name = order.customer_name or 'Cliente'
                 mp_title = f"Pedido #{order.order_number} - {target_store.name}"
-            else:
-                link_payer_email = (
-                    payment_payload.get('payer_email')
-                    or (target_store.owner.email if target_store.owner else None)
-                    or 'cliente@noreply.com'
+                payer_block = mp_orders.build_preference_payer(
+                    order, link_payer_email,
+                    document=payment_payload.get('payer_document'),
                 )
+                mp_items = mp_orders.build_preference_items(order)
+            else:
+                link_payer_email = (payment_payload.get('payer_email') or '').strip() or None
                 link_payer_name = payment_payload.get('payer_name') or 'Cliente'
                 mp_title = description or f"Cobranca - {target_store.name}"
+                mp_items = []
+                doc = mp_orders.clean_document(payment_payload.get('payer_document'))
+                if link_payer_email or doc:
+                    # Sem dados, melhor NÃO mandar payer: o Checkout Pro coleta
+                    # os dados reais do comprador (melhor pro antifraude).
+                    payer_block = {}
+                    if link_payer_email:
+                        payer_block['email'] = link_payer_email
+                    if payment_payload.get('payer_name'):
+                        first, last = mp_orders.split_name(link_payer_name)
+                        payer_block['name'] = first
+                        payer_block['surname'] = last
+                    if doc:
+                        payer_block['identification'] = {'type': 'CPF', 'number': doc}
+
+            # A preference cobra a SOMA dos itens: só usa itens reais quando a
+            # soma bate com o valor da cobrança (taxa/desconto divergem → item único).
+            items_sum = sum(
+                (Decimal(str(i['unit_price'])) * i['quantity'] for i in mp_items),
+                Decimal('0.00'),
+            )
+            if not mp_items or items_sum.quantize(Decimal('0.01')) != amount:
+                mp_items = [{
+                    "title": mp_title,
+                    "quantity": 1,
+                    "unit_price": float(amount),
+                    "currency_id": "BRL",
+                }]
 
             external_reference = f"splink:{uuid.uuid4().hex}"
             storefront_base_url = CheckoutService.get_storefront_base_url(target_store, payment_payload)
@@ -1510,16 +1558,13 @@ class CheckoutService:
             notification_url = f"{settings.BASE_URL}/webhooks/payments/mercadopago/{target_store.slug}/"
 
             preference_data = {
-                "items": [
-                    {
-                        "title": mp_title,
-                        "quantity": 1,
-                        "unit_price": float(amount),
-                        "currency_id": "BRL",
-                    }
-                ],
-                "payer": {"email": link_payer_email, "name": link_payer_name},
+                "items": mp_items,
                 "external_reference": external_reference,
+                "statement_descriptor": mp_orders.statement_descriptor(target_store),
+                "metadata": {
+                    "store_slug": target_store.slug,
+                    **({"order_id": str(order.id)} if order is not None else {}),
+                },
                 "back_urls": {
                     "success": f"{storefront_base_url}/sucesso",
                     "failure": f"{storefront_base_url}/erro",
@@ -1528,6 +1573,8 @@ class CheckoutService:
                 "auto_return": "approved",
                 "notification_url": notification_url,
             }
+            if payer_block:
+                preference_data["payer"] = payer_block
 
             result = sdk.preference().create(preference_data)
 

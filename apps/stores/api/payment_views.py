@@ -303,6 +303,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         payment_data = {
             'payer_name': request.data.get('payer_name', ''),
             'payer_email': request.data.get('payer_email', ''),
+            'payer_document': request.data.get('payer_document', ''),
         }
 
         try:

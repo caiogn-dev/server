@@ -71,7 +71,35 @@ def build_payer(order, payer_email, payer_data=None):
     if num:
         payer['phone'] = {'area_code': area, 'number': num}
 
-    addr = order.delivery_address or {}
+    address = _order_address(order)
+    if address:
+        payer['address'] = address
+    return payer
+
+
+def clean_document(document):
+    digits = re.sub(r'\D', '', str(document or ''))
+    return digits or None
+
+
+def build_preference_items(order):
+    """Itens no formato da preference (Checkout Pro): unit_price numérico +
+    currency_id. A preference cobra a SOMA dos itens — o chamador é quem decide
+    cair pro item único quando a soma diverge do valor cobrado (taxa/desconto)."""
+    items = []
+    for it in order.items.all():
+        items.append({
+            'title': (it.product_name or 'Item')[:256],
+            'quantity': int(it.quantity or 1),
+            'unit_price': float(it.unit_price),
+            'currency_id': 'BRL',
+            'category_id': 'food',
+        })
+    return items
+
+
+def _order_address(order):
+    addr = order.delivery_address if isinstance(order.delivery_address, dict) else {}
     zip_code = addr.get('zip_code') or addr.get('cep') or addr.get('zip')
     street = addr.get('street_name') or addr.get('street') or addr.get('address') or addr.get('logradouro')
     number = addr.get('street_number') or addr.get('number') or addr.get('numero')
@@ -88,6 +116,21 @@ def build_payer(order, payer_email, payer_data=None):
         address['city'] = str(city)
     if state:
         address['state'] = str(state)
+    return address
+
+
+def build_preference_payer(order, payer_email, document=None):
+    """Payer no formato da preference (name/surname, não first/last_name).
+    Quanto mais dado real do comprador, melhor o score antifraude do MP."""
+    first, last = split_name(order.customer_name)
+    payer = {'email': payer_email or order.customer_email, 'name': first, 'surname': last}
+    doc = clean_document(document)
+    if doc:
+        payer['identification'] = {'type': 'CPF', 'number': doc}
+    area, num = phone_parts(order.customer_phone)
+    if num:
+        payer['phone'] = {'area_code': area, 'number': num}
+    address = _order_address(order)
     if address:
         payer['address'] = address
     return payer
