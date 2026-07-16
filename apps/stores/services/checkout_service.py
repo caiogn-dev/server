@@ -1314,6 +1314,12 @@ class CheckoutService:
                 }
 
             logger.error(f"Payment creation failed: {result}")
+            # Honesto: sem cobrança criada, o pedido não pode ficar 'pending'
+            # fingindo cobrança ativa (o caminho de cartão já marca FAILED).
+            if order is not None:
+                order.status = StoreOrder.OrderStatus.FAILED
+                order.payment_status = StoreOrder.PaymentStatus.FAILED
+                order.save(update_fields=['status', 'payment_status', 'updated_at'])
             return {
                 'success': False,
                 'error': result.get("response", {}).get("message", "Erro ao criar pagamento"),

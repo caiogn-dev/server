@@ -831,6 +831,9 @@ class StoreCheckoutView(APIView):
             response_data['sandbox_init_point'] = payment_result.get('sandbox_init_point', '')
         else:
             response_data['payment_error'] = payment_result.get('error', 'Erro no pagamento')
+            # Corpo honesto: a cobrança NÃO foi criada — não pode fingir
+            # 'pending' (o service já marcou o pedido como FAILED no banco).
+            response_data['payment_status'] = StoreOrder.PaymentStatus.FAILED
 
     def post(self, request, store_slug):
         """Process checkout and create order."""
