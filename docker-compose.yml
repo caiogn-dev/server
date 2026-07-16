@@ -240,6 +240,9 @@ services:
     logging: *default-logging
     environment:
       <<: *django-env
+      # A imagem pode carregar RUN_INIT_TASKS=1 no config (docker commit do
+      # web); init (migrate/collectstatic) roda SÓ no web — força 0 aqui.
+      RUN_INIT_TASKS: "0"
     depends_on:
       db:
         condition: service_healthy
@@ -265,6 +268,7 @@ services:
     logging: *default-logging
     environment:
       <<: *django-env
+      RUN_INIT_TASKS: "0"
     depends_on:
       celery:
         condition: service_healthy
@@ -286,6 +290,7 @@ services:
     logging: *default-logging
     environment:
       <<: *django-env
+      RUN_INIT_TASKS: "0"
     command: celery -A config.celery flower --port=5555 --url_prefix=flower --basic_auth=${FLOWER_BASIC_AUTH:-admin:pastita123}
     ports:
       - "127.0.0.1:5556:5555"
