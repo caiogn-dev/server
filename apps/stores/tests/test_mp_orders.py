@@ -43,6 +43,23 @@ class MpOrdersTestCase(TestCase):
         self.assertEqual(items[0]['external_code'], 'SKU-1')
         self.assertEqual(items[0]['category_id'], 'food')
 
+    def test_build_items_external_code_max_30_chars(self):
+        """MP Orders API rejeita external_code > 30 chars (400 property_value).
+        Item sem SKU cai no product_id (UUID = 36 chars) e derrubava TODO
+        pagamento de cartão do site."""
+        from apps.stores.models import StoreProduct
+        product = StoreProduct.objects.create(
+            store=self.store, name='Sem SKU', price=Decimal('10.00'), status='active',
+        )
+        StoreOrderItem.objects.create(
+            order=self.order, product=product, product_name='Sem SKU',
+            unit_price=Decimal('10.00'), quantity=1,
+        )
+        items = mp_orders.build_items(self.order)
+        for it in items:
+            if 'external_code' in it:
+                self.assertLessEqual(len(it['external_code']), 30, it)
+
     def test_build_payer_completo(self):
         payer = mp_orders.build_payer(self.order, 'maria@x.com',
                                       {'identification_type': 'CPF', 'identification_number': '191.191.191-00'})

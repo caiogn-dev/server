@@ -43,11 +43,14 @@ def statement_descriptor(store):
 def build_items(order):
     items = []
     for it in order.items.all():
+        # MP limita external_code a 30 chars — UUID de product_id tem 36 e
+        # derruba a order inteira (400 property_value).
+        external_code = (it.sku or str(getattr(it, 'product_id', '') or ''))[:30]
         items.append({
             'title': (it.product_name or 'Item')[:256],
             'unit_price': str(it.unit_price),
             'quantity': int(it.quantity or 1),
-            'external_code': it.sku or str(getattr(it, 'product_id', '') or ''),
+            'external_code': external_code,
             'category_id': 'food',
             'description': (it.product_name or '')[:256],
         })
