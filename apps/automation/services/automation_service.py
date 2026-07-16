@@ -8,6 +8,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from apps.core.exceptions import NotFoundError, ValidationError
+from apps.core.pii import mask_phone
 from apps.whatsapp.models import WhatsAppAccount
 from apps.whatsapp.services import MessageService as WhatsAppService
 from ..models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog
@@ -638,7 +639,7 @@ class AutomationService:
         """Send a notification to the customer."""
         # Check if already sent
         if session.was_notification_sent(event_type):
-            logger.info(f"Notification {event_type} already sent to {session.phone_number}")
+            logger.info("Notification %s already sent to %s", event_type, mask_phone(session.phone_number))
             return False
 
         message = self._send_auto_message(profile, session, event_type, context)
@@ -655,7 +656,7 @@ class AutomationService:
         extra_context: Dict = None
     ) -> Optional[str]:
         """Send an auto message for a specific event."""
-        logger.info(f"[_send_auto_message] START - event_type={event_type}, profile={profile.id}, session_phone={session.phone_number}")
+        logger.info("[_send_auto_message] START - event_type=%s, profile=%s, session_phone=%s", event_type, profile.id, mask_phone(session.phone_number))
         
         auto_message = AutoMessage.objects.filter(
             company=profile,
@@ -731,7 +732,7 @@ class AutomationService:
                     logger.error(f"[_send_auto_message] No WhatsApp account available (profile has no account, no default found)")
                     return None
             
-            logger.info(f"[_send_auto_message] About to send message via WhatsApp - account_id={account_id}, to={session.phone_number}, has_buttons={bool(auto_message.buttons)}")
+            logger.info("[_send_auto_message] About to send message via WhatsApp - account_id=%s, to=%s, has_buttons=%s", account_id, mask_phone(session.phone_number), bool(auto_message.buttons))
             
             if auto_message.buttons:
                 logger.info(f"[_send_auto_message] Sending interactive buttons message")

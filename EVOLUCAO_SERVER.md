@@ -250,14 +250,46 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
 - Corrigido `is_superuser or is_staff` → `is_superuser` em `AutoMessageViewSet.create`.
 - 8 testes SimpleTestCase (sem DB/Docker): RED→GREEN.
 
+---
+
+### 2026-07-16
+
+**Baseline de testes:** 6 testes novos + 44 testes de regressão (core PII, serializer IDOR,
+order throttle, CSPRNG). Falhas pré-existentes: `langchain_core` ausente no container e
+`order_token` rate ausente em `test_serializer.py` (o PR #295 só adicionou ao `base.py`).
+Zero regressões introduzidas.
+
+**Bug encontrado e corrigido:** PII (telefones) em logs de tasks Celery e AutomationService — 7 pontos
+
+- **Tipo:** P0 — Telefones de clientes em claro nos logs de produção (LGPD art. 46)
+- **Contexto:** O sweep de PII de 29/06 cobriu 7 arquivos mas perdeu dois módulos de alta
+  frequência em produção: as tasks Celery de automação (`automation_tasks.py`) e o serviço de
+  notificação automática (`automation_service.py`). Esses rodam em background, gerando volume
+  alto de logs com telefones dos clientes.
+- **Arquivos corrigidos (2):**
+  - `apps/whatsapp/tasks/automation_tasks.py` — 4 pontos:
+    - Linha do payment reminder: `f"...{order.customer_phone}..."` → `mask_phone(order.customer_phone)`
+    - Linha do cart reminder: `f"...{customer_phone}..."` → `mask_phone(customer_phone)`
+    - Linha do session cart reminder: `"... %s", phone_number` → `"... %s", mask_phone(phone_number)`
+    - Linha do re-engagement: `"... %s ...", phone_number` → `mask_phone(phone_number)`
+  - `apps/automation/services/automation_service.py` — 3 pontos:
+    - `_notify_customer`: `f"...{session.phone_number}"` → lazy format + `mask_phone()`
+    - `_send_auto_message` START: f-string com `session_phone=` mascarado
+    - `_send_auto_message` about-to-send: `to={session.phone_number}` mascarado
+  - Import `from apps.core.pii import mask_phone` adicionado em ambos os arquivos
+- **Testes:** 6 novos casos em `apps/whatsapp/tests/test_pii_celery_automation_logs.py`
+  (varredura de código-fonte — RED→GREEN confirmado)
+- **PR:** `bot/server-2026-07-16-pii-logs-celery-automation`
+
 ### Próximo backlog (prioridade)
 
-1. **P0** — Varredura de `str(e)` em handlers de exceção que vazam mensagens internas do ORM
-   (já coberto parcialmente pelo PR #291 ainda aberto — verificar se foi mesclado).
-2. **P1** — Varredura de `is_staff` como bypass cross-tenant nas demais views de `apps/whatsapp/`
-   e `apps/instagram/` (prosseguir o sweep iniciado nesta sessão).
-3. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
-   (item crítico do CLAUDE.md ainda pendente).
+1. **P0** — Verificar se restam outros arquivos com PII em logs (whatsapp/services/message_service.py,
+   intents/handlers/ e automation/tasks/). Fazer sweep completo de `f"...{phone` em todos os arquivos
+   não cobertos pelo sweep anterior.
+2. **P1** — Testes de contrato (regressão) para zonas de entrega (endpoint) e checkout payload
+   (item crítico do CLAUDE.md — OTP já coberto por PR #303, mobile orders já coberto).
+3. **P1** — Varredura de `is_staff` nas views de `apps/whatsapp/` e `apps/instagram/` (já
+   comentado como corrigido nas linhas 294/504/49 de cada arquivo — confirmar cobertura de teste).
 4. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
