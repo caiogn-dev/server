@@ -213,6 +213,12 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
         elif message_type == 'subscribe_conversation':
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                # IDOR: verificar que a conversa pertence a uma conta do usuário.
+                # Sem este check qualquer autenticado assina grupos de tenants alheios
+                # e recebe PII (mensagens, telefones) em tempo real.
+                if not await self.verify_conversation_access(conversation_id):
+                    await self.send_error('Sem acesso a esta conversa', 'forbidden')
+                    return
                 group_name = f"whatsapp_conv_{conversation_id}"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.account_groups.add(group_name)
@@ -287,6 +293,20 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
             'message_id': event.get('message_id'),
             'account_id': event.get('account_id'),
         })
+
+    @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        """Verifica se a conversa pertence a alguma conta acessível ao usuário."""
+        from apps.conversations.models import Conversation
+        from .models import WhatsAppAccount
+        if self.user and self.user.is_superuser:
+            return Conversation.objects.filter(id=conversation_id).exists()
+        accessible_ids = set(
+            WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
+        )
+        return Conversation.objects.filter(
+            id=conversation_id, account_id__in=accessible_ids
+        ).exists()
 
     @database_sync_to_async
     def get_user_account_ids(self) -> list:

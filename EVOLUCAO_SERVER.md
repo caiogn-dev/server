@@ -262,3 +262,40 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-17
+
+**Gate anti-acúmulo:** 8 PRs abertos (#297–#304) — nenhum cobre `WhatsAppDashboardConsumer`. Achado confirmado ausente em `development` via `git show HEAD:apps/whatsapp/consumers.py`.
+
+**Bug encontrado e corrigido:** IDOR via WebSocket em `WhatsAppDashboardConsumer.subscribe_conversation` [P1]
+
+- **Tipo:** P1 — IDOR de leitura em tempo real (PII: mensagens, telefones de clientes)
+- **Arquivo:** `apps/whatsapp/consumers.py`
+- **Problema:** O `WhatsAppConsumer` (conexão por conta específica) verificava acesso com
+  `verify_conversation_access` antes de assinar o grupo de uma conversa. O
+  `WhatsAppDashboardConsumer` (dashboard multi-conta, `ws/whatsapp/dashboard/`) não fazia
+  nenhuma verificação: qualquer usuário autenticado enviava
+  `{"type": "subscribe_conversation", "conversation_id": "<uuid-alheio>"}` e passava a
+  receber todos os eventos em tempo real daquela conversa (mensagens, indicadores de digitação,
+  atualizações de status) — incluindo PII de clientes de qualquer tenant.
+- **Correção:**
+  1. Adicionado `verify_conversation_access` ao `WhatsAppDashboardConsumer`: verifica se
+     `conversation.account_id` está entre as contas do usuário. Superuser acessa qualquer conversa.
+  2. `handle_message` › `subscribe_conversation` agora chama `verify_conversation_access` e retorna
+     `send_error('Sem acesso a esta conversa', 'forbidden')` se o acesso for negado.
+- **Testes:** 7 novos casos `SimpleTestCase` em
+  `apps/whatsapp/tests/test_dashboard_consumer_subscribe_idor.py` (RED→GREEN confirmado):
+  - 2 testes: acesso negado → `send_error` chamado, `group_add` NÃO chamado, grupo não adicionado
+  - 1 teste: acesso concedido → `group_add` chamado, `subscribed` enviado
+  - 1 teste: superuser → subscribe sem erro
+  - 3 testes: lógica de `verify_conversation_access` (deny, grant, superuser)
+- **PR:** `bot/server-2026-07-17-dashboard-consumer-subscribe-idor`
+
+**Backlog prioritário:**
+
+1. **P1** — Testes de contrato para zonas de entrega e checkout (item crítico do CLAUDE.md ainda pendente — OTP já coberto pelo PR #303).
+2. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos.
+3. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+4. **P2** — Checar se `typing` no `WhatsAppDashboardConsumer` precisa de gate de acesso (impacto menor: permite injetar typing indicators em conversas alheias, mas não expõe PII).
+
