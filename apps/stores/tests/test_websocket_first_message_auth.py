@@ -36,9 +36,6 @@ IN_MEMORY_LAYER = {'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'
 
 @override_settings(CHANNEL_LAYERS=IN_MEMORY_LAYER)
 class FirstMessageAuthWSTest(TransactionTestCase):
-    def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
-
     async def _fixtures(self):
         owner = await sync_to_async(User.objects.create_user)(
             username='dono-ws', email='dono-ws@example.com', password='x')
@@ -47,77 +44,66 @@ class FirstMessageAuthWSTest(TransactionTestCase):
             name='Loja WS', slug='loja-ws', owner=owner)
         return owner, token, store
 
-    def test_first_message_auth_conecta_e_recebe_broadcast(self):
-        async def scenario():
-            _, token, store = await self._fixtures()
-            comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
-            connected, _ = await comm.connect()
-            assert connected, 'handshake deve aceitar sem token na URL'
-            await comm.send_json_to({'type': 'auth', 'token': token.key})
-            ack = await comm.receive_json_from(timeout=3)
-            assert ack['type'] == 'connection_established', ack
-            layer = get_channel_layer()
-            await layer.group_send(store_orders_group(store.slug), {
-                'type': 'order.created', 'order_id': 'abc', 'status': 'pending', 'total': '10.00',
-            })
-            msg = await comm.receive_json_from(timeout=3)
-            assert msg['type'] == 'order.created', msg
-            await comm.disconnect()
-        self._run(scenario())
+    async def test_first_message_auth_conecta_e_recebe_broadcast(self):
+        _, token, store = await self._fixtures()
+        comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
+        connected, _ = await comm.connect()
+        assert connected, 'handshake deve aceitar sem token na URL'
+        await comm.send_json_to({'type': 'auth', 'token': token.key})
+        ack = await comm.receive_json_from(timeout=3)
+        assert ack['type'] == 'connection_established', ack
+        layer = get_channel_layer()
+        await layer.group_send(store_orders_group(store.slug), {
+            'type': 'order.created', 'order_id': 'abc', 'status': 'pending', 'total': '10.00',
+        })
+        msg = await comm.receive_json_from(timeout=3)
+        assert msg['type'] == 'order.created', msg
+        await comm.disconnect()
 
-    def test_query_token_legado_continua_funcionando(self):
-        async def scenario():
-            _, token, store = await self._fixtures()
-            comm = WebsocketCommunicator(
-                application, f'/ws/stores/{store.slug}/orders/?token={token.key}')
-            connected, _ = await comm.connect()
-            assert connected
-            ack = await comm.receive_json_from(timeout=3)
-            assert ack['type'] == 'connection_established', ack
-            layer = get_channel_layer()
-            await layer.group_send(store_orders_group(store.slug), {
-                'type': 'order.updated', 'order_id': 'abc', 'status': 'paid',
-            })
-            msg = await comm.receive_json_from(timeout=3)
-            assert msg['type'] == 'order.updated', msg
-            await comm.disconnect()
-        self._run(scenario())
+    async def test_query_token_legado_continua_funcionando(self):
+        _, token, store = await self._fixtures()
+        comm = WebsocketCommunicator(
+            application, f'/ws/stores/{store.slug}/orders/?token={token.key}')
+        connected, _ = await comm.connect()
+        assert connected
+        ack = await comm.receive_json_from(timeout=3)
+        assert ack['type'] == 'connection_established', ack
+        layer = get_channel_layer()
+        await layer.group_send(store_orders_group(store.slug), {
+            'type': 'order.updated', 'order_id': 'abc', 'status': 'paid',
+        })
+        msg = await comm.receive_json_from(timeout=3)
+        assert msg['type'] == 'order.updated', msg
+        await comm.disconnect()
 
-    def test_token_invalido_na_primeira_mensagem_fecha_4001(self):
-        async def scenario():
-            _, _, store = await self._fixtures()
-            comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
-            connected, _ = await comm.connect()
-            assert connected
-            await comm.send_json_to({'type': 'auth', 'token': 'token-invalido'})
-            out = await comm.receive_output(timeout=3)
-            assert out['type'] == 'websocket.close', out
-            assert out.get('code') == 4001, out
-        self._run(scenario())
+    async def test_token_invalido_na_primeira_mensagem_fecha_4001(self):
+        _, _, store = await self._fixtures()
+        comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
+        connected, _ = await comm.connect()
+        assert connected
+        await comm.send_json_to({'type': 'auth', 'token': 'token-invalido'})
+        out = await comm.receive_output(timeout=3)
+        assert out['type'] == 'websocket.close', out
+        assert out.get('code') == 4001, out
 
-    def test_usuario_sem_acesso_a_loja_fecha_4003(self):
-        async def scenario():
-            _, _, store = await self._fixtures()
-            intruso = await sync_to_async(User.objects.create_user)(
-                username='intruso-ws', email='intruso-ws@example.com', password='x')
-            token = await sync_to_async(Token.objects.create)(user=intruso)
-            comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
-            connected, _ = await comm.connect()
-            assert connected
-            await comm.send_json_to({'type': 'auth', 'token': token.key})
-            out = await comm.receive_output(timeout=3)
-            assert out['type'] == 'websocket.close', out
-            assert out.get('code') == 4003, out
-        self._run(scenario())
+    async def test_usuario_sem_acesso_a_loja_fecha_4003(self):
+        _, _, store = await self._fixtures()
+        intruso = await sync_to_async(User.objects.create_user)(
+            username='intruso-ws', email='intruso-ws@example.com', password='x')
+        token = await sync_to_async(Token.objects.create)(user=intruso)
+        comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
+        connected, _ = await comm.connect()
+        assert connected
+        await comm.send_json_to({'type': 'auth', 'token': token.key})
+        out = await comm.receive_output(timeout=3)
+        assert out['type'] == 'websocket.close', out
+        assert out.get('code') == 4003, out
 
 
 @override_settings(CHANNEL_LAYERS=IN_MEMORY_LAYER)
 class RealtimeClientContractTest(TransactionTestCase):
     """Contrato do RealtimeConnection do painel: ACK connection_established +
     aceitar UUID da loja no lugar do slug (client global manda store.id)."""
-
-    def _run(self, coro):
-        return asyncio.get_event_loop().run_until_complete(coro)
 
     async def _fixtures(self):
         owner = await sync_to_async(User.objects.create_user)(
@@ -127,32 +113,28 @@ class RealtimeClientContractTest(TransactionTestCase):
             name='Loja RC', slug='loja-rc', owner=owner)
         return owner, token, store
 
-    def test_ack_connection_established_apos_auth(self):
-        async def scenario():
-            _, token, store = await self._fixtures()
-            comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
-            await comm.connect()
-            await comm.send_json_to({'type': 'auth', 'token': token.key})
-            msg = await comm.receive_json_from(timeout=3)
-            assert msg['type'] == 'connection_established', msg
-            await comm.disconnect()
-        self._run(scenario())
+    async def test_ack_connection_established_apos_auth(self):
+        _, token, store = await self._fixtures()
+        comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
+        await comm.connect()
+        await comm.send_json_to({'type': 'auth', 'token': token.key})
+        msg = await comm.receive_json_from(timeout=3)
+        assert msg['type'] == 'connection_established', msg
+        await comm.disconnect()
 
-    def test_uuid_da_loja_resolve_e_recebe_broadcast_do_grupo_por_slug(self):
-        async def scenario():
-            _, token, store = await self._fixtures()
-            comm = WebsocketCommunicator(application, f'/ws/stores/{store.id}/orders/')
-            connected, _ = await comm.connect()
-            assert connected
-            await comm.send_json_to({'type': 'auth', 'token': token.key})
-            msg = await comm.receive_json_from(timeout=3)
-            assert msg['type'] == 'connection_established', msg
-            layer = get_channel_layer()
-            # broadcaster de produção usa SEMPRE o grupo por slug
-            await layer.group_send(store_orders_group(store.slug), {
-                'type': 'order.created', 'order_id': 'xyz', 'status': 'pending', 'total': '5.00',
-            })
-            msg = await comm.receive_json_from(timeout=3)
-            assert msg['type'] == 'order.created', msg
-            await comm.disconnect()
-        self._run(scenario())
+    async def test_uuid_da_loja_resolve_e_recebe_broadcast_do_grupo_por_slug(self):
+        _, token, store = await self._fixtures()
+        comm = WebsocketCommunicator(application, f'/ws/stores/{store.id}/orders/')
+        connected, _ = await comm.connect()
+        assert connected
+        await comm.send_json_to({'type': 'auth', 'token': token.key})
+        msg = await comm.receive_json_from(timeout=3)
+        assert msg['type'] == 'connection_established', msg
+        layer = get_channel_layer()
+        # broadcaster de produção usa SEMPRE o grupo por slug
+        await layer.group_send(store_orders_group(store.slug), {
+            'type': 'order.created', 'order_id': 'xyz', 'status': 'pending', 'total': '5.00',
+        })
+        msg = await comm.receive_json_from(timeout=3)
+        assert msg['type'] == 'order.created', msg
+        await comm.disconnect()
