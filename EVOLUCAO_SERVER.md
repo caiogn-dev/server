@@ -262,3 +262,46 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-09
+
+**Baseline de testes:** 6/6 novos testes GREEN (SimpleTestCase, sem DB). 4 testes de campaigns
+pulados por `langchain_core` ausente no container mínimo — rodarão no Docker. Falha pré-existente:
+`test_order_token_rate_definida_no_settings` falha com `test_serializer` settings (config mínima
+sem o throttle `order_token`) — não é regressão desta sessão.
+
+**Bug encontrado e corrigido:** Info-disclosure via `str(e)` em handlers de exceção [P0]
+
+- **Tipo:** P0 — Info-disclosure: mensagens internas (Uber API tokens, mensagens ORM, stack info)
+  expostas em respostas HTTP para usuários autenticados
+- **Arquivos corrigidos (2):**
+  1. `apps/orders/views.py` — 3 handlers `except Exception as e: return Response({'detail': str(e)}, 500)`:
+     - `CreateDeliveryRequestView.post` (linha 64)
+     - `DeliveryRequestStatusView.get` (linha 95)
+     - `CancelDeliveryRequestView.delete` (linha 141)
+     Substituídos por mensagens genéricas em português; `str(e)` mantido apenas nos logs internos.
+  2. `apps/campaigns/api/views.py` — 2 handlers similares:
+     - `CampaignViewSet.process` (linha 479) → `'Erro ao processar lote de campanha.'`
+     - `ContactListViewSet.import_csv` (linha 591) → `'Erro ao importar contatos do CSV.'`
+- **Risco:** Uber API pode incluir tokens Bearer, IDs de rastreamento e endpoints internos em
+  mensagens de erro. ORM Django expõe nomes de colunas, chaves estrangeiras e stack traces em
+  exceções não tratadas. Com `str(e)` direto na resposta, qualquer usuário autenticado com acesso
+  ao endpoint obtém esses dados.
+- **Testes:** 6 novos casos em `apps/orders/tests/test_delivery_str_e_leak.py` (RED→GREEN confirmado
+  antes e após o fix); 4 casos em `apps/campaigns/tests.py` (skipUnless langchain_core).
+- **PR:** `bot/server-2026-07-09-info-disclosure-str-e` (abrindo agora)
+
+**Gate anti-acúmulo:** 0 PRs abertos antes desta sessão. Todos os 7 branches das sessões 07-01 a
+07-07 foram mergeados (commits d494c6c…a5843da) conforme EVOLUCAO_SERVER.md de 08/07.
+
+**Próximo backlog atualizado (prioridade):**
+
+1. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+   (item crítico do CLAUDE.md pendente desde a concepção).
+2. **P1** — `str(e)` residual: verificar se `apps/core/health_views.py` e `apps/core/api.py`
+   expõem erros de DB/Redis em endpoints acessíveis sem autenticação (health check público).
+3. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md).
+4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
