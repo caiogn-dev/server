@@ -94,7 +94,7 @@ def send_whatsapp_auth_code(request):
         if result.get('success'):
             from django.conf import settings
             if settings.DEBUG:
-                logger.debug(f"[WHATSAPP AUTH API] Code sent: {result.get('code')}")
+                logger.debug("[WHATSAPP AUTH API] Code sent: %s", result.get('code'))
             # Never expose the OTP code in the API response
             result.pop('code', None)
             return Response(result, status=status.HTTP_200_OK)
@@ -102,9 +102,9 @@ def send_whatsapp_auth_code(request):
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
     except WhatsAppAuthError as e:
-        logger.error(f"[WHATSAPP AUTH API] Error: {str(e)}")
+        logger.error('[WHATSAPP AUTH API] Erro ao enviar código: %s', e)
         return Response(
-            {'error': 'send_error', 'message': str(e)},
+            {'error': 'send_error', 'message': 'Erro ao enviar código de verificação.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -167,7 +167,7 @@ def verify_whatsapp_auth_code(request):
             )
             token, _ = Token.objects.get_or_create(user=user)
         except Exception as exc:
-            logger.exception(f"[WHATSAPP AUTH API] Failed to create auth token: {exc}")
+            logger.exception("[WHATSAPP AUTH API] Failed to create auth token: %s", exc)
             return Response(
                 {'error': 'auth_error', 'message': 'Falha ao autenticar usuário'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -230,7 +230,8 @@ def resend_whatsapp_auth_code(request):
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
     except WhatsAppAuthError as e:
+        logger.error('[WHATSAPP AUTH API] Erro ao reenviar código: %s', e)
         return Response(
-            {'error': 'send_error', 'message': str(e)},
+            {'error': 'send_error', 'message': 'Erro ao reenviar código de verificação.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
