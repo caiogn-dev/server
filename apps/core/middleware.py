@@ -278,6 +278,10 @@ class RateLimitMiddleware:
                 try:
                     cache.add(wh_key, 0, 60)
                     wh_count = cache.incr(wh_key)
+                    if wh_count == 1:
+                        # Race add→expiração→incr: INCR do Redis recria a chave SEM TTL.
+                        # touch garante a janela sempre que a chave acabou de nascer.
+                        cache.touch(wh_key, 60)
                 except Exception:
                     wh_count = 0
                 if wh_count > wh_max:
@@ -315,6 +319,10 @@ class RateLimitMiddleware:
         try:
             cache.add(cache_key, 0, self.window)
             request_count = cache.incr(cache_key)
+            if request_count == 1:
+                # Race add→expiração→incr: INCR do Redis recria a chave SEM TTL
+                # (visto em prod 18/jul: contador 22.808 com TTL=-1 → 429 permanente).
+                cache.touch(cache_key, self.window)
         except Exception:
             request_count = 0
 
@@ -356,6 +364,9 @@ class RateLimitMiddleware:
             try:
                 cache.add(cache_key, 0, window)
                 request_count = cache.incr(cache_key)
+                if request_count == 1:
+                    # Mesmo race do bucket global — ver comentário em __call__.
+                    cache.touch(cache_key, window)
             except Exception:
                 request_count = 0
 
