@@ -139,9 +139,46 @@ def build_preference_payer(order, payer_email, document=None):
     return payer
 
 
+def _iso_ms(dt):
+    return dt.isoformat(timespec='milliseconds')
+
+
+def build_additional_info(order):
+    """Industry data (quality score do MP): additional_info com chaves ACHATADAS
+    ("payer.registration_date", "shipment.local_pickup", ...) — formato da
+    Orders API, diferente do aninhado da Payments API antiga.
+
+    Histórico do comprador por telefone: no delivery o guest checkout nem sempre
+    tem email/usuário, mas o telefone é obrigatório e estável.
+    """
+    from apps.stores.models import StoreOrder
+
+    history = StoreOrder.objects.filter(
+        store=order.store, customer_phone=order.customer_phone,
+    ).exclude(id=order.id)
+
+    first_seen = history.order_by('created_at').values_list('created_at', flat=True).first()
+    last_paid = (
+        history.filter(payment_status=StoreOrder.PaymentStatus.PAID)
+        .order_by('-created_at').values_list('created_at', flat=True).first()
+    )
+
+    info = {
+        'shipment.local_pickup': order.delivery_method == StoreOrder.DeliveryMethod.PICKUP,
+        'shipment.express': False,
+        'payer.registration_date': _iso_ms(first_seen or order.created_at),
+        'payer.is_first_purchase_online': first_seen is None,
+        'payer.authentication_type': 'WEB',
+    }
+    if last_paid:
+        info['payer.last_purchase'] = _iso_ms(last_paid)
+    return info
+
+
 def build_order_payload(order, *, card_token, payment_method_id, installments,
                         payer_email, payer_data=None, payment_type='credit_card'):
     return {
+        'additional_info': build_additional_info(order),
         'type': 'online',
         'processing_mode': 'automatic',
         'total_amount': str(order.total),
