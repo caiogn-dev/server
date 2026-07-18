@@ -83,6 +83,16 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         if not self.conversation_id:
             await self.close(code=4000)
             return
+        # Gate de tenant: conversa deve pertencer a uma conta do usuário autenticado.
+        # Sem este check, qualquer usuário autenticado recebia mensagens/typing de
+        # qualquer conversa de qualquer tenant conhecendo apenas o UUID.
+        if not await self.verify_conversation_access(self.conversation_id):
+            logger.warning(
+                "ChatConsumer: User %s negado na conversa %s",
+                self.user.id, self.conversation_id,
+            )
+            await self.close(code=4003)
+            return
         await self.channel_layer.group_add(self.room_group_name, self.channel_name)
         await self.send_json({
             'type': 'connection_established',
@@ -133,10 +143,35 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
         })
 
     @database_sync_to_async
+    def verify_conversation_access(self, conversation_id: str) -> bool:
+        """Verifica se a conversa pertence a uma conta WhatsApp acessível ao usuário."""
+        from apps.conversations.models import Conversation
+        from apps.whatsapp.models import WhatsAppAccount
+        if self.user and self.user.is_superuser:
+            return Conversation.objects.filter(id=conversation_id).exists()
+        accessible_ids = set(
+            WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
+        )
+        return Conversation.objects.filter(
+            id=conversation_id, account_id__in=accessible_ids
+        ).exists()
+
+    @database_sync_to_async
     def mark_message_read(self, message_id):
-        from apps.whatsapp.models import Message
+        from apps.whatsapp.models import Message, WhatsAppAccount
         try:
-            message = Message.objects.get(id=message_id)
+            message = Message.objects.select_related('conversation__account').get(id=message_id)
+            # Verifica que a mensagem pertence a uma conta acessível ao usuário.
+            if not self.user.is_superuser:
+                owned_ids = set(
+                    WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
+                )
+                if message.conversation.account_id not in owned_ids:
+                    logger.warning(
+                        "ChatConsumer.mark_message_read: User %s tentou atualizar mensagem %s de outro tenant",
+                        self.user.id, message_id,
+                    )
+                    return
             if message.status != 'read':
                 message.status = 'read'
                 message.save(update_fields=['status'])

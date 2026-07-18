@@ -96,6 +96,16 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
             # Subscribe to a specific conversation for typing indicators
             conversation_id = content.get('conversation_id')
             if conversation_id:
+                # Gate de tenant: conversa deve pertencer à conta conectada (já autorizada).
+                # Sem este check, qualquer usuário recebia eventos de conversas de outros
+                # tenants após conectar com sua própria conta Instagram.
+                if not await self.verify_instagram_conversation_access(conversation_id):
+                    await self.send_json({
+                        'type': 'error',
+                        'code': 'forbidden',
+                        'message': 'Sem acesso a esta conversa.',
+                    })
+                    return
                 group_name = f"instagram_conv_{conversation_id}"
                 await self.channel_layer.group_add(group_name, self.channel_name)
                 self.conversation_groups.add(group_name)
@@ -215,6 +225,16 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
             'conversation': event.get('conversation'),
         })
     
+    @database_sync_to_async
+    def verify_instagram_conversation_access(self, conversation_id: str) -> bool:
+        """A conversa deve pertencer à conta conectada (já autorizada em _post_auth_connect)."""
+        from .models import InstagramConversation
+        if self.user and self.user.is_superuser:
+            return InstagramConversation.objects.filter(id=conversation_id).exists()
+        return InstagramConversation.objects.filter(
+            id=conversation_id, account_id=self.account_id
+        ).exists()
+
     @database_sync_to_async
     def verify_account_access(self, account_id: str) -> bool:
         """Verify user has access to the Instagram account."""
