@@ -12,7 +12,7 @@ CancelDeliveryRequestView.
 from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.orders.views import (
     CancelDeliveryRequestView,
@@ -59,7 +59,7 @@ class CreateDeliveryStrELeakTest(SimpleTestCase):
         mock_task.delay.side_effect = Exception(_SECRET)
 
         req = self.factory.post('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = CreateDeliveryRequestView.as_view()(
             req, store_slug='loja-test', order_id='order-uuid-222'
         )
@@ -76,7 +76,7 @@ class CreateDeliveryStrELeakTest(SimpleTestCase):
         mock_task.delay.side_effect = Exception(_SECRET)
 
         req = self.factory.post('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = CreateDeliveryRequestView.as_view()(
             req, store_slug='loja-test', order_id='order-uuid-222'
         )
@@ -100,7 +100,7 @@ class DeliveryStatusStrELeakTest(SimpleTestCase):
         mock_client_cls.return_value.poll_delivery_status.side_effect = Exception(_SECRET)
 
         req = self.factory.get('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = DeliveryRequestStatusView.as_view()(
             req, store_slug='loja-test', order_id='order-uuid-222'
         )
@@ -115,7 +115,7 @@ class DeliveryStatusStrELeakTest(SimpleTestCase):
         mock_client_cls.return_value.poll_delivery_status.side_effect = Exception(_SECRET)
 
         req = self.factory.get('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = DeliveryRequestStatusView.as_view()(
             req, store_slug='loja-test', order_id='order-uuid-222'
         )
@@ -137,7 +137,7 @@ class CancelDeliveryStrELeakTest(SimpleTestCase):
         mock_client_cls.return_value.cancel_delivery_request.side_effect = Exception(_SECRET)
 
         req = self.factory.delete('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = CancelDeliveryRequestView.as_view()(
             req, store_slug='loja-test', order_id='order-uuid-222'
         )
@@ -152,7 +152,7 @@ class CancelDeliveryStrELeakTest(SimpleTestCase):
         mock_client_cls.return_value.cancel_delivery_request.side_effect = Exception(_SECRET)
 
         req = self.factory.delete('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = CancelDeliveryRequestView.as_view()(
             req, store_slug='loja-test', order_id='order-uuid-222'
         )

@@ -20,7 +20,7 @@ Todos SimpleTestCase (sem DB) para rodar no container de CI sem PostgreSQL.
 """
 from unittest.mock import patch, MagicMock
 from django.test import SimpleTestCase
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, force_authenticate
 from rest_framework import status
 
 SENSITIVE = "MP_TOKEN_XYZ:oauth2/access_token=abc123&client_secret=s3cr3t"
@@ -36,7 +36,7 @@ class PaymentCreateStrELeakTest(SimpleTestCase):
 
         factory = APIRequestFactory()
         request = factory.post("/payments/", {"order_id": "x"}, format="json")
-        request.user = MagicMock(is_authenticated=True)
+        force_authenticate(request, user=MagicMock(is_authenticated=True))
 
         view = StorePaymentViewSet.as_view({"post": "create"})
         mock_svc = MagicMock()
@@ -66,7 +66,7 @@ class PaymentProcessStrELeakTest(SimpleTestCase):
 
         factory = APIRequestFactory()
         request = factory.post("/payments/1/process/", {}, format="json")
-        request.user = MagicMock(is_authenticated=True)
+        force_authenticate(request, user=MagicMock(is_authenticated=True))
 
         view = StorePaymentViewSet.as_view({"post": "process"})
         mock_payment = MagicMock(id="uuid")
@@ -95,7 +95,7 @@ class PaymentConfirmStrELeakTest(SimpleTestCase):
 
         factory = APIRequestFactory()
         request = factory.post("/payments/1/confirm/", {}, format="json")
-        request.user = MagicMock(is_authenticated=True)
+        force_authenticate(request, user=MagicMock(is_authenticated=True))
 
         view = StorePaymentViewSet.as_view({"post": "confirm"})
         mock_payment = MagicMock(id="uuid")
@@ -124,7 +124,7 @@ class PaymentFailStrELeakTest(SimpleTestCase):
 
         factory = APIRequestFactory()
         request = factory.post("/payments/1/fail/", {}, format="json")
-        request.user = MagicMock(is_authenticated=True)
+        force_authenticate(request, user=MagicMock(is_authenticated=True))
 
         view = StorePaymentViewSet.as_view({"post": "fail"})
         mock_payment = MagicMock(id="uuid")
@@ -153,7 +153,7 @@ class PaymentCancelStrELeakTest(SimpleTestCase):
 
         factory = APIRequestFactory()
         request = factory.post("/payments/1/cancel/", {}, format="json")
-        request.user = MagicMock(is_authenticated=True)
+        force_authenticate(request, user=MagicMock(is_authenticated=True))
 
         view = StorePaymentViewSet.as_view({"post": "cancel"})
         mock_payment = MagicMock(id="uuid")
@@ -177,7 +177,7 @@ class PaymentRefundStrELeakTest(SimpleTestCase):
 
         factory = APIRequestFactory()
         request = factory.post("/payments/1/refund/", {}, format="json")
-        request.user = MagicMock(is_authenticated=True)
+        force_authenticate(request, user=MagicMock(is_authenticated=True))
 
         view = StorePaymentViewSet.as_view({"post": "refund"})
         mock_payment = MagicMock(id="uuid")

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import SimpleTestCase
-from rest_framework.test import APIRequestFactory, APITestCase
+from rest_framework.test import APIRequestFactory, APITestCase, force_authenticate
 
 # langchain_core é necessário para importar os views de campaigns.
 # Em ambientes mínimos (container de CI sem as deps de IA), os testes
@@ -100,7 +100,7 @@ class CampaignProcessStrELeakTest(SimpleTestCase):
         mock_svc_cls.return_value.process_campaign_batch.side_effect = Exception(_STR_E_SECRET)
 
         req = self.factory.post('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = CampaignViewSet.as_view({'post': 'process'})(req, pk='uuid-test')
 
         self.assertEqual(resp.status_code, 500)
@@ -116,7 +116,7 @@ class CampaignProcessStrELeakTest(SimpleTestCase):
         mock_svc_cls.return_value.process_campaign_batch.side_effect = Exception(_STR_E_SECRET)
 
         req = self.factory.post('/fake/')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
         resp = CampaignViewSet.as_view({'post': 'process'})(req, pk='uuid-test')
 
         self.assertIn('error', resp.data)
@@ -140,7 +140,7 @@ class ContactListImportCsvStrELeakTest(SimpleTestCase):
             'name': 'Lista Teste',
             'csv_content': 'phone,name\n+5511999,Joao',
         }, format='json')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
 
         with patch('apps.campaigns.api.views.ImportContactsSerializer') as mock_ser_cls:
             mock_ser = MagicMock()
@@ -164,7 +164,7 @@ class ContactListImportCsvStrELeakTest(SimpleTestCase):
         mock_svc_cls.return_value.import_contacts_from_csv.side_effect = Exception(_STR_E_SECRET)
 
         req = self.factory.post('/fake/', {}, format='json')
-        req.user = MagicMock()
+        force_authenticate(req, user=MagicMock(is_authenticated=True))
 
         with patch('apps.campaigns.api.views.ImportContactsSerializer') as mock_ser_cls:
             mock_ser = MagicMock()
