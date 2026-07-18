@@ -7,11 +7,15 @@ Endpoints de assinatura SaaS:
   GET  /api/v1/stores/{store_slug}/invoices/            → lista faturas PIX (subpix:)
   GET  /api/v1/stores/{store_slug}/invoices/current/    → fatura vigente (gera se necessário)
 """
+import logging
+
 from django.conf import settings
 from django.shortcuts import get_object_or_404
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+logger = logging.getLogger(__name__)
 
 from apps.stores.models import Store, StorePayment, StoreSubscription
 from apps.stores.services import subscription_service
@@ -43,7 +47,8 @@ class StoreSubscribeView(APIView):
         try:
             result = subscription_service.create_subscription(store, plan, payer_email, back_url)
         except subscription_service.SubscriptionError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error('Erro ao criar assinatura (store=%s, plan=%s): %s', store_slug, plan, e)
+            return Response({'detail': 'Erro ao criar assinatura.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -80,7 +85,8 @@ class StoreSubscriptionCancelView(APIView):
         try:
             sub = subscription_service.cancel_subscription(store)
         except subscription_service.SubscriptionError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error('Erro ao cancelar assinatura (store=%s): %s', store_slug, e)
+            return Response({'detail': 'Erro ao cancelar assinatura.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'status': sub.status})
 
 
@@ -98,7 +104,8 @@ class StoreSubscriptionChangePlanView(APIView):
         try:
             result = subscription_service.change_plan(store, new_plan, payer_email, back_url)
         except subscription_service.SubscriptionError as e:
-            return Response({'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.error('Erro ao trocar plano (store=%s, plan=%s): %s', store_slug, new_plan, e)
+            return Response({'detail': 'Erro ao trocar plano de assinatura.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(result, status=status.HTTP_201_CREATED)
 
 

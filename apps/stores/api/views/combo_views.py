@@ -6,10 +6,13 @@ Provides:
 - ComboListView: GET /api/v1/stores/{store_slug}/combos/
 - AddComboToCartView: POST /api/v1/stores/{store_slug}/cart/add-combo/
 """
+import logging
 import uuid as uuid_module
 from rest_framework import views, permissions, status
 from rest_framework.response import Response
 from django.db import transaction
+
+logger = logging.getLogger(__name__)
 
 from apps.stores.models import (
     StoreCombo, StoreCart, StoreCartComboItem, Store
@@ -121,8 +124,9 @@ class AddComboToCartView(views.APIView):
                 customizations={'selections': selections},
             )
         except Exception as e:
+            logger.error('Erro ao adicionar combo ao carrinho (store=%s, combo=%s): %s', store_slug, combo_id, e)
             return Response(
-                {'detail': f'Erro ao adicionar combo ao carrinho: {str(e)}'},
+                {'detail': 'Erro ao adicionar combo ao carrinho.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

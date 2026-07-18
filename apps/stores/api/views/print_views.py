@@ -260,8 +260,8 @@ class PrintAgentWatchJobsView(APIView):
                         yield f": heartbeat\n\n"
                     time.sleep(2)
                 except Exception as e:
-                    logger.error(f'SSE event_generator error: {e}')
-                    yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+                    logger.error('SSE event_generator error: %s', e)
+                    yield f"data: {json.dumps({'type': 'error', 'message': 'Erro interno no servidor.'})}\n\n"
                     time.sleep(5)
 
         response = StreamingHttpResponse(

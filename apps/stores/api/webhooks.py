@@ -81,9 +81,9 @@ class MercadoPagoWebhookView(APIView):
                 return Response({'status': 'ignored'}, status=status.HTTP_200_OK)
         
         except Exception as e:
-            logger.error(f"Webhook error: {e}", exc_info=True)
-            # Always return 200 to prevent retries
-            return Response({'status': 'error', 'message': str(e)}, status=status.HTTP_200_OK)
+            logger.error('Webhook error: %s', e, exc_info=True)
+            # Always return 200 to prevent retries; never expose internal error to webhook sender
+            return Response({'status': 'error'}, status=status.HTTP_200_OK)
     
     def _handle_preapproval(self, request):
         """
