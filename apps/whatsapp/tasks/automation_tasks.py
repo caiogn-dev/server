@@ -12,6 +12,8 @@ from django.utils import timezone
 from datetime import timedelta
 import logging
 
+from apps.core.pii import mask_phone
+
 logger = logging.getLogger(__name__)
 
 
@@ -98,7 +100,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
             if account:
                 service = WhatsAppAPIService(account)
                 service.send_text_message(to=order.customer_phone, text=message)
-                logger.info(f"Payment reminder sent to {order.customer_phone} for order {order_id}")
+                logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
 
                 if not order.metadata:
                     order.metadata = {}
@@ -279,7 +281,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                         {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
                     ]
                 )
-                logger.info(f"Cart reminder sent to {customer_phone} for cart {cart_id}")
+                logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
 
         except AutoMessage.DoesNotExist:
             logger.warning(f"Template {event_type} not found for store {cart.store_id}")
@@ -606,7 +608,7 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
             ],
         )
         session.add_notification(notification_key)
-        logger.info("Session cart reminder (%s) sent to %s", reminder_type, phone_number)
+        logger.info("Session cart reminder (%s) sent to %s", reminder_type, mask_phone(phone_number))
 
     except CustomerSession.DoesNotExist:
         logger.error("CustomerSession %s not found", session_id)
@@ -714,7 +716,7 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
                 {'id': 'montar_salada', 'title': '🥗 Montar Salada'},
             ],
         )
-        logger.info("Re-engagement sent to %s for store %s", phone_number, store_id)
+        logger.info("Re-engagement sent to %s for store %s", mask_phone(phone_number), store_id)
 
     except Store.DoesNotExist:
         logger.error("Store %s not found for re-engagement", store_id)
