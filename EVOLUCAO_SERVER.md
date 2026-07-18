@@ -188,7 +188,7 @@ em `add_index concurrently` — pré-existente, não regressão.
 - **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
 - **Pontos corrigidos (3):**
   1. `StoreSlugOrIdField.to_internal_value` — adicionado tenant gate via `user_can_access_store`
-     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupons em loja alheia
+     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupões em loja alheia
   2. `StoreDeliveryZoneCreateSerializer.validate_store` — método adicionado com mesmo tenant gate
      - Campo `store` era `PrimaryKeyRelatedField` sem check; qualquer autenticado criava zonas em loja alheia
   3. `StoreOrderCreateSerializer._resolve_store` — `not is_staff` → `not is_superuser`
@@ -262,3 +262,60 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
    (item crítico do CLAUDE.md).
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-18
+
+**Baseline de testes:** Suíte completa não executável sem Docker/PostgreSQL (migração `add_index concurrently`). Pré-existente, não regressão. 9 testes SimpleTestCase novos verificados por inspeção de código.
+
+**Gate anti-acúmulo:** 8 PRs abertos (#297–#305). Nenhum cobre `ChatConsumer` nem `InstagramConsumer.subscribe_conversation`.
+
+**Bugs encontrados e corrigidos:** IDOR em ChatConsumer + InstagramConsumer.subscribe_conversation [P0/P1]
+
+#### 1. ChatConsumer — IDOR na conexão (P0)
+
+| Consumer | Rota WS | Gate em _post_auth_connect? |
+|---|---|---|
+| `ChatConsumer` | `ws/chat/{conversation_id}/` | ❌ **nenhum** |
+
+`_post_auth_connect` entrava no grupo `chat_{conversation_id}` sem verificar se a conversa pertence a
+uma conta do usuário. Qualquer usuário autenticado recebia em tempo real: mensagens (`chat_message`),
+typing indicators e status de mensagem — PII completo — de qualquer conversa de qualquer tenant.
+
+Adicionalmente, `mark_message_read` marcava mensagens de qualquer tenant como lidas sem verificação
+de propriedade (IDOR de escrita).
+
+#### 2. InstagramConsumer.subscribe_conversation — IDOR no handler (P1)
+
+Mesmo padrão do `WhatsAppDashboardConsumer` corrigido em PR #305. `handle_message` aceitava
+`subscribe_conversation` sem verificar se a conversa pertence à conta conectada. Usuário da conta
+IG própria podia assinar eventos de conversa de outro tenant.
+
+#### Correções
+
+**`apps/core/consumers.py` — ChatConsumer:**
+- `_post_auth_connect`: verifica `verify_conversation_access(conversation_id)` antes de `group_add`;
+  fecha com código 4003 se negado
+- `mark_message_read`: verifica `owned_ids` antes de salvar; retorno silencioso se tenant errado
+- `verify_conversation_access` adicionado: filtra `Conversation` por `account_id__in` de
+  `WhatsAppAccount.objects.filter(owner=self.user)`; superuser bypassa
+
+**`apps/instagram/consumers.py` — InstagramConsumer:**
+- `handle_message › subscribe_conversation`: verifica `verify_instagram_conversation_access` antes
+  de `group_add`; retorna `{type: error, code: forbidden}` se negado
+- `verify_instagram_conversation_access` adicionado: filtra `InstagramConversation` por
+  `account_id=self.account_id` (conta já autenticada); superuser bypassa
+
+**Testes:** 9 casos SimpleTestCase (sem DB/Docker) em dois novos arquivos:
+- `apps/core/tests/test_chat_consumer_idor.py` — 5 testes
+- `apps/instagram/tests/test_instagram_consumer_subscribe_idor.py` — 4+5 = 9 testes totais
+
+**PR:** `bot/server-2026-07-18-chat-consumer-idor`
+
+#### Próximo backlog (prioridade)
+
+1. **P1** — `DashboardConsumer.subscribe_account` sem verificação de acesso à conta (`ws/dashboard/`)
+2. **P1** — `AutomationConsumer.subscribe_company` sem verificação de acesso à empresa (`ws/automation/`)
+3. **P1** — `StoreOrdersConsumer` sem verificação que o usuário tem acesso ao `store_slug` (`ws/stores/{slug}/orders/`)
+4. **P1** — Merge dos PRs acumulados (#297–#305) para liberar a fila de revisão
+5. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (CLAUDE.md crítico)
