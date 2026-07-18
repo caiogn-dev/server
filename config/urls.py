@@ -123,6 +123,10 @@ urlpatterns = [
     # Meta WhatsApp API sends webhooks WITHOUT trailing slash for verification
     path('webhooks/v1/', include('apps.webhooks.urls')),
     path('webhooks/payments/mercadopago', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_no_slash'),
+    # Alias: URL cadastrada no painel do MP (Qualidade da Integração, 18/jul).
+    # O MP estava entregando aqui e levando 404 — requisito de webhook falhava.
+    path('webhook/mercadopago', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_alias'),
+    path('webhook/mercadopago/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook_alias_slash'),
     path('webhooks/payments/mercadopago/', MercadoPagoWebhookView.as_view(), name='mercadopago_webhook'),
     # Slug-scoped: usado pelo link de pagamento (notification_url com slug) p/ o
     # webhook resolver a loja e reconciliar a cobrança por external_reference.
