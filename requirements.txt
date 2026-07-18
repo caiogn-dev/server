@@ -18,7 +18,10 @@ psycopg2-binary>=2.9.9
 
 # Celery
 celery>=5.3.4
-redis>=5.0.1
+# redis 8.x quebra o channels-redis: redis.exceptions.TimeoutError deixou de
+# herdar de asyncio.TimeoutError, o loop do channel layer não captura e o
+# consumer WS morre a cada ~30s com 1006 (visto em prod 18/jul).
+redis>=5.0.1,<6
 django-celery-beat>=2.5.0
 flower>=2.0.1  # dashboard de monitoramento de filas/workers (serviço flower no compose)
 
