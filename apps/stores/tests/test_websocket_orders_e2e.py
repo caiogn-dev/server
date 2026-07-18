@@ -95,15 +95,25 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         self.assertEqual(close_code, 4001, "Consumer closes with code 4001 on auth failure")
 
     async def test_websocket_rejects_missing_token(self):
-        """No ``token`` query param at all should also close with 4001."""
+        """Sem ``token`` na query: aceita e aguarda first-message auth
+        ({"type":"auth","token":...}); auth inválida fecha com 4001.
+
+        Contrato atualizado 18/jul: o consumer suporta first-message auth
+        (padrão do client do painel, token fora de URLs/logs) além do query
+        param legado — ver test_websocket_first_message_auth.py.
+        """
         communicator = WebsocketCommunicator(
             application,
             f"ws/stores/{self.store.slug}/orders/",
         )
 
-        connected, close_code = await communicator.connect()
-        self.assertFalse(connected, "WebSocket should reject missing token")
-        self.assertEqual(close_code, 4001)
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected, "Handshake aceito; auth acontece via first-message")
+
+        await communicator.send_json_to({'type': 'auth', 'token': 'invalido'})
+        out = await asyncio.wait_for(communicator.receive_output(), timeout=5)
+        self.assertEqual(out['type'], 'websocket.close')
+        self.assertEqual(out.get('code'), 4001)
 
     async def test_websocket_broadcasts_order_created(self):
         """A group broadcast of ``order.created`` should reach the client."""

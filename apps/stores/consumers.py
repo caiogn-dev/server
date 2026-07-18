@@ -25,15 +25,23 @@ class OrderConsumer(AsyncWebsocketConsumer):
     - Listener deduplication (one listener per user+store)
     """
 
+    AUTH_TIMEOUT = 30
+
     async def connect(self):
-        """Handle WebSocket connection - validate auth BEFORE accepting."""
-        # Parse store slug from URL
+        """Aceita a conexão e autentica por query token (legado) OU first-message.
+
+        O client do painel (websocket.ts) manda {"type":"auth","token":...} logo
+        após o open — padrão da plataforma (token fora de URL/logs). O ?token=
+        na query segue aceito para clients legados.
+        """
         self.store_slug = self.scope['url_route']['kwargs'].get('store_slug')
         if not self.store_slug:
             await self.close(code=4000)  # Invalid route
             return
 
-        # Get token from query string
+        self._authenticated = False
+        self._auth_task = None
+
         query_params = {}
         if self.scope.get('query_string'):
             query_string = self.scope['query_string'].decode()
@@ -43,18 +51,53 @@ class OrderConsumer(AsyncWebsocketConsumer):
                     query_params[key] = value
 
         token_key = query_params.get('token')
-        if not token_key:
-            await self.close(code=4001)  # Auth required
+        if token_key:
+            # Modo legado: valida token E gate de tenant antes do accept —
+            # assim não há query de DB entre accept e group_add (evita perder
+            # broadcasts disparados logo após o handshake).
+            self.user = await self._validate_token(token_key)
+            if not self.user:
+                await self.close(code=4001)  # Invalid token
+                return
+            if not await self._user_can_access_store():
+                await self.close(code=4003)  # Sem acesso à loja (tenant gate)
+                return
+            await self.accept()
+            await self._join_and_start()
             return
 
-        # Validate token synchronously via database
-        self.user = await self._validate_token(token_key)
-        if not self.user:
-            await self.close(code=4001)  # Invalid token
-            return
-
-        # Auth successful - accept connection
+        # First-message auth: aceita e aguarda {"type":"auth"} por AUTH_TIMEOUT s.
         await self.accept()
+        self._auth_task = asyncio.create_task(self._auth_timeout())
+
+    async def _auth_timeout(self):
+        await asyncio.sleep(self.AUTH_TIMEOUT)
+        if not self._authenticated:
+            logger.warning('WS orders: auth timeout (4001) store=%s', self.store_slug)
+            try:
+                await self.close(code=4001)
+            except RuntimeError:
+                pass
+
+    async def _finish_setup(self):
+        """Pós-auth first-message: gate de tenant, join no grupo e heartbeat."""
+        # Gate de tenant: token válido NÃO basta — sem isso qualquer usuário
+        # autenticado assinava os pedidos de qualquer loja (IDOR de leitura).
+        if not await self._user_can_access_store():
+            logger.warning(
+                'WS orders: acesso negado (4003)',
+                extra={'user_id': self.user.id, 'store_slug': self.store_slug},
+            )
+            await self.close(code=4003)
+            return
+
+        await self._join_and_start()
+
+    async def _join_and_start(self):
+        """Join no grupo de broadcasts + heartbeat (auth e gate já validados)."""
+        self._authenticated = True
+        if self._auth_task:
+            self._auth_task.cancel()
 
         # Generate dedup listener ID and join group
         self.listener_id = generate_listener_id(self.user.id, self.store_slug)
@@ -78,9 +121,11 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
     async def disconnect(self, close_code):
         """Handle disconnection - cleanup listeners."""
-        # Cancel heartbeat
+        # Cancel heartbeat and pending auth timeout
         if hasattr(self, 'heartbeat_task'):
             self.heartbeat_task.cancel()
+        if getattr(self, '_auth_task', None):
+            self._auth_task.cancel()
 
         # Leave group (dedup listener gone)
         if hasattr(self, 'group_name'):
@@ -103,6 +148,16 @@ class OrderConsumer(AsyncWebsocketConsumer):
         try:
             data = json.loads(text_data)
             message_type = data.get('type')
+
+            if not self._authenticated:
+                if message_type == 'auth':
+                    user = await self._validate_token(data.get('token') or '')
+                    if user:
+                        self.user = user
+                        await self._finish_setup()
+                        return
+                await self.close(code=4001)
+                return
 
             if message_type == 'pong':
                 # Client responding to heartbeat
@@ -169,6 +224,19 @@ class OrderConsumer(AsyncWebsocketConsumer):
     def _validate_token(self, token_key: str):
         """Validate token synchronously (runs in thread pool)."""
         return validate_websocket_token(token_key)
+
+    @database_sync_to_async
+    def _user_can_access_store(self):
+        """Tenant gate: dono/staff da loja (is_staff NÃO bypassa; só superuser)."""
+        from apps.core.permissions import user_can_access_store
+        from apps.stores.models import Store
+
+        if getattr(self.user, 'is_superuser', False):
+            return True
+        store = Store.objects.filter(slug=self.store_slug).first()
+        if not store:
+            return False
+        return user_can_access_store(self.user, store)
 
 
 # Aliases for backward compatibility with routing
