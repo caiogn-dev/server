@@ -46,7 +46,7 @@ from ..serializers import (
     StoreSerializer, StoreCreateSerializer,
     StoreIntegrationSerializer, StoreIntegrationCreateSerializer,
     StoreWebhookSerializer,
-    StoreStatsSerializer
+    StoreStatsSerializer, StoreMetaTrackingSerializer,
 )
 from .base import IsStoreOwnerOrStaff
 
@@ -124,6 +124,15 @@ class StoreViewSet(viewsets.ModelViewSet):
         store.status = 'inactive'
         store.save(update_fields=['status', 'updated_at'])
         return Response({'status': store.status})
+
+    @action(detail=True, methods=['get', 'patch'], url_path='meta-tracking')
+    def meta_tracking(self, request, pk=None):
+        store = self.get_object()
+        if request.method == 'PATCH':
+            serializer = StoreMetaTrackingSerializer(store, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+        return Response(StoreMetaTrackingSerializer(store).data)
 
     @action(detail=True, methods=['post'], url_path='sync_pastita')
     def sync_pastita(self, request, pk=None):

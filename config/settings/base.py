@@ -431,16 +431,8 @@ MERCADO_PAGO_PUBLIC_KEY = os.environ.get('MERCADO_PAGO_PUBLIC_KEY', '')
 PASTITA_WHATSAPP_NUMBER = os.environ.get('PASTITA_WHATSAPP_NUMBER', '')
 PASTITA_BASE_URL = os.environ.get('PASTITA_BASE_URL', '')
 
-# Meta Pixel (Conversions API)
-META_PIXEL_ID = os.environ.get('META_PIXEL_ID', '').strip()
-META_CAPI_ACCESS_TOKEN = os.environ.get('META_CAPI_ACCESS_TOKEN', '').strip()
-META_CAPI_TEST_EVENT_CODE = os.environ.get('META_CAPI_TEST_EVENT_CODE', '').strip()
+# Meta transport version. Pixel IDs and CAPI credentials are stored per Store.
 META_CAPI_VERSION = os.environ.get('META_CAPI_VERSION', 'v25.0').strip()
-META_CAPI_STORE_SLUGS = [
-    slug.strip()
-    for slug in os.environ.get('META_CAPI_STORE_SLUGS', 'ce-saladas').split(',')
-    if slug.strip()
-]
 
 # ============================================================================
 # AI/LLM CONFIGURATION - Unified through LiteLLM Proxy (preferred) or direct
@@ -779,7 +771,6 @@ UNFOLD = {
         ],
     },
 }
-
 
 
 

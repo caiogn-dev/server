@@ -184,15 +184,11 @@ def _build_event_id(order, tracking_data):
 
 
 def send_purchase_event(order, request=None, tracking_data=None, force=False):
-    pixel_id = getattr(settings, 'META_PIXEL_ID', '').strip()
-    access_token = getattr(settings, 'META_CAPI_ACCESS_TOKEN', '').strip()
-    allowed_store_slugs = set(getattr(settings, 'META_CAPI_STORE_SLUGS', []) or [])
+    store = getattr(order, 'store', None)
+    pixel_id = str(getattr(store, 'meta_pixel_id', '') or '').strip()
+    access_token = str(getattr(store, 'meta_capi_access_token', '') or '').strip()
 
-    if not pixel_id or not access_token:
-        return False
-
-    store_slug = getattr(getattr(order, 'store', None), 'slug', '')
-    if allowed_store_slugs and store_slug not in allowed_store_slugs:
+    if not getattr(store, 'meta_capi_enabled', False) or not pixel_id or not access_token:
         return False
 
     metadata = _get_order_meta(order)
@@ -226,7 +222,7 @@ def send_purchase_event(order, request=None, tracking_data=None, force=False):
 
     payload = {'data': [event]}
 
-    test_event_code = getattr(settings, 'META_CAPI_TEST_EVENT_CODE', '').strip()
+    test_event_code = str(getattr(store, 'meta_capi_test_event_code', '') or '').strip()
     if test_event_code:
         payload['test_event_code'] = test_event_code
 

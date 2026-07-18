@@ -9,6 +9,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 from django.core.exceptions import ValidationError
 from apps.core.models import BaseModel
+from apps.core.fields import EncryptedCharField
 from apps.core.utils import token_encryption, mask_token, build_absolute_media_url
 
 
@@ -238,6 +239,14 @@ class Store(BaseModel):
 
     # Metadata
     metadata = models.JSONField(default=dict, blank=True)
+
+    # Canonical Meta tracking configuration for this tenant. Browser-safe
+    # fields may be exposed publicly; the encrypted CAPI token must never be.
+    meta_pixel_id = models.CharField(max_length=32, blank=True, default='')
+    meta_pixel_enabled = models.BooleanField(default=False)
+    meta_capi_access_token = EncryptedCharField(blank=True, default='')
+    meta_capi_enabled = models.BooleanField(default=False)
+    meta_capi_test_event_code = models.CharField(max_length=100, blank=True, default='')
 
     class Meta:
         db_table = 'stores'

@@ -48,12 +48,14 @@ class StoreSerializer(serializers.ModelSerializer):
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
             'owner', 'metadata',
+            'meta_pixel_id', 'meta_pixel_enabled',
             'plan', 'trial_ends_at', 'onboarding_completed',
             'integrations_count', 'products_count', 'orders_count',
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at',
                             'plan', 'trial_ends_at']
+
 
     # Estes 5 contadores são anotados na queryset do StoreViewSet (anno_*) via
     # Subquery — 1 query em vez de 5 por loja. Se a anotação não estiver
@@ -94,6 +96,48 @@ class StoreSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'anno_orders_count'):
             return obj.anno_orders_count
         return obj.orders.count()
+
+
+class StoreMetaTrackingSerializer(serializers.ModelSerializer):
+    """Owner-facing Meta configuration without leaking the stored CAPI token."""
+
+    meta_capi_access_token = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, trim_whitespace=True,
+    )
+    meta_capi_token_configured = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Store
+        fields = [
+            'meta_pixel_id', 'meta_pixel_enabled',
+            'meta_capi_enabled', 'meta_capi_access_token',
+            'meta_capi_token_configured', 'meta_capi_test_event_code',
+        ]
+
+    def get_meta_capi_token_configured(self, obj):
+        return bool(obj.meta_capi_access_token)
+
+    def validate_meta_pixel_id(self, value):
+        value = value.strip()
+        if value and not value.isdigit():
+            raise serializers.ValidationError('Informe somente os números do ID do Pixel.')
+        return value
+
+    def validate(self, attrs):
+        pixel_id = attrs.get('meta_pixel_id', self.instance.meta_pixel_id)
+        pixel_enabled = attrs.get('meta_pixel_enabled', self.instance.meta_pixel_enabled)
+        capi_enabled = attrs.get('meta_capi_enabled', self.instance.meta_capi_enabled)
+        token = attrs.get('meta_capi_access_token', self.instance.meta_capi_access_token)
+        if (pixel_enabled or capi_enabled) and not pixel_id:
+            raise serializers.ValidationError({'meta_pixel_id': 'Informe o ID do Pixel antes de ativar.'})
+        if capi_enabled and not token:
+            raise serializers.ValidationError({'meta_capi_access_token': 'Informe o token da Conversions API antes de ativar.'})
+        return attrs
+
+    def update(self, instance, validated_data):
+        if validated_data.get('meta_capi_access_token') == '':
+            validated_data.pop('meta_capi_access_token')
+        return super().update(instance, validated_data)
 
 
 class StoreCreateSerializer(serializers.ModelSerializer):

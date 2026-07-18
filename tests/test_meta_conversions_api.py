@@ -23,7 +23,14 @@ def _order(slug='ce-saladas', metadata=None):
     return SimpleNamespace(
         id='order-uuid',
         order_number='CS-123',
-        store=SimpleNamespace(slug=slug),
+        store=SimpleNamespace(
+            slug=slug,
+            meta_pixel_id='1301947998542003',
+            meta_pixel_enabled=True,
+            meta_capi_enabled=True,
+            meta_capi_access_token='test-token',
+            meta_capi_test_event_code='',
+        ),
         customer_name='Maria Silva',
         customer_email='maria@example.com',
         customer_phone='+55 (63) 99999-0000',
@@ -53,13 +60,7 @@ def _request():
 
 
 class MetaConversionsApiTest(SimpleTestCase):
-    @override_settings(
-        META_PIXEL_ID='1301947998542003',
-        META_CAPI_ACCESS_TOKEN='test-token',
-        META_CAPI_VERSION='v20.0',
-        META_CAPI_STORE_SLUGS=['ce-saladas'],
-        META_CAPI_TEST_EVENT_CODE='',
-    )
+    @override_settings(META_CAPI_VERSION='v20.0')
     @patch('apps.stores.services.meta_pixel_service.requests.post')
     def test_send_purchase_event_posts_meta_payload_and_marks_order(self, post):
         post.return_value = SimpleNamespace(ok=True, text='{}')
@@ -101,15 +102,26 @@ class MetaConversionsApiTest(SimpleTestCase):
         order.save.assert_called_once_with(update_fields=['metadata', 'updated_at'])
         self.assertEqual(order.metadata['meta_capi']['purchase_event_id'], 'Purchase:event-1')
 
-    @override_settings(
-        META_PIXEL_ID='1301947998542003',
-        META_CAPI_ACCESS_TOKEN='test-token',
-        META_CAPI_VERSION='v20.0',
-        META_CAPI_STORE_SLUGS=['ce-saladas'],
-    )
+    @override_settings(META_CAPI_VERSION='v20.0')
     @patch('apps.stores.services.meta_pixel_service.requests.post')
-    def test_send_purchase_event_skips_other_stores(self, post):
-        result = send_purchase_event(_order(slug='pastita'), request=_request())
+    def test_send_purchase_event_skips_store_with_capi_disabled(self, post):
+        order = _order(slug='pastita')
+        order.store.meta_capi_enabled = False
+        result = send_purchase_event(order, request=_request())
 
         self.assertFalse(result)
         post.assert_not_called()
+
+    @override_settings(META_CAPI_VERSION='v20.0')
+    @patch('apps.stores.services.meta_pixel_service.requests.post')
+    def test_each_store_uses_its_own_pixel_and_token(self, post):
+        post.return_value = SimpleNamespace(ok=True, text='{}')
+        order = _order(slug='other-store')
+        order.store.meta_pixel_id = '999888777'
+        order.store.meta_capi_access_token = 'other-token'
+
+        self.assertTrue(send_purchase_event(order, request=_request()))
+
+        url = post.call_args.args[0]
+        self.assertIn('/999888777/events', url)
+        self.assertEqual(post.call_args.kwargs['params']['access_token'], 'other-token')
