@@ -459,8 +459,8 @@ class StoreService:
                 
         except Exception as e:
             result['success'] = False
-            result['message'] = f'Error testing integration: {str(e)}'
-            logger.error(f"Integration test error for {integration.name}: {e}")
+            result['message'] = 'Erro ao testar integração.'
+            logger.error('Erro ao testar integração %s: %s', integration.name, e)
         
         return result
     
@@ -494,10 +494,11 @@ class StoreService:
                 result['message'] = f'WhatsApp API error: {response.status_code}'
                 result['details'] = {'error': response.text[:500]}
         except requests.RequestException as e:
-            result['message'] = f'Connection error: {str(e)}'
-        
+            logger.error('Erro de conexão na integração WhatsApp %s: %s', integration.name, e)
+            result['message'] = 'Erro de conexão.'
+
         return result
-    
+
     def _test_mercadopago_integration(self, integration, result: Dict) -> Dict:
         """Test Mercado Pago integration."""
         import requests
@@ -528,10 +529,11 @@ class StoreService:
                 result['message'] = f'Mercado Pago API error: {response.status_code}'
                 result['details'] = {'error': response.text[:500]}
         except requests.RequestException as e:
-            result['message'] = f'Connection error: {str(e)}'
-        
+            logger.error('Erro de conexão na integração MercadoPago %s: %s', integration.name, e)
+            result['message'] = 'Erro de conexão.'
+
         return result
-    
+
     def _test_instagram_integration(self, integration, result: Dict) -> Dict:
         """Test Instagram API integration."""
         import requests
@@ -563,10 +565,11 @@ class StoreService:
                 result['message'] = f'Instagram API error: {response.status_code}'
                 result['details'] = {'error': response.text[:500]}
         except requests.RequestException as e:
-            result['message'] = f'Connection error: {str(e)}'
-        
+            logger.error('Erro de conexão na integração Instagram %s: %s', integration.name, e)
+            result['message'] = 'Erro de conexão.'
+
         return result
-    
+
     def _test_webhook_integration(self, integration, result: Dict) -> Dict:
         """Test webhook endpoint connectivity."""
         import requests
@@ -620,10 +623,11 @@ class StoreService:
                     'response': response.text[:500],
                 }
         except requests.RequestException as e:
-            result['message'] = f'Webhook connection error: {str(e)}'
-        
+            logger.error('Erro de conexão com webhook da integração %s: %s', integration.name, e)
+            result['message'] = 'Erro de conexão com webhook.'
+
         return result
-    
+
     def _test_email_integration(self, integration, result: Dict) -> Dict:
         """Test email service integration."""
         from django.conf import settings
@@ -652,7 +656,8 @@ class StoreService:
                 else:
                     result['message'] = f'Email API error: {response.status_code}'
             except requests.RequestException as e:
-                result['message'] = f'Connection error: {str(e)}'
+                logger.error('Erro de conexão com API de email (integração %s): %s', integration.name, e)
+                result['message'] = 'Erro de conexão.'
         else:
             # Test SMTP connection
             import smtplib
@@ -661,7 +666,7 @@ class StoreService:
                 smtp_port = email_settings.get('smtp_port', 587)
                 smtp_user = email_settings.get('smtp_user')
                 smtp_pass = email_settings.get('smtp_pass')
-                
+
                 with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
                     server.starttls()
                     if smtp_user and smtp_pass:
@@ -670,7 +675,8 @@ class StoreService:
                     result['message'] = 'SMTP connection successful'
                     result['details'] = {'host': smtp_host, 'port': smtp_port}
             except Exception as e:
-                result['message'] = f'SMTP connection error: {str(e)}'
+                logger.error('Erro de conexão SMTP (integração %s): %s', integration.name, e)
+                result['message'] = 'Erro de conexão SMTP.'
         
         return result
 
