@@ -40,9 +40,10 @@ def _accessible_agents(user):
     account_ids = list(accessible_whatsapp_account_ids(user))
 
     if not account_ids:
-        # User has no WhatsApp accounts — fall back to all active agents
-        # (agents don't contain sensitive data; access is read-only for this path)
-        return queryset
+        # Sem conta WhatsApp acessível → NENHUM agente. O fallback antigo
+        # (todos os ativos) expunha conversations/history/process/clear_memory
+        # de agentes alheios a qualquer usuário autenticado (PII cross-tenant).
+        return queryset.none()
 
     return queryset.filter(
         Q(accounts__id__in=account_ids) |

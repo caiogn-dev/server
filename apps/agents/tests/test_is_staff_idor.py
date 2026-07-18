@@ -107,3 +107,22 @@ class EnforceAccountScopeSourceTest(SimpleTestCase):
         condition = match.group(0)
         self.assertNotIn('is_staff', condition,
             f"Condição de bypass inclui is_staff: {condition!r}")
+
+
+class AccessibleAgentsFallbackTest(SimpleTestCase):
+    """Regressão (auditoria 17/jul, crítico nº1): usuário sem conta WhatsApp
+    NÃO pode cair num fallback que devolve todos os agentes ativos — isso
+    expunha conversations/history/process/clear_memory cross-tenant.
+
+    Leitura de fonte (sem importar o módulo) pelo mesmo motivo dos demais
+    testes deste arquivo: langchain_core indisponível no container de CI.
+    """
+
+    def test_fallback_sem_contas_retorna_none(self):
+        source = _read_views_source()
+        func = _extract_function(source, '_accessible_agents')
+        self.assertIn('queryset.none()', func,
+                      '_accessible_agents deve retornar queryset.none() quando '
+                      'o usuário não tem contas WhatsApp acessíveis')
+        self.assertNotIn('fall back to all active agents', func,
+                         'fallback perigoso (todos os agentes) não pode voltar')
