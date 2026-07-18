@@ -54,7 +54,8 @@ class FirstMessageAuthWSTest(TransactionTestCase):
             connected, _ = await comm.connect()
             assert connected, 'handshake deve aceitar sem token na URL'
             await comm.send_json_to({'type': 'auth', 'token': token.key})
-            await asyncio.sleep(0.2)  # deixa o _post_auth rodar (join group)
+            ack = await comm.receive_json_from(timeout=3)
+            assert ack['type'] == 'connection_established', ack
             layer = get_channel_layer()
             await layer.group_send(store_orders_group(store.slug), {
                 'type': 'order.created', 'order_id': 'abc', 'status': 'pending', 'total': '10.00',
@@ -71,7 +72,8 @@ class FirstMessageAuthWSTest(TransactionTestCase):
                 application, f'/ws/stores/{store.slug}/orders/?token={token.key}')
             connected, _ = await comm.connect()
             assert connected
-            await asyncio.sleep(0.2)
+            ack = await comm.receive_json_from(timeout=3)
+            assert ack['type'] == 'connection_established', ack
             layer = get_channel_layer()
             await layer.group_send(store_orders_group(store.slug), {
                 'type': 'order.updated', 'order_id': 'abc', 'status': 'paid',
@@ -106,4 +108,51 @@ class FirstMessageAuthWSTest(TransactionTestCase):
             out = await comm.receive_output(timeout=3)
             assert out['type'] == 'websocket.close', out
             assert out.get('code') == 4003, out
+        self._run(scenario())
+
+
+@override_settings(CHANNEL_LAYERS=IN_MEMORY_LAYER)
+class RealtimeClientContractTest(TransactionTestCase):
+    """Contrato do RealtimeConnection do painel: ACK connection_established +
+    aceitar UUID da loja no lugar do slug (client global manda store.id)."""
+
+    def _run(self, coro):
+        return asyncio.get_event_loop().run_until_complete(coro)
+
+    async def _fixtures(self):
+        owner = await sync_to_async(User.objects.create_user)(
+            username='dono-rc', email='dono-rc@example.com', password='x')
+        token = await sync_to_async(Token.objects.create)(user=owner)
+        store = await sync_to_async(Store.objects.create)(
+            name='Loja RC', slug='loja-rc', owner=owner)
+        return owner, token, store
+
+    def test_ack_connection_established_apos_auth(self):
+        async def scenario():
+            _, token, store = await self._fixtures()
+            comm = WebsocketCommunicator(application, f'/ws/stores/{store.slug}/orders/')
+            await comm.connect()
+            await comm.send_json_to({'type': 'auth', 'token': token.key})
+            msg = await comm.receive_json_from(timeout=3)
+            assert msg['type'] == 'connection_established', msg
+            await comm.disconnect()
+        self._run(scenario())
+
+    def test_uuid_da_loja_resolve_e_recebe_broadcast_do_grupo_por_slug(self):
+        async def scenario():
+            _, token, store = await self._fixtures()
+            comm = WebsocketCommunicator(application, f'/ws/stores/{store.id}/orders/')
+            connected, _ = await comm.connect()
+            assert connected
+            await comm.send_json_to({'type': 'auth', 'token': token.key})
+            msg = await comm.receive_json_from(timeout=3)
+            assert msg['type'] == 'connection_established', msg
+            layer = get_channel_layer()
+            # broadcaster de produção usa SEMPRE o grupo por slug
+            await layer.group_send(store_orders_group(store.slug), {
+                'type': 'order.created', 'order_id': 'xyz', 'status': 'pending', 'total': '5.00',
+            })
+            msg = await comm.receive_json_from(timeout=3)
+            assert msg['type'] == 'order.created', msg
+            await comm.disconnect()
         self._run(scenario())

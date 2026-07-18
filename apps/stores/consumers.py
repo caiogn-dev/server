@@ -6,6 +6,7 @@ from datetime import datetime
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 
 from apps.core.websocket_auth import validate_websocket_token
 from apps.core.websocket_listeners import generate_listener_id
@@ -109,6 +110,13 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
         # Start heartbeat task
         self.heartbeat_task = asyncio.create_task(self._send_heartbeat())
+
+        # ACK esperado pelo RealtimeConnection do painel: sem ele o client
+        # considera o transporte morto e rotaciona (WS→SSE→polling) em loop.
+        await self.send(text_data=json.dumps({
+            'type': 'connection_established',
+            'store_slug': self.store_slug,
+        }))
 
         logger.info(
             f'WebSocket connected',
@@ -227,15 +235,27 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
     @database_sync_to_async
     def _user_can_access_store(self):
-        """Tenant gate: dono/staff da loja (is_staff NÃO bypassa; só superuser)."""
+        """Tenant gate: dono/staff da loja (is_staff NÃO bypassa; só superuser).
+
+        Aceita slug OU UUID na URL (o client global do painel manda store.id).
+        Normaliza self.store_slug para o slug real — o broadcaster de produção
+        usa SEMPRE o grupo por slug, então o join precisa bater com ele.
+        """
         from apps.core.permissions import user_can_access_store
         from apps.stores.models import Store
 
-        if getattr(self.user, 'is_superuser', False):
-            return True
         store = Store.objects.filter(slug=self.store_slug).first()
         if not store:
+            try:
+                store = Store.objects.filter(id=self.store_slug).first()
+            except (ValueError, ValidationError):
+                store = None
+        if not store:
             return False
+        self.store_slug = store.slug
+
+        if getattr(self.user, 'is_superuser', False):
+            return True
         return user_can_access_store(self.user, store)
 
 

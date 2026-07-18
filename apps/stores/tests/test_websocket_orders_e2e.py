@@ -120,6 +120,8 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         communicator = WebsocketCommunicator(application, self._path())
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
+        ack = await asyncio.wait_for(communicator.receive_json_from(), timeout=5)
+        self.assertEqual(ack.get('type'), 'connection_established')
 
         order = await sync_to_async(StoreOrder.objects.create)(
             store=self.store,
@@ -160,6 +162,8 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         communicator = WebsocketCommunicator(application, self._path())
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
+        ack = await asyncio.wait_for(communicator.receive_json_from(), timeout=5)
+        self.assertEqual(ack.get('type'), 'connection_established')
 
         channel_layer = get_channel_layer()
         await channel_layer.group_send(
@@ -200,6 +204,9 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         c2, _ = await comm2.connect()
         self.assertTrue(c1)
         self.assertTrue(c2)
+        for comm in (comm1, comm2):
+            ack = await asyncio.wait_for(comm.receive_json_from(), timeout=5)
+            self.assertEqual(ack.get('type'), 'connection_established')
 
         channel_layer = get_channel_layer()
         await channel_layer.group_send(
@@ -232,6 +239,8 @@ class WebSocketOrdersE2ETest(TransactionTestCase):
         communicator = WebsocketCommunicator(application, self._path())
         connected, _ = await communicator.connect()
         self.assertTrue(connected)
+        ack = await asyncio.wait_for(communicator.receive_json_from(), timeout=5)
+        self.assertEqual(ack.get('type'), 'connection_established')
 
         await communicator.send_json_to({
             'type': 'pong',
