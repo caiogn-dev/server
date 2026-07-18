@@ -744,9 +744,12 @@ class StoreCheckoutView(APIView):
         request.session.modified = True
 
     def _maybe_send_meta_purchase(self, request, order, payment_result):
-        """Dispara o evento Meta CAPI Purchase, salvo quando o pagamento falhou."""
-        payment_failed = bool(payment_result and not payment_result.get('success'))
-        if payment_failed:
+        """Envia Purchase imediato apenas para pagamento realmente aprovado.
+
+        PIX/links pendentes são enviados pelo webhook quando virarem PAID; emitir
+        na criação do pedido inflaria vendas e impediria o envio correto depois.
+        """
+        if not payment_result or payment_result.get('status') != 'approved':
             return
         try:
             from apps.stores.services.meta_pixel_service import _get_client_ip
