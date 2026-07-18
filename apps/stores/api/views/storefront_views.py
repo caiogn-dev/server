@@ -647,7 +647,7 @@ class StoreCartViewSet(viewsets.ViewSet):
         except Exception as e:
             logger.error(f"Error adding item to cart: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao adicionar item ao carrinho.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -941,7 +941,7 @@ class StoreCheckoutView(APIView):
         except Exception as e:
             logger.error(f"Checkout error: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao processar checkout.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -973,7 +973,7 @@ class StoreDeliveryFeeView(APIView):
                 except Exception as e:
                     logger.error(f"Delivery fee calculation error: {e}")
                     return Response(
-                        {'error': str(e)},
+                        {'error': 'Erro ao calcular taxa de entrega.'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
             return Response(
@@ -1008,7 +1008,7 @@ class StoreDeliveryFeeView(APIView):
         except Exception as e:
             logger.error(f"Delivery fee calculation error: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao calcular taxa de entrega.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 

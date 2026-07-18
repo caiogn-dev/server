@@ -144,7 +144,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error creating payment: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao criar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -168,7 +168,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error processing payment {payment.id}: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao processar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -193,7 +193,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error confirming payment {payment.id}: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao confirmar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -219,7 +219,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error failing payment {payment.id}: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao registrar falha de pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -237,7 +237,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error cancelling payment {payment.id}: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao cancelar pagamento.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
@@ -262,7 +262,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error refunding payment {payment.id}: {e}")
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao realizar estorno.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
     
