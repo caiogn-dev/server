@@ -423,3 +423,46 @@ O sweep de views HTTP está essencialmente completo após os PRs #297, #298, #29
    (item crítico do CLAUDE.md).
 4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-19
+
+**Baseline de testes:** 16 testes novos GREEN (SimpleTestCase, sem Docker). 4 skipped por
+`psycopg2` e `langchain_core` ausentes no container mínimo — pré-existente, não regressão.
+Gate anti-acúmulo: 0 PRs abertos (todos os anteriores já mergeados em `development`).
+
+**Situação encontrada:** sweep de `is_staff` em whatsapp/instagram já coberto (comentários
+e testes existentes confirmam); 7 pontos de `str(e)` em `Exception` genérica ainda expostos
+em respostas HTTP — um deles em endpoint **AllowAny** (público sem autenticação).
+
+**Bug encontrado e corrigido:** `str(e)` em 7 handlers de Exception em views HTTP [P0/P1]
+
+- **Tipo:** P0 — endpoint público (`health_views.py`) + P1 — endpoints autenticados WhatsApp/Automação
+- **Arquivo crítico:** `apps/core/health_views.py` — `@permission_classes([AllowAny])`, montado em
+  `/api/v1/core/metrics/`. Falhas de DB, Redis e Celery retornavam `str(e)` com host, porta e
+  credenciais da string de conexão para qualquer cliente anônimo.
+- **Arquivos corrigidos (5):**
+  1. `apps/core/health_views.py` — DB (`database_unavailable`), cache (`cache_unavailable`), Celery
+     (`celery_unavailable`): `str(e)` preservado apenas no `logger.error` interno.
+  2. `apps/core/api/health_views.py` — idem.
+  3. `apps/whatsapp/api/views.py` — `force_delete` (500), `business_profile` (502 — protegia tokens
+     Meta), `sync_templates` (502 — idem): respostas genéricas pt-BR + logger adicionado.
+  4. `apps/automation/api/views/unified_views.py` — `UnifiedProcessView`: `f'Erro ao processar
+     mensagem: {str(e)}'` → `'Erro ao processar mensagem.'`
+  5. `apps/automation/api/views/auto_message_views.py` — `test_send` e `bulk_update`.
+- **Testes:** 16 casos em 3 arquivos (RED→GREEN confirmado).
+- **PR:** #307 — `bot/server-2026-07-19-str-e-whatsapp-automation-health`
+
+**Status do sweep de `str(e)` em views HTTP:** COMPLETO. Apenas services/tasks internos restam
+(não retornam HTTP direto — risco baixo, não prioritário).
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+   (item crítico do CLAUDE.md há várias sessões — item de maior valor pendente).
+2. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md).
+3. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+4. **P2** — Varredura de `str(e)` em serviços internos (`order_service`, `payment_service`,
+   `agent_service`) para mensagens de erro que possam vazar para Celery task logs externos.
+
