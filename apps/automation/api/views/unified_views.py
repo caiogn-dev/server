@@ -124,7 +124,7 @@ class UnifiedProcessView(APIView):
         except Exception as e:
             logger.error(f"[UnifiedAPI] Error processing message: {e}", exc_info=True)
             return Response(
-                {'error': f'Erro ao processar mensagem: {str(e)}'},
+                {'error': 'Erro ao processar mensagem.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

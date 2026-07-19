@@ -168,9 +168,10 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
                     'buttons': auto_message.buttons,
                 })
             except Exception as e:
+                logger.error(f"Error sending test auto message: {e}", exc_info=True)
                 return Response({
                     'success': False,
-                    'error': str(e),
+                    'error': 'Erro ao enviar mensagem de teste.',
                     'rendered_message': rendered_message,
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
@@ -213,7 +214,8 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
             except AutoMessage.DoesNotExist:
                 errors.append(f"Message {message_id} not found")
             except Exception as e:
-                errors.append(f"Error updating {message_id}: {str(e)}")
+                logger.error(f"Error updating auto message {message_id}: {e}", exc_info=True)
+                errors.append(f"Erro ao atualizar mensagem {message_id}.")
         
         return Response({
             'updated': updated_count,
