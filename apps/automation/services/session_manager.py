@@ -396,6 +396,30 @@ class SessionManager:
         session.save(update_fields=['cart_data'])
         return attempts
 
+    def should_send_unknown_helper(self, cooldown_seconds: int = 900) -> bool:
+        """True só na 1ª mensagem não identificada dentro do cooldown.
+
+        Evita o bot metralhar "não entendi"/atalhos a cada mensagem que não
+        reconhece — depois da 1ª ajuda, silêncio até o cooldown expirar.
+        """
+        session = self.get_or_create_session()
+        if not session:
+            return True
+        data = session.cart_data or {}
+        last = data.get('unknown_helper_at')
+        now = timezone.now()
+        if last:
+            try:
+                last_dt = datetime.fromisoformat(last)
+                if (now - last_dt).total_seconds() < cooldown_seconds:
+                    return False
+            except (ValueError, TypeError):
+                pass
+        data['unknown_helper_at'] = now.isoformat()
+        session.cart_data = data
+        session.save(update_fields=['cart_data'])
+        return True
+
     def clear_address_attempts(self) -> None:
         session = self.get_or_create_session()
         if session and (session.cart_data or {}).get('address_attempts'):

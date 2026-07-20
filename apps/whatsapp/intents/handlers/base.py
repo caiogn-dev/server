@@ -104,12 +104,19 @@ class HandlerResult:
         interactive_type: Optional[str] = None,
         interactive_data: Optional[Dict] = None,
         requires_llm: bool = False,
+        suppress: bool = False,
     ):
         self.response_text = response_text
         self.use_interactive = use_interactive
         self.interactive_type = interactive_type
         self.interactive_data = interactive_data or {}
         self.requires_llm = requires_llm
+        self.suppress = suppress
+
+    @classmethod
+    def silent(cls) -> 'HandlerResult':
+        """Sem resposta nenhuma — o pipeline suprime o envio."""
+        return cls(suppress=True)
 
     @classmethod
     def text(cls, text: str) -> 'HandlerResult':

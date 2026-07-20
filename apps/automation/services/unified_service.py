@@ -581,6 +581,9 @@ class UnifiedService:
         if not result:
             return None
 
+        if getattr(result, 'suppress', False):
+            return self._suppressed(f'{intent.value}_silent')
+
         if result.requires_llm:
             return None
 
@@ -866,11 +869,8 @@ class UnifiedService:
                 logger.error('[unified] location handler failed: %s', exc, exc_info=True)
 
         if not message_text or not message_text.strip():
-            logger.debug('[unified] Mensagem sem texto ignorada silenciosamente')
-            return UnifiedResponse(
-                content="Não entendi sua mensagem. Como posso ajudar?",
-                source=ResponseSource.FALLBACK,
-            )
+            # Sticker/mídia sem texto: não responde "não entendi" — silêncio.
+            return self._suppressed('empty_message')
 
         normalized = message_text.strip()
 

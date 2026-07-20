@@ -140,11 +140,21 @@ class UnknownHandler(IntentHandler):
             logger.info("[UnknownHandler] Mensagem desconhecida delegada ao LLM")
             return HandlerResult.needs_llm()
 
-        logger.info("[UnknownHandler] Mensagem não reconhecida — fallback determinístico")
+        # Sem "não consegui identificar": 1ª vez oferece atalhos úteis; se o
+        # cliente seguir mandando coisas que não entendemos dentro do cooldown,
+        # o bot fica QUIETO (provavelmente é conversa pra atendente, não spam).
+        try:
+            if not self._get_session_manager().should_send_unknown_helper():
+                logger.info("[UnknownHandler] Unknown repetido dentro do cooldown — silêncio")
+                return HandlerResult.silent()
+        except Exception as exc:
+            logger.warning("[UnknownHandler] Erro no cooldown de unknown: %s", exc)
+        logger.info("[UnknownHandler] Mensagem não reconhecida — enviando atalhos")
         return HandlerResult.buttons(
-            body="Não consegui identificar isso com segurança. Como quer continuar?",
+            body="Como posso te ajudar? 👇",
             buttons=[
                 {'id': 'view_menu', 'title': '📋 Cardápio'},
+                {'id': 'start_order', 'title': '🛒 Fazer pedido'},
                 {'id': 'contact_support', 'title': '👤 Atendente'},
             ],
         )

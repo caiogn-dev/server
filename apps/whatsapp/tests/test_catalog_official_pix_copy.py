@@ -162,3 +162,52 @@ class AddressLoopEscapeTests(_Base):
             resp = svc.process_message('Tem como eu falar com um atendente')
         self.assertIn('atendente', (resp.content or '').lower())
         self.assertFalse(self._handler()._get_session_manager().is_waiting_for_address())
+
+
+class UnknownFallbackTests(_Base):
+    """Mensagem não identificada: atalhos úteis 1x, depois silêncio.
+
+    Nada de "não consegui identificar" — pedido do usuário 20/jul.
+    """
+
+    def _unknown(self):
+        from apps.whatsapp.intents.handlers.fallback import UnknownHandler
+        h = UnknownHandler(self.account, self.conversation, self.profile)
+        h.store = self.store
+        return h
+
+    def test_first_unknown_sends_shortcuts_without_apology(self):
+        res = self._unknown().handle({'original_message': 'askjdh qweqwe'})
+        self.assertTrue(res.use_interactive)
+        body = (res.interactive_data or {}).get('body', '')
+        self.assertNotIn('identificar', body.lower())
+        self.assertNotIn('não entendi', body.lower())
+        ids = [b['id'] for b in res.interactive_data['buttons']]
+        self.assertIn('view_menu', ids)
+        self.assertIn('contact_support', ids)
+
+    def test_repeated_unknown_is_silent(self):
+        self._unknown().handle({'original_message': 'askjdh qweqwe'})
+        res2 = self._unknown().handle({'original_message': 'zxzxzx ababab'})
+        self.assertTrue(res2.suppress)
+
+    def test_unified_maps_suppress_to_suppressed(self):
+        from apps.automation.services.unified_service import (
+            LLMOrchestratorService, ResponseSource,
+        )
+        svc = LLMOrchestratorService(
+            account=self.account, conversation=self.conversation, use_llm=False,
+        )
+        svc.process_message('askjdh qweqwe blorb')
+        resp2 = svc.process_message('zxzxzx ababab blorb')
+        self.assertEqual(resp2.source, ResponseSource.SUPPRESSED)
+
+    def test_empty_message_is_suppressed(self):
+        from apps.automation.services.unified_service import (
+            LLMOrchestratorService, ResponseSource,
+        )
+        svc = LLMOrchestratorService(
+            account=self.account, conversation=self.conversation, use_llm=False,
+        )
+        resp = svc.process_message('   ')
+        self.assertEqual(resp.source, ResponseSource.SUPPRESSED)
