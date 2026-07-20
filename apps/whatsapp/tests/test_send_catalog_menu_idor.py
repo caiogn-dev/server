@@ -55,12 +55,12 @@ class SendCatalogMenuStaffIDORTest(APITestCase):
         self.client.force_authenticate(self.attacker)
         with patch('apps.whatsapp.api.views.MessageService') as MS, \
              patch('apps.whatsapp.api.views.MessageSerializer') as MSer:
-            MS.return_value.send_product_list.return_value = object()
+            MS.return_value.send_catalog_message.return_value = object()
             MSer.return_value.data = {'ok': True}
             resp = self.client.post(URL, self._payload(), format='json')
         self.assertEqual(resp.status_code, 400, resp.content)
         self.assertIn('não encontrada', str(resp.data))
-        MS.return_value.send_product_list.assert_not_called()
+        MS.return_value.send_catalog_message.assert_not_called()
 
     def test_superuser_pode_selecionar_qualquer_loja(self):
         """Regressão: superuser continua podendo enviar catálogo de qualquer loja."""
@@ -75,8 +75,8 @@ class SendCatalogMenuStaffIDORTest(APITestCase):
         payload['account_id'] = str(su_acc.id)
         with patch('apps.whatsapp.api.views.MessageService') as MS, \
              patch('apps.whatsapp.api.views.MessageSerializer') as MSer:
-            MS.return_value.send_product_list.return_value = object()
+            MS.return_value.send_catalog_message.return_value = object()
             MSer.return_value.data = {'ok': True}
             resp = self.client.post(URL, payload, format='json')
         self.assertEqual(resp.status_code, 201, resp.content)
-        MS.return_value.send_product_list.assert_called_once()
+        MS.return_value.send_catalog_message.assert_called_once()

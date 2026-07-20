@@ -241,35 +241,16 @@ class MenuRequestHandler(IntentHandler):
                 return HandlerResult.text(body)
             return HandlerResult.text("Nenhum produto disponível no momento. 😔")
 
-        product_sections = []
-        total_product_items = 0
-        max_product_items = 30
-        for cat_name, products in list(products_by_category.items())[:10]:
-            if total_product_items >= max_product_items:
-                break
-            remaining_items = max_product_items - total_product_items
-            product_items = [{'product_retailer_id': str(p.id)} for p in products[:remaining_items]]
-            if not product_items:
-                continue
-            product_sections.append({'title': cat_name[:24], 'product_items': product_items})
-            total_product_items += len(product_items)
-
-        if product_sections:
-            logger.info("[MenuRequestHandler] Catálogo WhatsApp: %s seções, %s produtos",
-                        len(product_sections), total_product_items)
-            return HandlerResult.product_list(
-                header=f"Cardápio - {self.store.name}",
-                body="Escolha seus produtos no catálogo abaixo. 🛒",
-                footer=drink_footer or "As imagens e preços vêm do catálogo do WhatsApp.",
-                sections=product_sections,
-                fallback_sections=sections,
-            )
-
-        logger.info("[MenuRequestHandler] Enviando lista com %s seções", len(sections))
-        return HandlerResult.list_message(
-            body=f"📋 *Cardápio - {self.store.name}*\n\nEscolha um produto:",
-            button="Ver opções",
-            sections=sections,
+        # Encaminha pro catálogo OFICIAL do WhatsApp (carrinho nativo, cliente
+        # adiciona/remove vários itens). product_list com retailer_id do nosso
+        # banco não bate com os IDs do catálogo e vira mensagem não-selecionável.
+        logger.info("[MenuRequestHandler] Enviando catalog_message oficial (fallback: %s seções)",
+                    len(sections))
+        return HandlerResult.catalog_message(
+            body=f"📋 *Cardápio - {self.store.name}*\n\n"
+                 "Toque em *Ver catálogo* para escolher seus produtos e montar o carrinho. 🛒",
+            footer=drink_footer or "Adicione quantos itens quiser!",
+            fallback_sections=sections,
         )
 
 

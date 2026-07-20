@@ -17,10 +17,7 @@ class PaymentStatusHandler(IntentHandler):
             session_data = session_manager.get_session_data()
             pix_code = session_data.get('pix_code', '')
             if pix_code:
-                return HandlerResult.buttons(
-                    body=pix_code,
-                    buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}],
-                )
+                return HandlerResult.text(pix_code)
         # Busca pedido pendente com PIX já gerado
         pending_order = Order.objects.filter(
             customer_phone=self.conversation.phone_number,
@@ -33,10 +30,7 @@ class PaymentStatusHandler(IntentHandler):
                 pix_code=pending_order.pix_code,
                 payment_id=str(pending_order.id),
             )
-            return HandlerResult.buttons(
-                body=pending_order.pix_code,
-                buttons=[{'id': f'pix_copy_{pending_order.id}', 'title': 'COPIAR CODIGO PIX'}],
-            )
+            return HandlerResult.text(pending_order.pix_code)
         # Race condition: pedido criado mas PIX ainda sendo gerado (async)
         order_without_pix = Order.objects.filter(
             customer_phone=self.conversation.phone_number,

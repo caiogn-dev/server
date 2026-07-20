@@ -530,36 +530,20 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         if not products.exists():
             return Response({'detail': 'Nenhum produto disponível para enviar.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Group by category and build product_list sections
-        products_by_category: dict = {}
-        for p in products:
-            cat = p.category.name if p.category else 'Outros'
-            if ' - ' in cat:
-                cat = cat.split(' - ')[-1]
-            products_by_category.setdefault(cat, []).append(p)
-
-        sections = []
-        total = 0
-        for cat_name, items in list(products_by_category.items())[:10]:
-            if total >= 30:
-                break
-            remaining = 30 - total
-            product_items = [{'product_retailer_id': str(p.id)} for p in items[:remaining]]
-            if product_items:
-                sections.append({'title': cat_name[:24], 'product_items': product_items})
-                total += len(product_items)
-
-        header_text = data.get('header_text') or f'Cardápio - {store.name}'
-        body_text = data.get('body_text') or 'Escolha seus itens pelo catálogo abaixo.'
-        footer = data.get('footer') or 'Imagens e preços do catálogo do WhatsApp.'
+        # Encaminha pro catálogo OFICIAL (catalog_message, carrinho nativo).
+        # product_list com retailer_id do nosso banco não bate com os IDs do
+        # catálogo do WhatsApp e chega como mensagem não-selecionável.
+        body_text = data.get('body_text') or (
+            f'📋 *Cardápio - {store.name}*\n\n'
+            'Toque em *Ver catálogo* para escolher seus produtos. 🛒'
+        )
+        footer = data.get('footer') or 'Adicione quantos itens quiser!'
 
         service = MessageService()
-        message = service.send_product_list(
+        message = service.send_catalog_message(
             account_id=account_id,
             to=to,
-            sections=sections,
             body_text=body_text,
-            header_text=header_text,
             footer=footer,
             metadata=data.get('metadata', {}),
         )

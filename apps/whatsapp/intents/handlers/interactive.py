@@ -455,10 +455,7 @@ class InteractiveReplyHandler(IntentHandler):
             if lock_key:
                 cache.delete(lock_key)
             logger.info('[InteractiveReplyHandler] Reclique de PIX no mesmo checkout — reenviando código')
-            return HandlerResult.buttons(
-                body=session_data['pix_code'],
-                buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}],
-            )
+            return HandlerResult.text(session_data['pix_code'])
 
         if not items:
             if lock_key:

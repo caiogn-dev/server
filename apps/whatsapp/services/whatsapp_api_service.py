@@ -342,6 +342,44 @@ class WhatsAppAPIService:
             data=payload
         )
 
+    def send_catalog_message(
+        self,
+        to: str,
+        body_text: str,
+        footer: Optional[str] = None,
+        thumbnail_product_retailer_id: Optional[str] = None,
+        reply_to: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Send an interactive catalog_message — opens the full official
+        WhatsApp catalog with the native cart (add/remove multiple items)."""
+        payload = {
+            'messaging_product': 'whatsapp',
+            'recipient_type': 'individual',
+            'to': to,
+            'type': 'interactive',
+            'interactive': {
+                'type': 'catalog_message',
+                'body': {'text': body_text[:1024]},
+                'action': {
+                    'name': 'catalog_message',
+                },
+            },
+        }
+        if thumbnail_product_retailer_id:
+            payload['interactive']['action']['parameters'] = {
+                'thumbnail_product_retailer_id': thumbnail_product_retailer_id,
+            }
+        if footer:
+            payload['interactive']['footer'] = {'text': footer[:60]}
+        if reply_to:
+            payload['context'] = {'message_id': reply_to}
+
+        return self._make_request(
+            'POST',
+            f'{self.phone_number_id}/messages',
+            data=payload
+        )
+
     def send_image(
         self,
         to: str,

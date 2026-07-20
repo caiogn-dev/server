@@ -4,6 +4,7 @@ Webhook Service - Process incoming webhooks from Meta.
 import logging
 import hashlib
 import mimetypes
+import re
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
 from django.db import IntegrityError
@@ -29,6 +30,43 @@ from .broadcast_service import get_broadcast_service
 from .whatsapp_api_service import WhatsAppAPIService
 
 logger = logging.getLogger(__name__)
+
+_UUID_RE = re.compile(
+    r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+)
+
+
+def resolve_catalog_products(store, retailer_ids):
+    """Mapeia retailer_ids do catálogo oficial → StoreProduct.
+
+    O catálogo oficial usa IDs prefixados (ex.: "cs-<uuid>"); pedidos vindos
+    do app podem trazer IDs arbitrários. Extrai o UUID quando existir e nunca
+    passa string não-UUID pro filtro (evita ValidationError).
+    """
+    from apps.stores.models import StoreProduct
+
+    uuid_by_rid = {}
+    for rid in retailer_ids:
+        m = _UUID_RE.search(rid or '')
+        if m:
+            uuid_by_rid[rid] = m.group(0).lower()
+
+    if not uuid_by_rid:
+        return {}
+
+    products_by_uuid = {
+        str(p.id): p
+        for p in StoreProduct.objects.filter(
+            store=store,
+            id__in=set(uuid_by_rid.values()),
+            is_active=True,
+        )
+    }
+    return {
+        rid: products_by_uuid[pid]
+        for rid, pid in uuid_by_rid.items()
+        if pid in products_by_uuid
+    }
 
 
 class WebhookService:
@@ -843,14 +881,7 @@ class WebhookService:
             for item in product_items
             if item.get('product_retailer_id')
         ]
-        products = {
-            str(product.id): product
-            for product in StoreProduct.objects.filter(
-                store=store,
-                id__in=retailer_ids,
-                is_active=True,
-            )
-        }
+        products = resolve_catalog_products(store, retailer_ids)
 
         pending_items = []
         item_lines = []
@@ -980,6 +1011,36 @@ class WebhookService:
 
         if isinstance(header, str):
             header = {'type': 'text', 'text': header}
+
+        if unified_response.interactive_type == 'catalog_message':
+            try:
+                svc.send_catalog_message(
+                    account_id=account_id,
+                    to=message.from_number,
+                    body_text=interactive_data.get('body') or unified_response.content,
+                    footer=footer,
+                    thumbnail_product_retailer_id=interactive_data.get('thumbnail_product_retailer_id'),
+                    reply_to=str(message.whatsapp_message_id),
+                )
+                return
+            except Exception as exc:
+                logger.warning(
+                    '[pipeline] Catalog message send failed, falling back to WhatsApp list: %s',
+                    exc,
+                    extra={'message_id': str(message.id)},
+                )
+                fallback_sections = interactive_data.get('fallback_sections') or []
+                if fallback_sections:
+                    svc.send_interactive_list(
+                        account_id=account_id,
+                        to=message.from_number,
+                        body_text=interactive_data.get('body') or unified_response.content,
+                        button_text='Ver opcoes',
+                        sections=fallback_sections,
+                        footer=footer,
+                        reply_to=str(message.whatsapp_message_id),
+                    )
+                return
 
         if unified_response.interactive_type == 'product_list':
             try:

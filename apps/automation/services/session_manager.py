@@ -384,6 +384,26 @@ class SessionManager:
             session.cart_data = data
             session.save(update_fields=['cart_data'])
 
+    def bump_address_attempts(self) -> int:
+        """Conta falhas consecutivas de geocode — trava anti-loop de endereço."""
+        session = self.get_or_create_session()
+        if not session:
+            return 0
+        data = session.cart_data or {}
+        attempts = int(data.get('address_attempts') or 0) + 1
+        data['address_attempts'] = attempts
+        session.cart_data = data
+        session.save(update_fields=['cart_data'])
+        return attempts
+
+    def clear_address_attempts(self) -> None:
+        session = self.get_or_create_session()
+        if session and (session.cart_data or {}).get('address_attempts'):
+            data = session.cart_data or {}
+            data.pop('address_attempts', None)
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
     def is_waiting_for_address(self) -> bool:
         """Verifica se a sessão está aguardando endereço do cliente."""
         session = self.get_or_create_session()

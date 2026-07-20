@@ -296,6 +296,53 @@ class MessageService:
 
         return message
 
+    def send_catalog_message(
+        self,
+        account_id: str,
+        to: str,
+        body_text: str,
+        footer: Optional[str] = None,
+        thumbnail_product_retailer_id: Optional[str] = None,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Message:
+        """Send the official WhatsApp catalog (interactive catalog_message)."""
+        account = self._get_account(account_id)
+        api_service = WhatsAppAPIService(account)
+
+        message = self._create_outbound_message(
+            account=account,
+            to=to,
+            message_type=Message.MessageType.INTERACTIVE,
+            content={
+                'type': 'catalog_message',
+                'body_text': body_text,
+                'footer': footer,
+                'thumbnail_product_retailer_id': thumbnail_product_retailer_id,
+            },
+            text_body=body_text,
+            context_message_id=reply_to or '',
+            metadata=metadata or {}
+        )
+
+        try:
+            response = api_service.send_catalog_message(
+                to=to,
+                body_text=body_text,
+                footer=footer,
+                thumbnail_product_retailer_id=thumbnail_product_retailer_id,
+                reply_to=reply_to,
+            )
+
+            self._update_message_sent(message, response)
+            logger.info(f"Catalog message sent: {message.id}")
+
+        except Exception as e:
+            self._update_message_failed(message, str(e))
+            raise
+
+        return message
+
     def send_image(
         self,
         account_id: str,

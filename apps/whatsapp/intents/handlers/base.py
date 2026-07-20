@@ -159,6 +159,27 @@ class HandlerResult:
         )
 
     @classmethod
+    def catalog_message(
+        cls,
+        body: str,
+        footer: Optional[str] = None,
+        thumbnail_product_retailer_id: Optional[str] = None,
+        fallback_sections: Optional[list] = None,
+    ) -> 'HandlerResult':
+        """Encaminha pro catálogo oficial do WhatsApp (carrinho nativo)."""
+        return cls(
+            response_text="CATALOG_SENT",
+            use_interactive=True,
+            interactive_type='catalog_message',
+            interactive_data={
+                'body': body,
+                'footer': footer,
+                'thumbnail_product_retailer_id': thumbnail_product_retailer_id,
+                'fallback_sections': fallback_sections or [],
+            },
+        )
+
+    @classmethod
     def needs_llm(cls) -> 'HandlerResult':
         return cls(requires_llm=True)
 
@@ -343,10 +364,9 @@ class IntentHandler:
             self.whatsapp_service.send_text_message(to=self.conversation.phone_number, text=msg1)
         except Exception as exc:
             logger.warning("[_send_pix_confirmation] Erro ao enviar msg1: %s", exc)
-        return HandlerResult.buttons(
-            body=pix_code,
-            buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}],
-        )
+        # Código copia-e-cola SOZINHO na mensagem: segurar → copiar. Botão
+        # quick-reply "copiar" não copia nada, só ecoa o título na conversa.
+        return HandlerResult.text(pix_code)
 
     def _handle_address_input(self, address_text: str) -> 'HandlerResult':
         session_manager = self._get_session_manager()
@@ -357,6 +377,19 @@ class IntentHandler:
             from apps.stores.services.geo import geo_service
             geo = geo_service.geocode(address_text, restrict_to_city=True)
             if not geo or not geo.get('lat'):
+                # Anti-loop: na 2ª falha consecutiva (geo fora do ar, key
+                # bloqueada etc.) aceita o endereço como digitado com a taxa
+                # padrão e segue o checkout — nunca prende o cliente aqui.
+                attempts = session_manager.bump_address_attempts()
+                if attempts >= 2:
+                    logger.warning(
+                        "[_handle_address_input] Geocode falhou %s vezes — "
+                        "aceitando endereço como digitado", attempts,
+                    )
+                    default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
+                    session_manager.save_delivery_address_info(address=address_text, fee=default_fee)
+                    session_manager.clear_address_attempts()
+                    return self._ask_payment_method('delivery')
                 city = getattr(self.store, 'city', '') or ''
                 where = f" em {city}" if city else ""
                 return HandlerResult.text(
@@ -365,6 +398,7 @@ class IntentHandler:
                     "(rua/quadra, número e bairro), ou compartilhe sua "
                     "localização pelo clipe 📎."
                 )
+            session_manager.clear_address_attempts()
             return self._process_location_and_ask_payment(
                 session_manager=session_manager,
                 geo_svc=geo_service,

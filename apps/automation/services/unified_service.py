@@ -884,7 +884,14 @@ class UnifiedService:
             r'|desisti|desistir|n[ãa]o quero|pode cancelar|pode esquecer)\.?$',
             normalized,
         ))
-        if not _early_cancel and _restricted is None and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
+        # Pedido de atendente também escapa do checkout: cliente presa no
+        # loop de endereço precisa conseguir chamar um humano.
+        _early_human = bool(re.search(
+            r'(?i)(atendente|atendimento humano|falar com (um[a]? )?(pessoa|humano|algu[ée]m|gente)'
+            r'|quero falar com|chama algu[ée]m|ajuda humana|suporte)',
+            normalized,
+        ))
+        if not _early_cancel and not _early_human and _restricted is None and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
             from apps.whatsapp.intents.handlers import UnknownHandler
             try:
                 handler = UnknownHandler(self.account, self.conversation, self.company)
