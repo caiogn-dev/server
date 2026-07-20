@@ -423,3 +423,40 @@ O sweep de views HTTP está essencialmente completo após os PRs #297, #298, #29
    (item crítico do CLAUDE.md).
 4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-20
+
+**Baseline de testes:** Django e dependências instaladas via pip no container. 24 testes SimpleTestCase
+rodados sem Docker/PostgreSQL. 24/24 GREEN após o fix (3 FAIL antes — RED confirmado).
+
+**PRs abertos no gate anti-acúmulo:** #307 (info-disclosure P0) — sem duplicata.
+
+**Bug encontrado e corrigido:** Ingredientes de salada em formato string ignorados na comanda e no recibo [P1]
+
+- **Tipo:** P1 — Fluxo quebrado: comanda de cozinha e recibo não exibiam ingredientes para pedidos
+  do Flutter salad-builder quando enviados como `["Alface", "Tomate", ...]` (lista de strings simples).
+- **Causa raiz:** `normalize_custom_salad_payload` (checkout_service) armazena ingredientes corretamente
+  como strings ou dicts conforme o que o Flutter envia. Porém tanto `_ingredient_lines` em
+  `print_service.py` quanto o loop em `receipt_service.py` só tratavam `isinstance(ing, dict)` e
+  silenciosamente ignoravam ingredientes do tipo `str`. Resultado: comanda/recibo saíam sem
+  ingredientes para pedidos com formato simplificado do Flutter.
+- **Arquivos corrigidos (2):**
+  1. `apps/stores/services/print_service.py` — `_ingredient_lines`: adicionado branch
+     `elif isinstance(ingredient, str) and ingredient.strip()` para renderizar strings diretamente.
+  2. `apps/stores/services/receipt_service.py` — loop de ingredientes do salad-builder: mesma
+     adição de branch `elif isinstance(ing, str) and ing.strip()`.
+- **Testes (24 SimpleTestCase):** `apps/stores/tests/test_salad_builder_contract.py`
+  - `NormalizeCustomSaladPayloadTest` (10 casos): contratos de normalização de payload
+  - `IngredientLinesPrintServiceTest` (8 casos): renderização da comanda (RED→GREEN confirmado)
+  - `ReceiptIngredientRenderingTest` (5 casos): renderização do recibo
+- **PR:** `bot/server-2026-07-20-salad-builder-str-ingredients`
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md há várias sessões, ainda pendente).
+2. **P2** — Testes de contrato para `additional_info` do Mercado Pago Orders API (quality score MP):
+   `test_mp_orders_additional_info.py` já existe no repo — verificar se passa com settings de teste.
+3. **P3** — Confirmar que todos os PRs de str(e) (#297–#300) foram mergeados em development.
+

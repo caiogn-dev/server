@@ -48,19 +48,20 @@ def _extract_address_lines(order: StoreOrder) -> list[str]:
     return [line for line in [line1, line2, line3, fallback] if line]
 
 
-def _ingredient_lines(ingredients: Iterable[dict]) -> list[str]:
+def _ingredient_lines(ingredients) -> list[str]:
     lines: list[str] = []
     for ingredient in ingredients:
-        if not isinstance(ingredient, dict):
-            continue
-        name = str(ingredient.get('name') or '').strip()
-        if not name:
-            continue
-        role = str(ingredient.get('role') or '').strip()
-        price = Decimal(str(ingredient.get('price') or 0))
-        prefix = f"{role}: " if role else ''
-        suffix = f" (+R$ {_money(price)})" if price > 0 else ''
-        lines.append(f"{prefix}{name}{suffix}")
+        if isinstance(ingredient, dict):
+            name = str(ingredient.get('name') or '').strip()
+            if not name:
+                continue
+            role = str(ingredient.get('role') or '').strip()
+            price = Decimal(str(ingredient.get('price') or 0))
+            prefix = f"{role}: " if role else ''
+            suffix = f" (+R$ {_money(price)})" if price > 0 else ''
+            lines.append(f"{prefix}{name}{suffix}")
+        elif isinstance(ingredient, str) and ingredient.strip():
+            lines.append(ingredient.strip())
     return lines
 
 
