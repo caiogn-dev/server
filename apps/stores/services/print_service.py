@@ -44,8 +44,13 @@ def _extract_address_lines(order: StoreOrder) -> list[str]:
         address.get('cep') or address.get('zip_code'),
     ]))
 
+    # O fallback (endereço em string única) só entra quando os campos
+    # estruturados estão vazios — senão a comanda sai com o endereço 2x.
+    structured = [line for line in [line1, line2, line3] if line]
+    if structured:
+        return structured
     fallback = address.get('raw_address') or address.get('address')
-    return [line for line in [line1, line2, line3, fallback] if line]
+    return [fallback] if fallback else []
 
 
 def _ingredient_lines(ingredients: Iterable[dict]) -> list[str]:
@@ -81,7 +86,7 @@ def _combo_selection_lines(display_data: dict) -> list[str]:
         if not group_items:
             continue
         if g_name:
-            lines.append(f"{g_name}:")
+            lines.append(f"{g_name.rstrip(':')}:")
         for it in group_items:
             name = str(it.get('product_name') or it.get('variant_name') or '').strip()
             if not name:
@@ -92,12 +97,39 @@ def _combo_selection_lines(display_data: dict) -> list[str]:
 
 
 def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:
+    # Combos ligados a uma linha de item são pulados no loop de combos abaixo
+    # (evita duplicar a linha), então os sabores escolhidos precisam entrar
+    # nos details do próprio item — senão a comanda sai sem salada/suco.
+    combo_by_order_item = {
+        combo.order_item_id: combo
+        for combo in order.combo_items.all()
+        if getattr(combo, 'order_item_id', None)
+    }
+
     items = []
     for item in order.items.all():
         options = item.options if isinstance(item.options, dict) else {}
         details = []
         if item.variant_name:
             details.append(item.variant_name)
+        combo_ingredients = []
+        linked_combo = combo_by_order_item.get(item.id)
+        if linked_combo is not None:
+            linked_display = linked_combo.display_data if isinstance(linked_combo.display_data, dict) else {}
+            details.extend(_combo_selection_lines(linked_display))
+            # O print-agent atual só imprime 'ingredients' (não lê 'details'),
+            # então as escolhas do combo também vão como ingredients.
+            for group in (linked_display.get('groups') or []):
+                if not isinstance(group, dict):
+                    continue
+                role = str(group.get('group_name') or '').strip().rstrip(':')
+                for sel in (group.get('items') or []):
+                    if not isinstance(sel, dict):
+                        continue
+                    name = str(sel.get('product_name') or sel.get('variant_name') or '').strip()
+                    if name:
+                        qty = sel.get('quantity') or 1
+                        combo_ingredients.append({'role': role, 'name': f"{qty}x {name}" if qty > 1 else name, 'price': 0})
         details.extend(_ingredient_lines(options.get('ingredients') or []))
         items.append({
             'type': 'item',
@@ -106,6 +138,7 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'unit_price': _money(item.unit_price),
             'subtotal': _money(item.subtotal),
             'details': details,
+            'ingredients': combo_ingredients,
             'notes': item.notes or '',
         })
 
