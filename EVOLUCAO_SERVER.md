@@ -30,7 +30,8 @@ Suíte completa não executável neste container; testes que usam migrações Po
 **Outros achados (backlog para próximas execuções):**
 
 | Prioridade | Arquivo | Linha | Problema |
-|---|---|---|---|
+|---|---|---|
+|---|
 | P0 | apps/core/auth/views.py | 76 | PII em log — telefone em texto plano |
 | P0 | apps/core/auth/whatsapp_auth.py | 235, 281 | PII em log — telefone |
 | P0 | apps/automation/services/session_manager.py | 260, 467, 477, 487 | PII em log — telefone |
@@ -423,3 +424,55 @@ O sweep de views HTTP está essencialmente completo após os PRs #297, #298, #29
    (item crítico do CLAUDE.md).
 4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-21
+
+**Baseline de testes:** Ambiente de checkout limpo sem Docker/PostgreSQL. SimpleTestCase
+sem dependências externas executável diretamente.
+
+**Gate anti-acúmulo (checado antes de implementar):**
+- PRs abertos: #307 (str(e) whatsapp/automation/health — P0/P1) e #308 (salad-builder str ingredients — P2/P1).
+- Commits recentes em `development` (18–20/jul): merges dos PRs #302–#306, fixes de WebSocket
+  (ACK, UUID na rota, redis<6), WhatsApp bot (catálogo oficial, PIX copia-e-cola, anti-loop de
+  endereço, cooldown de handler desconhecido).
+- Itens já cobertos em `development`: OTP contract (`test_otp_whatsapp_contract.py`),
+  GeoService calculation (`test_delivery_fee_refactor.py`), IDOR delivery fee
+  (`test_delivery_calculate_fee_idor.py`), mobile contracts/orders by token
+  (`test_mobile_contracts.py`), agent guardrails + OTP (`test_otp_and_agent_guardrails.py`).
+- **Lacuna confirmada:** `StoreDeliveryZone` — métodos `get_distance_range`, `matches_distance`,
+  `matches_zip_code` e `calculate_fee` — **zero cobertura de testes**. Estes são as regras
+  canônicas de entrega que o CLAUDE.md exige como "backend-owned truth".
+
+**Fix implementado:** Testes de regressão para contratos do modelo StoreDeliveryZone [P1]
+
+- **Tipo:** P1 — Cobertura de testes em lógica canônica de cálculo de entrega
+- **Problema:** Os quatro métodos do modelo `StoreDeliveryZone` que implementam as regras
+  de entrega não tinham nenhum teste. Refatorações ou mudanças de constantes
+  (`DISTANCE_BAND_RANGES`) poderiam quebrar silenciosamente o cálculo de taxa sem nenhum
+  sinal de alerta. O risco é alto porque o `GeoService` chama `matches_distance` e
+  `calculate_fee` para determinar o valor cobrado do cliente.
+- **Arquivo criado:** `apps/stores/tests/test_delivery_zone_model_contract.py`
+- **Cobertura (30 casos, todos SimpleTestCase — sem DB/Docker):**
+  - `TestGetDistanceRange` (7 casos): todas as bandas nomeadas, range custom, banda desconhecida
+    → (None, None), sem dados → (None, None)
+  - `TestMatchesDistance` (7 casos): limite inferior inclusivo, superior exclusivo, banda 30_plus
+    aceita distâncias grandes, range custom, sem range → False
+  - `TestMatchesZipCode` (9 casos): range, fronteiras inclusivas, CEP fora do range, strip de
+    hífen e ponto, sem range → False, apenas start → False, apenas end → False
+  - `TestCalculateFee` (7 casos): taxa plana, per_km + distância, sem distância usa base,
+    distance_km=0 é falsy, min_fee abaixo e acima, combinações, tipo Decimal garantido
+- **Técnica:** `StoreDeliveryZone.__new__` + setattr — sem banco, sem migrations, sem HTTP;
+  testa os métodos puro-Python do modelo diretamente.
+- **PR:** `bot/server-2026-07-21-delivery-zone-model-contract` → base `development`
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Mesclar PRs abertos #307 e #308 (pendentes de review).
+2. **P1** — Testes de regressão para o checkout payload (fluxo completo: itens, taxa de
+   entrega, cupom, pagamento) — `test_checkout_contract.py` ainda falta.
+3. **P1** — Testes para o anti-loop de endereço do agente WhatsApp (commit 58986f17): garantir
+   que 2 falhas de geocode consecutivas aceitam o endereço como digitado e não travam o bot.
+4. **P1** — Testes para o cooldown do UnknownHandler (commit 7a2653ad): `should_send_unknown_helper`
+   com cooldown de 15 min e supressão de mídia/sticker.
+5. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos.
