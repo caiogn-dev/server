@@ -839,9 +839,10 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
         email = 'cliente@exemplo.com'
         phone = '(11) 99999-9999'
         
-        # Só busca dados reais se store_id for informado — sem escopo não há como
-        # garantir que o email pertence a um assinante do tenant correto (IDOR/PII).
-        if customer_email and store_id:
+        # Só busca dados reais se store_id for informado E o usuário tiver acesso
+        # à loja — sem ambas as condições não há como garantir que o email pertence
+        # a um assinante do tenant correto (cross-tenant PII / LGPD art. 46).
+        if customer_email and store_id and _user_can_use_store(request.user, store_id):
             subscriber = Subscriber.objects.filter(
                 email=customer_email, store_id=store_id
             ).first()
@@ -895,9 +896,9 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
         """Get a sample customer for preview."""
         store_id = request.query_params.get('store')
 
-        # Sem store_id não há como escopar por tenant — retorna dados de exemplo.
-        # Consultar User.objects sem filtro de loja vaza PII cross-tenant (LGPD art. 46).
-        if store_id:
+        # Sem store_id (ou sem acesso à loja) não há como escopar por tenant.
+        # Consultar subscriber sem verificar acesso vaza PII cross-tenant (LGPD art. 46).
+        if store_id and _user_can_use_store(request.user, store_id):
             subscriber = Subscriber.objects.filter(store_id=store_id, status='active').first()
             if subscriber:
                 return Response({

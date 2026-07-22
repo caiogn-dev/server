@@ -7,9 +7,9 @@ Antes do fix:
 - sample_customer: User.objects.filter(is_active=True, ...).first() sem escopo de loja
   → retornava nome/email/telefone real do primeiro usuário do banco global.
 
-Fix: preview só usa dados reais de Subscriber.filter(email=..., store_id=store_id)
-— sem store_id nenhuma consulta real é feita. sample_customer remove o
-User.objects global e depende apenas de Subscriber escopado por store_id.
+Fix: preview e sample_customer verificam _user_can_use_store antes de qualquer
+consulta de subscriber; sem acesso confirmado apenas dados de exemplo são retornados.
+O lookup de subscriber também exige store_id para garantir escopo de tenant.
 
 Técnica: SimpleTestCase + mocks. Sem Docker/PostgreSQL.
 """
@@ -59,7 +59,7 @@ def _mock_subscriber_qs(subscriber):
 class PreviewCrossTenantPIITest(SimpleTestCase):
     """preview não deve vazar PII de tenants alheios via customer_email."""
 
-    def _call(self, data, subscriber=None):
+    def _call(self, data, subscriber=None, can_use_store=True):
         from apps.marketing.api.views import TemplateVariablesViewSet
         req = factory.post('/preview/', data, format='json')
         req._force_auth_user = _user()
@@ -70,7 +70,8 @@ class PreviewCrossTenantPIITest(SimpleTestCase):
         fake_store.website_url = None
         fake_store.slug = 'loja-teste'
         with patch(f'{_VIEW_MODULE}.Subscriber') as mock_sub, \
-             patch('apps.stores.models.Store.objects') as mock_store_mgr:
+             patch('apps.stores.models.Store.objects') as mock_store_mgr, \
+             patch(f'{_VIEW_MODULE}._user_can_use_store', return_value=can_use_store):
             mock_sub.objects.filter.return_value = _mock_subscriber_qs(subscriber)
             mock_store_mgr.get.return_value = fake_store
             resp = view(req)
@@ -96,14 +97,29 @@ class PreviewCrossTenantPIITest(SimpleTestCase):
         self.assertNotIn('vitima@outro-tenant.com',
                          str(resp.data.get('variables_used', {})))
 
+    def test_usuario_sem_acesso_store_nao_busca_subscriber(self):
+        """Usuário sem acesso à loja não deve obter PII mesmo com customer_email + store."""
+        sub = _fake_subscriber()
+        resp, mock_sub = self._call(
+            {'html_content': '<p>{{customer_name}}</p>',
+             'customer_email': 'vitima@loja.com',
+             'store': 'store-alheio'},
+            subscriber=sub,
+            can_use_store=False,
+        )
+        self.assertEqual(resp.status_code, 200)
+        mock_sub.objects.filter.assert_not_called()
+        self.assertNotIn('vitima@loja.com', resp.data.get('preview_html', ''))
+
     def test_customer_email_com_store_id_consulta_subscriber_escopado(self):
-        """customer_email + store_id busca subscriber filtrado por store_id."""
+        """customer_email + store_id + acesso busca subscriber filtrado por store_id."""
         sub = _fake_subscriber(name='Maria Souza', email='maria@loja.com')
         resp, mock_sub = self._call(
             {'html_content': '<p>{{customer_name}}</p>',
              'customer_email': 'maria@loja.com',
              'store': 'store-abc'},
             subscriber=sub,
+            can_use_store=True,
         )
         self.assertEqual(resp.status_code, 200)
         mock_sub.objects.filter.assert_called_once()
@@ -119,6 +135,7 @@ class PreviewCrossTenantPIITest(SimpleTestCase):
              'customer_email': 'naoexiste@loja.com',
              'store': 'store-abc'},
             subscriber=None,
+            can_use_store=True,
         )
         self.assertEqual(resp.status_code, 200)
         self.assertIn('Cliente', resp.data.get('preview_html', ''))
@@ -128,7 +145,8 @@ class PreviewCrossTenantPIITest(SimpleTestCase):
         mock_user_model = MagicMock()
         with patch(f'{_VIEW_MODULE}.Subscriber') as mock_sub, \
              patch('apps.stores.models.Store.objects') as mock_store_mgr, \
-             patch('django.contrib.auth.get_user_model', return_value=mock_user_model):
+             patch('django.contrib.auth.get_user_model', return_value=mock_user_model), \
+             patch(f'{_VIEW_MODULE}._user_can_use_store', return_value=True):
             fake_store = MagicMock(); fake_store.name = 'L'; fake_store.website_url = None; fake_store.slug = 's'
             mock_sub.objects.filter.return_value = _mock_subscriber_qs(None)
             mock_store_mgr.get.return_value = fake_store
@@ -146,9 +164,9 @@ class PreviewCrossTenantPIITest(SimpleTestCase):
 
 @override_settings(**_SETTINGS)
 class SampleCustomerCrossTenantPIITest(SimpleTestCase):
-    """sample_customer não deve retornar PII real sem escopo de loja."""
+    """sample_customer não deve retornar PII real sem escopo de loja + acesso verificado."""
 
-    def _call(self, store_id=None, subscriber=None):
+    def _call(self, store_id=None, subscriber=None, can_use_store=True):
         from apps.marketing.api.views import TemplateVariablesViewSet
         url = f'/sample-customer/?store={store_id}' if store_id else '/sample-customer/'
         req = factory.get(url)
@@ -157,7 +175,8 @@ class SampleCustomerCrossTenantPIITest(SimpleTestCase):
 
         mock_user_model = MagicMock()
         with patch(f'{_VIEW_MODULE}.Subscriber') as mock_sub, \
-             patch('django.contrib.auth.get_user_model', return_value=mock_user_model):
+             patch('django.contrib.auth.get_user_model', return_value=mock_user_model), \
+             patch(f'{_VIEW_MODULE}._user_can_use_store', return_value=can_use_store):
             mock_sub.objects.filter.return_value = _mock_subscriber_qs(subscriber)
             resp = view(req)
         return resp, mock_user_model, mock_sub
@@ -179,21 +198,29 @@ class SampleCustomerCrossTenantPIITest(SimpleTestCase):
         _, _, mock_sub = self._call(store_id=None)
         mock_sub.objects.filter.assert_not_called()
 
+    def test_usuario_sem_acesso_store_nao_busca_subscriber(self):
+        """Usuário sem acesso à loja retorna dados de exemplo, não dados do subscriber."""
+        sub = _fake_subscriber(name='Ana Lima', email='ana@loja-alheia.com')
+        resp, _, mock_sub = self._call(store_id='store-alheio', subscriber=sub, can_use_store=False)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data.get('email'), 'cliente@exemplo.com')
+        mock_sub.objects.filter.assert_not_called()
+
     def test_com_store_id_sem_subscriber_retorna_dados_exemplo(self):
-        """store_id fornecido mas sem subscriber ativo → dados de exemplo."""
-        resp, _, _ = self._call(store_id='store-xyz', subscriber=None)
+        """store_id fornecido com acesso mas sem subscriber ativo → dados de exemplo."""
+        resp, _, _ = self._call(store_id='store-xyz', subscriber=None, can_use_store=True)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data.get('email'), 'cliente@exemplo.com')
 
     def test_com_store_id_com_subscriber_retorna_dados_escopados(self):
-        """store_id fornecido com subscriber ativo → dados reais do subscriber."""
+        """store_id fornecido com acesso e subscriber ativo → dados reais do subscriber."""
         sub = _fake_subscriber(name='Ana Lima', email='ana@loja.com', phone='11988887777')
-        resp, _, _ = self._call(store_id='store-xyz', subscriber=sub)
+        resp, _, _ = self._call(store_id='store-xyz', subscriber=sub, can_use_store=True)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data.get('email'), 'ana@loja.com')
         self.assertEqual(resp.data.get('name'), 'Ana Lima')
 
     def test_nao_chama_user_objects_filter_global(self):
         """sample_customer nunca deve chamar User.objects.filter() sem escopo."""
-        _, mock_user_model, _ = self._call(store_id='store-xyz', subscriber=None)
+        _, mock_user_model, _ = self._call(store_id='store-xyz', subscriber=None, can_use_store=True)
         mock_user_model.objects.filter.assert_not_called()
