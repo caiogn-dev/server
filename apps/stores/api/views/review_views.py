@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
+from django.http import Http404
+from apps.core.permissions import user_can_access_store
 from apps.stores.models import Store, StoreOrder, StoreReview
 from .base import IsStoreOwnerOrStaff
 
@@ -81,8 +83,11 @@ class StoreReviewListView(ListAPIView):
 
     def get_queryset(self):
         store = Store.objects.filter(slug=self.kwargs['store_slug']).first()
-        if not store:
-            return StoreReview.objects.none()
+        if not store or not user_can_access_store(self.request.user, store):
+            # 404 para não revelar se a loja existe (info-hiding, mesmo padrão das cash views).
+            # IsStoreOwnerOrStaff.has_permission() não verifica ownership quando o kwarg é
+            # store_slug em vez de store_pk, portanto o gate precisa ser explícito aqui.
+            raise Http404
         qs = StoreReview.objects.filter(store=store).select_related('order')
         rating = self.request.query_params.get('rating')
         if rating:
