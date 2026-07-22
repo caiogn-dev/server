@@ -77,7 +77,7 @@ class CashOpenIDORTest(SimpleTestCase):
     def _call(self, user, store=None, can_access=False):
         from apps.stores.api.views.cash_views import CashOpenView
         req = factory.post('/cash/open/', {'opening_amount': '0'}, format='json')
-        req.user = user
+        req._force_auth_user = user
         with patch('apps.stores.api.views.cash_views._get_store', return_value=store), \
              patch('apps.stores.api.views.cash_views.user_can_access_store', return_value=can_access), \
              patch('apps.stores.api.views.cash_views._get_open_session', return_value=None):
@@ -132,7 +132,7 @@ class CashCurrentIDORTest(SimpleTestCase):
     def _call(self, user, store=None, can_access=False):
         from apps.stores.api.views.cash_views import CashCurrentView
         req = factory.get('/cash/current/')
-        req.user = user
+        req._force_auth_user = user
         with patch('apps.stores.api.views.cash_views._get_store', return_value=store), \
              patch('apps.stores.api.views.cash_views.user_can_access_store', return_value=can_access), \
              patch('apps.stores.api.views.cash_views._get_open_session', return_value=None):
@@ -156,7 +156,7 @@ class CashMovementIDORTest(SimpleTestCase):
         from apps.stores.api.views.cash_views import CashMovementView
         req = factory.post('/cash/movement/',
                            {'kind': 'sangria', 'amount': '10.00'}, format='json')
-        req.user = user
+        req._force_auth_user = user
         with patch('apps.stores.api.views.cash_views._get_store', return_value=store), \
              patch('apps.stores.api.views.cash_views.user_can_access_store', return_value=can_access), \
              patch('apps.stores.api.views.cash_views._get_open_session', return_value=None):
@@ -180,7 +180,7 @@ class CashCloseIDORTest(SimpleTestCase):
         from apps.stores.api.views.cash_views import CashCloseView
         req = factory.post('/cash/close/',
                            {'counted_amount': '100.00'}, format='json')
-        req.user = user
+        req._force_auth_user = user
         with patch('apps.stores.api.views.cash_views._get_store', return_value=store), \
              patch('apps.stores.api.views.cash_views.user_can_access_store', return_value=can_access), \
              patch('apps.stores.api.views.cash_views._get_open_session', return_value=None):
