@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # rejeitada com 403. Configure um WebhookEndpoint com secret no admin OU as
 # envs WHATSAPP_APP_SECRET / INSTAGRAM_APP_SECRET / META_WEBHOOK_APP_SECRET.
 _PROVIDERS_REQUIRE_SIGNATURE: frozenset = frozenset({
-    'whatsapp', 'instagram', 'messenger', 'mercadopago',
+    'whatsapp', 'instagram', 'messenger', 'mercadopago', 'toca-delivery',
 })
 
 # Providers da Meta que compartilham o formato de assinatura X-Hub-Signature-256.
@@ -333,6 +333,18 @@ class WebhookDispatcherView(View):
                     fallback = self._meta_fallback_secret(provider)
                     if fallback:
                         return self._verify_meta_signature(request, fallback)
+                # Toca Delivery: fallback via TOCA_DELIVERY_WEBHOOK_SECRET
+                if provider == 'toca-delivery':
+                    from django.conf import settings as _settings
+                    fallback = getattr(_settings, 'TOCA_DELIVERY_WEBHOOK_SECRET', '')
+                    if fallback:
+                        toca_sig = request.headers.get('X-Toca-Signature', '')
+                        if not toca_sig:
+                            return False
+                        expected = hmac.new(
+                            fallback.encode(), request.body, hashlib.sha256
+                        ).hexdigest()
+                        return hmac.compare_digest(expected, toca_sig)
                 return None  # No verification configured
 
             signature_header = request.headers.get(endpoint.signature_header)
@@ -382,7 +394,16 @@ class WebhookDispatcherView(View):
                     hashlib.sha256,
                 ).hexdigest()
                 return hmac.compare_digest(v1, expected)
-            
+
+            elif provider == 'toca-delivery':
+                # HMAC-SHA256 of raw body; signature in X-Toca-Signature (hex digest, no prefix)
+                expected = hmac.new(
+                    endpoint.secret.encode(),
+                    request.body,
+                    hashlib.sha256,
+                ).hexdigest()
+                return hmac.compare_digest(expected, signature_header)
+
             return None
             
         except WebhookEndpoint.DoesNotExist:
