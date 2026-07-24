@@ -423,3 +423,48 @@ O sweep de views HTTP está essencialmente completo após os PRs #297, #298, #29
    (item crítico do CLAUDE.md).
 4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-24
+
+**Baseline de testes:** Django e dependências instalados via pip no container (sem Docker/PostgreSQL).
+Migrações com `AddIndexConcurrently` exigem psycopg2 → testes de integração com DB não executáveis.
+8 testes SimpleTestCase (sem DB/Docker) GREEN para a correção desta sessão.
+CI do GitHub Actions com `runner_id=0` (infra pré-existente desde 2026-07-18) — não é regressão.
+
+**PRs abertos no gate anti-acúmulo:** #307–#313 verificados — nenhum cobria `apps/webhooks/dispatcher.py`.
+Nenhuma duplicata gerada.
+
+**Vulnerabilidade encontrada e corrigida:** toca-delivery aceita POST sem assinatura HMAC [P0]
+
+- **Tipo:** P0 — Forja de status de entrega por atacante anônimo sem credenciais
+- **Descrição:** `WebhookDispatcherView._verify_signature` retornava `None` para `toca-delivery`
+  sem validar nenhuma assinatura. Qualquer POST anônimo a `/webhooks/v1/toca-delivery/` com
+  `corrida_id` de um pedido real atualizava `StoreOrder.status` e `delivered_at` para "entregue".
+  `TocaDeliveryHandler.validate_signature()` existia mas **nunca era chamado** (código morto).
+- **Arquivos corrigidos:**
+  1. `apps/webhooks/dispatcher.py` — adiciona `'toca-delivery'` a `_PROVIDERS_REQUIRE_SIGNATURE`
+     (fail-closed: sem secret → 403); implementa branch `elif provider == 'toca-delivery':` com
+     HMAC-SHA256 de `request.body` via `TOCA_DELIVERY_WEBHOOK_SECRET` (settings fallback) ou
+     `endpoint.secret` (WebhookEndpoint no admin), comparado ao header `X-Toca-Signature`
+  2. `config/urls_minimal.py` — adiciona rota `webhooks/v1/` para testes futuros
+- **Testes:** 8 SimpleTestCase em `apps/webhooks/tests_toca_delivery_signature.py`:
+  fail-closed (sem secret → None), assinatura correta via settings → True, errada → False,
+  header ausente → False; mesmos 3 casos via WebhookEndpoint no banco
+- **PR:** #315 — `bot/server-2026-07-24-toca-webhook-signature`
+- **CI:** `check` e `complexity` falham com `runner_id=0`, 2s de duração — infra pré-existente
+
+**Nota:** PR #314 (campaign/contactlist IDOR) também aberto nesta sessão em branch separado.
+Ambos os PRs aguardam merge para `development`.
+
+**Backlog atualizado:**
+
+1. **P0** — `apps/instagram/api/serializers.py` — `InstagramMediaSerializer` e
+   `InstagramConversationSerializer`: `account` gravável via PATCH (mesmo padrão do campaign IDOR).
+   Adicionar `'account'` a `read_only_fields` + validar `perform_create`.
+2. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+   (item crítico do CLAUDE.md há várias sessões, ainda pendente).
+3. **P1** — Varredura de `is_staff` como bypass cross-tenant em `apps/whatsapp/` e `apps/instagram/`
+4. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos.
+5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+
