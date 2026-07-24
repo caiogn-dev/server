@@ -65,6 +65,22 @@ class TocaDeliveryProvidersRequireSignatureTest(SimpleTestCase):
             "atacante pode forjar qualquer status de entrega.",
         )
 
+    def test_toca_delivery_em_webhook_endpoint_provider_choices(self):
+        """'toca-delivery' deve ser choice válido em WebhookEndpoint.Provider.
+
+        Sem este choice, o admin do Django rejeita WebhookEndpoint(provider='toca-delivery')
+        e o path de configuração via DB fica inutilizável: _verify_signature retornaria None
+        e todo POST ao provider seria rejeitado com 403 mesmo com secret correto.
+        """
+        from apps.webhooks.models import WebhookEndpoint
+        valid_values = [choice[0] for choice in WebhookEndpoint.Provider.choices]
+        self.assertIn(
+            'toca-delivery',
+            valid_values,
+            "'toca-delivery' não está em WebhookEndpoint.Provider.choices — "
+            "admin não consegue salvar WebhookEndpoint para este provider.",
+        )
+
 
 class TocaDeliveryVerifySignatureNoEndpointTest(SimpleTestCase):
     """_verify_signature com fallback via TOCA_DELIVERY_WEBHOOK_SECRET (sem WebhookEndpoint)."""
