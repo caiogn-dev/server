@@ -959,6 +959,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             metadata=metadata,
         )
 
+        stock_changed = False
         for item in resolved_items:
             StoreOrderItem.objects.create(
                 order=order,
@@ -973,6 +974,21 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                 options=item['options'],
                 notes=item['notes'],
             )
+
+            # Baixa de estoque — mesmo comportamento do checkout do storefront
+            # (checkout_service). Sem isso, venda de balcão/PDV não dava baixa.
+            if item['product'].track_stock:
+                from django.db.models import F
+                StoreProduct.objects.filter(id=item['product'].id).update(
+                    stock_quantity=F('stock_quantity') - item['quantity'],
+                    sold_count=F('sold_count') + item['quantity'],
+                )
+                stock_changed = True
+
+        if stock_changed:
+            from apps.stores.services.checkout_service import _invalidate_agent_menu_safe
+            store_id = order.store_id
+            transaction.on_commit(lambda: _invalidate_agent_menu_safe(store_id))
 
         from apps.stores.services.print_service import enqueue_order_print_job
         transaction.on_commit(
