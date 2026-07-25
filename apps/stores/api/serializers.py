@@ -784,6 +784,9 @@ class StoreOrderCreateSerializer(serializers.Serializer):
     notes = serializers.CharField(required=False, allow_blank=True)
     # Pedido de balcão: não enviar nenhuma mensagem automática de status
     suppress_notifications = serializers.BooleanField(required=False)
+    # Balcão: além da comanda da cozinha, imprimir cupom do cliente
+    # (template customer_receipt) na estação 'balcao'
+    print_receipt = serializers.BooleanField(required=False)
 
     def _resolve_store(self, validated_data):
         """Resolve store from payload, query params, or nested router kwargs."""
@@ -996,6 +999,16 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                 StoreOrder.objects.get(id=order_id)
             )
         )
+
+        if validated_data.get('print_receipt'):
+            from apps.stores.models.printing import StorePrintJob
+            transaction.on_commit(
+                lambda order_id=order.id: enqueue_order_print_job(
+                    StoreOrder.objects.get(id=order_id),
+                    station='balcao',
+                    template=StorePrintJob.Template.CUSTOMER_RECEIPT,
+                )
+            )
 
         return order
 
