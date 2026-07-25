@@ -75,6 +75,15 @@ def store_order_generate_payment(request, store_slug, pk):
     view = StoreOrderViewSet.as_view({'post': 'generate_payment'})
     return view(request, store_pk=store_slug, pk=pk)
 
+def store_order_emit_nfce(request, store_slug, pk):
+    """Wrapper para POST /orders/{pk}/emit_nfce/ — injeta store_slug."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_pk'] = store_slug
+        request.resolver_match.kwargs['pk'] = pk
+
+    view = StoreOrderViewSet.as_view({'post': 'emit_nfce'})
+    return view(request, store_pk=store_slug, pk=pk)
+
 def my_addresses_list(request, store_slug):
     """Wrapper to inject store_slug for address list/create."""
     if request.resolver_match:
@@ -244,6 +253,7 @@ store_frontend_patterns = [
     path('orders/<uuid:pk>/', store_order_detail, name='store-order-detail'),
     path('orders/<uuid:pk>/adjust/', store_order_adjust, name='store-order-adjust'),
     path('orders/<uuid:pk>/generate_payment/', store_order_generate_payment, name='store-order-generate-payment'),
+    path('orders/<uuid:pk>/emit_nfce/', store_order_emit_nfce, name='store-order-emit-nfce'),
 
     # CRM
     path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),

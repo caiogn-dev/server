@@ -601,6 +601,30 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         self._notify_order_update(order, 'order.cancelled')
         return Response(StoreOrderSerializer(order).data)
     
+    @action(detail=True, methods=['post'], url_path='emit_nfce')
+    def emit_nfce(self, request, pk=None, **kwargs):
+        """Emite a NFC-e do pedido via provider fiscal configurado na loja."""
+        from apps.fiscal.providers.base import FiscalNotConfigured
+        from apps.fiscal.services import emit_nfce_for_order
+
+        order = self.get_object()
+        try:
+            doc = emit_nfce_for_order(order)
+        except FiscalNotConfigured as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            'id': str(doc.id),
+            'status': doc.status,
+            'provider': doc.provider,
+            'chave_acesso': doc.chave_acesso,
+            'numero': doc.numero,
+            'serie': doc.serie,
+            'qrcode_url': doc.qrcode_url,
+            'danfe_url': doc.danfe_url,
+            'error_message': doc.error_message,
+        }, status=status.HTTP_201_CREATED if doc.status == 'authorized' else status.HTTP_200_OK)
+
     @action(detail=True, methods=['post'], url_path='generate_payment')
     def generate_payment(self, request, pk=None, **kwargs):
         """Generate a real PIX/card payment link for an admin-created order."""

@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'apps.campaigns',
     'apps.automation',
     'apps.stores',  # Multi-store management (unified)
+    'apps.fiscal',  # NFC-e (Focus NFe hoje, SEFAZ direto quando houver certificado)
     'apps.marketing',  # Email marketing with Resend
     'apps.instagram',  # Instagram Messaging API integration
     'apps.messaging',  # Unified messaging dispatcher (includes Messenger)
