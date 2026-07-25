@@ -98,6 +98,22 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=True, methods=['post'], url_path='requeue')
     def requeue(self, request, pk=None):
         job = self.get_object()
+
+        # Reimprimir cria um job NOVO (id/dedupe novos): o agent guarda os ids
+        # já impressos e marcaria o mesmo id como "duplicata" sem imprimir.
+        if job.order_id:
+            from apps.stores.services.print_service import enqueue_order_print_job
+            result = enqueue_order_print_job(
+                job.order,
+                station=job.station,
+                template=job.template,
+                source=StorePrintJob.Source.MANUAL_REPRINT,
+                dedupe=False,
+                requested_by=getattr(request.user, 'username', '') or '',
+            )
+            return Response(StorePrintJobSerializer(result.job).data)
+
+        # Job sem pedido (ex.: teste): comportamento antigo
         job.status = StorePrintJob.JobStatus.PENDING
         job.available_at = job.created_at
         job.last_error = ''
