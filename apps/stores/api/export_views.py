@@ -5,7 +5,7 @@ import csv
 import io
 from datetime import datetime, timedelta
 from decimal import Decimal
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.db.models import Sum, Count, Avg, F, Q
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 from django.utils import timezone
@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.permissions import user_can_access_store
 from ..models import Store, StoreOrder, StoreProduct, StoreCustomer
 from .views import IsStoreOwnerOrStaff
 
@@ -24,17 +25,33 @@ class BaseExportView(APIView):
     permission_classes = [IsAuthenticated, IsStoreOwnerOrStaff]
     
     def get_store(self, request):
-        """Get store from query params."""
+        """Get store from query params.
+
+        Gate de tenant: superuser vê qualquer loja; demais usuários só
+        acessam lojas para as quais têm permissão explícita.
+        Acesso negado a uma loja existente → Http404 (info-hiding).
+        """
         store_param = request.query_params.get('store')
         if not store_param:
             return None
-        
+
         try:
             import uuid
             uuid.UUID(store_param)
-            return Store.objects.get(id=store_param)
+            try:
+                store = Store.objects.get(id=store_param)
+            except Store.DoesNotExist:
+                return None
         except (ValueError, AttributeError):
-            return Store.objects.filter(slug=store_param).first()
+            store = Store.objects.filter(slug=store_param).first()
+
+        if store is None:
+            return None
+
+        if not request.user.is_superuser and not user_can_access_store(request.user, store):
+            raise Http404
+
+        return store
     
     def get_date_range(self, request):
         """Get date range from query params."""
