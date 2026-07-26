@@ -423,3 +423,47 @@ O sweep de views HTTP está essencialmente completo após os PRs #297, #298, #29
    (item crítico do CLAUDE.md).
 4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
 
+---
+
+### 2026-07-26
+
+**Baseline de testes:** 46 testes `SimpleTestCase` rodados localmente (sem Docker/PostgreSQL).
+46/46 passando após o fix. PRs abertos no gate: #307–#315 (9 PRs abertos, nenhum mergeado desde
+19/07). CI `check`/`complexity` falhando por infra desde 2026-07-18 — pré-existente, não regressão.
+
+**Varreduras antes de escolher o fix:**
+- `is_staff` em `apps/whatsapp/` e `apps/instagram/`: **limpos** — nenhum bypass encontrado.
+- `str(e)` residual em `campaigns/api/views.py:354,374,395,413,431,515`: são `ValueError` de validação
+  com mensagens intencionais (ex: "Only running campaigns can be paused") — risco aceitável, P3.
+- Fiscal (NFC-e): sem views HTTP expostas — serviço interno apenas.
+- SSRF: `StoreWebhookSerializer.validate_url` + `apps.core.url_security` já existem — protegido.
+- OTP WhatsApp: `test_otp_whatsapp_contract.py` já existe — coberto.
+
+**Bug encontrado e corrigido:** IDOR cross-tenant em views de exportação [P0]
+
+- **Tipo:** P0 — IDOR de leitura com exfiltração de PII + dados financeiros cross-tenant
+- **Arquivo:** `apps/stores/api/export_views.py` — `BaseExportView.get_store()`
+- **Problema:** `get_store()` buscava qualquer loja do banco por `?store=<slug/uuid>` sem verificar
+  acesso do usuário. `IsStoreOwnerOrStaff` em `permission_classes` não protegia porque só verifica
+  ownership quando `store_pk` está em `view.kwargs` — aqui o store vem de query params.
+- **Vetor:** `GET /api/v1/stores/export/orders/?store=loja-vitima` → CSV com nome/email/telefone
+  de todos os clientes. Mesmo padrão válido para receita, produtos, stock, dashboard, KPIs.
+- **Views afetadas (8):** `OrdersExportView`, `RevenueReportView`, `ProductsReportView`,
+  `StockReportView`, `CustomersReportView`, `CustomerInsightsReportView`,
+  `StoreDashboardStatsView`, `SaladasReportView`.
+- **Correção:** Importa `user_can_access_store` + `Http404`. Em `get_store()`: após resolver a loja,
+  superuser passa sem gate; demais → `user_can_access_store(user, store)`; se False → `Http404`
+  (info-hiding). Bônus: UUID inexistente captura `DoesNotExist` → `None` (antes propagava 500).
+- **Testes:** 9 `SimpleTestCase` em `test_export_views_idor.py` (RED→GREEN confirmado).
+- **PR:** #316 — `bot/server-2026-07-26-export-views-idor`
+- **CI:** jobs `check`/`complexity` falham por infra pré-existente (output vazio, logs 404) — não
+  relacionado ao PR. Comentado no #316.
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Merge dos PRs acumulados #307–#316 (9 PRs aguardando revisão há até 7 dias).
+2. **P1** — Testes de contrato para checkout payload e pedido por token (OTP já coberto).
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
+   sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
+
