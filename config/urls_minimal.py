@@ -1,4 +1,6 @@
 """URL configuration minimalista para testes de serializers."""
-from django.urls import path
+from django.urls import path, include
 
-urlpatterns = []
+urlpatterns = [
+    path('webhooks/v1/', include('apps.webhooks.urls')),
+]
