@@ -10,6 +10,54 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-07-27
+
+**Baseline de testes:** 10 PRs abertos (#307–#316) aguardando merge; nenhum novo desde #316 (2026-07-26).
+HEAD de `development`: `ba8de8c` (fix impressão reimprimir). Novos módulos desde o último histórico:
+- `ae62e65` feat(fiscal): módulo NFC-e com provedores Focus NFe + SEFAZ (novo)
+- `130c25a` feat(pdv): flag print_receipt gera cupom
+- `83c7071` feat(pdv): baixa de estoque na criação de pedido PDV
+- `ba8de8c` fix(impressao): Reimprimir cria job novo
+
+**Gate anti-acúmulo:** PRs #307–#316 cobrem export-views-IDOR, toca-delivery HMAC, campaign-account IDOR,
+handover-log FieldError, review-list IDOR, marketing PII, cash-register IDOR, delivery-zone tests,
+salad-builder string ingredients, str(e) em handlers. Nenhum cobre o módulo `apps/fiscal`.
+
+**Bug encontrado e corrigido:** str(exc) info-disclosure no módulo fiscal NFC-e [P2]
+
+- **Tipo:** P2 — Info-disclosure consistente com o sweep P0/P1 de PRs #297-#307; completa o padrão.
+- **Arquivos corrigidos (3):**
+  1. `apps/fiscal/providers/sefaz.py` — `SefazProvider.emit_nfce()` levantava `FiscalNotConfigured`
+     com mensagem contendo o caminho interno `apps/fiscal/providers/sefaz.py`, retornado ao cliente
+     via `Response({'error': str(exc)})`. Caminho removido; instrução ao operador preservada.
+  2. `apps/fiscal/services.py` (mensagem FiscalNotConfigured) — mensagem de "Loja sem config fiscal"
+     continha `store.metadata["fiscal"]` revelando a estrutura interna de metadados do modelo Store.
+     Substituída por mensagem sem referência a chave interna.
+  3. `apps/fiscal/services.py` (except Exception) — `emit_nfce_for_order()` capturava qualquer
+     exceção (ConnectionError, Timeout) e armazenava `str(exc)` em `doc.error_message`, que é devolvido
+     na resposta HTTP. Uma `requests.ConnectionError` expõe URL interna da Focus API
+     (`api.focusnfe.com.br`) e parâmetros de query com UUID do pedido.
+     Substituído por mensagem genérica; erro real preservado apenas no `logger.exception`.
+- **Bônus:** adicionado `logger.warning` na view `emit_nfce` para capturar `FiscalNotConfigured`
+  com contexto (pedido/loja) nos logs internos.
+- **Testes:** 6 `SimpleTestCase` em `apps/fiscal/tests/test_nfce_str_exc_disclosure.py` (RED→GREEN):
+  - `SefazProvider` message sem caminho de arquivo (2 testes)
+  - `SefazProvider` message preserva instrução 'certificado A1' ao operador
+  - `services.py` sem `store.metadata["fiscal"]` na exception
+  - `services.py` sem `str(exc)` em `doc.error_message` (análise estática)
+  - Mock `ConnectionError` → `error_message` genérica (teste comportamental)
+- **PR:** `bot/server-2026-07-27-nfce-str-exc-disclosure` (abrindo agora)
+
+**Próximo backlog priorizado (após merge dos 11 PRs abertos):**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge urgente dos PRs P0 #310, #311, #315, #316 (IDOR cash/export + PII marketing + webhook HMAC) |
+| P1 | Merge dos PRs P1 #312, #313, #314 (handover FieldError + review IDOR + campaign IDOR) |
+| P2 | Merge dos PRs P2 #307, #308, #309 (str/e str/eng + salad ingredients + delivery zone tests) |
+| P2 | Varredura de N+1 queries em `emit_nfce_for_order` (prefetch_related para order.items__product) |
+| P2 | Namespace mobile: rota `/api/v1/mobile/` já existe — verificar contratos de reordenação |
+
 ### 2026-06-28
 
 **Baseline de testes:** Ambiente de checkout limpo sem Docker (sem PostgreSQL/Redis).

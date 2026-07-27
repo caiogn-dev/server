@@ -108,8 +108,8 @@ def emit_nfce_for_order(order) -> FiscalDocument:
         raise FiscalNotConfigured(f'Provider fiscal desconhecido: {provider_key}')
     if not config:
         raise FiscalNotConfigured(
-            'Loja sem config fiscal (store.metadata["fiscal"]). '
-            'Configure provider/token/CNPJ antes de emitir.'
+            'Loja sem config fiscal. '
+            'Configure provider, CNPJ e token nas configurações fiscais da loja antes de emitir.'
         )
 
     doc = FiscalDocument.objects.create(
@@ -126,10 +126,10 @@ def emit_nfce_for_order(order) -> FiscalDocument:
     except FiscalNotConfigured:
         doc.delete()
         raise
-    except Exception as exc:  # provedor fora do ar etc. — registra e devolve
+    except Exception:  # provedor fora do ar etc. — registra e devolve
         logger.exception('Falha ao emitir NFC-e do pedido %s', order.id)
         doc.status = FiscalDocument.Status.ERROR
-        doc.error_message = str(exc)
+        doc.error_message = 'Falha de comunicação com o provedor fiscal. Tente novamente.'
         doc.save(update_fields=['status', 'error_message', 'updated_at'])
         return doc
 
