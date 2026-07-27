@@ -36,9 +36,10 @@ def health_check(request):
             'connections': _get_db_connection_count()
         }
     except Exception as e:
+        logger.error(f'Health check DB failure: {e}', exc_info=True)
         health_status['services']['database'] = {
             'status': 'unhealthy',
-            'error': str(e)
+            'error': 'database_unavailable',
         }
         health_status['status'] = 'unhealthy'
 
@@ -48,12 +49,13 @@ def health_check(request):
         if cache.get('health_check') == 'ok':
             health_status['services']['cache'] = {'status': 'healthy'}
         else:
-            health_status['services']['cache'] = {'status': 'unhealthy', 'error': 'Cache miss'}
+            health_status['services']['cache'] = {'status': 'unhealthy', 'error': 'cache_miss'}
             health_status['status'] = 'unhealthy'
     except Exception as e:
+        logger.error(f'Health check cache failure: {e}', exc_info=True)
         health_status['services']['cache'] = {
             'status': 'unhealthy',
-            'error': str(e)
+            'error': 'cache_unavailable',
         }
         health_status['status'] = 'unhealthy'
 
@@ -70,12 +72,13 @@ def health_check(request):
             if queue_depth > 100:
                 logger.warning(f'Celery queue depth high: {queue_depth}')
         else:
-            health_status['services']['celery'] = {'status': 'unhealthy', 'error': 'No workers'}
+            health_status['services']['celery'] = {'status': 'unhealthy', 'error': 'no_workers'}
             health_status['status'] = 'unhealthy'
     except Exception as e:
+        logger.error(f'Health check celery failure: {e}', exc_info=True)
         health_status['services']['celery'] = {
             'status': 'unhealthy',
-            'error': str(e)
+            'error': 'celery_unavailable',
         }
         health_status['status'] = 'unhealthy'
 

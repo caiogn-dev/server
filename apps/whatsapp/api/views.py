@@ -207,7 +207,7 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.error(f"Error force deleting account {account_id}: {e}", exc_info=True)
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro interno ao excluir conta WhatsApp. Tente novamente.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -259,8 +259,9 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
             profile = api_service.get_business_profile()
             return Response(profile)
         except Exception as e:
+            logger.error(f"Error fetching business profile for account {account.id}: {e}", exc_info=True)
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao obter perfil de negócio via API WhatsApp.'},
                 status=status.HTTP_502_BAD_GATEWAY
             )
 
@@ -295,8 +296,9 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                 'count': synced
             })
         except Exception as e:
+            logger.error(f"Error syncing templates for account {account.id}: {e}", exc_info=True)
             return Response(
-                {'error': str(e)},
+                {'error': 'Erro ao sincronizar templates via API WhatsApp.'},
                 status=status.HTTP_502_BAD_GATEWAY
             )
 
