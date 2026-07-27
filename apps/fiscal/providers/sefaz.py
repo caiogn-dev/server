@@ -22,8 +22,8 @@ class SefazProvider(FiscalProvider):
     def emit_nfce(self, *, ref: str, payload: dict) -> EmitResult:
         raise FiscalNotConfigured(
             'Emissão direta SEFAZ ainda não ativada: falta o certificado A1 '
-            '(cert_path/cert_password) e o CSC na config fiscal da loja. '
-            'Use provider "focus" ou complete o checklist em apps/fiscal/providers/sefaz.py.'
+            '(cert_path/cert_password) e o CSC nas configurações fiscais da loja. '
+            'Use provider "focus" enquanto o provedor SEFAZ não estiver ativado.'
         )
 
     def cancel_nfce(self, *, ref: str, justificativa: str) -> EmitResult:

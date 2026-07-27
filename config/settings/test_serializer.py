@@ -37,6 +37,8 @@ INSTALLED_APPS = [
     'apps.orders',
     'apps.automation',
     'apps.agents',
+    'apps.fiscal',
+    'apps.mobile_api',
 ]
 
 SILENCED_SYSTEM_CHECKS = []

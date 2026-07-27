@@ -611,6 +611,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         try:
             doc = emit_nfce_for_order(order)
         except FiscalNotConfigured as exc:
+            logger.warning('emit_nfce: config inválida pedido=%s loja=%s: %s',
+                           order.id, order.store_id, exc)
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
