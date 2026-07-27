@@ -10,6 +10,57 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-07-23
+
+**Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
+Falha pré-existente: migrações com `AddIndexConcurrently` requerem psycopg2/PostgreSQL — não é regressão desta sessão.
+
+**Gate anti-acúmulo:** 6 PRs abertos (#307–#312). Nenhum cobre `HandoverLogViewSet`.
+Confirmado via leitura do source de `development` HEAD (`fef1b06`).
+
+**Bug encontrado e corrigido:** `HandoverLogViewSet.get_queryset()` — FieldError runtime + isolamento inexistente [P1]
+
+- **Tipo:** P1 — endpoint quebrado em produção (500 para todos os não-superusers) + IDOR (isolamento de tenant nunca executado)
+- **Arquivo corrigido (1):** `apps/handover/views.py:332–343`
+- **Problema:** `HandoverLog.objects.filter(conversation__store__members=user)`
+  — `Conversation` tem campo `account` (FK → `WhatsAppAccount`), **não** `store`.
+  — `Store` não tem campo `members` (tem `staff` M2M e `owner` FK).
+  — Django levantava `FieldError: Cannot resolve keyword 'store'` para qualquer não-superuser.
+  — `GET /api/v1/handover/logs/` sempre retornava 500 para usuários comuns.
+  — Não havia isolamento efetivo por tenant (o filtro nunca executava).
+- **Correção:** substituído por `conversation__account_id__in=accessible_whatsapp_account_ids(user)`,
+  mesmo padrão já usado em `HandoverViewSet.get_conversation()` na mesma view.
+- **Testes:** 9 casos em `apps/handover/tests_log_tenant_scope.py` (RED→GREEN confirmado):
+  - Source não contém `conversation__store` nem `__members` (caminhos inválidos)
+  - Source usa `account_id` e `accessible_whatsapp_account_ids`
+  - Superuser → `HandoverLog.objects.all()` sem filtro
+  - Não-superuser → `filter(conversation__account_id__in=...)`
+  - Não-superuser não chama `objects.all()`
+  - Não levanta `FieldError`/`AttributeError`
+- **PR:** `bot/server-2026-07-23-handover-log-tenant-scope`
+
+**PRs abertos em produção aguardando merge (não criados por esta sessão):**
+| PR | Tipo | Descrição |
+|---|---|---|
+| #307 | P0/P1 | str(e) em health_views, whatsapp/api/views, automation views |
+| #308 | P1 | Ingredientes de salada (string) ignorados na comanda e recibo |
+| #309 | P1 | Contratos de cálculo de StoreDeliveryZone (30 testes) |
+| #310 | P0 | IDOR no caixa de PDV — gate de tenant em cash_views |
+| #311 | P0 | PII cross-tenant em TemplateVariablesViewSet |
+| #312 | P1 | IDOR em StoreReviewListView |
+
+**Próximo backlog priorizado:**
+
+1. **P0/P1** — Merge dos PRs #307–#312 (todos aguardando revisão há 1–4 dias).
+2. **P1** — Testes de contrato para OTP WhatsApp e checkout (pendência crítica do CLAUDE.md).
+   Verificar cobertura real de `test_otp_whatsapp_contract.py` e `test_checkout_*.py`.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P2** — `base_consumer.py:142` `verify_account_access` usa `is_staff or is_superuser` como fallback;
+   se surgir novo consumer sem override, vaza cross-tenant. Adicionar comentário de warning
+   ou tornar o método abstrato.
+
+
+
 ### 2026-06-28
 
 **Baseline de testes:** Ambiente de checkout limpo sem Docker (sem PostgreSQL/Redis).

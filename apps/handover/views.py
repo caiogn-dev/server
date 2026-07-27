@@ -332,12 +332,13 @@ class HandoverLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Retorna logs visíveis para o usuário."""
         user = self.request.user
-        
+
         if user.is_superuser:
             return HandoverLog.objects.all()
-        
-        # Logs de conversas da loja do usuário
-        # (assumindo que o usuário tem uma loja associada)
+
+        # Conversation tem FK `account` (não `store`). Filtra pelos IDs de conta acessíveis.
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        account_ids = accessible_whatsapp_account_ids(user)
         return HandoverLog.objects.filter(
-            conversation__store__members=user
+            conversation__account_id__in=account_ids
         )
