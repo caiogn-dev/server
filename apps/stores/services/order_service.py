@@ -283,7 +283,8 @@ class OrderService:
         order,
         reason: str = None,
         refund: bool = False,
-        restore_stock: bool = True
+        restore_stock: bool = True,
+        notify_customer: bool = False,
     ) -> Dict[str, Any]:
         """Cancel an order with optional refund and stock restoration."""
         from apps.stores.models import StoreOrder
@@ -305,7 +306,7 @@ class OrderService:
         order.cancelled_at = timezone.now()
         
         if reason:
-            order.notes = f"{order.notes}\n\nCancellation reason: {reason}".strip()
+            order.internal_notes = f"{order.internal_notes}\n\nMotivo do cancelamento: {reason}".strip()
         
         order.save()
         
@@ -338,8 +339,13 @@ class OrderService:
             'refunded': refund_result.get('success') if refund_result else False,
         })
         
+        # Aviso ao cliente respeita o silêncio por pedido (ex.: venda de balcão)
+        metadata = order.metadata if isinstance(order.metadata, dict) else {}
+        if notify_customer and not metadata.get('suppress_notifications'):
+            self._send_status_notification(order, old_status='', new_status='cancelled')
+
         logger.info(f"Order {order.order_number} cancelled. Reason: {reason}")
-        
+
         return {
             'success': True,
             'order_id': str(order.id),

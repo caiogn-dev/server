@@ -52,8 +52,23 @@ class StoreCoupon(models.Model):
     def __str__(self):
         return f"{self.store.name} - {self.code}"
 
-    def is_valid(self, subtotal=None, user=None):
-        """Check if coupon is valid for use."""
+    def _identity_filter(self, user=None, customer_phone=None):
+        """Filtro de pedidos do mesmo cliente (logado OU guest por telefone)."""
+        from django.db.models import Q
+        q = Q()
+        if user is not None and getattr(user, 'is_authenticated', False):
+            q |= Q(customer=user)
+        if customer_phone:
+            q |= Q(customer_phone=customer_phone)
+        return q
+
+    def is_valid(self, subtotal=None, user=None, customer_phone=None):
+        """Check if coupon is valid for use.
+
+        `customer_phone` identifica o guest — o checkout do storefront é
+        guest-first, então limites por cliente precisam funcionar sem login.
+        """
+        from django.db.models import Q
         now = timezone.now()
 
         if not self.is_active:
@@ -66,28 +81,58 @@ class StoreCoupon(models.Model):
             return False, "Limite de uso atingido"
         if subtotal and subtotal < self.min_purchase:
             return False, f"Valor mínimo de R$ {self.min_purchase:.2f}"
-        if self.first_order_only and user:
+
+        identity = self._identity_filter(user=user, customer_phone=customer_phone)
+        if identity:
             from .order import StoreOrder
-            has_orders = StoreOrder.objects.filter(
-                store=self.store,
-                customer=user,
-                status__in=['paid', 'completed', 'delivered']
-            ).exists()
-            if has_orders:
+            # Pedido "de verdade": pago, ou já andou no funil — pending
+            # abandonado e cancelado não contam contra o cliente.
+            real_orders = StoreOrder.objects.filter(identity, store=self.store).filter(
+                Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled'])
+            )
+            if self.first_order_only and real_orders.exists():
                 return False, "Cupom válido apenas para primeira compra"
+            if self.usage_limit_per_user:
+                uses = real_orders.filter(coupon_code__iexact=self.code).count()
+                if uses >= self.usage_limit_per_user:
+                    return False, "Você já usou este cupom o máximo de vezes"
 
         return True, None
 
-    def calculate_discount(self, subtotal):
+    def _eligible_subtotal(self, subtotal, items=None):
+        """Base do desconto respeitando applicable_products/applicable_categories.
+
+        `items`: [{'product_id', 'category_id', 'total'}]. Sem escopo definido
+        (ou sem items pra avaliar), a base é o subtotal inteiro.
+        """
+        product_ids = {str(p) for p in (self.applicable_products or [])}
+        category_ids = {str(c) for c in (self.applicable_categories or [])}
+        if not product_ids and not category_ids:
+            return subtotal
+        if items is None:
+            return subtotal
+        eligible = Decimal('0')
+        for item in items:
+            pid = str(item.get('product_id') or '')
+            cid = str(item.get('category_id') or '')
+            if (pid and pid in product_ids) or (cid and cid in category_ids):
+                eligible += Decimal(str(item.get('total') or 0))
+        return eligible
+
+    def calculate_discount(self, subtotal, items=None):
         """Calculate discount amount for a given subtotal."""
         valid, _ = self.is_valid(subtotal)
         if not valid:
             return Decimal('0.00')
 
+        base = self._eligible_subtotal(subtotal, items=items)
+        if base <= 0:
+            return Decimal('0.00')
+
         if self.discount_type == self.DiscountType.PERCENTAGE:
-            discount = subtotal * (self.discount_value / 100)
+            discount = base * (self.discount_value / 100)
         else:
-            discount = self.discount_value
+            discount = min(self.discount_value, base)
 
         if self.max_discount:
             discount = min(discount, self.max_discount)

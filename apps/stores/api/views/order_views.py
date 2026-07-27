@@ -548,7 +548,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])
-    def mark_paid(self, request, pk=None):
+    def mark_paid(self, request, pk=None, **kwargs):
         """Mark order as paid (convenience endpoint)."""
         order = self.get_object()
         paid = StoreOrder.PaymentStatus.PAID
@@ -581,7 +581,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(order).data)
     
     @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
+    def cancel(self, request, pk=None, **kwargs):
         """Cancel an order."""
         order = self.get_object()
         reason = request.data.get('reason', '')

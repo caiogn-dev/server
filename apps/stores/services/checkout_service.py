@@ -653,7 +653,22 @@ class CheckoutService:
         return min(prices) if prices else Decimal('0')
     
     @staticmethod
-    def validate_coupon(store: Store, code: str, subtotal: Decimal, user=None) -> dict:
+    def _coupon_items(cart: StoreCart) -> list:
+        """Itens do carrinho no formato que o cupom usa pra escopo por
+        produto/categoria (combos ficam de fora — cupom escopado é de produto)."""
+        items = []
+        for item in cart.items.select_related('product').all():
+            product = item.product
+            items.append({
+                'product_id': str(item.product_id) if item.product_id else '',
+                'category_id': str(product.category_id) if product and product.category_id else '',
+                'total': Decimal(str(item.unit_price)) * int(item.quantity or 0),
+            })
+        return items
+
+    @staticmethod
+    def validate_coupon(store: Store, code: str, subtotal: Decimal, user=None,
+                        customer_phone: str = None, items: list = None) -> dict:
         """Validate a coupon code for a store using the unified StoreCoupon model."""
         try:
             # Find coupon for this store
@@ -662,16 +677,18 @@ class CheckoutService:
                 code__iexact=code,
                 is_active=True
             ).first()
-            
+
             if not coupon:
                 return {'valid': False, 'error': 'Cupom nao encontrado'}
-            
+
             # Use the model's is_valid method which handles all validation
-            is_valid, error_message = coupon.is_valid(subtotal=subtotal, user=user)
+            is_valid, error_message = coupon.is_valid(
+                subtotal=subtotal, user=user, customer_phone=customer_phone,
+            )
             if not is_valid:
                 return {'valid': False, 'error': error_message}
-            
-            discount = coupon.calculate_discount(subtotal)
+
+            discount = coupon.calculate_discount(subtotal, items=items)
             
             return {
                 'valid': True,
@@ -874,7 +891,12 @@ class CheckoutService:
         discount = Decimal('0')
         coupon = None
         if coupon_code:
-            coupon_result = CheckoutService.validate_coupon(store, coupon_code, subtotal, user=cart.user)
+            coupon_result = CheckoutService.validate_coupon(
+                store, coupon_code, subtotal,
+                user=cart.user,
+                customer_phone=(customer_data.get('phone') or '').strip() or None,
+                items=CheckoutService._coupon_items(cart),
+            )
             if coupon_result['valid']:
                 discount = Decimal(str(coupon_result['discount']))
                 coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])

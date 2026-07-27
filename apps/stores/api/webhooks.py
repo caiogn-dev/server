@@ -630,10 +630,8 @@ class CustomerOrdersView(APIView):
                     'subtotal': float(item.subtotal),
                     'image_url': image_url(getattr(item, 'product', None)),
                 })
-            # TODO: Add combo_items support when StoreOrder has combo_items relation
-            # for item in order.combo_items.all()[: max(0, 3 - len(items))]:
-            #     items.append({...})
-            total_items = order.items.count()  # + order.combo_items.count()
+            # Combos já aparecem aqui: a linha vendável do combo vive em order.items
+            total_items = order.items.count()
             results.append({
                 'id': str(order.id),
                 'order_number': order.order_number,
@@ -666,7 +664,9 @@ class CustomerOrderDetailView(APIView):
     def get(self, request, order_id):
         """Get order details."""
         try:
-            order = StoreOrder.objects.select_related('store').prefetch_related('items__product').get(id=order_id)
+            order = StoreOrder.objects.select_related('store').prefetch_related(
+                'items__product', 'combo_items'
+            ).get(id=order_id)
 
             token = request.query_params.get('token', '')
             user = request.user
@@ -695,6 +695,37 @@ class CustomerOrderDetailView(APIView):
                 except Exception:
                     return ''
 
+            # Escolhas de combo (salada/suco) ficam em StoreOrderComboItem,
+            # ligadas à linha vendável — sem isso o cliente vê o combo sem sabores.
+            combo_by_order_item = {
+                combo.order_item_id: combo
+                for combo in order.combo_items.all()
+                if combo.order_item_id
+            }
+
+            def combo_selections(item):
+                combo = combo_by_order_item.get(item.id)
+                if combo is None:
+                    return None
+                display = combo.display_data if isinstance(combo.display_data, dict) else {}
+                groups = []
+                for group in (display.get('groups') or []):
+                    if not isinstance(group, dict):
+                        continue
+                    selections = []
+                    for sel in (group.get('items') or []):
+                        if not isinstance(sel, dict):
+                            continue
+                        name = str(sel.get('product_name') or sel.get('variant_name') or '').strip()
+                        if name:
+                            selections.append({'name': name, 'quantity': sel.get('quantity') or 1})
+                    if selections:
+                        groups.append({
+                            'group_name': str(group.get('group_name') or '').strip().rstrip(':'),
+                            'items': selections,
+                        })
+                return groups or None
+
             items = []
             for item in order.items.all():
                 items.append({
@@ -707,6 +738,7 @@ class CustomerOrderDetailView(APIView):
                     'subtotal': float(item.subtotal),
                     'notes': item.notes,
                     'customizations': item.options,
+                    'combo_selections': combo_selections(item),
                     'is_custom_salad': bool(
                         isinstance(item.options, dict)
                         and (
@@ -716,9 +748,6 @@ class CustomerOrderDetailView(APIView):
                     ),
                     'image_url': image_url(getattr(item, 'product', None)),
                 })
-            # TODO: Add combo_items support when StoreOrder has combo_items relation
-            # for item in order.combo_items.all():
-            #     items.append({...})
             
             def _ts(dt):
                 return dt.isoformat() if dt else None

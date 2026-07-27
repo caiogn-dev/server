@@ -1046,8 +1046,14 @@ class StoreCouponValidateView(APIView):
                 is_active=True
             )
             
-            # Check validity (includes min_purchase check)
-            valid, error_msg = coupon.is_valid(subtotal=subtotal, user=request.user)
+            # Check validity (includes min_purchase check). Guest é identificado
+            # pelo telefone quando o front manda — sem isso limites por cliente
+            # e "primeira compra" não valem pra checkout sem login.
+            valid, error_msg = coupon.is_valid(
+                subtotal=subtotal,
+                user=request.user,
+                customer_phone=(request.data.get('customer_phone') or '').strip() or None,
+            )
             if not valid:
                 return Response({
                     'valid': False,
