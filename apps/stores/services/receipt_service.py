@@ -197,13 +197,14 @@ def generate_order_receipt_pdf(order: "StoreOrder") -> bytes:
             ingredients = customizations['ingredients']
             ingredient_parts = []
             for ing in ingredients:
-                if not isinstance(ing, dict):
-                    continue
-                ing_name = str(ing.get('name') or '').strip()
-                if not ing_name:
-                    continue
-                role = str(ing.get('role') or '').strip()
-                ingredient_parts.append(f"{role}: {ing_name}" if role else ing_name)
+                if isinstance(ing, dict):
+                    ing_name = str(ing.get('name') or '').strip()
+                    if not ing_name:
+                        continue
+                    role = str(ing.get('role') or '').strip()
+                    ingredient_parts.append(f"{role}: {ing_name}" if role else ing_name)
+                elif isinstance(ing, str) and ing.strip():
+                    ingredient_parts.append(ing.strip())
             if ingredient_parts:
                 name += "\n" + ", ".join(ingredient_parts)
         else:
