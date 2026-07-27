@@ -602,3 +602,50 @@ sem dependências externas executável diretamente.
 4. **P1** — Testes para o cooldown do UnknownHandler (commit 7a2653ad): `should_send_unknown_helper`
    com cooldown de 15 min e supressão de mídia/sticker.
 5. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos.
+
+---
+
+### 2026-07-22
+
+**Baseline de testes:** 11 novos testes `test_cash_register_idor` GREEN (SimpleTestCase, sem DB).
+21 testes de `test_order_number_csprng` + `test_delivery_fee_refactor` continuam passando.
+Testes DB (PostgreSQL) não executáveis neste container — pré-existente, não regressão.
+
+**PRs abertos no gate anti-acúmulo:** #307 (str(e) whatsapp/automation/health), #308 (salad-builder
+str ingredients), #309 (delivery zone model contract). Nenhum cobre o caixa de PDV.
+
+**Bug encontrado e corrigido:** IDOR no caixa de PDV — gate de tenant em 4 views de cash [P0]
+
+- **Tipo:** P0 — IDOR de escrita em registro financeiro cross-tenant
+- **Arquivo:** `apps/stores/api/views/cash_views.py`
+- **Problema:** `IsStoreOwnerOrStaff.has_permission()` só verifica ownership quando `store_pk`
+  está em `view.kwargs` (roteador nested). As views de caixa usam `store_slug` direto nos kwargs,
+  portanto `store_pk` nunca existia e o check sempre retornava `True` para qualquer autenticado.
+  Vetor: `POST /api/v1/stores/{slug-alheio}/cash/open/` abria o caixa e registrava o atacante
+  como `opened_by`. Idem para movement (sangria/reforço) e close.
+- **Correção:** Adicionado `_gate(request, store)` que chama `user_can_access_store`
+  explicitamente em todas as quatro views (Open, Current, Movement, Close). Superuser passa
+  sem check; sem acesso → 404 (info-hiding).
+- **Testes:** 11 SimpleTestCase em `test_cash_register_idor.py` (RED→GREEN confirmado)
+- **PR:** `bot/server-2026-07-22-cash-register-idor`
+
+**Backlog de segurança mapeado nesta sessão (próximas execuções):**
+
+| Prioridade | Arquivo | Linha(s) | Problema |
+|---|---|---|---|
+| P0 | `marketing/api/views.py` | 847, 859 | `preview` retorna PII (nome, telefone) para qualquer email do sistema sem escopo de tenant |
+| P0/P1 | `marketing/api/views.py` | 913–918 | `sample_customer` retorna user aleatório sem escopo de loja |
+| P1 | `stores/api/views/review_views.py` | 76–90 | `StoreReviewListView` sem gate de tenant (mesmo padrão do cash IDOR) |
+| P1 | `marketing/api/views.py` | 64–65 | `EmailTemplate.perform_create` sem `validate_store` → IDOR escrita |
+| P1 | `marketing/api/views.py` | 661–662 | `EmailAutomation.perform_create` sem `validate_store` → IDOR escrita |
+| P1 | `marketing/api/views.py` | 509 | `debug` usa `IsAdminUser` (is_staff) sem `_user_can_use_store` |
+| P2 | `stores/api/views/crm_views.py` | 71–81 | `CustomerSearchView` retorna usuários de outros tenants |
+| P2 | `stores/api/views/product_views.py` | 348 | `is_staff` bypassa filtro de combos inativos (dentro do tenant correto) |
+
+**Próximo backlog priorizado:**
+
+1. **P0** — `marketing/api/views.py` — `preview` e `sample_customer` vazam PII cross-tenant (LGPD art. 46)
+2. **P1** — `stores/api/views/review_views.py` — mesmo padrão de IDOR do caixa via store_slug
+3. **P1** — `marketing/api/views.py` — `EmailTemplate` e `EmailAutomation` sem `validate_store`
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
+5. **P2** — Suporte a itens customizados de salada no checkout (print/receipt já cobertos pelo PR #308)

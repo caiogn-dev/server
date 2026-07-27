@@ -6,6 +6,7 @@ from rest_framework import permissions, serializers, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import user_can_access_store
 from apps.stores.models import Store, StoreCashMovement, StoreCashSession
 from .base import IsStoreOwnerOrStaff
 
@@ -41,6 +42,23 @@ def _get_open_session(store):
     return StoreCashSession.objects.filter(store=store, status='open').first()
 
 
+def _gate(request, store):
+    """Retorna True se o usuário pode operar o caixa desta loja.
+
+    IsStoreOwnerOrStaff.has_permission() só verifica quando 'store_pk' está nos
+    kwargs do roteador nested. Como as rotas de caixa usam 'store_slug' direto, o
+    check de ownership precisa ser feito explicitamente aqui.
+    Superuser passa sem verificação; demais precisam de acesso confirmado via
+    user_can_access_store (owner, staff M2M ou StoreTeamMember ativo).
+    Retorna False quando store é None (loja inexistente) — o chamador emite 404.
+    """
+    if not store:
+        return False
+    if request.user.is_superuser:
+        return True
+    return user_can_access_store(request.user, store)
+
+
 def _parse_amount(raw):
     try:
         amount = Decimal(str(raw))
@@ -56,7 +74,7 @@ class CashSessionBaseView(APIView):
 class CashOpenView(CashSessionBaseView):
     def post(self, request, store_slug):
         store = _get_store(store_slug)
-        if not store:
+        if not _gate(request, store):
             return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         if _get_open_session(store):
             return Response({'detail': 'Já existe um caixa aberto nesta loja.'}, status=status.HTTP_409_CONFLICT)
@@ -74,7 +92,9 @@ class CashOpenView(CashSessionBaseView):
 class CashCurrentView(CashSessionBaseView):
     def get(self, request, store_slug):
         store = _get_store(store_slug)
-        session = _get_open_session(store) if store else None
+        if not _gate(request, store):
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        session = _get_open_session(store)
         if not session:
             return Response({'detail': 'Nenhum caixa aberto.'}, status=status.HTTP_404_NOT_FOUND)
         return Response(CashSessionSerializer(session).data)
@@ -83,7 +103,9 @@ class CashCurrentView(CashSessionBaseView):
 class CashMovementView(CashSessionBaseView):
     def post(self, request, store_slug):
         store = _get_store(store_slug)
-        session = _get_open_session(store) if store else None
+        if not _gate(request, store):
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        session = _get_open_session(store)
         if not session:
             return Response({'detail': 'Nenhum caixa aberto.'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -104,7 +126,9 @@ class CashMovementView(CashSessionBaseView):
 class CashCloseView(CashSessionBaseView):
     def post(self, request, store_slug):
         store = _get_store(store_slug)
-        session = _get_open_session(store) if store else None
+        if not _gate(request, store):
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        session = _get_open_session(store)
         if not session:
             return Response({'detail': 'Nenhum caixa aberto.'}, status=status.HTTP_400_BAD_REQUEST)
 
