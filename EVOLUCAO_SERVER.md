@@ -707,4 +707,54 @@ str ingredients), #309 (delivery zone model contract). Nenhum cobre o caixa de P
 4. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
 5. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de outros tenants
 6. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+### 2026-07-24
+
+**Baseline de testes:** 10 testes `test_order_number_csprng` passando (SimpleTestCase, sem Docker).
+Deps instaladas no container: django, djangorestframework, django-cors-headers, django-filter, channels,
+celery, Pillow, drf-spectacular, cryptography. Falhas pré-existentes de infra CI (`check` e `complexity`)
+com `runner_id=0` afetam todos os PRs desde 2026-07-18 — não são regressão desta sessão.
+
+**PRs abertos no gate anti-acúmulo:** #307–#313 (todos baseados em `fef1b06`). Varredura confirmou
+que nenhum cobre `apps/campaigns/api/serializers.py`.
+
+**Varredura de segurança executada:** agente de busca inspecionou `apps/instagram/`, `apps/campaigns/`,
+`apps/webhooks/` e encontrou 5 vulnerabilidades não cobertas pelos PRs abertos:
+
+| Achado | Prioridade | Arquivo | Vetor |
+|---|---|---|---|
+| Toca Delivery webhook sem auth | P0 | `apps/webhooks/dispatcher.py` + handler | POST sem assinatura → falso-entrega de pedido |
+| `CampaignSerializer.account` gravável no PATCH | P1 | `apps/campaigns/api/serializers.py` | Sequestro de conta WA da vítima para mass message |
+| `InstagramMediaSerializer.account` gravável | P1 | `apps/instagram/api/serializers.py` | Injeção de mídia na fila de publicação da vítima |
+| `InstagramConversationSerializer.account` gravável | P1 | `apps/instagram/api/serializers.py` | Injeção de conversa na inbox DM da vítima |
+| `ContactListSerializer.account` gravável no PATCH | P1 | `apps/campaigns/api/serializers.py` | Movimentação de PII (telefones) para tenant alheio |
+
+**Bug corrigido (maior impacto):** `account` gravável em PATCH de campanha e lista de contatos [P1 IDOR]
+
+- **Tipo:** P1 — IDOR de escrita cross-tenant em campanhas e listas de contatos
+- **Arquivos corrigidos (1):** `apps/campaigns/api/serializers.py`
+  - `CampaignSerializer.Meta.read_only_fields` — adicionado `'account'`
+  - `ContactListSerializer.Meta.read_only_fields` — adicionado `'account'`
+- **Problema:** `create()` já estava protegido por `CampaignCreateSerializer` + `_user_can_use_account`,
+  mas `update()`/`partial_update()` herdados do `ModelViewSet` usavam os serializers sem validação de tenant.
+  PATCH com `{"account": victim_id}` transferia campanha para a vítima → Celery enviava mensagens com token WA dela.
+- **Testes:** 10 SimpleTestCase em `apps/campaigns/tests_account_field_idor.py` (RED→GREEN confirmado).
+  Análise estática + DRF field.read_only + writable_fields + não-regressão para campos pré-existentes.
+- **PR:** #314 — `bot/server-2026-07-24-campaign-account-idor`
+
+**CI do PR #314:** jobs `check` e `complexity` falharam com `runner_id=0`, duração 3s, output vazio —
+falha de infraestrutura pré-existente desde 2026-07-18, não causada por esta PR.
+
+**Próximo backlog priorizado:**
+
+1. **P0** — Toca Delivery webhook sem autenticação (`apps/webhooks/dispatcher.py`):
+   `validate_signature` do handler é dead code — dispatcher nunca o chama. Fix: adicionar branch
+   `toca-delivery` em `_verify_signature` com `TOCA_DELIVERY_WEBHOOK_SECRET` + `X-Toca-Signature`.
+2. **P1** — `InstagramMediaSerializer.account` e `InstagramConversationSerializer.account` graváveis
+   (`apps/instagram/api/serializers.py`): mesmo padrão do fix desta sessão — adicionar `'account'`
+   a `read_only_fields` em ambos. Cuidado: `InstagramMediaViewSet.perform_create` também precisa
+   validar ownership da conta no create (sem `CampaignCreateSerializer` equivalente).
+3. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+   (pendência crítica do CLAUDE.md há várias sessões).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md).
 

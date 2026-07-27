@@ -43,7 +43,7 @@ class CampaignSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'status', 'started_at', 'completed_at',
+            'id', 'account', 'status', 'started_at', 'completed_at',
             'total_recipients', 'messages_sent', 'messages_delivered',
             'messages_read', 'messages_failed', 'created_at', 'updated_at',
         ]
@@ -89,7 +89,7 @@ class ContactListSerializer(serializers.ModelSerializer):
             'contacts', 'contact_count', 'source', 'imported_at',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'contact_count', 'imported_at', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'account', 'contact_count', 'imported_at', 'created_at', 'updated_at']
 
 
 class ContactListCreateSerializer(serializers.Serializer):
