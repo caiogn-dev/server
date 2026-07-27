@@ -839,29 +839,18 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
         email = 'cliente@exemplo.com'
         phone = '(11) 99999-9999'
         
-        if customer_email:
-            # Try to find real customer data
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            
-            user = User.objects.filter(email=customer_email).first()
-            if user:
-                customer_name = f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0]
-                first_name = user.first_name or user.email.split('@')[0]
-                email = user.email
-                try:
-                    if hasattr(user, 'profile') and user.profile:
-                        phone = user.profile.phone or phone
-                except Exception:
-                    pass
-            else:
-                # Try subscriber
-                subscriber = Subscriber.objects.filter(email=customer_email).first()
-                if subscriber:
-                    customer_name = subscriber.name or customer_email.split('@')[0]
-                    first_name = customer_name.split()[0] if customer_name else customer_email.split('@')[0]
-                    email = subscriber.email
-                    phone = subscriber.phone or phone
+        # Só busca dados reais se store_id for informado E o usuário tiver acesso
+        # à loja — sem ambas as condições não há como garantir que o email pertence
+        # a um assinante do tenant correto (cross-tenant PII / LGPD art. 46).
+        if customer_email and store_id and _user_can_use_store(request.user, store_id):
+            subscriber = Subscriber.objects.filter(
+                email=customer_email, store_id=store_id
+            ).first()
+            if subscriber:
+                customer_name = subscriber.name or customer_email.split('@')[0]
+                first_name = customer_name.split()[0] if customer_name else customer_email.split('@')[0]
+                email = subscriber.email
+                phone = subscriber.phone or phone
         
         # Build replacement variables
         variables = {
@@ -905,35 +894,11 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def sample_customer(self, request):
         """Get a sample customer for preview."""
-        from django.contrib.auth import get_user_model
-        
         store_id = request.query_params.get('store')
-        
-        # Try to get a real customer
-        User = get_user_model()
-        user = User.objects.filter(
-            is_active=True,
-            is_staff=False,
-            is_superuser=False
-        ).exclude(email='').first()
-        
-        if user:
-            phone = ''
-            try:
-                if hasattr(user, 'profile') and user.profile:
-                    phone = user.profile.phone or ''
-            except Exception:
-                pass
-            
-            return Response({
-                'email': user.email,
-                'name': f"{user.first_name} {user.last_name}".strip() or user.email.split('@')[0],
-                'first_name': user.first_name or user.email.split('@')[0],
-                'phone': phone,
-            })
-        
-        # Fallback to subscriber
-        if store_id:
+
+        # Sem store_id (ou sem acesso à loja) não há como escopar por tenant.
+        # Consultar subscriber sem verificar acesso vaza PII cross-tenant (LGPD art. 46).
+        if store_id and _user_can_use_store(request.user, store_id):
             subscriber = Subscriber.objects.filter(store_id=store_id, status='active').first()
             if subscriber:
                 return Response({
@@ -942,8 +907,7 @@ class TemplateVariablesViewSet(viewsets.ViewSet):
                     'first_name': (subscriber.name or subscriber.email.split('@')[0]).split()[0],
                     'phone': subscriber.phone or '',
                 })
-        
-        # Return sample data
+
         return Response({
             'email': 'cliente@exemplo.com',
             'name': 'Cliente Exemplo',

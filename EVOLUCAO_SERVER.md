@@ -642,10 +642,30 @@ str ingredients), #309 (delivery zone model contract). Nenhum cobre o caixa de P
 | P2 | `stores/api/views/crm_views.py` | 71–81 | `CustomerSearchView` retorna usuários de outros tenants |
 | P2 | `stores/api/views/product_views.py` | 348 | `is_staff` bypassa filtro de combos inativos (dentro do tenant correto) |
 
+**Nota sobre CI:** Jobs `check` e `complexity` falham com infraestrutura pré-existente desde
+2026-07-18 (`runner_id=0`, duração ~2s, logs HTTP 404). Não causado por esta PR.
+
+**Segunda correção nesta sessão:** PII cross-tenant em TemplateVariablesViewSet [P0]
+
+- **Tipo:** P0 — Vazamento de PII cross-tenant (LGPD art. 46)
+- **Arquivo:** `apps/marketing/api/views.py`
+- **Problema 1 — `preview`:** `User.objects.filter(email=customer_email).first()` sem escopo
+  de loja permitia a qualquer autenticado obter nome+telefone de clientes alheios via e-mail.
+  `Subscriber.objects.filter(email=...)` igual: sem store_id.
+- **Problema 2 — `sample_customer`:** `User.objects.filter(is_active=True,...).first()`
+  retornava o primeiro usuário do banco inteiro — dados reais de qualquer tenant.
+- **Correção:** `preview` usa `Subscriber.filter(email=..., store_id=store_id)` (requer os dois);
+  `sample_customer` remove o `User.objects` global, usa apenas `Subscriber` escopado.
+- **Testes:** 11 SimpleTestCase em `tests_pii_cross_tenant.py` (RED→GREEN).
+  Corrigido também `req._force_auth_user` em `test_cash_register_idor.py` (compatível DRF 3.17).
+  22 testes totais passando.
+- **PR:** #311 `bot/server-2026-07-22-marketing-pii-cross-tenant`
+
 **Próximo backlog priorizado:**
 
-1. **P0** — `marketing/api/views.py` — `preview` e `sample_customer` vazam PII cross-tenant (LGPD art. 46)
-2. **P1** — `stores/api/views/review_views.py` — mesmo padrão de IDOR do caixa via store_slug
-3. **P1** — `marketing/api/views.py` — `EmailTemplate` e `EmailAutomation` sem `validate_store`
-4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
-5. **P2** — Suporte a itens customizados de salada no checkout (print/receipt já cobertos pelo PR #308)
+1. **P1** — `stores/api/views/review_views.py` — `StoreReviewListView` sem gate de tenant (mesmo padrão de IDOR do caixa via store_slug)
+2. **P1** — `marketing/api/views.py:64–65` — `EmailTemplate.perform_create` sem `validate_store` → IDOR escrita
+3. **P1** — `marketing/api/views.py:661–662` — `EmailAutomation.perform_create` sem `validate_store` → IDOR escrita
+4. **P1** — `marketing/api/views.py:509` — `debug` usa `IsAdminUser` (is_staff) sem `_user_can_use_store`
+5. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de outros tenants
+6. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
