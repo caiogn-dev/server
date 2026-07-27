@@ -669,3 +669,42 @@ str ingredients), #309 (delivery zone model contract). Nenhum cobre o caixa de P
 4. **P1** — `marketing/api/views.py:509` — `debug` usa `IsAdminUser` (is_staff) sem `_user_can_use_store`
 5. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de outros tenants
 6. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
+### 2026-07-22
+
+**Baseline de testes:** 24 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN antes desta sessão
+(11 cash IDOR + 13 marketing PII). CI do GitHub Actions com falha pré-existente em infra
+(runner_id=0, runner_name="", duração ~2s) desde 2026-07-18 — documentado nos PRs.
+
+**Gate anti-acúmulo:** PRs #307–#311 abertos, aguardando merge. Nenhuma duplicata gerada.
+
+**Fix 1 (PR #311):** PII cross-tenant em `TemplateVariablesViewSet` [P0]
+
+- **Tipo:** P0 — Vazamento de PII de subscriber (nome/email/telefone) cross-tenant
+- **Vetores corrigidos:**
+  - `preview`: `User.objects.filter(email=...)` global removido; `Subscriber` só consultado
+    com `store_id` E verificação de `_user_can_use_store(request.user, store_id)`.
+  - `sample_customer`: `User.objects.filter(is_active=True, ...)` global removido; subscriber
+    só retornado quando `store_id` presente E usuário tem acesso à loja.
+- **Arquivos:** `apps/marketing/api/views.py`, `apps/marketing/tests_pii_cross_tenant.py` (13 testes)
+- **PR:** #311 — `bot/server-2026-07-22-marketing-pii-cross-tenant`
+
+**Fix 2 (este PR):** IDOR em `StoreReviewListView` [P1]
+
+- **Tipo:** P1 — IDOR: qualquer usuário autenticado lia avaliações e dados de pedidos
+  de qualquer loja via `GET /api/v1/stores/{slug-da-vítima}/reviews/`
+- **Causa raiz:** `IsStoreOwnerOrStaff.has_permission()` só verifica ownership quando
+  `store_pk` está nos kwargs do router nested. A rota usa `store_slug` — gate nunca ativava.
+- **Correção:** `get_queryset()` levanta `Http404` quando loja inexistente ou usuário sem acesso
+  (info-hiding: mesmo comportamento das cash views do PR #310).
+- **Arquivos:** `apps/stores/api/views/review_views.py`, `apps/stores/tests/test_review_list_idor.py` (5 testes)
+- **PR:** `bot/server-2026-07-22-review-list-idor` (este PR)
+
+**Próximo backlog priorizado:**
+
+1. **P1** — `marketing/api/views.py:64–65` — `EmailTemplate.perform_create` sem `validate_store` → IDOR write
+2. **P1** — `marketing/api/views.py:661–662` — `EmailAutomation.perform_create` sem `validate_store` → IDOR write
+3. **P1** — `marketing/api/views.py:509` — `debug` action usa `IsAdminUser` (is_staff) em vez de `_user_can_use_store`
+4. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
+5. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de outros tenants
+6. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos
+
