@@ -161,7 +161,7 @@ from .api.export_views import (
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
-from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView
+from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView
 from .api.views.crm_views import (
     CustomerSearchView,
     CustomerAddressViewSet,
@@ -259,6 +259,7 @@ store_frontend_patterns = [
     path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
+    path('loyalty/accounts/', LoyaltyAccountsView.as_view(), name='store-loyalty-accounts'),
 
     # Customer-facing address management — using re_path to capture store_slug from parent include()
     re_path(r'^customer/my-addresses/$', my_addresses_list, name='my-addresses'),
