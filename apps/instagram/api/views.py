@@ -296,6 +296,14 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.filter(account__user=self.request.user)
 
+    def perform_create(self, serializer):
+        account_id = self.request.data.get('account')
+        qs = InstagramAccount.objects.filter(id=account_id)
+        if not self.request.user.is_superuser:
+            qs = qs.filter(user=self.request.user)
+        account = get_object_or_404(qs)
+        serializer.save(account=account)
+
     @action(detail=False, methods=["get"])
     def feed(self, request):
         queryset = self.get_queryset().filter(
@@ -493,6 +501,14 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         return queryset
+
+    def perform_create(self, serializer):
+        account_id = self.request.data.get('account')
+        qs = InstagramAccount.objects.filter(id=account_id)
+        if not self.request.user.is_superuser:
+            qs = qs.filter(user=self.request.user)
+        account = get_object_or_404(qs)
+        serializer.save(account=account)
 
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):

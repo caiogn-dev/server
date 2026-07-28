@@ -45,7 +45,7 @@ class InstagramMediaSerializer(serializers.ModelSerializer):
             'has_product_tags', 'items', 'product_tags',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'account', 'created_at', 'updated_at']
 
 
 class InstagramProductSerializer(serializers.ModelSerializer):
@@ -125,7 +125,7 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = InstagramConversation
         fields = [
@@ -136,7 +136,7 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
             'last_message', 'last_message_preview',
             'status', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'account', 'created_at', 'updated_at']
     
     def get_last_message(self, obj):
         last_msg = obj.messages.filter(is_unsent=False).order_by('-created_at').first()
