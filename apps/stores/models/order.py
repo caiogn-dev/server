@@ -18,6 +18,22 @@ logger = logging.getLogger(__name__)
 User = get_user_model()
 
 
+def build_loyalty_status_line(store, user):
+    """Linha de fidelidade anexada à mensagem de pagamento confirmado ('' se n/a)."""
+    if not user or not store:
+        return ''
+    from apps.stores.services.loyalty_service import LoyaltyService
+    status = LoyaltyService.get_status(store, user)
+    if not status.get('enabled'):
+        return ''
+    if status['available_rewards'] > 0:
+        return f"\n\n🥗 Você tem {status['available_rewards']} salada(s) grátis para resgatar!"
+    if status['qualified_salads'] > 0:
+        return (f"\n\n🥗 Cartão fidelidade: {status['progress']}/{status['threshold']} — "
+                f"faltam {status['remaining']} para a próxima grátis!")
+    return ''
+
+
 class StoreOrder(BaseModel):
     """
     Order model for any store.
@@ -481,6 +497,9 @@ class StoreOrder(BaseModel):
                 customer_name=self.customer_name or 'Cliente',
                 order_number=self.order_number,
             )
+            if new_status == self.OrderStatus.PAID:
+                message_text += build_loyalty_status_line(
+                    self.store, self.customer if self.customer_id else None)
             logger.info(f"[WhatsAppNotification] ✓ Message template formatted successfully")
 
             # Normalize phone

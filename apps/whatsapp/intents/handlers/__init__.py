@@ -8,6 +8,7 @@ from .fallback import AffirmativeHandler, HumanHandoffHandler, UnknownHandler
 from .greeting import GreetingHandler
 from .info import BusinessHoursHandler, ContactHandler, DeliveryInfoHandler, FAQHandler, LocationHandler
 from .interactive import InteractiveReplyHandler
+from .loyalty import LoyaltyStatusHandler
 from .order import CancelOrderHandler, CreateOrderHandler, QuickOrderHandler, TrackOrderHandler
 from .payment import CopyPixHandler, PaymentStatusHandler, ViewQRCodeHandler
 
@@ -21,6 +22,7 @@ __all__ = [
     'BusinessHoursHandler', 'DeliveryInfoHandler', 'LocationHandler', 'ContactHandler', 'FAQHandler',
     'AffirmativeHandler', 'HumanHandoffHandler', 'UnknownHandler',
     'InteractiveReplyHandler',
+    'LoyaltyStatusHandler',
     'get_handler',
 ]
 
@@ -48,6 +50,7 @@ HANDLER_MAP = {
     IntentType.FAQ: FAQHandler,
     IntentType.UNKNOWN: UnknownHandler,
     IntentType.AFFIRMATIVE: AffirmativeHandler,
+    IntentType.LOYALTY_STATUS: LoyaltyStatusHandler,
 }
 
 

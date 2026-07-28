@@ -57,6 +57,9 @@ class IntentType(Enum):
     # ===== Confirmação contextual =====
     AFFIRMATIVE = "affirmative"              # "Sim", "Ok", "Pode ser" — interpretado pelo contexto de sessão
 
+    # ===== Fidelidade =====
+    LOYALTY_STATUS = "loyalty_status"        # "Meus pontos", "Cartão fidelidade"
+
     # ===== Fallback =====
     UNKNOWN = "unknown"
     HUMAN_HANDOFF = "human_handoff"          # "Falar com atendente"
@@ -170,6 +173,9 @@ class IntentDetector:
             r'^(sim|s[ií]m|s|ok|okay|tá|ta|tá bom|ta bom|certo|pode ser|pode|claro|é isso|isso|ótimo|otimo|perfeito|combinado|fechado|fechou|vai|vamo|vamos|tô dentro|to dentro)[!.\s]*$',
             r'^(tudo (bem|certo|ok)|beleza|top|show|bora|pode|pode sim|com certeza|afirmativo)[!.\s]*$',
         ],
+        IntentType.LOYALTY_STATUS: [
+            r'\b(fidelidade|meus?\s+pontos?|quantos\s+pontos|cart[aã]o\s+fidelidade|salada\s+gr[aá]tis|meu\s+saldo)\b',
+        ],
         IntentType.FRUSTRATION: [
             r'(p[eé]ssimo|horr[íi]vel|lixo|absurdo|rid[íi]culo|uma merda|um lixo|n[ãa]o presta)',
             r'(que bot (horrível|inútil|idiota|lixo)|bot (inútil|horrível|lixo)|que atendimento)',
@@ -217,6 +223,7 @@ class IntentDetector:
             IntentType.CANCEL_ORDER,
             IntentType.TRACK_ORDER,
             IntentType.PAYMENT_STATUS,
+            IntentType.LOYALTY_STATUS,
             IntentType.HUMAN_HANDOFF,
             IntentType.ADD_TO_CART,
             IntentType.PRODUCT_MENTION,
