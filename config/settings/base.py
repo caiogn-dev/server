@@ -622,6 +622,9 @@ MERCADO_PAGO_RECIPIENT_NAME = os.environ.get('MERCADO_PAGO_RECIPIENT_NAME', '')
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
 # URL do painel (back_url do checkout de assinatura). FRONTEND_URL é lista p/ CORS, não serve.
 BILLING_PANEL_URL = os.environ.get('BILLING_PANEL_URL', 'https://painel.cardapidex.com.br').rstrip('/')
+# Link na Bio: base do storefront (link "Cardápio") e base pública da página bio.cardapidex.com.br/<slug>.
+STOREFRONT_BASE_URL = os.environ.get('STOREFRONT_BASE_URL', 'https://cardapidex.com.br')
+BIO_BASE_URL = os.environ.get('BIO_BASE_URL', 'https://bio.cardapidex.com.br')
 # Dias de carência após o fim do trial antes de suspender a loja.
 BILLING_GRACE_DAYS = int(os.environ.get('BILLING_GRACE_DAYS', '3'))
 # Dias em past_due (cobrança falhou) antes de suspender.

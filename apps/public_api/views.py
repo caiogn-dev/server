@@ -72,6 +72,18 @@ def public_store_detail(request, slug):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
+def public_store_bio(request, slug):
+    """Payload público da página Link na Bio: store branding + links resolvidos."""
+    from apps.stores.models import BioClickStat
+    from . import bio as bio_mod
+    store = _get_active_store(slug)
+    BioClickStat.bump(store, 'page:view')
+    return Response(bio_mod.bio_payload(store, request=request))
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_catalog(request, slug):
     """Full catalog: store + categories with their products."""
     store = _get_active_store(slug)
