@@ -643,12 +643,14 @@ class CheckoutService:
 
     @staticmethod
     def _cart_salad_discount(cart: StoreCart) -> Decimal:
+        from apps.stores.services.loyalty_service import LoyaltyService
+
         prices = []
         for item in cart.items.select_related('product__category', 'product__product_type', 'variant').all():
-            if CheckoutService._is_salad_cart_item(item):
+            if LoyaltyService.cart_item_qualifies(cart.store, item):
                 prices.extend([Decimal(str(item.unit_price))] * int(item.quantity or 0))
         for item in cart.combo_items.all():
-            if CheckoutService._is_salad_cart_item(item):
+            if LoyaltyService.cart_item_qualifies(cart.store, item):
                 prices.extend([Decimal(str(item.effective_price))] * int(item.quantity or 0))
         return min(prices) if prices else Decimal('0')
     

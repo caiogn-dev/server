@@ -28,6 +28,35 @@ class LoyaltyService:
         return account
 
     @staticmethod
+    def _qualifying_categories(store):
+        cats = (store.metadata or {}).get('loyalty_qualifying_categories') or []
+        return {str(c) for c in cats}
+
+    @staticmethod
+    def _item_category_id(item):
+        cat = getattr(item, 'category_id', None)
+        if cat:
+            return cat
+        product = getattr(item, 'product', None)
+        return getattr(product, 'category_id', None)
+
+    @staticmethod
+    def order_item_qualifies(store, item) -> bool:
+        from apps.stores.services.checkout_service import CheckoutService
+        cats = LoyaltyService._qualifying_categories(store)
+        if cats:
+            return str(LoyaltyService._item_category_id(item)) in cats
+        return CheckoutService._is_salad_order_item(item)
+
+    @staticmethod
+    def cart_item_qualifies(store, item) -> bool:
+        from apps.stores.services.checkout_service import CheckoutService
+        cats = LoyaltyService._qualifying_categories(store)
+        if cats:
+            return str(LoyaltyService._item_category_id(item)) in cats
+        return CheckoutService._is_salad_cart_item(item)
+
+    @staticmethod
     @transaction.atomic
     def credit_qualified(store, user, order, quantity: int):
         """Credita itens qualificados de um pedido. Idempotente por pedido."""

@@ -179,12 +179,11 @@ class OrderService:
         # (idempotente por pedido — unique(order, kind) na transação)
         if new_status in ('paid', 'delivered', 'completed') and order.customer_id:
             try:
-                from apps.stores.services.checkout_service import CheckoutService
                 from apps.stores.services.loyalty_service import LoyaltyService
                 qty = sum(
                     int(item.quantity or 0)
                     for item in order.items.all()
-                    if CheckoutService._is_salad_order_item(item)
+                    if LoyaltyService.order_item_qualifies(order.store, item)
                 )
                 if qty:
                     LoyaltyService.credit_qualified(order.store, order.customer, order, qty)
