@@ -24,6 +24,8 @@ PLAN_CATALOG = {
             'whatsapp_bot': False,
             'ai_agent': False,
             'coupon_banner': False,
+            'bio_custom_links': False,
+            'bio_analytics': False,
         },
     },
     'starter': {
@@ -39,6 +41,8 @@ PLAN_CATALOG = {
             'whatsapp_bot': False,
             'ai_agent': False,
             'coupon_banner': False,
+            'bio_custom_links': False,
+            'bio_analytics': False,
         },
     },
     'pro': {
@@ -54,6 +58,8 @@ PLAN_CATALOG = {
             'whatsapp_bot': True,
             'ai_agent': False,
             'coupon_banner': True,
+            'bio_custom_links': True,
+            'bio_analytics': True,
         },
     },
     'premium': {
@@ -69,6 +75,8 @@ PLAN_CATALOG = {
             'whatsapp_bot': True,
             'ai_agent': True,
             'coupon_banner': True,
+            'bio_custom_links': True,
+            'bio_analytics': True,
         },
     },
 }
