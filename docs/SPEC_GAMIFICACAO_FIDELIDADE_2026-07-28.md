@@ -45,7 +45,7 @@ A Fase 1 é **expor o que existe** + cupons que convertem + mensagens proativas 
 
 **C2. Linha de fidelidade na confirmação de pagamento** — mensagem de pedido pago que o bot já envia ganha: "🥗 8/10 no seu cartão — faltam 2!". Carona em mensagem existente, custo zero.
 
-**C3. Carrinho abandonado** — task Celery existente (varredura 5min) ganha dispatch WhatsApp: template Utility "seu carrinho está salvo: {{link}}" (sem cupom). Variante com cupom (template Marketing) configurável por loja. Regras: 1 mensagem por carrinho, cooldown 24h por cliente, respeita opt-out.
+**C3. Carrinho abandonado — ADIADO (decisão 28/jul: "bem pro final")** — task Celery existente (varredura 5min) ganha dispatch WhatsApp. Direção definida pelo usuário: em vez de sair do número de cada loja, os proativos de marketing sairão de um **número mediador da plataforma Cardapidex** (chip próprio, sem fluxo de pedido) enviando em nome de todas as lojas — nesse número isolado, Evolution API é aceitável (risco de ban não atinge canais de venda). Implementar por último, junto com o provider plugável no `apps.messaging`. Regras quando entrar: 1 mensagem por carrinho, cooldown 24h por cliente, respeita opt-out.
 
 **C4. Reativação** — task diária: cliente com ≥1 pedido pago e sem pedido há N dias (default 21, configurável) recebe template Marketing com cupom "sentimos sua falta". Máx. 1 reativação por cliente a cada 45 dias.
 
