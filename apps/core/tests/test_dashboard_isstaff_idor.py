@@ -53,7 +53,12 @@ class DashboardIsStaffIDORTest(APITestCase):
         self.assertEqual(resp.data['accounts']['total'], 0)
         self.assertEqual(resp.data['orders']['today'], 0)
         self.assertEqual(float(resp.data['orders']['revenue_today']), 0.0)
-        self.assertNotIn('500', str(resp.data))
+        # Exclui 'timestamp' antes do assertNotIn: o ISO datetime pode
+        # conter a substring '500' por coincidência (ex.: microssegundos
+        # terminando em ...500...), o que produzia falso-positivo flaky
+        # sem relação nenhuma com vazamento de dados cross-tenant.
+        leak_check_data = {k: v for k, v in resp.data.items() if k != 'timestamp'}
+        self.assertNotIn('500', str(leak_check_data))
 
     def test_superuser_ve_tudo(self):
         self.client.force_authenticate(self.superuser)
