@@ -55,16 +55,29 @@ class UnifiedViewStrELeakTest(SimpleTestCase):
         view = UnifiedProcessView()
         mock_request = MagicMock()
         mock_request.user = MagicMock()
+        mock_request.user.is_superuser = True
+        # phone_number é obrigatório — sem ele a view devolve 400 antes de
+        # chegar no caminho de exceção que este teste cobre.
         mock_request.data = {
             'account_id': 'test-acc',
-            'conversation_id': 'conv-1',
+            'phone_number': '5563999990000',
             'message': 'oi',
         }
 
         internal_error = "LLM API error: api_key=sk-secret-key-12345 (dado sensível)"
 
-        with patch('apps.automation.api.views.unified_views.WhatsAppAccount') as mock_wa:
-            mock_wa.objects.get.side_effect = Exception(internal_error)
+        with patch('apps.automation.api.views.unified_views.WhatsAppAccount') as mock_wa, \
+                patch('apps.automation.api.views.unified_views.Conversation') as mock_conv, \
+                patch('apps.automation.api.views.unified_views.LLMOrchestratorService') as mock_svc:
+            qs = MagicMock()
+            qs.filter.return_value = qs
+            qs.distinct.return_value = qs
+            qs.get.return_value = MagicMock()
+            mock_wa.objects.filter.return_value = qs
+            mock_wa.DoesNotExist = type('DoesNotExist', (Exception,), {})
+            mock_conv.objects.get_or_create.return_value = (MagicMock(), True)
+            # exceção interna com segredo estoura dentro do orquestrador LLM
+            mock_svc.side_effect = Exception(internal_error)
             response = view.post(mock_request)
 
         self.assertEqual(response.status_code, 500)

@@ -45,7 +45,8 @@ class ExportViewConversationsTest(TestCase):
         fake_qs.count.return_value = 5
         mock_conv_model.objects.filter.return_value = fake_qs
 
-        mock_response = MagicMock()
+        from django.http import HttpResponse
+        mock_response = HttpResponse(b"ok")  # DRF exige HttpResponse real no finalize_response
         mock_export_svc.return_value.export_conversations.return_value = mock_response
         mock_audit_svc.return_value.log_export.return_value = None
 
@@ -55,7 +56,8 @@ class ExportViewConversationsTest(TestCase):
             data={'export_type': 'conversations', 'export_format': 'csv'},
             format='json',
         )
-        raw_request.user = self.user
+        from rest_framework.test import force_authenticate
+        force_authenticate(raw_request, user=self.user)
 
         view = ExportViewSet.as_view({'post': 'export'})
 
@@ -99,7 +101,8 @@ class ExportViewConversationsTest(TestCase):
         fake_qs.count.return_value = 3
         mock_order_model.objects.filter.return_value = fake_qs
 
-        mock_response = MagicMock()
+        from django.http import HttpResponse
+        mock_response = HttpResponse(b"ok")  # DRF exige HttpResponse real no finalize_response
         mock_export_svc.return_value.export_orders.return_value = mock_response
         mock_audit_svc.return_value.log_export.return_value = None
 
@@ -109,7 +112,8 @@ class ExportViewConversationsTest(TestCase):
             data={'export_type': 'orders', 'export_format': 'csv'},
             format='json',
         )
-        raw_request.user = self.user
+        from rest_framework.test import force_authenticate
+        force_authenticate(raw_request, user=self.user)
 
         view = ExportViewSet.as_view({'post': 'export'})
 
