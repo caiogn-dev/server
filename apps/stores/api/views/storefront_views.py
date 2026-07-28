@@ -360,6 +360,36 @@ class StoreCatalogView(APIView):
         return Response(payload)
 
 
+def _loyalty_program_payload(store):
+    meta = store.metadata or {}
+    return {
+        'enabled': bool(meta.get('loyalty_enabled', True)),
+        'threshold': max(1, int(meta.get('loyalty_salads_required', 10) or 10)),
+    }
+
+
+def _featured_coupon_payload(store):
+    from apps.stores import billing
+    from apps.stores.models import StoreCoupon
+    if not billing.plan_allows(store, 'coupon_banner'):
+        return None
+    coupon = (StoreCoupon.objects
+              .filter(store=store, is_active=True, is_featured=True)
+              .order_by('-created_at').first())
+    if not coupon:
+        return None
+    ok, _reason = coupon.is_valid()
+    if not ok:
+        return None
+    return {
+        'code': coupon.code,
+        'description': coupon.description,
+        'discount_type': coupon.discount_type,
+        'discount_value': str(coupon.discount_value),
+        'first_order_only': coupon.first_order_only,
+    }
+
+
 class StoreAppConfigView(APIView):
     """Public bootstrap config for the native storefront app."""
 
@@ -377,6 +407,8 @@ class StoreAppConfigView(APIView):
                 'whatsapp_otp_enabled': bool(whatsapp_account),
                 'whatsapp_account_id': str(whatsapp_account.id) if whatsapp_account else '',
             },
+            'loyalty_program': _loyalty_program_payload(store),
+            'featured_coupon': _featured_coupon_payload(store),
             'payment': payment_config,
             'delivery': {
                 'city': store.city or '',

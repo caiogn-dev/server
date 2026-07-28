@@ -14,6 +14,8 @@ from .models import Lead
 class PublicStoreSerializer(serializers.ModelSerializer):
     logo_url = serializers.SerializerMethodField()
     is_open = serializers.SerializerMethodField()
+    loyalty_program = serializers.SerializerMethodField()
+    featured_coupon = serializers.SerializerMethodField()
 
     class Meta:
         model = Store
@@ -26,6 +28,7 @@ class PublicStoreSerializer(serializers.ModelSerializer):
             'meta_pixel_id', 'meta_pixel_enabled',
             'clarity_id', 'clarity_enabled',
             'template', 'tagline',
+            'loyalty_program', 'featured_coupon',
         ]
 
     def get_logo_url(self, obj):
@@ -37,6 +40,14 @@ class PublicStoreSerializer(serializers.ModelSerializer):
 
     def get_is_open(self, obj):
         return obj.is_open()
+
+    def get_loyalty_program(self, obj):
+        from apps.stores.api.views.storefront_views import _loyalty_program_payload
+        return _loyalty_program_payload(obj)
+
+    def get_featured_coupon(self, obj):
+        from apps.stores.api.views.storefront_views import _featured_coupon_payload
+        return _featured_coupon_payload(obj)
 
 
 class PublicCategorySerializer(serializers.ModelSerializer):
