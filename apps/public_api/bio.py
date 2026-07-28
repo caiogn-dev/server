@@ -3,6 +3,7 @@ import re
 from urllib.parse import quote
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 
 from apps.stores import billing
 
@@ -70,7 +71,10 @@ def resolve_link_url(store, key):
     if key.startswith('custom:'):
         if not billing.plan_allows(store, 'bio_custom_links'):
             return None
-        link = store.bio_links.filter(id=key.split(':', 1)[1], is_active=True).first()
+        try:
+            link = store.bio_links.filter(id=key.split(':', 1)[1], is_active=True).first()
+        except (ValueError, ValidationError):
+            return None
         return link.url if link else None
     return None
 

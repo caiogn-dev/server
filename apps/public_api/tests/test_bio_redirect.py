@@ -35,6 +35,22 @@ class PublicBioRedirectTest(TestCase):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(resp['Location'], 'https://forms.gle/x')
 
+    def test_malformed_custom_key_falls_back(self):
+        resp = self.r('custom:not-a-uuid')
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/red-bio', resp['Location'])
+
+    def test_custom_link_on_free_plan_does_not_redirect_to_link(self):
+        self.store.plan = 'free'
+        self.store.save(update_fields=['plan'])
+        link = StoreBioLink.objects.create(store=self.store, title='P', url='https://forms.gle/x')
+        resp = self.r(f'custom:{link.id}')
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn('/red-bio', resp['Location'])
+        self.assertFalse(
+            BioClickStat.objects.filter(store=self.store, link_key=f'custom:{link.id}').exists()
+        )
+
     def test_invalid_key_falls_back_to_bio_page_without_counting(self):
         resp = self.r('custom:00000000-0000-0000-0000-000000000000')
         self.assertEqual(resp.status_code, 302)
