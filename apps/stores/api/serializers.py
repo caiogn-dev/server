@@ -1609,7 +1609,7 @@ class StoreCouponSerializer(serializers.ModelSerializer):
             'min_purchase', 'max_discount',
             'usage_limit', 'usage_limit_per_user', 'used_count',
             'is_active', 'valid_from', 'valid_until',
-            'first_order_only',
+            'first_order_only', 'is_featured',
             'applicable_categories', 'applicable_products',
             'is_valid_now',
             'created_at', 'updated_at'
@@ -1671,7 +1671,7 @@ class StoreCouponCreateSerializer(serializers.ModelSerializer):
             'min_purchase', 'max_discount',
             'usage_limit', 'usage_limit_per_user',
             'is_active', 'valid_from', 'valid_until',
-            'first_order_only',
+            'first_order_only', 'is_featured',
             'applicable_categories', 'applicable_products'
         ]
 

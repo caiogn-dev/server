@@ -23,6 +23,7 @@ PLAN_CATALOG = {
             'custom_domain': False,
             'whatsapp_bot': False,
             'ai_agent': False,
+            'coupon_banner': False,
         },
     },
     'starter': {
@@ -37,6 +38,7 @@ PLAN_CATALOG = {
             'custom_domain': False,
             'whatsapp_bot': False,
             'ai_agent': False,
+            'coupon_banner': False,
         },
     },
     'pro': {
@@ -51,6 +53,7 @@ PLAN_CATALOG = {
             'custom_domain': False,
             'whatsapp_bot': True,
             'ai_agent': False,
+            'coupon_banner': True,
         },
     },
     'premium': {
@@ -65,6 +68,7 @@ PLAN_CATALOG = {
             'custom_domain': True,
             'whatsapp_bot': True,
             'ai_agent': True,
+            'coupon_banner': True,
         },
     },
 }
@@ -91,7 +95,7 @@ def plan_allows(store, feature):
     True se o plano permite a feature.
     Aceita uma instância de Store OU diretamente uma plan_key (str).
     NÃO é enforcement automático — chamadores decidem quando aplicar.
-    Features booleanas: custom_domain, whatsapp_bot, ai_agent.
+    Features booleanas: custom_domain, whatsapp_bot, ai_agent, coupon_banner.
     """
     if isinstance(store, str):
         return bool(plan_limits(store).get(feature, False))

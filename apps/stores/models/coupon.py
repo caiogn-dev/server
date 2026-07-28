@@ -37,6 +37,7 @@ class StoreCoupon(models.Model):
     valid_from = models.DateTimeField()
     valid_until = models.DateTimeField()
     first_order_only = models.BooleanField(default=False)
+    is_featured = models.BooleanField(default=False, help_text='Exibir como banner no cardápio')
     applicable_categories = models.JSONField(default=list, blank=True)
     applicable_products = models.JSONField(default=list, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
