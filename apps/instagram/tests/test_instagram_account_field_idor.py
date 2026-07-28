@@ -265,3 +265,97 @@ class InstagramSerializerFieldBehaviorTest(SimpleTestCase):
             writable,
             "campo 'account' está em writable_fields de InstagramConversationSerializer — IDOR via PATCH",
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Testes dos serializers de criação (schema drf-spectacular / COMPONENT_SPLIT_REQUEST)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class InstagramCreateSerializersSchemaTest(SimpleTestCase):
+    """InstagramMediaCreateSerializer e InstagramConversationCreateSerializer devem
+    declarar 'account' como UUIDField — garante presença no request schema com
+    COMPONENT_SPLIT_REQUEST=True."""
+
+    def setUp(self):
+        self.source = _read(_SERIALIZERS_PATH)
+
+    def test_media_create_serializer_exists(self):
+        self.assertIsNotNone(
+            _extract_class(self.source, "InstagramMediaCreateSerializer"),
+            "InstagramMediaCreateSerializer não encontrado em serializers.py",
+        )
+
+    def test_conversation_create_serializer_exists(self):
+        self.assertIsNotNone(
+            _extract_class(self.source, "InstagramConversationCreateSerializer"),
+            "InstagramConversationCreateSerializer não encontrado em serializers.py",
+        )
+
+    def test_media_create_serializer_declares_account_uuid(self):
+        block = _extract_class(self.source, "InstagramMediaCreateSerializer")
+        self.assertIn("account", block)
+        self.assertIn(
+            "UUIDField",
+            block,
+            "InstagramMediaCreateSerializer.account não é UUIDField — schema incorreto",
+        )
+
+    def test_conversation_create_serializer_declares_account_uuid(self):
+        block = _extract_class(self.source, "InstagramConversationCreateSerializer")
+        self.assertIn("account", block)
+        self.assertIn("UUIDField", block)
+
+    def test_extend_schema_used_on_media_create(self):
+        block = _extract_class(_read(_VIEWS_PATH), "InstagramMediaViewSet")
+        self.assertIn(
+            "extend_schema",
+            block,
+            "InstagramMediaViewSet.create não usa @extend_schema — account ausente do OpenAPI request schema",
+        )
+        self.assertIn("InstagramMediaCreateSerializer", block)
+
+    def test_extend_schema_used_on_conversation_create(self):
+        block = _extract_class(_read(_VIEWS_PATH), "InstagramConversationViewSet")
+        self.assertIn("extend_schema", block)
+        self.assertIn("InstagramConversationCreateSerializer", block)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Testes: UUID malformado → 404, não 500
+# ──────────────────────────────────────────────────────────────────────────────
+
+class InstagramPerformCreateUUIDValidationTest(SimpleTestCase):
+    """perform_create deve capturar DjangoValidationError de UUID inválido e
+    retornar 404, não propagar como 500."""
+
+    def setUp(self):
+        self.source = _read(_VIEWS_PATH)
+
+    def test_media_perform_create_catches_django_validation_error(self):
+        block = _extract_class(self.source, "InstagramMediaViewSet")
+        self.assertIn(
+            "DjangoValidationError",
+            block,
+            "InstagramMediaViewSet.perform_create não captura DjangoValidationError — "
+            "UUID malformado em 'account' causa 500 em vez de 404",
+        )
+
+    def test_media_perform_create_raises_http404(self):
+        block = _extract_class(self.source, "InstagramMediaViewSet")
+        self.assertIn(
+            "Http404",
+            block,
+            "perform_create não levanta Http404 para UUID inválido",
+        )
+
+    def test_conversation_perform_create_catches_django_validation_error(self):
+        block = _extract_class(self.source, "InstagramConversationViewSet")
+        self.assertIn(
+            "DjangoValidationError",
+            block,
+            "InstagramConversationViewSet.perform_create não captura DjangoValidationError",
+        )
+
+    def test_conversation_perform_create_raises_http404(self):
+        block = _extract_class(self.source, "InstagramConversationViewSet")
+        self.assertIn("Http404", block)
