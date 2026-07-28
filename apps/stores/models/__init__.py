@@ -64,6 +64,9 @@ from .loyalty import StoreLoyaltyAccount, StoreLoyaltyTransaction
 # Cash (PDV)
 from .cash import StoreCashSession, StoreCashMovement
 
+# Bio (Link na Bio)
+from .bio import BioClickStat, StoreBioLink
+
 
 __all__ = [
     # Base
@@ -115,4 +118,7 @@ __all__ = [
     # Cash (PDV)
     'StoreCashSession',
     'StoreCashMovement',
+    # Bio (Link na Bio)
+    'BioClickStat',
+    'StoreBioLink',
 ]
