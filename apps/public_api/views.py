@@ -84,6 +84,22 @@ def public_store_bio(request, slug):
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
+def public_store_bio_redirect(request, slug, key):
+    """Redireciona um clique de link da página bio, contabilizando o clique. Nunca usa URL do request (anti open-redirect)."""
+    from django.http import HttpResponseRedirect
+    from apps.stores.models import BioClickStat
+    from . import bio as bio_mod
+    store = _get_active_store(slug)
+    target = bio_mod.resolve_link_url(store, key)
+    if not target:
+        return HttpResponseRedirect(bio_mod.bio_page_url(store))
+    BioClickStat.bump(store, key)
+    return HttpResponseRedirect(target)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+@throttle_classes([_PublicReadThrottle])
 def public_store_catalog(request, slug):
     """Full catalog: store + categories with their products."""
     store = _get_active_store(slug)

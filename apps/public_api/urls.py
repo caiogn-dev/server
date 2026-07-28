@@ -13,6 +13,7 @@ urlpatterns = [
     path('plans/', views.public_plans, name='public-plans'),
     path('store-by-domain/', views.store_by_domain, name='store-by-domain'),
     path('<slug:slug>/', views.public_store_detail, name='store-detail'),
+    path('<slug:slug>/bio/r/<str:key>/', views.public_store_bio_redirect, name='public-store-bio-redirect'),
     path('<slug:slug>/bio/', views.public_store_bio, name='public-store-bio'),
     path('<slug:slug>/catalog/', views.public_store_catalog, name='store-catalog'),
     path('<slug:slug>/categories/', views.public_store_categories, name='store-categories'),
