@@ -24,6 +24,7 @@ class PublicStoreSerializer(serializers.ModelSerializer):
             'phone', 'email', 'address', 'city', 'state',
             'operating_hours', 'is_open',
             'meta_pixel_id', 'meta_pixel_enabled',
+            'clarity_id', 'clarity_enabled',
             'template', 'tagline',
         ]
 

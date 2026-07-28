@@ -248,6 +248,10 @@ class Store(BaseModel):
     meta_capi_enabled = models.BooleanField(default=False)
     meta_capi_test_event_code = models.CharField(max_length=100, blank=True, default='')
 
+    # Microsoft Clarity (heatmaps/session replay) por loja — id público do projeto.
+    clarity_id = models.CharField(max_length=32, blank=True, default='')
+    clarity_enabled = models.BooleanField(default=False)
+
     class Meta:
         db_table = 'stores'
         verbose_name = 'Store'

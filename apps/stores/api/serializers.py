@@ -5,6 +5,7 @@ This is the UNIFIED e-commerce serializer module supporting all stores.
 All product types are DYNAMIC - stores can create their own types with custom fields.
 Products store type-specific values in the type_attributes JSONField.
 """
+import re
 import uuid as uuid_module
 from decimal import Decimal, InvalidOperation
 from django.db import transaction
@@ -49,6 +50,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'avg_rating', 'reviews_count',
             'owner', 'metadata',
             'meta_pixel_id', 'meta_pixel_enabled',
+            'clarity_id', 'clarity_enabled',
             'plan', 'trial_ends_at', 'onboarding_completed',
             'integrations_count', 'products_count', 'orders_count',
             'created_at', 'updated_at', 'is_active'
@@ -112,6 +114,7 @@ class StoreMetaTrackingSerializer(serializers.ModelSerializer):
             'meta_pixel_id', 'meta_pixel_enabled',
             'meta_capi_enabled', 'meta_capi_access_token',
             'meta_capi_token_configured', 'meta_capi_test_event_code',
+            'clarity_id', 'clarity_enabled',
         ]
 
     def get_meta_capi_token_configured(self, obj):
@@ -123,6 +126,12 @@ class StoreMetaTrackingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError('Informe somente os números do ID do Pixel.')
         return value
 
+    def validate_clarity_id(self, value):
+        value = value.strip()
+        if value and not re.fullmatch(r'[a-z0-9]{4,32}', value, re.IGNORECASE):
+            raise serializers.ValidationError('ID do Clarity inválido — use o código do projeto (letras e números).')
+        return value
+
     def validate(self, attrs):
         pixel_id = attrs.get('meta_pixel_id', self.instance.meta_pixel_id)
         pixel_enabled = attrs.get('meta_pixel_enabled', self.instance.meta_pixel_enabled)
@@ -132,6 +141,10 @@ class StoreMetaTrackingSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({'meta_pixel_id': 'Informe o ID do Pixel antes de ativar.'})
         if capi_enabled and not token:
             raise serializers.ValidationError({'meta_capi_access_token': 'Informe o token da Conversions API antes de ativar.'})
+        clarity_id = attrs.get('clarity_id', self.instance.clarity_id)
+        clarity_enabled = attrs.get('clarity_enabled', self.instance.clarity_enabled)
+        if clarity_enabled and not clarity_id:
+            raise serializers.ValidationError({'clarity_id': 'Informe o ID do Clarity antes de ativar.'})
         return attrs
 
     def update(self, instance, validated_data):
