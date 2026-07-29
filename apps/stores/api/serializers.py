@@ -1994,5 +1994,5 @@ class BioLinkSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StoreBioLink
-        fields = ['id', 'store', 'title', 'url', 'icon', 'sort_order', 'is_active']
+        fields = ['id', 'store', 'title', 'url', 'icon', 'icon_url', 'sort_order', 'is_active']
         read_only_fields = ['id']

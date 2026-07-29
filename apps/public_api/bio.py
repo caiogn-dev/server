@@ -53,10 +53,10 @@ def bio_links(store):
     links = []
     for key in AUTO_KEYS:
         if key in urls and toggles.get(key, True) is not False:
-            links.append({'key': f'auto:{key}', 'title': AUTO_TITLES[key], 'icon': AUTO_ICONS[key], 'url': urls[key]})
+            links.append({'key': f'auto:{key}', 'title': AUTO_TITLES[key], 'icon': AUTO_ICONS[key], 'icon_url': '', 'url': urls[key]})
     if billing.plan_allows(store, 'bio_custom_links'):
         for link in store.bio_links.filter(is_active=True):
-            links.append({'key': f'custom:{link.id}', 'title': link.title, 'icon': link.icon, 'url': link.url})
+            links.append({'key': f'custom:{link.id}', 'title': link.title, 'icon': link.icon, 'icon_url': link.icon_url, 'url': link.url})
     return links
 
 

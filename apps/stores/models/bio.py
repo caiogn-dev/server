@@ -16,6 +16,7 @@ class StoreBioLink(models.Model):
     title = models.CharField(max_length=80)
     url = models.URLField(max_length=500)
     icon = models.CharField(max_length=8, blank=True, default='')
+    icon_url = models.URLField(max_length=500, blank=True, default='')
     sort_order = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
