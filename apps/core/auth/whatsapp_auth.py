@@ -194,10 +194,11 @@ class WhatsAppAuthService:
 
     @classmethod
     def send_auth_code(
-        cls, 
-        phone_number: str, 
+        cls,
+        phone_number: str,
         whatsapp_account_id: str,
-        user_name: Optional[str] = None
+        user_name: Optional[str] = None,
+        store_name: Optional[str] = None
     ) -> dict:
         """
         Envia código de autenticação via WhatsApp Template.
@@ -360,7 +361,8 @@ class WhatsAppAuthService:
         if cls.USE_TEXT_FALLBACK:
             logger.info(f"[WHATSAPP AUTH] Trying text message fallback...")
             try:
-                text_message = f"🥗 Seu código de verificação Cê Saladas é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
+                brand = (store_name or '').strip() or 'Cardapidex'
+                text_message = f"🔐 Seu código de verificação {brand} é: *{code}*\n\nEste código expira em {cls.CODE_TTL_MINUTES} minutos."
                 result = message_service.send_text_message(
                     account_id=whatsapp_account_id,
                     to=clean_phone,

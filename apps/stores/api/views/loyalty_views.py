@@ -1,3 +1,5 @@
+import re
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -8,13 +10,46 @@ from ...services.checkout_service import CheckoutService
 from ...services.loyalty_service import LoyaltyService
 
 
+def _user_phone(user) -> str:
+    """Telefone verificado do usuário: UserProfile.phone, ou o padrão
+    cliente_<digits> do username criado pelo fluxo de OTP."""
+    profile = getattr(user, 'profile', None)
+    phone = getattr(profile, 'phone', '') or ''
+    if phone:
+        return phone
+    match = re.fullmatch(r'cliente_(\d{10,13})', user.username or '')
+    return match.group(1) if match else ''
+
+
+def resolve_loyalty_status_for_user(store, user) -> dict:
+    """Status de fidelidade do usuário autenticado, com fallback por telefone.
+
+    O checkout pode ter resolvido o customer dos pedidos para OUTRO usuário
+    (identidade fragmentada por canal). Se a conta própria está vazia, usa o
+    telefone verificado da sessão para achar a conta operante — a mesma
+    resolução do guest-status, então display e crédito ficam consistentes.
+    """
+    status = CheckoutService.get_loyalty_status(store, user)
+    if status.get('qualified_salads') or status.get('rewards_redeemed'):
+        return status
+    phone = _user_phone(user)
+    if not phone:
+        return status
+    other = LoyaltyGuestStatusView()._resolve_user(store, phone)
+    if other and other.id != user.id:
+        alt = CheckoutService.get_loyalty_status(store, other)
+        if alt.get('qualified_salads') or alt.get('rewards_redeemed'):
+            return alt
+    return status
+
+
 class LoyaltyStatusView(APIView):
     """GET — returns current loyalty progress for the authenticated user."""
     permission_classes = [IsAuthenticated]
 
     def get(self, request, store_slug):
         store = get_active_store(store_slug)
-        loyalty = CheckoutService.get_loyalty_status(store, request.user)
+        loyalty = resolve_loyalty_status_for_user(store, request.user)
         return Response(loyalty)
 
 
@@ -26,7 +61,7 @@ class LoyaltyRedeemCheckView(APIView):
 
     def post(self, request, store_slug):
         store = get_active_store(store_slug)
-        loyalty = CheckoutService.get_loyalty_status(store, request.user)
+        loyalty = resolve_loyalty_status_for_user(store, request.user)
         if not loyalty.get('can_redeem'):
             return Response(
                 {'error': 'Nenhuma recompensa disponível', 'loyalty': loyalty},

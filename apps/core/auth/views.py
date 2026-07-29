@@ -24,6 +24,16 @@ from .whatsapp_auth import WhatsAppAuthService, WhatsAppAuthError
 logger = logging.getLogger(__name__)
 
 
+def _resolve_store_name(store_slug: str | None) -> str:
+    """Nome da loja para personalizar a mensagem de OTP (fallback: Cardapidex)."""
+    slug = str(store_slug or '').strip()
+    if not slug:
+        return ''
+    from apps.stores.models import Store
+    store = Store.objects.filter(slug=slug).only('name').first()
+    return store.name if store else ''
+
+
 def _resolve_whatsapp_account_id(account_id: str | None = None) -> str:
     """
     Resolve the WhatsApp account to use for OTP flows.
@@ -73,23 +83,24 @@ def send_whatsapp_auth_code(request):
     """
     phone = request.data.get('phone_number')
     account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
-    
+    store_name = _resolve_store_name(request.data.get('store_slug'))
+
     logger.info("[WHATSAPP AUTH API] Request to send code to: %s", mask_phone(phone))
-    
+
     if not phone:
         return Response(
             {'error': 'phone_number é obrigatório'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     if not account_id:
         return Response(
             {'error': 'Nenhuma conta WhatsApp disponível para autenticação'},
             status=status.HTTP_400_BAD_REQUEST
         )
-    
+
     try:
-        result = WhatsAppAuthService.send_auth_code(phone, account_id)
+        result = WhatsAppAuthService.send_auth_code(phone, account_id, store_name=store_name)
         
         if result.get('success'):
             from django.conf import settings
