@@ -888,3 +888,45 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+
+### 2026-07-29
+
+**Baseline de testes:** 10 testes `test_order_number_csprng` passando (SimpleTestCase, sem Docker).
+CI `check`/`complexity` falhando por infra desde 2026-07-18 — pré-existente, não regressão.
+
+**Gate anti-acúmulo:** 1 PR aberto (#318 — Instagram IDOR account gravável, aberto 2026-07-28).
+HEAD de `development`: `051ae68`. Commits recentes incluem novos módulos `feat(bio)` e
+`feat(fidelidade)` — inspecionados para segurança antes de escolher o fix.
+
+**Varredura dos novos módulos (bio + fidelidade):**
+- `BioLinkViewSet` — `StoreSlugOrIdField` com tenant gate (PR #294); `StoreQuerysetMixin` para
+  leitura; `get_queryset()` escopado. Sem vulnerabilidade nova.
+- `bio_payload` (public_api) — AllowAny, retorna apenas dados públicos da loja (sem PII).
+  Redirect resolve URL pelo banco (`resolve_link_url`), nunca pelo request — anti open-redirect.
+- `LoyaltyGuestStatusView` — AllowAny com `PublicWriteThrottle`; resposta sem PII (apenas contadores).
+- `LoyaltyAccountsView` — gate `is_superuser OR store.owner_id == user.id`. Sem IDOR.
+
+**Bug encontrado e corrigido:** `CustomerSearchView` retorna PII de clientes de outros tenants [P2]
+
+- **Tipo:** P2 — Vazamento de PII cross-tenant (nome + telefone); LGPD art. 46
+- **Arquivo:** `apps/stores/api/views/crm_views.py`
+- **Problema:** `UnifiedUser.objects.filter(Q(name__icontains=q) | Q(phone_number__icontains=q))[:limit]`
+  sem nenhum filtro de tenant. A checagem `_user_can_access_store` verificava apenas o acesso à
+  loja da URL, mas o queryset buscava todos os usuários do banco. Qualquer owner de qualquer loja
+  podia enumerar nome/telefone de clientes de outros tenants via `?q=Silva`.
+- **Correção:** Adicionado `.filter(Q(addresses__tenant=store) | Q(django_user__store_orders__store=store))`
+  + `.distinct()`. Também importado `StoreOrder` que faltava no módulo.
+- **Testes:** 8 SimpleTestCase em `test_customer_search_tenant_scope.py` (RED→GREEN confirmado).
+  89 testes de regressão passando.
+- **PR:** #319 — `bot/server-2026-07-29-customer-search-tenant-scope`
+- **CI:** jobs `check`/`complexity` com runner_id=0 — infra pré-existente, comentado no PR.
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge urgente dos PRs acumulados #318, #319 + PRs anteriores |
+| P1 | Testes de contrato para checkout payload completo (itens, taxa, cupom, pagamento) |
+| P2 | `LoyaltyAccountsView` — acesso limitado a owner (sem staff); avaliar se store staff deve ter acesso |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | N+1 em `emit_nfce_for_order` — `prefetch_related` para `order.items__product` |
