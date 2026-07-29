@@ -26,11 +26,14 @@ def build_loyalty_status_line(store, user):
     status = LoyaltyService.get_status(store, user)
     if not status.get('enabled'):
         return ''
+    label, label_plural = LoyaltyService.item_labels(store)
     if status['available_rewards'] > 0:
-        return f"\n\n🥗 Você tem {status['available_rewards']} salada(s) grátis para resgatar!"
+        count = status['available_rewards']
+        item_word = label if count == 1 else label_plural
+        return f"\n\n🎁 Você tem {count} {item_word} grátis para resgatar!"
     if status['qualified_salads'] > 0:
-        return (f"\n\n🥗 Cartão fidelidade: {status['progress']}/{status['threshold']} — "
-                f"faltam {status['remaining']} para a próxima grátis!")
+        return (f"\n\n🎁 Cartão fidelidade: {status['progress']}/{status['threshold']} — "
+                f"faltam {status['remaining']} para o próximo {label} grátis!")
     return ''
 
 

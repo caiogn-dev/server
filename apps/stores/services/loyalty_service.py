@@ -1,8 +1,12 @@
-"""Serviço de fidelidade persistida.
+"""Serviço de fidelidade persistida (multi-tenant, sem heurísticas hardcoded).
 
-Regras de negócio iguais ao programa atual (compre N saladas → ganhe 1):
+Regras de negócio (compre N itens qualificantes → ganhe 1):
 - threshold por loja em store.metadata['loyalty_salads_required'] (default 10)
 - enabled em store.metadata['loyalty_enabled'] (default True)
+- categorias qualificantes em store.metadata['loyalty_qualifying_categories']
+  (lista de category ids); vazio/ausente = TODO item qualifica
+- rótulo do item em store.metadata['loyalty_item_label'] /
+  'loyalty_item_label_plural' (default 'item'/'itens')
 """
 import logging
 
@@ -21,6 +25,14 @@ class LoyaltyService:
         threshold = max(1, int(meta.get('loyalty_salads_required', 10) or 10))
         enabled = bool(meta.get('loyalty_enabled', True))
         return threshold, enabled
+
+    @staticmethod
+    def item_labels(store):
+        """Rótulo do item qualificante, configurável por loja (default genérico)."""
+        meta = store.metadata or {}
+        singular = str(meta.get('loyalty_item_label') or 'item')
+        plural = str(meta.get('loyalty_item_label_plural') or 'itens')
+        return singular, plural
 
     @staticmethod
     def _get_account(store, user):
@@ -42,19 +54,17 @@ class LoyaltyService:
 
     @staticmethod
     def order_item_qualifies(store, item) -> bool:
-        from apps.stores.services.checkout_service import CheckoutService
         cats = LoyaltyService._qualifying_categories(store)
-        if cats:
-            return str(LoyaltyService._item_category_id(item)) in cats
-        return CheckoutService._is_salad_order_item(item)
+        if not cats:
+            return True
+        return str(LoyaltyService._item_category_id(item)) in cats
 
     @staticmethod
     def cart_item_qualifies(store, item) -> bool:
-        from apps.stores.services.checkout_service import CheckoutService
         cats = LoyaltyService._qualifying_categories(store)
-        if cats:
-            return str(LoyaltyService._item_category_id(item)) in cats
-        return CheckoutService._is_salad_cart_item(item)
+        if not cats:
+            return True
+        return str(LoyaltyService._item_category_id(item)) in cats
 
     @staticmethod
     @transaction.atomic

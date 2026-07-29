@@ -576,6 +576,8 @@ class CheckoutService:
 
     @staticmethod
     def _compute_loyalty_from_history(store: Store, user=None) -> dict:
+        from apps.stores.services.loyalty_service import LoyaltyService
+
         threshold = int((store.metadata or {}).get('loyalty_salads_required', 10) or 10)
         threshold = max(1, threshold)
         enabled = bool((store.metadata or {}).get('loyalty_enabled', True))
@@ -618,7 +620,7 @@ class CheckoutService:
                 redeemed += int(loyalty_meta.get('count') or 1)
             order_qty = 0
             for item in order.items.all():
-                if CheckoutService._is_salad_order_item(item):
+                if LoyaltyService.order_item_qualifies(store, item):
                     order_qty += int(item.quantity or 0)
             if order_qty:
                 per_order_qualified[str(order.id)] = order_qty

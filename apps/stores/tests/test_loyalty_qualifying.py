@@ -9,9 +9,6 @@ User = get_user_model()
 
 
 def _item(category_id=None, product_name=''):
-    # `_is_salad_order_item` (heurística legada, sem config) acessa
-    # product.category/product_type como objetos (não só o _id) — adaptação
-    # pontual do fixture do brief para casar com o código real.
     product = SimpleNamespace(category_id=category_id, category=None, product_type=None)
     return SimpleNamespace(
         product=product, product_name=product_name, variant_name='',
@@ -24,9 +21,11 @@ class LoyaltyQualifyingTest(TestCase):
         owner = User.objects.create_user(username='dono', password='x')
         self.store = Store.objects.create(name='Loja', slug='loja-q', owner=owner, status='active')
 
-    def test_sem_config_usa_heuristica_salada(self):
+    def test_sem_config_tudo_qualifica(self):
+        # Multi-tenant: sem `loyalty_qualifying_categories`, QUALQUER item conta
+        # (não há mais heurística de "salada" hardcoded).
         assert LoyaltyService.order_item_qualifies(self.store, _item(product_name='Salada Caesar')) is True
-        assert LoyaltyService.order_item_qualifies(self.store, _item(product_name='Suco de Uva')) is False
+        assert LoyaltyService.order_item_qualifies(self.store, _item(product_name='Suco de Uva')) is True
 
     def test_com_config_categoria_listada_qualifica(self):
         self.store.metadata = {'loyalty_qualifying_categories': ['cat-1']}

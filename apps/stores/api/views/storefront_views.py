@@ -361,10 +361,17 @@ class StoreCatalogView(APIView):
 
 
 def _loyalty_program_payload(store):
+    from apps.stores.services.loyalty_service import LoyaltyService
+
     meta = store.metadata or {}
+    item_label, item_label_plural = LoyaltyService.item_labels(store)
+    qualifying_categories = [str(c) for c in (meta.get('loyalty_qualifying_categories') or [])]
     return {
         'enabled': bool(meta.get('loyalty_enabled', True)),
         'threshold': max(1, int(meta.get('loyalty_salads_required', 10) or 10)),
+        'item_label': item_label,
+        'item_label_plural': item_label_plural,
+        'qualifying_categories': qualifying_categories,
     }
 
 

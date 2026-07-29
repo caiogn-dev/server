@@ -30,7 +30,11 @@ class AppConfigLoyaltyTest(APITestCase):
 
     def test_loyalty_program_no_app_config(self):
         data = self._get()
-        assert data['loyalty_program'] == {'enabled': True, 'threshold': 8}
+        assert data['loyalty_program'] == {
+            'enabled': True, 'threshold': 8,
+            'item_label': 'item', 'item_label_plural': 'itens',
+            'qualifying_categories': [],
+        }
 
     def test_featured_coupon_no_app_config_plano_pro(self):
         data = self._get()
