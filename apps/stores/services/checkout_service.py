@@ -553,7 +553,8 @@ class CheckoutService:
         status = LoyaltyService.get_status(store, user)
         available = status['available_rewards']
         status['remaining'] = 0 if available else status['remaining']
-        status['label'] = f"A cada {status['threshold']} saladas, 1 grátis"
+        _, item_label_plural = LoyaltyService.item_labels(store)
+        status['label'] = f"A cada {status['threshold']} {item_label_plural}, 1 grátis"
         return status
 
     @staticmethod

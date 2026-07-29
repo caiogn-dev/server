@@ -69,6 +69,14 @@ class LoyaltyCreditOnPaymentTests(TestCase):
         CheckoutService._apply_order_webhook_status(order, 'approved')
         self.assertEqual(StoreLoyaltyTransaction.objects.count(), 0)
 
+    def test_label_do_status_usa_rotulo_da_loja_nao_hardcoded_saladas(self):
+        self.store.metadata['loyalty_item_label'] = 'rondelli'
+        self.store.metadata['loyalty_item_label_plural'] = 'rondellis'
+        self.store.save(update_fields=['metadata'])
+        status = CheckoutService.get_loyalty_status(self.store, self.customer)
+        self.assertIn('rondellis', status['label'])
+        self.assertNotIn('saladas', status['label'])
+
     def test_webhook_rejeitado_nao_credita(self):
         order = self._order(customer=self.customer)
         CheckoutService._apply_order_webhook_status(order, 'rejected')
