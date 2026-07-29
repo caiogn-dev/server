@@ -1,20 +1,30 @@
 """
 Store management API views.
 """
+import datetime
 import logging
 import uuid as uuid_module
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from django.db.models import Subquery, OuterRef, Count, Avg, IntegerField, FloatField
 from django.db.models.functions import Coalesce
+from apps.public_api.bio import AUTO_TITLES
+from apps.stores import billing
 from apps.stores.models import (
     Store, StoreIntegration, StoreWebhook, StoreReview, StoreProduct, StoreOrder,
+    BioClickStat, StoreBioLink,
 )
 from apps.stores.services import store_service, webhook_service
 from apps.core.permissions import accessible_store_ids
+
+BIO_ANALYTICS_UPGRADE_MSG = (
+    'Estatísticas do Link na Bio são exclusivas dos planos Pro e Premium. '
+    'Faça upgrade do plano.'
+)
 
 
 def _count_sq(model, **filters):
@@ -133,6 +143,44 @@ class StoreViewSet(viewsets.ModelViewSet):
             serializer.is_valid(raise_exception=True)
             serializer.save()
         return Response(StoreMetaTrackingSerializer(store).data)
+
+    @action(detail=True, methods=['get'], url_path='bio-stats')
+    def bio_stats(self, request, pk=None):
+        """Estatísticas do Link na Bio (page views + cliques por link) — gated por plano."""
+        store = self.get_object()
+        if not billing.plan_allows(store, 'bio_analytics'):
+            return Response({'detail': BIO_ANALYTICS_UPGRADE_MSG}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            days = min(max(int(request.query_params.get('days', 30)), 1), 90)
+        except (TypeError, ValueError):
+            days = 30
+
+        since = timezone.localdate() - datetime.timedelta(days=days - 1)
+        stats = BioClickStat.objects.filter(store=store, date__gte=since)
+        views = stats.filter(link_key='page:view').order_by('date')
+        series = [{'date': s.date.isoformat(), 'views': s.clicks} for s in views]
+
+        link_totals = {}
+        for s in stats.exclude(link_key='page:view'):
+            link_totals[s.link_key] = link_totals.get(s.link_key, 0) + s.clicks
+
+        custom_titles = {
+            f'custom:{l.id}': l.title for l in StoreBioLink.objects.filter(store=store)
+        }
+        links = []
+        for key, total in sorted(link_totals.items(), key=lambda kv: -kv[1]):
+            if key.startswith('auto:'):
+                title = AUTO_TITLES.get(key.split(':', 1)[1], key)
+            else:
+                title = custom_titles.get(key, key)
+            links.append({'key': key, 'title': title, 'total': total})
+
+        return Response({
+            'days': days,
+            'page_views': {'total': sum(s.clicks for s in views), 'series': series},
+            'links': links,
+        })
 
     @action(detail=True, methods=['post'], url_path='sync_pastita')
     def sync_pastita(self, request, pk=None):
