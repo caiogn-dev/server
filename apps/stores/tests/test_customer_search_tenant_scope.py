@@ -19,6 +19,11 @@ class TestCustomerSearchTenantScopeSource(unittest.TestCase):
         from apps.stores.api.views.crm_views import CustomerSearchView
         cls.src = inspect.getsource(CustomerSearchView.get)
 
+    def test_scope_por_storecustomer(self):
+        """Query deve filtrar por StoreCustomer.store (caminho canônico usado em _accessible_unified_users)."""
+        self.assertIn('store_customers__store', self.src,
+                      "CustomerSearchView deve escopar por 'store_customers__store=store'")
+
     def test_scope_por_enderecos_do_tenant(self):
         """Query deve filtrar por endereços do tenant (addresses__tenant)."""
         self.assertIn('addresses__tenant', self.src,

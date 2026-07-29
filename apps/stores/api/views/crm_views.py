@@ -16,7 +16,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.stores.models import Store, StoreTeamMember, StoreOrder
+from apps.stores.models import Store, StoreTeamMember, StoreOrder, StoreCustomer
 from apps.stores.permissions import has_store_permission, get_member_role
 from apps.users.models import UnifiedUser, UserAddress
 from ..crm_serializers import (
@@ -72,7 +72,8 @@ class CustomerSearchView(APIView):
             UnifiedUser.objects
             .filter(Q(name__icontains=q) | Q(phone_number__icontains=q))
             .filter(
-                Q(addresses__tenant=store)
+                Q(store_customers__store=store)
+                | Q(addresses__tenant=store)
                 | Q(django_user__store_orders__store=store)
             )
             .distinct()
