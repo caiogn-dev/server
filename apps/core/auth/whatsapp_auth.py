@@ -102,14 +102,23 @@ class WhatsAppAuthService:
         
         for template_name, language, has_param in cls.TEMPLATE_ATTEMPTS:
             if has_param:
-                # Template OTP/copy-code: o código vai no body; o botão COPY_CODE
-                # já faz parte do template aprovado e não deve ser montado no payload.
+                # Template AUTH: a Meta exige o código no body E no parâmetro do
+                # botão COPY_CODE (sub_type url, index 0) — sem o botão a API
+                # devolve #131008 Required parameter is missing.
                 configs.append({
                     'name': template_name,
                     'language': {'code': language},
                     'components': [
                         {
                             'type': 'body',
+                            'parameters': [
+                                {'type': 'text', 'text': code},
+                            ]
+                        },
+                        {
+                            'type': 'button',
+                            'sub_type': 'url',
+                            'index': '0',
                             'parameters': [
                                 {'type': 'text', 'text': code},
                             ]

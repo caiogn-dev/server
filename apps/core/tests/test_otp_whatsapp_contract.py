@@ -158,6 +158,18 @@ class TestOTPSendAuthCode(SimpleTestCase):
         self.assertFalse(result['success'])
         self.assertEqual(result['error'], 'code_already_sent')
 
+    def test_template_config_inclui_parametro_do_botao_copy_code(self):
+        # Template AUTH exige o código no body E no botão (senão Meta #131008)
+        configs = WhatsAppAuthService._get_template_configs('123456')
+        self.assertGreaterEqual(len(configs), 1)
+        components = configs[0]['components']
+        types = {c['type'] for c in components}
+        self.assertIn('body', types)
+        self.assertIn('button', types)
+        button = next(c for c in components if c['type'] == 'button')
+        self.assertEqual(button['sub_type'], 'url')
+        self.assertEqual(button['parameters'][0]['text'], '123456')
+
     def test_code_stored_as_hash_not_plaintext(self):
         """Código nunca deve ser armazenado em texto puro no cache."""
         stored_value = {}
