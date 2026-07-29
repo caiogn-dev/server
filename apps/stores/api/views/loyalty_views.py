@@ -89,6 +89,13 @@ class LoyaltyGuestStatusView(APIView):
         variants = [raw_phone, normalized, digits_only]
         if normalized:
             variants.append(f'+{normalized}')
+        # Autofill (Google/iOS) grava com +55 e pedidos antigos sem — casa os
+        # dois sentidos: versão local (sem código do país) e versão com 55.
+        if digits_only.startswith('55') and len(digits_only) in (12, 13):
+            local = digits_only[2:]
+            variants.extend([local, f'+55{local}'])
+        elif digits_only and len(digits_only) in (10, 11):
+            variants.extend([f'55{digits_only}', f'+55{digits_only}'])
         return [value for value in dict.fromkeys(v for v in variants if v)]
 
     def _resolve_user(self, store, phone):

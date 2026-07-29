@@ -77,6 +77,25 @@ class LoyaltyCreditOnPaymentTests(TestCase):
         self.assertIn('rondellis', status['label'])
         self.assertNotIn('saladas', status['label'])
 
+    def test_guest_status_acha_conta_com_telefone_prefixado_55(self):
+        # Autofill do Google salva com +55; pedido foi gravado sem o código
+        # do país — as variantes precisam casar nos dois sentidos.
+        from apps.stores.api.views.loyalty_views import LoyaltyGuestStatusView
+        order = self._order(customer=self.customer)
+        order.customer_phone = '63999547790'
+        order.save(update_fields=['customer_phone'])
+        view = LoyaltyGuestStatusView()
+        self.assertEqual(view._resolve_user(self.store, '+55 63 99954-7790'), self.customer)
+        self.assertEqual(view._resolve_user(self.store, '5563999547790'), self.customer)
+
+    def test_guest_status_acha_conta_com_pedido_gravado_com_55(self):
+        from apps.stores.api.views.loyalty_views import LoyaltyGuestStatusView
+        order = self._order(customer=self.customer)
+        order.customer_phone = '5563999547790'
+        order.save(update_fields=['customer_phone'])
+        view = LoyaltyGuestStatusView()
+        self.assertEqual(view._resolve_user(self.store, '(63) 99954-7790'), self.customer)
+
     def test_webhook_rejeitado_nao_credita(self):
         order = self._order(customer=self.customer)
         CheckoutService._apply_order_webhook_status(order, 'rejected')
