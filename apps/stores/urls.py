@@ -21,6 +21,8 @@ from .api.views import (
     StoreComboViewSet, StoreProductTypeViewSet,
     # Coupon and Delivery Zone views
     StoreCouponViewSet, StoreDeliveryZoneViewSet,
+    # Bio link views (Link na Bio)
+    BioLinkViewSet,
     # Wishlist views
     StoreWishlistViewSet,
     # Combo views
@@ -186,6 +188,7 @@ router.register(r'customers', StoreCustomerViewSet, basename='customer')
 router.register(r'combos', StoreComboViewSet, basename='combo')
 router.register(r'product-types', StoreProductTypeViewSet, basename='product-type')
 router.register(r'coupons', StoreCouponViewSet, basename='coupon')
+router.register(r'bio-links', BioLinkViewSet, basename='bio-link')
 router.register(r'delivery-zones', StoreDeliveryZoneViewSet, basename='delivery-zone')
 router.register(r'print-agents', StorePrintAgentViewSet, basename='print-agent')
 router.register(r'print-jobs', StorePrintJobViewSet, basename='print-job')

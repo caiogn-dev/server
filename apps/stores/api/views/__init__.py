@@ -50,6 +50,11 @@ from .coupon_views import (
     StoreCouponViewSet,
 )
 
+# Bio link management (Link na Bio)
+from .bio_views import (
+    BioLinkViewSet,
+)
+
 # Delivery management
 from .delivery_views import (
     StoreDeliveryZoneViewSet,
@@ -103,6 +108,8 @@ __all__ = [
     'PrintAgentWatchJobsView',
     # Coupons
     'StoreCouponViewSet',
+    # Bio links
+    'BioLinkViewSet',
     # Delivery
     'StoreDeliveryZoneViewSet',
     # Combos

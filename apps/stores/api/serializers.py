@@ -1605,7 +1605,7 @@ class StoreCatalogSerializer(serializers.Serializer):
 # COUPON SERIALIZERS
 # =============================================================================
 
-from apps.stores.models import StoreCoupon, StoreDeliveryZone, StoreOrderComboItem
+from apps.stores.models import StoreCoupon, StoreDeliveryZone, StoreOrderComboItem, StoreBioLink
 
 
 class StoreCouponSerializer(serializers.ModelSerializer):
@@ -1980,3 +1980,19 @@ class PublicCatalogSerializer(serializers.Serializer):
                 'is_open': store.is_open(),
             }
         return None
+
+
+# =============================================================================
+# BIO LINK SERIALIZERS (Link na Bio)
+# =============================================================================
+
+
+class BioLinkSerializer(serializers.ModelSerializer):
+    """Serializer for a store's custom bio-page links."""
+
+    store = StoreSlugOrIdField()
+
+    class Meta:
+        model = StoreBioLink
+        fields = ['id', 'store', 'title', 'url', 'icon', 'sort_order', 'is_active']
+        read_only_fields = ['id']
