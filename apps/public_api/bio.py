@@ -41,7 +41,7 @@ def _auto_link_urls(store):
     return urls
 
 
-AUTO_TITLES = {'menu': 'Cardápio', 'whatsapp': 'Pedir no WhatsApp', 'maps': 'Como chegar', 'instagram': 'Instagram'}
+AUTO_TITLES = {'menu': 'Fazer pedido', 'whatsapp': 'Fale Conosco', 'maps': 'Como chegar', 'instagram': 'Instagram'}
 AUTO_ICONS = {'menu': '🍽️', 'whatsapp': '💬', 'maps': '📍', 'instagram': '📸'}
 
 

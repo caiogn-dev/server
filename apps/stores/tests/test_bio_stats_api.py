@@ -38,7 +38,7 @@ class BioStatsApiTest(TestCase):
         self.assertEqual(totals['auto:menu'], 3)
         titles = {l['key']: l['title'] for l in data['links']}
         self.assertEqual(titles[f'custom:{link.id}'], 'Pesquisa')
-        self.assertEqual(titles['auto:menu'], 'Cardápio')
+        self.assertEqual(titles['auto:menu'], 'Fazer pedido')
         self.assertEqual(data['links'][0]['key'], f'custom:{link.id}')  # ordenado desc
 
     def test_gate_403_on_free(self):
