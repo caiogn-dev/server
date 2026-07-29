@@ -42,29 +42,67 @@ class LoyaltyService:
     @staticmethod
     def _qualifying_categories(store):
         cats = (store.metadata or {}).get('loyalty_qualifying_categories') or []
-        return {str(c) for c in cats}
+        return {str(c).strip().lower() for c in cats if str(c).strip()}
 
     @staticmethod
-    def _item_category_id(item):
-        cat = getattr(item, 'category_id', None)
-        if cat:
-            return cat
+    def _item_category_keys(item):
+        """Chaves comparáveis da categoria do item: id, nome e slug (lowercase).
+
+        Configs gravadas pelo painel usam ids, mas há metadata legada com
+        NOMES de categoria (ex.: ['Saladas']) — aceitar ambos evita que a
+        fidelidade pare de contar silenciosamente.
+        """
+        keys = set()
+        cat_id = getattr(item, 'category_id', None)
         product = getattr(item, 'product', None)
-        return getattr(product, 'category_id', None)
+        if not cat_id:
+            cat_id = getattr(product, 'category_id', None)
+        if cat_id:
+            keys.add(str(cat_id).lower())
+        category = getattr(item, 'category', None) or getattr(product, 'category', None)
+        if category is not None:
+            for attr in ('name', 'slug'):
+                value = str(getattr(category, attr, '') or '').strip().lower()
+                if value:
+                    keys.add(value)
+        return keys
+
+    @staticmethod
+    def _item_qualifies(store, item) -> bool:
+        cats = LoyaltyService._qualifying_categories(store)
+        if not cats:
+            return True
+        return bool(cats & LoyaltyService._item_category_keys(item))
 
     @staticmethod
     def order_item_qualifies(store, item) -> bool:
-        cats = LoyaltyService._qualifying_categories(store)
-        if not cats:
-            return True
-        return str(LoyaltyService._item_category_id(item)) in cats
+        return LoyaltyService._item_qualifies(store, item)
 
     @staticmethod
     def cart_item_qualifies(store, item) -> bool:
-        cats = LoyaltyService._qualifying_categories(store)
-        if not cats:
-            return True
-        return str(LoyaltyService._item_category_id(item)) in cats
+        return LoyaltyService._item_qualifies(store, item)
+
+    @staticmethod
+    def credit_order(order):
+        """Credita os itens qualificados de um pedido (idempotente por pedido).
+
+        Ponto único usado tanto pela mudança de status no painel quanto pela
+        aprovação de pagamento via webhook/checkout.
+        """
+        if not order or not getattr(order, 'customer_id', None):
+            return None
+        store = order.store
+        _, enabled = LoyaltyService._config(store)
+        if not enabled:
+            return None
+        qty = sum(
+            int(item.quantity or 0)
+            for item in order.items.all()
+            if LoyaltyService.order_item_qualifies(store, item)
+        )
+        if not qty:
+            return None
+        return LoyaltyService.credit_qualified(store, order.customer, order, qty)
 
     @staticmethod
     @transaction.atomic

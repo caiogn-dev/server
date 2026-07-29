@@ -1409,6 +1409,12 @@ class CheckoutService:
                     else:  # pending / action_required
                         order.payment_status = StoreOrder.PaymentStatus.PENDING
                     order.save()
+                    if mapped_status == 'approved':
+                        try:
+                            from apps.stores.services.loyalty_service import LoyaltyService
+                            LoyaltyService.credit_order(order)
+                        except Exception:
+                            logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
 
                     return {
                         'success': True,
@@ -1825,6 +1831,11 @@ class CheckoutService:
         order.save(update_fields=list(dict.fromkeys(update_fields)))
 
         if status == 'approved':
+            try:
+                from apps.stores.services.loyalty_service import LoyaltyService
+                LoyaltyService.credit_order(order)
+            except Exception:
+                logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
             try:
                 from apps.stores.services.meta_pixel_service import send_purchase_event
                 send_purchase_event(order)

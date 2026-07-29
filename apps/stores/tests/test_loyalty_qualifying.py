@@ -8,8 +8,11 @@ from apps.stores.services.loyalty_service import LoyaltyService
 User = get_user_model()
 
 
-def _item(category_id=None, product_name=''):
-    product = SimpleNamespace(category_id=category_id, category=None, product_type=None)
+def _item(category_id=None, product_name='', category_name=None, category_slug=None):
+    category = None
+    if category_name or category_slug:
+        category = SimpleNamespace(name=category_name or '', slug=category_slug or '')
+    product = SimpleNamespace(category_id=category_id, category=category, product_type=None)
     return SimpleNamespace(
         product=product, product_name=product_name, variant_name='',
         options={}, quantity=1,
@@ -36,3 +39,22 @@ class LoyaltyQualifyingTest(TestCase):
         self.store.metadata = {'loyalty_qualifying_categories': ['cat-1']}
         self.store.save(update_fields=['metadata'])
         assert LoyaltyService.order_item_qualifies(self.store, _item(category_id='cat-2', product_name='Salada Caesar')) is False
+
+    def test_config_por_nome_da_categoria_qualifica(self):
+        # Painéis/configs legadas gravaram NOMES (ex.: ['Saladas']) em vez de ids.
+        self.store.metadata = {'loyalty_qualifying_categories': ['Rondelli']}
+        self.store.save(update_fields=['metadata'])
+        item = _item(category_id='uuid-x', category_name='Rondelli', category_slug='rondelli')
+        assert LoyaltyService.order_item_qualifies(self.store, item) is True
+
+    def test_config_por_slug_case_insensitive_qualifica(self):
+        self.store.metadata = {'loyalty_qualifying_categories': ['RONDELLI']}
+        self.store.save(update_fields=['metadata'])
+        item = _item(category_id='uuid-x', category_name='Massas', category_slug='rondelli')
+        assert LoyaltyService.order_item_qualifies(self.store, item) is True
+
+    def test_config_por_nome_nao_bate_continua_nao_qualificando(self):
+        self.store.metadata = {'loyalty_qualifying_categories': ['Saladas']}
+        self.store.save(update_fields=['metadata'])
+        item = _item(category_id='uuid-x', category_name='Rondelli', category_slug='rondelli')
+        assert LoyaltyService.order_item_qualifies(self.store, item) is False
