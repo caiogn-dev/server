@@ -11,7 +11,14 @@ from types import SimpleNamespace
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
-from apps.stores.models import Store
+from apps.stores.models import (
+    Store,
+    StoreCombo,
+    StoreLoyaltyTransaction,
+    StoreOrder,
+    StoreOrderComboItem,
+    StoreOrderItem,
+)
 from apps.stores.services.loyalty_service import LoyaltyService
 
 User = get_user_model()
@@ -60,6 +67,50 @@ class LoyaltyUnitsTest(TestCase):
     def test_item_comum_qualificante_continua_valendo_1_por_unidade(self):
         salada = _item(quantity=3, category_id='cat-saladas', name='Tilápia Suprema')
         assert LoyaltyService.item_qualified_units(self.store, salada) == 3
+
+    def test_combo_real_com_loyalty_units_conta_no_credit_order(self):
+        """StoreCombo (combo de verdade): item do pedido nasce com product=None
+        e sem categoria → contava 0 com categorias configuradas. metadata
+        ['loyalty_units'] no combo credita quantity × units."""
+        customer = User.objects.create_user(username='cliente-lu', password='x')
+        combo = StoreCombo.objects.create(
+            store=self.store, name='Combo 3 saladas', slug='combo-3-saladas',
+            price=100, metadata={'loyalty_units': 3},
+        )
+        order = StoreOrder.objects.create(
+            store=self.store, customer=customer, subtotal=200, total=200,
+        )
+        order_item = StoreOrderItem.objects.create(
+            order=order, product_name='Combo: Combo 3 saladas',
+            unit_price=100, quantity=2, subtotal=200,
+        )
+        StoreOrderComboItem.objects.create(
+            order=order, order_item=order_item, combo=combo, quantity=2,
+        )
+        tx = LoyaltyService.credit_order(order)
+        self.assertIsNotNone(tx)
+        self.assertEqual(tx.quantity, 6)
+
+    def test_combo_real_sem_loyalty_units_mantem_comportamento_legado(self):
+        customer = User.objects.create_user(username='cliente-lu2', password='x')
+        combo = StoreCombo.objects.create(
+            store=self.store, name='Combo Suco', slug='combo-suco', price=40,
+        )
+        order = StoreOrder.objects.create(
+            store=self.store, customer=customer, subtotal=40, total=40,
+        )
+        order_item = StoreOrderItem.objects.create(
+            order=order, product_name='Combo: Combo Suco',
+            unit_price=40, quantity=1, subtotal=40,
+        )
+        StoreOrderComboItem.objects.create(
+            order=order, order_item=order_item, combo=combo, quantity=1,
+        )
+        # Sem units e com categorias configuradas → não qualifica → sem crédito
+        self.assertIsNone(LoyaltyService.credit_order(order))
+        self.assertFalse(
+            StoreLoyaltyTransaction.objects.filter(order=order).exists()
+        )
 
     def test_loyalty_units_invalido_cai_na_regra_de_categoria(self):
         ruim = _item(quantity=2, category_id='cat-saladas',

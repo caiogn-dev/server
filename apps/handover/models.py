@@ -288,37 +288,57 @@ class HandoverLog(models.Model):
         return f"{self.conversation} - {self.from_status} → {self.to_status}"
 
 
+def _group_send_fire_and_forget(sends):
+    """Envia eventos ao channel layer SEM poder travar o chamador.
+
+    `async_to_sync(group_send)` síncrono no caminho da resposta do bot já
+    pendurou o pipeline por 90s (timeout → MESSAGE DROPPED: cliente clicou
+    "Atendente" e não recebeu NADA). Notificação de painel é best-effort —
+    roda em thread daemon; se o Redis do channels engasgar, só loga.
+
+    `sends` = lista de (group_name, payload) já montada (nada de ORM aqui).
+    """
+    import logging
+    import threading
+    logger = logging.getLogger(__name__)
+
+    def _worker():
+        try:
+            channel_layer = get_channel_layer()
+            if not channel_layer:
+                return
+            for group, payload in sends:
+                try:
+                    async_to_sync(channel_layer.group_send)(group, payload)
+                except Exception as exc:
+                    logger.warning("WS group_send falhou (%s): %s", group, exc)
+        except Exception as exc:
+            logger.warning("WS notify thread falhou: %s", exc)
+
+    threading.Thread(target=_worker, daemon=True, name="handover-ws-notify").start()
+
+
 def notify_handover_update(handover):
     """
-    Notifica via WebSocket sobre atualização de handover.
+    Notifica via WebSocket sobre atualização de handover (fire-and-forget).
     """
-    channel_layer = get_channel_layer()
-
-    # Notificar no grupo da conversa
-    async_to_sync(channel_layer.group_send)(
+    base_payload = {
+        "type": "handover_updated",
+        "conversation_id": str(handover.conversation.id),
+        "handover_status": handover.status,
+        "assigned_to": str(handover.assigned_to.id) if handover.assigned_to else None,
+        "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
+    }
+    sends = [(
         f"conversation_{handover.conversation.id}",
         {
-            "type": "handover_updated",
-            "conversation_id": str(handover.conversation.id),
-            "handover_status": handover.status,
-            "assigned_to": str(handover.assigned_to.id) if handover.assigned_to else None,
-            "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
+            **base_payload,
             "timestamp": handover.last_transfer_at.isoformat() if handover.last_transfer_at else None,
-        }
-    )
-
-    # Notificar no grupo da loja (para operadores)
+        },
+    )]
     if hasattr(handover.conversation, 'store') and handover.conversation.store:
-        async_to_sync(channel_layer.group_send)(
-            f"store_{handover.conversation.store.id}_operators",
-            {
-                "type": "handover_updated",
-                "conversation_id": str(handover.conversation.id),
-                "handover_status": handover.status,
-                "assigned_to": str(handover.assigned_to.id) if handover.assigned_to else None,
-                "assigned_to_name": handover.assigned_to.get_full_name() if handover.assigned_to else None,
-            }
-        )
+        sends.append((f"store_{handover.conversation.store.id}_operators", dict(base_payload)))
+    _group_send_fire_and_forget(sends)
 
 
 def notify_handover_request(handover_request):
@@ -326,14 +346,6 @@ def notify_handover_request(handover_request):
     Notifica operadores via WebSocket sobre nova solicitação de handover pendente.
     Disparado quando um HandoverRequest é criado (bot pedindo transferência para humano).
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
-    channel_layer = get_channel_layer()
-    if not channel_layer:
-        logger.warning("Channel layer not available — handover request notification skipped")
-        return
-
     conversation = handover_request.conversation
     payload = {
         "type": "handover_request_created",
@@ -345,22 +357,10 @@ def notify_handover_request(handover_request):
         "timestamp": timezone.now().isoformat(),
     }
 
-    # Notificar grupo de operadores da loja
+    sends = []
     store = getattr(conversation, 'store', None)
     if store:
-        try:
-            async_to_sync(channel_layer.group_send)(
-                f"store_{store.id}_operators",
-                payload,
-            )
-        except Exception as exc:
-            logger.error(f"WebSocket error notifying handover request to store operators: {exc}")
-
-    # Notificar grupo global de operadores como fallback
-    try:
-        async_to_sync(channel_layer.group_send)(
-            "operators",
-            payload,
-        )
-    except Exception as exc:
-        logger.error(f"WebSocket error notifying handover request to global operators: {exc}")
+        sends.append((f"store_{store.id}_operators", payload))
+    # Grupo global de operadores como fallback
+    sends.append(("operators", payload))
+    _group_send_fire_and_forget(sends)

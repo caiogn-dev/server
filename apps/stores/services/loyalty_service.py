@@ -114,6 +114,50 @@ class LoyaltyService:
         return quantity if LoyaltyService._item_qualifies(store, item) else 0
 
     @staticmethod
+    def _combo_loyalty_units(combo):
+        """Multiplicador explícito do StoreCombo (metadata['loyalty_units'])."""
+        meta = getattr(combo, 'metadata', None) or {}
+        try:
+            units = int(meta.get('loyalty_units'))
+        except (TypeError, ValueError):
+            return None
+        return units if units > 0 else None
+
+    @staticmethod
+    def order_qualified_units(store, order) -> int:
+        """Total de selos do pedido: itens comuns + combos reais.
+
+        Combo real (StoreCombo) vira StoreOrderItem com product=None e sem
+        categoria → nunca qualificava por categoria. Com
+        combo.metadata['loyalty_units'] a linha do combo vale quantity × units
+        (substitui a contagem do item pra não duplicar). Sem o metadata,
+        mantém o comportamento legado do item.
+        """
+        combo_units_by_item = {}
+        combo_only_total = 0
+        try:
+            for ci in order.combo_items.select_related('combo').all():
+                units = LoyaltyService._combo_loyalty_units(ci.combo) if ci.combo else None
+                if units is None:
+                    continue
+                credited = int(ci.quantity or 0) * units
+                if ci.order_item_id:
+                    combo_units_by_item[ci.order_item_id] = credited
+                else:
+                    combo_only_total += credited
+        except Exception:
+            logger.warning('order_qualified_units: falha ao ler combo_items', exc_info=True)
+
+        total = combo_only_total
+        for item in order.items.all():
+            explicit = combo_units_by_item.get(item.id)
+            if explicit is not None:
+                total += explicit
+            else:
+                total += LoyaltyService.item_qualified_units(store, item)
+        return total
+
+    @staticmethod
     def credit_order(order):
         """Credita os itens qualificados de um pedido (idempotente por pedido).
 
@@ -126,10 +170,7 @@ class LoyaltyService:
         _, enabled = LoyaltyService._config(store)
         if not enabled:
             return None
-        qty = sum(
-            LoyaltyService.item_qualified_units(store, item)
-            for item in order.items.all()
-        )
+        qty = LoyaltyService.order_qualified_units(store, order)
         if not qty:
             return None
         return LoyaltyService.credit_qualified(store, order.customer, order, qty)

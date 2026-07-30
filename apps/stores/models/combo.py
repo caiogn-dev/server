@@ -33,6 +33,9 @@ class StoreCombo(models.Model):
     # (price_override do item, ou preço normal do produto/variante se sem override).
     # Quando False, o total é o price fixo. Ver compute_unit_price().
     dynamic_pricing = models.BooleanField(default=False)
+    # Config livre por combo (ex.: loyalty_units — quantos selos de fidelidade
+    # o combo vale por unidade; mesma convenção do StoreProduct.attributes).
+    metadata = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
