@@ -683,6 +683,42 @@ def check_abandoned_whatsapp_sessions():
     )
 
 
+def _reengagement_content(store, profile):
+    """Corpo e botões do re-engajamento por loja.
+
+    O texto cita um produto real da loja (destaque primeiro) em vez do
+    antigo "que tal uma salada" fixo; o segundo botão vem de
+    settings['bot_cta'] (mesmo CTA custom usado nos handlers do bot).
+    """
+    from apps.stores.models import StoreProduct
+
+    product_name = (
+        StoreProduct.objects
+        .filter(store=store, is_active=True, status='active')
+        .order_by('-featured', 'sort_order', '-created_at')
+        .values_list('name', flat=True)
+        .first()
+    )
+    if product_name:
+        body = (
+            f"Sentimos sua falta aqui na {store.name}! 😊\n\n"
+            f"Que tal pedir {product_name} hoje? "
+            f"Temos novidades no cardápio esperando por você."
+        )
+    else:
+        body = (
+            f"Sentimos sua falta aqui na {store.name}! 😊\n\n"
+            f"Temos novidades no cardápio esperando por você."
+        )
+
+    buttons = [{'id': 'view_menu', 'title': '📋 Ver Cardápio'}]
+    settings_data = getattr(profile, 'settings', None) or {}
+    cta = settings_data.get('bot_cta') or {}
+    if cta.get('id') and cta.get('title'):
+        buttons.append({'id': str(cta['id']), 'title': str(cta['title'])[:20]})
+    return body, buttons
+
+
 @shared_task(bind=True, max_retries=2)
 def send_reengagement_message(self, phone_number: str, store_id: str):
     """
@@ -705,16 +741,11 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
         if not account:
             return
 
+        body_text, buttons = _reengagement_content(store, profile)
         WhatsAppAPIService(account).send_interactive_buttons(
             to=phone_number,
-            body_text=(
-                f"Sentimos sua falta! 🥗\n\n"
-                f"Que tal uma salada hoje? Temos novidades no cardápio esperando por você 😊"
-            ),
-            buttons=[
-                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-                {'id': 'montar_salada', 'title': '🥗 Montar Salada'},
-            ],
+            body_text=body_text,
+            buttons=buttons,
         )
         logger.info("Re-engagement sent to %s for store %s", mask_phone(phone_number), store_id)
 
