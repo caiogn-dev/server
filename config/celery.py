@@ -50,6 +50,12 @@ app.conf.beat_schedule = {
         'task': 'apps.automation.tasks.check_pending_pix_payments',
         'schedule': 600.0,  # Every 10 minutes
     },
+    # Reconciliação ativa: consulta o MP p/ pagamentos pendentes da última hora
+    # e dispara o fluxo do webhook quando o aviso se perdeu (502 em restart etc.)
+    'reconcile-pending-pix-payments': {
+        'task': 'apps.stores.tasks.reconcile_pending_pix_payments',
+        'schedule': 180.0,  # Every 3 minutes
+    },
     # REMOVED: check-pending-payments-new + check-abandoned-carts-new were
     # duplicates of the tasks above with different schedules (race condition).
     # Kept only the canonical apps.automation.tasks versions.

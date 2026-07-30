@@ -374,3 +374,72 @@ def send_meta_purchase_event(self, order_id: str, tracking_data: dict = None):
     except Exception as exc:
         logger.warning('send_meta_purchase_event failed for %s: %s', order_id, exc)
         raise self.retry(exc=exc)
+
+
+@shared_task(name='apps.stores.tasks.reconcile_pending_pix_payments')
+def reconcile_pending_pix_payments():
+    """Reconciliação ativa de pagamentos pendentes com o Mercado Pago.
+
+    O webhook é o caminho rápido, mas pode se perder (502 durante restart,
+    queda de rede). Este poller consulta o MP para StorePayments pendentes
+    da última hora e dispara o MESMO fluxo do webhook, com a MESMA chave de
+    idempotência (mp_webhook:{id}:{status}) — nunca processa em dobro.
+    """
+    import mercadopago
+    from datetime import timedelta
+    from django.core.cache import cache
+
+    from apps.stores.api.webhooks import MercadoPagoWebhookView
+    from apps.stores.models import StorePayment
+    from apps.stores.services import checkout_service
+    from apps.stores.services.realtime_service import broadcast_order_event
+
+    window_start = timezone.now() - timedelta(hours=1)
+    pending = (
+        StorePayment.objects
+        .filter(status=StorePayment.PaymentStatus.PENDING, created_at__gte=window_start)
+        .exclude(external_id='')
+        .select_related('order', 'store')
+    )
+
+    checked = reconciled = 0
+    for sp in pending:
+        store = sp.store or (sp.order.store if sp.order_id else None)
+        if not store:
+            continue
+        credentials = checkout_service.get_payment_credentials(store)
+        if not credentials or not credentials.get('access_token'):
+            continue
+        try:
+            resp = mercadopago.SDK(credentials['access_token']).payment().get(sp.external_id)
+        except Exception as exc:
+            logger.warning('Reconcile PIX: erro consultando MP p/ %s: %s', sp.external_id, exc)
+            continue
+        if resp.get('status') != 200:
+            continue
+        payment = resp.get('response') or {}
+        mp_status = payment.get('status')
+        checked += 1
+        if mp_status in (None, 'pending', 'in_process'):
+            continue
+
+        idempotency_key = f"mp_webhook:{sp.external_id}:{mp_status}"
+        if not cache.add(idempotency_key, 1, timeout=3600):
+            continue
+
+        order = checkout_service.process_payment_webhook(
+            str(sp.external_id), mp_status,
+            external_reference=payment.get('external_reference'),
+        )
+        reconciled += 1
+        logger.info(
+            'Reconcile PIX: pagamento %s -> %s (pedido %s) via poller',
+            sp.external_id, mp_status, getattr(order, 'order_number', None),
+        )
+        if order:
+            broadcast_order_event(order)
+            if mp_status == 'approved':
+                MercadoPagoWebhookView()._send_payment_confirmation_whatsapp(order)
+
+    if checked:
+        logger.info('Reconcile PIX: %d consultados, %d reconciliados', checked, reconciled)
