@@ -570,6 +570,91 @@ class OrderByTokenView(APIView):
             )
 
 
+def _serialize_customer_orders(request, orders):
+    """Shape compartilhada do histórico do cliente (auth e guest).
+
+    Itens COMPLETOS (sem corte) e com o id da variante — o "Pedir novamente"
+    do storefront repete a variante original e precisa de todas as linhas.
+    """
+    def image_url(product):
+        if not product:
+            return ''
+        image = getattr(product, 'main_image', None) or getattr(product, 'image', None)
+        if not image:
+            return ''
+        try:
+            return request.build_absolute_uri(image.url)
+        except Exception:
+            return ''
+
+    results = []
+    for order in orders:
+        items = []
+        for item in order.items.all():
+            items.append({
+                'id': str(item.id),
+                'product': str(item.product_id) if item.product_id else '',
+                'product_name': item.product_name,
+                'variant': str(item.variant_id) if item.variant_id else '',
+                'variant_name': item.variant_name,
+                'quantity': item.quantity,
+                'unit_price': float(item.unit_price),
+                'subtotal': float(item.subtotal),
+                'image_url': image_url(getattr(item, 'product', None)),
+            })
+        # Combos já aparecem aqui: a linha vendável do combo vive em order.items
+        results.append({
+            'id': str(order.id),
+            'order_number': order.order_number,
+            'access_token': order.access_token,
+            'store_name': order.store.name,
+            'store_slug': order.store.slug,
+            'status': order.status,
+            'payment_status': order.payment_status,
+            'total': float(order.total),
+            'delivery_method': order.delivery_method,
+            'items_count': len(items),
+            'items': items,
+            'created_at': order.created_at.isoformat(),
+        })
+    return results
+
+
+class GuestOrdersView(APIView):
+    """POST — histórico de pedidos para guest (sem login) identificado por telefone.
+
+    Mesma decisão de produto da fidelidade guest-status: o storefront não tem
+    login obrigatório; a identidade é o telefone salvo no aparelho (90d).
+    Casa as mesmas variantes de telefone (com/sem 55, formatado) e devolve a
+    mesma shape do endpoint autenticado, limitado à loja da URL.
+    """
+    permission_classes = []
+    authentication_classes = []
+
+    def get_throttles(self):
+        from apps.stores.api.views.storefront_views import PublicWriteThrottle
+        return [PublicWriteThrottle()]
+
+    def post(self, request, store_slug):
+        from apps.stores.api.views.storefront_views import get_active_store
+        from apps.stores.api.views.loyalty_views import LoyaltyGuestStatusView
+
+        store = get_active_store(store_slug)
+        phone = request.data.get('phone') or ''
+        variants = LoyaltyGuestStatusView._build_phone_variants(phone)
+        if not variants:
+            return Response({'results': []})
+
+        orders = (
+            StoreOrder.objects
+            .filter(store=store, customer_phone__in=variants)
+            .select_related('store')
+            .prefetch_related('items__product')
+            .order_by('-created_at')[:50]
+        )
+        return Response({'results': _serialize_customer_orders(request, orders)})
+
+
 class CustomerOrdersView(APIView):
     """
     Get orders for authenticated customer.
@@ -605,49 +690,7 @@ class CustomerOrdersView(APIView):
             .order_by('-created_at')[:50]
         )
 
-        def image_url(product):
-            if not product:
-                return ''
-            image = getattr(product, 'main_image', None) or getattr(product, 'image', None)
-            if not image:
-                return ''
-            try:
-                return request.build_absolute_uri(image.url)
-            except Exception:
-                return ''
-
-        results = []
-        for order in orders:
-            items = []
-            for item in order.items.all()[:3]:
-                items.append({
-                    'id': str(item.id),
-                    'product': str(item.product_id) if item.product_id else '',
-                    'product_name': item.product_name,
-                    'variant_name': item.variant_name,
-                    'quantity': item.quantity,
-                    'unit_price': float(item.unit_price),
-                    'subtotal': float(item.subtotal),
-                    'image_url': image_url(getattr(item, 'product', None)),
-                })
-            # Combos já aparecem aqui: a linha vendável do combo vive em order.items
-            total_items = order.items.count()
-            results.append({
-                'id': str(order.id),
-                'order_number': order.order_number,
-                'access_token': order.access_token,
-                'store_name': order.store.name,
-                'store_slug': order.store.slug,
-                'status': order.status,
-                'payment_status': order.payment_status,
-                'total': float(order.total),
-                'delivery_method': order.delivery_method,
-                'items_count': total_items,
-                'items': items,
-                'created_at': order.created_at.isoformat(),
-            })
-        
-        return Response({'results': results})
+        return Response({'results': _serialize_customer_orders(request, orders)})
 
 
 class CustomerOrderDetailView(APIView):

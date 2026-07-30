@@ -136,7 +136,7 @@ def my_addresses_set_default(request, store_slug, id):
 
 from .api.webhooks import (
     MercadoPagoWebhookView, PaymentStatusView, OrderByTokenView,
-    CustomerOrdersView, CustomerOrderDetailView, OrderWhatsAppView,
+    CustomerOrdersView, CustomerOrderDetailView, GuestOrdersView, OrderWhatsAppView,
     OrderReceiptView,
 )
 from .api.views.review_views import OrderReviewByTokenView, StoreReviewListView
@@ -264,6 +264,9 @@ store_frontend_patterns = [
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
     path('loyalty/accounts/', LoyaltyAccountsView.as_view(), name='store-loyalty-accounts'),
     path('loyalty/guest-status/', LoyaltyGuestStatusView.as_view(), name='store-loyalty-guest-status'),
+
+    # Histórico do cliente guest por telefone (sem login) — mesma decisão do loyalty/guest-status
+    re_path(r'^customer/guest-orders/$', GuestOrdersView.as_view(), name='store-guest-orders'),
 
     # Customer-facing address management — using re_path to capture store_slug from parent include()
     re_path(r'^customer/my-addresses/$', my_addresses_list, name='my-addresses'),
