@@ -126,8 +126,8 @@ class IntentDetector:
             r'(como funciona|como [ée]|qual [ée] a|o que [ée]|me explica|explica como)',
         ],
         IntentType.CREATE_ORDER: [
-            r'(quero (fazer( um)? )?pedido|quero pedir|fazer pedido|vou querer|queria (comprar|pedir)|quero comprar)',
-            r'(come[çc]ar pedido|novo pedido|quero encomendar|quero solicitar)',
+            r'(quero (fazer( um)? )?pedido|quero pedir|fazer( um)? pedido|vou querer|queria (comprar|pedir)|quero comprar)',
+            r'(gostaria de (fazer|pedir|comprar|encomendar)|come[çc]ar pedido|novo pedido|quero encomendar|quero solicitar)',
             r'(pode fazer pedido|aceita pedido|tem como pedir|pedido rápido)',
             r'(finalizar pedido|fechar pedido|concluir pedido|criar pedido)',
             r'(quero finalizar|confirmar compra|finalizar compra)',

@@ -235,15 +235,16 @@ class IntentHandler:
 
     def _order_cta_button(self):
         """CTA de pedido multi-tenant: configurável via settings['bot_cta']
-        (ex.: Cê Saladas usa Montar Salada); default genérico Fazer Pedido.
-        Retorna None quando o lojista desligou pedidos pelo bot."""
+        (ex.: Cê Saladas usa Montar Salada). Sem CTA custom retorna None —
+        o default "Fazer Pedido" duplicava o Cardápio (fluxo enxuto 29/jul).
+        Também retorna None quando o lojista desligou pedidos pelo bot."""
         if not self._bot_order_enabled():
             return None
         settings_data = getattr(self.company_profile, 'settings', None) or {}
         cta = settings_data.get('bot_cta') or {}
         if cta.get('id') and cta.get('title'):
             return {'id': str(cta['id']), 'title': str(cta['title'])[:20]}
-        return {'id': 'start_order', 'title': '🛒 Fazer Pedido'}
+        return None
 
     def _normalize_lookup_text(self, value: str) -> str:
         if not value:

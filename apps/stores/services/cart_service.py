@@ -62,6 +62,12 @@ class CartService:
         variant = None
         if variant_id:
             variant = StoreProductVariant.objects.get(id=variant_id, product=product)
+        elif product.variants.filter(is_active=True).exists():
+            # Produto com sabores/variantes exige a escolha — sem isto o pedido
+            # chegava na loja como "Molho" sem dizer qual (CE-2607306092).
+            raise ValueError(
+                f'Escolha uma opção de "{product.name}" antes de adicionar ao carrinho.'
+            )
         return CartService.add_product(cart, product, quantity, variant, options=options, notes=notes)
     
     @staticmethod

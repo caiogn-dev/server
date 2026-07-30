@@ -76,12 +76,11 @@ class AffirmativeHandler(IntentHandler):
         except Exception as exc:
             logger.warning('[AffirmativeHandler] Erro ao verificar sessão: %s', exc)
 
-        # Sem contexto claro — mostrar menu
+        # Sem contexto claro — só as duas saídas reais: catálogo ou humano
         return HandlerResult.buttons(
             body="Claro! O que você gostaria de fazer? 😊",
             buttons=[
-                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-                {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
+                {'id': 'view_menu', 'title': '📋 Cardápio'},
                 {'id': 'contact_support', 'title': '👤 Atendente'},
             ],
         )
@@ -154,7 +153,6 @@ class UnknownHandler(IntentHandler):
             body="Como posso te ajudar? 👇",
             buttons=[
                 {'id': 'view_menu', 'title': '📋 Cardápio'},
-                {'id': 'start_order', 'title': '🛒 Fazer pedido'},
                 {'id': 'contact_support', 'title': '👤 Atendente'},
             ],
         )

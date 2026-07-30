@@ -1076,13 +1076,19 @@ class UnifiedService:
                    'unified.duration_ms': _ms, 'unified.store_id': _store_id},
         )
         self.stats['fallback'] += 1
+        _fallback_buttons = [
+            {'id': 'view_menu', 'title': '📋 Cardápio'},
+            {'id': 'contact_support', 'title': '👤 Atendente'},
+        ]
         return UnifiedResponse(
-            content='Posso continuar pelo menu, te mostrar o catalogo ou encaminhar voce para um atendente humano.',
+            content='Como posso te ajudar? 👇',
             source=ResponseSource.FALLBACK,
             metadata={
                 'intent': intent.value,
                 'unified.duration_ms': _ms,
             },
+            interactive_type='buttons',
+            interactive_data={'buttons': _fallback_buttons},
         )
 
 

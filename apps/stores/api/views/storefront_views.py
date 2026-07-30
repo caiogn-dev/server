@@ -683,13 +683,16 @@ class StoreCartViewSet(viewsets.ViewSet):
                 {'error': 'Combo not found or inactive'},
                 status=status.HTTP_404_NOT_FOUND
             )
+        except ValueError as e:
+            # Regra de negócio com mensagem própria (ex.: variante obrigatória)
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Error adding item to cart: {e}")
             return Response(
                 {'error': 'Erro ao adicionar item ao carrinho.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
+
     @action(detail=False, methods=['patch'], url_path='item/(?P<item_id>[^/.]+)')
     def update_item(self, request, store_slug=None, item_id=None):
         """Update cart item quantity."""
@@ -1308,17 +1311,87 @@ class MyAddressViewSet(viewsets.ModelViewSet):
             raise get_object_or_404(Store, slug=None)
         return get_object_or_404(Store, slug=store_slug)
 
+    def _get_unified_user(self, create=False):
+        """UnifiedUser do usuário logado (related_name correto: unified_profile).
+
+        Com create=True, resolve/cria pelo telefone verificado (mesmo elo da
+        fidelidade) e vincula o django_user.
+        """
+        user = self.request.user
+        unified_user = getattr(user, 'unified_profile', None)
+        if unified_user:
+            return unified_user
+        from apps.users.models import UnifiedUser
+        unified_user = UnifiedUser.objects.filter(django_user=user).first()
+        if unified_user or not create:
+            return unified_user
+        from apps.stores.api.views.loyalty_views import _user_phone
+        phone = _user_phone(user)
+        if not phone:
+            return None
+        from apps.users.services import UnifiedUserService
+        unified_user, _ = UnifiedUserService.get_or_create_by_phone(phone)
+        if unified_user and not unified_user.django_user_id:
+            unified_user.django_user = user
+            unified_user.save(update_fields=['django_user'])
+        return unified_user
+
+    def _seed_from_orders(self, store, unified_user):
+        """Semeia UserAddress a partir dos delivery_address estruturados dos
+        pedidos recentes do usuário (por customer OU pelo telefone verificado
+        da sessão) quando a lista está vazia."""
+        from django.db.models import Q
+        from apps.stores.api.views.loyalty_views import _user_phone, LoyaltyGuestStatusView
+
+        if UserAddress.objects.filter(unified_user=unified_user, tenant=store).exists():
+            return
+        cond = Q(customer=self.request.user)
+        phone = _user_phone(self.request.user)
+        if phone:
+            variants = LoyaltyGuestStatusView._build_phone_variants(phone)
+            cond = cond | Q(customer_phone__in=variants)
+        orders = (StoreOrder.objects.filter(store=store).filter(cond)
+                  .exclude(delivery_address={}).order_by('-created_at')[:10])
+        seen = set()
+        created = 0
+        for order in orders:
+            addr = order.delivery_address or {}
+            street = str(addr.get('street') or '').strip()
+            if not street:
+                continue
+            key = (street.lower(), str(addr.get('number') or '').strip().lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            UserAddress.objects.create(
+                unified_user=unified_user,
+                tenant=store,
+                label='Entrega',
+                street=street[:255],
+                number=str(addr.get('number') or '')[:20],
+                neighborhood=str(addr.get('neighborhood') or '')[:100],
+                city=str(addr.get('city') or '')[:100],
+                state=str(addr.get('state') or '')[:2],
+                zip_code=str(addr.get('zip_code') or '')[:10],
+                is_default=created == 0,
+            )
+            created += 1
+            if created >= 3:
+                break
+
+    def list(self, request, *args, **kwargs):
+        try:
+            unified_user = self._get_unified_user(create=True)
+            if unified_user:
+                self._seed_from_orders(self.get_store(), unified_user)
+        except Exception:
+            logger.warning('Falha ao semear endereços do usuário %s', request.user.id, exc_info=True)
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         """Retorna endereços do usuário logado para a loja atual."""
         store = self.get_store()
-
-        # Filtrar por unified_user (do token) + tenant (loja)
-        unified_user = getattr(self.request.user, 'unified_user', None)
-        if not unified_user:
-            # Fallback se user não tiver unified_user populado
-            from apps.users.models import UnifiedUser
-            unified_user = UnifiedUser.objects.filter(user=self.request.user).first()
-
+        unified_user = self._get_unified_user()
         if not unified_user:
             return UserAddress.objects.none()
 
@@ -1330,12 +1403,7 @@ class MyAddressViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """Criar endereço vinculando ao usuário e loja."""
         store = self.get_store()
-
-        unified_user = getattr(self.request.user, 'unified_user', None)
-        if not unified_user:
-            from apps.users.models import UnifiedUser
-            unified_user = UnifiedUser.objects.filter(user=self.request.user).first()
-
+        unified_user = self._get_unified_user(create=True)
         serializer.save(unified_user=unified_user, tenant=store)
 
     @action(detail=True, methods=['patch'])

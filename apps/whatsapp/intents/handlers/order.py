@@ -114,7 +114,7 @@ class CreateOrderHandler(IntentHandler):
         logger.info(f"[CreateOrderHandler] Itens extraídos: {items}")
         if items:
             return self._create_real_order(items, message_text)
-        return self._start_order_flow()
+        return self._show_catalog()
 
     def _extract_items_from_context(self, intent_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         items = []
@@ -138,22 +138,16 @@ class CreateOrderHandler(IntentHandler):
         logger.info(f"[CreateOrderHandler] Perguntando método de entrega para {self.conversation.phone_number}")
         return self._ask_delivery_method(items)
 
-    def _start_order_flow(self) -> HandlerResult:
+    def _show_catalog(self) -> HandlerResult:
+        # Fluxo enxuto (29/jul): sem itens na mensagem → catálogo direto.
+        # O passo "Como prefere começar?" (Cardápio/Pedido Rápido/Ajuda) era
+        # loop puro — todos os caminhos terminavam no catálogo mesmo.
         session_manager = self._get_session_manager()
         session_manager.get_or_create_session()
         context = session_manager.get_context()
         context.start_order_flow()
-        return HandlerResult.buttons(
-            body=(
-                f"🛒 *Vamos fazer seu pedido, {self.get_customer_name()}!*\n\n"
-                f"Como prefere começar?"
-            ),
-            buttons=[
-                {'id': 'order_catalog', 'title': '📋 Ver Cardápio'},
-                {'id': 'order_quick', 'title': '⚡ Pedido Rápido'},
-                {'id': 'order_help', 'title': '❓ Preciso de Ajuda'},
-            ],
-        )
+        from .catalog import MenuRequestHandler
+        return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle({})
 
     def _parse_items_from_text(self, text: str) -> List[Dict[str, Any]]:
         return _parse_items_from_text_dynamic(text, self.store)

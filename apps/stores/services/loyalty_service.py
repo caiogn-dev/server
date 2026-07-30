@@ -83,6 +83,37 @@ class LoyaltyService:
         return LoyaltyService._item_qualifies(store, item)
 
     @staticmethod
+    def _product_loyalty_units(item):
+        """Multiplicador explícito do produto (attributes['loyalty_units']).
+
+        Ex.: "Combo Tilápia" = 1 produto com 4 saladas → loyalty_units: 4.
+        Retorna None quando ausente/inválido/<=0 (cai na regra de categoria).
+        """
+        product = getattr(item, 'product', None)
+        attrs = getattr(product, 'attributes', None) or {}
+        try:
+            units = int(attrs.get('loyalty_units'))
+        except (TypeError, ValueError):
+            return None
+        return units if units > 0 else None
+
+    @staticmethod
+    def item_qualified_units(store, item) -> int:
+        """Selos que este item do pedido/carrinho vale.
+
+        `loyalty_units` no produto é opt-in explícito: qualifica mesmo fora
+        das categorias configuradas e multiplica pela quantidade. Sem ele,
+        vale a regra de categoria (1 selo por unidade).
+        """
+        quantity = int(getattr(item, 'quantity', 0) or 0)
+        if not quantity:
+            return 0
+        units = LoyaltyService._product_loyalty_units(item)
+        if units is not None:
+            return quantity * units
+        return quantity if LoyaltyService._item_qualifies(store, item) else 0
+
+    @staticmethod
     def credit_order(order):
         """Credita os itens qualificados de um pedido (idempotente por pedido).
 
@@ -96,9 +127,8 @@ class LoyaltyService:
         if not enabled:
             return None
         qty = sum(
-            int(item.quantity or 0)
+            LoyaltyService.item_qualified_units(store, item)
             for item in order.items.all()
-            if LoyaltyService.order_item_qualifies(store, item)
         )
         if not qty:
             return None

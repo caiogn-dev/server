@@ -621,8 +621,7 @@ class CheckoutService:
                 redeemed += int(loyalty_meta.get('count') or 1)
             order_qty = 0
             for item in order.items.all():
-                if LoyaltyService.order_item_qualifies(store, item):
-                    order_qty += int(item.quantity or 0)
+                order_qty += LoyaltyService.item_qualified_units(store, item)
             if order_qty:
                 per_order_qualified[str(order.id)] = order_qty
                 qualified += order_qty

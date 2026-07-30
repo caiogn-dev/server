@@ -45,8 +45,15 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id.startswith('add_'):
             return self._handle_add_to_cart(reply_id)
 
+        # Fluxo enxuto (29/jul): pedido é SEMPRE pelo catálogo — clique em
+        # "fazer pedido"/"pedido rápido" abre o catálogo direto, sem o passo
+        # "Como prefere começar?" (que virava loop).
         if reply_id in ('start_order', 'order_quick'):
-            return CreateOrderHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
+            return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
+
+        # Botão antigo "Preciso de Ajuda" ainda vivo em conversas abertas
+        if reply_id == 'order_help':
+            return HumanHandoffHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
 
         if reply_id in ('order_delivery', 'order_pickup'):
             return self._handle_delivery_choice(reply_id)
@@ -152,10 +159,10 @@ class InteractiveReplyHandler(IntentHandler):
 
         logger.warning('[InteractiveReplyHandler] Unhandled reply_id=%s', reply_id)
         return HandlerResult.buttons(
-            body=f"Você selecionou: {reply_title or reply_id}\n\nComo posso ajudar?",
+            body="Como posso ajudar? 👇",
             buttons=[
-                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-                {'id': 'start_order', 'title': '🛒 Fazer Pedido'},
+                {'id': 'view_menu', 'title': '📋 Cardápio'},
+                {'id': 'contact_support', 'title': '👤 Atendente'},
             ],
         )
 
