@@ -34,18 +34,29 @@ def _resolve_store_name(store_slug: str | None) -> str:
     return store.name if store else ''
 
 
-def _resolve_whatsapp_account_id(account_id: str | None = None) -> str:
+def _resolve_whatsapp_account_id(account_id: str | None = None, store_slug: str | None = None) -> str:
     """
     Resolve the WhatsApp account to use for OTP flows.
 
-    Compatibility:
-    - Keeps supporting explicit `whatsapp_account_id` from the client.
-    - Falls back to `DEFAULT_WHATSAPP_ACCOUNT_ID` when configured.
-    - Falls back to a single active WhatsApp account when only one exists.
+    Ordem (multi-tenant):
+    1. `whatsapp_account_id` explícito do cliente.
+    2. Conta WhatsApp ATIVA da própria loja (`store_slug`) — o OTP deve sair
+       pelo número da loja, não pelo de outra marca.
+    3. `DEFAULT_WHATSAPP_ACCOUNT_ID` do settings.
+    4. Primeira conta ativa (fallback legado).
     """
     candidate = str(account_id or '').strip()
     if candidate:
         return candidate
+
+    slug = str(store_slug or '').strip()
+    if slug:
+        from apps.stores.models import Store
+        store = (Store.objects.filter(slug=slug)
+                 .select_related('whatsapp_account').first())
+        store_account = getattr(store, 'whatsapp_account', None)
+        if store_account and store_account.is_active and store_account.access_token:
+            return str(store_account.id)
 
     default_account_id = str(getattr(settings, 'DEFAULT_WHATSAPP_ACCOUNT_ID', '') or '').strip()
     if default_account_id:
@@ -82,7 +93,7 @@ def send_whatsapp_auth_code(request):
     }
     """
     phone = request.data.get('phone_number')
-    account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
+    account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'), request.data.get('store_slug'))
     store_name = _resolve_store_name(request.data.get('store_slug'))
 
     logger.info("[WHATSAPP AUTH API] Request to send code to: %s", mask_phone(phone))
@@ -224,7 +235,7 @@ def resend_whatsapp_auth_code(request):
     }
     """
     phone = request.data.get('phone_number')
-    account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'))
+    account_id = _resolve_whatsapp_account_id(request.data.get('whatsapp_account_id'), request.data.get('store_slug'))
 
     if not phone or not account_id:
         return Response(
