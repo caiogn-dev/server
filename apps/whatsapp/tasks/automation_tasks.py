@@ -690,12 +690,16 @@ def _reengagement_content(store, profile):
     antigo "que tal uma salada" fixo; o segundo botão vem de
     settings['bot_cta'] (mesmo CTA custom usado nos handlers do bot).
     """
+    from django.db.models import Sum
+    from django.db.models.functions import Coalesce
+
     from apps.stores.models import StoreProduct
 
     product_name = (
         StoreProduct.objects
         .filter(store=store, is_active=True, status='active')
-        .order_by('-featured', 'sort_order', '-created_at')
+        .annotate(sales=Coalesce(Sum('storeorderitem__quantity'), 0))
+        .order_by('-featured', '-sales', 'sort_order', '-created_at')
         .values_list('name', flat=True)
         .first()
     )

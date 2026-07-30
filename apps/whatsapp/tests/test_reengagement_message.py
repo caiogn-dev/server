@@ -49,6 +49,29 @@ class ReengagementContentTests(TestCase):
         body, _ = _reengagement_content(self.store, self.profile)
         self.assertIn('Rondelli de Queijo', body)
 
+    def test_best_seller_breaks_featured_tie(self):
+        from apps.stores.models import StoreOrder, StoreOrderItem
+
+        quieto = StoreProduct.objects.create(
+            store=self.store, name='Molho Artesanal', slug='molho-a',
+            price=20, is_active=True, featured=True, sort_order=0,
+        )
+        campeao = StoreProduct.objects.create(
+            store=self.store, name='Rondelli Linguiça', slug='rondelli-l',
+            price=48, is_active=True, featured=True, sort_order=5,
+        )
+        order = StoreOrder.objects.create(
+            store=self.store, customer_phone='5563999990000',
+            subtotal=144, total=144,
+        )
+        StoreOrderItem.objects.create(
+            order=order, product=campeao, product_name=campeao.name,
+            quantity=3, unit_price=campeao.price, subtotal=campeao.price * 3,
+        )
+        body, _ = _reengagement_content(self.store, self.profile)
+        self.assertIn('Rondelli Linguiça', body)
+        self.assertNotIn('Molho Artesanal', body)
+
     def test_inactive_products_ignored(self):
         StoreProduct.objects.create(
             store=self.store, name='Extinto', slug='extinto',
