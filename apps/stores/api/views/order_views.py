@@ -161,6 +161,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             logger.warning('[ORDER_CREATE_ERROR] Validation failed: %s', serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         order = serializer.save()
+        # serializer.save() direto pulava o perform_create() — pedido novo
+        # nascia sem broadcast e o painel só via no refresh manual
+        self._notify_order_update(order, 'order.created')
 
         # PDV: gerar o pagamento na criação (o checkout do storefront faz isso;
         # esta rota administrativa não fazia — pedido nascia sem link/QR PIX)
