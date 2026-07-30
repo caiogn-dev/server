@@ -38,25 +38,19 @@ def _resolve_whatsapp_account_id(account_id: str | None = None, store_slug: str 
     """
     Resolve the WhatsApp account to use for OTP flows.
 
-    Ordem (multi-tenant):
-    1. `whatsapp_account_id` explícito do cliente.
-    2. Conta WhatsApp ATIVA da própria loja (`store_slug`) — o OTP deve sair
-       pelo número da loja, não pelo de outra marca.
-    3. `DEFAULT_WHATSAPP_ACCOUNT_ID` do settings.
-    4. Primeira conta ativa (fallback legado).
+    Decisão de produto (30/jul): o OTP de TODAS as lojas sai pelo número
+    oficial do Cardapidex (`DEFAULT_WHATSAPP_ACCOUNT_ID`) — identidade única
+    de autenticação/sincronização, independente da loja. `store_slug` segue
+    aceito só para personalizar o texto (store_name), não a conta.
+
+    Ordem:
+    1. `whatsapp_account_id` explícito do cliente (override/testes).
+    2. `DEFAULT_WHATSAPP_ACCOUNT_ID` do settings — o número oficial.
+    3. Primeira conta ativa (fallback legado).
     """
     candidate = str(account_id or '').strip()
     if candidate:
         return candidate
-
-    slug = str(store_slug or '').strip()
-    if slug:
-        from apps.stores.models import Store
-        store = (Store.objects.filter(slug=slug)
-                 .select_related('whatsapp_account').first())
-        store_account = getattr(store, 'whatsapp_account', None)
-        if store_account and store_account.is_active and store_account.access_token:
-            return str(store_account.id)
 
     default_account_id = str(getattr(settings, 'DEFAULT_WHATSAPP_ACCOUNT_ID', '') or '').strip()
     if default_account_id:
