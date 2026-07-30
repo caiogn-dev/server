@@ -888,3 +888,50 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-07-30
+
+**Baseline de testes:** 13/13 testes `tests_pii_cross_tenant` GREEN (SimpleTestCase, sem Docker).
+PRs abertos: #318 (Instagram account IDOR — P1) e #319 (CustomerSearch tenant scope — P2).
+PRs #307–#317 já mergeados em `development` (commits confirmados via git log).
+Novos commits em `development` desde a última sessão: feat(bio), feat(fidelidade),
+feat(stores/clarity), feat(cupom) — funcionalidades novas não cobertas por segurança.
+
+**Gate anti-acúmulo:** Nenhum PR aberto cobria marketing serializers.
+Confirmado via leitura do source `apps/marketing/api/serializers.py` em `origin/development`.
+
+**Vulnerabilidade encontrada e corrigida:** IDOR de escrita cross-tenant em serializers de e-mail marketing [P1]
+
+- **Tipo:** P1 — IDOR de escrita: qualquer usuário autenticado criava e-mail templates,
+  campanhas e automações no tenant alheio via body `store=<slug-da-vítima>`.
+- **Causa raiz:** `EmailTemplateSerializer`, `EmailCampaignSerializer`, `EmailAutomationSerializer`
+  tinham `store` em `fields` sem `validate_store`. `StoreQuerysetMixin` escopava apenas leituras;
+  o `perform_create` de cada ViewSet não verificava se o usuário tem acesso à loja do body.
+- **Bônus — debug action:** `IsAdminUser` (= `is_staff`) como único portão do endpoint debug;
+  `is_staff` não concede autoridade cross-tenant — corrigido para `is_superuser`.
+- **Arquivos corrigidos (2):**
+  1. `apps/marketing/api/serializers.py` — `validate_store` adicionado em `EmailTemplateSerializer`,
+     `EmailCampaignSerializer` e `EmailAutomationSerializer`; padrão: `user_can_access_store` +
+     `is_superuser` como único bypass + mensagem genérica `'Loja não encontrada.'`
+  2. `apps/marketing/api/views.py` — action `debug`: `IsAdminUser` substituído por verificação
+     explícita `is_superuser` + `PermissionDenied` para não-superusers
+- **Testes (11 SimpleTestCase):** `apps/marketing/tests_email_store_idor.py` (RED→GREEN):
+  - Análise estática: `validate_store` em `EmailTemplateSerializer`, `EmailCampaignSerializer`,
+    `EmailAutomationSerializer`; `user_can_access_store` no source
+  - Funcional: atacante → `ValidationError` em Template + Automation
+  - Funcional: superuser → bypass sem erro; owner → acesso normal
+  - debug: `is_superuser` presente no source; sem `IsAdminUser` solitário no bloco debug
+- **13 testes de regressão** `tests_pii_cross_tenant` continuam OK
+- **PR:** `bot/server-2026-07-30-marketing-email-store-idor`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs #318 (Instagram IDOR) e #319 (CustomerSearch PII) |
+| P1 | Testes de contrato para checkout payload (fluxo completo) — pendência crítica do CLAUDE.md |
+| P2 | Varredura de segurança nos novos módulos `bio` e `fidelidade` (feat commits julho/30) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido |
+| P2 | `str(e)` em `EmailCampaignViewSet.send` (linha 156) — erro de campanha expõe `str(e)` |
+
