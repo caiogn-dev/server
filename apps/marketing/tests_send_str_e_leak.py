@@ -137,17 +137,20 @@ class TestSendSingleEmailExceptionHidesDetails(SimpleTestCase):
     @override_settings(**_SETTINGS)
     def test_resend_exception_not_in_return(self):
         m = _load_email_service()
+
+        # Injeta o mock diretamente no namespace do módulo — garante que a referência
+        # local `resend` usada por send_single_email() aponte para o mock,
+        # independentemente de o pacote real estar ou não instalado.
+        resend_mock = MagicMock()
+        resend_mock.Emails.send.side_effect = Exception(_INTERNAL_ERROR_MSG)
+
         service = m.EmailMarketingService.__new__(m.EmailMarketingService)
         service.enabled = True
         service.api_key = 'test_key'
         service.default_from_email = 'test@example.com'
         service.default_from_name = 'Test'
 
-        with patch.dict('sys.modules', {'resend': MagicMock()}):
-            import sys
-            resend_mock = sys.modules['resend']
-            resend_mock.Emails.send.side_effect = Exception(_INTERNAL_ERROR_MSG)
-
+        with patch.dict(vars(m), {'resend': resend_mock}):
             result = service.send_single_email(
                 to_email='customer@example.com',
                 subject='Test',
