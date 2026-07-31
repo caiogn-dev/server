@@ -154,7 +154,7 @@ class EmailCampaignViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except Exception as e:
             logger.exception(f"Error sending campaign {pk}: {e}")
             return Response(
-                {'success': False, 'error': str(e)},
+                {'success': False, 'error': 'Erro ao enviar campanha.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
