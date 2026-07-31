@@ -385,7 +385,9 @@ class StoreProductSerializer(serializers.ModelSerializer):
     variants = StoreProductVariantSerializer(many=True, read_only=True)
     catalog_role = serializers.SerializerMethodField()
     merchandising_flags = serializers.SerializerMethodField()
-    
+    rating_avg = serializers.SerializerMethodField()
+    rating_count = serializers.SerializerMethodField()
+
     class Meta:
         model = StoreProduct
         fields = [
@@ -404,6 +406,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             'weight', 'weight_unit', 'dimensions',
             'attributes', 'tags', 'sort_order',
             'catalog_role', 'merchandising_flags',
+            'rating_avg', 'rating_count',
             'view_count', 'sold_count',
             'variants',
             'created_at', 'updated_at', 'is_active'
@@ -412,6 +415,16 @@ class StoreProductSerializer(serializers.ModelSerializer):
     
     def get_main_image_url(self, obj):
         return obj.get_main_image_url()
+
+    # Média/contagem de avaliações por produto. SÓ via annotation (anno_rating_*,
+    # feita na queryset do catálogo) — sem fallback com query pra não criar N+1
+    # nos outros usos deste serializer (dash, wishlist etc.).
+    def get_rating_avg(self, obj):
+        v = getattr(obj, 'anno_rating_avg', None)
+        return round(v, 1) if v is not None else None
+
+    def get_rating_count(self, obj):
+        return getattr(obj, 'anno_rating_count', 0) or 0
 
     def get_catalog_role(self, obj):
         category_slug = (obj.category.slug if obj.category else '').lower()

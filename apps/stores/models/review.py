@@ -31,3 +31,31 @@ class StoreReview(models.Model):
 
     def __str__(self):
         return f"{self.store.name} - pedido {self.order_id} - {self.rating}★"
+
+
+class StoreProductReview(models.Model):
+    """Nota por produto dentro de uma avaliação de pedido (1 nota por produto/review)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    review = models.ForeignKey(StoreReview, on_delete=models.CASCADE, related_name='items')
+    product = models.ForeignKey(
+        'stores.StoreProduct', on_delete=models.CASCADE, related_name='review_items',
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'store_product_reviews'
+        verbose_name = 'Store Product Review'
+        verbose_name_plural = 'Store Product Reviews'
+        constraints = [
+            models.UniqueConstraint(fields=['review', 'product'], name='uniq_review_product'),
+        ]
+        indexes = [
+            models.Index(fields=['product', 'rating']),
+        ]
+
+    def __str__(self):
+        return f"{self.product_id} - {self.rating}★"

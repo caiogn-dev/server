@@ -303,10 +303,17 @@ class StoreCatalogView(APIView):
             return Response(cached)
 
         # Single query for all active products — evaluated once, grouped in Python
+        from django.db.models import Avg, Count, Q
+
+        _public_reviews = Q(review_items__review__is_public=True)
         all_products = list(
             StoreProduct.objects.filter(store=store, status='active')
             .select_related('category', 'product_type')
             .prefetch_related('variants')
+            .annotate(
+                anno_rating_avg=Avg('review_items__rating', filter=_public_reviews),
+                anno_rating_count=Count('review_items', filter=_public_reviews),
+            )
             .order_by('sort_order', 'name')
         )
 

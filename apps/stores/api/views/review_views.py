@@ -5,23 +5,33 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
+from django.db import transaction
 from django.http import Http404
 from apps.core.permissions import user_can_access_store
-from apps.stores.models import Store, StoreOrder, StoreReview
+from apps.stores.models import Store, StoreOrder, StoreProductReview, StoreReview
 from .base import IsStoreOwnerOrStaff
 
 # Pedido só pode ser avaliado depois de chegar ao cliente
 REVIEWABLE_STATUSES = ('delivered', 'completed')
 
 
+class StoreProductReviewItemSerializer(serializers.ModelSerializer):
+    """Nota individual de um produto do pedido (mockup 'avaliações por produto')."""
+
+    class Meta:
+        model = StoreProductReview
+        fields = ['product', 'rating']
+
+
 class StoreReviewSerializer(serializers.ModelSerializer):
     order_number = serializers.CharField(source='order.order_number', read_only=True)
+    items = StoreProductReviewItemSerializer(many=True, required=False)
 
     class Meta:
         model = StoreReview
         fields = [
             'id', 'order', 'order_number', 'rating', 'comment',
-            'customer_name', 'is_public', 'created_at',
+            'customer_name', 'is_public', 'created_at', 'items',
         ]
         read_only_fields = ['id', 'order', 'is_public', 'created_at']
 
@@ -71,7 +81,33 @@ class OrderReviewByTokenView(APIView):
 
         serializer = StoreReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        review = serializer.save(store=order.store, order=order)
+
+        # Notas por produto: só itens que realmente estão no pedido, sem repetição.
+        items = serializer.validated_data.pop('items', [])
+        order_product_ids = {
+            pid for pid in order.items.values_list('product_id', flat=True) if pid
+        }
+        seen = set()
+        for item in items:
+            pid = item['product'].id
+            if pid in seen:
+                return Response(
+                    {'detail': 'Produto repetido na avaliação.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            seen.add(pid)
+            if pid not in order_product_ids:
+                return Response(
+                    {'detail': 'Só é possível avaliar produtos deste pedido.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        with transaction.atomic():
+            review = serializer.save(store=order.store, order=order)
+            StoreProductReview.objects.bulk_create([
+                StoreProductReview(review=review, product=item['product'], rating=item['rating'])
+                for item in items
+            ])
         return Response(StoreReviewSerializer(review).data, status=status.HTTP_201_CREATED)
 
 

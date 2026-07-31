@@ -56,7 +56,7 @@ from .printing import (
 from .team import StoreTeamMember
 
 # Review
-from .review import StoreReview
+from .review import StoreReview, StoreProductReview
 
 # Loyalty
 from .loyalty import StoreLoyaltyAccount, StoreLoyaltyTransaction
@@ -112,6 +112,7 @@ __all__ = [
     'StoreTeamMember',
     # Review
     'StoreReview',
+    'StoreProductReview',
     # Loyalty
     'StoreLoyaltyAccount',
     'StoreLoyaltyTransaction',
