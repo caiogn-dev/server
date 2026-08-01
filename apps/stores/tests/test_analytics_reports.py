@@ -157,6 +157,10 @@ class GeographyReportTest(AnalyticsReportsBase):
         self.assertEqual(bands.get('0-2 km'), 1)
         self.assertEqual(bands.get('4-6 km'), 1)
         self.assertEqual(len(resp.data['points']), 1)
+        point = resp.data['points'][0]
+        self.assertTrue(point['order_number'])
+        self.assertEqual(point['customer_name'], 'Cliente')
+        self.assertEqual(point['neighborhood'], 'Centro')
         zones = {r['name']: r['orders'] for r in resp.data['zones']}
         self.assertEqual(zones['Zona 1'], 1)
 

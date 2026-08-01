@@ -207,7 +207,10 @@ class GeographyReportView(BaseAnalyticsView):
         zones = defaultdict(lambda: {'orders': 0, 'revenue': Decimal('0')})
         points = []
 
-        for address, metadata, total in orders.values_list('delivery_address', 'metadata', 'total'):
+        point_fields = orders.values_list(
+            'delivery_address', 'metadata', 'total', 'order_number', 'customer_name', 'created_at',
+        )
+        for address, metadata, total, order_number, customer_name, created_at in point_fields:
             address = address or {}
             metadata = metadata or {}
             total = total or Decimal('0')
@@ -235,7 +238,15 @@ class GeographyReportView(BaseAnalyticsView):
 
             lat, lng = address.get('lat'), address.get('lng')
             if isinstance(lat, (int, float)) and isinstance(lng, (int, float)) and len(points) < MAX_GEO_POINTS:
-                points.append({'lat': lat, 'lng': lng, 'total': _round2(total)})
+                points.append({
+                    'lat': lat,
+                    'lng': lng,
+                    'total': _round2(total),
+                    'order_number': order_number,
+                    'customer_name': customer_name or '',
+                    'neighborhood': (address.get('neighborhood') or '').strip().title(),
+                    'created_at': created_at,
+                })
 
         def rows(mapping, key_label, extra=None):
             out = []
