@@ -81,6 +81,34 @@ class CashSessionTests(APITestCase):
         self.assertEqual(session.difference, Decimal('15.00'))
         self.assertIsNotNone(session.closed_at)
 
+    def test_expected_cash_soma_vendas_em_dinheiro_da_sessao(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        from apps.stores.models import StoreOrder
+
+        self._open('100.00')
+        session = StoreCashSession.objects.get(store=self.store)
+
+        def cash_order(tag, total, paid_at, method='cash', paid=True):
+            o = StoreOrder.objects.create(
+                store=self.store, customer_name='C', customer_phone=f'55639{tag}',
+                subtotal=Decimal(total), total=Decimal(total),
+                payment_method=method,
+                payment_status='paid' if paid else 'pending',
+                status='completed',
+            )
+            StoreOrder.objects.filter(pk=o.pk).update(paid_at=paid_at)
+            return o
+
+        now = timezone.now()
+        cash_order('1', '50.00', now)                                  # dinheiro, na sessão → conta
+        cash_order('2', '30.00', now, method='pix')                    # pix → não conta
+        cash_order('3', '20.00', now, paid=False)                      # dinheiro não pago → não conta
+        cash_order('4', '25.00', now - timedelta(hours=1))             # pago ANTES de abrir → não conta
+
+        # 100 (fundo) + 50 (venda em dinheiro) = 150
+        self.assertEqual(session.expected_cash(), Decimal('150.00'))
+
     def test_fechar_sem_caixa_aberto_400(self):
         resp = self.client.post(f'{self.base}/close/', {'counted_amount': '10.00'}, format='json')
         self.assertEqual(resp.status_code, 400)

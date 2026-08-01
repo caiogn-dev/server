@@ -262,6 +262,23 @@ class ReviewsReportTest(AnalyticsReportsBase):
         self.assertEqual(dist[3], 1)
         self.assertEqual(len(resp.data['recent']), 3)
 
+    def test_by_product_ordena_piores_primeiro(self):
+        from apps.stores.models.review import StoreProductReview
+        cat = StoreCategory.objects.create(store=self.store, name='CatR', slug='catr')
+        bom = StoreProduct.objects.create(store=self.store, category=cat, name='Bom', slug='bom', price=Decimal('10'))
+        ruim = StoreProduct.objects.create(store=self.store, category=cat, name='Ruim', slug='ruim', price=Decimal('10'))
+        o1 = self.order(total='10.00', phone='556399955501')
+        o2 = self.order(total='10.00', phone='556399955502')
+        r1 = StoreReview.objects.create(store=self.store, order=o1, rating=5, customer_name='A')
+        r2 = StoreReview.objects.create(store=self.store, order=o2, rating=2, customer_name='B')
+        StoreProductReview.objects.create(review=r1, product=bom, rating=5)
+        StoreProductReview.objects.create(review=r2, product=ruim, rating=2)
+        resp = self._get('reviews/')
+        rows = resp.data['by_product']
+        self.assertEqual(rows[0]['product_name'], 'Ruim')   # pior primeiro
+        self.assertAlmostEqual(rows[0]['avg_rating'], 2.0)
+        self.assertEqual(rows[1]['product_name'], 'Bom')
+
 
 class CouponsReportTest(AnalyticsReportsBase):
     def test_roi_per_code(self):

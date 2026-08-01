@@ -43,14 +43,36 @@ class StoreCashSession(models.Model):
         ]
 
     def expected_cash(self) -> Decimal:
-        """Fundo de troco + reforços - sangrias (vendas em dinheiro entram via relatório)."""
+        """Fundo de troco + vendas em dinheiro da sessão + reforços - sangrias.
+
+        Vendas em dinheiro = pedidos payment_method='cash' pagos dentro da
+        janela da sessão (paid_at, com fallback em created_at para pedidos
+        antigos sem o timestamp). Antes elas eram ignoradas e a "quebra" no
+        fechamento saía sempre errada em dia de movimento no balcão.
+        """
+        from django.db.models import Q, Sum
+        from django.utils import timezone as dj_tz
+
         total = Decimal(self.opening_amount)
         for mv in self.movements.all():
             if mv.kind == StoreCashMovement.Kind.REINFORCEMENT:
                 total += Decimal(mv.amount)
             else:
                 total -= Decimal(mv.amount)
-        return total
+
+        from .order import StoreOrder
+        window_end = self.closed_at or dj_tz.now()
+        paid_window = (
+            Q(paid_at__gte=self.opened_at, paid_at__lte=window_end)
+            | (Q(paid_at__isnull=True) & Q(created_at__gte=self.opened_at, created_at__lte=window_end))
+        )
+        cash_sales = StoreOrder.objects.filter(
+            store=self.store,
+            payment_method='cash',
+            payment_status='paid',
+        ).filter(paid_window).aggregate(total=Sum('total'))['total'] or Decimal('0')
+
+        return total + Decimal(cash_sales)
 
     def __str__(self):
         return f"Caixa {self.store.slug} {self.opened_at:%d/%m %H:%M} ({self.status})"

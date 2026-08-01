@@ -105,6 +105,14 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id.startswith('track_'):
             return TrackOrderHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
 
+        # Botões de avaliação pós-entrega (request_feedback envia
+        # rating_{5|3|1}_{order_id}). Antes NINGUÉM tratava — o voto sumia.
+        if reply_id.startswith('rating_'):
+            return self._handle_feedback_rating(reply_id)
+
+        if reply_id.startswith('review_done_'):
+            return self._handle_google_review_done(reply_id)
+
         if reply_id == 'show_options':
             return HandlerResult.list_message(
                 body="O que você gostaria de fazer? 😊",
@@ -182,6 +190,110 @@ class InteractiveReplyHandler(IntentHandler):
         except Exception as exc:
             logger.warning('[InteractiveReplyHandler] Erro ao salvar estado de endereço: %s', exc)
         return HandlerResult.text(self._ASK_ADDRESS_TEXT)
+
+    def _handle_feedback_rating(self, reply_id: str) -> HandlerResult:
+        """Grava a nota dos botões de avaliação (rating_{n}_{order_id}).
+
+        Guarda de tenant/identidade: o pedido tem que ser da loja desta conta
+        E do telefone desta conversa — id chutado não avalia pedido alheio.
+        """
+        from apps.core.utils import normalize_phone_number
+        from apps.stores.models import StoreOrder, StoreReview
+
+        try:
+            _, rating_raw, order_id = reply_id.split('_', 2)
+            rating = max(1, min(5, int(rating_raw)))
+        except (ValueError, IndexError):
+            return HandlerResult.text('Não consegui registrar sua avaliação. 😕')
+
+        order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
+        conv_phone = normalize_phone_number(self.conversation.phone_number or '')
+        order_phone = normalize_phone_number(order.customer_phone or '') if order else ''
+        if not order or not conv_phone or conv_phone != order_phone:
+            return HandlerResult.text('Não encontrei esse pedido para avaliar. 😕')
+        if self.company_profile and self.company_profile.store_id and order.store_id != self.company_profile.store_id:
+            return HandlerResult.text('Não encontrei esse pedido para avaliar. 😕')
+
+        StoreReview.objects.update_or_create(
+            order=order,
+            defaults={
+                'store': order.store,
+                'rating': rating,
+                'customer_name': order.customer_name or '',
+            },
+        )
+
+        google_url = (order.store.metadata or {}).get('google_review_url', '').strip()
+        if rating == 5 and google_url:
+            # Loop de reputação: 5★ no WhatsApp → avaliar no Google → cupom 5%
+            return HandlerResult.buttons(
+                body=(
+                    'Que bom que você amou! ⭐⭐⭐⭐⭐\n\n'
+                    f'Avalia a gente no Google também? Leva 30 segundos:\n{google_url}\n\n'
+                    'Depois toca no botão abaixo e ganha *5% de desconto* no próximo pedido. 🎁'
+                ),
+                buttons=[{'id': f'review_done_{order.id}', 'title': '✅ Avaliei no Google'}],
+            )
+        if rating >= 4:
+            from apps.stores.services.checkout_service import CheckoutService
+            base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
+            return HandlerResult.text(
+                f'Obrigado pela avaliação! ⭐{"⭐" * (rating - 1)}\n\n'
+                f'Se quiser, avalie também cada prato do pedido: {base}/orders/{order.access_token}'
+            )
+        return HandlerResult.text(
+            'Sentimos muito que a experiência não tenha sido boa. 😔\n'
+            'Sua avaliação foi registrada e vamos usá-la para melhorar. '
+            'Se quiser contar o que aconteceu, é só responder aqui.'
+        )
+
+    def _handle_google_review_done(self, reply_id: str) -> HandlerResult:
+        """Botão '✅ Avaliei no Google' → cupom pessoal de 5% (1 uso, 30 dias).
+
+        Idempotente: o código fica em order.metadata['google_review_coupon'];
+        clique repetido reapresenta o mesmo cupom em vez de criar outro.
+        """
+        import uuid as uuid_mod
+        from datetime import timedelta
+        from django.utils import timezone as dj_tz
+        from apps.core.utils import normalize_phone_number
+        from apps.stores.models import StoreCoupon, StoreOrder
+
+        order_id = reply_id[len('review_done_'):]
+        order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
+        conv_phone = normalize_phone_number(self.conversation.phone_number or '')
+        order_phone = normalize_phone_number(order.customer_phone or '') if order else ''
+        if not order or not conv_phone or conv_phone != order_phone:
+            return HandlerResult.text('Não encontrei esse pedido. 😕')
+        if self.company_profile and self.company_profile.store_id and order.store_id != self.company_profile.store_id:
+            return HandlerResult.text('Não encontrei esse pedido. 😕')
+
+        existing = (order.metadata or {}).get('google_review_coupon')
+        if existing:
+            return HandlerResult.text(
+                f'Seu cupom de 5% já está garantido! 🎁\n\nCódigo: *{existing}*\n'
+                'É só usar no próximo pedido (válido por 30 dias).'
+            )
+
+        code = f'AVALIA5-{uuid_mod.uuid4().hex[:6].upper()}'
+        now = dj_tz.now()
+        StoreCoupon.objects.create(
+            store=order.store,
+            code=code,
+            discount_type='percentage',
+            discount_value=5,
+            usage_limit=1,
+            valid_from=now,
+            valid_until=now + timedelta(days=30),
+        )
+        order.metadata['google_review_coupon'] = code
+        order.save(update_fields=['metadata'])
+
+        return HandlerResult.text(
+            'Obrigado por avaliar no Google! 💛\n\n'
+            f'Aqui está seu cupom de *5% de desconto*: *{code}*\n'
+            'Vale 1 uso no próximo pedido, nos próximos 30 dias.'
+        )
 
     def _handle_delivery_choice(self, reply_id: str) -> HandlerResult:
         delivery_method = 'pickup' if reply_id == 'order_pickup' else 'delivery'

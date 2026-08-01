@@ -864,6 +864,21 @@ class ReviewsReportView(BaseAnalyticsView):
             }
             for r in reviews.order_by('-created_at')[:10]
         ]
+
+        from ..models.review import StoreProductReview
+        by_product = [
+            {
+                'product_name': r['product__name'],
+                'avg_rating': round(float(r['avg']), 2),
+                'count': r['count'],
+            }
+            for r in StoreProductReview.objects.filter(
+                review__store=store, created_at__date__range=(start, end)
+            )
+            .values('product__name')
+            .annotate(avg=Avg('rating'), count=Count('id'))
+            .order_by('avg')  # piores primeiro: é onde o dono precisa agir
+        ]
         return Response({
             'summary': {
                 'avg_rating': round(float(summary['avg_rating']), 2) if summary['avg_rating'] else None,
@@ -871,4 +886,5 @@ class ReviewsReportView(BaseAnalyticsView):
             },
             'distribution': distribution,
             'recent': recent,
+            'by_product': by_product,
         })
