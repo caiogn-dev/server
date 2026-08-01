@@ -888,3 +888,62 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-01
+
+**Baseline de testes:** 106 testes SimpleTestCase (sem Docker/PostgreSQL) — 106/106 OK.
+PRs abertos: #318 (Instagram account IDOR — P1), #319 (CustomerSearch PII — P2),
+#320 (marketing email store IDOR — P1), #321 (str(e) marketing — P2).
+PRs #307–#317 mergeados em `development`. CI `check`/`complexity` com runner_id=0 pré-existente.
+
+**Gate anti-acúmulo (verificado antes de implementar):**
+- Módulo analytics (commits df3263e, 030b795, b235c1c): herda `BaseAnalyticsView → BaseExportView`
+  que tem o gate `user_can_access_store` do PR #316. **Seguro.**
+- Módulo reviews produto (commit ee1ab15): `OrderReviewByTokenView` escopado por `access_token`;
+  `StoreReviewListView` tem fix do PR #312. **Seguro.**
+- `is_placeholder_email`, `get_valid_email_for_payment`, `calculate_totals`:
+  **zero cobertura de testes** — confirmado via `grep` — pendência crítica do CLAUDE.md há 7+ sessões.
+
+**Fix implementado:** Testes de contrato para checkout payload [P1]
+
+- **Tipo:** P1 — Cobertura de regressão para funções financeiras e de identidade críticas do checkout
+- **Problema:** `CheckoutService.calculate_totals()`, `is_placeholder_email()` e
+  `get_valid_email_for_payment()` não tinham nenhum teste. Uma alteração acidental nas
+  regras de cálculo (ex: remoção do `max(total, 0)`) ou na lista de domínios placeholder
+  passaria silenciosamente, causando total negativo cobrado do cliente ou cobrança
+  recusada pelo Mercado Pago (`@local.invalid` → recusa de pagamento).
+- **Arquivo criado:** `apps/stores/tests/test_checkout_contract.py`
+- **Cobertura (28 casos, todos SimpleTestCase — sem DB/Docker):**
+  - `TestCalculateTotalsContrato` (12 casos):
+    - Soma básica: 100 + 10 – 5 = 105
+    - Defaults de taxa e desconto (zero quando omitidos)
+    - **Total nunca negativo:** desconto excessivo → 0 (cláusula `max(…, 0)`)
+    - Imposto sempre 0 (contrato com frontend)
+    - Precisão decimal com centavos
+    - Subtotal zero + frete → frete
+    - Todos zeros sem crash
+    - Chaves obrigatórias presentes na resposta
+  - `TestIsPlaceholderEmail` (9 casos):
+    - Todos os domínios placeholder: `@local.invalid`, `@whatsapp.bot`, `@cliente.pastita.com.br`
+    - None e string vazia são placeholder
+    - E-mails reais não são placeholder
+    - Subdomínio diferente não é placeholder
+  - `TestGetValidEmailForPayment` (7 casos):
+    - E-mail real do cliente → retornado diretamente
+    - Placeholder → fallback para owner.email
+    - Domínios `.local`, `.test`, `.invalid` rejeitados → fallback
+    - Sem e-mail e sem owner → `cliente@noreply.com`
+    - Sem e-mail e sem owner mas com website → `cliente@dominio-da-loja`
+- **Suíte de regressão:** 106/106 OK (inclui todos os contratos anteriores)
+- **PR:** `bot/server-2026-08-01-checkout-contract`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs #318, #319, #320, #321 (4 PRs aguardando revisão) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido (CLAUDE.md crítico) |
+| P2 | Testes de contrato para `StoreCartItem.subtotal` / `StoreCart.subtotal` — verificar que soma de itens + combos bate com o que `calculate_totals` recebe |
+| P3 | Varredura de segurança no módulo `apps/stores/api/analytics_views.py` (novo, coberto por herança mas sem teste explícito de isolamento de tenant) |
+
