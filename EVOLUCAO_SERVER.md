@@ -938,11 +938,23 @@ PRs #307–#317 mergeados em `development`. CI `check`/`complexity` com runner_i
 - **Suíte de regressão:** 106/106 OK (inclui todos os contratos anteriores)
 - **PR:** `bot/server-2026-08-01-checkout-contract`
 
+**Escopo desta PR vs. backlog restante:**
+
+> Esta PR cobre as **funções auxiliares puras** de cálculo de checkout (`calculate_totals`,
+> `is_placeholder_email`, `get_valid_email_for_payment`) — sem DB/Docker, chamadas tanto
+> pelo endpoint quanto pelo agente WhatsApp.
+>
+> O fluxo end-to-end completo (`POST /api/v1/public/{slug}/checkout/` → itens → taxa →
+> cupom → criação de pedido → pagamento MP) exige DB + mocks de serviços externos
+> (Google Maps, Mercado Pago) e existe parcialmente em `tests/test_checkout_service.py`
+> e `tests/test_checkout_e2e.py`. Essa cobertura permanece no backlog P2 abaixo.
+
 **Próximo backlog priorizado:**
 
 | Prioridade | Item |
 |---|---|
 | P1 | Merge dos PRs #318, #319, #320, #321 (4 PRs aguardando revisão) |
+| P2 | **Checkout end-to-end**: testes de contrato do endpoint `POST /checkout/` cobrindo montagem de payload (itens + combos), aplicação de cupom e cálculo de total — `test_checkout_e2e.py` existe mas cobertura de contrato completa falta |
 | P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido (CLAUDE.md crítico) |
 | P2 | Testes de contrato para `StoreCartItem.subtotal` / `StoreCart.subtotal` — verificar que soma de itens + combos bate com o que `calculate_totals` recebe |
 | P3 | Varredura de segurança no módulo `apps/stores/api/analytics_views.py` (novo, coberto por herança mas sem teste explícito de isolamento de tenant) |
