@@ -233,6 +233,12 @@ class RfmReportTest(AnalyticsReportsBase):
         row = next(c for c in resp.data['inactive'] if c['phone'] == phone)
         self.assertEqual(row['typical_gap_days'], 10)
         self.assertAlmostEqual(row['overdue_factor'], 9.0, places=1)
+        # Métrica POR cliente na lista top
+        top = next(c for c in resp.data['customers'] if c['phone'] == phone)
+        self.assertEqual(top['total_orders'], 3)
+        self.assertAlmostEqual(float(top['avg_ticket']), 30.0)
+        self.assertEqual(top['typical_gap_days'], 10)
+        self.assertEqual(top['segment'], 'em_risco')
 
     def test_segments_and_inactive_list(self):
         self._cust('01', 6, '600.00', 10)    # campeão

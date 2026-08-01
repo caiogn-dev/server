@@ -416,6 +416,7 @@ class RfmReportView(BaseAnalyticsView):
         cadence = self._cadence_by_phone(store)
         segments = defaultdict(lambda: {'count': 0, 'revenue': Decimal('0')})
         inactive = []
+        top_customers = []
         customers = StoreCustomer.objects.filter(store=store).values(
             'unified_user__name', 'user__first_name', 'phone', 'whatsapp',
             'total_orders', 'total_spent', 'last_order_at',
@@ -425,6 +426,19 @@ class RfmReportView(BaseAnalyticsView):
             segment = _rfm_segment(days, c['total_orders'])
             segments[segment]['count'] += 1
             segments[segment]['revenue'] += c['total_spent'] or Decimal('0')
+            if c['total_orders']:
+                phone_key = (c['whatsapp'] or c['phone'] or '').strip()
+                spent = c['total_spent'] or Decimal('0')
+                top_customers.append({
+                    'name': c['unified_user__name'] or c['user__first_name'] or '',
+                    'phone': phone_key,
+                    'segment': segment,
+                    'total_orders': c['total_orders'],
+                    'total_spent': _round2(spent),
+                    'avg_ticket': _round2(spent / c['total_orders']),
+                    'typical_gap_days': cadence.get(phone_key),
+                    'days_since': days,
+                })
             if c['total_orders'] and days is not None and days >= INACTIVE_DAYS:
                 phone = (c['whatsapp'] or c['phone'] or '').strip()
                 typical_gap = cadence.get(phone)
@@ -452,8 +466,10 @@ class RfmReportView(BaseAnalyticsView):
             for key, agg in segments.items()
         ]
         segment_rows.sort(key=lambda r: -r['revenue'])
+        top_customers.sort(key=lambda c: -c['total_spent'])
         return Response({
             'segments': segment_rows,
+            'customers': top_customers[:50],
             'inactive': inactive[:INACTIVE_LIMIT],
             'cadence': {
                 'avg_days_between_orders': avg_cadence,
