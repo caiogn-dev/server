@@ -218,12 +218,15 @@ class TestGetValidEmailForPayment(SimpleTestCase):
         self.assertEqual(result, 'real@owner.com')
 
     def test_sem_owner_usa_fallback_padrao(self):
-        """Sem dono nem e-mail válido → cliente@noreply.com (fallback final)."""
+        """Sem dono nem e-mail válido → exatamente cliente@noreply.com (fallback final).
+
+        A asserção exata detecta regressão: qualquer alteração no domínio padrão
+        (ex: noreply.com → local.invalid) quebraria pagamentos no Mercado Pago.
+        """
         order = _order(email=None, owner_email=None)
         order.store.owner.email = None
         result = get_valid_email_for_payment(order)
-        self.assertIn('@', result)
-        self.assertTrue(result.startswith('cliente@'))
+        self.assertEqual(result, 'cliente@noreply.com')
 
     def test_sem_owner_com_website_usa_dominio_da_loja(self):
         """Sem e-mail de dono, mas loja tem website → usa domínio do site."""
