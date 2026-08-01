@@ -160,6 +160,13 @@ from .api.export_views import (
     StockReportView, CustomersReportView, StoreDashboardStatsView,
     SaladasReportView, CustomerInsightsReportView,
 )
+from .api.analytics_views import (
+    HeatmapReportView, AbcReportView, ChannelsReportView, GeographyReportView,
+    SlaReportView, FinanceReportView, RfmReportView, BotFunnelReportView,
+    ReviewsReportView, CouponsReportView, BasketReportView,
+    CancellationsReportView, SchedulingReportView, CashHistoryReportView,
+    StaffReportView,
+)
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
@@ -376,6 +383,23 @@ urlpatterns = [
     
     # Dashboard stats overview
     path('reports/dashboard/', StoreDashboardStatsView.as_view(), name='store-dashboard-stats'),
+
+    # Analytics/BI Fase 1 (docs/PLANO_RELATORIOS_BI_2026-07-31.md)
+    path('reports/heatmap/', HeatmapReportView.as_view(), name='heatmap-report'),
+    path('reports/abc/', AbcReportView.as_view(), name='abc-report'),
+    path('reports/channels/', ChannelsReportView.as_view(), name='channels-report'),
+    path('reports/geography/', GeographyReportView.as_view(), name='geography-report'),
+    path('reports/sla/', SlaReportView.as_view(), name='sla-report'),
+    path('reports/finance/', FinanceReportView.as_view(), name='finance-report'),
+    path('reports/rfm/', RfmReportView.as_view(), name='rfm-report'),
+    path('reports/bot-funnel/', BotFunnelReportView.as_view(), name='bot-funnel-report'),
+    path('reports/reviews/', ReviewsReportView.as_view(), name='reviews-report'),
+    path('reports/coupons/', CouponsReportView.as_view(), name='coupons-report'),
+    path('reports/basket/', BasketReportView.as_view(), name='basket-report'),
+    path('reports/cancellations/', CancellationsReportView.as_view(), name='cancellations-report'),
+    path('reports/scheduling/', SchedulingReportView.as_view(), name='scheduling-report'),
+    path('reports/cash-history/', CashHistoryReportView.as_view(), name='cash-history-report'),
+    path('reports/staff/', StaffReportView.as_view(), name='staff-report'),
     
     # ==========================================================================
     # PAYMENT ENDPOINTS (require auth)
