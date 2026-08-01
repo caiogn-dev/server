@@ -458,6 +458,80 @@ class BotFunnelReportView(BaseAnalyticsView):
         })
 
 
+class OverviewReportView(BaseAnalyticsView):
+    """Resumo executivo: KPIs do período atual × período anterior + deltas.
+
+    O período anterior tem a MESMA duração, imediatamente antes do atual —
+    todo relatório vira comparável sem o front fazer duas chamadas.
+    """
+
+    def _kpis(self, store, start, end):
+        from datetime import datetime, time as dtime
+        from django.utils.timezone import make_aware
+        start_dt = make_aware(datetime.combine(start, dtime.min))
+        end_dt = make_aware(datetime.combine(end, dtime.max))
+
+        all_orders = StoreOrder.objects.filter(store=store, created_at__range=(start_dt, end_dt))
+        paid = all_orders.filter(payment_status='paid')
+        agg = paid.aggregate(orders=Count('id'), revenue=Sum('total'), avg_ticket=Avg('total'))
+        total = all_orders.count()
+        cancelled = all_orders.filter(status__in=('cancelled', 'failed', 'refunded')).count()
+
+        new_customers = StoreCustomer.objects.filter(
+            store=store, created_at__range=(start_dt, end_dt)
+        ).count()
+        rating = StoreReview.objects.filter(
+            store=store, created_at__range=(start_dt, end_dt)
+        ).aggregate(avg=Avg('rating'), count=Count('id'))
+        sessions = CustomerSession.objects.filter(
+            company__store=store, created_at__range=(start_dt, end_dt)
+        )
+        session_count = sessions.count()
+        with_order = sessions.filter(order__isnull=False).count()
+
+        return {
+            'orders': agg['orders'] or 0,
+            'revenue': _round2(agg['revenue']),
+            'avg_ticket': _round2(agg['avg_ticket']),
+            'cancel_rate': round(cancelled / total * 100, 1) if total else 0.0,
+            'new_customers': new_customers,
+            'avg_rating': round(float(rating['avg']), 2) if rating['avg'] else None,
+            'reviews': rating['count'],
+            'bot_sessions': session_count,
+            'bot_conversion': round(with_order / session_count * 100, 1) if session_count else 0.0,
+        }
+
+    def get(self, request):
+        store, start, end, err = self.resolve(request)
+        if err:
+            return err
+        span = (end - start).days or 1
+        from datetime import timedelta
+        prev_start = start - timedelta(days=span)
+        prev_end = start - timedelta(days=1)
+
+        current = self._kpis(store, start, end)
+        previous = self._kpis(store, prev_start, prev_end)
+
+        def pct(cur, prev):
+            if not prev:
+                return None
+            return round((float(cur or 0) - float(prev)) / float(prev) * 100, 1)
+
+        delta = {
+            'revenue_pct': pct(current['revenue'], previous['revenue']),
+            'orders_pct': pct(current['orders'], previous['orders']),
+            'avg_ticket_pct': pct(current['avg_ticket'], previous['avg_ticket']),
+            'new_customers_pct': pct(current['new_customers'], previous['new_customers']),
+        }
+        return Response({
+            'current': current,
+            'previous': previous,
+            'delta': delta,
+            'period': {'start': start, 'end': end, 'prev_start': prev_start, 'prev_end': prev_end},
+        })
+
+
 class CouponsReportView(BaseAnalyticsView):
     """ROI de cupom: uso, desconto concedido e receita gerada por código."""
 

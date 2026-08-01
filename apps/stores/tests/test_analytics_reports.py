@@ -354,10 +354,32 @@ class StaffReportTest(AnalyticsReportsBase):
         self.assertAlmostEqual(float(rows[0]['manual_discounts']), 5.0)
 
 
+class OverviewReportTest(AnalyticsReportsBase):
+    def test_current_vs_previous_period(self):
+        now = timezone.now()
+        # Período atual (7d): 2 pedidos pagos, 1 cancelado
+        self.order(total='100.00', created=now - timedelta(days=1))
+        self.order(total='60.00', created=now - timedelta(days=2), phone='5563999222')
+        self.order(total='40.00', paid=False, status='cancelled', created=now - timedelta(days=3), phone='5563999333')
+        # Período anterior (7-14d atrás): 1 pedido pago
+        self.order(total='80.00', created=now - timedelta(days=10), phone='5563999444')
+        resp = self._get('overview/', period='7d')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        cur, prev = resp.data['current'], resp.data['previous']
+        self.assertEqual(cur['orders'], 2)
+        self.assertAlmostEqual(float(cur['revenue']), 160.0)
+        self.assertAlmostEqual(float(cur['avg_ticket']), 80.0)
+        self.assertAlmostEqual(cur['cancel_rate'], 33.3, places=1)
+        self.assertEqual(prev['orders'], 1)
+        self.assertAlmostEqual(float(prev['revenue']), 80.0)
+        # Delta % de receita: (160-80)/80 = +100%
+        self.assertAlmostEqual(resp.data['delta']['revenue_pct'], 100.0, places=1)
+
+
 ALL_PATHS = (
     'heatmap/', 'abc/', 'channels/', 'geography/', 'sla/', 'finance/', 'rfm/',
     'bot-funnel/', 'reviews/', 'coupons/', 'basket/', 'cancellations/',
-    'scheduling/', 'cash-history/', 'staff/',
+    'scheduling/', 'cash-history/', 'staff/', 'overview/',
 )
 
 

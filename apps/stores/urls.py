@@ -165,7 +165,7 @@ from .api.analytics_views import (
     SlaReportView, FinanceReportView, RfmReportView, BotFunnelReportView,
     ReviewsReportView, CouponsReportView, BasketReportView,
     CancellationsReportView, SchedulingReportView, CashHistoryReportView,
-    StaffReportView,
+    StaffReportView, OverviewReportView,
 )
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
@@ -400,6 +400,7 @@ urlpatterns = [
     path('reports/scheduling/', SchedulingReportView.as_view(), name='scheduling-report'),
     path('reports/cash-history/', CashHistoryReportView.as_view(), name='cash-history-report'),
     path('reports/staff/', StaffReportView.as_view(), name='staff-report'),
+    path('reports/overview/', OverviewReportView.as_view(), name='overview-report'),
     
     # ==========================================================================
     # PAYMENT ENDPOINTS (require auth)
