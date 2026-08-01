@@ -100,3 +100,57 @@ class LoyaltyCreditOnPaymentTests(TestCase):
         order = self._order(customer=self.customer)
         CheckoutService._apply_order_webhook_status(order, 'rejected')
         self.assertEqual(StoreLoyaltyTransaction.objects.count(), 0)
+
+
+class LoyaltyCreditOnPanelMarkPaidTests(TestCase):
+    """Mesmo bug do webhook, na porta do painel: 'marcar como pago'
+    (mark_paid / update_payment_status) não creditava fidelidade — pedido
+    em dinheiro confirmado antes da entrega ficava sem selo."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+        self.owner = User.objects.create_user(
+            username='owner-mark-loyal', email='oml@test.com', password='x',
+        )
+        self.customer = User.objects.create_user(
+            username='cliente-mark-loyal', email='cml@test.com', password='x',
+        )
+        self.store = Store.objects.create(
+            name='Loja Mark Loyal', slug='loja-mark-loyal', owner=self.owner,
+            status='active', metadata={'loyalty_enabled': True},
+        )
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer=self.customer, subtotal=30, total=30,
+            status='out_for_delivery', payment_method='cash',
+        )
+        StoreOrderItem.objects.create(
+            order=self.order, product_name='Salada Queridinha',
+            unit_price=30, quantity=4, subtotal=120,
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.owner)
+
+    def _tx_count(self):
+        return StoreLoyaltyTransaction.objects.filter(
+            account__store=self.store, account__user=self.customer, kind='earn',
+        ).count()
+
+    def test_mark_paid_credita_fidelidade(self):
+        resp = self.client.post(f'/api/v1/stores/orders/{self.order.id}/mark_paid/')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(self._tx_count(), 1)
+        tx = StoreLoyaltyTransaction.objects.get(order=self.order)
+        self.assertEqual(tx.quantity, 4)
+
+    def test_update_payment_status_paid_credita(self):
+        resp = self.client.post(
+            f'/api/v1/stores/orders/{self.order.id}/update_payment_status/',
+            {'payment_status': 'paid'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(self._tx_count(), 1)
+
+    def test_mark_paid_repetido_nao_duplica(self):
+        self.client.post(f'/api/v1/stores/orders/{self.order.id}/mark_paid/')
+        self.client.post(f'/api/v1/stores/orders/{self.order.id}/mark_paid/')
+        self.assertEqual(self._tx_count(), 1)

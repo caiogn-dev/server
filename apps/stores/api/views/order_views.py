@@ -548,6 +548,11 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 update_fields.append('paid_at')
             order.save(update_fields=update_fields)
 
+        # Fidelidade: pagamento confirmado pelo painel também credita (mesma
+        # regra do webhook/status; idempotente por pedido).
+        if new_status == paid:
+            self._credit_loyalty(order)
+
         return Response(StoreOrderSerializer(order).data)
 
     @action(detail=True, methods=['post'])
@@ -578,10 +583,20 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         logger.info(f"Order {order.order_number} marked as paid")
 
+        self._credit_loyalty(order)
+
         # Notify via WebSocket
         self._notify_order_update(order, 'order.paid')
 
         return Response(StoreOrderSerializer(order).data)
+
+    @staticmethod
+    def _credit_loyalty(order):
+        try:
+            from apps.stores.services.loyalty_service import LoyaltyService
+            LoyaltyService.credit_order(order)
+        except Exception:
+            logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
     
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None, **kwargs):
