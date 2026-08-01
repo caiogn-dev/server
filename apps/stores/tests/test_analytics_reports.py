@@ -376,10 +376,64 @@ class OverviewReportTest(AnalyticsReportsBase):
         self.assertAlmostEqual(resp.data['delta']['revenue_pct'], 100.0, places=1)
 
 
+class MenuMatrixReportTest(AnalyticsReportsBase):
+    def test_quadrants_by_popularity_and_margin(self):
+        cat = StoreCategory.objects.create(store=self.store, name='Cat', slug='cat')
+
+        def prod(name, price, cost):
+            return StoreProduct.objects.create(
+                store=self.store, category=cat, name=name, slug=name.lower(),
+                price=Decimal(price), cost_price=Decimal(cost),
+            )
+        estrela = prod('Estrela', '30', '9')      # margem 70%, muito vendido
+        burro = prod('Burro', '20', '14')         # margem 30%, muito vendido
+        enigma = prod('Enigma', '40', '10')       # margem 75%, pouco vendido
+        abacaxi = prod('Abacaxi', '15', '11')     # margem ~27%, pouco vendido
+        o = self.order(total='1000.00')
+        for p, qty in ((estrela, 20), (burro, 18), (enigma, 2), (abacaxi, 1)):
+            StoreOrderItem.objects.create(
+                order=o, product=p, product_name=p.name,
+                unit_price=p.price, quantity=qty, subtotal=p.price * qty,
+            )
+        resp = self._get('menu-matrix/')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        quad = {r['product_name']: r['quadrant'] for r in resp.data['products']}
+        self.assertEqual(quad['Estrela'], 'estrela')
+        self.assertEqual(quad['Burro'], 'burro_de_carga')
+        self.assertEqual(quad['Enigma'], 'enigma')
+        self.assertEqual(quad['Abacaxi'], 'abacaxi')
+
+    def test_products_without_cost_listed_apart(self):
+        cat = StoreCategory.objects.create(store=self.store, name='Cat', slug='cat')
+        p = StoreProduct.objects.create(store=self.store, category=cat, name='SemCusto', slug='semcusto', price=Decimal('10'))
+        o = self.order(total='10.00')
+        StoreOrderItem.objects.create(order=o, product=p, product_name='SemCusto', unit_price=Decimal('10'), quantity=1, subtotal=Decimal('10'))
+        resp = self._get('menu-matrix/')
+        self.assertEqual(resp.data['products'], [])
+        self.assertEqual(resp.data['missing_cost'][0]['product_name'], 'SemCusto')
+
+
+class CohortReportTest(AnalyticsReportsBase):
+    def test_monthly_retention(self):
+        now = timezone.now()
+        m0 = (now - timedelta(days=65)).replace(day=5)   # ~2 meses atrás
+        # Cliente A: primeiro pedido em m0, voltou no mês seguinte
+        self.order(total='50.00', phone='5563999000111', created=m0)
+        self.order(total='50.00', phone='5563999000111', created=m0 + timedelta(days=32))
+        # Cliente B: primeiro pedido em m0, nunca voltou
+        self.order(total='30.00', phone='5563999000222', created=m0)
+        resp = self._get('cohort/')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        cohort = next((c for c in resp.data['cohorts'] if c['size'] == 2), None)
+        self.assertIsNotNone(cohort, resp.data)
+        # M+1: 1 de 2 voltou = 50%
+        self.assertAlmostEqual(cohort['retention'][0], 50.0, places=1)
+
+
 ALL_PATHS = (
     'heatmap/', 'abc/', 'channels/', 'geography/', 'sla/', 'finance/', 'rfm/',
     'bot-funnel/', 'reviews/', 'coupons/', 'basket/', 'cancellations/',
-    'scheduling/', 'cash-history/', 'staff/', 'overview/',
+    'scheduling/', 'cash-history/', 'staff/', 'overview/', 'menu-matrix/', 'cohort/',
 )
 
 

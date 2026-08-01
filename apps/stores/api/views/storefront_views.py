@@ -1370,6 +1370,11 @@ class MyAddressViewSet(viewsets.ModelViewSet):
             if key in seen:
                 continue
             seen.add(key)
+            # lat/lng do pedido (quando o checkout/bot gravou) alimentam as
+            # colunas geo do UserAddress — antes ficavam sempre vazias e o
+            # mapa de calor perdia esses pontos.
+            lat, lng = addr.get('lat'), addr.get('lng')
+            has_coords = isinstance(lat, (int, float)) and isinstance(lng, (int, float))
             UserAddress.objects.create(
                 unified_user=unified_user,
                 tenant=store,
@@ -1380,6 +1385,8 @@ class MyAddressViewSet(viewsets.ModelViewSet):
                 city=str(addr.get('city') or '')[:100],
                 state=str(addr.get('state') or '')[:2],
                 zip_code=str(addr.get('zip_code') or '')[:10],
+                lat=lat if has_coords else None,
+                lng=lng if has_coords else None,
                 is_default=created == 0,
             )
             created += 1

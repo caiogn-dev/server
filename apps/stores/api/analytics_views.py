@@ -733,6 +733,115 @@ class StaffReportView(BaseAnalyticsView):
         return Response({'staff': staff})
 
 
+class MenuMatrixReportView(BaseAnalyticsView):
+    """Engenharia de cardápio (Kasavana-Smith): popularidade × margem de
+    contribuição. Quadrantes: estrela, burro_de_carga (vende muito/lucra
+    pouco), enigma (lucra muito/vende pouco), abacaxi. Usa o cost_price
+    ATUAL do produto — aproximação até existir snapshot de custo no item.
+    """
+
+    def get(self, request):
+        store, start, end, err = self.resolve(request)
+        if err:
+            return err
+        rows = list(
+            StoreOrderItem.objects.filter(order__in=self.paid_orders(store, start, end), product__isnull=False)
+            .values('product_id', 'product__name', 'product__cost_price')
+            .annotate(quantity=Sum('quantity'), revenue=Sum('subtotal'))
+            .order_by('-quantity')
+        )
+        with_cost, missing_cost = [], []
+        for r in rows:
+            cost = r['product__cost_price']
+            entry = {
+                'product_name': r['product__name'],
+                'quantity': r['quantity'],
+                'revenue': _round2(r['revenue']),
+            }
+            if cost and cost > 0:
+                avg_price = (r['revenue'] or Decimal('0')) / r['quantity'] if r['quantity'] else Decimal('0')
+                entry['unit_margin'] = _round2(avg_price - cost)
+                entry['margin_pct'] = round(float((avg_price - cost) / avg_price * 100), 1) if avg_price else 0.0
+                with_cost.append(entry)
+            else:
+                missing_cost.append(entry)
+
+        products = []
+        if with_cost:
+            total_qty = sum(e['quantity'] for e in with_cost)
+            # Regra dos 70%: popular se vende >= 70% da média por item
+            popularity_threshold = total_qty / len(with_cost) * 0.7
+            avg_margin = sum(e['unit_margin'] * e['quantity'] for e in with_cost) / total_qty
+            for e in with_cost:
+                popular = e['quantity'] >= popularity_threshold
+                profitable = e['unit_margin'] >= avg_margin
+                e['quadrant'] = (
+                    'estrela' if popular and profitable
+                    else 'burro_de_carga' if popular
+                    else 'enigma' if profitable
+                    else 'abacaxi'
+                )
+                products.append(e)
+
+        return Response({
+            'products': products,
+            'missing_cost': missing_cost,
+            'summary': {
+                'analyzed': len(products),
+                'missing_cost': len(missing_cost),
+            },
+        })
+
+
+COHORT_MONTHS = 6
+COHORT_HORIZON = 5
+
+
+class CohortReportView(BaseAnalyticsView):
+    """Retenção por safra mensal: % dos clientes do 1º pedido no mês X que
+    voltaram em M+1..M+5. Cliente = telefone normalizado."""
+
+    def get(self, request):
+        store, _, _, err = self.resolve(request)
+        if err:
+            return err
+        tz = timezone.get_current_timezone()
+        pairs = StoreOrder.objects.filter(store=store, payment_status='paid').exclude(
+            customer_phone=''
+        ).values_list('customer_phone', 'created_at')
+
+        months_by_phone = defaultdict(set)
+        for phone, created in pairs:
+            local = created.astimezone(tz)
+            months_by_phone[phone.strip()].add(local.year * 12 + (local.month - 1))
+
+        cohorts = defaultdict(lambda: {'size': 0, 'returns': [0] * COHORT_HORIZON})
+        for months in months_by_phone.values():
+            first = min(months)
+            cohorts[first]['size'] += 1
+            for offset in range(1, COHORT_HORIZON + 1):
+                if first + offset in months:
+                    cohorts[first]['returns'][offset - 1] += 1
+
+        now = timezone.now().astimezone(tz)
+        current_month = now.year * 12 + (now.month - 1)
+        out = []
+        for month_key in sorted(cohorts)[-COHORT_MONTHS:]:
+            c = cohorts[month_key]
+            year, month = divmod(month_key, 12)
+            # Meses futuros ao calendário ficam null (safra ainda não viveu M+n)
+            retention = [
+                round(c['returns'][i] / c['size'] * 100, 1) if month_key + i + 1 <= current_month else None
+                for i in range(COHORT_HORIZON)
+            ]
+            out.append({
+                'cohort': f'{year}-{month + 1:02d}',
+                'size': c['size'],
+                'retention': retention,
+            })
+        return Response({'cohorts': out, 'horizon': COHORT_HORIZON})
+
+
 class ReviewsReportView(BaseAnalyticsView):
     """Nota média, distribuição e comentários recentes."""
 
