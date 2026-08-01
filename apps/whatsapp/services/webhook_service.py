@@ -126,6 +126,21 @@ class WebhookService:
             waba_id = entry.get('id')
             
             for change in changes:
+                # COEX: eco das mensagens que o lojista envia pelo APP
+                # WhatsApp Business — sem isso elas nunca chegam ao inbox.
+                if change.get('field') == 'smb_message_echoes':
+                    value = change.get('value', {})
+                    metadata = value.get('metadata', {})
+                    account = self._resolve_account(
+                        phone_number_id=metadata.get('phone_number_id'),
+                        display_phone=metadata.get('display_phone_number'),
+                        waba_id=waba_id,
+                    )
+                    if account:
+                        for echo in value.get('message_echoes', []):
+                            self._handle_message_echo(account, echo)
+                    continue
+
                 if change.get('field') != 'messages':
                     continue
                 
@@ -229,6 +244,62 @@ class WebhookService:
                 )
         
         return account
+
+    def _handle_message_echo(self, account, echo: Dict[str, Any]) -> None:
+        """Persiste o eco (mensagem enviada pelo app Business) como OUTBOUND
+        na conversa do cliente e avisa o inbox via WS. Nunca vira WebhookEvent
+        de MESSAGE — o bot não pode responder ao próprio lojista."""
+        from django.utils import timezone as dj_tz
+        from apps.conversations.models import Conversation
+        from apps.whatsapp.models import Message
+
+        try:
+            wamid = echo.get('id')
+            to_number = echo.get('to') or ''
+            if not wamid or not to_number:
+                return
+            if Message.objects.filter(whatsapp_message_id=wamid).exists():
+                return
+
+            conversation, _ = Conversation.objects.get_or_create(
+                account=account,
+                phone_number=to_number,
+            )
+            text_body = (echo.get('text') or {}).get('body', '') if isinstance(echo.get('text'), dict) else ''
+            message = Message.objects.create(
+                account=account,
+                conversation=conversation,
+                whatsapp_message_id=wamid,
+                direction='outbound',
+                message_type=echo.get('type') or 'text',
+                status='sent',
+                from_number=echo.get('from') or '',
+                to_number=to_number,
+                text_body=text_body,
+                content=echo,
+                sent_at=dj_tz.now(),
+            )
+            Conversation.objects.filter(pk=conversation.pk).update(last_message_at=message.created_at)
+
+            from apps.whatsapp.services.broadcast_service import BroadcastService
+            BroadcastService().broadcast_message_sent(
+                account_id=str(account.id),
+                message={
+                    'id': str(message.id),
+                    'whatsapp_message_id': wamid,
+                    'direction': 'outbound',
+                    'message_type': message.message_type,
+                    'status': 'sent',
+                    'from_number': message.from_number,
+                    'to_number': message.to_number,
+                    'text_body': text_body,
+                    'content': echo,
+                    'created_at': message.created_at.isoformat(),
+                },
+                conversation_id=str(conversation.id),
+            )
+        except Exception:
+            logger.warning('Falha ao processar eco de mensagem do app Business', exc_info=True)
 
     def _process_message_event(
         self,
