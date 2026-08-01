@@ -34,6 +34,8 @@ class StoreCoupon(models.Model):
     usage_limit_per_user = models.PositiveIntegerField(null=True, blank=True)
     used_count = models.PositiveIntegerField(default=0)
     is_active = models.BooleanField(default=True)
+    # Uso livre (ex.: indicação: {'type': 'referral', 'referrer_phone': ...})
+    metadata = models.JSONField(default=dict, blank=True)
     valid_from = models.DateTimeField()
     valid_until = models.DateTimeField()
     first_order_only = models.BooleanField(default=False)

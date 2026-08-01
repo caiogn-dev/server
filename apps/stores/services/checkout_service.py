@@ -1002,6 +1002,9 @@ class CheckoutService:
 
         if coupon is not None:
             CheckoutService.record_coupon_redemption(order, coupon)
+            # Indicação: amigo usou cupom INDICA → premia o indicador (best-effort)
+            from apps.stores.services.referral_service import ReferralService
+            ReferralService.reward_referrer_if_applicable(order, coupon)
 
         # Fidelidade persistida: registra o resgate na trilha auditável
         if loyalty_reward.get('applied'):

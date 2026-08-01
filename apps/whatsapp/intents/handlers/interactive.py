@@ -113,6 +113,9 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id.startswith('review_done_'):
             return self._handle_google_review_done(reply_id)
 
+        if reply_id.startswith('refer_friend_'):
+            return self._handle_refer_friend(reply_id)
+
         if reply_id == 'show_options':
             return HandlerResult.list_message(
                 body="O que você gostaria de fazer? 😊",
@@ -237,14 +240,45 @@ class InteractiveReplyHandler(IntentHandler):
         if rating >= 4:
             from apps.stores.services.checkout_service import CheckoutService
             base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
-            return HandlerResult.text(
-                f'Obrigado pela avaliação! ⭐{"⭐" * (rating - 1)}\n\n'
-                f'Se quiser, avalie também cada prato do pedido: {base}/orders/{order.access_token}'
+            return HandlerResult.buttons(
+                body=(
+                    f'Obrigado pela avaliação! ⭐{"⭐" * (rating - 1)}\n\n'
+                    f'Se quiser, avalie também cada prato do pedido: {base}/orders/{order.access_token}'
+                ),
+                buttons=[{'id': f'refer_friend_{order.id}', 'title': '🎁 Indicar um amigo'}],
             )
         return HandlerResult.text(
             'Sentimos muito que a experiência não tenha sido boa. 😔\n'
             'Sua avaliação foi registrada e vamos usá-la para melhorar. '
             'Se quiser contar o que aconteceu, é só responder aqui.'
+        )
+
+    def _handle_refer_friend(self, reply_id: str) -> HandlerResult:
+        """Botão '🎁 Indicar um amigo' → cupom pessoal INDICA-XXXX + texto
+        pronto pra encaminhar. Guarda de telefone igual ao rating."""
+        from apps.core.utils import normalize_phone_number
+        from apps.stores.models import StoreOrder
+        from apps.stores.services.checkout_service import CheckoutService
+        from apps.stores.services.referral_service import ReferralService, REFERRAL_DISCOUNT_PCT
+
+        order_id = reply_id[len('refer_friend_'):]
+        order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
+        conv_phone = normalize_phone_number(self.conversation.phone_number or '')
+        order_phone = normalize_phone_number(order.customer_phone or '') if order else ''
+        if not order or not conv_phone or conv_phone != order_phone:
+            return HandlerResult.text('Não encontrei esse pedido. 😕')
+
+        coupon, _ = ReferralService.get_or_create_referral_coupon(
+            order.store, self.conversation.phone_number or order.customer_phone
+        )
+        base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
+        return HandlerResult.text(
+            'Seu cupom de indicação está pronto! 🎁\n\n'
+            'É só encaminhar a mensagem abaixo para os amigos:\n\n'
+            f'—\n{REFERRAL_DISCOUNT_PCT}% de desconto no primeiro pedido na '
+            f'{order.store.name}! Usa o cupom *{coupon.code}* em {base} 🥗\n—\n\n'
+            'Cada amigo que fizer o primeiro pedido com ele te rende '
+            '*5% de desconto* — te aviso por aqui quando acontecer. 😉'
         )
 
     def _handle_google_review_done(self, reply_id: str) -> HandlerResult:

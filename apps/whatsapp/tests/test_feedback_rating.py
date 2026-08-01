@@ -54,8 +54,21 @@ class FeedbackRatingTest(TestCase):
         review = StoreReview.objects.get(order=self.order)
         self.assertEqual(review.rating, 5)
         self.assertEqual(review.store_id, self.store.id)
-        self.assertIn('brigad', (result.response_text or '').lower())
-        self.assertIn(str(self.order.access_token), result.response_text or '')
+        body = result.interactive_data.get('body', '')
+        self.assertIn('brigad', body.lower())
+        self.assertIn(str(self.order.access_token), body)
+        button_ids = [b['id'] for b in result.interactive_data.get('buttons', [])]
+        self.assertIn(f'refer_friend_{self.order.id}', button_ids)
+
+    def test_refer_friend_gera_cupom_de_indicacao(self):
+        from apps.stores.models import StoreCoupon
+        result = self._click(f'refer_friend_{self.order.id}')
+        coupon = StoreCoupon.objects.get(metadata__type='referral')
+        self.assertTrue(coupon.first_order_only)
+        self.assertIn(coupon.code, result.response_text or '')
+        # Clique repetido reapresenta o MESMO cupom
+        self._click(f'refer_friend_{self.order.id}')
+        self.assertEqual(StoreCoupon.objects.filter(metadata__type='referral').count(), 1)
 
     def test_rating_1_cria_review_e_pede_desculpas(self):
         result = self._click(f'rating_1_{self.order.id}')
