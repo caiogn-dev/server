@@ -215,6 +215,25 @@ class RfmReportTest(AnalyticsReportsBase):
             last_order_at=timezone.now() - timedelta(days=days_ago) if days_ago is not None else None,
         )
 
+    def test_cadence_and_overdue_factor(self):
+        now = timezone.now()
+        phone = '5563999777001'
+        # Cliente que pedia a cada ~10 dias e sumiu há 90
+        for days_ago in (110, 100, 90):
+            self.order(total='30.00', phone=phone, created=now - timedelta(days=days_ago))
+        u = User.objects.create_user(username='u-cad', email='cad@x.com', password='x')
+        StoreCustomer.objects.create(
+            store=self.store, user=u, phone=phone, total_orders=3,
+            total_spent=Decimal('90.00'), last_order_at=now - timedelta(days=90),
+        )
+        resp = self._get('rfm/')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data['cadence']['avg_days_between_orders'], 10)
+        self.assertEqual(resp.data['cadence']['customers_with_repeat'], 1)
+        row = next(c for c in resp.data['inactive'] if c['phone'] == phone)
+        self.assertEqual(row['typical_gap_days'], 10)
+        self.assertAlmostEqual(row['overdue_factor'], 9.0, places=1)
+
     def test_segments_and_inactive_list(self):
         self._cust('01', 6, '600.00', 10)    # campeão
         self._cust('02', 3, '200.00', 45)    # leal

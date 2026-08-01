@@ -208,9 +208,9 @@ class GeographyReportView(BaseAnalyticsView):
         points = []
 
         point_fields = orders.values_list(
-            'delivery_address', 'metadata', 'total', 'order_number', 'customer_name', 'created_at',
+            'delivery_address', 'metadata', 'total', 'order_number', 'customer_name', 'created_at', 'id',
         )
-        for address, metadata, total, order_number, customer_name, created_at in point_fields:
+        for address, metadata, total, order_number, customer_name, created_at, order_id in point_fields:
             address = address or {}
             metadata = metadata or {}
             total = total or Decimal('0')
@@ -242,6 +242,7 @@ class GeographyReportView(BaseAnalyticsView):
                     'lat': lat,
                     'lng': lng,
                     'total': _round2(total),
+                    'order_id': str(order_id),
                     'order_number': order_number,
                     'customer_name': customer_name or '',
                     'neighborhood': (address.get('neighborhood') or '').strip().title(),
@@ -389,11 +390,30 @@ def _rfm_segment(recency_days, frequency):
 class RfmReportView(BaseAnalyticsView):
     """Segmentação RFM + lista acionável de inativos (reengajamento)."""
 
+    @staticmethod
+    def _cadence_by_phone(store):
+        """Gap médio entre pedidos (dias) por telefone — só clientes 2+ pedidos."""
+        orders_by_phone = defaultdict(list)
+        pairs = StoreOrder.objects.filter(store=store, payment_status='paid').exclude(
+            customer_phone=''
+        ).values_list('customer_phone', 'created_at')
+        for phone, created in pairs:
+            orders_by_phone[phone.strip()].append(created)
+        cadence = {}
+        for phone, dates in orders_by_phone.items():
+            if len(dates) < 2:
+                continue
+            dates.sort()
+            gaps = [(b - a).days for a, b in zip(dates, dates[1:])]
+            cadence[phone] = max(1, round(sum(gaps) / len(gaps)))
+        return cadence
+
     def get(self, request):
         store, _, _, err = self.resolve(request)
         if err:
             return err
         now = timezone.now()
+        cadence = self._cadence_by_phone(store)
         segments = defaultdict(lambda: {'count': 0, 'revenue': Decimal('0')})
         inactive = []
         customers = StoreCustomer.objects.filter(store=store).values(
@@ -406,14 +426,22 @@ class RfmReportView(BaseAnalyticsView):
             segments[segment]['count'] += 1
             segments[segment]['revenue'] += c['total_spent'] or Decimal('0')
             if c['total_orders'] and days is not None and days >= INACTIVE_DAYS:
+                phone = (c['whatsapp'] or c['phone'] or '').strip()
+                typical_gap = cadence.get(phone)
                 inactive.append({
                     'name': c['unified_user__name'] or c['user__first_name'] or '',
-                    'phone': c['whatsapp'] or c['phone'],
+                    'phone': phone,
                     'days_since': days,
                     'total_orders': c['total_orders'],
                     'total_spent': _round2(c['total_spent']),
+                    # cadência: "pedia a cada Xd" e quantas vezes o gap normal
+                    # já estourou — quanto maior, mais urgente o resgate
+                    'typical_gap_days': typical_gap,
+                    'overdue_factor': round(days / typical_gap, 1) if typical_gap else None,
                 })
         inactive.sort(key=lambda c: -c['total_spent'])
+        cadence_values = sorted(cadence.values())
+        avg_cadence = round(sum(cadence_values) / len(cadence_values)) if cadence_values else None
         segment_rows = [
             {
                 'segment': key,
@@ -424,7 +452,14 @@ class RfmReportView(BaseAnalyticsView):
             for key, agg in segments.items()
         ]
         segment_rows.sort(key=lambda r: -r['revenue'])
-        return Response({'segments': segment_rows, 'inactive': inactive[:INACTIVE_LIMIT]})
+        return Response({
+            'segments': segment_rows,
+            'inactive': inactive[:INACTIVE_LIMIT],
+            'cadence': {
+                'avg_days_between_orders': avg_cadence,
+                'customers_with_repeat': len(cadence_values),
+            },
+        })
 
 
 class BotFunnelReportView(BaseAnalyticsView):
