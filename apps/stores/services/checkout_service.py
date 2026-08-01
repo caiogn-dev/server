@@ -343,6 +343,26 @@ class CheckoutService:
         return f'{parsed.scheme}://{parsed.netloc}'
 
     @staticmethod
+    def record_coupon_redemption(order, coupon) -> None:
+        """Trilha cupom×pedido (BI Fase 2). Idempotente: OneToOne com o pedido."""
+        from apps.stores.models import StoreCouponRedemption
+        if not order or not coupon:
+            return
+        try:
+            StoreCouponRedemption.objects.get_or_create(
+                order=order,
+                defaults={
+                    'store': order.store,
+                    'coupon': coupon,
+                    'code': (order.coupon_code or coupon.code or '').upper(),
+                    'amount': order.discount or 0,
+                    'customer_phone': order.customer_phone or '',
+                },
+            )
+        except Exception:
+            logger.warning('Falha ao registrar resgate de cupom do pedido %s', order.id, exc_info=True)
+
+    @staticmethod
     def get_storefront_base_url(store: Store, payment_payload: dict = None) -> str:
         """
         Resolve the correct storefront base URL for post-payment redirects.
@@ -979,6 +999,9 @@ class CheckoutService:
         if customer_user and customer_user != cart.user:
             cart.user = customer_user
             cart.save(update_fields=['user', 'updated_at'])
+
+        if coupon is not None:
+            CheckoutService.record_coupon_redemption(order, coupon)
 
         # Fidelidade persistida: registra o resgate na trilha auditável
         if loyalty_reward.get('applied'):

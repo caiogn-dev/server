@@ -34,7 +34,7 @@ from .combo_group import ComboProductGroup, ComboProductGroupVariantLimit, Combo
 from .subscription import StoreSubscription
 
 # Coupon
-from .coupon import StoreCoupon
+from .coupon import StoreCoupon, StoreCouponRedemption
 
 # Delivery
 from .delivery import StoreDeliveryZone
@@ -99,6 +99,7 @@ __all__ = [
     'ComboProductGroupProductOption',
     # Coupon
     'StoreCoupon',
+    'StoreCouponRedemption',
     # Delivery
     'StoreDeliveryZone',
     # Payment

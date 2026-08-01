@@ -154,3 +154,26 @@ class StoreCoupon(models.Model):
                 used_count=F('used_count') + 1, updated_at=timezone.now()
             )
             return True
+
+
+class StoreCouponRedemption(models.Model):
+    """Trilha cupom×pedido (BI Fase 2). Antes o vínculo era só a string
+    coupon_code no pedido — sem FK, sem valor, sem timestamp de resgate."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='coupon_redemptions')
+    coupon = models.ForeignKey(StoreCoupon, on_delete=models.SET_NULL, null=True, related_name='redemptions')
+    order = models.OneToOneField('stores.StoreOrder', on_delete=models.CASCADE, related_name='coupon_redemption')
+    code = models.CharField(max_length=50)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    customer_phone = models.CharField(max_length=20, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'store_coupon_redemptions'
+        indexes = [
+            models.Index(fields=['store', 'code', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.code} → pedido {self.order_id}"

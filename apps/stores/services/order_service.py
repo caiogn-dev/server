@@ -300,6 +300,7 @@ class OrderService:
         
         if reason:
             order.internal_notes = f"{order.internal_notes}\n\nMotivo do cancelamento: {reason}".strip()
+            order.cancel_reason = str(reason)[:140]
         
         order.save()
         

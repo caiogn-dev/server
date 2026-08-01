@@ -169,6 +169,14 @@ class StoreOrder(BaseModel):
     delivered_at = models.DateTimeField(null=True, blank=True)
     picked_up_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=140, blank=True, default='')
+
+    # ── BI Fase 2: colunas denormalizadas (fonte: metadata/delivery_address) ──
+    # Canal do pedido: web / whatsapp / pdv / app / instagram. Derivado no
+    # save() do create a partir de metadata.source; indexável para relatórios.
+    source = models.CharField(max_length=20, blank=True, default='', db_index=True)
+    delivery_lat = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
+    delivery_lng = models.DecimalField(max_digits=9, decimal_places=6, null=True, blank=True)
 
     # PDV: desconto manual e acréscimo
     manual_discount_type = models.CharField(
@@ -290,11 +298,29 @@ class StoreOrder(BaseModel):
     def __str__(self):
         return f"{self.store.name} - Order #{self.order_number}"
 
+    # metadata.source cru → canal canônico da coluna `source`
+    _SOURCE_MAP_PREFIXES = (('whatsapp', 'whatsapp'), ('dashboard', 'pdv'), ('pdv', 'pdv'))
+
     def save(self, *args, **kwargs):
         if not self.order_number:
             self.order_number = self.generate_order_number()
         if not self.access_token:
             self.access_token = self.generate_access_token()
+        if self._state.adding:
+            # BI Fase 2: canal e coordenadas denormalizados no create — os
+            # relatórios param de depender de JSON não indexável.
+            if not self.source:
+                raw = str((self.metadata or {}).get('source') or '')
+                self.source = next(
+                    (canonical for prefix, canonical in self._SOURCE_MAP_PREFIXES if raw.startswith(prefix)),
+                    'web',
+                )
+            if self.delivery_lat is None or self.delivery_lng is None:
+                addr = self.delivery_address or {}
+                lat, lng = addr.get('lat'), addr.get('lng')
+                if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+                    self.delivery_lat = lat
+                    self.delivery_lng = lng
         super().save(*args, **kwargs)
 
     @property
@@ -629,6 +655,8 @@ class StoreOrderItem(models.Model):
 
     # Pricing
     unit_price = models.DecimalField(max_digits=10, decimal_places=2)
+    # Snapshot do cost_price do produto no momento da venda (BI Fase 2)
+    unit_cost = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     quantity = models.PositiveIntegerField(default=1)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
 
@@ -648,4 +676,10 @@ class StoreOrderItem(models.Model):
 
     def save(self, *args, **kwargs):
         self.subtotal = self.unit_price * self.quantity
+        # Snapshot do custo no momento da venda — margem histórica exata,
+        # imune a edições futuras do cost_price do produto.
+        if self._state.adding and self.unit_cost is None and self.product_id:
+            cost = getattr(self.product, 'cost_price', None)
+            if cost:
+                self.unit_cost = cost
         super().save(*args, **kwargs)

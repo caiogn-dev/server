@@ -149,9 +149,13 @@ class ChannelsReportView(BaseAnalyticsView):
             return err
         qs = self.paid_orders(store, start, end)
 
+        # Coluna `source` (BI Fase 2) — indexada; '' só em legado sem backfill
         by_channel = defaultdict(lambda: {'orders': 0, 'revenue': Decimal('0')})
-        for source, total in qs.values_list('metadata__source', 'total'):
-            bucket = by_channel[_map_channel(source)]
+        for source, metadata_source, total in qs.values_list('source', 'metadata__source', 'total'):
+            channel = source or _map_channel(metadata_source)
+            if channel == 'whatsapp':
+                channel = 'bot'  # nome do canal na API/painel
+            bucket = by_channel[channel]
             bucket['orders'] += 1
             bucket['revenue'] += total or Decimal('0')
 
@@ -209,8 +213,9 @@ class GeographyReportView(BaseAnalyticsView):
 
         point_fields = orders.values_list(
             'delivery_address', 'metadata', 'total', 'order_number', 'customer_name', 'created_at', 'id',
+            'delivery_lat', 'delivery_lng',
         )
-        for address, metadata, total, order_number, customer_name, created_at, order_id in point_fields:
+        for address, metadata, total, order_number, customer_name, created_at, order_id, col_lat, col_lng in point_fields:
             address = address or {}
             metadata = metadata or {}
             total = total or Decimal('0')
@@ -236,7 +241,11 @@ class GeographyReportView(BaseAnalyticsView):
                 zones[zone_name]['orders'] += 1
                 zones[zone_name]['revenue'] += total
 
-            lat, lng = address.get('lat'), address.get('lng')
+            # Colunas denormalizadas primeiro (BI Fase 2); JSON como legado
+            if col_lat is not None and col_lng is not None:
+                lat, lng = float(col_lat), float(col_lng)
+            else:
+                lat, lng = address.get('lat'), address.get('lng')
             if isinstance(lat, (int, float)) and isinstance(lng, (int, float)) and len(points) < MAX_GEO_POINTS:
                 points.append({
                     'lat': lat,
@@ -682,6 +691,11 @@ class CancellationsReportView(BaseAnalyticsView):
             {'status': r['status'], 'count': r['count'], 'lost_value': _round2(r['lost'])}
             for r in cancelled.values('status').annotate(count=Count('id'), lost=Sum('total')).order_by('-count')
         ]
+        by_reason = [
+            {'reason': r['cancel_reason'], 'count': r['count'], 'lost_value': _round2(r['lost'])}
+            for r in cancelled.exclude(cancel_reason='')
+            .values('cancel_reason').annotate(count=Count('id'), lost=Sum('total')).order_by('-count')[:10]
+        ]
         count = agg['count'] or 0
         return Response({
             'summary': {
@@ -691,6 +705,7 @@ class CancellationsReportView(BaseAnalyticsView):
                 'lost_value': _round2(agg['lost']),
             },
             'by_status': by_status,
+            'by_reason': by_reason,
             'timeline': timeline,
         })
 
@@ -806,24 +821,34 @@ class MenuMatrixReportView(BaseAnalyticsView):
         store, start, end, err = self.resolve(request)
         if err:
             return err
+        from django.db.models.functions import Coalesce
+        # Custo por item: snapshot unit_cost (BI Fase 2) com fallback no
+        # cost_price atual do produto para o legado sem backfill.
         rows = list(
             StoreOrderItem.objects.filter(order__in=self.paid_orders(store, start, end), product__isnull=False)
-            .values('product_id', 'product__name', 'product__cost_price')
-            .annotate(quantity=Sum('quantity'), revenue=Sum('subtotal'))
+            .values('product_id', 'product__name')
+            .annotate(
+                # cost_total ANTES de quantity: a annotation quantity=Sum(...)
+                # sombreia o campo e o F('quantity') viraria agregado (FieldError)
+                cost_total=Sum(F('quantity') * Coalesce(F('unit_cost'), F('product__cost_price'))),
+                quantity=Sum('quantity'),
+                revenue=Sum('subtotal'),
+            )
             .order_by('-quantity')
         )
         with_cost, missing_cost = [], []
         for r in rows:
-            cost = r['product__cost_price']
             entry = {
                 'product_name': r['product__name'],
                 'quantity': r['quantity'],
                 'revenue': _round2(r['revenue']),
             }
-            if cost and cost > 0:
-                avg_price = (r['revenue'] or Decimal('0')) / r['quantity'] if r['quantity'] else Decimal('0')
-                entry['unit_margin'] = _round2(avg_price - cost)
-                entry['margin_pct'] = round(float((avg_price - cost) / avg_price * 100), 1) if avg_price else 0.0
+            cost_total = r['cost_total']
+            if cost_total and cost_total > 0 and r['quantity']:
+                avg_price = (r['revenue'] or Decimal('0')) / r['quantity']
+                avg_cost = cost_total / r['quantity']
+                entry['unit_margin'] = _round2(avg_price - avg_cost)
+                entry['margin_pct'] = round(float((avg_price - avg_cost) / avg_price * 100), 1) if avg_price else 0.0
                 with_cost.append(entry)
             else:
                 missing_cost.append(entry)
