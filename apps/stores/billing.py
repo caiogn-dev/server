@@ -23,6 +23,7 @@ PLAN_CATALOG = {
             'custom_domain': False,
             'whatsapp_bot': False,
             'ai_agent': False,
+            'advanced_reports': False,
             'coupon_banner': False,
             'bio_custom_links': False,
             'bio_analytics': False,
@@ -40,6 +41,7 @@ PLAN_CATALOG = {
             'custom_domain': False,
             'whatsapp_bot': False,
             'ai_agent': False,
+            'advanced_reports': False,
             'coupon_banner': False,
             'bio_custom_links': False,
             'bio_analytics': False,
@@ -57,6 +59,7 @@ PLAN_CATALOG = {
             'custom_domain': False,
             'whatsapp_bot': True,
             'ai_agent': False,
+            'advanced_reports': True,
             'coupon_banner': True,
             'bio_custom_links': True,
             'bio_analytics': True,
@@ -74,6 +77,7 @@ PLAN_CATALOG = {
             'custom_domain': True,
             'whatsapp_bot': True,
             'ai_agent': True,
+            'advanced_reports': True,
             'coupon_banner': True,
             'bio_custom_links': True,
             'bio_analytics': True,
@@ -201,3 +205,16 @@ def public_catalog():
             entry['annual_price'] = float(annual_price(p['key']))
         out.append(entry)
     return out
+
+
+def advanced_reports_allowed(store):
+    """True se a loja pode usar os relatórios avançados (BI) — Pro/Premium.
+
+    Mesma régua do bot: isentas sempre; trial ativo libera; senão o plano.
+    """
+    if is_billing_exempt(store):
+        return True
+    trial_ends = getattr(store, 'trial_ends_at', None)
+    if trial_ends and trial_ends > timezone.now():
+        return True
+    return plan_allows(store, 'advanced_reports')

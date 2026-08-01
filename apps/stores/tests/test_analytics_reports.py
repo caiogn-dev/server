@@ -42,8 +42,10 @@ class AnalyticsReportsBase(APITestCase):
     def setUp(self):
         self.owner = User.objects.create_user(username='owner', email='o@x.com', password='x')
         self.other = User.objects.create_user(username='other', email='i@x.com', password='x')
-        self.store = Store.objects.create(name='Loja', slug='loja', owner=self.owner, status='active')
-        self.other_store = Store.objects.create(name='Outra', slug='outra', owner=self.other, status='active')
+        # billing_exempt: relatórios avançados são feature Pro/Premium; as
+        # fixtures usam loja grandfather (mesmo padrão dos testes do bot)
+        self.store = Store.objects.create(name='Loja', slug='loja', owner=self.owner, status='active', billing_exempt=True)
+        self.other_store = Store.objects.create(name='Outra', slug='outra', owner=self.other, status='active', billing_exempt=True)
         self.client.force_authenticate(self.owner)
 
     def _get(self, path, **params):
@@ -481,6 +483,22 @@ ALL_PATHS = (
     'bot-funnel/', 'reviews/', 'coupons/', 'basket/', 'cancellations/',
     'scheduling/', 'cash-history/', 'staff/', 'overview/', 'menu-matrix/', 'cohort/',
 )
+
+
+class PlanGateTest(AnalyticsReportsBase):
+    def test_loja_free_sem_trial_recebe_403_menos_no_overview(self):
+        free_owner = User.objects.create_user(username='free-o', email='free@x.com', password='x')
+        free_store = Store.objects.create(
+            name='Free', slug='loja-free-gate', owner=free_owner, status='active',
+        )
+        Store.objects.filter(pk=free_store.pk).update(trial_ends_at=None)
+        self.client.force_authenticate(free_owner)
+        resp = self.client.get(f'{BASE}heatmap/', {'store': free_store.slug})
+        self.assertEqual(resp.status_code, 403, resp.content)
+        self.assertEqual(resp.data['code'], 'plan_upgrade_required')
+        # Visão Geral continua livre
+        resp = self.client.get(f'{BASE}overview/', {'store': free_store.slug})
+        self.assertEqual(resp.status_code, 200, resp.content)
 
 
 class TenantIsolationTest(AnalyticsReportsBase):

@@ -29,12 +29,29 @@ from .export_views import BaseExportView
 
 
 class BaseAnalyticsView(BaseExportView):
-    """Resolve loja + período e o queryset canônico de pedidos pagos."""
+    """Resolve loja + período e o queryset canônico de pedidos pagos.
+
+    Relatórios avançados são feature Pro/Premium (`advanced_reports`);
+    subclasses liberadas para todos os planos zeram `plan_feature`.
+    """
+
+    plan_feature = 'advanced_reports'
 
     def resolve(self, request):
         store = self.get_store(request)
         if not store:
             return None, None, None, Response({'error': 'Store parameter required'}, status=400)
+        if self.plan_feature:
+            from apps.stores.billing import advanced_reports_allowed
+            if not advanced_reports_allowed(store):
+                return None, None, None, Response(
+                    {
+                        'error': 'Relatórios avançados são do plano Pro. Faça upgrade para liberar.',
+                        'code': 'plan_upgrade_required',
+                        'feature': self.plan_feature,
+                    },
+                    status=403,
+                )
         start, end = self.get_date_range(request)
         return store, start, end, None
 
@@ -532,6 +549,12 @@ class BotFunnelReportView(BaseAnalyticsView):
 class OverviewReportView(BaseAnalyticsView):
     """Resumo executivo: KPIs do período atual × período anterior + deltas.
 
+    Livre para todos os planos — é a Visão Geral do painel.
+    """
+
+    plan_feature = None
+
+    _doc = """
     O período anterior tem a MESMA duração, imediatamente antes do atual —
     todo relatório vira comparável sem o front fazer duas chamadas.
     """
