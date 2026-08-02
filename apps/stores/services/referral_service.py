@@ -13,6 +13,8 @@ from datetime import timedelta
 
 from django.utils import timezone
 
+from apps.core.pii import mask_phone
+
 logger = logging.getLogger(__name__)
 
 REFERRAL_DISCOUNT_PCT = 10
@@ -102,4 +104,4 @@ class ReferralService:
                 metadata={'source': 'referral_reward'},
             )
         except Exception:
-            logger.warning('Falha ao avisar indicador %s', phone, exc_info=True)
+            logger.warning('Falha ao avisar indicador %s', mask_phone(phone), exc_info=True)

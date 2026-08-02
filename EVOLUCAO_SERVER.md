@@ -10,6 +10,52 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-02
+
+**Baseline de testes:** 5 novos testes `SimpleTestCase` sem Docker/PostgreSQL.
+Django 5.x instalado localmente; `daphne` stubado para setup sem container.
+PRs abertos antes desta execução: #318 (Instagram IDOR), #319 (CustomerSearch tenant), #320 (email marketing IDOR), #321 (str(e) campaigns), #322 (checkout contracts). Nenhum cobre `order.py` ou `referral_service.py`.
+
+**Gate anti-acúmulo:** confirmado via `grep`/leitura de código que nenhum PR aberto
+cobre `apps/stores/models/order.py` nem `apps/stores/services/referral_service.py`.
+Commits recentes em `development` (feat bi-fase2, gamificação, reviews) introduziram novos módulos
+sem estender a cobertura de PII.
+
+**Bugs encontrados e corrigidos:** PII (telefone) em logs — módulos novos de ordem e indicação [P0]
+
+- **Tipo:** P0 — Violação de LGPD art. 46: telefone de cliente em claro em logs de produção.
+  Padrão igual ao sweep P0 dos PRs #296-#299 (pii-logs, 2026-06-29), mas em código adicionado
+  depois daquela correção.
+- **Arquivos corrigidos (2):**
+  1. `apps/stores/models/order.py` — método `_trigger_status_whatsapp_notification`:
+     - L536: `{self.customer_phone} → {phone}` em `logger.info` (antes e depois da normalização)
+     - L539: `{self.customer_phone}` em `logger.warning` ("Invalid phone number")
+     - L571: `to={phone}` em `logger.info` de despacho da mensagem
+     - Correção: importado `mask_phone` de `apps.core.pii`; substituídos os 3 logs por
+       `mask_phone(self.customer_phone)` e `mask_phone(phone)`.
+  2. `apps/stores/services/referral_service.py` — método `_notify_referrer`:
+     - L105: `phone` em claro no `logger.warning('Falha ao avisar indicador %s', phone)`
+     - Correção: importado `mask_phone`; substituído por `mask_phone(phone)`.
+- **Testes:** 5 novos `SimpleTestCase` em `apps/stores/tests/test_pii_order_referral_logs.py`
+  (RED→GREEN confirmado):
+  - 3 testes de análise estática de `order.py`: nenhum `{self.customer_phone}`/`{phone}` sem
+    `mask_phone` em linhas de logger; `mask_phone` importada.
+  - 2 testes comportamentais de `referral_service._notify_referrer`: telefone em claro ausente
+    no warning de falha; telefone mascarado presente (rastreabilidade).
+- **PR:** `bot/server-2026-08-02-pii-order-referral-logs` (abrindo agora)
+
+**Próximo backlog priorizado (após merge dos 6 PRs abertos):**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge urgente dos PRs #318–#322 (IDOR Instagram, CustomerSearch, email IDOR, str/e, checkout) |
+| P1 | Varredura de `str(exc)` em modules novos (gamificação, BI) — revisar `referral_service` e `analytics_views` para erros não tratados |
+| P2 | N+1 em `RfmReportView._cadence_by_phone`: faz query full de pedidos por telefone sem prefetch — candidato a índice em `customer_phone` |
+| P2 | Rate limiting em endpoints de analytics (`BaseAnalyticsView`) — atualmente sem throttle explícito, herda apenas global |
+| P3 | `StoreReview.customer_name` no relatório `GeographyReportView.points` expõe nome do cliente em JSON público da resposta — verificar se endpoint é autenticado (parece ser, via `IsStoreOwnerOrStaff`) |
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
