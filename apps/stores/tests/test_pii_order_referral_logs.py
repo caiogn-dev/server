@@ -131,3 +131,86 @@ class ReferralServiceNotifyLogMaskingTest(SimpleTestCase):
             f"Telefone mascarado ({masked}) não encontrado no log de falha — "
             "adicione mask_phone ao warning para manter rastreabilidade",
         )
+
+
+# ---------------------------------------------------------------------------
+# Análise estática de message_service.py e whatsapp_api_service.py
+# Verifica que nenhum logger expõe {to} ou {phone_number} em claro.
+# ---------------------------------------------------------------------------
+
+MSG_SERVICE_PATH = os.path.join(
+    os.path.dirname(__file__),
+    '..', '..', 'whatsapp', 'services', 'message_service.py',
+)
+API_SERVICE_PATH = os.path.join(
+    os.path.dirname(__file__),
+    '..', '..', 'whatsapp', 'services', 'whatsapp_api_service.py',
+)
+
+
+def _phone_leaks_in_logger(source: str) -> list[str]:
+    """Retorna linhas em que logger.*(...) tem {to} ou {phone_number} sem mask_phone,
+    ou usa `to` como argumento de format sem máscara."""
+    leaks = []
+    for i, line in enumerate(source.splitlines(), 1):
+        stripped = line.strip()
+        if not re.search(r'logger\.(info|warning|debug|error|critical)', stripped):
+            continue
+        # f-string: {to} ou {phone_number} sem mask_phone na mesma linha
+        if re.search(r'\{to\}|\{phone_number\}', stripped) and 'mask_phone' not in stripped:
+            leaks.append(f'L{i}: {stripped}')
+        # %-format: argumento posicional `to` ou `phone_number` — detecta padrão
+        # "..., to," ou "..., phone_number," sem mask_phone
+        if re.search(r',\s*(to|phone_number)\s*,?\s*\)', stripped) and 'mask_phone' not in stripped:
+            leaks.append(f'L{i}: {stripped}')
+    return leaks
+
+
+class MessageServicePiiStaticAnalysisTest(SimpleTestCase):
+    """Análise estática de message_service.py para garantir que logs não
+    expõem o destinatário em claro."""
+
+    def setUp(self):
+        path = os.path.normpath(os.path.join(os.path.dirname(__file__), MSG_SERVICE_PATH))
+        with open(path, encoding='utf-8') as fh:
+            self.source = fh.read()
+
+    def test_no_raw_to_in_logger_lines(self):
+        """{to} não deve aparecer sem mask_phone em linhas de logger."""
+        leaks = _phone_leaks_in_logger(self.source)
+        self.assertFalse(
+            leaks,
+            "PII (telefone `to`/`phone_number`) exposto em log de message_service:\n"
+            + '\n'.join(leaks),
+        )
+
+    def test_mask_phone_imported_in_message_service(self):
+        """mask_phone deve estar importada em message_service.py."""
+        self.assertIn('mask_phone', self.source)
+
+
+class WhatsAppApiServicePiiStaticAnalysisTest(SimpleTestCase):
+    """Análise estática de whatsapp_api_service.py — foco no payload com `to`."""
+
+    def setUp(self):
+        path = os.path.normpath(os.path.join(os.path.dirname(__file__), API_SERVICE_PATH))
+        with open(path, encoding='utf-8') as fh:
+            self.source = fh.read()
+
+    def test_no_raw_to_in_logger_lines(self):
+        """`to={to}` não deve aparecer sem mask_phone em linhas de logger."""
+        leaks = _phone_leaks_in_logger(self.source)
+        self.assertFalse(
+            leaks,
+            "PII (telefone `to`) exposto em log de whatsapp_api_service:\n"
+            + '\n'.join(leaks),
+        )
+
+    def test_payload_log_uses_masked_to(self):
+        """O log do payload do _make_request deve mascarar o campo `to`."""
+        self.assertIn(
+            'mask_phone',
+            self.source,
+            "mask_phone não encontrada em whatsapp_api_service.py — "
+            "payload com `to` provavelmente logado em claro",
+        )
