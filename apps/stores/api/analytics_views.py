@@ -19,10 +19,12 @@ from apps.automation.models import CustomerSession
 from ..models import (
     StoreCashMovement,
     StoreCashSession,
+    StoreCoupon,
     StoreCustomer,
     StoreOrder,
     StoreOrderItem,
     StorePayment,
+    StoreProduct,
     StoreReview,
 )
 from .export_views import BaseExportView
@@ -623,6 +625,93 @@ class OverviewReportView(BaseAnalyticsView):
             'previous': previous,
             'delta': delta,
             'period': {'start': start, 'end': end, 'prev_start': prev_start, 'prev_end': prev_end},
+        })
+
+
+SCORE_LEVELS = ((85, 'diamante'), (65, 'ouro'), (40, 'prata'), (0, 'bronze'))
+
+
+class StoreScoreView(BaseAnalyticsView):
+    """Score da Loja (gamificação do lojista): 100 pontos distribuídos em
+    conquistas acionáveis — cada uma é uma alavanca real de venda que também
+    alimenta os relatórios (custo → matriz, Google → reviews, fotos → conversão).
+
+    Livre para todos os planos: é o motor de engajamento/onboarding.
+    """
+
+    plan_feature = None
+
+    def get(self, request):
+        store, _, _, err = self.resolve(request)
+        if err:
+            return err
+
+        products = StoreProduct.objects.filter(store=store, status='active')
+        total_products = products.count()
+
+        def pct(qs_count):
+            return (qs_count / total_products) if total_products else 0.0
+
+        # foto pode estar no ImageField OU na URL externa
+        with_photo = pct(products.filter(
+            Q(main_image_url__gt='') | Q(main_image__isnull=False) & ~Q(main_image='')
+        ).count())
+        with_desc = pct(products.exclude(description='').count())
+        with_cost = pct(products.filter(cost_price__gt=0).count())
+
+        metadata = store.metadata or {}
+        avg_rating = StoreReview.objects.filter(store=store).aggregate(avg=Avg('rating'))['avg']
+
+        from datetime import timedelta as _td
+        recent = StoreOrder.objects.filter(store=store, created_at__gte=timezone.now() - _td(days=90))
+        recent_total = recent.count()
+        recent_cancel_rate = (
+            recent.filter(status__in=('cancelled', 'failed', 'refunded')).count() / recent_total
+            if recent_total else 0.0
+        )
+
+        checklist = [
+            # (key, label, points, done, cta)
+            ('logo', 'Logo da loja', 6, bool(store.logo or store.logo_url),
+             'Suba a logo em Configurações da loja'),
+            ('descricao_loja', 'Descrição da loja', 4, bool((store.description or '').strip()),
+             'Conte a história da loja em Configurações'),
+            ('horarios', 'Horários de funcionamento', 6, bool(store.operating_hours),
+             'Defina os horários em Configurações'),
+            ('produtos_com_foto', 'Fotos em 80%+ dos produtos', 14, with_photo >= 0.8,
+             'Produto com foto vende até 2× mais — complete o catálogo'),
+            ('produtos_com_descricao', 'Descrição em 80%+ dos produtos', 10, with_desc >= 0.8,
+             'Use *negrito* e listas — o cardápio formata'),
+            ('produtos_com_custo', 'Custo em 80%+ dos produtos', 12, with_cost >= 0.8,
+             'Preencha o Custo e libere a Engenharia de Cardápio'),
+            ('cupom_boas_vindas', 'Cupom de boas-vindas ativo', 8,
+             StoreCoupon.objects.filter(store=store, is_active=True, first_order_only=True,
+                                        valid_until__gt=timezone.now()).exists(),
+             'Crie um cupom só de primeiro pedido — converte visitante em cliente'),
+            ('google_review_url', 'Link de avaliação do Google', 10, bool(metadata.get('google_review_url')),
+             'Cole o link em Configurações → Avaliações no Google e ligue o cupom 5★'),
+            ('nota_media', 'Nota média 4.5★ ou mais', 12, bool(avg_rating and avg_rating >= 4.5),
+             'Responda avaliações e cuide dos pratos com nota baixa (aba Bot & Avaliações)'),
+            ('cancelamento_baixo', 'Cancelamento abaixo de 15% (90d)', 10,
+             recent_total > 0 and recent_cancel_rate < 0.15,
+             'Investigue os motivos na aba Operação'),
+            ('fidelidade_ativa', 'Clube de fidelidade ligado', 8, bool(metadata.get('loyalty_enabled')),
+             'Ative o cartão de selos — recorrência no piloto automático'),
+        ]
+
+        items = [
+            {'key': k, 'label': label, 'points': pts, 'done': done, 'cta': cta}
+            for k, label, pts, done, cta in checklist
+        ]
+        score = sum(i['points'] for i in items if i['done'])
+        level = next(name for minimum, name in SCORE_LEVELS if score >= minimum)
+        next_up = sorted((i for i in items if not i['done']), key=lambda i: -i['points'])[:3]
+
+        return Response({
+            'score': score,
+            'level': level,
+            'checklist': items,
+            'next_up': next_up,
         })
 
 

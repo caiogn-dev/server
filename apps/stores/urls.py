@@ -166,6 +166,7 @@ from .api.analytics_views import (
     ReviewsReportView, CouponsReportView, BasketReportView,
     CancellationsReportView, SchedulingReportView, CashHistoryReportView,
     StaffReportView, OverviewReportView, MenuMatrixReportView, CohortReportView,
+    StoreScoreView,
 )
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
@@ -403,6 +404,7 @@ urlpatterns = [
     path('reports/overview/', OverviewReportView.as_view(), name='overview-report'),
     path('reports/menu-matrix/', MenuMatrixReportView.as_view(), name='menu-matrix-report'),
     path('reports/cohort/', CohortReportView.as_view(), name='cohort-report'),
+    path('reports/store-score/', StoreScoreView.as_view(), name='store-score'),
     
     # ==========================================================================
     # PAYMENT ENDPOINTS (require auth)
