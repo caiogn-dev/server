@@ -8,8 +8,8 @@ nao concede acesso a is_staff sem is_superuser (is_staff = acesso ao
 
 Todos SimpleTestCase — sem Docker/PostgreSQL/Redis.
 """
-import inspect
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 from django.test import SimpleTestCase, override_settings
 
@@ -132,26 +132,29 @@ class HealthCheckCacheStrETest(SimpleTestCase):
 class BaseConsumerIsStaffTest(SimpleTestCase):
     """verify_account_access fallback nao deve conceder acesso via is_staff."""
 
-    def test_source_does_not_grant_is_staff(self):
-        """Codigo-fonte: is_staff NAO e criterio de acesso no fallback."""
-        from apps.core import base_consumer
-        source = inspect.getsource(
-            base_consumer.ThrottledWebSocketConsumer.verify_account_access
-        )
-        self.assertNotIn(
-            'is_staff',
-            source,
-            "verify_account_access nao deve conceder acesso cross-tenant via is_staff",
-        )
+    def _call_verify(self, is_staff=False, is_superuser=False, account_id='acct-1'):
+        """Chama a funcao sincrona subjacente diretamente, sem event loop."""
+        from apps.core.base_consumer import ThrottledWebSocketConsumer
+        fn = ThrottledWebSocketConsumer.verify_account_access
+        # database_sync_to_async usa functools.update_wrapper → __wrapped__ é o original
+        sync_fn = getattr(fn, '__wrapped__', fn)
+        consumer = ThrottledWebSocketConsumer.__new__(ThrottledWebSocketConsumer)
+        consumer.user = SimpleNamespace(is_staff=is_staff, is_superuser=is_superuser)
+        return sync_fn(consumer, account_id)
 
-    def test_source_uses_only_is_superuser(self):
-        """Codigo-fonte: apenas is_superuser concede acesso no fallback."""
-        from apps.core import base_consumer
-        source = inspect.getsource(
-            base_consumer.ThrottledWebSocketConsumer.verify_account_access
-        )
-        self.assertIn(
-            'is_superuser',
-            source,
-            "verify_account_access deve usar is_superuser como criterio",
-        )
+    def test_is_staff_only_denied(self):
+        """is_staff=True, is_superuser=False → acesso negado (is_staff nao e criterio cross-tenant)."""
+        self.assertFalse(self._call_verify(is_staff=True, is_superuser=False))
+
+    def test_is_superuser_allowed(self):
+        """is_superuser=True → acesso concedido."""
+        self.assertTrue(self._call_verify(is_staff=False, is_superuser=True))
+
+    def test_no_user_denied(self):
+        """user=None → acesso negado."""
+        from apps.core.base_consumer import ThrottledWebSocketConsumer
+        fn = ThrottledWebSocketConsumer.verify_account_access
+        sync_fn = getattr(fn, '__wrapped__', fn)
+        consumer = ThrottledWebSocketConsumer.__new__(ThrottledWebSocketConsumer)
+        consumer.user = None
+        self.assertFalse(sync_fn(consumer, 'acct-1'))
