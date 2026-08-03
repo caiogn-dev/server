@@ -10,6 +10,75 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-03
+
+**Baseline de testes:** 10 testes SimpleTestCase (sem Docker/PostgreSQL) — 10/10 RED→GREEN após os fixes.
+PRs abertos no gate: #318–#323 (6 PRs). Nenhum cobre `apps/core/api.py` nem `apps/core/base_consumer.py`.
+
+**PRs abertos aguardando merge (sessões 2026-07-28 a 2026-08-02):**
+
+| PR | Tipo | Descrição |
+|---|---|---|
+| #318 | P1 | IDOR cross-tenant via campo `account` gravável em Instagram serializers |
+| #319 | P2 | `CustomerSearchView` retorna clientes de outros tenants |
+| #320 | P1 | IDOR de escrita cross-tenant em serializers de e-mail marketing |
+| #321 | P2 | info-disclosure via `str(e)` em envio de campanha e e-mail |
+| #322 | P1 | contratos de regressão para `calculate_totals`, `is_placeholder_email` e `get_valid_email_for_payment` |
+| #323 | P0 | PII (telefone) em logs de notificação WhatsApp e indicação |
+
+**Varredura executada antes do fix:**
+- `str(e)` em views HTTP: `apps/core/api.py` (AllowAny) ainda retorna `f'error: {str(e)}'` para DB e cache — PR #307 (07-jul) corrigiu `health_views.py` mas **não tocou** `api.py`.
+- `is_staff` em `base_consumer.py`: fallback `verify_account_access` ainda usa `is_staff or is_superuser` (flagrado em 07-23, nunca corrigido).
+- `universal_conversation_service._is_staff`: retorna `is_superuser` — correto, sem ação necessária.
+- PII em `order.py` logs: coberto pelo PR #323 — não duplicado.
+- `str(e)` em `marketing/api/views.py:send()`: coberto pelo PR #321 — não duplicado.
+
+**Fix 1 (P0): `apps/core/api.py` — str(e) exposto em endpoint AllowAny**
+
+- **Tipo:** P0 — info-disclosure em endpoint público sem autenticação
+- **Problema:** `HealthCheckView` (`GET /api/v1/core/health/`, `AllowAny`) retornava `f'error: {str(e)}'`
+  diretamente em `response.data['checks']['database']` e `['cache']`. Erros de PostgreSQL expõem
+  `host=`, `port=`, `dbname=`, `user=`, `password=`. Erros de Redis expõem `redis://user:password@host:port/db`.
+  Qualquer scanner anônimo que sonda `/api/v1/core/health/` durante uma falha transitória (deploy,
+  restart) obtém credenciais de infraestrutura em claro.
+- **Raiz do bug:** PR #307 (07-jul) corrigiu `apps/core/health_views.py` mas NÃO tocou `apps/core/api.py`.
+  Ambas as views implementam health check; a `api.py` era a montada em produção.
+- **Correção:**
+  - `db_type = 'unknown'` e `cache_type = 'unknown'` inicializados ANTES do try (evita UnboundLocalError)
+  - Todos os caminhos de erro (except DB, else cache, except cache): `{'status': 'error', 'type': <tipo>}` sem `str(e)`
+- **Arquivos alterados:** `apps/core/api.py` (2 except blocks + 1 else branch)
+
+**Fix 2 (P2): `apps/core/base_consumer.py` — is_staff no fallback de verify_account_access**
+
+- **Tipo:** P2 — risco latente de IDOR cross-tenant via WebSocket para qualquer consumer criado sem override
+- **Problema:** `ThrottledWebSocketConsumer.verify_account_access` retornava True para `is_staff or is_superuser`.
+  Conforme a convenção do projeto (fixada em PRs #290–#310), `is_staff` (acesso ao `/admin` Django)
+  NÃO concede acesso cross-tenant. Qualquer consumer sem override de `verify_account_access` concedia
+  acesso a toda conta WebSocket para usuários `is_staff`.
+- **Correção:** `return self.user.is_staff or self.user.is_superuser` → `return self.user.is_superuser`
+  Docstring atualizado com a convenção.
+- **Arquivos alterados:** `apps/core/base_consumer.py` (1 linha + docstring)
+
+**Testes:** 10 SimpleTestCase em `apps/core/tests/test_health_check_str_e.py` (RED→GREEN confirmado)
+- `HealthCheckDbStrETest` (4): sem host/password na resposta, status 200, checks.database é dict, status degraded
+- `HealthCheckCacheStrETest` (4): sem redis://, status 200, checks.cache é dict, else branch também é dict
+- `BaseConsumerIsStaffTest` (2): source sem is_staff, source usa is_superuser
+
+**PR:** `bot/server-2026-08-03-health-check-str-e-base-consumer` → base `development`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente do PR #323 (PII em logs de notificação — telefone em claro) |
+| P1 | Merge dos PRs #318 (Instagram IDOR), #320 (e-mail marketing IDOR), #322 (contratos checkout) |
+| P1 | Merge dos PRs #319 (CustomerSearch tenant), #321 (str/e campanha) |
+| P1 | `apps/core/sse_views.py`: SSE stream emite `str(e)` para usuário autenticado (`data={'message': str(e)}`) — não coberto por PR #300 (que fixou `print_views.py`) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | Testes de contrato: anti-loop de endereço WhatsApp + cooldown UnknownHandler |
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
@@ -543,7 +612,7 @@ em respostas HTTP — um deles em endpoint **AllowAny** (público sem autentica�
 - **Arquivos corrigidos (5):**
   1. `apps/core/health_views.py` — DB (`database_unavailable`), cache (`cache_unavailable`), Celery
      (`celery_unavailable`): `str(e)` preservado apenas no `logger.error` interno.
-  2. `apps/core/api/health_views.py` — idem.
+  2. `apps/core/api.py` — idem.
   3. `apps/whatsapp/api/views.py` — `force_delete` (500), `business_profile` (502 — protegia tokens
      Meta), `sync_templates` (502 — idem): respostas genéricas pt-BR + logger adicionado.
   4. `apps/automation/api/views/unified_views.py` — `UnifiedProcessView`: `f'Erro ao processar
@@ -552,7 +621,7 @@ em respostas HTTP — um deles em endpoint **AllowAny** (público sem autentica�
 - **Testes:** 16 casos em 3 arquivos (RED→GREEN confirmado).
 - **PR:** #307 — `bot/server-2026-07-19-str-e-whatsapp-automation-health`
 
-**Status do sweep de `str(e)` em views HTTP:** COMPLETO. Apenas services/tasks internos restam
+**Status do sweep de `str(e)` em views HTTP:** COMPLETO (exceto `apps/core/api.py` — ver 2026-08-03). Apenas services/tasks internos restam
 (não retornam HTTP direto — risco baixo, não prioritário).
 
 **Próximo backlog (prioridade atualizada):**
@@ -887,4 +956,3 @@ Ambos os PRs aguardam merge para `development`.
 3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
-

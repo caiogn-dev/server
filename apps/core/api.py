@@ -34,6 +34,7 @@ class HealthCheckView(APIView):
         }
 
         # Check database - but don't fail healthcheck if unavailable
+        db_type = 'unknown'
         try:
             db_engine = settings.DATABASES['default']['ENGINE']
             db_type = 'postgresql' if 'postgresql' in db_engine else 'sqlite' if 'sqlite' in db_engine else 'unknown'
@@ -44,11 +45,13 @@ class HealthCheckView(APIView):
                 'type': db_type
             }
         except Exception as e:
-            health_status['checks']['database'] = f'error: {str(e)}'
+            # Não expõe str(e) — strings de conexão (host, porta, senha) são segredos de infra.
+            health_status['checks']['database'] = {'status': 'error', 'type': db_type}
             health_status['status'] = 'degraded'
             logger.warning(f"Database health check failed: {e}")
 
         # Check cache - but don't fail healthcheck if unavailable
+        cache_type = 'unknown'
         try:
             cache_backend = settings.CACHES['default']['BACKEND']
             cache_type = 'redis' if 'redis' in cache_backend.lower() else 'memory' if 'locmem' in cache_backend.lower() else 'unknown'
@@ -59,10 +62,11 @@ class HealthCheckView(APIView):
                     'type': cache_type
                 }
             else:
-                health_status['checks']['cache'] = 'error: cache not working'
+                health_status['checks']['cache'] = {'status': 'error', 'type': cache_type}
                 health_status['status'] = 'degraded'
         except Exception as e:
-            health_status['checks']['cache'] = f'error: {str(e)}'
+            # Não expõe str(e) — URL do Redis com credenciais é segredo de infra.
+            health_status['checks']['cache'] = {'status': 'error', 'type': cache_type}
             health_status['status'] = 'degraded'
             logger.warning(f"Cache health check failed: {e}")
 
