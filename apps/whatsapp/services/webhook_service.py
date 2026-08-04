@@ -479,6 +479,12 @@ class WebhookService:
             self.mark_event_failed(event, str(e))
             raise
 
+    @staticmethod
+    def _is_transactional_only(account: WhatsAppAccount) -> bool:
+        """Conta usada só para envio transacional (OTP/notificação), sem bot."""
+        metadata = getattr(account, 'metadata', None) or {}
+        return bool(metadata.get('transactional_only'))
+
     def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
         """
         Processa mensagem inbound pelo pipeline canônico de automação.
@@ -512,6 +518,15 @@ class WebhookService:
 
         self._ensure_conversation_attached(event, message, contact_info)
         self._update_contact_name(message, contact_info)
+
+        # Conta transacional (só OTP/notificação, ex.: número global do
+        # Cardapidex): a mensagem entra no inbox, mas o bot NUNCA responde.
+        if self._is_transactional_only(event.account):
+            logger.info(
+                '[pipeline] Conta transacional — automação desligada message_id=%s account=%s',
+                message.id, event.account_id,
+            )
+            return
 
         context = AutomationContextService.resolve(
             account=event.account,
