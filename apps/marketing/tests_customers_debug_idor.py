@@ -123,13 +123,19 @@ class TestCustomersDebugIDOR(SimpleTestCase):
         user.is_superuser = is_superuser
         return user
 
+    def _req(self, path, params=None, user=None):
+        """Cria request GET com _force_auth_user para evitar dependência de SessionAuthentication."""
+        request = factory.get(path, params or {})
+        if user is not None:
+            request._force_auth_user = user
+        return request
+
     @override_settings(**_SETTINGS)
     def test_missing_store_param_returns_400(self):
         """Sem ?store= → 400 Bad Request."""
         view = self._make_view()
         user = self._make_user(is_staff=True)
-        request = factory.get('/debug/')
-        request.user = user
+        request = self._req('/debug/', user=user)
         response = view(request)
         self.assertEqual(response.status_code, 400)
 
@@ -138,8 +144,7 @@ class TestCustomersDebugIDOR(SimpleTestCase):
         """is_staff sem acesso à loja deve receber 404 (info-hiding, não 403)."""
         view = self._make_view()
         user = self._make_user(is_staff=True, is_superuser=False)
-        request = factory.get('/debug/', {'store': 'loja-vitima-uuid'})
-        request.user = user
+        request = self._req('/debug/', {'store': 'loja-vitima-uuid'}, user=user)
 
         with patch(
             'apps.marketing.api.views._user_can_use_store',
@@ -158,8 +163,7 @@ class TestCustomersDebugIDOR(SimpleTestCase):
         view = self._make_view()
         user = self._make_user(is_staff=False, is_superuser=False)
         store_id = 'minha-loja-uuid'
-        request = factory.get('/debug/', {'store': store_id})
-        request.user = user
+        request = self._req('/debug/', {'store': store_id}, user=user)
 
         fake_store = MagicMock()
         fake_store.name = 'Minha Loja'
@@ -186,8 +190,7 @@ class TestCustomersDebugIDOR(SimpleTestCase):
         """Superuser deve conseguir debugar qualquer loja (sem gate de tenant)."""
         view = self._make_view()
         user = self._make_user(is_staff=False, is_superuser=True)
-        request = factory.get('/debug/', {'store': 'qualquer-loja-uuid'})
-        request.user = user
+        request = self._req('/debug/', {'store': 'qualquer-loja-uuid'}, user=user)
 
         fake_store = MagicMock()
         fake_store.name = 'Loja Qualquer'
@@ -215,8 +218,7 @@ class TestCustomersDebugIDOR(SimpleTestCase):
         from apps.stores.models import Store
         view = self._make_view()
         user = self._make_user(is_superuser=True)
-        request = factory.get('/debug/', {'store': 'store-nao-existe'})
-        request.user = user
+        request = self._req('/debug/', {'store': 'store-nao-existe'}, user=user)
 
         with (
             patch('apps.marketing.api.views._user_can_use_store', return_value=True),
@@ -237,8 +239,7 @@ class TestCustomersDebugIDOR(SimpleTestCase):
         """is_staff sem acesso NÃO deve receber qualquer dado de PII da loja alheia."""
         view = self._make_view()
         user = self._make_user(is_staff=True, is_superuser=False)
-        request = factory.get('/debug/', {'store': 'loja-alheia'})
-        request.user = user
+        request = self._req('/debug/', {'store': 'loja-alheia'}, user=user)
 
         with patch('apps.marketing.api.views._user_can_use_store', return_value=False):
             response = view(request)
