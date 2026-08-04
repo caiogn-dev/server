@@ -10,6 +10,53 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-04
+
+**Baseline de testes:** 63 testes SimpleTestCase (sem Docker/PostgreSQL) — 63/63 OK.
+Dependências instaladas no container: django, djangorestframework, cors-headers, channels, celery,
+Pillow, drf-spectacular, cryptography. Falha pré-existente de infra CI (`check` e `complexity`)
+com `runner_id=0`, duração ~2s, logs HTTP 404 desde 2026-07-18 — não é regressão desta sessão.
+
+**Gate anti-acúmulo:** 7 PRs abertos (#318–#324). Varredura confirmou que nenhum cobre o
+`debug` action de `CustomersViewSet` em `apps/marketing/api/views.py`.
+
+**Bug encontrado e corrigido:** IDOR + PII leak no `debug` action de `CustomersViewSet` [P0/P1]
+
+- **Tipo:** P0/P1 — IDOR cross-tenant + vazamento de PII (email, nome, data de cadastro)
+- **Arquivo:** `apps/marketing/api/views.py:509`
+- **Problema:**
+  - `debug` action usava `permission_classes=[IsAuthenticated, IsAdminUser]` (is_staff-based)
+    sem `_user_can_use_store`. Qualquer usuário com `is_staff=True` passava
+    `?store=<uuid-loja-alheia>` e recebia dados do tenant alheio.
+  - Resposta incluía: `store_name`, contagens de clientes/assinantes/pedidos, e sample de
+    até 5 clientes com `id, email, first_name, last_name, date_joined`.
+  - Todas as outras actions do mesmo viewset (`list`, `count`) já chamavam `_user_can_use_store`
+    corretamente — o `debug` era a única exceção.
+- **Correção:**
+  - Removido `IsAdminUser` do decorator (viewset já tem `permission_classes = [IsAuthenticated]`)
+  - Adicionado `_user_can_use_store(request.user, store_id)` logo após validar `store_id`
+  - Sem acesso → `HTTP 404` (info-hiding — padrão estabelecido em todas as outras views)
+- **Testes:** 10 SimpleTestCase em `apps/marketing/tests_customers_debug_idor.py` (RED→GREEN):
+  - Análise estática: `IsAdminUser` ausente + `_user_can_use_store` presente no debug action
+  - is_staff sem acesso à loja → 404, sem PII na resposta
+  - Usuário com acesso → 200
+  - Superuser → 200 (via `_user_can_use_store`)
+  - Store inexistente → 404
+  - Sem parâmetro `store` → 400
+- **PR:** #325 — `bot/server-2026-08-04-customers-debug-idor`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente dos PRs abertos #318–#325 (acúmulo de 7–8 dias) |
+| P1 | Varredura de campos `account` graváveis restantes em `apps/instagram/` (PR #318 aberto) |
+| P1 | Varredura de N+1 queries em `emit_nfce_for_order` (`prefetch_related` para `order.items__product`) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo |
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
