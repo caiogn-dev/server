@@ -167,7 +167,10 @@ class StoreService:
         orders_this_month = orders.filter(created_at__date__gte=month_ago).count()
         
         # Revenue stats
-        paid_orders = orders.filter(payment_status='paid')
+        # SSOT: pago E não cancelado E não é teste. `payment_status='paid'` sozinho
+        # deixava passar pedido pago e depois cancelado sem estorno.
+        from apps.stores.services.revenue import revenue_orders
+        paid_orders = revenue_orders(queryset=orders)
         total_revenue = paid_orders.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
         revenue_today = paid_orders.filter(created_at__date=today).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
         revenue_this_week = paid_orders.filter(created_at__date__gte=week_ago).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
@@ -190,9 +193,13 @@ class StoreService:
         # Order status breakdown
         status_breakdown = orders.values('status').annotate(count=Count('id'))
         
-        # Daily orders for chart (last 30 days)
-        daily_orders = orders.filter(
-            created_at__date__gte=month_ago
+        # Daily orders for chart (last 30 days).
+        # Usa o SSOT de receita: antes somava `orders` cru e o gráfico da home
+        # mostrava R$ 5.056 numa loja que faturou R$ 2.324 — os 21 cancelados
+        # entravam como faturamento, e os pedidos de teste do dono também.
+        from apps.stores.services.revenue import revenue_orders
+        daily_orders = revenue_orders(
+            queryset=orders, start=month_ago,
         ).annotate(
             date=TruncDate('created_at')
         ).values('date').annotate(

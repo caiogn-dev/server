@@ -23,10 +23,15 @@ class _Base(TestCase):
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=self.owner).key}')
 
-    def _order(self, when, total=50, status='delivered', items=None):
+    def _order(self, when, total=50, status='delivered', items=None, payment_status='paid'):
+        # payment_status='paid' explícito: desde o SSOT de receita
+        # (services/revenue.py) faturamento exige pedido PAGO e não cancelado.
+        # Antes bastava não estar cancelado, e pedido com PIX pendente entrava
+        # no relatório como se fosse dinheiro no caixa.
         o = StoreOrder.objects.create(
             store=self.store, customer_phone='5563000000000',
             status=status, subtotal=total, total=total,
+            payment_status=payment_status,
         )
         StoreOrder.objects.filter(pk=o.pk).update(created_at=when)
         for name, qty in (items or [('Lasanha', 1)]):
