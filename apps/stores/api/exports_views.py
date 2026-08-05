@@ -66,14 +66,17 @@ def _valor_csv(coluna: Coluna, linha: dict):
     valor = coluna.valor(linha)
     if valor is None:
         return ''
+    # Percentual ANTES de Decimal: a fração 0.32 precisa virar "32,0". Estava
+    # depois, e como Decimal não é int nem float, caía na regra decimal e o
+    # relatório mostrava "0,32" onde devia mostrar 32%.
+    if coluna.tipo == 'percentual':
+        return f'{float(valor) * 100:.1f}'.replace('.', ',')
     if isinstance(valor, Decimal):
         # Vírgula decimal: o Excel pt-BR lê "12.50" como texto, não número.
         return f'{valor:.2f}'.replace('.', ',')
     if coluna.tipo in ('data', 'data_hora') and hasattr(valor, 'strftime'):
         fmt = '%d/%m/%Y %H:%M' if coluna.tipo == 'data_hora' else '%d/%m/%Y'
         return valor.strftime(fmt)
-    if coluna.tipo == 'percentual' and isinstance(valor, (int, float)):
-        return f'{valor * 100:.1f}'.replace('.', ',')
     return valor
 
 
@@ -100,12 +103,21 @@ class VendasPorItemExportView(BaseExportView):
             return Response({'error': 'Store parameter required'}, status=400)
 
         inicio, fim = self.get_date_range(request)
-        linhas = vendas_por_item(loja, inicio, fim, incluir_teste=_incluir_teste(request))
+        incluir_teste = _incluir_teste(request)
+        linhas = vendas_por_item(loja, inicio, fim, incluir_teste=incluir_teste)
+        # O total de pedidos do período vem do resumo, não da soma da coluna
+        # "Pedidos c/ o item" (que contaria o mesmo pedido uma vez por item).
+        resumo = resumo_faturamento(loja, inicio, fim, incluir_teste)
 
         colunas = [
             Coluna('Produto', 'produto', largura=42),
             Coluna('Qtd vendida', 'quantidade', tipo='inteiro', somar=True),
-            Coluna('Pedidos', 'pedidos', tipo='inteiro', somar=True),
+            # Pedidos NÃO soma: é contagem de pedidos DISTINTOS que contêm o
+            # item, então o mesmo pedido aparece em várias linhas. Somar a
+            # coluna dava 50 onde havia 16 pedidos reais — um número que não
+            # significa nada. Por linha o valor está certo ("apareceu em 12
+            # pedidos"); o que não existe é o total dessa coluna.
+            Coluna('Pedidos c/ o item', 'pedidos', tipo='inteiro'),
             Coluna('Receita', 'receita', tipo='dinheiro', somar=True),
             Coluna('Preço médio', 'preco_medio', tipo='dinheiro'),
             Coluna('% da receita', 'part_receita', tipo='percentual'),
@@ -117,6 +129,7 @@ class VendasPorItemExportView(BaseExportView):
             _formato(request),
             titulo='Vendas por item',
             subtitulo=f'{loja.name} · {inicio:%d/%m/%Y} a {fim:%d/%m/%Y} · '
+                      f'{resumo["pedidos"]} pedidos no período · '
                       f'exclui cancelados, estornados e pedidos de teste',
         )
 

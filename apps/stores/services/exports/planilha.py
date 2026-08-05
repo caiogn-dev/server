@@ -93,6 +93,28 @@ def _normaliza(valor: Any, tipo: str) -> Any:
     return '' if valor is None else str(valor)
 
 
+def _largura_texto(valor, tipo: str) -> int:
+    """Largura aproximada da célula COMO ELA APARECE, não do dado cru.
+
+    999.75 tem 6 caracteres mas o Excel exibe "R$ 999,75" (9). Medir o valor
+    bruto deixava a coluna de dinheiro estreita e a de percentual larga demais —
+    era o motivo de "Receita" sair com 11 e "Preço médio" com 21.
+    """
+    if valor is None:
+        return 0
+    if tipo == 'dinheiro':
+        return len(f'{float(valor):,.2f}') + 6      # "R$ " + separador de milhar
+    if tipo == 'percentual':
+        return 9                                    # "100,0%" cabe folgado
+    if tipo in ('inteiro', 'decimal'):
+        return len(f'{float(valor):,.0f}') + 3
+    if tipo == 'data':
+        return 12                                   # dd/mm/aaaa
+    if tipo == 'data_hora':
+        return 18
+    return len(str(valor)) + 3
+
+
 def monta_planilha(
     linhas: Iterable[dict],
     colunas: list[Coluna],
@@ -108,29 +130,46 @@ def monta_planilha(
     ws = wb.active
     ws.title = titulo[:31] or 'Dados'  # limite do Excel
 
+    # ── Título e subtítulo ───────────────────────────────────────────────
+    ultima_col = get_column_letter(max(len(colunas), 1))
     linha_atual = 1
     if subtitulo:
-        ws.cell(row=1, column=1, value=subtitulo).font = Font(size=10, italic=True, color='666666')
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max(len(colunas), 1))
-        linha_atual = 3
+        c = ws.cell(row=1, column=1, value=titulo)
+        c.font = Font(size=15, bold=True, color='1F1A15')
+        c.alignment = Alignment(vertical='center')
+        ws.merge_cells(f'A1:{ultima_col}1')
+        ws.row_dimensions[1].height = 22
+
+        c2 = ws.cell(row=2, column=1, value=subtitulo)
+        c2.font = Font(size=9, color='8A7E6C')
+        c2.alignment = Alignment(vertical='center', wrap_text=False)
+        ws.merge_cells(f'A2:{ultima_col}2')
+        ws.row_dimensions[2].height = 14
+        linha_atual = 4
 
     linha_cabecalho = linha_atual
-    fundo = PatternFill('solid', start_color='1F1A15')  # carvão da marca
-    fonte_cabecalho = Font(bold=True, color='C9A24B', size=11)  # dourado
-    borda_fina = Side(style='thin', color='D9D9D9')
+    fundo = PatternFill('solid', start_color='1F1A15')      # carvão da marca
+    fonte_cabecalho = Font(bold=True, color='C9A24B', size=10.5)  # dourado
+    borda_fina = Side(style='thin', color='E8E4DE')
+    zebra = PatternFill('solid', start_color='FAF8F5')
 
     for i, col in enumerate(colunas, start=1):
         c = ws.cell(row=linha_cabecalho, column=i, value=col.titulo)
         c.fill = fundo
         c.font = fonte_cabecalho
-        c.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
+        # Número alinha à direita já no cabeçalho, para a coluna ler como bloco.
+        horiz = 'right' if col.tipo in _TIPOS_NUMERICOS else 'left'
+        c.alignment = Alignment(horizontal=horiz, vertical='center', wrap_text=True)
+    # Altura maior: os títulos de duas palavras vinham espremidos.
+    ws.row_dimensions[linha_cabecalho].height = 30
 
-    larguras = [len(c.titulo) + 4 for c in colunas]
+    larguras = [len(c.titulo) + 3 for c in colunas]
     totais = {i: 0.0 for i, c in enumerate(colunas, start=1) if c.somar}
 
     r = linha_cabecalho
-    for linha in linhas:
+    for indice, linha in enumerate(linhas):
         r += 1
+        listrada = indice % 2 == 1
         for i, col in enumerate(colunas, start=1):
             bruto = _normaliza(col.valor(linha), col.tipo)
             celula = ws.cell(row=r, column=i, value=bruto)
@@ -138,9 +177,17 @@ def monta_planilha(
             if fmt:
                 celula.number_format = fmt
             celula.border = Border(bottom=borda_fina)
+            celula.alignment = Alignment(
+                horizontal='right' if col.tipo in _TIPOS_NUMERICOS else 'left',
+                vertical='center',
+            )
+            # Zebra discreta: ajuda a seguir a linha em tabela larga sem virar
+            # enfeite.
+            if listrada:
+                celula.fill = zebra
             if col.somar and isinstance(bruto, (int, float)):
                 totais[i] += bruto
-            largura_valor = len(str(bruto)) + 4 if bruto is not None else 0
+            largura_valor = _largura_texto(bruto, col.tipo)
             if largura_valor > larguras[i - 1]:
                 larguras[i - 1] = largura_valor
 
@@ -150,15 +197,25 @@ def monta_planilha(
     # Rodapé de totais — o número que o dono procura primeiro.
     if tem_dados and totais:
         r += 1
-        rotulo = ws.cell(row=r, column=1, value='TOTAL')
-        rotulo.font = Font(bold=True)
+        fundo_total = PatternFill('solid', start_color='F0EBE2')
+        borda_topo = Side(style='medium', color='C9A24B')
         for i, col in enumerate(colunas, start=1):
-            if i in totais:
-                c = ws.cell(row=r, column=i, value=totais[i])
-                c.font = Font(bold=True)
+            c = ws.cell(row=r, column=i)
+            c.fill = fundo_total
+            c.border = Border(top=borda_topo)
+            c.font = Font(bold=True, size=10.5, color='1F1A15')
+            if i == 1:
+                c.value = 'TOTAL'
+            elif i in totais:
+                c.value = totais[i]
                 fmt = _FORMATO_POR_TIPO.get(col.tipo)
                 if fmt:
                     c.number_format = fmt
+            c.alignment = Alignment(
+                horizontal='right' if col.tipo in _TIPOS_NUMERICOS and i != 1 else 'left',
+                vertical='center',
+            )
+        ws.row_dimensions[r].height = 20
 
     for i, col in enumerate(colunas, start=1):
         largura = col.largura or min(max(larguras[i - 1], _LARGURA_MIN), _LARGURA_MAX)
@@ -170,7 +227,7 @@ def monta_planilha(
     if tem_dados:
         ws.auto_filter.ref = (
             f'A{linha_cabecalho}:'
-            f'{get_column_letter(len(colunas))}{ultima_linha_dados}'
+            f'{ultima_col}{ultima_linha_dados}'
         )
     ws.sheet_view.showGridLines = False
     return wb
