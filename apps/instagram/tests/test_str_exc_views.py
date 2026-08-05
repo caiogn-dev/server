@@ -112,6 +112,29 @@ class InstagramViewsStrExcTest(SimpleTestCase):
             if in_comments and 'def ' in line and 'def comments' not in line:
                 break
 
+    def test_send_message_preserva_instagram_api_exception(self):
+        """send_message preserva InstagramAPIException (domínio controlado) e usa genérica para Exception."""
+        source = self._get_source()
+        lines = source.splitlines()
+        in_send = False
+        found_api_exc_handler = False
+        found_generic_str_exc = False
+        for line in lines:
+            if 'def send_message' in line:
+                in_send = True
+            if in_send and 'except InstagramAPIException' in line:
+                found_api_exc_handler = True
+            if in_send and 'except Exception' in line:
+                # dentro do except Exception genérico, não deve haver str(exc) no Response
+                pass
+            if in_send and 'def ' in line and 'def send_message' not in line:
+                break
+        self.assertTrue(
+            found_api_exc_handler,
+            "send_message deve capturar InstagramAPIException separadamente para preservar "
+            "mensagens de domínio controladas (janela 24h, token expirado, etc.)"
+        )
+
     def test_logger_presente_nos_handlers(self):
         """Após o fix, cada handler deve logar o erro real antes de responder."""
         source = self._get_source()

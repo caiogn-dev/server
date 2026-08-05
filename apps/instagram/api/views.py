@@ -33,6 +33,7 @@ from ..services import (
     InstagramLiveService,
     InstagramShoppingService,
 )
+from ..services.instagram_api import InstagramAPIException
 from .serializers import (
     InstagramAccountSerializer,
     InstagramCatalogSerializer,
@@ -542,6 +543,15 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
             )
             serializer = InstagramMessageSerializer(message)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except InstagramAPIException as exc:
+            logger.warning(
+                "Instagram send request failed: account=%s conversation=%s participant=%s error=%s",
+                conversation.account_id,
+                conversation.id,
+                conversation.participant_id,
+                exc,
+            )
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.warning(
                 "Instagram send request failed: account=%s conversation=%s participant=%s error=%s",
