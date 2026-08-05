@@ -82,21 +82,31 @@ class BaseExportView(APIView):
 
 
 class OrdersExportView(BaseExportView):
-    """Export orders as CSV."""
-    
+    """Export orders. `?fmt=xlsx` devolve planilha formatada; padrão é CSV.
+
+    O CSV segue exatamente como era — quem já tem rotina montada em cima dele
+    não quebra. O Excel é uma opção a mais, com moeda em R$, cabeçalho fixo,
+    filtro por coluna e linha de totais.
+    """
+
     def get(self, request):
         store = self.get_store(request)
         if not store:
             return Response({'error': 'Store parameter required'}, status=400)
-        
+
         start_date, end_date = self.get_date_range(request)
-        
+
         orders = StoreOrder.objects.filter(
             store=store,
             created_at__date__gte=start_date,
             created_at__date__lte=end_date
         ).select_related('customer').prefetch_related('items__product').order_by('-created_at')
-        
+
+        # `fmt`, não `format`: este último é reservado pelo DRF para content
+        # negotiation e faz a requisição virar 404 antes de chegar aqui.
+        if (request.query_params.get('fmt') or '').strip().lower() == 'xlsx':
+            return self._xlsx(store, orders, start_date, end_date)
+
         # Create CSV
         output = io.StringIO()
         writer = csv.writer(output)
@@ -133,6 +143,52 @@ class OrdersExportView(BaseExportView):
         response = HttpResponse(output.read(), content_type='text/csv')
         response['Content-Disposition'] = f'attachment; filename="pedidos_{store.slug}_{start_date}_{end_date}.csv"'
         return response
+
+    def _xlsx(self, store, orders, start_date, end_date):
+        """Mesmos dados do CSV, com os tipos que o Excel entende."""
+        from ..services.exports.planilha import Coluna, resposta_xlsx
+
+        linhas = [
+            {
+                'numero': o.order_number,
+                'data': o.created_at,
+                'cliente': o.customer_name,
+                'email': o.customer_email,
+                'telefone': o.customer_phone,
+                'status': o.get_status_display(),
+                'pagamento': o.get_payment_status_display(),
+                'entrega': o.get_delivery_method_display(),
+                'subtotal': o.subtotal,
+                'taxa': o.delivery_fee,
+                'desconto': o.discount,
+                'total': o.total,
+                'itens': ', '.join(
+                    f'{i.product_name} x{i.quantity}' for i in o.items.all()
+                ),
+            }
+            for o in orders
+        ]
+        colunas = [
+            Coluna('Pedido', 'numero'),
+            Coluna('Data', 'data', tipo='data_hora'),
+            Coluna('Cliente', 'cliente', largura=26),
+            Coluna('E-mail', 'email', largura=26),
+            Coluna('Telefone', 'telefone'),
+            Coluna('Status', 'status'),
+            Coluna('Pagamento', 'pagamento'),
+            Coluna('Entrega', 'entrega'),
+            Coluna('Subtotal', 'subtotal', tipo='dinheiro', somar=True),
+            Coluna('Taxa', 'taxa', tipo='dinheiro', somar=True),
+            Coluna('Desconto', 'desconto', tipo='dinheiro', somar=True),
+            Coluna('Total', 'total', tipo='dinheiro', somar=True),
+            Coluna('Itens', 'itens', largura=50),
+        ]
+        return resposta_xlsx(
+            linhas, colunas,
+            f'pedidos_{store.slug}_{start_date}_{end_date}.xlsx',
+            titulo='Pedidos',
+            subtitulo=f'{store.name} · {start_date:%d/%m/%Y} a {end_date:%d/%m/%Y}',
+        )
 
 
 class RevenueReportView(BaseExportView):

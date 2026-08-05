@@ -160,6 +160,9 @@ from .api.export_views import (
     StockReportView, CustomersReportView, StoreDashboardStatsView,
     SaladasReportView, CustomerInsightsReportView,
 )
+from .api.exports_views import (
+    VendasPorItemExportView, FaturamentoExportView, CardapioPdfView,
+)
 from .api.analytics_views import (
     HeatmapReportView, AbcReportView, ChannelsReportView, GeographyReportView,
     SlaReportView, FinanceReportView, RfmReportView, BotFunnelReportView,
@@ -367,6 +370,10 @@ urlpatterns = [
 
     # Export orders as CSV
     path('reports/orders/export/', OrdersExportView.as_view(), name='orders-export'),
+    # Downloads novos: ?format=csv|xlsx nos dois primeiros.
+    path('reports/items/export/', VendasPorItemExportView.as_view(), name='items-export'),
+    path('reports/revenue/export/', FaturamentoExportView.as_view(), name='revenue-export'),
+    path('catalog/pdf/', CardapioPdfView.as_view(), name='catalog-pdf'),
     
     # Revenue report (JSON)
     path('reports/revenue/', RevenueReportView.as_view(), name='revenue-report'),
