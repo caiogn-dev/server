@@ -65,7 +65,8 @@ class MessengerAccountViewSet(viewsets.ModelViewSet):
             )
             return Response({"status": "success"})
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("Falha ao sincronizar conta Messenger: account=%s", account.id)
+            return Response({"error": "Falha ao sincronizar. Tente novamente em instantes."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class MessengerProfileViewSet(viewsets.ViewSet):
@@ -224,7 +225,8 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("Falha ao enviar mensagem Messenger: conversation=%s", conversation.id)
+            return Response({"error": "Falha ao enviar mensagem. Tente novamente."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"], url_path="mark-read")
     def mark_read(self, request, pk=None):
