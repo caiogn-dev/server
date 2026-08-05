@@ -394,7 +394,12 @@ def reconcile_pending_pix_payments():
     from apps.stores.services import checkout_service
     from apps.stores.services.realtime_service import broadcast_order_event
 
-    window_start = timezone.now() - timedelta(hours=1)
+    # A janela NÃO pode ser igual ao TTL da chave de idempotência (3600s), senão
+    # este poller nunca alcança um pagamento que o webhook perdeu: quando a chave
+    # expira, o StorePayment — criado ANTES do webhook chegar — já saiu da janela.
+    # Não sobrava nem um ciclo de folga. O PIX do MP expira em 24h, então é esse
+    # o horizonte em que ainda faz sentido reconciliar.
+    window_start = timezone.now() - timedelta(hours=24)
     pending = (
         StorePayment.objects
         .filter(status=StorePayment.PaymentStatus.PENDING, created_at__gte=window_start)
@@ -427,10 +432,22 @@ def reconcile_pending_pix_payments():
         if not cache.add(idempotency_key, 1, timeout=3600):
             continue
 
-        order = checkout_service.process_payment_webhook(
-            str(sp.external_id), mp_status,
-            external_reference=payment.get('external_reference'),
-        )
+        # Sem este try/except, uma exceção em QUALQUER pagamento abortava o loop
+        # inteiro e os demais pendentes do ciclo nem chegavam a ser consultados.
+        # A chave também precisa ser devolvida, senão a próxima rodada pula este
+        # pagamento achando que já foi processado.
+        try:
+            order = checkout_service.process_payment_webhook(
+                str(sp.external_id), mp_status,
+                external_reference=payment.get('external_reference'),
+            )
+        except Exception:
+            cache.delete(idempotency_key)
+            logger.exception(
+                'Reconcile PIX: falha processando %s — chave liberada, segue para o próximo',
+                sp.external_id,
+            )
+            continue
         reconciled += 1
         logger.info(
             'Reconcile PIX: pagamento %s -> %s (pedido %s) via poller',

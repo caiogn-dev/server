@@ -82,8 +82,12 @@ class MercadoPagoWebhookView(APIView):
         
         except Exception as e:
             logger.error('Webhook error: %s', e, exc_info=True)
-            # Always return 200 to prevent retries; never expose internal error to webhook sender
-            return Response({'status': 'error'}, status=status.HTTP_200_OK)
+            # 5xx DE PROPÓSITO: o Mercado Pago só reenvia em erro do servidor.
+            # Devolver 200 aqui fazia o MP considerar entregue e nunca mais tentar —
+            # um blip de banco no meio do processamento apagava o pagamento do
+            # sistema em silêncio, e o check_pending_payments ainda cancelava o
+            # pedido pago em 24h. Nada é exposto ao remetente além do status.
+            return Response({'status': 'error'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def _handle_preapproval(self, request):
         """
@@ -250,10 +254,22 @@ class MercadoPagoWebhookView(APIView):
             logger.info("Duplicate MP webhook for payment %s status %s — skipped", payment_id, payment_status)
             return Response({'status': 'duplicate'}, status=status.HTTP_200_OK)
 
-        # Process payment status
-        order = checkout_service.process_payment_webhook(
-            str(payment_id), payment_status, external_reference=payment_external_reference,
-        )
+        # Process payment status.
+        # A chave de idempotência acima é reivindicada ANTES de processar. Se o
+        # processamento falhar (deadlock, conexão do pgbouncer derrubada num
+        # deploy, timeout), a chave precisa ser devolvida — senão o reenvio do MP
+        # cai no ramo 'duplicate' e o pagamento aprovado some para sempre.
+        try:
+            order = checkout_service.process_payment_webhook(
+                str(payment_id), payment_status, external_reference=payment_external_reference,
+            )
+        except Exception:
+            cache.delete(idempotency_key)
+            logger.exception(
+                "Falha ao processar webhook MP do payment %s (status %s) — chave de "
+                "idempotência liberada para permitir reenvio", payment_id, payment_status,
+            )
+            raise
 
         if order:
             logger.info(f"Order {order.order_number} updated to status: {order.status}")
