@@ -988,6 +988,30 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             metadata=metadata,
         )
 
+        # Trava e valida o estoque ANTES de decrementar. Este caminho (PDV/painel)
+        # só tinha copiado o UPDATE com F() do storefront, não a validação com
+        # lock que vem antes dele — então uma venda de balcão de 5 unidades num
+        # produto com 2 levava stock_quantity a -3 em silêncio (o campo é
+        # IntegerField, sem piso). A partir daí `is_in_stock` vira False e o item
+        # some do cardápio web E do bot, e a reposição parte do número negativo.
+        # O select_for_update também fecha a corrida com um checkout web em voo.
+        agrupado = {}
+        for item in resolved_items:
+            if item['product'].track_stock:
+                agrupado[item['product'].id] = agrupado.get(item['product'].id, 0) + item['quantity']
+        if agrupado:
+            travados = {
+                p.id: p
+                for p in StoreProduct.objects.select_for_update().filter(id__in=list(agrupado))
+            }
+            for pid, qtd in agrupado.items():
+                p = travados.get(pid)
+                if p and not p.allow_backorder and p.stock_quantity < qtd:
+                    raise serializers.ValidationError({
+                        'items': f'Estoque insuficiente de {p.name}: '
+                                 f'disponível {p.stock_quantity}, pedido {qtd}'
+                    })
+
         stock_changed = False
         for item in resolved_items:
             StoreOrderItem.objects.create(

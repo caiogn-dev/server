@@ -14,6 +14,19 @@ from ..models import WebhookEvent
 logger = logging.getLogger(__name__)
 
 
+def verify_mercadopago_signature_with_secret(request, payload: dict, secret: str) -> bool:
+    """
+    Mesma validação de assinatura do MP, porém com a chave passada por parâmetro.
+
+    Existe para as lojas: cada `StorePaymentGateway` pode ter o seu próprio
+    `webhook_secret`, mas o ESQUEMA assinado é idêntico ao da plataforma. Antes
+    havia uma segunda implementação em apps/stores/api/webhooks.py que assinava o
+    corpo cru — coisa que o MP não faz — e rejeitava 100% dos webhooks da loja.
+    Uma implementação só, dois chamadores.
+    """
+    return _check_signature(request, payload, secret)
+
+
 def _verify_mercadopago_signature(request, payload: dict) -> bool:
     """
     Validate Mercado Pago webhook HMAC-SHA256 signature.
@@ -37,6 +50,11 @@ def _verify_mercadopago_signature(request, payload: dict) -> bool:
             return False
         return True  # DEBUG: skip validation para testes locais
 
+    return _check_signature(request, payload, secret)
+
+
+def _check_signature(request, payload: dict, secret: str) -> bool:
+    """Verificação HMAC propriamente dita. `secret` já resolvido pelo chamador."""
     x_signature = request.headers.get('x-signature', '')
     x_request_id = request.headers.get('x-request-id', '')
 

@@ -6,6 +6,8 @@ package-based task layout under apps.whatsapp.tasks.
 """
 import logging
 
+from datetime import timedelta
+
 from celery import shared_task
 from django.db import models, transaction
 from django.utils import timezone
@@ -67,12 +69,44 @@ def process_pending_webhook_events(batch_size: int = 100):
     failed = 0
     service = WebhookService()
 
+    # Repesca eventos órfãos ANTES de reservar o lote novo. Como agora marcamos
+    # PROCESSING para reservar, um worker que morra no meio (deploy, OOM, restart
+    # de container) deixaria o evento preso nesse estado para sempre — antes ele
+    # continuava PENDING e acabava sendo pego de novo. 15min é folgado: o lote
+    # mais lento observado leva ~150s.
+    limite_orfao = timezone.now() - timedelta(minutes=15)
+    orfaos = WebhookEvent.objects.filter(
+        processing_status=WebhookEvent.ProcessingStatus.PROCESSING,
+        updated_at__lt=limite_orfao,
+    ).update(
+        processing_status=WebhookEvent.ProcessingStatus.PENDING,
+        updated_at=timezone.now(),
+    )
+    if orfaos:
+        logger.warning("Reciclados %s eventos presos em PROCESSING", orfaos)
+
+    # RESERVA o lote dentro da mesma transação do lock. Antes o atomic fechava
+    # logo após materializar a lista: os locks caíam ali, os eventos continuavam
+    # PENDING no banco, e o processamento (lento — pipeline do bot + HTTP ao
+    # Meta) rodava fora de qualquer transação. Como o beat dispara a cada 30s e
+    # um lote de 100 leva 50-150s, a execução seguinte re-seleciona o que a
+    # anterior ainda não alcançou: 2 a 5 execuções sobre os mesmos eventos, o
+    # cliente recebendo a resposta repetida. O skip_locked não protegia nada
+    # porque não havia mais lock para pular.
+    # Mesmo padrão de claim_next_print_job: travar e marcar juntos.
     with transaction.atomic():
         pending_events = list(
             WebhookEvent.objects.select_for_update(skip_locked=True).filter(
                 processing_status=WebhookEvent.ProcessingStatus.PENDING
             ).order_by('created_at')[:batch_size]
         )
+        if pending_events:
+            WebhookEvent.objects.filter(
+                id__in=[e.id for e in pending_events]
+            ).update(
+                processing_status=WebhookEvent.ProcessingStatus.PROCESSING,
+                updated_at=timezone.now(),
+            )
 
     for event in pending_events:
         try:

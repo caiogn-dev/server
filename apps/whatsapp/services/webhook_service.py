@@ -454,8 +454,23 @@ class WebhookService:
             
             if event.event_type == WebhookEvent.EventType.MESSAGE:
                 message = self._process_inbound_message(event)
+                # O pipeline roda UMA vez por mensagem, ponto. `_process_inbound_message`
+                # devolve a Message existente quando é duplicata (retorno truthy), então
+                # antes bastava um retry para o handler de checkout criar um segundo
+                # pedido, um segundo PIX e uma segunda baixa de estoque. O UPDATE
+                # condicional abaixo é a reserva: quem conseguir marcar, processa.
+                # Dois workers no mesmo evento → só um dos updates afeta linha.
                 if post_process_inbound and message:
-                    self.post_process_inbound_message(event, message)
+                    reservou = Message.objects.filter(
+                        pk=message.pk, pipeline_processed_at__isnull=True,
+                    ).update(pipeline_processed_at=timezone.now())
+                    if reservou:
+                        self.post_process_inbound_message(event, message)
+                    else:
+                        logger.info(
+                            "Pipeline já rodou para a mensagem %s — pulando pós-processamento",
+                            message.whatsapp_message_id,
+                        )
                 self.mark_event_completed(event)
                 return message
             

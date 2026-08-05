@@ -102,3 +102,15 @@ yarn-error.log*
 *.pid
 *.seed
 *.pid.lock
+
+# Scripts de teste manual da raiz. Os Dockerfiles fazem `COPY . .`, então
+# qualquer script solto aqui entra na imagem de produção — foi assim que um
+# client_secret da Uber acabou legível por `docker exec` no container.
+# Os testes de verdade vivem em apps/*/tests/ e tests/, que não casam com isto.
+/test_*.py
+/*_test.py
+/mcp_*.py
+
+# Clone git aninhado (1.4M, com .git próprio). O padrão `.git/` acima só casa
+# na raiz do contexto, então openapi/.git iria inteiro para a imagem.
+openapi/

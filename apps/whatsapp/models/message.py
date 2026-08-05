@@ -83,6 +83,15 @@ class Message(BaseModel):
     metadata = models.JSONField(default=dict, blank=True)
     processed_by_agent = models.BooleanField(default=False, help_text='Processado pelo agente IA')
 
+    # Marca que o pipeline de intents/handlers JÁ rodou sobre esta mensagem.
+    # Sem isso, um evento que falhou DEPOIS de criar a Message (ex.: timeout no
+    # envio da resposta ao Meta) era reprocessado por retry_failed_webhook_events
+    # a cada 5min, até 3x — e o handler de checkout criava pedido, PIX e baixa de
+    # estoque de novo a cada volta. O guard de duplicata não bastava: ele
+    # devolvia a Message existente, que é truthy, e o pós-processamento seguia.
+    # O UPDATE condicional (…__isnull=True) também serve de lock entre workers.
+    pipeline_processed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+
     class Meta:
         app_label = 'whatsapp'
         db_table = 'whatsapp_messages'

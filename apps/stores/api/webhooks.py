@@ -114,13 +114,26 @@ class MercadoPagoWebhookView(APIView):
         """
         Validate Mercado Pago webhook signature.
 
+        O MP assina o manifesto `id:<data.id>;request-id:<x-request-id>;ts:<ts>`,
+        NÃO o corpo cru. A implementação anterior aqui fazia HMAC do corpo e
+        comparava com o header inteiro (`ts=...,v1=...`), então toda loja que
+        preenchesse `webhook_secret` — o que o comando oficial de onboarding
+        manda fazer — passava a ter 100% dos webhooks rejeitados com 401, sem
+        fallback (o poller não reconcilia link de pagamento). Pior: `request.body`
+        já não é legível depois que o DRF consome `request.data`, então a
+        comparação nem acontecia; estourava e caía no fail-closed.
+
+        Agora delega para a mesma função que a rota da plataforma usa, só
+        trocando a chave.
+
         Returns:
             True  — no secret configured (validation skipped, allow)
             True  — secret configured and signature matches
             False — secret configured but signature is missing or wrong
         """
-        import hmac as hmac_mod
-        import hashlib
+        from apps.webhooks.handlers.mercadopago_handler import (
+            verify_mercadopago_signature_with_secret,
+        )
 
         if not store_slug:
             return True
@@ -149,30 +162,10 @@ class MercadoPagoWebhookView(APIView):
             # No secret configured — skip validation (True = allow)
             return True
 
-        # Secret IS configured — enforce validation
-        # Mercado Pago sends signature in query string: ?signature=<hex>
-        provided_sig = (
-            request.query_params.get('signature')
-            or request.headers.get('X-Signature')
-            or request.headers.get('X-Hub-Signature')
-            or ''
-        )
-        if not provided_sig:
-            logger.warning("MP webhook missing signature for store %s", store_slug)
-            return False
-
-        # Strip algorithm prefix if present (e.g. "sha256=abc...")
-        if '=' in provided_sig and not provided_sig.startswith('0') and len(provided_sig) < 20:
-            provided_sig = provided_sig.split('=', 1)[-1]
-
+        # Secret configurado — valida com o esquema real do MP (ts/v1 sobre o
+        # manifesto), usando a chave DA LOJA.
         try:
-            body = request.body.decode('utf-8')
-            expected = hmac_mod.new(
-                webhook_secret.encode('utf-8'),
-                body.encode('utf-8'),
-                hashlib.sha256,
-            ).hexdigest()
-            if hmac_mod.compare_digest(provided_sig, expected):
+            if verify_mercadopago_signature_with_secret(request, request.data, webhook_secret):
                 return True
             logger.warning("MP webhook signature mismatch for store %s", store_slug)
             return False

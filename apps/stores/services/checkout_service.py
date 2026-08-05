@@ -920,8 +920,23 @@ class CheckoutService:
                 items=CheckoutService._coupon_items(cart),
             )
             if coupon_result['valid']:
-                discount = Decimal(str(coupon_result['discount']))
-                coupon = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
+                # RESERVA a vaga antes de conceder o desconto. `validate_coupon`
+                # leu `used_count` lá atrás; entre aquela leitura e aqui, outros
+                # checkouts podem ter esgotado o cupom. `increment_usage()` é
+                # atômico (`used_count__lt=usage_limit` no WHERE) e devolve False
+                # quando não havia vaga — antes esse retorno era descartado e o
+                # desconto saía assim mesmo, para todos os concorrentes.
+                # Estamos dentro de _create_order_atomic: se o pedido reverter,
+                # a reserva reverte junto.
+                candidate = StoreCoupon.objects.get(id=coupon_result['coupon_id'])
+                if candidate.increment_usage():
+                    coupon = candidate
+                    discount = Decimal(str(coupon_result['discount']))
+                else:
+                    logger.info(
+                        'Cupom %s esgotou na corrida (limite %s); pedido segue sem desconto',
+                        coupon_code, candidate.usage_limit,
+                    )
 
         loyalty_reward = {
             'applied': False,
@@ -1107,9 +1122,8 @@ class CheckoutService:
                 lambda: _invalidate_agent_menu_safe(store_id)
             )
 
-        # Mark coupon as used (atomic)
-        if coupon:
-            coupon.increment_usage()
+        # (o incremento do cupom virou RESERVA e acontece lá em cima, junto da
+        # aplicação do desconto — incrementar aqui contaria duas vezes)
 
         if store_customer:
             store_customer.last_order_at = timezone.now()
