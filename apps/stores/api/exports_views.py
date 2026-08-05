@@ -210,6 +210,25 @@ class CardapioPdfView(BaseExportView):
             .select_related('category')
             .order_by('category__sort_order', 'category__name', 'sort_order', 'name')
         )
+
+        # `?categories=slug-a,slug-b` limita o cardápio às categorias escolhidas.
+        # Existe porque nem todo produto ativo é um item de cardápio: numa loja
+        # de saladas montáveis, "Alface" e "Repolho" são INGREDIENTES do builder
+        # e ficam ao lado das saladas prontas no catálogo. Não há campo no
+        # modelo que separe os dois (`show_in_menu` é do ProductType, que essas
+        # lojas não usam), e qualquer heurística — preço baixo, ser opção de
+        # combo — erra: aqui as SALADAS é que são opções de combo, não os
+        # ingredientes. Então quem decide é o dono, e o painel lembra a escolha.
+        filtro_categorias = (request.query_params.get('categories') or '').strip()
+        if filtro_categorias:
+            escolhidas = {c.strip().lower() for c in filtro_categorias.split(',') if c.strip()}
+            produtos = [
+                p for p in produtos
+                if p.category and (
+                    p.category.slug.lower() in escolhidas
+                    or p.category.name.lower() in escolhidas
+                )
+            ]
         # Fora de estoque não vai para o cardápio impresso: o cliente pede e a
         # loja tem que negar no balcão. `allow_backorder` continua entrando.
         if (request.query_params.get('include_out_of_stock') or '').lower() not in ('1', 'true'):
