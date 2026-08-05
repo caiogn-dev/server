@@ -204,13 +204,21 @@ class DashboardOverviewView(APIView):
         )
         
         # Orders + payments — todos os aggregates do mesmo queryset num só.
+        # CONTAGEM operacional usa o queryset cru (pedido cancelado existe e
+        # precisa aparecer na operação); RECEITA passa pelo SSOT.
+        from apps.stores.services.revenue import revenue_orders
         _ord = orders_qs.aggregate(
             today=Count('id', filter=Q(created_at__gte=today_start)),
-            revenue_today=Sum('total', filter=Q(paid_at__gte=today_start)),
-            revenue_month=Sum('total', filter=Q(paid_at__gte=month_start)),
             payments_pending=Count('id', filter=Q(payment_status__in=['pending', 'processing'])),
             payments_completed_today=Count('id', filter=Q(payment_status='paid', paid_at__gte=today_start)),
         )
+        # Somar por paid_at sem checar status contava pedido pago e cancelado
+        # depois — o paid_at fica gravado mesmo após o cancelamento.
+        _rev = revenue_orders(queryset=orders_qs).aggregate(
+            revenue_today=Sum('total', filter=Q(paid_at__gte=today_start)),
+            revenue_month=Sum('total', filter=Q(paid_at__gte=month_start)),
+        )
+        _ord.update(_rev)
         orders_today = _ord['today']
         revenue_today = _ord['revenue_today'] or 0
         revenue_month = _ord['revenue_month'] or 0
@@ -324,7 +332,11 @@ class DashboardProjectHealthView(APIView):
         conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
         products_qs = StoreProduct.objects.filter(store_id__in=store_ids)
 
-        paid_orders_qs = orders_qs.filter(payment_status=StoreOrder.PaymentStatus.PAID)
+        # SSOT de receita (apps/stores/services/revenue.py): pago E não cancelado
+        # E não é teste. `payment_status=PAID` sozinho deixava passar pedido pago
+        # e cancelado depois.
+        from apps.stores.services.revenue import revenue_orders
+        paid_orders_qs = revenue_orders(queryset=orders_qs)
         orders_today = orders_qs.filter(created_at__gte=today_start).count()
         orders_24h = orders_qs.filter(created_at__gte=day_start).count()
         orders_week = orders_qs.filter(created_at__gte=week_start).count()
@@ -744,8 +756,11 @@ class DashboardChartsView(APIView):
             .annotate(c=Count('id'))
         )
         order_counts = {r['day'].strftime('%Y-%m-%d'): r['c'] for r in order_count_rows}
+        # Somar por `paid_at` sem checar status contava pedido que foi pago e
+        # DEPOIS cancelado/estornado: o payment_status muda, mas o paid_at fica.
+        # Eram 5 pedidos (R$ 420,84) inflando o gráfico da home em 21%.
         revenue_rows = (
-            orders_qs.filter(paid_at__gte=window_start)
+            revenue_orders(queryset=orders_qs).filter(paid_at__gte=window_start)
             .annotate(day=TruncDate('paid_at', tzinfo=utc))
             .values('day')
             .annotate(total=Sum('total'))
