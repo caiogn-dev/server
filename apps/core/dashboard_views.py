@@ -335,7 +335,7 @@ class DashboardProjectHealthView(APIView):
         # SSOT de receita (apps/stores/services/revenue.py): pago E não cancelado
         # E não é teste. `payment_status=PAID` sozinho deixava passar pedido pago
         # e cancelado depois.
-        from apps.stores.services.revenue import revenue_orders
+        from apps.stores.services.revenue import revenue_orders, revenue_date_field
         paid_orders_qs = revenue_orders(queryset=orders_qs)
         orders_today = orders_qs.filter(created_at__gte=today_start).count()
         orders_24h = orders_qs.filter(created_at__gte=day_start).count()
@@ -761,7 +761,9 @@ class DashboardChartsView(APIView):
         # Eram 5 pedidos (R$ 420,84) inflando o gráfico da home em 21%.
         revenue_rows = (
             revenue_orders(queryset=orders_qs).filter(paid_at__gte=window_start)
-            .annotate(day=TruncDate('paid_at', tzinfo=utc))
+            # Sem tzinfo: agrupa no TIME_ZONE do projeto. Forçar UTC jogava toda
+            # venda depois das 21h para o dia seguinte — o pico do delivery.
+            .annotate(day=TruncDate(revenue_date_field()))
             .values('day')
             .annotate(total=Sum('total'))
         )

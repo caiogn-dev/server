@@ -132,7 +132,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     """
     from django.db.models import Count, Sum
     from django.db.models.functions import TruncDate
-    from apps.stores.services.revenue import revenue_orders
+    from apps.stores.services.revenue import revenue_orders, revenue_date_field
 
     tz_now = timezone.localtime()
     day = day or (tz_now - timedelta(days=1)).date()
@@ -140,7 +140,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
 
     series = list(
         revenue_orders(store=store, start=inicio, end=day)
-        .annotate(d=TruncDate('created_at'))
+        .annotate(d=TruncDate(revenue_date_field()))
         .values('d')
         .annotate(orders=Count('id'), revenue=Sum('total'))
         .order_by('d')
@@ -185,6 +185,9 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     pior = min(media_semana, key=media_semana.get) if media_semana else None
 
     return {
+        # Série diária completa: é o que o painel plota. Sem ela o front teria de
+        # refazer a query só para desenhar a mesma coisa.
+        'daily': diario,
         'window_days': days,
         'daily_avg_revenue': round(media_dia, 2),
         'recent_avg_revenue': round(media_rec, 2),
