@@ -10,6 +10,17 @@ from decimal import Decimal
 from django.utils import timezone
 
 # Catálogo dos 4 planos. limits.max_products / max_orders_per_month = None => ilimitado.
+# Catálogo dos 4 planos. limits.max_products / max_orders_per_month = None => ilimitado.
+#
+# Escada desenhada em estrategia-monetizacao-2026-08-02.md. Duas decisões que
+# parecem detalhe e não são:
+#   1. O Grátis tem que DOER. Antes permitia 30 pedidos/mês enquanto a maior loja
+#      da plataforma fazia 32 — ninguém encostava no teto, então não existia
+#      motivo para pagar. 15 é o número em que a loja que virou negócio percebe.
+#   2. O bot do WhatsApp é o único motivo real de compra, então ele marca a
+#      fronteira entre "Loja" e "Loja + WhatsApp". Não vem no plano de entrada.
+#
+# Lojas grandfather (billing_exempt=True) ignoram tudo isto — ver is_billing_exempt.
 PLAN_CATALOG = {
     'free': {
         'key': 'free',
@@ -18,8 +29,8 @@ PLAN_CATALOG = {
         'monthly_price': Decimal('0.00'),
         'charges_setup_fee': False,
         'limits': {
-            'max_products': 40,
-            'max_orders_per_month': 30,
+            'max_products': 20,
+            'max_orders_per_month': 15,
             'custom_domain': False,
             'whatsapp_bot': False,
             'ai_agent': False,
@@ -31,10 +42,10 @@ PLAN_CATALOG = {
     },
     'starter': {
         'key': 'starter',
-        'name': 'Essencial',
-        'setup_fee': Decimal('0.00'),
-        'monthly_price': Decimal('99.90'),
-        'charges_setup_fee': False,
+        'name': 'Loja',
+        'setup_fee': Decimal('1200.00'),
+        'monthly_price': Decimal('179.00'),
+        'charges_setup_fee': True,
         'limits': {
             'max_products': None,
             'max_orders_per_month': None,
@@ -42,21 +53,21 @@ PLAN_CATALOG = {
             'whatsapp_bot': False,
             'ai_agent': False,
             'advanced_reports': False,
-            'coupon_banner': False,
-            'bio_custom_links': False,
+            'coupon_banner': True,
+            'bio_custom_links': True,
             'bio_analytics': False,
         },
     },
     'pro': {
         'key': 'pro',
-        'name': 'Pro',
-        'setup_fee': Decimal('0.00'),
-        'monthly_price': Decimal('249.00'),
-        'charges_setup_fee': False,
+        'name': 'Loja + WhatsApp',
+        'setup_fee': Decimal('1200.00'),
+        'monthly_price': Decimal('329.00'),
+        'charges_setup_fee': True,
         'limits': {
             'max_products': None,
             'max_orders_per_month': None,
-            'custom_domain': False,
+            'custom_domain': True,
             'whatsapp_bot': True,
             'ai_agent': False,
             'advanced_reports': True,
@@ -67,13 +78,14 @@ PLAN_CATALOG = {
     },
     'premium': {
         'key': 'premium',
-        'name': 'Premium',
-        'setup_fee': Decimal('149.00'),
-        'monthly_price': Decimal('349.00'),
+        'name': 'Rede',
+        'setup_fee': Decimal('1200.00'),
+        'monthly_price': Decimal('549.00'),
         'charges_setup_fee': True,
         'limits': {
             'max_products': None,
             'max_orders_per_month': None,
+            'max_stores': 3,
             'custom_domain': True,
             'whatsapp_bot': True,
             'ai_agent': True,

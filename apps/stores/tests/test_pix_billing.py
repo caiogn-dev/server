@@ -56,7 +56,7 @@ class GenerateInvoiceTest(TestCase):
         self.assertIsNone(inv.order_id)
         self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026-07")
         self.assertEqual(inv.qr_code, "PIXCOPIACOLA123")
-        self.assertEqual(float(inv.amount), 249.0)  # pro mensal
+        self.assertEqual(float(inv.amount), 329.0)  # "Loja + WhatsApp" mensal
         self.assertEqual(inv.metadata["kind"], "monthly")
 
     @patch.object(pix_billing_service.subscription_service, "_sdk")
@@ -64,7 +64,7 @@ class GenerateInvoiceTest(TestCase):
         mock_sdk.return_value = _fake_pix_sdk()
         self.sub.billing_cycle = "annual"; self.sub.save()
         inv = pix_billing_service.generate_invoice(self.sub, now=self.now)
-        self.assertEqual(float(inv.amount), 2490.0)
+        self.assertEqual(float(inv.amount), 3290.0)  # 329 x 10 (paga 10, leva 12)
         self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026")
 
     @patch.object(pix_billing_service.subscription_service, "_sdk")
@@ -243,7 +243,7 @@ class InvoiceEndpointTest(TestCase):
     def test_public_plans_expose_annual_price(self):
         r = self.client.get("/api/v1/public/plans/")
         pro = next(p for p in r.data["plans"] if p["key"] == "pro")
-        self.assertEqual(float(pro["annual_price"]), 2490.0)
+        self.assertEqual(float(pro["annual_price"]), 3290.0)  # 329 x 10
         free = next(p for p in r.data["plans"] if p["key"] == "free")
         self.assertNotIn("annual_price", free)
 

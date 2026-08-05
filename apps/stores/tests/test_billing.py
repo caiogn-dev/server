@@ -25,7 +25,7 @@ class BillingCatalogTestCase(TestCase):
         pro = self._store('pro')
         premium = self._store('premium')
         self.assertFalse(billing.plan_allows(starter, 'custom_domain'))
-        self.assertFalse(billing.plan_allows(pro, 'custom_domain'))
+        self.assertTrue(billing.plan_allows(pro, 'custom_domain'))  # go-live: domínio junto com o bot
         self.assertTrue(billing.plan_allows(pro, 'whatsapp_bot'))
         self.assertFalse(billing.plan_allows(pro, 'ai_agent'))
         self.assertTrue(billing.plan_allows(premium, 'custom_domain'))
@@ -36,8 +36,8 @@ class BillingCatalogTestCase(TestCase):
         starter = self._store('starter')
         pro = self._store('pro')
         # free tem cap 40
-        self.assertTrue(billing.within_product_limit(free, 39))
-        self.assertFalse(billing.within_product_limit(free, 40))
+        self.assertTrue(billing.within_product_limit(free, 19))
+        self.assertFalse(billing.within_product_limit(free, 20))
         # starter e pro são ilimitados
         self.assertTrue(billing.within_product_limit(starter, 9999))
         self.assertTrue(billing.within_product_limit(pro, 9999))
@@ -73,7 +73,7 @@ class PublicPlansEndpointTestCase(TestCase):
         keys = {p['key'] for p in plans}
         self.assertEqual(keys, {'free', 'starter', 'pro', 'premium'})
         free = next(p for p in plans if p['key'] == 'free')
-        self.assertEqual(free['limits']['max_products'], 40)
+        self.assertEqual(free['limits']['max_products'], 20)
         starter = next(p for p in plans if p['key'] == 'starter')
         self.assertIsNone(starter['limits']['max_products'])
         self.assertIn('monthly_price', starter)
