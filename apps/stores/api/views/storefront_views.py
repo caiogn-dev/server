@@ -636,12 +636,11 @@ class StoreCartViewSet(viewsets.ViewSet):
 
         try:
             if is_virtual_combo:
-                # Virtual combo (e.g. salad builder) — no real StoreCombo FK
-                if unit_price is None:
-                    return Response(
-                        {'error': 'unit_price is required for virtual combos'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
+                # Virtual combo (e.g. salad builder) — no real StoreCombo FK.
+                # unit_price continua sendo aceito por compatibilidade com os
+                # clientes existentes (web e Flutter), mas NÃO define o valor:
+                # CartService.add_combo recalcula tudo a partir dos ingredientes
+                # persistidos e só usa este número para logar divergência.
                 customizations = request.data.get('customizations', {})
                 if customizations.get('is_salad_builder') or customizations.get('type') == 'custom_salad':
                     customizations = checkout_service.normalize_custom_salad_payload(
@@ -649,7 +648,6 @@ class StoreCartViewSet(viewsets.ViewSet):
                         combo_name=combo_name,
                         unit_price=unit_price,
                     )
-                from decimal import Decimal
                 cart_service.add_combo(
                     cart,
                     combo=None,
@@ -657,7 +655,7 @@ class StoreCartViewSet(viewsets.ViewSet):
                     customizations=customizations,
                     notes=notes,
                     combo_name=combo_name,
-                    unit_price=Decimal(str(unit_price)),
+                    unit_price=unit_price,
                 )
             elif combo_id:
                 # Real combo

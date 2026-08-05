@@ -122,6 +122,63 @@ class CartService:
                 notes=notes
             )
     
+    # Slug do combo que define o preço-base da salada montada. Mesmo contrato do
+    # storefront (BUILDER_COMBO_SLUG em Cardapio.jsx).
+    BUILDER_COMBO_SLUG = 'monte-sua-salada'
+    # Papel cujos itens não somam ao preço (molho é cortesia) — espelha a regra do
+    # front em CartContext.addSaladToCart.
+    FREE_INGREDIENT_ROLES = {'molho'}
+
+    @staticmethod
+    def price_custom_salad(store, customizations: dict) -> Decimal:
+        """Preço da salada montada, derivado SÓ do banco.
+
+        base (preço do combo `monte-sua-salada` da loja, 0 se não existir)
+        + soma de StoreProduct.price de cada ingrediente cujo papel não é gratuito.
+
+        Ingredientes são resolvidos por id E filtrados por loja: id de produto de
+        outro tenant é descartado em vez de somar o preço dele.
+        """
+        base = Decimal('0.00')
+        builder = StoreCombo.objects.filter(
+            store=store, slug=CartService.BUILDER_COMBO_SLUG
+        ).values_list('price', flat=True).first()
+        if builder is not None:
+            base = Decimal(str(builder))
+
+        ingredientes = (customizations or {}).get('ingredients') or []
+        cobraveis = []
+        for item in ingredientes:
+            if not isinstance(item, dict):
+                continue  # formato legado (string): sem id, não dá para precificar
+            if str(item.get('role') or '').strip().lower() in CartService.FREE_INGREDIENT_ROLES:
+                continue
+            pid = item.get('id') or item.get('product_id')
+            if pid:
+                cobraveis.append(str(pid))
+
+        if not cobraveis:
+            return base
+
+        # Uma query só. A chave é str(id) para casar com o que veio no payload,
+        # e a lista preserva repetições (2x tomate soma duas vezes).
+        mapa = {
+            str(pid): preco
+            for pid, preco in StoreProduct.objects.filter(
+                store=store, id__in=cobraveis
+            ).values_list('id', 'price')
+        }
+        total = base
+        for pid in cobraveis:
+            preco = mapa.get(pid)
+            if preco is None:
+                logger.warning(
+                    "Ingrediente %s não pertence à loja %s — ignorado no preço", pid, store.slug
+                )
+                continue
+            total += Decimal(str(preco))
+        return total
+
     @staticmethod
     @transaction.atomic
     def add_combo(
@@ -146,17 +203,35 @@ class CartService:
             if combo.track_stock and combo.stock_quantity < quantity:
                 raise ValueError(f"Estoque insuficiente para o combo. Disponível: {combo.stock_quantity}")
             effective_name = combo_name or combo.name
-            effective_price = Decimal(str(unit_price)) if unit_price is not None else combo.price
+            # PREÇO É DERIVADO, NUNCA ACEITO DO CLIENTE. Antes esta linha era
+            # `unit_price if unit_price is not None else combo.price`, o que deixava
+            # o corpo da requisição sobrescrever o preço cadastrado do combo.
+            if unit_price is not None and Decimal(str(unit_price)) != combo.price:
+                logger.warning(
+                    "Combo %s: unit_price do cliente (%s) ignorado; usando o cadastrado (%s)",
+                    combo.id, unit_price, combo.price,
+                )
+            effective_price = combo.price
         else:
             # Virtual combo (salad builder, etc.)
             if not combo_name:
                 raise ValueError("combo_name is required for virtual combos")
-            try:
-                effective_price = Decimal(str(unit_price))
-                if effective_price <= 0:
-                    raise ValueError("unit_price must be positive for virtual combos")
-            except (TypeError, Exception) as e:
-                raise ValueError(f"unit_price must be a valid positive decimal for virtual combos: {e}")
+            # Recalcula a partir dos ingredientes persistidos. O unit_price que vem
+            # do cliente serve só para detectar divergência (UI desatualizada ou
+            # adulteração) — nunca para definir o valor cobrado.
+            effective_price = CartService.price_custom_salad(cart.store, customizations)
+            if unit_price is not None:
+                try:
+                    esperado = Decimal(str(unit_price))
+                    if abs(esperado - effective_price) > Decimal('0.01'):
+                        logger.warning(
+                            "price_mismatch store=%s enviado=%s servidor=%s customizations=%s",
+                            cart.store.slug, esperado, effective_price, customizations,
+                        )
+                except (TypeError, ValueError, ArithmeticError):
+                    logger.warning("unit_price ilegível do cliente: %r", unit_price)
+            if effective_price <= 0:
+                raise ValueError("Não foi possível calcular o preço da salada montada")
             effective_name = combo_name
 
         customizations = customizations or {}
