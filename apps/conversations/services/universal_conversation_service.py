@@ -16,9 +16,9 @@ from ..models import Conversation
 class UniversalConversationService:
     """Build a normalized, read-only conversation list across platforms."""
 
-    def list_conversations(self, user) -> List[Dict[str, Any]]:
+    def list_conversations(self, user, store=None) -> List[Dict[str, Any]]:
         conversations: List[Dict[str, Any]] = []
-        conversations.extend(self._build_whatsapp_rows(user))
+        conversations.extend(self._build_whatsapp_rows(user, store))
         conversations.extend(self._build_instagram_rows(user))
         conversations.extend(self._build_messenger_rows(user))
         conversations.sort(
@@ -27,10 +27,10 @@ class UniversalConversationService:
         )
         return conversations
 
-    def _build_whatsapp_rows(self, user) -> List[Dict[str, Any]]:
+    def _build_whatsapp_rows(self, user, store=None) -> List[Dict[str, Any]]:
         from apps.conversations.api.views import _accessible_conversations
 
-        queryset = _accessible_conversations(user)
+        queryset = _accessible_conversations(user, store=store)
         rows: List[Dict[str, Any]] = []
 
         for conv in queryset:

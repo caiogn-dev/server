@@ -47,7 +47,7 @@ def _search_token_variants(token):
     return variants
 
 
-def _accessible_conversations(user):
+def _accessible_conversations(user, store=None):
     from django.db.models import Count, Q, Subquery, OuterRef
     from apps.whatsapp.models.message import Message
     from apps.users.models import UnifiedUser
@@ -72,11 +72,45 @@ def _accessible_conversations(user):
         anno_unified_user_id=Subquery(_unified[:1]),
     )
     # is_staff NÃO vê conversas (mensagens de clientes) cross-tenant — só superuser.
-    if user.is_superuser:
+    if not user.is_superuser:
+        account_ids = accessible_whatsapp_account_ids(user)
+        queryset = queryset.filter(is_active=True, account_id__in=account_ids)
+
+    return _restrict_to_store(queryset, store).distinct()
+
+
+def _restrict_to_store(queryset, store):
+    """Restringe o inbox à loja selecionada no painel.
+
+    A fronteira por usuário acima é a de SEGURANÇA (o que ele pode alcançar);
+    esta é a de CONTEXTO (o que ele está olhando agora). Faltava a segunda: um
+    dono de três lojas recebia as conversas das três misturadas numa lista só,
+    porque nada no ViewSet aceitava a loja e o painel não mandava.
+
+    `store` só RESTRINGE — nunca amplia. Slug desconhecido devolve vazio em vez
+    de "sem filtro", senão um erro de digitação viraria o bug de novo.
+    """
+    if not store:
         return queryset
 
-    account_ids = accessible_whatsapp_account_ids(user)
-    return queryset.filter(is_active=True, account_id__in=account_ids).distinct()
+    import uuid as uuid_module
+    from django.db.models import Q
+    from apps.stores.models import Store
+
+    loja = Store.objects.filter(slug=str(store)).first()
+    if loja is None:
+        try:
+            uuid_module.UUID(str(store))
+            loja = Store.objects.filter(id=store).first()
+        except (ValueError, AttributeError, TypeError):
+            loja = None
+    if loja is None:
+        return queryset.none()
+
+    # A conta pode estar ligada à loja pelo M2M `stores` ou pelo CompanyProfile.
+    return queryset.filter(
+        Q(account__stores=loja) | Q(account__company_profile__store=loja)
+    )
 
 
 @extend_schema_view(
@@ -92,7 +126,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
     filterset_fields = ['account', 'status', 'mode', 'assigned_agent']
 
     def get_queryset(self):
-        queryset = _accessible_conversations(self.request.user)
+        # `store` = loja selecionada no painel. Sem isso o dono de várias lojas
+        # via as conversas de todas misturadas numa lista só.
+        queryset = _accessible_conversations(
+            self.request.user,
+            store=(self.request.query_params.get('store') or '').strip() or None,
+        )
         search = (self.request.query_params.get('search') or '').strip()
         if search:
             for token in search.split():
@@ -118,7 +157,10 @@ class ConversationViewSet(viewsets.ModelViewSet):
         from apps.conversations.services import UniversalConversationService
 
         service = UniversalConversationService()
-        rows = service.list_conversations(request.user)
+        rows = service.list_conversations(
+            request.user,
+            store=(request.query_params.get('store') or '').strip() or None,
+        )
 
         page = self.paginate_queryset(rows)
         if page is not None:
