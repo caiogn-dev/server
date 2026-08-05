@@ -138,14 +138,31 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     day = day or (tz_now - timedelta(days=1)).date()
     inicio = day - timedelta(days=days - 1)
 
-    series = list(
-        revenue_orders(store=store, start=inicio, end=day)
-        .annotate(d=TruncDate(revenue_date_field()))
-        .values('d')
-        .annotate(orders=Count('id'), revenue=Sum('total'))
-        .order_by('d')
-    )
-    por_dia = {r['d']: (r['orders'], float(r['revenue'] or 0)) for r in series}
+    # BAIXA EM LOTE: quando N pedidos compartilham o mesmo paid_at ao segundo, não
+    # foi fluxo de caixa — foi alguém clicando "marcar como pago" numa fila. Na
+    # Pastita, 5 pedidos de julho foram baixados em 03/08 16:51, um deles com 26
+    # dias de atraso, empilhando R$ 1.489 num dia que não vendeu isso.
+    # Nesses pedidos a data de referência volta a ser a da venda (created_at).
+    # Agrupa por MINUTO, não por instante exato: uma baixa em lote leva alguns
+    # segundos para percorrer a fila. Na Pastita os 6 pedidos ficaram entre
+    # 16:51:41 e 16:51:53 — comparar timestamp exato nunca detectaria.
+    lote_minimo = 3
+    contagem = {}
+    for ts in revenue_orders(store=store).exclude(paid_at=None).values_list('paid_at', flat=True):
+        chave = ts.replace(second=0, microsecond=0)
+        contagem[chave] = contagem.get(chave, 0) + 1
+    minutos_de_lote = {m for m, n in contagem.items() if n >= lote_minimo}
+
+    por_dia = {}
+    for o in revenue_orders(store=store).only('created_at', 'paid_at', 'total'):
+        quando = o.paid_at or o.created_at
+        if o.paid_at and o.paid_at.replace(second=0, microsecond=0) in minutos_de_lote:
+            quando = o.created_at
+        d = timezone.localtime(quando).date()
+        if not (inicio <= d <= day):
+            continue
+        n, v = por_dia.get(d, (0, 0.0))
+        por_dia[d] = (n + 1, v + float(o.total or 0))
 
     # Dias sem venda contam como zero — senão a média mente para cima.
     diario = []
@@ -157,15 +174,34 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
 
     receitas = [x['revenue'] for x in diario]
     media_dia = sum(receitas) / len(receitas) if receitas else 0.0
+    dias_com_venda = sum(1 for x in diario if x['orders'] > 0)
+
+    def _mediana(vals):
+        """Robusta a outlier: um dia de R$ 3.000 não vira R$ 230/dia de projeção."""
+        if not vals:
+            return 0.0
+        s = sorted(vals)
+        meio = len(s) // 2
+        return s[meio] if len(s) % 2 else (s[meio - 1] + s[meio]) / 2
 
     metade = len(receitas) // 2
     ant, rec = receitas[:metade], receitas[metade:]
     media_ant = sum(ant) / len(ant) if ant else 0.0
     media_rec = sum(rec) / len(rec) if rec else 0.0
+
+    # A projeção usa a MEDIANA dos dias com venda da metade recente. A média era
+    # sequestrada por um único pico (ou por uma baixa em lote que sobreviveu).
+    rec_com_venda = [v for v in rec if v > 0]
+    base_projecao = _mediana(rec_com_venda) * (len(rec_com_venda) / len(rec)) if rec else 0.0
+
     if media_ant > 0:
         tendencia_pct = round((media_rec - media_ant) / media_ant * 100, 1)
     else:
         tendencia_pct = 100.0 if media_rec > 0 else 0.0
+
+    # Com pouquíssimo dia de venda o percentual é ruído: 2 dias em 28 produziam
+    # "+404%". O painel usa esta flag para mostrar o número ou dizer "amostra pequena".
+    tendencia_confiavel = dias_com_venda >= 8
 
     # Projeção do mês corrente: realizado + média diária recente x dias restantes.
     primeiro = day.replace(day=1)
@@ -173,7 +209,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     import calendar
     dias_no_mes = calendar.monthrange(day.year, day.month)[1]
     restantes = dias_no_mes - day.day
-    projecao_mes = realizado + (media_rec * restantes)
+    projecao_mes = realizado + (base_projecao * restantes)
 
     # Melhor e pior dia da semana (0=segunda).
     por_semana = {}
@@ -192,6 +228,8 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
         'daily_avg_revenue': round(media_dia, 2),
         'recent_avg_revenue': round(media_rec, 2),
         'trend_pct': tendencia_pct,
+        'trend_reliable': tendencia_confiavel,
+        'days_with_sale': dias_com_venda,
         'month_realized': round(realizado, 2),
         'month_projection': round(projecao_mes, 2),
         'days_left_in_month': restantes,
