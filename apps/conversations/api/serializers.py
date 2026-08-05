@@ -9,6 +9,13 @@ from ..models import Conversation, ConversationNote
 class ConversationSerializer(serializers.ModelSerializer):
     """Serializer for Conversation."""
     account_name = serializers.CharField(source='account.name', read_only=True)
+    # A qual LOJA esta conversa pertence. Sem isto o painel não conseguia nem
+    # marcar visualmente de quem é a conversa, nem descartar no WebSocket as
+    # mensagens de outra loja — a lista vinha filtrada da API mas o WS (que roda
+    # em modo multi-conta) injetava tudo, então a conversa aparecia ao vivo e
+    # sumia no primeiro refresh.
+    store_slug = serializers.SerializerMethodField()
+    store_name = serializers.SerializerMethodField()
     profile_picture = serializers.SerializerMethodField()
     unified_user_id = serializers.SerializerMethodField()
     assigned_agent_name = serializers.CharField(
@@ -31,7 +38,8 @@ class ConversationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Conversation
         fields = [
-            'id', 'account', 'account_name', 'phone_number', 'contact_name',
+            'id', 'account', 'account_name', 'store_slug', 'store_name',
+            'phone_number', 'contact_name',
             'wa_id', 'profile_picture_url', 'profile_picture_file', 'profile_picture',
             'profile_name_last_seen_at',
             'mode', 'status', 'assigned_agent', 'assigned_agent_name',
@@ -59,6 +67,30 @@ class ConversationSerializer(serializers.ModelSerializer):
             return None
         result = UnifiedUser.objects.filter(phone_number=obj.phone_number).values('id').first()
         return str(result['id']) if result else None
+
+    @staticmethod
+    def _loja(obj):
+        """Loja da conta: pelo M2M `stores` ou pelo CompanyProfile.
+
+        O viewset já faz prefetch de `account__stores` e `account__company_profile`,
+        então isto não gera query por linha.
+        """
+        conta = obj.account
+        if conta is None:
+            return None
+        lojas = list(conta.stores.all())
+        if lojas:
+            return lojas[0]
+        perfil = getattr(conta, 'company_profile', None)
+        return getattr(perfil, 'store', None) if perfil else None
+
+    def get_store_slug(self, obj):
+        loja = self._loja(obj)
+        return loja.slug if loja else None
+
+    def get_store_name(self, obj):
+        loja = self._loja(obj)
+        return loja.name if loja else None
 
     def get_profile_picture(self, obj):
         if obj.profile_picture_file:
