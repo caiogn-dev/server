@@ -775,11 +775,17 @@ class WebhookService:
             'pay_card',
             'pay_pickup',
         }
+        # Clique em botão que o PRÓPRIO bot mandou não é "falar por cima" do
+        # atendente — é a continuação de um fluxo que o bot começou. Sem isto,
+        # as 3 avaliações 5★ de 06/ago (Leani, Margô, Marilene) morreram em
+        # silêncio: o cliente clicou, o modo estava humano, e o link de
+        # avaliação do Google nunca foi enviado.
+        fluxos_do_bot = ('add_', 'product_', 'rating_', 'review_done_',
+                         'refer_friend_', 'track_')
         reply_id = (interactive_reply or {}).get('id', '')
         allow_transactional = (
             reply_id in transactional_reply_ids
-            or reply_id.startswith('add_')
-            or reply_id.startswith('product_')
+            or reply_id.startswith(fluxos_do_bot)
             or bool(location_data)
         )
         if not allow_transactional:

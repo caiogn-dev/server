@@ -200,7 +200,7 @@ class InteractiveReplyHandler(IntentHandler):
         Guarda de tenant/identidade: o pedido tem que ser da loja desta conta
         E do telefone desta conversa — id chutado não avalia pedido alheio.
         """
-        from apps.core.utils import normalize_phone_number
+        from apps.core.utils import phone_variants
         from apps.stores.models import StoreOrder, StoreReview
 
         try:
@@ -210,9 +210,13 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text('Não consegui registrar sua avaliação. 😕')
 
         order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
-        conv_phone = normalize_phone_number(self.conversation.phone_number or '')
-        order_phone = normalize_phone_number(order.customer_phone or '') if order else ''
-        if not order or not conv_phone or conv_phone != order_phone:
+        # phone_variants e não igualdade normalizada: o wa_id do WhatsApp vem
+        # sem o nono dígito e o pedido do site grava com ele. A guarda rejeitava
+        # o próprio dono do pedido (06/ago: Leani e Marilene não conseguiram
+        # avaliar; a resposta seria "Não encontrei esse pedido para avaliar").
+        conv_phones = set(phone_variants(self.conversation.phone_number or ''))
+        order_phones = set(phone_variants(order.customer_phone or '')) if order else set()
+        if not order or not conv_phones or not (conv_phones & order_phones):
             return HandlerResult.text('Não encontrei esse pedido para avaliar. 😕')
         if self.company_profile and self.company_profile.store_id and order.store_id != self.company_profile.store_id:
             return HandlerResult.text('Não encontrei esse pedido para avaliar. 😕')
@@ -256,16 +260,20 @@ class InteractiveReplyHandler(IntentHandler):
     def _handle_refer_friend(self, reply_id: str) -> HandlerResult:
         """Botão '🎁 Indicar um amigo' → cupom pessoal INDICA-XXXX + texto
         pronto pra encaminhar. Guarda de telefone igual ao rating."""
-        from apps.core.utils import normalize_phone_number
+        from apps.core.utils import phone_variants
         from apps.stores.models import StoreOrder
         from apps.stores.services.checkout_service import CheckoutService
         from apps.stores.services.referral_service import ReferralService, REFERRAL_DISCOUNT_PCT
 
         order_id = reply_id[len('refer_friend_'):]
         order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
-        conv_phone = normalize_phone_number(self.conversation.phone_number or '')
-        order_phone = normalize_phone_number(order.customer_phone or '') if order else ''
-        if not order or not conv_phone or conv_phone != order_phone:
+        # phone_variants e não igualdade normalizada: o wa_id do WhatsApp vem
+        # sem o nono dígito e o pedido do site grava com ele. A guarda rejeitava
+        # o próprio dono do pedido (06/ago: Leani e Marilene não conseguiram
+        # avaliar; a resposta seria "Não encontrei esse pedido para avaliar").
+        conv_phones = set(phone_variants(self.conversation.phone_number or ''))
+        order_phones = set(phone_variants(order.customer_phone or '')) if order else set()
+        if not order or not conv_phones or not (conv_phones & order_phones):
             return HandlerResult.text('Não encontrei esse pedido. 😕')
 
         coupon, _ = ReferralService.get_or_create_referral_coupon(
@@ -290,14 +298,18 @@ class InteractiveReplyHandler(IntentHandler):
         import uuid as uuid_mod
         from datetime import timedelta
         from django.utils import timezone as dj_tz
-        from apps.core.utils import normalize_phone_number
+        from apps.core.utils import phone_variants
         from apps.stores.models import StoreCoupon, StoreOrder
 
         order_id = reply_id[len('review_done_'):]
         order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
-        conv_phone = normalize_phone_number(self.conversation.phone_number or '')
-        order_phone = normalize_phone_number(order.customer_phone or '') if order else ''
-        if not order or not conv_phone or conv_phone != order_phone:
+        # phone_variants e não igualdade normalizada: o wa_id do WhatsApp vem
+        # sem o nono dígito e o pedido do site grava com ele. A guarda rejeitava
+        # o próprio dono do pedido (06/ago: Leani e Marilene não conseguiram
+        # avaliar; a resposta seria "Não encontrei esse pedido para avaliar").
+        conv_phones = set(phone_variants(self.conversation.phone_number or ''))
+        order_phones = set(phone_variants(order.customer_phone or '')) if order else set()
+        if not order or not conv_phones or not (conv_phones & order_phones):
             return HandlerResult.text('Não encontrei esse pedido. 😕')
         if self.company_profile and self.company_profile.store_id and order.store_id != self.company_profile.store_id:
             return HandlerResult.text('Não encontrei esse pedido. 😕')
