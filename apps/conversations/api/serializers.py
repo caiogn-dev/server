@@ -57,6 +57,39 @@ class ConversationSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at'
         ]
 
+    # Nomes-lixo que o sistema inventa quando não sabe quem é a pessoa.
+    # Mostrar "Desconhecido" no lugar do telefone é PIOR que mostrar o número:
+    # o dono perde o único dado útil e 112 conversas ficam idênticas na lista
+    # (06/ago: 112 dos 116 unified_users sem nome real tinham exatamente isso).
+    NOMES_INUTEIS = {'desconhecido', 'cliente balcão', 'cliente balcao',
+                     'cliente', 'sem nome', 'none', 'null'}
+
+    @classmethod
+    def _nome_util(cls, valor) -> str:
+        nome = str(valor or '').strip()
+        if not nome or nome.lower() in cls.NOMES_INUTEIS:
+            return ''
+        # cliente_5563..., user_123: identificador interno, não nome de gente.
+        if nome.lower().startswith(('cliente_', 'user_', 'usuario_')):
+            return ''
+        return nome
+
+    def to_representation(self, instance):
+        """Preenche `contact_name` vazio com o nome que já conhecemos.
+
+        O WhatsApp só manda o nome do perfil junto de mensagem RECEBIDA.
+        Conversa aberta por disparo da loja (campanha, notificação) nasce sem
+        nome, e o inbox vira uma parede de números.
+
+        Feito aqui, e não como SerializerMethodField, para o campo continuar
+        gravável (o painel edita o nome do contato).
+        """
+        data = super().to_representation(instance)
+        if not self._nome_util(data.get('contact_name')):
+            nome = self._nome_util(getattr(instance, 'anno_unified_name', None))
+            data['contact_name'] = nome or (data.get('contact_name') or '')
+        return data
+
     def get_unified_user_id(self, obj):
         # Subquery do viewset evita 1 query/linha em unified_users.
         if hasattr(obj, 'anno_unified_user_id'):
@@ -106,17 +139,34 @@ class ConversationSerializer(serializers.ModelSerializer):
             return anno
         return obj.messages.count() if hasattr(obj, 'messages') else 0
 
+    # Mídia não tem text_body — sem rótulo, a conversa aparecia em branco.
+    ROTULO_POR_TIPO = {
+        'image': '📷 Foto',
+        'document': '📄 Documento',
+        'audio': '🎤 Áudio',
+        'video': '🎥 Vídeo',
+        'sticker': '💬 Figurinha',
+        'location': '📍 Localização',
+        'contacts': '👤 Contato',
+        'order': '🛒 Pedido pelo catálogo',
+        'reaction': '👍 Reação',
+    }
+
+    def _preview(self, texto, tipo):
+        texto = (texto or '').strip()
+        if not texto:
+            texto = self.ROTULO_POR_TIPO.get(tipo or '', '')
+        return texto[:50] + '...' if len(texto) > 50 else texto
+
     def get_last_message_preview(self, obj):
         """Get preview of the last message in the conversation."""
         # Subquery do viewset traz o texto da última msg sem query por linha.
         if hasattr(obj, 'anno_last_text'):
-            text = obj.anno_last_text or ''
-            return text[:50] + '...' if len(text) > 50 else text
+            return self._preview(obj.anno_last_text, getattr(obj, 'anno_last_type', ''))
         if hasattr(obj, 'messages'):
             last_msg = obj.messages.order_by('-created_at').first()
             if last_msg:
-                text = last_msg.text_body or ''
-                return text[:50] + '...' if len(text) > 50 else text
+                return self._preview(last_msg.text_body, last_msg.message_type)
         return ''
 
     def get_unread_count(self, obj):

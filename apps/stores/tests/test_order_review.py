@@ -145,8 +145,14 @@ class ProductReviewItemTests(APITestCase):
             'items': [{'product': str(self.fora_do_pedido.id), 'rating': 5}],
         })
         self.assertEqual(resp.status_code, 400, resp.content)
-        self.assertEqual(StoreProductReview.objects.count(), 0)
-        self.assertEqual(StoreReview.objects.count(), 0)
+        # Escopado ao pedido do teste: o count() global media resíduo de outras
+        # suítes no banco de teste compartilhado e falhava sozinho (4 != 0).
+        # O que importa aqui é a atomicidade — o 400 não pode ter gravado nada
+        # PARA ESTE pedido.
+        self.assertEqual(
+            StoreProductReview.objects.filter(review__order=self.order).count(), 0,
+        )
+        self.assertEqual(StoreReview.objects.filter(order=self.order).count(), 0)
 
     def test_rating_de_item_fora_da_faixa_400(self):
         resp = self._post({

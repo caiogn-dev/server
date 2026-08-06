@@ -57,6 +57,13 @@ def _accessible_conversations(user, store=None):
     # handover via select_related; o resto via annotate/Subquery (1 query total).
     _last_msg = Message.objects.filter(conversation=OuterRef('pk')).order_by('-created_at')
     _unified = UnifiedUser.objects.filter(phone_number=OuterRef('phone_number')).values('id')
+    # Nome de fallback: o WhatsApp só entrega o nome do perfil em mensagem
+    # RECEBIDA. Conversa que a loja abriu disparando (campanha, notificação)
+    # nasce sem `contact_name` e o inbox virava uma parede de números — 116 de
+    # 182 conversas em 06/ago. Os 116 nomes já existiam em unified_users.
+    _unified_name = UnifiedUser.objects.filter(
+        phone_number=OuterRef('phone_number')
+    ).values('name')
     queryset = Conversation.objects.select_related(
         'account', 'assigned_agent', 'handover'
     ).prefetch_related(
@@ -69,7 +76,12 @@ def _accessible_conversations(user, store=None):
             distinct=True,
         ),
         anno_last_text=Subquery(_last_msg.values('text_body')[:1]),
+        # Imagem, documento e áudio não têm text_body: sem o tipo, a última
+        # mensagem virava preview VAZIO e a conversa parecia em branco na lista
+        # (06/ago: 77 de 78 imagens e 40 de 41 documentos).
+        anno_last_type=Subquery(_last_msg.values('message_type')[:1]),
         anno_unified_user_id=Subquery(_unified[:1]),
+        anno_unified_name=Subquery(_unified_name[:1]),
     )
     # is_staff NÃO vê conversas (mensagens de clientes) cross-tenant — só superuser.
     if not user.is_superuser:
