@@ -726,6 +726,12 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
 
+        # Faturamento é o queryset de receita (SSOT em services/revenue.py): sem
+        # cancelado e sem pedido de teste. As CONTAGENS continuam sobre tudo —
+        # a lista de pedidos precisa mostrar o cancelado.
+        from apps.stores.services.revenue import exclude_non_revenue
+        receita = Q(id__in=exclude_non_revenue(queryset).values('id'))
+
         # Single aggregation query combines all counts
         agg = queryset.aggregate(
             # Total counts by period.
@@ -738,9 +744,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             this_month=Count(Case(When(created_at__gte=month_ago, then=1))),
 
             # Revenue aggregates
-            revenue_total=Sum('total', filter=Q(payment_status='paid')),
-            revenue_today=Sum('total', filter=Q(payment_status='paid', created_at__gte=today)),
-            revenue_week=Sum('total', filter=Q(payment_status='paid', created_at__gte=week_ago)),
+            revenue_total=Sum('total', filter=receita),
+            revenue_today=Sum('total', filter=receita & Q(created_at__gte=today)),
+            revenue_week=Sum('total', filter=receita & Q(created_at__gte=week_ago)),
             revenue_pending=Sum('total', filter=Q(payment_status='pending')),
 
             # Counts por payment_status (o painel de pagamentos precisa do

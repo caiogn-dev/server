@@ -142,13 +142,16 @@ def dashboard(request):
     store = _get_selected_store(request)
     today = timezone.now().date()
 
-    # Orders today
-    orders_today = StoreOrder.objects.filter(
-        store=store, created_at__date=today
-    ).aggregate(
-        count=Count('id'),
-        revenue=Sum('total'),
-    )
+    # Orders today — a contagem é operacional (mostra tudo), o faturamento passa
+    # pelo SSOT de receita: somava `Sum('total')` sem filtro nenhum, contando
+    # pedido cancelado e até o que nunca foi pago.
+    from apps.stores.services.revenue import exclude_non_revenue
+
+    do_dia = StoreOrder.objects.filter(store=store, created_at__date=today)
+    orders_today = {
+        'count': do_dia.count(),
+        'revenue': exclude_non_revenue(do_dia).aggregate(revenue=Sum('total'))['revenue'],
+    }
 
     # Order status breakdown
     order_statuses = list(

@@ -89,9 +89,20 @@ class DashboardStatsAggregator:
             'generated_at': timezone.localtime(timezone.now()).isoformat(),
         }
 
+    def _revenue_queryset(self):
+        """Pedidos que contam como faturamento — SSOT em stores/services/revenue.py."""
+        from apps.stores.services.revenue import exclude_non_revenue
+
+        return exclude_non_revenue(
+            StoreOrder.objects.filter(store=self.store, is_active=True)
+        )
+
     def _aggregate_orders(self) -> Dict[str, Any]:
         queryset = StoreOrder.objects.filter(store=self.store, is_active=True)
-        filter_q = Q(payment_status__in=self.PAID_STATUSES)
+        # A contagem de pedidos é operacional (conta tudo); o dinheiro vem do
+        # queryset de receita, que exclui cancelado e pedido de teste.
+        revenue_ids = self._revenue_queryset().values('id')
+        filter_q = Q(id__in=revenue_ids)
 
         return queryset.aggregate(
             today_orders=Count('id', filter=Q(created_at__date=self.today)),

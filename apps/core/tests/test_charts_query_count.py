@@ -31,7 +31,11 @@ class ChartsQueryCountTest(APITestCase):
             StoreOrder.objects.create(
                 store=self.store,
                 order_number=f'CH-{i}',
-                status='paid',
+                status='delivered',
+                # `status='paid'` é status do PEDIDO; receita olha o PAGAMENTO.
+                # Sem isto o pedido não era faturamento nenhum e o teste cobrava
+                # R$ 50 de venda que nunca foi paga.
+                payment_status='paid',
                 subtotal='10.00',
                 total='10.00',
                 created_at=now - timedelta(days=i),

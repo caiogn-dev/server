@@ -157,9 +157,14 @@ class OrderService:
         
         if notes:
             order.notes = f"{order.notes}\n\n[{timezone.now().isoformat()}] Status: {new_status} - {notes}".strip()
-        
+
         order.save()
-        
+
+        # O painel cancela pelo dropdown de status, não só pelo botão de cancelar
+        # — os dois caminhos precisam liquidar o pagamento.
+        if new_status == 'cancelled':
+            self._liquidar_pagamento_do_cancelado(order)
+
         # Trigger webhook
         from .webhook_service import webhook_service
         webhook_service.trigger_webhooks(order.store, 'order.status_changed', {
@@ -323,7 +328,11 @@ class OrderService:
         refund_result = None
         if refund and order.payment_status == 'paid':
             refund_result = self._process_refund(order)
-        
+
+        # Depois do estorno: se ele deu certo o pagamento já é 'refunded' e fica
+        # como está; senão o pedido cancelado não pode continuar 'paid'.
+        self._liquidar_pagamento_do_cancelado(order)
+
         # Trigger webhook
         from .webhook_service import webhook_service
         webhook_service.trigger_webhooks(order.store, 'order.cancelled', {
@@ -348,12 +357,29 @@ class OrderService:
             'refund': refund_result
         }
 
+    # Pagamentos que já são um desfecho final e não podem ser sobrescritos ao
+    # cancelar: quem estornou de verdade precisa continuar aparecendo como
+    # estorno na conciliação com o gateway.
+    _PAGAMENTO_FINAL = ('refunded', 'partially_refunded', 'cancelled')
+
+    def _liquidar_pagamento_do_cancelado(self, order) -> None:
+        """Ao cancelar, o pagamento deixa de estar 'paid' ou 'pending'.
+
+        Sem isto a venda de balcão cancelada continuava `payment_status='paid'`
+        e entrava no faturamento de toda tela que soma por pagamento — e a
+        pendente continuava contando em 'a receber'.
+        """
+        if order.payment_status in self._PAGAMENTO_FINAL:
+            return
+        order.payment_status = 'cancelled'
+        order.save(update_fields=['payment_status'])
+
     def _process_refund(self, order) -> Dict[str, Any]:
         """Process refund for a cancelled order."""
         try:
             from .payment_service import get_payment_service
             
-            payment_service = get_payment_service(order.store)
+            payment_service = get_payment_service()
             if payment_service and order.payment_id:
                 result = payment_service.refund_payment(order.payment_id)
                 if result.get('success'):

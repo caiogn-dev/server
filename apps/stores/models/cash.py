@@ -66,10 +66,13 @@ class StoreCashSession(models.Model):
             Q(paid_at__gte=self.opened_at, paid_at__lte=window_end)
             | (Q(paid_at__isnull=True) & Q(created_at__gte=self.opened_at, created_at__lte=window_end))
         )
-        cash_sales = StoreOrder.objects.filter(
-            store=self.store,
-            payment_method='cash',
-            payment_status='paid',
+        # Só venda que virou dinheiro na gaveta: cancelada não entra (senão a
+        # "quebra" do fechamento acusa falta que não existe) e pedido de teste
+        # do dono também não.
+        from apps.stores.services.revenue import exclude_non_revenue
+
+        cash_sales = exclude_non_revenue(
+            StoreOrder.objects.filter(store=self.store, payment_method='cash')
         ).filter(paid_window).aggregate(total=Sum('total'))['total'] or Decimal('0')
 
         return total + Decimal(cash_sales)

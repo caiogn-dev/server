@@ -65,6 +65,10 @@ class StoreOrder(BaseModel):
         FAILED = 'failed', 'Failed'
         REFUNDED = 'refunded', 'Refunded'
         PARTIALLY_REFUNDED = 'partially_refunded', 'Partially Refunded'
+        # Pedido cancelado sem estorno pelo gateway: venda de balcão desfeita,
+        # dinheiro devolvido na mão, PIX que nunca chegou a ser pago. Sem este
+        # estado o pedido ficava 'paid' para sempre e entrava no faturamento.
+        CANCELLED = 'cancelled', 'Cancelled'
 
     class DeliveryMethod(models.TextChoices):
         DELIVERY = 'delivery', 'Delivery'
@@ -169,6 +173,7 @@ class StoreOrder(BaseModel):
     delivered_at = models.DateTimeField(null=True, blank=True)
     picked_up_at = models.DateTimeField(null=True, blank=True)
     cancelled_at = models.DateTimeField(null=True, blank=True)
+    refunded_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=140, blank=True, default='')
 
     # ── BI Fase 2: colunas denormalizadas (fonte: metadata/delivery_address) ──

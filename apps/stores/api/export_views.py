@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import user_can_access_store
 from ..models import Store, StoreOrder, StoreProduct, StoreCustomer
+from ..services.revenue import exclude_non_revenue, revenue_items
 from .views import IsStoreOwnerOrStaff
 
 
@@ -53,6 +54,17 @@ class BaseExportView(APIView):
 
         return store
     
+    def revenue_queryset(self, store, **filtros):
+        """Pedidos que contam como faturamento — SSOT em services/revenue.py.
+
+        Os relatórios montavam `payment_status='paid'` na mão em ~10 pontos e
+        somavam venda cancelada e pedido de teste do dono como receita.
+        `filtros` são lookups extras de período (ex.: `created_at__gte=...`).
+        """
+        from apps.stores.services.revenue import exclude_non_revenue
+
+        return exclude_non_revenue(StoreOrder.objects.filter(store=store, **filtros))
+
     def get_date_range(self, request):
         """Get date range from query params."""
         start_date = request.query_params.get('start_date')
@@ -202,11 +214,10 @@ class RevenueReportView(BaseExportView):
         start_date, end_date = self.get_date_range(request)
         group_by = request.query_params.get('group_by', 'day')  # day, week, month
         
-        orders = StoreOrder.objects.filter(
-            store=store,
+        orders = self.revenue_queryset(
+            store,
             created_at__date__gte=start_date,
             created_at__date__lte=end_date,
-            payment_status='paid'
         )
         
         # Aggregation function based on group_by
@@ -277,11 +288,9 @@ class ProductsReportView(BaseExportView):
         # Get order items for the period
         from ..models import StoreOrderItem
         
-        items = StoreOrderItem.objects.filter(
-            order__store=store,
+        items = revenue_items(store=store).filter(
             order__created_at__date__gte=start_date,
             order__created_at__date__lte=end_date,
-            order__payment_status='paid'
         ).values(
             'product_id', 'product_name'
         ).annotate(
@@ -379,11 +388,10 @@ class CustomersReportView(BaseExportView):
         start_date, end_date = self.get_date_range(request)
         
         # Top customers by order value
-        top_customers = StoreOrder.objects.filter(
-            store=store,
+        top_customers = self.revenue_queryset(
+            store,
             created_at__date__gte=start_date,
             created_at__date__lte=end_date,
-            payment_status='paid'
         ).values(
             'customer_email', 'customer_name', 'customer_phone'
         ).annotate(
@@ -556,7 +564,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date=today
         )
-        today_revenue = today_orders.filter(payment_status='paid').aggregate(
+        today_revenue = exclude_non_revenue(today_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -565,7 +573,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date=yesterday
         )
-        yesterday_revenue = yesterday_orders.filter(payment_status='paid').aggregate(
+        yesterday_revenue = exclude_non_revenue(yesterday_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -574,7 +582,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date__gte=last_7_days
         )
-        week_revenue = week_orders.filter(payment_status='paid').aggregate(
+        week_revenue = exclude_non_revenue(week_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -583,7 +591,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date__gte=last_30_days
         )
-        month_revenue = month_orders.filter(payment_status='paid').aggregate(
+        month_revenue = exclude_non_revenue(month_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -657,17 +665,15 @@ class SaladasReportView(BaseExportView):
             prev_end = today - timedelta(days=30)
             period_label = 'Mês'
 
-        paid_orders = StoreOrder.objects.filter(
-            store=store,
+        paid_orders = self.revenue_queryset(
+            store,
             created_at__date__gte=start,
             created_at__date__lte=end,
-            payment_status='paid',
         )
-        prev_paid_orders = StoreOrder.objects.filter(
-            store=store,
+        prev_paid_orders = self.revenue_queryset(
+            store,
             created_at__date__gte=prev_start,
             created_at__date__lte=prev_end,
-            payment_status='paid',
         )
 
         curr = paid_orders.aggregate(
@@ -737,9 +743,8 @@ class SaladasReportView(BaseExportView):
         period_phones = list(paid_orders.values_list('customer_phone', flat=True).distinct())
         total_period_customers = len(period_phones)
         returning = (
-            StoreOrder.objects.filter(
-                store=store,
-                payment_status='paid',
+            self.revenue_queryset(
+                store,
                 customer_phone__in=period_phones,
                 created_at__date__lt=start,
             )

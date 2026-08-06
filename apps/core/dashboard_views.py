@@ -759,6 +759,10 @@ class DashboardChartsView(APIView):
         # Somar por `paid_at` sem checar status contava pedido que foi pago e
         # DEPOIS cancelado/estornado: o payment_status muda, mas o paid_at fica.
         # Eram 5 pedidos (R$ 420,84) inflando o gráfico da home em 21%.
+        # Import local: o topo do módulo não importa o SSOT e sem isto o
+        # endpoint do gráfico da home responde 500 (NameError).
+        from apps.stores.services.revenue import revenue_date_field, revenue_orders
+
         revenue_rows = (
             revenue_orders(queryset=orders_qs).filter(paid_at__gte=window_start)
             # Sem tzinfo: agrupa no TIME_ZONE do projeto. Forçar UTC jogava toda

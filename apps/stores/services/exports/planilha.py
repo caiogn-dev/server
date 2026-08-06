@@ -121,14 +121,26 @@ def monta_planilha(
     titulo: str = 'Dados',
     subtitulo: str = '',
 ):
-    """Monta o Workbook. Separado da resposta HTTP para poder ser testado."""
+    """Workbook de uma aba só. Separado da resposta HTTP para poder ser testado."""
     from openpyxl import Workbook
+
+    wb = Workbook()
+    _preenche_aba(wb.active, linhas, colunas, titulo=titulo, subtitulo=subtitulo)
+    return wb
+
+
+def _preenche_aba(ws, linhas, colunas, titulo='Dados', subtitulo=''):
+    """Escreve uma tabela formatada NA worksheet recebida.
+
+    Preenche direto em vez de montar noutro workbook e copiar célula a célula:
+    a cópia perdia mesclagem, bordas, autofiltro e — o pior — o number_format,
+    então nas abas secundárias a participação aparecia como
+    "0.837016938062098" em vez de 83,7%.
+    """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = titulo[:31] or 'Dados'  # limite do Excel
+    ws.title = (titulo[:31] or 'Dados')
 
     # ── Título e subtítulo ───────────────────────────────────────────────
     ultima_col = get_column_letter(max(len(colunas), 1))
@@ -230,7 +242,7 @@ def monta_planilha(
             f'{ultima_col}{ultima_linha_dados}'
         )
     ws.sheet_view.showGridLines = False
-    return wb
+    return ws
 
 
 def resposta_xlsx(
@@ -248,7 +260,11 @@ def resposta_xlsx(
 
     if abas_extras:
         for nome_aba, linhas_extra, colunas_extra in abas_extras:
-            _acrescenta_aba(wb, nome_aba, linhas_extra, colunas_extra)
+            _preenche_aba(
+                wb.create_sheet(title=nome_aba[:31]),
+                linhas_extra, colunas_extra,
+                titulo=nome_aba, subtitulo=subtitulo,
+            )
 
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -256,21 +272,3 @@ def resposta_xlsx(
     resposta = HttpResponse(buffer.read(), content_type=CONTENT_TYPE_XLSX)
     resposta['Content-Disposition'] = f'attachment; filename="{nome_arquivo}"'
     return resposta
-
-
-def _acrescenta_aba(wb, nome: str, linhas: Iterable[dict], colunas: list[Coluna]) -> None:
-    """Copia uma aba montada por monta_planilha para o workbook destino."""
-    origem = monta_planilha(linhas, colunas, titulo=nome).active
-    destino = wb.create_sheet(title=nome[:31])
-    for linha in origem.iter_rows():
-        for celula in linha:
-            nova = destino.cell(row=celula.row, column=celula.column, value=celula.value)
-            if celula.has_style:
-                nova.number_format = celula.number_format
-                nova.font = celula.font.copy()
-                nova.fill = celula.fill.copy()
-                nova.alignment = celula.alignment.copy()
-    for chave, dim in origem.column_dimensions.items():
-        destino.column_dimensions[chave].width = dim.width
-    destino.freeze_panes = origem.freeze_panes
-    destino.sheet_view.showGridLines = False

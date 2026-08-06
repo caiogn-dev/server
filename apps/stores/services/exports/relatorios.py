@@ -18,6 +18,36 @@ from apps.stores.services.revenue import revenue_date_field, revenue_orders
 
 _DEC = DecimalField(max_digits=12, decimal_places=2)
 
+# O banco guarda o código cru do gateway/checkout. Num relatório que o dono lê
+# (e manda para o contador), "cash" e "pickup" não dizem nada.
+_ROTULO_PAGAMENTO = {
+    'cash': 'Dinheiro',
+    'pix': 'PIX',
+    'credit_card': 'Cartão de crédito',
+    'debit_card': 'Cartão de débito',
+    'card': 'Cartão',
+    'mercadopago': 'Mercado Pago',
+    'meal_voucher': 'Vale-refeição',
+    'bank_transfer': 'Transferência',
+    'other': 'Outro',
+}
+
+_ROTULO_ENTREGA = {
+    'delivery': 'Entrega',
+    'pickup': 'Retirada no local',
+    'dine_in': 'Consumo no local',
+    'counter': 'Balcão',
+    'table': 'Mesa',
+}
+
+
+def _rotulo(codigo, mapa):
+    """Código do banco → nome legível. Desconhecido vira o próprio código
+    capitalizado, para não sumir do relatório nem virar 'None'."""
+    if not codigo:
+        return 'Não informado'
+    return mapa.get(str(codigo).lower(), str(codigo).replace('_', ' ').capitalize())
+
 
 def _zero():
     return Coalesce(Sum('total'), Decimal('0'), output_field=_DEC)
@@ -113,7 +143,7 @@ def faturamento_por_pagamento(store, inicio, fim, incluir_teste=False):
     total = sum((l['receita'] for l in linhas), Decimal('0'))
     return [
         {
-            'metodo': l['payment_method'] or 'não informado',
+            'metodo': _rotulo(l['payment_method'], _ROTULO_PAGAMENTO),
             'pedidos': l['pedidos'],
             'receita': l['receita'],
             'participacao': (l['receita'] / total) if total else Decimal('0'),
@@ -136,7 +166,7 @@ def faturamento_por_entrega(store, inicio, fim, incluir_teste=False):
     )
     return [
         {
-            'modalidade': l['delivery_method'] or 'não informado',
+            'modalidade': _rotulo(l['delivery_method'], _ROTULO_ENTREGA),
             'pedidos': l['pedidos'],
             'receita': l['receita'],
             'taxa_entrega': l['taxa'],
