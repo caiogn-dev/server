@@ -6,7 +6,9 @@ Problema (antes do fix):
   gerando 1 + N queries ao banco (N = sessões, até 100) em vez de 1 query com
   conditional aggregation via annotate().
 
-Correção: .annotate(total_reinforcement=..., total_withdrawal=...) na queryset.
+Correção: .annotate(total_reinforcement=..., total_withdrawal=...) na queryset
+usando StoreCashMovement.Kind.REINFORCEMENT ('reforco') e .Kind.WITHDRAWAL
+('sangria') — valores reais persistidos no banco (não os nomes do enum).
 
 SimpleTestCase — sem DB / Docker / psycopg2.
 """
@@ -38,13 +40,21 @@ class CashHistoryN1EliminadoTest(SimpleTestCase):
         """Campo total_withdrawal presente no annotate."""
         self.assertIn('total_withdrawal', _src())
 
-    def test_filtro_usa_movements_kind_reinforcement(self):
-        """Filtro condicional usa movements__kind='reinforcement'."""
-        self.assertIn("movements__kind='reinforcement'", _src())
+    def test_filtro_usa_kind_reinforcement_enum(self):
+        """Filtro usa StoreCashMovement.Kind.REINFORCEMENT (valor DB: 'reforco')."""
+        self.assertIn('Kind.REINFORCEMENT', _src())
 
-    def test_filtro_usa_movements_kind_withdrawal(self):
-        """Filtro condicional usa movements__kind='withdrawal'."""
-        self.assertIn("movements__kind='withdrawal'", _src())
+    def test_filtro_usa_kind_withdrawal_enum(self):
+        """Filtro usa StoreCashMovement.Kind.WITHDRAWAL (valor DB: 'sangria')."""
+        self.assertIn('Kind.WITHDRAWAL', _src())
+
+    def test_nao_usa_string_hardcoded_reinforcement(self):
+        """Não usa string literal 'reinforcement' (valor errado — DB usa 'reforco')."""
+        self.assertNotIn("movements__kind='reinforcement'", _src())
+
+    def test_nao_usa_string_hardcoded_withdrawal(self):
+        """Não usa string literal 'withdrawal' (valor errado — DB usa 'sangria')."""
+        self.assertNotIn("movements__kind='withdrawal'", _src())
 
     def test_total_difference_acumulado_no_loop(self):
         """total_difference é acumulado dentro do for (não segunda iteração)."""

@@ -860,11 +860,11 @@ class CashHistoryReportView(BaseAnalyticsView):
             .annotate(
                 total_reinforcement=Sum(
                     'movements__amount',
-                    filter=Q(movements__kind='reinforcement'),
+                    filter=Q(movements__kind=StoreCashMovement.Kind.REINFORCEMENT),
                 ),
                 total_withdrawal=Sum(
                     'movements__amount',
-                    filter=Q(movements__kind='withdrawal'),
+                    filter=Q(movements__kind=StoreCashMovement.Kind.WITHDRAWAL),
                 ),
             )
             .order_by('-opened_at')[:100]
