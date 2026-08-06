@@ -1012,6 +1012,18 @@ class CheckoutService:
             }
         )
         if customer_user and customer_user != cart.user:
+            # O cliente fechou como convidado, mas o e-mail/telefone casou com
+            # uma conta existente. Se essa conta já tinha um carrinho ativo
+            # abandonado, reivindicar este aqui violava
+            # unique_active_cart_per_user_store e o checkout inteiro morria em
+            # 400 ("Erro ao processar checkout"). Desativa o carrinho órfão
+            # antes de reivindicar — este carrinho é o que virou pedido e será
+            # desativado logo abaixo de qualquer forma.
+            StoreCart.objects.filter(
+                store=store,
+                user=customer_user,
+                is_active=True,
+            ).exclude(pk=cart.pk).update(is_active=False)
             cart.user = customer_user
             cart.save(update_fields=['user', 'updated_at'])
 
