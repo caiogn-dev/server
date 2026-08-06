@@ -3,7 +3,7 @@ Conversation API views.
 """
 import logging
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import F, Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
@@ -76,7 +76,19 @@ def _accessible_conversations(user, store=None):
         account_ids = accessible_whatsapp_account_ids(user)
         queryset = queryset.filter(is_active=True, account_id__in=account_ids)
 
-    return _restrict_to_store(queryset, store).distinct()
+    # ORDENAÇÃO EXPLÍCITA — não confie no `ordering` do Meta aqui.
+    # O `annotate()` acima é agregação (Count), e o Django DESCARTA o ordering
+    # default do Meta em query agregada. A lista voltava na ordem arbitrária do
+    # Postgres: com paginação, a conversa que acabou de chegar caía numa página
+    # qualquer e o painel mostrava no topo uma conversa de dias atrás
+    # (06/ago: Lúcia às 13:18 sumida, Juliana de 05/ago no topo).
+    #
+    # nulls_last: conversa sem nenhuma mensagem tem last_message_at NULL e no
+    # Postgres DESC coloca NULL PRIMEIRO — ela ia furar a fila no topo do inbox.
+    return _restrict_to_store(queryset, store).distinct().order_by(
+        F('last_message_at').desc(nulls_last=True),
+        '-created_at',
+    )
 
 
 def _restrict_to_store(queryset, store):
