@@ -10,6 +10,68 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-06
+
+**Baseline de testes:** 82 testes SimpleTestCase (sem Docker/PostgreSQL) — 82/82 OK após o fix.
+9 PRs abertos (#318–#326) cobrem IDOR Instagram, CustomerSearchView, marketing e-mail IDOR,
+str(e) em campanha/e-mail, contratos de checkout, PII WhatsApp/indicação, str(e) health check +
+is_staff base_consumer, debug IDOR CustomersViewSet, str(exc) Meta API.
+Nenhum PR cobria o N+1 do histórico de caixa.
+HEAD de `development`: `e1e5662` (feat store-score).
+
+**Bug encontrado e corrigido:** N+1 queries em `CashHistoryReportView` [P2]
+
+- **Tipo:** P2 — performance: endpoint do histórico de caixa PDV gerava 1 + N queries (N = sessões de caixa, até 100) em vez de 1 query com conditional aggregation.
+- **Arquivo corrigido (1):** `apps/stores/api/analytics_views.py:855–881`
+- **Problema:** `StoreCashSession` era iterado via `for s in sessions:` e a cada iteração chamava
+  `s.movements.aggregate(reinforcement=Sum(...), withdrawal=Sum(...))` — uma query separada por sessão.
+  Com até 100 sessões fechadas no período: 101 queries ao invés de 1.
+- **Correção:**
+  - Adicionado `.annotate(total_reinforcement=Sum('movements__amount', filter=Q(movements__kind='reinforcement')), total_withdrawal=Sum('movements__amount', filter=Q(movements__kind='withdrawal')))` diretamente na queryset de sessions.
+  - Django gera uma única query com `SUM(CASE WHEN kind='reinforcement' ...) AS total_reinforcement` — conditional aggregation via LEFT OUTER JOIN.
+  - Removida a chamada `s.movements.aggregate()` do loop; substituída por leitura dos campos anotados `s.total_reinforcement` / `s.total_withdrawal`.
+  - Bônus: `total_difference` agora é acumulado dentro do loop (elimina a segunda iteração `sum((s.difference ...) for s in sessions)` que existia antes após o loop).
+- **Redução de queries:** de `1 + N` (até 101) para `1` query por request ao endpoint.
+- **Testes:** 10 SimpleTestCase em `apps/stores/tests/test_cash_history_n1.py` (RED→GREEN confirmado):
+  - `movements.aggregate` não mais presente no código
+  - `.annotate(` presente na queryset
+  - `total_reinforcement` e `total_withdrawal` presentes no annotate
+  - Filtros condicionais `movements__kind='reinforcement'` e `movements__kind='withdrawal'`
+  - `total_difference +=` acumulado no loop
+  - Nenhum `.aggregate(` no corpo do `for`
+  - `s.total_reinforcement` / `s.total_withdrawal` usados (não `movements['..']`)
+  - Chaves de resposta `'reinforcement':` e `'withdrawal':` inalteradas
+- **PR:** `bot/server-2026-08-06-cash-history-n1`
+
+**PRs em aberto aguardando merge (não criados por esta sessão):**
+
+| PR | Tipo | Descrição |
+|---|---|---|
+| #318 | P1 | IDOR cross-tenant via campo account gravável em Instagram serializers |
+| #319 | P2 | CustomerSearchView retorna clientes de outros tenants |
+| #320 | P1 | IDOR de escrita cross-tenant em serializers de e-mail marketing |
+| #321 | P2 | str(e) em envio de campanha e e-mail |
+| #322 | P1 | Contratos de regressão para checkout (calculate_totals, placeholder email) |
+| #323 | P0 | PII (telefone) em logs de notificação WhatsApp e indicação |
+| #324 | P0/P2 | str(e) em health check AllowAny + is_staff em base_consumer |
+| #325 | P0/P1 | IDOR + PII leak no debug action de CustomersViewSet |
+| #326 | P2 | str(exc) em views Meta API |
+
+**Próximo backlog priorizado:**
+
+1. **P0/P1** — Merge urgente dos PRs #323, #324, #325 (PII + str(e) AllowAny + IDOR debug).
+2. **P1** — Merge dos PRs #318, #320, #322 (IDOR Instagram + marketing + contratos checkout).
+3. **P2** — Varredura de N+1 no restante de `analytics_views.py`:
+   - `ChannelsReportView`: itera todos os pedidos em Python (acceptable — sem queries extras no loop)
+   - `GeographyReportView`: itera `point_fields` sem N+1 (acceptable)
+   - `RfmReportView._cadence_by_phone()`: carrega todos os pedidos do banco de uma vez (acceptable)
+   - `SaladasReportView`: loop sobre `delivery_orders` sem N+1 (campos `delivery_address` são JSONField, não FK)
+4. **P2** — `LoyaltyAccountsView` retorna `email` do usuário que pode ser `{phone}@pastita.local` (violação do CLAUDE.md). Filtrar emails placeholder antes de expor.
+5. **P2** — `maps_views.py:logger.info(...)` loga coordenadas GPS de destino de entrega (dados de localização LGPD art. 5, XIII). Remover ou mascarar lat/lng dos logs de rota e validação.
+6. **P3** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (item crítico do CLAUDE.md, pendente há várias sessões).
+
+
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.

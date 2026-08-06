@@ -857,14 +857,23 @@ class CashHistoryReportView(BaseAnalyticsView):
                 store=store, status='closed', opened_at__date__range=(start, end)
             )
             .select_related('opened_by', 'closed_by')
+            .annotate(
+                total_reinforcement=Sum(
+                    'movements__amount',
+                    filter=Q(movements__kind='reinforcement'),
+                ),
+                total_withdrawal=Sum(
+                    'movements__amount',
+                    filter=Q(movements__kind='withdrawal'),
+                ),
+            )
             .order_by('-opened_at')[:100]
         )
         rows = []
+        total_difference = Decimal('0')
         for s in sessions:
-            movements = s.movements.aggregate(
-                reinforcement=Sum('amount', filter=Q(kind='reinforcement')),
-                withdrawal=Sum('amount', filter=Q(kind='withdrawal')),
-            )
+            diff = s.difference or Decimal('0')
+            total_difference += diff
             rows.append({
                 'id': str(s.id),
                 'opened_at': s.opened_at,
@@ -874,11 +883,10 @@ class CashHistoryReportView(BaseAnalyticsView):
                 'opening_amount': _round2(s.opening_amount),
                 'expected_amount': _round2(s.expected_amount),
                 'counted_amount': _round2(s.counted_amount),
-                'difference': _round2(s.difference),
-                'reinforcement': _round2(movements['reinforcement']),
-                'withdrawal': _round2(movements['withdrawal']),
+                'difference': _round2(diff),
+                'reinforcement': _round2(s.total_reinforcement),
+                'withdrawal': _round2(s.total_withdrawal),
             })
-        total_difference = sum((s.difference or Decimal('0')) for s in sessions)
         return Response({
             'sessions': rows,
             'summary': {
