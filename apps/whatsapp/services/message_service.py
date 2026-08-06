@@ -786,8 +786,19 @@ class MessageService:
         requests try to create a conversation for the same phone number simultaneously.
         """
         from apps.conversations.models import Conversation
-        from apps.core.utils import normalize_phone_number
+        from apps.core.utils import normalize_phone_number, phone_variants
         from django.db import IntegrityError
+
+        # Mesma conversa em qualquer forma do telefone (com/sem nono dígito,
+        # com/sem DDI). Sem isto o envio de notificação criava uma thread
+        # fantasma paralela à conversa real do cliente.
+        existente = Conversation.objects.filter(
+            account=account,
+            phone_number__in=phone_variants(phone_number),
+        ).order_by('-last_message_at', '-created_at').first()
+        if existente is not None:
+            return existente
+
         phone_number = normalize_phone_number(phone_number)
         try:
             # First try: standard get_or_create

@@ -97,8 +97,90 @@ class Command(BaseCommand):
                     Conversation.objects.filter(pk=conv.pk).update(phone_number=normalized)
                 normalized_only += 1
 
+        merged += self._merge_by_ninth_digit(dry_run)
+
         self.stdout.write(self.style.SUCCESS(
             f'\nDone. Merged: {merged}, Normalized-only: {normalized_only}'
         ))
         if dry_run:
             self.stdout.write(self.style.WARNING('(dry run — nothing was written)'))
+
+    def _merge_by_ninth_digit(self, dry_run: bool) -> int:
+        """Une conversas do MESMO celular gravadas com e sem o nono dígito.
+
+        A normalização acima não resolve este caso: `556392618115` e
+        `5563992618115` já estão ambos normalizados — são 12 e 13 dígitos, e
+        `normalize_phone_number` só acrescenta o DDI. O WhatsApp entrega o
+        `wa_id` sem o nono dígito e o site grava com ele, então o cliente ficava
+        com duas conversas: a real (com histórico) e uma fantasma sem nome, que
+        recebia as notificações do pedido.
+
+        Vence a conversa com `wa_id` preenchido — é a que o WhatsApp reconhece e
+        para onde as respostas do cliente chegam. Sem `wa_id`, vence a que tem
+        mais mensagens.
+        """
+        from apps.conversations.models import Conversation
+        from apps.whatsapp.models import Message
+        from apps.core.utils import phone_variants
+
+        self.stdout.write('\nUnificando por nono dígito...')
+
+        grupos = {}
+        for conv in Conversation.objects.all():
+            variantes = phone_variants(conv.phone_number)
+            if not variantes:
+                continue
+            # Chave canônica estável: a menor variante só-dígitos do conjunto.
+            chave = (conv.account_id, min(v for v in variantes if v.isdigit()))
+            grupos.setdefault(chave, []).append(conv)
+
+        merged = 0
+        for (_account_id, chave), convs in grupos.items():
+            if len(convs) < 2:
+                continue
+
+            convs.sort(key=lambda c: (
+                bool(c.wa_id),
+                Message.objects.filter(conversation=c).count(),
+                c.last_message_at or c.created_at,
+            ), reverse=True)
+            canonical, duplicatas = convs[0], convs[1:]
+
+            self.stdout.write(
+                f'  GRUPO {chave}: mantendo {canonical.phone_number} '
+                f'(id={canonical.id}, wa_id={"sim" if canonical.wa_id else "nao"}, '
+                f'nome={canonical.contact_name or "-"})'
+            )
+
+            for dup in duplicatas:
+                qtd = Message.objects.filter(conversation=dup).count()
+                self.stdout.write(
+                    f'    MERGE {dup.phone_number} (id={dup.id}, msgs={qtd}) → {canonical.id}'
+                )
+                if dry_run:
+                    merged += 1
+                    continue
+
+                with transaction.atomic():
+                    Message.objects.filter(conversation=dup).update(conversation=canonical)
+
+                    campos = []
+                    if dup.contact_name and not canonical.contact_name:
+                        canonical.contact_name = dup.contact_name
+                        campos.append('contact_name')
+                    if dup.wa_id and not canonical.wa_id:
+                        canonical.wa_id = dup.wa_id
+                        campos.append('wa_id')
+                    if dup.last_message_at and (
+                        not canonical.last_message_at
+                        or dup.last_message_at > canonical.last_message_at
+                    ):
+                        canonical.last_message_at = dup.last_message_at
+                        campos.append('last_message_at')
+                    if campos:
+                        canonical.save(update_fields=campos + ['updated_at'])
+
+                    dup.delete()
+                merged += 1
+
+        return merged

@@ -214,3 +214,73 @@ def clean_cpf(cpf: str) -> str:
         CPF with only digits
     """
     return ''.join(filter(str.isdigit, str(cpf or '')))
+
+
+def start_of_today():
+    """Instante em que o dia de HOJE começou, no fuso da loja.
+
+    `timezone.now().replace(hour=0, ...)` parece certo e não é: `now()` devolve
+    UTC, então a meia-noite resultante é 00:00 UTC — 21:00 de Brasília do dia
+    ANTERIOR. Efeito prático no painel: todo dia às 21h o dia "virava" em UTC e
+    o card "Receita hoje" descartava o faturamento das 00h às 21h — justamente
+    o pico do delivery. Antes das 21h o erro era o oposto: colava as vendas do
+    fim da noite anterior no dia de hoje.
+
+    Converta para o fuso local ANTES de zerar a hora.
+    """
+    from django.utils import timezone
+
+    return timezone.localtime(timezone.now()).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+
+def phone_variants(phone: str) -> list:
+    """Todas as formas em que ESTE MESMO telefone aparece no sistema.
+
+    O WhatsApp entrega o `wa_id` de celular brasileiro SEM o nono dígito
+    (`556392618115`, 12 dígitos), enquanto formulário do site, painel e PDV
+    gravam COM ele (`5563992618115`, 13). São a mesma pessoa e o sistema tratava
+    como duas — o cliente ganhava uma conversa fantasma sem histórico para onde
+    iam as notificações do pedido, e a busca de pedido por telefone no bot nunca
+    casava ("Não encontrei pedidos recentes" logo após confirmar o pedido).
+
+    Devolve as variantes com e sem DDI 55, com e sem o nono dígito, e cada uma
+    também na forma `+55...`. Use em QUALQUER lookup por telefone
+    (`filter(campo__in=phone_variants(...))`), nunca compare telefone por
+    igualdade direta.
+    """
+    digitos = ''.join(filter(str.isdigit, str(phone or '')))
+    if not digitos:
+        return []
+
+    nucleos = {digitos, normalize_phone_number(digitos)}
+
+    def _alterna_nono(valor: str) -> set:
+        """Gera o par com/sem o nono dígito para celular brasileiro."""
+        saida = set()
+        if valor.startswith('55'):
+            local = valor[2:]
+            prefixo = '55'
+        else:
+            local = valor
+            prefixo = ''
+        # local = DDD (2) + assinante (8 ou 9)
+        if len(local) == 11 and local[2] == '9':
+            saida.add(prefixo + local[:2] + local[3:])      # remove o 9
+        elif len(local) == 10:
+            saida.add(prefixo + local[:2] + '9' + local[2:])  # adiciona o 9
+        return saida
+
+    for valor in list(nucleos):
+        nucleos |= _alterna_nono(valor)
+
+    # Cada núcleo também vale sem o DDI e com o prefixo '+'.
+    completo = set(nucleos)
+    for valor in nucleos:
+        if valor.startswith('55') and len(valor) > 11:
+            completo.add(valor[2:])
+    for valor in list(completo):
+        completo.add(f'+{valor}')
+
+    return [v for v in completo if v]

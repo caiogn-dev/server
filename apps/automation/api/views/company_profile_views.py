@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
+from apps.core.utils import start_of_today
 from datetime import timedelta
 
 from apps.automation.models import (
@@ -312,7 +313,7 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         
         # Time ranges
         now = timezone.now()
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = start_of_today()
         week_start = today_start - timedelta(days=7)
         month_start = today_start - timedelta(days=30)
         

@@ -362,6 +362,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Get payment statistics."""
         from django.db.models import Sum, Count, Q
         from django.utils import timezone
+        from apps.core.utils import start_of_today
         from datetime import timedelta
         
         queryset = self.get_queryset()
@@ -371,7 +372,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         now = timezone.now()
         
         if period == 'today':
-            date_from = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            date_from = start_of_today()
         elif period == 'week':
             date_from = now - timedelta(days=7)
         elif period == 'year':

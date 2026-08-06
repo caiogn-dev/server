@@ -2,6 +2,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from django.utils import timezone
+
 from apps.stores.models.order import StoreOrder as Order
 
 from .base import HandlerResult, IntentHandler, _parse_items_from_text_dynamic
@@ -13,14 +15,15 @@ class TrackOrderHandler(IntentHandler):
     """Handler para rastrear pedido."""
 
     def _build_phone_variants(self) -> list:
-        from apps.core.utils import normalize_phone_number
-        raw_phone = self.conversation.phone_number or ''
-        normalized = normalize_phone_number(raw_phone)
-        digits_only = ''.join(filter(str.isdigit, raw_phone))
-        variants = [raw_phone, normalized, digits_only]
-        if normalized:
-            variants.append(f'+{normalized}')
-        return [value for value in dict.fromkeys(v for v in variants if v)]
+        """Variantes do telefone da conversa — SSOT em core.utils.phone_variants.
+
+        Antes só gerava as formas COM o nono dígito. O `wa_id` do WhatsApp vem
+        SEM ele, e o pedido feito no site grava COM: a busca nunca casava e o
+        bot respondia "Não encontrei pedidos recentes" sobre o pedido que ele
+        mesmo tinha acabado de confirmar (CE-2608062713, 06/ago).
+        """
+        from apps.core.utils import phone_variants
+        return phone_variants(self.conversation.phone_number or '')
 
     def _extract_order_number(self, intent_data: Dict[str, Any]) -> str:
         entities = intent_data.get('entities', {}) or {}
@@ -40,6 +43,25 @@ class TrackOrderHandler(IntentHandler):
                 return match.group(1).strip()
         return ''
 
+    def _order_id_from_reply(self, intent_data: Dict[str, Any]) -> str:
+        """UUID embutido no botão `track_<uuid>`.
+
+        O botão "🔄 Atualizar" carrega o id exato do pedido, mas o handler só
+        olhava o texto do botão ("🔄 Atualizar") e o número extraído da
+        mensagem — jogava fora a resposta que já tinha em mãos e caía na busca
+        por telefone, que falhava pelo nono dígito.
+        """
+        entities = intent_data.get('entities', {}) or {}
+        reply_id = str(
+            entities.get('reply_id')
+            or intent_data.get('reply_id')
+            or (intent_data.get('interactive_reply') or {}).get('id')
+            or ''
+        )
+        if reply_id.startswith('track_'):
+            return reply_id[len('track_'):].strip()
+        return ''
+
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         order_number = self._extract_order_number(intent_data)
         logger.info(f"Track order: number={order_number}")
@@ -50,7 +72,16 @@ class TrackOrderHandler(IntentHandler):
         if self.store:
             order_qs = order_qs.filter(store=self.store)
         last_order = None
-        if order_number:
+        # O id do botão é a fonte mais confiável: aponta para UM pedido.
+        reply_order_id = self._order_id_from_reply(intent_data)
+        if reply_order_id:
+            from uuid import UUID
+            try:
+                UUID(reply_order_id)
+                last_order = order_qs.filter(id=reply_order_id).first()
+            except (ValueError, TypeError):
+                last_order = None
+        if not last_order and order_number:
             order_qs_by_number = order_qs.filter(order_number__iexact=order_number)
             if phone_variants:
                 order_qs_by_number = order_qs_by_number.filter(customer_phone__in=phone_variants)
@@ -87,7 +118,9 @@ class TrackOrderHandler(IntentHandler):
             response = (
                 f"📦 *Pedido #{last_order.order_number}*\n"
                 f"{status_display}\n"
-                f"Data: {last_order.created_at.strftime('%d/%m/%Y %H:%M')}\n"
+                # localtime: created_at é UTC; sem converter o card dizia
+                # "14:18" para um pedido feito às 11:18 de Brasília.
+                f"Data: {timezone.localtime(last_order.created_at).strftime('%d/%m/%Y %H:%M')}\n"
                 f"Total: R$ {last_order.total}"
             )
             if last_order.status in ['pending', 'confirmed', 'preparing', 'out_for_delivery']:

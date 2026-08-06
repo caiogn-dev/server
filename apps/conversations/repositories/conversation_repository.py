@@ -49,6 +49,19 @@ class ConversationRepository:
         requests try to create a conversation for the same phone number simultaneously.
         """
         from django.db import IntegrityError
+        from apps.core.utils import phone_variants
+
+        # Reaproveita a conversa que já existe em QUALQUER forma do mesmo
+        # telefone. O `wa_id` do WhatsApp vem sem o nono dígito e o site grava
+        # com ele: sem isto o cliente ganhava uma segunda conversa, sem
+        # histórico e sem nome, para onde iam as notificações do pedido.
+        existente = Conversation.objects.filter(
+            account=account,
+            phone_number__in=phone_variants(phone_number),
+        ).order_by('-last_message_at', '-created_at').first()
+        if existente is not None:
+            return existente, False
+
         phone_number = normalize_phone_number(phone_number)
         try:
             return Conversation.objects.get_or_create(

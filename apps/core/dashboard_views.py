@@ -6,6 +6,7 @@ import uuid
 from datetime import timedelta, timezone as dt_timezone
 from typing import Optional
 from django.utils import timezone
+from apps.core.utils import start_of_today
 from django.db.models import Count, Sum, Avg, Q, F
 from django.db.models.functions import TruncDate
 from rest_framework import status
@@ -135,7 +136,7 @@ class DashboardOverviewView(APIView):
             return account_error
         
         now = timezone.now()
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = start_of_today()
         week_start = today_start - timedelta(days=7)
         month_start = today_start - timedelta(days=30)
 
@@ -306,7 +307,7 @@ class DashboardProjectHealthView(APIView):
             return store_error
 
         now = timezone.now()
-        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = start_of_today()
         day_start = now - timedelta(hours=24)
         week_start = now - timedelta(days=7)
         month_start = now - timedelta(days=30)

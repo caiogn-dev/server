@@ -13,6 +13,7 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Q, Sum, Count, Func, F, Value, CharField
 from django.utils import timezone
+from apps.core.utils import start_of_today
 from datetime import timedelta
 
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer, StoreProduct
@@ -722,7 +723,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             queryset, _ = filter_by_store(queryset, store_id)
 
         now = timezone.now()
-        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today = start_of_today()
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
 
