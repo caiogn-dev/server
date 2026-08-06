@@ -67,10 +67,11 @@ class LoyaltyCreditOnPaymentTests(TestCase):
     def test_webhook_aprovado_sem_customer_nao_quebra(self):
         order = self._order(customer=None)
         CheckoutService._apply_order_webhook_status(order, 'approved')
-        # Escopado à loja do teste: o count() global media resíduo de outras
-        # suítes no banco compartilhado e falhava sozinho.
+        # Escopado ao pedido do teste: o count() global media resíduo de
+        # outras suítes no banco compartilhado e falhava sozinho. O modelo não
+        # tem `store` — a transação se liga a `account` e `order`.
         self.assertEqual(
-            StoreLoyaltyTransaction.objects.filter(store=self.store).count(), 0,
+            StoreLoyaltyTransaction.objects.filter(order=order).count(), 0,
         )
 
     def test_label_do_status_usa_rotulo_da_loja_nao_hardcoded_saladas(self):
@@ -104,7 +105,7 @@ class LoyaltyCreditOnPaymentTests(TestCase):
         order = self._order(customer=self.customer)
         CheckoutService._apply_order_webhook_status(order, 'rejected')
         self.assertEqual(
-            StoreLoyaltyTransaction.objects.filter(store=self.store).count(), 0,
+            StoreLoyaltyTransaction.objects.filter(order=order).count(), 0,
         )
 
 
