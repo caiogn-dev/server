@@ -1,5 +1,7 @@
 import re
 
+from django.db.models import Count, ExpressionWrapper, F, IntegerField, Sum, Value
+from django.db.models.functions import Coalesce, Greatest
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -70,6 +72,21 @@ class LoyaltyRedeemCheckView(APIView):
         return Response({'success': True, 'loyalty': loyalty})
 
 
+def _falta_para_o_brinde(threshold: int):
+    """Quantos itens faltam para o cliente fechar o cartão atual.
+
+    `qualified_count % threshold` é o progresso; o que falta é o complemento.
+    Quem acabou de fechar (resto 0) fica com `falta = threshold`, ou seja, no
+    fim da fila — está no começo de um cartão novo, não perto de ganhar.
+    """
+    progresso = ExpressionWrapper(
+        F('qualified_count') % Value(threshold), output_field=IntegerField(),
+    )
+    return ExpressionWrapper(
+        Value(threshold) - progresso, output_field=IntegerField(),
+    )
+
+
 class LoyaltyAccountsView(APIView):
     """Listagem de contas de fidelidade da loja (dash). Dono ou superuser."""
     permission_classes = [IsAuthenticated]
@@ -81,8 +98,19 @@ class LoyaltyAccountsView(APIView):
         if not (request.user.is_superuser or store.owner_id == request.user.id):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
         threshold, _enabled = LoyaltyService._config(store)
+        # ORDEM: quem está mais perto de fechar o cartão primeiro.
+        #
+        # Era `-updated_at`, que responde "quem comprou por último" — pergunta
+        # que a lista de pedidos já responde melhor. A pergunta desta tela é
+        # outra: a quem eu mando mensagem hoje. Quem está a 1 item do brinde
+        # converte com um empurrão; quem acabou de começar, não.
+        #
+        # Desempate por `-qualified_count`: entre dois clientes a 1 item, o que
+        # já comprou mais no total é o mais valioso.
         qs = (StoreLoyaltyAccount.objects.filter(store=store)
-              .select_related('user').order_by('-updated_at'))
+              .select_related('user')
+              .annotate(_falta=_falta_para_o_brinde(threshold))
+              .order_by('_falta', '-qualified_count', '-updated_at'))
         try:
             page = max(1, int(request.query_params.get('page', 1)))
         except (TypeError, ValueError):
@@ -99,9 +127,60 @@ class LoyaltyAccountsView(APIView):
                 'redeemed_count': acc.redeemed_count,
                 'progress': acc.qualified_count % threshold,
                 'available_rewards': max(0, earned - acc.redeemed_count),
+                # Quantos itens faltam — o frontend não precisa refazer a conta
+                # com o threshold, que ele recebe por outro caminho e pode
+                # divergir.
+                'falta': acc.qualified_count % threshold and threshold - (acc.qualified_count % threshold) or threshold,
                 'updated_at': acc.updated_at.isoformat(),
             })
-        return Response({'count': qs.count(), 'results': results})
+        payload = {'count': qs.count(), 'results': results}
+
+        # `?resumo=1` — agregado do BANCO INTEIRO, não da página.
+        #
+        # A tentação é somar no frontend a partir da lista, e é justamente o
+        # que não se pode fazer: a lista vem de 50 em 50, então somar a
+        # primeira página produz um número menor que o real com cara de total.
+        # Número errado com aparência de certo é pior que número ausente —
+        # ninguém desconfia dele.
+        #
+        # Opcional de propósito: a listagem já é consumida por outra tela e
+        # não deve carregar peso extra porque um consumidor novo precisa disso.
+        if request.query_params.get('resumo') in ('1', 'true', 'True'):
+            payload['resumo'] = self._resumo(qs, threshold)
+
+        return Response(payload)
+
+    @staticmethod
+    def _resumo(qs, threshold):
+        ganhos = ExpressionWrapper(
+            F('qualified_count') / Value(threshold), output_field=IntegerField(),
+        )
+        disponiveis = ExpressionWrapper(
+            F('qualified_count') / Value(threshold) - F('redeemed_count'),
+            output_field=IntegerField(),
+        )
+        agg = qs.aggregate(
+            participantes=Count('id'),
+            brindes_ganhos=Coalesce(Sum(ganhos), 0),
+            brindes_resgatados=Coalesce(Sum('redeemed_count'), 0),
+            # Greatest(…, 0): resgate manual e restauração de backup produzem
+            # `redeemed_count` maior que o ganho. Um "-3 brindes disponíveis"
+            # na tela destrói a confiança em todos os outros números.
+            brindes_disponiveis=Coalesce(
+                Sum(Greatest(disponiveis, Value(0), output_field=IntegerField())), 0,
+            ),
+            # "Quase lá" = falta exatamente 1 item. É o corte acionável:
+            # "falta 1 para você ganhar" é mensagem que se manda hoje e
+            # converte; "falta 5" não é.
+        )
+        # "Quase lá" = falta exatamente 1 item para fechar o cartão. É o corte
+        # acionável: "falta 1 para você ganhar" é mensagem que se manda hoje e
+        # converte; "falta 5" não é. Conta separada porque o módulo dentro de
+        # `filter=` não é portável entre bancos — e é um COUNT barato.
+        agg['quase_la'] = qs.annotate(falta=_falta_para_o_brinde(threshold)).filter(
+            falta=1,
+        ).count()
+        return agg
 
 
 class LoyaltyGuestStatusView(APIView):
