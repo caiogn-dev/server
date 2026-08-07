@@ -140,14 +140,35 @@ class DashboardOverviewView(APIView):
         week_start = today_start - timedelta(days=7)
         month_start = today_start - timedelta(days=30)
 
-        account_ids = list(accounts_qs.values_list('id', flat=True))
-        
-        messages_qs = Message.objects.filter(account_id__in=account_ids)
-        conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
         store_param = request.query_params.get('store')
         stores_qs, store_error = _resolve_store_scope(request.user, store_param, accounts_qs=accounts_qs)
         if store_error:
             return store_error
+
+        # Mensagens e conversas seguem a LOJA selecionada, não tudo a que o
+        # usuário tem acesso.
+        #
+        # Os pedidos já eram filtrados por `stores_qs`; conversas e mensagens
+        # ficaram em `account_id__in=account_ids`, que é a lista inteira de
+        # contas do dono. Em 07/ago a home da Cê Saladas anunciava 208 conversas
+        # esperando resposta: 126 dela + 78 da Pastita + 4 da conta global.
+        #
+        # Para quem tem uma loja só o defeito é invisível. Para quem tem duas, a
+        # home de cada uma mostra o movimento das duas — e o seletor de loja
+        # deixa de significar alguma coisa.
+        #
+        # Sem `store` na query continua somando tudo: aí é a visão consolidada
+        # do dono, e somar é o certo.
+        if store_param:
+            contas_da_loja = accounts_qs.filter(
+                Q(stores__in=stores_qs) | Q(company_profile__store__in=stores_qs)
+            ).distinct()
+            account_ids = list(contas_da_loja.values_list('id', flat=True))
+        else:
+            account_ids = list(accounts_qs.values_list('id', flat=True))
+
+        messages_qs = Message.objects.filter(account_id__in=account_ids)
+        conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
 
         orders_qs = StoreOrder.objects.filter(is_active=True, store__in=stores_qs)
         
@@ -196,6 +217,21 @@ class DashboardOverviewView(APIView):
         )
         
         conversations_resolved_today = _conv['resolved_today']
+
+        # Conversa "esperando resposta" = a última mensagem foi do cliente e
+        # houve movimento nas últimas 48h.
+        #
+        # NÃO usar `status='open'` para isso: o status nasce 'open' e nada no
+        # sistema fecha conversa, então ele conta a base histórica inteira. A
+        # home chegou a anunciar "208 conversas em aberto — cliente esperando
+        # resposta" quando havia 5. Alerta que nunca muda é alerta que ninguém lê.
+        conversations_waiting_reply = conversations_qs.filter(
+            last_customer_message_at__isnull=False,
+            last_customer_message_at__gte=now - timedelta(hours=48),
+        ).filter(
+            Q(last_agent_message_at__isnull=True)
+            | Q(last_customer_message_at__gt=F('last_agent_message_at'))
+        ).count()
 
         # Orders metrics
         orders_by_status = dict(
@@ -268,6 +304,7 @@ class DashboardOverviewView(APIView):
             },
             'conversations': {
                 'active': conversations_active,
+                'waiting_reply': conversations_waiting_reply,
                 'by_status': conversations_by_status,
                 'by_mode': conversations_by_mode,
                 'resolved_today': conversations_resolved_today,
