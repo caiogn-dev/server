@@ -408,12 +408,47 @@ class FinanceReportView(BaseAnalyticsView):
                 for r in rows
             ]
 
-        timeline = [
-            {'date': r['day'], 'gross': _round2(r['gross']), 'net': _round2(r['net'])}
-            for r in payments.annotate(day=TruncDate('order__paid_at'))
+        # Timeline = quando o dinheiro entrou.
+        #
+        # Dois cuidados que faltavam:
+        #
+        # 1. EIXO — usa o `paid_at` do PRÓPRIO pagamento, que é a data que o
+        #    Mercado Pago carimba. É essa que aparece no extrato, e é por ela
+        #    que se confere repasse. Cai para a data do pedido quando o
+        #    gateway não informou.
+        # 2. O dinheiro SEM gateway não entrava aqui. O total dizia
+        #    R$ 1.557,04 e a soma do gráfico dava R$ 1.259,48 — o gráfico
+        #    mentia sobre o próprio card que estava em cima dele.
+        from django.db.models.functions import Coalesce as _Coalesce
+
+        from apps.stores.metrics import eixo_de_receita as _eixo_de_receita
+
+        por_dia = defaultdict(lambda: {'gross': Decimal('0'), 'net': Decimal('0')})
+        for r in (
+            payments.annotate(
+                day=TruncDate(_Coalesce('paid_at', 'order__paid_at', 'order__created_at'))
+            )
             .values('day')
             .annotate(gross=Sum('amount'), net=Sum('net_amount'))
-            .order_by('day')
+        ):
+            bucket = por_dia[r['day']]
+            bucket['gross'] += r['gross'] or Decimal('0')
+            bucket['net'] += r['net'] or Decimal('0')
+
+        for r in (
+            sem_gateway['queryset']
+            .annotate(day=TruncDate(_eixo_de_receita()))
+            .values('day')
+            .annotate(total=Sum('total'))
+        ):
+            bucket = por_dia[r['day']]
+            # Sem gateway não há taxa: entra igual no bruto e no líquido.
+            bucket['gross'] += r['total'] or Decimal('0')
+            bucket['net'] += r['total'] or Decimal('0')
+
+        timeline = [
+            {'date': dia, 'gross': _round2(v['gross']), 'net': _round2(v['net'])}
+            for dia, v in sorted(por_dia.items(), key=lambda kv: (kv[0] is None, kv[0]))
         ]
         linha_sem_gateway = {
             'count': sem_gateway['pedidos'],
@@ -449,7 +484,11 @@ class FinanceReportView(BaseAnalyticsView):
             loja=store, inicio=start, fim=end,
         ).filter(payments__isnull=True)
         agg = qs.aggregate(total=_Sum('total'), pedidos=Count('id'))
-        return {'total': agg['total'] or 0, 'pedidos': agg['pedidos'] or 0}
+        return {
+            'total': agg['total'] or 0,
+            'pedidos': agg['pedidos'] or 0,
+            'queryset': qs,
+        }
 
 
 RFM_SEGMENT_LABELS = {
