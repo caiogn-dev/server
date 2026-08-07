@@ -477,8 +477,9 @@ def request_feedback(order_id: str):
     Solicita avaliação após entrega
     Executado 30 minutos após pedido ser marcado como entregue
     """
+    from apps.core.utils import normalize_phone_number
     from apps.stores.models.order import StoreOrder as Order
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
+    from apps.whatsapp.services import MessageService
     from apps.automation.models import AutoMessage
 
     try:
@@ -510,18 +511,40 @@ def request_feedback(order_id: str):
             })
 
             account = _get_account_for_profile(profile)
-            if account:
-                service = WhatsAppAPIService(account)
-                service.send_interactive_buttons(
-                    to=order.customer_phone,
-                    body_text=message,
-                    buttons=[
-                        {'id': f'rating_5_{order.id}', 'title': '⭐⭐⭐⭐⭐'},
-                        {'id': f'rating_3_{order.id}', 'title': '⭐⭐⭐'},
-                        {'id': f'rating_1_{order.id}', 'title': '⭐'},
-                    ]
-                )
-                logger.info(f"Feedback request sent for order {order_id}")
+            if not account:
+                logger.warning("No WhatsApp account for store %s, skipping feedback request", order.store_id)
+                return
+
+            # MessageService e não WhatsAppAPIService: a camada de API só fala
+            # HTTP com a Meta. Quem cria o registro Message, vincula à conversa
+            # e marca falha é o MessageService. Enviando pela camada crua, o
+            # convite sumia do inbox — o dono via a mensagem de "entregue" às
+            # 12:42 e nada depois, concluindo (com razão) que não foi enviado.
+            #
+            # normalize_phone_number: o pedido grava o telefone como o cliente
+            # digitou ('63992618115'). Todo o resto do envio normaliza para
+            # E.164 antes de chamar a Meta; só este caminho mandava cru.
+            phone = normalize_phone_number(order.customer_phone or '')
+            if not phone:
+                logger.warning("Order %s has no usable phone for feedback request", order_id)
+                return
+
+            MessageService().send_interactive_buttons(
+                account_id=str(account.id),
+                to=phone,
+                body_text=message,
+                buttons=[
+                    {'id': f'rating_5_{order.id}', 'title': '⭐⭐⭐⭐⭐'},
+                    {'id': f'rating_3_{order.id}', 'title': '⭐⭐⭐'},
+                    {'id': f'rating_1_{order.id}', 'title': '⭐'},
+                ],
+                metadata={
+                    'source': 'feedback_request',
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                },
+            )
+            logger.info(f"Feedback request sent for order {order_id}")
 
         except AutoMessage.DoesNotExist:
             logger.debug(f"No feedback_request template for store {order.store_id}")
