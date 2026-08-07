@@ -355,20 +355,40 @@ class SlaReportView(BaseAnalyticsView):
 
 
 class FinanceReportView(BaseAnalyticsView):
-    """Bruto × taxa de gateway × líquido (StorePayment) + série diária."""
+    """Bruto × taxa de gateway × líquido, incluindo o que não passou por gateway.
+
+    Esta tela partia só de `StorePayment`, que existe apenas quando houve
+    cobrança por gateway. Venda em DINHEIRO e baixa manual não geram esse
+    registro — e sumiam do relatório financeiro.
+
+    Em 07/ago a Cê Saladas tinha 5 vendas assim (R$ 297,56): o BI mostrava
+    R$ 1.508,49 enquanto o relatório de faturamento mostrava R$ 1.557,04, e o
+    dono não tinha como saber de onde vinha a diferença. Um card chamado
+    "bruto" que ignora o dinheiro do caixa não é bruto.
+
+    Agora o dinheiro sem gateway entra como uma linha própria, com taxa zero —
+    o total concilia com o resto do painel e a quebra por taxa continua exata.
+    """
 
     def get(self, request):
         store, start, end, err = self.resolve(request)
         if err:
             return err
+        # Parte dos PEDIDOS DE RECEITA e busca os pagamentos deles — não o
+        # contrário. Filtrar StorePayment por conta própria trazia cobrança de
+        # pedido cancelado, cobrança avulsa de assinatura e pagamento fora da
+        # janela: o "bruto" estourava o faturamento real.
+        pedidos = self.paid_orders(store, start, end)
         payments = StorePayment.objects.filter(
-            store=store,
-            status='completed',
-            created_at__date__range=(start, end),
+            order__in=pedidos, status='completed',
         )
+        sem_gateway = self._receita_sem_gateway(store, start, end)
         summary = payments.aggregate(
             gross=Sum('amount'), fees=Sum('fee'), net=Sum('net_amount'), refunded=Sum('refunded_amount'),
         )
+        # Sem gateway não há taxa: entra igual no bruto e no líquido.
+        summary['gross'] = (summary['gross'] or 0) + sem_gateway['total']
+        summary['net'] = (summary['net'] or 0) + sem_gateway['total']
 
         def group(field, label):
             rows = (
@@ -389,17 +409,46 @@ class FinanceReportView(BaseAnalyticsView):
 
         timeline = [
             {'date': r['day'], 'gross': _round2(r['gross']), 'net': _round2(r['net'])}
-            for r in payments.annotate(day=TruncDate('created_at'))
+            for r in payments.annotate(day=TruncDate('order__paid_at'))
             .values('day')
             .annotate(gross=Sum('amount'), net=Sum('net_amount'))
             .order_by('day')
         ]
+        linha_sem_gateway = {
+            'count': sem_gateway['pedidos'],
+            'gross': _round2(sem_gateway['total']),
+            'fees': 0.0,
+            'net': _round2(sem_gateway['total']),
+        }
+        por_gateway = group('gateway__name', 'gateway')
+        por_metodo = group('payment_method', 'payment_method')
+        if sem_gateway['pedidos']:
+            por_gateway.append({'gateway': 'sem gateway (dinheiro/baixa manual)', **linha_sem_gateway})
+            por_metodo.append({'payment_method': 'sem gateway (dinheiro/baixa manual)', **linha_sem_gateway})
+
         return Response({
             'summary': {k: _round2(v) for k, v in summary.items()},
-            'by_gateway': group('gateway__name', 'gateway'),
-            'by_method': group('payment_method', 'payment_method'),
+            'by_gateway': por_gateway,
+            'by_method': por_metodo,
             'timeline': timeline,
         })
+
+    @staticmethod
+    def _receita_sem_gateway(store, start, end):
+        """Receita real que NÃO gerou registro de pagamento.
+
+        Dinheiro na entrega e baixa manual no painel: o pedido é receita
+        legítima (passa pelo núcleo), mas nunca houve cobrança por gateway.
+        """
+        from django.db.models import Sum as _Sum
+
+        from apps.stores import metrics
+
+        qs = metrics.pedidos_de_receita(
+            loja=store, inicio=start, fim=end,
+        ).filter(payments__isnull=True)
+        agg = qs.aggregate(total=_Sum('total'), pedidos=Count('id'))
+        return {'total': agg['total'] or 0, 'pedidos': agg['pedidos'] or 0}
 
 
 RFM_SEGMENT_LABELS = {
