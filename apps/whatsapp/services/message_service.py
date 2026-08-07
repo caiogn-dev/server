@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db import transaction
 from apps.core.exceptions import ValidationError, NotFoundError
+from apps.core.pii import mask_phone
 from ..models import WhatsAppAccount, Message
 from ..repositories import MessageRepository, WhatsAppAccountRepository
 from .whatsapp_api_service import WhatsAppAPIService
@@ -34,7 +35,7 @@ class MessageService:
         metadata: Optional[Dict] = None
     ) -> Message:
         """Send a text message."""
-        logger.info(f"[send_text_message] START - account_id={account_id}, to={to}, text_len={len(text)}")
+        logger.info(f"[send_text_message] START - account_id={account_id}, to={mask_phone(to)}, text_len={len(text)}")
         
         account = self._get_account(account_id)
         logger.info(f"[send_text_message] Account retrieved: {account.id}, phone_number_id={account.phone_number_id}")
@@ -59,7 +60,7 @@ class MessageService:
             logger.warning(
                 "[send_text_message] Duplicate send suppressed - reusing message_id=%s to=%s",
                 duplicate.id,
-                to,
+                mask_phone(to),
             )
             return duplicate
         
@@ -77,7 +78,7 @@ class MessageService:
         logger.info(f"[send_text_message] Outbound message created: {message.id}")
         
         try:
-            logger.info(f"[send_text_message] Calling api_service.send_text_message(to={to}, text_len={len(text)})")
+            logger.info(f"[send_text_message] Calling api_service.send_text_message(to={mask_phone(to)}, text_len={len(text)})")
             response = api_service.send_text_message(
                 to=to,
                 text=text,
@@ -746,7 +747,7 @@ class MessageService:
                 conversation.save(update_fields=['contact_name', 'updated_at'])
         except Exception as conv_error:
             # Log but don't fail - conversation is optional for auth messages
-            logger.warning(f"Could not create conversation for {to}: {conv_error}")
+            logger.warning(f"Could not create conversation for {mask_phone(to)}: {conv_error}")
             conversation = None
         
         message = self.message_repo.create(
@@ -812,14 +813,14 @@ class MessageService:
             )
             
             if created:
-                logger.info(f"Created new conversation with {phone_number}")
+                logger.info(f"Created new conversation with {mask_phone(phone_number)}")
             
             return conversation
             
         except IntegrityError:
             # Race condition: another request created the conversation first
             # This can happen with unique_together constraint on (account, phone_number)
-            logger.warning(f"IntegrityError on get_or_create for {phone_number}, retrying get...")
+            logger.warning(f"IntegrityError on get_or_create for {mask_phone(phone_number)}, retrying get...")
             try:
                 conversation = Conversation.objects.get(
                     account=account,
@@ -828,7 +829,7 @@ class MessageService:
                 return conversation
             except Conversation.DoesNotExist:
                 # This shouldn't happen but handle it gracefully
-                logger.error(f"Conversation not found after IntegrityError for {phone_number}")
+                logger.error(f"Conversation not found after IntegrityError for {mask_phone(phone_number)}")
                 raise
 
     def _update_message_sent(self, message: Message, response: Dict) -> None:

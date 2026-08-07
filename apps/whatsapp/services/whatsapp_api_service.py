@@ -7,6 +7,7 @@ import requests
 from typing import Dict, Any, Optional, List
 from django.conf import settings
 from apps.core.exceptions import WhatsAppAPIError
+from apps.core.pii import mask_phone
 from ..models import WhatsAppAccount
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,7 @@ class WhatsAppAPIService:
         reply_to: Optional[str] = None
     ) -> Dict[str, Any]:
         """Send a text message."""
-        logger.info(f"[send_text_message] START - to={to}, text_len={len(text)}, phone_number_id={self.phone_number_id}")
+        logger.info(f"[send_text_message] START - to={mask_phone(to)}, text_len={len(text)}, phone_number_id={self.phone_number_id}")
         
         if not self.phone_number_id:
             logger.error(f"[send_text_message] phone_number_id is missing or empty!")
@@ -155,7 +156,8 @@ class WhatsAppAPIService:
         if reply_to:
             payload['context'] = {'message_id': reply_to}
 
-        logger.info(f"[send_text_message] About to call _make_request with payload: {payload}")
+        _safe_payload = {**payload, 'to': mask_phone(payload.get('to', ''))}
+        logger.info(f"[send_text_message] About to call _make_request with payload: {_safe_payload}")
         
         result = self._make_request(
             'POST',

@@ -11,6 +11,7 @@ from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from apps.core.models import BaseModel
+from apps.core.pii import mask_phone
 from apps.whatsapp.utils import get_default_whatsapp_account
 from .base import Store
 
@@ -538,10 +539,10 @@ class StoreOrder(BaseModel):
 
             # Normalize phone
             phone = self._normalize_phone_number(self.customer_phone)
-            logger.info(f"[WhatsAppNotification] ✓ Phone normalization: {self.customer_phone} → {phone}")
+            logger.info(f"[WhatsAppNotification] ✓ Phone normalization: {mask_phone(self.customer_phone)} → {mask_phone(phone)}")
             
             if not phone:
-                logger.warning(f"[WhatsAppNotification] RETURN: Invalid phone number {self.customer_phone}")
+                logger.warning(f"[WhatsAppNotification] RETURN: Invalid phone number {mask_phone(self.customer_phone)}")
                 return
 
             # Get WhatsApp account
@@ -573,7 +574,7 @@ class StoreOrder(BaseModel):
 
             # Send message
             logger.info(f"[WhatsAppNotification] → Sending message...")
-            logger.info(f"  account_id={account.id}, to={phone}, store={self.store.slug if self.store else 'N/A'}")
+            logger.info(f"  account_id={account.id}, to={mask_phone(phone)}, store={self.store.slug if self.store else 'N/A'}")
             
             message_service = MessageService()
             message_service.send_text_message(
