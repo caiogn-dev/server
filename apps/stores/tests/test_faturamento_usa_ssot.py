@@ -61,13 +61,21 @@ class TestTelasDeFaturamento:
         assert list(qs) == [pedidos]
 
     def test_resumo_do_dashboard_soma_so_a_venda_real(self, loja, pedidos):
-        from django.db.models import Sum
+        """Agora pelo payload público, não por um método interno.
+
+        O agregador deixou de montar queryset próprio e passou a chamar
+        `metrics.totais()`. Testar a saída é mais forte que testar o encanamento:
+        vale mesmo que o interior mude de novo.
+        """
+        from decimal import Decimal
 
         from apps.core.services.dashboard_stats import DashboardStatsAggregator
 
-        qs = DashboardStatsAggregator(loja)._revenue_queryset()
+        payload = DashboardStatsAggregator(loja).build_payload()
 
-        assert qs.aggregate(t=Sum('total'))['t'] == RECEITA_REAL
+        assert Decimal(str(payload['today']['revenue'])) == RECEITA_REAL
+        # A contagem é operacional: os 3 pedidos aparecem, o dinheiro não.
+        assert payload['today']['orders'] == 3
 
     def test_estatisticas_da_lista_de_pedidos_somam_so_a_venda_real(self, loja, pedidos):
         from apps.stores.metrics import pedidos_de_receita

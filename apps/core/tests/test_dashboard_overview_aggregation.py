@@ -43,7 +43,10 @@ class DashboardOverviewAggregationTest(APITestCase):
 
     def test_valores_da_resposta(self):
         self.client.force_authenticate(self.admin)
-        resp = self.client.get(URL)
+        # `?store=` escopa à loja do teste. Sem isso o admin é superusuário e
+        # o endpoint agrega TODAS as lojas do banco de teste compartilhado —
+        # os contadores vinham contaminados por resíduo de outras suítes.
+        resp = self.client.get(URL, {'store': self.store.slug})
         self.assertEqual(resp.status_code, 200, resp.content)
         data = resp.data
 

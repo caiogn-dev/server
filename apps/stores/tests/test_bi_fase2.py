@@ -118,7 +118,13 @@ class CouponRedemptionTest(BiFase2Base):
         self.assertEqual(red.coupon_id, coupon.id)
         self.assertEqual(red.code, 'FASE2')
         self.assertEqual(red.amount, Decimal('5'))
-        self.assertEqual(StoreCouponRedemption.objects.count(), 1)
+        # Escopado ao cupom do teste: o count() global media resgates de outras
+        # suítes no banco compartilhado e falhava sozinho (19 != 1). O que o
+        # teste quer provar é a idempotência — dois registros do MESMO resgate
+        # não podem virar duas linhas.
+        self.assertEqual(
+            StoreCouponRedemption.objects.filter(coupon=coupon).count(), 1,
+        )
 
 
 class BackfillCommandTest(BiFase2Base):

@@ -89,31 +89,34 @@ class DashboardStatsAggregator:
             'generated_at': timezone.localtime(timezone.now()).isoformat(),
         }
 
-    def _revenue_queryset(self):
-        """Pedidos que contam como faturamento — SSOT em stores/stores/metrics/."""
-        from apps.stores.metrics import apenas_receita
-
-        return apenas_receita(
-            StoreOrder.objects.filter(store=self.store, is_active=True)
-        )
-
     def _aggregate_orders(self) -> Dict[str, Any]:
-        queryset = StoreOrder.objects.filter(store=self.store, is_active=True)
-        # A contagem de pedidos é operacional (conta tudo); o dinheiro vem do
-        # queryset de receita, que exclui cancelado e pedido de teste.
-        revenue_ids = self._revenue_queryset().values('id')
-        filter_q = Q(id__in=revenue_ids)
+        """Contagem operacional vem do queryset cru; dinheiro vem do núcleo.
 
-        return queryset.aggregate(
+        Antes o dinheiro era filtrado por `paid_at__date`. Pedido pago em
+        dinheiro na entrega ou com baixa manual não tem `paid_at` — sumia do
+        faturamento em silêncio. O núcleo usa Coalesce(paid_at, created_at),
+        então esses continuam contando, no dia certo.
+        """
+        from apps.stores import metrics
+
+        queryset = StoreOrder.objects.filter(store=self.store, is_active=True)
+        contagens = queryset.aggregate(
             today_orders=Count('id', filter=Q(created_at__date=self.today)),
             week_orders=Count('id', filter=Q(created_at__date__gte=self.week_start)),
             month_orders=Count('id', filter=Q(created_at__date__gte=self.month_start)),
-            today_revenue=Sum('total', filter=filter_q & Q(paid_at__date=self.today)),
-            week_revenue=Sum('total', filter=filter_q & Q(paid_at__date__gte=self.week_start)),
-            month_revenue=Sum('total', filter=filter_q & Q(paid_at__date__gte=self.month_start)),
-            yesterday_revenue=Sum('total', filter=filter_q & Q(paid_at__date=self.yesterday)),
             pending_orders=Count('id', filter=Q(status__in=self.IN_PROGRESS_STATUSES)),
         )
+
+        def receita(janela):
+            return metrics.totais(self.store, janela)['receita']
+
+        contagens.update(
+            today_revenue=receita(metrics.hoje()),
+            yesterday_revenue=receita(metrics.ontem()),
+            week_revenue=receita(metrics.ultimos_dias(8)),
+            month_revenue=receita(metrics.ultimos_dias(31)),
+        )
+        return contagens
 
     def _calculate_low_stock_count(self) -> int:
         return StoreProduct.objects.filter(

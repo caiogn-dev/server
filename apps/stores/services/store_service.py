@@ -166,16 +166,17 @@ class StoreService:
         orders_this_week = orders.filter(created_at__date__gte=week_ago).count()
         orders_this_month = orders.filter(created_at__date__gte=month_ago).count()
         
-        # Revenue stats
-        # SSOT: pago E não cancelado E não é teste. `payment_status='paid'` sozinho
-        # deixava passar pedido pago e depois cancelado sem estorno.
-        from apps.stores.metrics import pedidos_de_receita
-        paid_orders = pedidos_de_receita(queryset=orders)
+        # Faturamento vem do núcleo. Antes filtrava por `created_at`, um eixo
+        # diferente do resto do painel: pedido feito 23h40 e pago 00h05 caía em
+        # dias distintos conforme a tela, e não conciliava com o extrato.
+        from apps.stores import metrics
+
+        paid_orders = metrics.pedidos_de_receita(queryset=orders)
         total_revenue = paid_orders.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        revenue_today = paid_orders.filter(created_at__date=today).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        revenue_this_week = paid_orders.filter(created_at__date__gte=week_ago).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        revenue_this_month = paid_orders.filter(created_at__date__gte=month_ago).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        
+        revenue_today = metrics.totais(store, metrics.hoje())['receita']
+        revenue_this_week = metrics.totais(store, metrics.ultimos_dias(8))['receita']
+        revenue_this_month = metrics.totais(store, metrics.ultimos_dias(31))['receita']
+
         avg_order_value = paid_orders.aggregate(avg=Avg('total'))['avg'] or Decimal('0.00')
         
         # Product stats
@@ -197,15 +198,13 @@ class StoreService:
         # Usa o SSOT de receita: antes somava `orders` cru e o gráfico da home
         # mostrava R$ 5.056 numa loja que faturou R$ 2.324 — os 21 cancelados
         # entravam como faturamento, e os pedidos de teste do dono também.
-        from apps.stores.metrics import pedidos_de_receita
-        daily_orders = pedidos_de_receita(
-            queryset=orders, inicio=month_ago,
-        ).annotate(
-            date=TruncDate('created_at')
-        ).values('date').annotate(
-            count=Count('id'),
-            revenue=Sum('total')
-        ).order_by('date')
+        # Série pelo núcleo: agrupa pelo MESMO eixo em que filtra (data do
+        # pagamento). Agrupar por `created_at` e filtrar por outro deixava
+        # pedido dentro da janela fora do gráfico.
+        daily_orders = [
+            {'date': p['periodo'], 'count': p['pedidos'], 'revenue': p['receita']}
+            for p in metrics.serie_temporal(store, metrics.ultimos_dias(31))
+        ]
         
         return {
             'orders': {

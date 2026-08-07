@@ -727,11 +727,24 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
 
-        # Faturamento é o queryset de receita (SSOT em stores/metrics/): sem
-        # cancelado e sem pedido de teste. As CONTAGENS continuam sobre tudo —
-        # a lista de pedidos precisa mostrar o cancelado.
-        from apps.stores.metrics import apenas_receita
-        receita = Q(id__in=apenas_receita(queryset).values('id'))
+        # Faturamento vem do núcleo (apps/stores/metrics/). As CONTAGENS
+        # continuam sobre o queryset cru — a lista de pedidos precisa mostrar
+        # o cancelado, o faturamento não.
+        #
+        # Este endpoint pode agregar VÁRIAS lojas (sem `?store` ele cobre todas
+        # as do usuário), então usa a forma por queryset em vez de por loja.
+        from apps.stores import metrics
+
+        hoje = metrics.hoje()
+        semana = metrics.ultimos_dias(8)
+
+        def _receita(janela=None):
+            qs = metrics.pedidos_de_receita(
+                queryset=queryset,
+                inicio=janela.inicio if janela else None,
+                fim=janela.fim if janela else None,
+            )
+            return qs.aggregate(t=Sum('total'))['t'] or 0
 
         # Single aggregation query combines all counts
         agg = queryset.aggregate(
@@ -744,10 +757,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             this_week=Count(Case(When(created_at__gte=week_ago, then=1))),
             this_month=Count(Case(When(created_at__gte=month_ago, then=1))),
 
-            # Revenue aggregates
-            revenue_total=Sum('total', filter=receita),
-            revenue_today=Sum('total', filter=receita & Q(created_at__gte=today)),
-            revenue_week=Sum('total', filter=receita & Q(created_at__gte=week_ago)),
+            # Receita sai daqui: era agrupada por `created_at`, um eixo
+            # diferente do resto do painel. Ver `_receita()` acima.
             revenue_pending=Sum('total', filter=Q(payment_status='pending')),
 
             # Counts por payment_status (o painel de pagamentos precisa do
@@ -778,9 +789,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'pending': agg['pending_count'],
             },
             'revenue': {
-                'total': agg['revenue_total'] or 0,
-                'today': agg['revenue_today'] or 0,
-                'week': agg['revenue_week'] or 0,
+                'total': _receita(),
+                'today': _receita(hoje),
+                'week': _receita(semana),
                 'pending': agg['revenue_pending'] or 0,
             }
         }

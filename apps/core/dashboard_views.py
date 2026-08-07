@@ -213,16 +213,20 @@ class DashboardOverviewView(APIView):
             payments_pending=Count('id', filter=Q(payment_status__in=['pending', 'processing'])),
             payments_completed_today=Count('id', filter=Q(payment_status='paid', paid_at__gte=today_start)),
         )
-        # Somar por paid_at sem checar status contava pedido pago e cancelado
-        # depois — o paid_at fica gravado mesmo após o cancelamento.
-        _rev = pedidos_de_receita(queryset=orders_qs).aggregate(
-            revenue_today=Sum('total', filter=Q(paid_at__gte=today_start)),
-            revenue_month=Sum('total', filter=Q(paid_at__gte=month_start)),
-        )
-        _ord.update(_rev)
+        # Receita pelo núcleo. Filtrar por `paid_at` cru descartava pedido
+        # pago em dinheiro na entrega ou com baixa manual, que não tem paid_at;
+        # o núcleo usa Coalesce(paid_at, created_at) e conta no dia certo.
+        from apps.stores import metrics
+
+        def _receita(janela):
+            qs = metrics.pedidos_de_receita(
+                queryset=orders_qs, inicio=janela.inicio, fim=janela.fim,
+            )
+            return qs.aggregate(t=Sum('total'))['t'] or 0
+
         orders_today = _ord['today']
-        revenue_today = _ord['revenue_today'] or 0
-        revenue_month = _ord['revenue_month'] or 0
+        revenue_today = _receita(metrics.hoje())
+        revenue_month = _receita(metrics.ultimos_dias(31))
         payments_pending = _ord['payments_pending']
         payments_completed_today = _ord['payments_completed_today']
 
@@ -341,9 +345,20 @@ class DashboardProjectHealthView(APIView):
         orders_today = orders_qs.filter(created_at__gte=today_start).count()
         orders_24h = orders_qs.filter(created_at__gte=day_start).count()
         orders_week = orders_qs.filter(created_at__gte=week_start).count()
-        revenue_today = paid_orders_qs.filter(paid_at__gte=today_start).aggregate(total=Sum('total'))['total'] or 0
-        revenue_month = paid_orders_qs.filter(paid_at__gte=month_start).aggregate(total=Sum('total'))['total'] or 0
-        avg_ticket = paid_orders_qs.filter(paid_at__gte=month_start).aggregate(avg=Avg('total'))['avg'] or 0
+        # Mesmo motivo do bloco acima: janela e eixo vêm do núcleo.
+        from apps.stores import metrics
+
+        _mes = metrics.pedidos_de_receita(
+            queryset=orders_qs,
+            inicio=metrics.ultimos_dias(31).inicio, fim=metrics.ultimos_dias(31).fim,
+        )
+        _hoje_qs = metrics.pedidos_de_receita(
+            queryset=orders_qs,
+            inicio=metrics.hoje().inicio, fim=metrics.hoje().fim,
+        )
+        revenue_today = _hoje_qs.aggregate(t=Sum('total'))['t'] or 0
+        revenue_month = _mes.aggregate(t=Sum('total'))['t'] or 0
+        avg_ticket = _mes.aggregate(avg=Avg('total'))['avg'] or 0
 
         action_statuses = [
             StoreOrder.OrderStatus.PENDING,
