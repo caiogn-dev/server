@@ -100,6 +100,8 @@ def serie_temporal(loja, janela: Janela, granularidade='dia', incluir_teste=Fals
             receita=Sum('total'),
             pedidos=Count('id'),
             ticket_medio=Avg('total'),
+            frete=Sum('delivery_fee'),
+            desconto=Sum('discount'),
         )
         .order_by('periodo')
     )
@@ -109,6 +111,8 @@ def serie_temporal(loja, janela: Janela, granularidade='dia', incluir_teste=Fals
             'receita': _decimal(linha['receita']),
             'pedidos': linha['pedidos'] or 0,
             'ticket_medio': _decimal(linha['ticket_medio']),
+            'frete': _decimal(linha['frete']),
+            'desconto': _decimal(linha['desconto']),
         }
         for linha in linhas
     ]
@@ -138,6 +142,8 @@ def serie_completa(loja, janela: Janela, granularidade='dia', incluir_teste=Fals
             'receita': ZERO,
             'pedidos': 0,
             'ticket_medio': ZERO,
+            'frete': ZERO,
+            'desconto': ZERO,
         }))
         dia += timedelta(days=1)
     return saida

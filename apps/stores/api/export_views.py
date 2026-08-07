@@ -213,39 +213,35 @@ class RevenueReportView(BaseExportView):
         start_date, end_date = self.get_date_range(request)
         group_by = request.query_params.get('group_by', 'day')  # day, week, month
         
-        orders = self.revenue_queryset(
-            store,
-            created_at__date__gte=start_date,
-            created_at__date__lte=end_date,
-        )
-        
-        # Aggregation function based on group_by
-        if group_by == 'week':
-            trunc_func = TruncWeek('created_at')
-        elif group_by == 'month':
-            trunc_func = TruncMonth('created_at')
-        else:
-            trunc_func = TruncDate('created_at')
-        
-        # Revenue by period
-        revenue_data = orders.annotate(
-            period=trunc_func
-        ).values('period').annotate(
-            total_revenue=Sum('total'),
-            order_count=Count('id'),
-            avg_order_value=Avg('total'),
-            total_delivery_fees=Sum('delivery_fee'),
-            total_discounts=Sum('discount')
-        ).order_by('period')
-        
-        # Summary
-        summary = orders.aggregate(
-            total_revenue=Sum('total'),
-            total_orders=Count('id'),
-            avg_order_value=Avg('total'),
-            total_delivery_fees=Sum('delivery_fee'),
-            total_discounts=Sum('discount')
-        )
+        # Série e totais vêm do núcleo. Antes filtrava e agrupava por
+        # `created_at`; o resto do painel usa a data do pagamento, então este
+        # relatório distribuía a receita em dias diferentes das outras telas.
+        from apps.stores import metrics
+
+        janela = metrics.de_datas(start_date, end_date)
+        granularidade = {'week': 'semana', 'month': 'mes'}.get(group_by, 'dia')
+
+        pontos = metrics.serie_temporal(store, janela, granularidade)
+        revenue_data = [
+            {
+                'period': p['periodo'],
+                'total_revenue': p['receita'],
+                'order_count': p['pedidos'],
+                'avg_order_value': p['ticket_medio'],
+                'total_delivery_fees': p['frete'],
+                'total_discounts': p['desconto'],
+            }
+            for p in pontos
+        ]
+
+        agregado = metrics.totais(store, janela)
+        summary = {
+            'total_revenue': agregado['receita'],
+            'total_orders': agregado['pedidos'],
+            'avg_order_value': agregado['ticket_medio'],
+            'total_delivery_fees': agregado['frete'],
+            'total_discounts': agregado['desconto'],
+        }
         
         return Response({
             'period': {
@@ -558,41 +554,22 @@ class StoreDashboardStatsView(BaseExportView):
         last_7_days = today - timedelta(days=7)
         last_30_days = today - timedelta(days=30)
         
-        # Today's stats
-        today_orders = StoreOrder.objects.filter(
-            store=store,
-            created_at__date=today
-        )
-        today_revenue = apenas_receita(today_orders).aggregate(
-            total=Sum('total')
-        )['total'] or Decimal('0')
-        
-        # Yesterday's stats for comparison
-        yesterday_orders = StoreOrder.objects.filter(
-            store=store,
-            created_at__date=yesterday
-        )
-        yesterday_revenue = apenas_receita(yesterday_orders).aggregate(
-            total=Sum('total')
-        )['total'] or Decimal('0')
-        
-        # Last 7 days
-        week_orders = StoreOrder.objects.filter(
-            store=store,
-            created_at__date__gte=last_7_days
-        )
-        week_revenue = apenas_receita(week_orders).aggregate(
-            total=Sum('total')
-        )['total'] or Decimal('0')
-        
-        # Last 30 days
-        month_orders = StoreOrder.objects.filter(
-            store=store,
-            created_at__date__gte=last_30_days
-        )
-        month_revenue = apenas_receita(month_orders).aggregate(
-            total=Sum('total')
-        )['total'] or Decimal('0')
+        # Faturamento vem do núcleo: janela no fuso da loja e agrupamento pela
+        # data do PAGAMENTO. Aqui filtrava por `created_at`, eixo diferente do
+        # resto do painel — este resumo não batia com o card da home.
+        from apps.stores import metrics
+
+        today_revenue = metrics.totais(store, metrics.hoje())['receita']
+        yesterday_revenue = metrics.totais(store, metrics.ontem())['receita']
+        week_revenue = metrics.totais(store, metrics.ultimos_dias(8))['receita']
+        month_revenue = metrics.totais(store, metrics.ultimos_dias(31))['receita']
+
+        # Contagem operacional continua sobre o queryset cru: a operação
+        # precisa ver o pedido cancelado, o faturamento não.
+        _op = StoreOrder.objects.filter(store=store)
+        today_orders = _op.filter(created_at__date=today)
+        week_orders = _op.filter(created_at__date__gte=last_7_days)
+        month_orders = _op.filter(created_at__date__gte=last_30_days)
         
         # Pending orders
         pending_orders = StoreOrder.objects.filter(

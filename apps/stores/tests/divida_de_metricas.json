@@ -4,7 +4,7 @@
   "apps/marketing/api/views.py": 1,
   "apps/panel/views.py": 1,
   "apps/stores/api/analytics_views.py": 14,
-  "apps/stores/api/export_views.py": 12,
+  "apps/stores/api/export_views.py": 6,
   "apps/stores/api/views/order_views.py": 3,
   "apps/stores/api/views/product_views.py": 1,
   "apps/stores/models/cash.py": 1,
