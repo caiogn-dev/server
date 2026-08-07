@@ -45,7 +45,7 @@ class InstagramMediaSerializer(serializers.ModelSerializer):
             'has_product_tags', 'items', 'product_tags',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'account', 'created_at', 'updated_at']
 
 
 class InstagramProductSerializer(serializers.ModelSerializer):
@@ -125,7 +125,7 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
     last_message = serializers.SerializerMethodField()
     status = serializers.SerializerMethodField()
     last_message_preview = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = InstagramConversation
         fields = [
@@ -136,7 +136,7 @@ class InstagramConversationSerializer(serializers.ModelSerializer):
             'last_message', 'last_message_preview',
             'status', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'account', 'created_at', 'updated_at']
     
     def get_last_message(self, obj):
         last_msg = obj.messages.filter(is_unsent=False).order_by('-created_at').first()
@@ -180,3 +180,40 @@ class InstagramInsightSerializer(serializers.ModelSerializer):
             'website_clicks', 'follower_count', 'followers_gained',
             'followers_lost', 'engagement', 'created_at'
         ]
+
+
+class InstagramMediaCreateSerializer(serializers.Serializer):
+    """Serializer de entrada para criação de InstagramMedia.
+
+    Documenta o campo `account` (UUIDField) no request schema gerado pelo
+    drf-spectacular quando COMPONENT_SPLIT_REQUEST=True — evita que clientes
+    gerados do OpenAPI omitam o campo e recebam 404.
+    """
+    account = serializers.UUIDField(help_text='UUID da conta Instagram do usuário autenticado.')
+    media_type = serializers.ChoiceField(choices=['IMAGE', 'VIDEO', 'CAROUSEL_ALBUM', 'REELS', 'STORY', 'LIVE'])
+    caption = serializers.CharField(required=False, allow_blank=True, default='')
+    media_url = serializers.URLField(required=False, allow_null=True)
+    thumbnail_url = serializers.URLField(required=False, allow_null=True)
+    permalink = serializers.URLField(required=False, allow_null=True)
+    status = serializers.ChoiceField(
+        choices=['PUBLISHED', 'SCHEDULED', 'DRAFT', 'PROCESSING', 'FAILED', 'ARCHIVED'],
+        required=False,
+        default='DRAFT',
+    )
+    scheduled_at = serializers.DateTimeField(required=False, allow_null=True)
+    has_product_tags = serializers.BooleanField(required=False, default=False)
+
+
+class InstagramConversationCreateSerializer(serializers.Serializer):
+    """Serializer de entrada para criação de InstagramConversation.
+
+    Mesma finalidade que InstagramMediaCreateSerializer: garante que `account`
+    apareça no request schema com COMPONENT_SPLIT_REQUEST=True.
+    """
+    account = serializers.UUIDField(help_text='UUID da conta Instagram do usuário autenticado.')
+    instagram_conversation_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    participant_id = serializers.CharField(help_text='ID do participante na API do Instagram.')
+    participant_username = serializers.CharField(required=False, allow_blank=True, default='')
+    participant_name = serializers.CharField(required=False, allow_blank=True, default='')
+    participant_profile_pic = serializers.URLField(required=False, allow_null=True)
+    is_active = serializers.BooleanField(required=False, default=True)

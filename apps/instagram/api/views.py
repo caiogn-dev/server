@@ -6,11 +6,13 @@ from urllib.parse import quote as urlquote
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.signing import BadSignature, SignatureExpired, TimestampSigner
-from django.http import HttpResponseRedirect
+from django.http import Http404, HttpResponseRedirect
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
+from drf_spectacular.utils import extend_schema
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -36,9 +38,11 @@ from ..services import (
 from .serializers import (
     InstagramAccountSerializer,
     InstagramCatalogSerializer,
+    InstagramConversationCreateSerializer,
     InstagramConversationSerializer,
     InstagramInsightSerializer,
     InstagramLiveSerializer,
+    InstagramMediaCreateSerializer,
     InstagramMediaSerializer,
     InstagramMessageSerializer,
     InstagramProductSerializer,
@@ -296,6 +300,21 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.filter(account__user=self.request.user)
 
+    @extend_schema(request=InstagramMediaCreateSerializer, responses=InstagramMediaSerializer)
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        account_id = self.request.data.get('account')
+        qs = InstagramAccount.objects.filter(id=account_id)
+        if not self.request.user.is_superuser:
+            qs = qs.filter(user=self.request.user)
+        try:
+            account = get_object_or_404(qs)
+        except (ValueError, DjangoValidationError):
+            raise Http404
+        serializer.save(account=account)
+
     @action(detail=False, methods=["get"])
     def feed(self, request):
         queryset = self.get_queryset().filter(
@@ -493,6 +512,21 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         return queryset
+
+    @extend_schema(request=InstagramConversationCreateSerializer, responses=InstagramConversationSerializer)
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        account_id = self.request.data.get('account')
+        qs = InstagramAccount.objects.filter(id=account_id)
+        if not self.request.user.is_superuser:
+            qs = qs.filter(user=self.request.user)
+        try:
+            account = get_object_or_404(qs)
+        except (ValueError, DjangoValidationError):
+            raise Http404
+        serializer.save(account=account)
 
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):

@@ -846,6 +846,53 @@ Ambos os PRs aguardam merge para `development`.
 3. **P1** — Varredura de `is_staff` como bypass cross-tenant em `apps/whatsapp/` e `apps/instagram/`
 4. **P2** — Namespace limpo mobile/customer para detalhe/status/rastreio/reordenação de pedidos.
 5. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+### 2026-07-28
+
+**Baseline de testes:** 18 novos testes `test_instagram_account_field_idor` GREEN (SimpleTestCase, sem Docker).
+109 testes de regressão (campanhas, stores, handover, webhooks, instagram consumers) passando. Falhas
+pré-existentes: `test_idor_is_staff.py` requer `pytest` (não instalado no container) — pré-existente, não regressão.
+
+**Gate anti-acúmulo:** 0 PRs abertos. Confirmado via `gh pr list`. Todos os PRs #307–#317 mergeados.
+Commit HEAD: `6caeb33` (test: conserta testes das PRs #316/#307).
+Última sessão registrada: 2026-07-27 (fiscal NFC-e, já em `development`).
+
+**Bug encontrado e corrigido:** IDOR cross-tenant em InstagramMediaSerializer e InstagramConversationSerializer [P1]
+
+- **Tipo:** P1 — IDOR de escrita via POST + PATCH cross-tenant em dois endpoints autenticados
+- **Arquivos corrigidos (2):**
+  1. `apps/instagram/api/serializers.py`
+     - `InstagramMediaSerializer.Meta.read_only_fields`: adicionado `'account'`
+       → PATCH `/api/v1/instagram/media/{id}/` com `{"account": victim_id}` não altera mais a FK
+     - `InstagramConversationSerializer.Meta.read_only_fields`: adicionado `'account'`
+       → PATCH `/api/v1/instagram/conversations/{id}/` com `{"account": victim_id}` bloqueado
+  2. `apps/instagram/api/views.py`
+     - `InstagramMediaViewSet.perform_create`: adicionado — get `account_id` de `request.data`,
+       filtra `InstagramAccount.objects.filter(id=account_id, user=request.user)` (superuser ignora filtro),
+       `get_object_or_404` → 404 se conta não pertence ao usuário; `serializer.save(account=account)`
+     - `InstagramConversationViewSet.perform_create`: mesmo padrão
+       → POST com `account` de outro tenant retorna 404 (info-hiding)
+- **Vetores fechados:**
+  - `POST /api/v1/instagram/media/ {"account": victim_account_id, ...}` → 404
+  - `PATCH /api/v1/instagram/media/{id}/ {"account": victim_account_id}` → ignorado (read_only)
+  - `POST /api/v1/instagram/conversations/ {"account": victim_account_id, ...}` → 404
+  - `PATCH /api/v1/instagram/conversations/{id}/ {"account": victim_account_id}` → ignorado (read_only)
+- **Testes:** 18 SimpleTestCase em `apps/instagram/tests/test_instagram_account_field_idor.py` (RED→GREEN):
+  - Análise estática de `read_only_fields` nos dois serializers (4 testes)
+  - Análise estática de `perform_create` nas duas ViewSets (8 testes)
+  - Testes funcionais DRF via importlib (4 testes): `field.read_only=True` + ausência de `writable_fields`
+- **PR:** `bot/server-2026-07-28-instagram-account-idor`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Testes de contrato para checkout payload completo (itens, taxa, cupom, pagamento) — pendente há várias sessões |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (CLAUDE.md) |
+| P2 | N+1 queries em `emit_nfce_for_order` — prefetch_related para `order.items__product` |
+| P3 | Verificar cobertura de `apps/audit/` para IDOR no export (fix de 2026-06-28) |
+
+---
+
 ### 2026-07-26
 
 **Baseline de testes:** 46 testes `SimpleTestCase` rodados localmente (sem Docker/PostgreSQL).
