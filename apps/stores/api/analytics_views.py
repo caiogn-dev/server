@@ -58,16 +58,24 @@ class BaseAnalyticsView(BaseExportView):
         return store, start, end, None
 
     def paid_orders(self, store, start, end):
-        """Queryset canônico de faturamento — SSOT em stores/metrics/.
+        """Queryset canônico de faturamento — núcleo em `apps/stores/metrics/`.
 
-        Filtrava só `payment_status='paid'`: contava venda cancelada e pedido de
-        teste do dono como receita.
+        Ponto único de entrada dos 20 relatórios desta camada: eles compõem em
+        cima deste queryset. Consertar aqui conserta todos de uma vez — e
+        introduzir divergência aqui a espalha para todos.
+
+        Duas correções em cima do que existia antes:
+
+        - filtrava só `payment_status='paid'`, contando venda cancelada e
+          pedido de teste do dono como receita;
+        - recortava o período por `created_at`, enquanto o resto do painel usa
+          a data do PAGAMENTO. Pedido feito 31/07 23h40 e pago 01/08 00h05
+          caía em meses diferentes conforme a tela, e o BI não conciliava com
+          o extrato do Mercado Pago.
         """
-        from apps.stores.metrics import apenas_receita
+        from apps.stores import metrics
 
-        return apenas_receita(
-            StoreOrder.objects.filter(store=store, created_at__date__range=(start, end))
-        )
+        return metrics.pedidos_de_receita(loja=store, inicio=start, fim=end)
 
 
 def _round2(value):
