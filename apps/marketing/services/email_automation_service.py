@@ -156,7 +156,7 @@ class EmailAutomationService:
             log.status = 'failed'
             log.error_message = str(e)
             log.save()
-            return {'success': False, 'error': str(e)}
+            return {'success': False, 'error': 'Erro ao enviar e-mail de automação.'}
     
     def _check_conditions(self, conditions: Dict, context: Dict) -> bool:
         """Check if conditions are met for sending."""

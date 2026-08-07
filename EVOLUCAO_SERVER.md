@@ -888,3 +888,52 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-07-31
+
+**Baseline de testes:** 45 testes SimpleTestCase (sem Docker/PostgreSQL) — 45/45 OK.
+PRs abertos: #318 (Instagram IDOR — P1), #319 (CustomerSearch PII — P2), #320 (marketing email IDOR — P1).
+PRs #307–#317 já mergeados em `development` (confirmado via git log).
+
+**Gate anti-acúmulo:**
+- Novos módulos `bio` e `fidelidade` varridos: `BioLinkSerializer` usa `StoreSlugOrIdField`
+  (já tem tenant gate desde PR #294), `LoyaltyAccountsView` escopado por `store.owner_id`,
+  `LoyaltyGuestStatusView` AllowAny com throttle — ambos seguros.
+- PR #320 já cobre: IDOR marketing serializers + `debug` is_staff → is_superuser.
+- Nenhum PR aberto cobria `EmailCampaignViewSet.send` str(e) nem `send_single_email`/`_send_automation_email`.
+
+**Bug encontrado e corrigido:** info-disclosure via `str(e)` em envio de campanha e e-mail [P2]
+
+- **Tipo:** P2 — Info-disclosure: detalhes internos (Resend API errors, tokens, URLs de conexão)
+  propagados ao requisitante autenticado via resposta HTTP.
+- **Arquivos corrigidos (3):**
+  1. `apps/marketing/api/views.py` — `EmailCampaignViewSet.send` (linha 157): `except Exception as e`
+     retornava `{'error': str(e)}` como HTTP 500 ao dono da campanha. Uma exceção de DB/Redis/timeout
+     poderia expor string de conexão, nome de tabela ou stack info.
+     Substituído por `'Erro ao enviar campanha.'`; `str(e)` preservado no `logger.exception` já existente.
+  2. `apps/marketing/services/email_marketing_service.py` — `send_single_email()` (linha 452):
+     `return {'success': False, 'error': str(e)}` expunha erros da Resend API (URL interna, token,
+     corpo da resposta). Substituído por `'Erro ao enviar e-mail.'`; real error no `logger.error`.
+  3. `apps/marketing/services/email_automation_service.py` — `_send_automation_email()` (linha 159):
+     mesmo padrão; pode chegar a views de automação de email.
+     Substituído por `'Erro ao enviar e-mail de automação.'`; `log.error_message = str(e)` mantido
+     (registro interno no banco, não exposto em HTTP).
+- **Testes (6 SimpleTestCase):** `apps/marketing/tests_send_str_e_leak.py` (RED→GREEN confirmado):
+  - `TestViewSendNoStrE` — regex confirma ausência de `str(e)` em `return Response(...)` em views.py
+  - `TestEmailServiceNoStrEInReturn` — regex confirma ausência de `str(e)` em `send_single_email`;
+    logging do erro real preservado
+  - `TestAutomationServiceNoStrEInReturn` — regex confirma ausência de `'error': str(e)` em return dict
+  - `TestSendSingleEmailExceptionHidesDetails` — mock Resend → resposta não inclui mensagem interna
+  - `TestEmailAutomationExceptionHidesDetails` — mock exceção → return dict não inclui detalhe interno
+- **PR:** `bot/server-2026-07-31-marketing-send-str-e`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs #318 (Instagram IDOR), #319 (CustomerSearch), #320 (marketing IDOR) |
+| P1 | Testes de contrato para checkout payload (fluxo completo) — pendência crítica do CLAUDE.md há várias sessões |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido |
+| P3 | `email_automation_service.py:152` — `result.get('error')` ainda propaga msg do send_single_email; mas após fix #2 a msg é já genérica, risco residual baixo |
+
