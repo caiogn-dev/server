@@ -89,11 +89,18 @@ class StoreCoupon(models.Model):
         if identity:
             from .order import StoreOrder
             # Pedido "de verdade": pago, ou já andou no funil — pending
-            # abandonado e cancelado não contam contra o cliente.
+            # abandonado, cancelado e FALHO não contam contra o cliente.
+            #
+            # `failed` entrou aqui depois de um caso real: a cliente aplicou o
+            # BEMVINDO10, o pagamento falhou, e três minutos depois ela refez o
+            # mesmo pedido — o cupom de primeira compra já estava queimado pela
+            # tentativa que nunca virou venda. Tentativa frustrada de pagar não
+            # é compra; quem perde é sempre o cliente, que paga a diferença sem
+            # entender o motivo.
             real_orders = StoreOrder.objects.filter(identity, store=self.store).filter(
                 # metrics-ok: regra de VALIDADE de cupom (o pedido conta contra o
             # limite de uso?), nao calculo de faturamento.
-            Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled'])
+            Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled', 'failed'])
             )
             if self.first_order_only and real_orders.exists():
                 return False, "Cupom válido apenas para primeira compra"
@@ -158,6 +165,21 @@ class StoreCoupon(models.Model):
                 used_count=F('used_count') + 1, updated_at=timezone.now()
             )
             return True
+
+    def decrement_usage(self) -> None:
+        """Devolve a vaga reservada por `increment_usage()`.
+
+        A reserva acontece no checkout, ANTES do pagamento. Quando o pagamento
+        falha, o pedido morre mas a vaga ficava presa: num cupom com
+        `usage_limit`, cada tentativa frustrada consumia uma unidade que ninguém
+        usou. `used_count__gt=0` no WHERE impede contador negativo se dois
+        caminhos de falha chamarem isto para o mesmo pedido.
+        """
+        from django.db.models import F
+
+        StoreCoupon.objects.filter(id=self.id, used_count__gt=0).update(
+            used_count=F('used_count') - 1, updated_at=timezone.now()
+        )
 
 
 class StoreCouponRedemption(models.Model):

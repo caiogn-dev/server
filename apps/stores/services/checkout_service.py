@@ -912,6 +912,7 @@ class CheckoutService:
         # Validate and apply coupon using unified StoreCoupon model
         discount = Decimal('0')
         coupon = None
+        coupon_rejected = None   # {'code', 'reason'} quando o cupom não pegou
         if coupon_code:
             coupon_result = CheckoutService.validate_coupon(
                 store, coupon_code, subtotal,
@@ -937,6 +938,24 @@ class CheckoutService:
                         'Cupom %s esgotou na corrida (limite %s); pedido segue sem desconto',
                         coupon_code, candidate.usage_limit,
                     )
+                    coupon_rejected = {
+                        'code': coupon_code,
+                        'reason': 'Limite de uso atingido',
+                    }
+            else:
+                # O cupom foi recusado AQUI, depois de a tela já ter mostrado o
+                # desconto (a validação do storefront acontece antes e pode ter
+                # sido aprovada). Registrar o motivo: sem isso, o pedido saía com
+                # o código gravado e desconto zero, e nem o cliente nem o
+                # atendente conseguiam explicar o "-" na coluna de desconto.
+                coupon_rejected = {
+                    'code': coupon_code,
+                    'reason': coupon_result.get('error') or 'Cupom inválido',
+                }
+                logger.info(
+                    'Cupom %s recusado no checkout (%s); pedido segue sem desconto',
+                    coupon_code, coupon_rejected['reason'],
+                )
 
         loyalty_reward = {
             'applied': False,
@@ -983,7 +1002,11 @@ class CheckoutService:
             payment_status=StoreOrder.PaymentStatus.PENDING,
             subtotal=subtotal,
             discount=discount,
-            coupon_code=coupon_code or '',
+            # Só grava o código que REALMENTE valeu. Antes gravava a string crua:
+            # cupom recusado virava pedido com código preenchido e desconto 0,00,
+            # o painel mostrava "-" e o cliente jurava ter aplicado. O código
+            # recusado fica em metadata['coupon_rejected'] para auditoria.
+            coupon_code=(coupon.code if coupon else ''),
             tax=Decimal('0'),
             delivery_fee=delivery_fee,
             total=total,
@@ -1008,6 +1031,7 @@ class CheckoutService:
                     'cpf': customer_data.get('cpf', '') or '',
                     'auth_channel': 'whatsapp_otp',
                 },
+                **({'coupon_rejected': coupon_rejected} if coupon_rejected else {}),
                 **extra_metadata,
             }
         )
@@ -1396,6 +1420,7 @@ class CheckoutService:
                 order.status = StoreOrder.OrderStatus.FAILED
                 order.payment_status = StoreOrder.PaymentStatus.FAILED
                 order.save(update_fields=['status', 'payment_status', 'updated_at'])
+                CheckoutService._release_coupon(order)
             return {
                 'success': False,
                 'error': result.get("response", {}).get("message", "Erro ao criar pagamento"),
@@ -1479,6 +1504,7 @@ class CheckoutService:
                 order.status = StoreOrder.OrderStatus.FAILED
                 order.payment_status = StoreOrder.PaymentStatus.FAILED
                 order.save(update_fields=['status', 'payment_status', 'updated_at'])
+                CheckoutService._release_coupon(order)
                 return {
                     'success': False,
                     'error': status_detail or 'Erro ao processar pagamento com cartao',
@@ -1865,6 +1891,7 @@ class CheckoutService:
             # restaurar de novo infla o estoque -> overselling. Guard por old_status.
             if old_status not in _STOCK_RESTORED_STATUSES:
                 CheckoutService._restore_stock(order)
+                CheckoutService._release_coupon(order)
             trigger_order_email_automation(order, 'order_cancelled')
 
         elif status == 'refunded':
@@ -1911,6 +1938,34 @@ class CheckoutService:
                         stock_quantity=F('stock_quantity') + item.quantity,
                         sold_count=F('sold_count') - item.quantity
                     )
+
+    @staticmethod
+    def _release_coupon(order: StoreOrder):
+        """Devolve a vaga do cupom quando o pedido morre (falhou/cancelado).
+
+        A reserva é feita no checkout, antes do pagamento (ver
+        `_create_order_atomic`). Sem esta devolução, cada tentativa frustrada
+        consome uma unidade do `usage_limit` para sempre.
+
+        Idempotente via `metadata['coupon_released']`: o Mercado Pago reenvia
+        webhooks, e um segundo release devolveria uma vaga que não existe.
+        """
+        if not order.coupon_code or order.discount <= 0:
+            return
+        metadata = dict(order.metadata or {})
+        if metadata.get('coupon_released'):
+            return
+
+        coupon = StoreCoupon.objects.filter(
+            store=order.store, code__iexact=order.coupon_code
+        ).first()
+        if not coupon:
+            return
+
+        coupon.decrement_usage()
+        metadata['coupon_released'] = True
+        order.metadata = metadata
+        order.save(update_fields=['metadata', 'updated_at'])
 
 
 # Singleton instance
