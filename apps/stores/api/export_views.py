@@ -78,18 +78,22 @@ class BaseExportView(APIView):
             except ValueError:
                 pass
         
-        # Default periods
-        today = hoje_local()
-        if period == '7d':
-            return today - timedelta(days=7), today
-        elif period == '30d':
-            return today - timedelta(days=30), today
-        elif period == '90d':
-            return today - timedelta(days=90), today
-        elif period == '1y':
-            return today - timedelta(days=365), today
-        else:
-            return today - timedelta(days=30), today
+        # Janelas vêm do núcleo. `today - timedelta(days=7)` até `today` cobre
+        # OITO dias, não sete — o rótulo "7 dias" mentia, e comparar duas
+        # janelas de tamanhos diferentes dava variação que não existia.
+        from apps.stores import metrics
+
+        janelas = {
+            'hoje': metrics.hoje,
+            'ontem': metrics.ontem,
+            '7d': lambda: metrics.ultimos_dias(7),
+            '30d': lambda: metrics.ultimos_dias(30),
+            '90d': lambda: metrics.ultimos_dias(90),
+            '1y': lambda: metrics.ultimos_dias(365),
+            'mes': metrics.mes_corrente,
+        }
+        janela = janelas.get(period, janelas['30d'])()
+        return janela.inicio, janela.fim
 
 
 class OrdersExportView(BaseExportView):
