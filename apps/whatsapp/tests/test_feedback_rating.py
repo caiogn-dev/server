@@ -79,7 +79,9 @@ class FeedbackRatingTest(TestCase):
     def test_clique_repetido_atualiza_nota(self):
         self._click(f'rating_3_{self.order.id}')
         self._click(f'rating_5_{self.order.id}')
-        self.assertEqual(StoreReview.objects.count(), 1)
+        # Escopado ao pedido: o count() global media resíduo de outras suítes
+        # no banco de teste compartilhado e falhava sozinho (7 != 1).
+        self.assertEqual(StoreReview.objects.filter(order=self.order).count(), 1)
         self.assertEqual(StoreReview.objects.get(order=self.order).rating, 5)
 
     def test_rating_5_com_google_url_oferece_botao_de_recompensa(self):

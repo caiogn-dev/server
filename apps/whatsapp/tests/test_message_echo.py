@@ -61,5 +61,9 @@ class MessageEchoTest(TestCase):
         self.assertEqual(Message.objects.filter(whatsapp_message_id='wamid.ECHO1').count(), 1)
 
     def test_eco_nao_gera_webhook_event_de_message(self):
+        # Conta ANTES e DEPOIS: o exists() global via evento de outra suíte
+        # no banco de teste compartilhado e falhava sozinho.
+        antes = WebhookEvent.objects.filter(event_type=WebhookEvent.EventType.MESSAGE).count()
         self.service.process_webhook(echo_payload(), headers={})
-        self.assertFalse(WebhookEvent.objects.filter(event_type=WebhookEvent.EventType.MESSAGE).exists())
+        depois = WebhookEvent.objects.filter(event_type=WebhookEvent.EventType.MESSAGE).count()
+        self.assertEqual(depois, antes, 'eco do WhatsApp não pode virar WebhookEvent de mensagem')

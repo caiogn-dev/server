@@ -37,36 +37,66 @@ _UUID_RE = re.compile(
 
 
 def resolve_catalog_products(store, retailer_ids):
-    """Mapeia retailer_ids do catálogo oficial → StoreProduct.
+    """Mapeia retailer_ids do catálogo do WhatsApp → StoreProduct.
 
-    O catálogo oficial usa IDs prefixados (ex.: "cs-<uuid>"); pedidos vindos
-    do app podem trazer IDs arbitrários. Extrai o UUID quando existir e nunca
-    passa string não-UUID pro filtro (evita ValidationError).
+    Três formatos convivem, e o resolvedor precisa dar conta dos três:
+
+    1. `cs-<uuid>` — o feed autogerado do cardápio (`npm run feed:catalog`);
+    2. `<sku>` — catálogo montado a partir do SKU do produto;
+    3. IDs arbitrários do Commerce Manager (ex.: `kqvvc3txuf`) — quando o
+       catálogo foi criado À MÃO, a Meta gera o id e ele não tem relação
+       nenhuma com os nossos dados. Esses são IRRECUPERÁVEIS por código: não
+       existe de onde deduzir o produto. O caminho é religar o WABA no
+       catálogo autogerado. Ver `_build_catalog_order_response`, que trata a
+       falha como handoff de verdade em vez de beco sem saída.
+
+    Nunca passa string não-UUID pro filtro de id (evita ValidationError).
     """
     from apps.stores.models import StoreProduct
 
-    uuid_by_rid = {}
-    for rid in retailer_ids:
-        m = _UUID_RE.search(rid or '')
-        if m:
-            uuid_by_rid[rid] = m.group(0).lower()
-
-    if not uuid_by_rid:
+    rids = [r for r in (retailer_ids or []) if r]
+    if not rids:
         return {}
 
-    products_by_uuid = {
-        str(p.id): p
-        for p in StoreProduct.objects.filter(
-            store=store,
-            id__in=set(uuid_by_rid.values()),
-            is_active=True,
-        )
-    }
-    return {
-        rid: products_by_uuid[pid]
-        for rid, pid in uuid_by_rid.items()
-        if pid in products_by_uuid
-    }
+    resolvidos = {}
+
+    # 1) UUID embutido no retailer_id
+    uuid_por_rid = {}
+    for rid in rids:
+        m = _UUID_RE.search(rid)
+        if m:
+            uuid_por_rid[rid] = m.group(0).lower()
+
+    if uuid_por_rid:
+        por_uuid = {
+            str(p.id): p
+            for p in StoreProduct.objects.filter(
+                store=store, id__in=set(uuid_por_rid.values()), is_active=True,
+            )
+        }
+        for rid, pid in uuid_por_rid.items():
+            if pid in por_uuid:
+                resolvidos[rid] = por_uuid[pid]
+
+    # 2) SKU — case-insensitive, porque o Commerce Manager normaliza a caixa.
+    faltando = [r for r in rids if r not in resolvidos]
+    if faltando:
+        from django.db.models import Q
+
+        consulta = Q()
+        for rid in faltando:
+            consulta |= Q(sku__iexact=rid)
+        por_sku = {
+            (p.sku or '').lower(): p
+            for p in StoreProduct.objects.filter(consulta, store=store, is_active=True)
+            if p.sku
+        }
+        for rid in faltando:
+            produto = por_sku.get(rid.lower())
+            if produto is not None:
+                resolvidos[rid] = produto
+
+    return resolvidos
 
 
 class WebhookService:
@@ -958,6 +988,61 @@ class WebhookService:
             logger.error('[pipeline] Failed to enqueue agent fallback: %s', exc, exc_info=True, extra={'message_id': str(message.id)})
             return False
 
+    @staticmethod
+    def _resumo_do_pedido_de_catalogo(product_items) -> str:
+        """O que o cliente pediu, com o que veio no payload da Meta.
+
+        O payload traz `product_retailer_id`, `quantity` e `item_price` — não
+        traz o nome. Mesmo assim isso é suficiente para o atendente reconhecer
+        o pedido pelo valor e fechar na mão, que é melhor que perder a venda.
+        """
+        linhas = []
+        total = 0.0
+        for item in product_items or []:
+            try:
+                qtd = max(1, int(item.get('quantity') or 1))
+            except (TypeError, ValueError):
+                qtd = 1
+            try:
+                preco = float(item.get('item_price') or 0)
+            except (TypeError, ValueError):
+                preco = 0.0
+            subtotal = preco * qtd
+            total += subtotal
+            linhas.append(f"• {qtd}x — R$ {subtotal:.2f}")
+        if total:
+            linhas.append(f"\n💰 *Total:* R$ {total:.2f}")
+        return '\n'.join(linhas)
+
+    @staticmethod
+    def _forcar_atendimento_humano(message, motivo=''):
+        """Passa a conversa para humano de verdade.
+
+        `mode='human'` é o que faz o painel destacar a conversa E o que faz o
+        bot parar de responder por cima do atendente. Sem isto, "vou chamar um
+        atendente" era só texto: ninguém era chamado.
+        """
+        conversa = getattr(message, 'conversation', None)
+        if conversa is None:
+            return False
+        try:
+            from apps.conversations.services import ConversationService
+
+            ConversationService().switch_to_human(str(conversa.id))
+            logger.info(
+                '[handoff] Conversa passada para humano (%s)',
+                motivo,
+                extra={'conversation_id': str(conversa.id)},
+            )
+            return True
+        except Exception as exc:
+            logger.error(
+                '[handoff] Falha ao passar para humano: %s', exc,
+                exc_info=True,
+                extra={'conversation_id': str(conversa.id)},
+            )
+            return False
+
     def _build_catalog_order_response(self, event, message, company_profile=None, store=None):
         """Handle native WhatsApp catalog order payloads without involving the LLM."""
         order = (message.content or {}).get('order') or {}
@@ -974,13 +1059,25 @@ class WebhookService:
             store = getattr(event.account, 'store', None)
 
         if not store:
+            # Mesmo beco sem saída do caso acima: prometia atendente e não
+            # chamava. Aqui o cliente não tem culpa nenhuma — é config nossa.
+            logger.error(
+                '[catalog_order] Loja não identificada para a conta %s',
+                getattr(event.account, 'id', '?'),
+                extra={'message_id': str(message.id)},
+            )
+            self._forcar_atendimento_humano(message, motivo='catalogo_sem_loja')
             return UnifiedResponse(
                 content=(
-                    "Recebi seu pedido pelo catalogo, mas nao consegui identificar a loja agora. "
-                    "Vou chamar um atendente para conferir."
+                    "Recebi seu pedido pelo catálogo! 🛒\n\n"
+                    "Um atendente confirma os itens com você em instantes. 😊"
                 ),
                 source=ResponseSource.HANDLER,
-                metadata={'intent': 'catalog_order', 'error': 'store_not_found'},
+                metadata={
+                    'intent': 'catalog_order',
+                    'error': 'store_not_found',
+                    'handoff': True,
+                },
             )
 
         retailer_ids = [
@@ -1038,18 +1135,36 @@ class WebhookService:
             item_lines.append(f"• {quantity}x {product.name} - R$ {line_total:.2f}")
 
         if not pending_items:
+            # Beco sem saída: a mensagem prometia um atendente e NÃO chamava
+            # ninguém — o pedido morria ali. Acontece quando o WABA está
+            # ligado num catálogo feito à mão, cujos retailer_ids a Meta gera
+            # e não têm relação com os nossos produtos (06/ago: `kqvvc3txuf`,
+            # pedido da Margô, R$ 39,99 perdidos).
+            #
+            # Não dá para resolver o item por código. Dá para não perder o
+            # cliente: passa para humano DE VERDADE e entrega ao atendente o
+            # que veio no payload, para ele fechar na mão.
             logger.warning(
-                '[catalog_order] No matching products for catalog order: %s',
+                '[catalog_order] Nenhum produto casou — handoff humano. ids=%s',
                 missing_items,
-                extra={'message_id': str(message.id)},
+                extra={'message_id': str(message.id), 'store_id': str(store.id)},
             )
+            self._forcar_atendimento_humano(message, motivo='catalogo_sem_correspondencia')
+
+            resumo = self._resumo_do_pedido_de_catalogo(product_items)
             return UnifiedResponse(
                 content=(
-                    "Recebi seu pedido pelo catalogo, mas nao encontrei esses itens no sistema. "
-                    "Vou chamar um atendente para conferir."
+                    "Recebi seu pedido pelo catálogo! 🛒\n\n"
+                    f"{resumo}\n\n"
+                    "Só preciso confirmar os itens com você — um atendente "
+                    "responde aqui em instantes. 😊"
                 ),
                 source=ResponseSource.HANDLER,
-                metadata={'intent': 'catalog_order', 'missing_items': missing_items},
+                metadata={
+                    'intent': 'catalog_order',
+                    'missing_items': missing_items,
+                    'handoff': True,
+                },
             )
 
         try:
