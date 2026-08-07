@@ -405,6 +405,45 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         if str(account_id) not in {str(i) for i in accessible_whatsapp_account_ids(user)}:
             raise PermissionDenied('Sem permissão nesta conta WhatsApp')
 
+    @staticmethod
+    def _assumir_atendimento(message):
+        """Responder pelo painel JÁ É assumir a conversa.
+
+        O gate de modo humano (`_should_suppress_for_human_mode`) sempre
+        existiu e funcionava — só nunca era acionado, porque nada trocava
+        `conversation.mode`. O modo só mudava pelo botão de handover, que
+        ninguém aperta no meio de um atendimento.
+
+        Resultado em 06/ago, conversa da Margô: o dono digitava e o bot
+        respondia por cima ("Você tem itens no carrinho...") enquanto o
+        cliente falava com gente de verdade.
+
+        Mora AQUI e não no MessageService de propósito: o service é usado
+        pelos dois lados, e o bot se silenciaria ao responder.
+        """
+        from apps.conversations.models import Conversation
+
+        conversa = getattr(message, 'conversation', None)
+        if conversa is None:
+            return
+        if conversa.mode == Conversation.ConversationMode.HUMAN:
+            return
+        try:
+            from apps.conversations.services import ConversationService
+
+            ConversationService().switch_to_human(str(conversa.id))
+            logger.info(
+                '[handover] Operador respondeu — conversa assumida',
+                extra={'conversation_id': str(conversa.id)},
+            )
+        except Exception as exc:
+            # Nunca derrubar o envio por causa do handover: a mensagem já foi
+            # para o cliente; falhar aqui só esconderia isso do operador.
+            logger.error(
+                '[handover] Falha ao assumir a conversa: %s', exc,
+                exc_info=True, extra={'conversation_id': str(conversa.id)},
+            )
+
     @extend_schema(
         summary="Send text message",
         request=SendTextMessageSerializer,
@@ -419,7 +458,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         service = MessageService()
         message = service.send_text_message(**serializer.validated_data)
-        
+        self._assumir_atendimento(message)
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -439,7 +479,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         service = MessageService()
         message = service.send_template_message(**serializer.validated_data)
-        
+        self._assumir_atendimento(message)
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -459,7 +500,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         service = MessageService()
         message = service.send_interactive_buttons(**serializer.validated_data)
-        
+        self._assumir_atendimento(message)
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
@@ -479,7 +521,8 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         service = MessageService()
         message = service.send_interactive_list(**serializer.validated_data)
-        
+        self._assumir_atendimento(message)
+
         return Response(
             MessageSerializer(message).data,
             status=status.HTTP_201_CREATED
