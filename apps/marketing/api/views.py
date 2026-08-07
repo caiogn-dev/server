@@ -378,9 +378,12 @@ class CustomersViewSet(viewsets.ViewSet):
                 }
         
         # 2. Get customers from Store Orders
-        order_customers = StoreOrder.objects.filter(
-            store_id=store_id,
-            customer_email__isnull=False
+        # `total_spent` orienta segmentação de campanha — somar pedido
+        # cancelado e não pago punha o cliente na faixa errada.
+        from apps.stores.metrics import apenas_receita
+
+        order_customers = apenas_receita(
+            StoreOrder.objects.filter(store_id=store_id, customer_email__isnull=False)
         ).exclude(
             customer_email=''
         ).values('customer_email', 'customer_name', 'customer_phone').annotate(

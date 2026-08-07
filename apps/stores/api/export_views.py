@@ -390,6 +390,7 @@ class CustomersReportView(BaseExportView):
         ).values(
             'customer_email', 'customer_name', 'customer_phone'
         ).annotate(
+            # Sobre revenue_queryset() — ja e o queryset do nucleo.
             total_spent=Sum('total'),
             order_count=Count('id'),
             avg_order_value=Avg('total')

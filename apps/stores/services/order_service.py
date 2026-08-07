@@ -405,14 +405,14 @@ class OrderService:
             created_at__gte=period_start
         )
         
+        from apps.stores.metrics import apenas_receita
+
         total_orders = orders.count()
-        total_revenue = orders.filter(
-            payment_status='paid'
-        ).aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        
-        avg_order_value = orders.filter(
-            payment_status='paid'
-        ).aggregate(avg=Avg('total'))['avg'] or Decimal('0.00')
+        # `payment_status='paid'` sozinho contava venda cancelada depois do
+        # pagamento e pedido de teste do dono como faturamento.
+        de_receita = apenas_receita(orders)
+        total_revenue = de_receita.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+        avg_order_value = de_receita.aggregate(avg=Avg('total'))['avg'] or Decimal('0.00')
         
         # Orders by status
         by_status = orders.values('status').annotate(count=Count('id'))
@@ -420,12 +420,12 @@ class OrderService:
         # Orders by payment status
         by_payment = orders.values('payment_status').annotate(count=Count('id'))
         
-        # Daily orders
+        # Daily orders — contagem operacional (tudo) + receita pelo núcleo.
         daily = orders.annotate(
             date=TruncDate('created_at')
         ).values('date').annotate(
             count=Count('id'),
-            revenue=Sum('total')
+            revenue=Sum('total', filter=Q(id__in=de_receita.values('id'))),
         ).order_by('date')
         
         return {

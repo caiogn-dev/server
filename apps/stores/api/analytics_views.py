@@ -203,6 +203,7 @@ class ChannelsReportView(BaseAnalyticsView):
             return rows
 
         def dimension(field, label):
+            # `qs` e paid_orders() — ja passou pelo nucleo la em cima.
             rows = (
                 qs.values(field)
                 .annotate(orders=Count('id'), revenue=Sum('total'), avg_ticket=Avg('total'))
@@ -484,6 +485,8 @@ class RfmReportView(BaseAnalyticsView):
     def _cadence_by_phone(store):
         """Gap médio entre pedidos (dias) por telefone — só clientes 2+ pedidos."""
         orders_by_phone = defaultdict(list)
+        # metrics-ok: `payment_status='paid'` aqui e proxy de "pedido real do
+        # cliente" para medir RECORRENCIA — nao ha soma de dinheiro nenhuma.
         pairs = StoreOrder.objects.filter(store=store, payment_status='paid').exclude(
             customer_phone=''
         ).values_list('customer_phone', 'created_at')
@@ -630,7 +633,9 @@ class OverviewReportView(BaseAnalyticsView):
         end_dt = make_aware(datetime.combine(end, dtime.max))
 
         all_orders = StoreOrder.objects.filter(store=store, created_at__range=(start_dt, end_dt))
-        paid = all_orders.filter(payment_status='paid')
+        # `payment_status='paid'` sozinho conta venda cancelada depois do
+        # pagamento e pedido de teste do dono — a nota da loja saía inflada.
+        paid = self.paid_orders(store, start, end)
         agg = paid.aggregate(orders=Count('id'), revenue=Sum('total'), avg_ticket=Avg('total'))
         total = all_orders.count()
         cancelled = all_orders.filter(status__in=('cancelled', 'failed', 'refunded')).count()
@@ -853,21 +858,26 @@ class CancellationsReportView(BaseAnalyticsView):
         qs = StoreOrder.objects.filter(store=store, created_at__date__range=(start, end))
         total_orders = qs.count()
         cancelled = qs.filter(status__in=('cancelled', 'failed', 'refunded'))
+        # metrics-ok: `lost` e receita PERDIDA — o oposto de faturamento.
+        # Passar pelo nucleo aqui zeraria o numero, que e justamente o dado.
         agg = cancelled.aggregate(count=Count('id'), lost=Sum('total'))
         timeline = [
             {'date': r['day'], 'cancelled': r['count'], 'lost_value': _round2(r['lost'])}
             for r in cancelled.annotate(day=TruncDate('created_at'))
             .values('day')
+            # metrics-ok: receita perdida de cancelados, nao faturamento.
             .annotate(count=Count('id'), lost=Sum('total'))
             .order_by('day')
         ]
         by_status = [
             {'status': r['status'], 'count': r['count'], 'lost_value': _round2(r['lost'])}
+            # metrics-ok: receita perdida por status de cancelamento.
             for r in cancelled.values('status').annotate(count=Count('id'), lost=Sum('total')).order_by('-count')
         ]
         by_reason = [
             {'reason': r['cancel_reason'], 'count': r['count'], 'lost_value': _round2(r['lost'])}
             for r in cancelled.exclude(cancel_reason='')
+            # metrics-ok: receita perdida por motivo de cancelamento.
             .values('cancel_reason').annotate(count=Count('id'), lost=Sum('total')).order_by('-count')[:10]
         ]
         count = agg['count'] or 0
@@ -891,11 +901,9 @@ class SchedulingReportView(BaseAnalyticsView):
         store, start, end, err = self.resolve(request)
         if err:
             return err
-        qs = StoreOrder.objects.filter(
-            store=store,
-            scheduled_date__isnull=False,
-            created_at__date__range=(start, end),
-        ).exclude(status__in=('cancelled', 'failed'))
+        # Montava queryset proprio e so excluia cancelado/falho: pedido NAO
+        # PAGO entrava como receita agendada. Agora parte do nucleo.
+        qs = self.paid_orders(store, start, end).filter(scheduled_date__isnull=False)
         by_date = [
             {'date': r['scheduled_date'], 'orders': r['orders'], 'revenue': _round2(r['revenue'])}
             for r in qs.values('scheduled_date').annotate(orders=Count('id'), revenue=Sum('total')).order_by('scheduled_date')
@@ -1067,6 +1075,8 @@ class CohortReportView(BaseAnalyticsView):
         if err:
             return err
         tz = timezone.get_current_timezone()
+        # metrics-ok: `payment_status='paid'` aqui e proxy de "pedido real do
+        # cliente" para medir RECORRENCIA — nao ha soma de dinheiro nenhuma.
         pairs = StoreOrder.objects.filter(store=store, payment_status='paid').exclude(
             customer_phone=''
         ).values_list('customer_phone', 'created_at')

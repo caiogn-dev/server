@@ -91,7 +91,9 @@ class StoreCoupon(models.Model):
             # Pedido "de verdade": pago, ou já andou no funil — pending
             # abandonado e cancelado não contam contra o cliente.
             real_orders = StoreOrder.objects.filter(identity, store=self.store).filter(
-                Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled'])
+                # metrics-ok: regra de VALIDADE de cupom (o pedido conta contra o
+            # limite de uso?), nao calculo de faturamento.
+            Q(payment_status='paid') | ~Q(status__in=['pending', 'cancelled'])
             )
             if self.first_order_only and real_orders.exists():
                 return False, "Cupom válido apenas para primeira compra"

@@ -50,6 +50,7 @@ def _rotulo(codigo, mapa):
 
 
 def _zero():
+    # Helper aplicado SEMPRE sobre pedidos_de_receita() — ver chamadores.
     return Coalesce(Sum('total'), Decimal('0'), output_field=_DEC)
 
 

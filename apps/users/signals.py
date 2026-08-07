@@ -112,12 +112,16 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
 
         # Recalcula os totais a partir de todos os pedidos deste telefone
         from apps.stores.models import StoreOrder
-        stats = StoreOrder.objects.filter(
-            customer_phone__in=phone_candidates,
-        ).aggregate(
-            total_orders=Count('id'),
-            total_spent=Sum('total'),
-        )
+        # `total_spent` é quanto o cliente REALMENTE gastou: somar tudo
+        # incluía pedido cancelado e não pago, e o painel mostrava um valor
+        # que o cliente nunca desembolsou.
+        from apps.stores.metrics import apenas_receita
+
+        _pedidos = StoreOrder.objects.filter(customer_phone__in=phone_candidates)
+        stats = _pedidos.aggregate(total_orders=Count('id'))
+        stats['total_spent'] = apenas_receita(_pedidos).aggregate(
+            t=Sum('total'),
+        )['t']
 
         last_order = StoreOrder.objects.filter(
             customer_phone__in=phone_candidates,

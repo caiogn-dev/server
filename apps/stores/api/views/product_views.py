@@ -178,6 +178,8 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         else:
             # Até amanhã: meia-noite local do dia seguinte
             tomorrow = timezone.localtime() + timedelta(days=1)
+            # metrics-ok: `tomorrow` ja veio de timezone.localtime(), entao
+            # esta meia-noite e local. Nao e janela de metrica.
             product.paused_until = tomorrow.replace(hour=0, minute=0, second=0, microsecond=0)
         product.save(update_fields=['paused_until', 'updated_at'])
         return Response({

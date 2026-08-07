@@ -55,18 +55,67 @@ PROIBIDOS = [
 # Migrações são histórico congelado; testes montam cenário na mão.
 IGNORADOS = {'migrations', 'tests'}
 
+# `Sum('total')` aplicado a um queryset que JÁ passou pelo núcleo é o uso
+# correto — é exatamente assim que se soma dinheiro. O detector é textual e não
+# enxerga isso, então reconhece as marcas do núcleo na vizinhança da linha.
+MARCAS_DO_NUCLEO = (
+    'pedidos_de_receita', 'apenas_receita', 'itens_de_receita', 'paid_orders',
+    'revenue_queryset', 'de_receita', 'metrics.', '_hoje_qs', '_mes',
+    '_rev_qs', 'sem_gateway', 'nucleo',
+)
+JANELA_DE_CONTEXTO = 6  # linhas acima em que a marca ainda vale
+
+
+def _passou_pelo_nucleo(linhas, indice):
+    """A linha soma dinheiro de um queryset do núcleo?"""
+    inicio = max(0, indice - JANELA_DE_CONTEXTO)
+    trecho = '\n'.join(linhas[inicio:indice + 1])
+    return any(marca in trecho for marca in MARCAS_DO_NUCLEO)
+
+
+# Marcador explícito para ocorrência que NÃO é faturamento (receita perdida de
+# cancelado, valor pendente, validade de cupom, contagem de pagamentos...).
+# Exige justificativa escrita na linha anterior — quem adicionar uma nova tem
+# que dizer por quê, e a revisão vira uma pergunta objetiva em vez de "confia".
+MARCADOR_OK = 'metrics-ok:'
+
+
+def _marcada_como_nao_receita(linhas, indice):
+    janela = linhas[max(0, indice - 3):indice]
+    return any(MARCADOR_OK in ln for ln in janela)
+
+
+def _em_docstring(linhas, indice):
+    """A ocorrência está dentro de uma docstring?
+
+    Docstring que CITA o padrão para explicar o bug é documentação, não
+    reincidência — e é justamente onde queremos que o histórico fique.
+    """
+    aspas = 0
+    for ln in linhas[:indice]:
+        aspas += ln.count('\"\"\"')
+    return aspas % 2 == 1
+
 
 def _contar_por_arquivo():
     contagem = {}
     for caminho in sorted(APPS.rglob('*.py')):
         if NUCLEO in caminho.parents or IGNORADOS & set(caminho.parts):
             continue
+        linhas = caminho.read_text(encoding='utf-8', errors='ignore').split('\n')
         n = 0
-        for linha in caminho.read_text(encoding='utf-8', errors='ignore').split('\n'):
+        for i, linha in enumerate(linhas):
             if linha.lstrip().startswith('#'):
                 continue
-            if any(padrao.search(linha) for padrao, _ in PROIBIDOS):
-                n += 1
+            if not any(padrao.search(linha) for padrao, _ in PROIBIDOS):
+                continue
+            if (
+                _em_docstring(linhas, i)
+                or _passou_pelo_nucleo(linhas, i)
+                or _marcada_como_nao_receita(linhas, i)
+            ):
+                continue
+            n += 1
         if n:
             contagem[str(caminho.relative_to(RAIZ)).replace('\\', '/')] = n
     return contagem

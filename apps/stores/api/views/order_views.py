@@ -759,11 +759,14 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
             # Receita sai daqui: era agrupada por `created_at`, um eixo
             # diferente do resto do painel. Ver `_receita()` acima.
+            # metrics-ok: valor PENDENTE — explicitamente o que ainda nao e
+            # receita. O card do painel mostra isso como "a receber".
             revenue_pending=Sum('total', filter=Q(payment_status='pending')),
 
             # Counts por payment_status (o painel de pagamentos precisa do
             # nº exato de pagos/pendentes — by_status é STATUS do pedido, não
             # do pagamento; um pedido pode estar 'pago' mas ainda 'confirmed').
+            # metrics-ok: CONTAGEM de pagamentos, nao soma de dinheiro.
             paid_count=Count('id', filter=Q(payment_status='paid')),
             pending_count=Count('id', filter=Q(payment_status='pending')),
 
