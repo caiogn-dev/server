@@ -72,7 +72,7 @@ def compute_daily_stats(store, day=None) -> dict:
     day = day or (tz_now - timedelta(days=1)).date()
     prev_day = day - timedelta(days=1)
 
-    from apps.stores.services.revenue import revenue_orders, revenue_items
+    from apps.stores.metrics import pedidos_de_receita, itens_de_receita
 
     def day_qs(d):
         return StoreOrder.objects.filter(store=store, created_at__date=d)
@@ -80,7 +80,7 @@ def compute_daily_stats(store, day=None) -> dict:
     def day_numbers(d):
         # SSOT de receita. Antes excluía cancelado mas NÃO checava pagamento,
         # então pedido entregue com PIX pendente entrava como faturamento.
-        qs = revenue_orders(queryset=day_qs(d))
+        qs = pedidos_de_receita(queryset=day_qs(d))
         agg = qs.aggregate(count=Count('id'), revenue=Sum('total'))
         return agg['count'] or 0, float(agg['revenue'] or 0)
 
@@ -88,13 +88,13 @@ def compute_daily_stats(store, day=None) -> dict:
     prev_count, prev_revenue = day_numbers(prev_day)
 
     top_products = list(
-        revenue_items(store=store, start=day, end=day)
+        itens_de_receita(loja=store, inicio=day, fim=day)
         .values('product_name')
         .annotate(qty=Sum('quantity'), total=Sum('subtotal'))
         .order_by('-qty')[:3]
     )
 
-    hours = revenue_orders(queryset=day_qs(day)).values_list('created_at', flat=True)
+    hours = pedidos_de_receita(queryset=day_qs(day)).values_list('created_at', flat=True)
     hour_counts = {}
     for dt in hours:
         h = timezone.localtime(dt).hour
@@ -132,7 +132,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     """
     from django.db.models import Count, Sum
     from django.db.models.functions import TruncDate
-    from apps.stores.services.revenue import revenue_orders, revenue_date_field
+    from apps.stores.metrics import pedidos_de_receita, eixo_de_receita
 
     tz_now = timezone.localtime()
     day = day or (tz_now - timedelta(days=1)).date()
@@ -148,13 +148,13 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     # 16:51:41 e 16:51:53 — comparar timestamp exato nunca detectaria.
     lote_minimo = 3
     contagem = {}
-    for ts in revenue_orders(store=store).exclude(paid_at=None).values_list('paid_at', flat=True):
+    for ts in pedidos_de_receita(loja=store).exclude(paid_at=None).values_list('paid_at', flat=True):
         chave = ts.replace(second=0, microsecond=0)
         contagem[chave] = contagem.get(chave, 0) + 1
     minutos_de_lote = {m for m, n in contagem.items() if n >= lote_minimo}
 
     por_dia = {}
-    for o in revenue_orders(store=store).only('created_at', 'paid_at', 'total'):
+    for o in pedidos_de_receita(loja=store).only('created_at', 'paid_at', 'total'):
         quando = o.paid_at or o.created_at
         if o.paid_at and o.paid_at.replace(second=0, microsecond=0) in minutos_de_lote:
             quando = o.created_at

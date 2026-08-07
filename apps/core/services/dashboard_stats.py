@@ -90,10 +90,10 @@ class DashboardStatsAggregator:
         }
 
     def _revenue_queryset(self):
-        """Pedidos que contam como faturamento — SSOT em stores/services/revenue.py."""
-        from apps.stores.services.revenue import exclude_non_revenue
+        """Pedidos que contam como faturamento — SSOT em stores/stores/metrics/."""
+        from apps.stores.metrics import apenas_receita
 
-        return exclude_non_revenue(
+        return apenas_receita(
             StoreOrder.objects.filter(store=self.store, is_active=True)
         )
 

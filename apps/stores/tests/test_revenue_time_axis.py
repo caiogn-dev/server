@@ -21,7 +21,7 @@ from django.contrib.auth import get_user_model
 from django.utils import timezone
 
 from apps.stores.models import Store, StoreOrder
-from apps.stores.services.revenue import revenue_date_field, revenue_orders
+from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
 
 User = get_user_model()
 
@@ -54,8 +54,8 @@ class TestEixoDeReceita:
         from django.db.models.functions import TruncDate
         linhas = {
             r['d'].isoformat(): float(r['t'])
-            for r in revenue_orders(store=loja)
-            .annotate(d=TruncDate(revenue_date_field()))
+            for r in pedidos_de_receita(loja=loja)
+            .annotate(d=TruncDate(eixo_de_receita()))
             .values('d').annotate(t=Sum('total'))
         }
         assert '2026-08-01' in linhas, f'esperava no dia do pagamento, veio {linhas}'
@@ -73,8 +73,8 @@ class TestEixoDeReceita:
         from django.db.models import Sum
         from django.db.models.functions import TruncDate
         total = (
-            revenue_orders(store=loja)
-            .annotate(d=TruncDate(revenue_date_field()))
+            pedidos_de_receita(loja=loja)
+            .annotate(d=TruncDate(eixo_de_receita()))
             .values('d').annotate(t=Sum('total'))
         )
         assert len(total) == 1, 'pedido sem paid_at sumiu do agrupamento'
@@ -98,8 +98,8 @@ class TestFusoHorario:
         # Sem tzinfo explícito o Django usa o TIME_ZONE do projeto.
         linhas = {
             r['d'].isoformat(): float(r['t'])
-            for r in revenue_orders(store=loja)
-            .annotate(d=TruncDate(revenue_date_field()))
+            for r in pedidos_de_receita(loja=loja)
+            .annotate(d=TruncDate(eixo_de_receita()))
             .values('d').annotate(t=Sum('total'))
         }
         assert '2026-08-03' in linhas, f'venda das 22h caiu no dia errado: {linhas}'

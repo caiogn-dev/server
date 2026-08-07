@@ -25,7 +25,7 @@ class _Base(TestCase):
 
     def _order(self, when, total=50, status='delivered', items=None, payment_status='paid'):
         # payment_status='paid' explícito: desde o SSOT de receita
-        # (services/revenue.py) faturamento exige pedido PAGO e não cancelado.
+        # (stores/metrics/) faturamento exige pedido PAGO e não cancelado.
         # Antes bastava não estar cancelado, e pedido com PIX pendente entrava
         # no relatório como se fosse dinheiro no caixa.
         o = StoreOrder.objects.create(

@@ -19,8 +19,8 @@ import pytest
 from django.contrib.auth import get_user_model
 
 from apps.stores.models import Store, StoreOrder
-from apps.stores.services.revenue import (
-    NON_REVENUE_STATUSES, is_test_order, mark_as_test, revenue_orders,
+from apps.stores.metrics import (
+    STATUS_SEM_RECEITA, eh_pedido_de_teste, marcar_como_teste, pedidos_de_receita,
 )
 
 User = get_user_model()
@@ -44,27 +44,27 @@ class TestReceitaSSOT:
 
     def test_conta_pedido_pago_e_entregue(self, loja):
         _pedido(loja, '100.00')
-        assert revenue_orders(loja).count() == 1
+        assert pedidos_de_receita(loja).count() == 1
 
-    @pytest.mark.parametrize('status', sorted(NON_REVENUE_STATUSES))
+    @pytest.mark.parametrize('status', sorted(STATUS_SEM_RECEITA))
     def test_nao_conta_cancelado_estornado_nem_falho(self, loja, status):
         """Era isto que inflava o gráfico da home em mais de 2x."""
         _pedido(loja, '100.00', status=status)
-        assert revenue_orders(loja).count() == 0
+        assert pedidos_de_receita(loja).count() == 0
 
     def test_nao_conta_cancelado_mesmo_estando_pago(self, loja):
         """Pedido pago e depois cancelado sem estorno entrava como receita no BI."""
         _pedido(loja, '100.00', status='cancelled', pagamento='paid')
-        assert revenue_orders(loja).count() == 0
+        assert pedidos_de_receita(loja).count() == 0
 
     def test_nao_conta_entregue_com_pagamento_pendente(self, loja):
         """O resumo de IA contava — olhava só o status, não o pagamento."""
         _pedido(loja, '95.00', status='delivered', pagamento='pending')
-        assert revenue_orders(loja).count() == 0
+        assert pedidos_de_receita(loja).count() == 0
 
     def test_nao_conta_pedido_de_teste(self, loja):
         _pedido(loja, '100.00', metadata={'is_test': True})
-        assert revenue_orders(loja).count() == 0
+        assert pedidos_de_receita(loja).count() == 0
 
     def test_soma_so_o_que_e_receita_de_verdade(self, loja):
         _pedido(loja, '100.00')                                     # conta
@@ -73,13 +73,13 @@ class TestReceitaSSOT:
         _pedido(loja, '888.00', pagamento='pending')                # não
         _pedido(loja, '777.00', metadata={'is_test': True})         # não
         from django.db.models import Sum
-        total = revenue_orders(loja).aggregate(t=Sum('total'))['t']
+        total = pedidos_de_receita(loja).aggregate(t=Sum('total'))['t']
         assert total == Decimal('150.00')
 
     def test_incluir_teste_quando_pedido_explicitamente(self, loja):
         """A operação do dia a dia (KDS, fila) precisa ver o pedido de teste."""
         _pedido(loja, '100.00', metadata={'is_test': True})
-        assert revenue_orders(loja, include_test=True).count() == 1
+        assert pedidos_de_receita(loja, incluir_teste=True).count() == 1
 
 
 @pytest.mark.django_db
@@ -87,14 +87,14 @@ class TestMarcacaoDeTeste:
 
     def test_marca_e_reconhece(self, loja):
         p = _pedido(loja, '10.00')
-        assert is_test_order(p) is False
-        mark_as_test(p)
+        assert eh_pedido_de_teste(p) is False
+        marcar_como_teste(p)
         p.refresh_from_db()
-        assert is_test_order(p) is True
+        assert eh_pedido_de_teste(p) is True
 
     def test_marcar_preserva_o_resto_do_metadata(self, loja):
         p = _pedido(loja, '10.00', metadata={'source': 'whatsapp', 'suppress_notifications': True})
-        mark_as_test(p)
+        marcar_como_teste(p)
         p.refresh_from_db()
         assert p.metadata['source'] == 'whatsapp'
         assert p.metadata['suppress_notifications'] is True
@@ -103,12 +103,12 @@ class TestMarcacaoDeTeste:
     def test_metadata_vazio_nao_e_teste(self, loja):
         """No banco metadata é NOT NULL, então o caso real é {}."""
         p = _pedido(loja, '10.00', metadata={})
-        assert is_test_order(p) is False
+        assert eh_pedido_de_teste(p) is False
 
     def test_metadata_none_em_objeto_solto_nao_quebra(self, loja):
         """Objeto ainda não persistido pode ter metadata None — não pode estourar."""
         p = StoreOrder(store=loja, total=Decimal('10.00'), subtotal=Decimal('10.00'))
         p.metadata = None
-        assert is_test_order(p) is False
-        mark_as_test(p, save=False)
-        assert is_test_order(p) is True
+        assert eh_pedido_de_teste(p) is False
+        marcar_como_teste(p, salvar=False)
+        assert eh_pedido_de_teste(p) is True

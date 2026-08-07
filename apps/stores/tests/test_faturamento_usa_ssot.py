@@ -1,6 +1,6 @@
 """Toda tela que fala de dinheiro tem que passar pelo SSOT de receita.
 
-Existe `apps/stores/services/revenue.py` com a regra canônica (pago E não
+Existe `apps/stores/metrics/` com a regra canônica (pago E não
 cancelado E não é teste), mas metade das telas montava a própria query com
 `payment_status='paid'` e nada mais. Resultado: contavam venda cancelada e
 pedido de teste do dono como faturamento.
@@ -70,13 +70,13 @@ class TestTelasDeFaturamento:
         assert qs.aggregate(t=Sum('total'))['t'] == RECEITA_REAL
 
     def test_estatisticas_da_lista_de_pedidos_somam_so_a_venda_real(self, loja, pedidos):
-        from apps.stores.services.revenue import revenue_orders
+        from apps.stores.metrics import pedidos_de_receita
 
         # A lista mostra TODOS os pedidos (a cozinha precisa ver o cancelado),
         # mas o card de faturamento no topo só pode somar a venda real.
         todos = StoreOrder.objects.filter(store=loja)
         assert todos.count() == 3
-        assert revenue_orders(queryset=todos).count() == 1
+        assert pedidos_de_receita(queryset=todos).count() == 1
 
     def test_export_de_periodo_soma_so_a_venda_real(self, loja, pedidos):
         from django.db.models import Sum

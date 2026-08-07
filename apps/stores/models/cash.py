@@ -69,9 +69,9 @@ class StoreCashSession(models.Model):
         # Só venda que virou dinheiro na gaveta: cancelada não entra (senão a
         # "quebra" do fechamento acusa falta que não existe) e pedido de teste
         # do dono também não.
-        from apps.stores.services.revenue import exclude_non_revenue
+        from apps.stores.metrics import apenas_receita
 
-        cash_sales = exclude_non_revenue(
+        cash_sales = apenas_receita(
             StoreOrder.objects.filter(store=self.store, payment_method='cash')
         ).filter(paid_window).aggregate(total=Sum('total'))['total'] or Decimal('0')
 

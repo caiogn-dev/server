@@ -6,7 +6,7 @@ import uuid
 from datetime import timedelta, timezone as dt_timezone
 from typing import Optional
 from django.utils import timezone
-from apps.core.utils import start_of_today
+from apps.stores.metrics import inicio_do_dia
 from django.db.models import Count, Sum, Avg, Q, F
 from django.db.models.functions import TruncDate
 from rest_framework import status
@@ -136,7 +136,7 @@ class DashboardOverviewView(APIView):
             return account_error
         
         now = timezone.now()
-        today_start = start_of_today()
+        today_start = inicio_do_dia()
         week_start = today_start - timedelta(days=7)
         month_start = today_start - timedelta(days=30)
 
@@ -207,7 +207,7 @@ class DashboardOverviewView(APIView):
         # Orders + payments — todos os aggregates do mesmo queryset num só.
         # CONTAGEM operacional usa o queryset cru (pedido cancelado existe e
         # precisa aparecer na operação); RECEITA passa pelo SSOT.
-        from apps.stores.services.revenue import revenue_orders
+        from apps.stores.metrics import pedidos_de_receita
         _ord = orders_qs.aggregate(
             today=Count('id', filter=Q(created_at__gte=today_start)),
             payments_pending=Count('id', filter=Q(payment_status__in=['pending', 'processing'])),
@@ -215,7 +215,7 @@ class DashboardOverviewView(APIView):
         )
         # Somar por paid_at sem checar status contava pedido pago e cancelado
         # depois — o paid_at fica gravado mesmo após o cancelamento.
-        _rev = revenue_orders(queryset=orders_qs).aggregate(
+        _rev = pedidos_de_receita(queryset=orders_qs).aggregate(
             revenue_today=Sum('total', filter=Q(paid_at__gte=today_start)),
             revenue_month=Sum('total', filter=Q(paid_at__gte=month_start)),
         )
@@ -307,7 +307,7 @@ class DashboardProjectHealthView(APIView):
             return store_error
 
         now = timezone.now()
-        today_start = start_of_today()
+        today_start = inicio_do_dia()
         day_start = now - timedelta(hours=24)
         week_start = now - timedelta(days=7)
         month_start = now - timedelta(days=30)
@@ -333,11 +333,11 @@ class DashboardProjectHealthView(APIView):
         conversations_qs = Conversation.objects.filter(account_id__in=account_ids)
         products_qs = StoreProduct.objects.filter(store_id__in=store_ids)
 
-        # SSOT de receita (apps/stores/services/revenue.py): pago E não cancelado
+        # SSOT de receita (apps/stores/metrics/): pago E não cancelado
         # E não é teste. `payment_status=PAID` sozinho deixava passar pedido pago
         # e cancelado depois.
-        from apps.stores.services.revenue import revenue_orders, revenue_date_field
-        paid_orders_qs = revenue_orders(queryset=orders_qs)
+        from apps.stores.metrics import pedidos_de_receita, eixo_de_receita
+        paid_orders_qs = pedidos_de_receita(queryset=orders_qs)
         orders_today = orders_qs.filter(created_at__gte=today_start).count()
         orders_24h = orders_qs.filter(created_at__gte=day_start).count()
         orders_week = orders_qs.filter(created_at__gte=week_start).count()
@@ -762,13 +762,13 @@ class DashboardChartsView(APIView):
         # Eram 5 pedidos (R$ 420,84) inflando o gráfico da home em 21%.
         # Import local: o topo do módulo não importa o SSOT e sem isto o
         # endpoint do gráfico da home responde 500 (NameError).
-        from apps.stores.services.revenue import revenue_date_field, revenue_orders
+        from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
 
         revenue_rows = (
-            revenue_orders(queryset=orders_qs).filter(paid_at__gte=window_start)
+            pedidos_de_receita(queryset=orders_qs).filter(paid_at__gte=window_start)
             # Sem tzinfo: agrupa no TIME_ZONE do projeto. Forçar UTC jogava toda
             # venda depois das 21h para o dia seguinte — o pico do delivery.
-            .annotate(day=TruncDate(revenue_date_field()))
+            .annotate(day=TruncDate(eixo_de_receita()))
             .values('day')
             .annotate(total=Sum('total'))
         )

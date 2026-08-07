@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import user_can_access_store
 from ..models import Store, StoreOrder, StoreProduct, StoreCustomer
-from ..services.revenue import exclude_non_revenue, revenue_items
+from ..metrics import apenas_receita, hoje_local, itens_de_receita
 from .views import IsStoreOwnerOrStaff
 
 
@@ -55,15 +55,14 @@ class BaseExportView(APIView):
         return store
     
     def revenue_queryset(self, store, **filtros):
-        """Pedidos que contam como faturamento — SSOT em services/revenue.py.
+        """Pedidos que contam como faturamento — SSOT em stores/metrics/.
 
         Os relatórios montavam `payment_status='paid'` na mão em ~10 pontos e
         somavam venda cancelada e pedido de teste do dono como receita.
         `filtros` são lookups extras de período (ex.: `created_at__gte=...`).
         """
-        from apps.stores.services.revenue import exclude_non_revenue
 
-        return exclude_non_revenue(StoreOrder.objects.filter(store=store, **filtros))
+        return apenas_receita(StoreOrder.objects.filter(store=store, **filtros))
 
     def get_date_range(self, request):
         """Get date range from query params."""
@@ -80,7 +79,7 @@ class BaseExportView(APIView):
                 pass
         
         # Default periods
-        today = timezone.now().date()
+        today = hoje_local()
         if period == '7d':
             return today - timedelta(days=7), today
         elif period == '30d':
@@ -288,7 +287,7 @@ class ProductsReportView(BaseExportView):
         # Get order items for the period
         from ..models import StoreOrderItem
         
-        items = revenue_items(store=store).filter(
+        items = itens_de_receita(loja=store).filter(
             order__created_at__date__gte=start_date,
             order__created_at__date__lte=end_date,
         ).values(
@@ -554,7 +553,7 @@ class StoreDashboardStatsView(BaseExportView):
         if not store:
             return Response({'error': 'Store parameter required'}, status=400)
         
-        today = timezone.now().date()
+        today = hoje_local()
         yesterday = today - timedelta(days=1)
         last_7_days = today - timedelta(days=7)
         last_30_days = today - timedelta(days=30)
@@ -564,7 +563,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date=today
         )
-        today_revenue = exclude_non_revenue(today_orders).aggregate(
+        today_revenue = apenas_receita(today_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -573,7 +572,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date=yesterday
         )
-        yesterday_revenue = exclude_non_revenue(yesterday_orders).aggregate(
+        yesterday_revenue = apenas_receita(yesterday_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -582,7 +581,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date__gte=last_7_days
         )
-        week_revenue = exclude_non_revenue(week_orders).aggregate(
+        week_revenue = apenas_receita(week_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -591,7 +590,7 @@ class StoreDashboardStatsView(BaseExportView):
             store=store,
             created_at__date__gte=last_30_days
         )
-        month_revenue = exclude_non_revenue(month_orders).aggregate(
+        month_revenue = apenas_receita(month_orders).aggregate(
             total=Sum('total')
         )['total'] or Decimal('0')
         
@@ -644,7 +643,7 @@ class SaladasReportView(BaseExportView):
             return Response({'error': 'Store parameter required'}, status=400)
 
         period = request.query_params.get('period', 'today')
-        today = timezone.now().date()
+        today = hoje_local()
 
         if period == 'today':
             start = today

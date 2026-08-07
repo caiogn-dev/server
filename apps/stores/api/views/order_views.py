@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Q, Sum, Count, Func, F, Value, CharField
 from django.utils import timezone
-from apps.core.utils import start_of_today
+from apps.stores.metrics import inicio_do_dia
 from datetime import timedelta
 
 from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer, StoreProduct
@@ -723,15 +723,15 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             queryset, _ = filter_by_store(queryset, store_id)
 
         now = timezone.now()
-        today = start_of_today()
+        today = inicio_do_dia()
         week_ago = today - timedelta(days=7)
         month_ago = today - timedelta(days=30)
 
-        # Faturamento é o queryset de receita (SSOT em services/revenue.py): sem
+        # Faturamento é o queryset de receita (SSOT em stores/metrics/): sem
         # cancelado e sem pedido de teste. As CONTAGENS continuam sobre tudo —
         # a lista de pedidos precisa mostrar o cancelado.
-        from apps.stores.services.revenue import exclude_non_revenue
-        receita = Q(id__in=exclude_non_revenue(queryset).values('id'))
+        from apps.stores.metrics import apenas_receita
+        receita = Q(id__in=apenas_receita(queryset).values('id'))
 
         # Single aggregation query combines all counts
         agg = queryset.aggregate(

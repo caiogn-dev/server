@@ -58,14 +58,14 @@ class BaseAnalyticsView(BaseExportView):
         return store, start, end, None
 
     def paid_orders(self, store, start, end):
-        """Queryset canônico de faturamento — SSOT em services/revenue.py.
+        """Queryset canônico de faturamento — SSOT em stores/metrics/.
 
         Filtrava só `payment_status='paid'`: contava venda cancelada e pedido de
         teste do dono como receita.
         """
-        from apps.stores.services.revenue import exclude_non_revenue
+        from apps.stores.metrics import apenas_receita
 
-        return exclude_non_revenue(
+        return apenas_receita(
             StoreOrder.objects.filter(store=store, created_at__date__range=(start, end))
         )
 

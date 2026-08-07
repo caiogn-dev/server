@@ -108,7 +108,7 @@ class TestReceitaDepoisDoCancelamento:
 
     def test_venda_de_balcao_cancelada_sai_do_faturamento(self, loja):
         """Fim a fim: o que o painel soma depois do cancelamento."""
-        from apps.stores.services.revenue import revenue_orders
+        from apps.stores.metrics import pedidos_de_receita
 
         vendida = _pedido(loja, status='delivered', total='50.00')
         desfeita = _pedido(loja, total='100.00')
@@ -116,7 +116,7 @@ class TestReceitaDepoisDoCancelamento:
 
         pagos = StoreOrder.objects.filter(store=loja, payment_status='paid')
         assert list(pagos) == [vendida], 'cancelado ainda aparece como pago'
-        assert revenue_orders(loja).count() == 1
+        assert pedidos_de_receita(loja).count() == 1
 
     def test_fechamento_de_caixa_nao_espera_o_dinheiro_do_cancelado(self, loja):
         """A gaveta não tem o dinheiro da venda desfeita — o esperado não pode contar."""

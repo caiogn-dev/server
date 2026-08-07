@@ -16,7 +16,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.utils import start_of_today
+from apps.stores.metrics import inicio_do_dia
 from apps.stores.api.views.order_views import StoreOrderViewSet
 from apps.stores.models import Store, StoreOrder
 
@@ -25,13 +25,13 @@ SP = ZoneInfo('America/Sao_Paulo')
 
 
 class InicioDoDiaLocalTests(TestCase):
-    def test_start_of_today_e_meia_noite_local_e_nao_utc(self):
+    def test_inicio_do_dia_e_meia_noite_local_e_nao_utc(self):
         # 22:00 de Brasília = 01:00 UTC do dia seguinte.
         instante = datetime(2026, 8, 6, 22, 0, tzinfo=SP)
         with timezone.override(SP):
             from unittest.mock import patch
             with patch('django.utils.timezone.now', return_value=instante):
-                inicio = start_of_today()
+                inicio = inicio_do_dia()
 
         self.assertEqual(inicio.astimezone(SP).date(), instante.date())
         self.assertEqual(inicio.astimezone(SP).hour, 0)

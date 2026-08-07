@@ -216,7 +216,7 @@ def clean_cpf(cpf: str) -> str:
     return ''.join(filter(str.isdigit, str(cpf or '')))
 
 
-def start_of_today():
+def inicio_do_dia():
     """Instante em que o dia de HOJE começou, no fuso da loja.
 
     `timezone.now().replace(hour=0, ...)` parece certo e não é: `now()` devolve
