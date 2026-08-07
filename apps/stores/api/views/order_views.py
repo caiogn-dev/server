@@ -746,6 +746,25 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             )
             return qs.aggregate(t=Sum('total'))['t'] or 0
 
+        def _comparar(janela, rotulo):
+            """Variação contra o período anterior.
+
+            `variacao_pct` vem None quando o anterior foi ZERO: 0% lê como
+            "estável", e sair de R$ 0 para R$ 500 não é estabilidade.
+            """
+            anterior = metrics.janela_anterior(janela)
+            atual_v = Decimal(str(_receita(janela)))
+            ant_v = Decimal(str(_receita(anterior)))
+            delta = atual_v - ant_v
+            pct = (delta / ant_v * 100) if ant_v else None
+            return {
+                'atual': float(atual_v),
+                'anterior': float(ant_v),
+                'delta': float(delta),
+                'variacao_pct': round(float(pct), 1) if pct is not None else None,
+                'rotulo': f'vs {rotulo}',
+            }
+
         # Single aggregation query combines all counts
         agg = queryset.aggregate(
             # Total counts by period.
@@ -796,6 +815,13 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'today': _receita(hoje),
                 'week': _receita(semana),
                 'pending': agg['revenue_pending'] or 0,
+            },
+            # Comparativo com o período anterior, do mesmo tamanho. Número
+            # sozinho não informa: R$ 137 pode ser um dia bom ou metade do
+            # normal, e quem olha o card não tem como saber.
+            'comparativo': {
+                'today': _comparar(hoje, 'ontem'),
+                'week': _comparar(semana, 'semana anterior'),
             }
         }
 
