@@ -642,6 +642,11 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
             'items', 'combo_items', 'items_count', 'metadata',
+            # `source` é o canal de origem (web/whatsapp/pdv). O resumo do
+            # histórico já quebrava a receita por canal, mas a coluna da lista
+            # mostrava "—" porque o serializer nunca expôs o campo — dois
+            # números da mesma tela discordando sobre o mesmo pedido.
+            'source',
             'created_at', 'updated_at', 'is_active',
             'delivery_provider',
             'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
@@ -650,6 +655,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'order_number', 'access_token', 'created_at', 'updated_at',
+            'source',
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
