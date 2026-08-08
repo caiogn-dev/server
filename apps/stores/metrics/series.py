@@ -16,7 +16,7 @@ from decimal import Decimal
 from django.db.models import Avg, Count, Sum
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 
-from .definicoes import eixo_de_receita, pedidos_de_receita
+from .definicoes import apenas_receita, eixo_de_receita, pedidos_de_receita
 from .janelas import Janela
 
 GRANULARIDADES = {
@@ -51,6 +51,61 @@ def totais(loja, janela: Janela, incluir_teste=False) -> dict:
         'frete': _decimal(agg['frete']),
         'desconto': _decimal(agg['desconto']),
     }
+
+
+def resumo_de_lista(queryset, incluir_teste=False) -> dict:
+    """Totais de um recorte JÁ FILTRADO de pedidos — o que a tela está mostrando.
+
+    Diferente de `totais()`: lá a janela e a loja montam a consulta; aqui o
+    queryset vem pronto da view, com os filtros que o operador escolheu
+    (período, status, canal, busca).
+
+    Existe porque o resumo de uma lista NÃO pode ser uma consulta paralela. Se
+    o card soma por `paid_at` enquanto a lista mostra por `created_at`, o
+    operador vê "R$ 900" acima de linhas que somam R$ 850 — e a divergência
+    entre dois números na mesma tela destrói a confiança nos dois.
+
+    Devolve volume (inclui cancelado e não pago, porque a lista os mostra) E
+    dinheiro (só o que faturou), separados e rotulados.
+    """
+    from apps.stores.models import StoreOrder
+
+    faturando = apenas_receita(queryset, incluir_teste=incluir_teste)
+    agg = faturando.aggregate(receita=Sum('total'), pedidos=Count('id'))
+
+    receita = _decimal(agg['receita'])
+    pagos = agg['pedidos'] or 0
+
+    return {
+        'pedidos': queryset.count(),
+        'cancelados': queryset.filter(status=StoreOrder.OrderStatus.CANCELLED).count(),
+        'pedidos_faturados': pagos,
+        'receita': receita,
+        # Divide pelos pedidos que FATURARAM. Dividir pelo total (com cancelado
+        # e não pago dentro) derruba o número e mente sobre a venda média.
+        #
+        # `None` sem venda: "ticket médio R$ 0,00" lê como venda de graça.
+        'ticket_medio': (receita / pagos).quantize(Decimal('0.01')) if pagos else None,
+    }
+
+
+def quebra_de_lista(queryset, campo: str, incluir_teste=False) -> list:
+    """Receita do recorte agrupada por um campo (pagamento, canal).
+
+    Mesmo queryset filtrado do `resumo_de_lista`, então as partes somam o todo
+    — e é isso que permite usar a quebra para fechar o caixa.
+    """
+    faturando = apenas_receita(queryset, incluir_teste=incluir_teste)
+    return [
+        {
+            'chave': linha[campo] or 'nao_informado',
+            'pedidos': linha['n'],
+            'total': _decimal(linha['soma']),
+        }
+        for linha in faturando.values(campo).annotate(
+            n=Count('id'), soma=Sum('total')
+        ).order_by('-soma')
+    ]
 
 
 def contagem_operacional(loja, janela: Janela) -> dict:

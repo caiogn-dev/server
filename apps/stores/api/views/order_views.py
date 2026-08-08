@@ -101,6 +101,18 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 Q(customer_phone__icontains=search)
             )
 
+        qs = self._filtrar_periodo(qs)
+
+        # Canal de origem (site, whatsapp, pdv). O dono quer saber de onde vem
+        # a venda antes de decidir onde investir.
+        source = self.request.query_params.get('source')
+        if source:
+            qs = qs.filter(source=source)
+
+        payment_method = self.request.query_params.get('payment_method')
+        if payment_method:
+            qs = qs.filter(payment_method=payment_method)
+
         customer = self.request.query_params.get('customer')
         if customer:
             import re
@@ -148,6 +160,80 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         return qs.order_by('-created_at')
     
+    def _filtrar_periodo(self, qs):
+        """Recorta a lista pelo período pedido, no FUSO DA LOJA.
+
+        `created_at__date` sobre UTC empurra tudo que foi vendido depois das
+        21h para o dia seguinte — e 21h é o pico do delivery. Foi esse bug no
+        card "Receita hoje" em 06/ago. `__date` do Django converte para o fuso
+        ativo (TIME_ZONE), então a comparação é feita no dia local.
+
+        Data inválida IGNORA o filtro em vez de estourar: o valor vem de URL
+        colada e de campo de texto, e um 500 apaga a tela inteira, enquanto a
+        lista completa é um resultado que o operador consegue corrigir.
+        """
+        from datetime import date as _date
+
+        def _ler(nome):
+            bruto = self.request.query_params.get(nome)
+            if not bruto:
+                return None
+            try:
+                return _date.fromisoformat(bruto[:10])
+            except (ValueError, TypeError):
+                logger.info('Período ignorado em %s: valor inválido %r', nome, bruto)
+                return None
+
+        inicio = _ler('date_from')
+        fim = _ler('date_to')
+
+        if inicio and fim:
+            # `range` inclui as duas pontas: quem pede "até hoje" quer as
+            # vendas de hoje, não até a meia-noite de ontem.
+            return qs.filter(created_at__date__range=(inicio, fim))
+        if inicio:
+            return qs.filter(created_at__date__gte=inicio)
+        if fim:
+            return qs.filter(created_at__date__lte=fim)
+        return qs
+
+    @action(detail=False, methods=['get'])
+    def resumo(self, request):
+        """Totais do MESMO recorte que a lista está mostrando.
+
+        A aritmética mora no núcleo (`apps.stores.metrics`): seis arquivos já
+        calcularam faturamento por conta própria e deram respostas diferentes
+        para o mesmo dia. Aqui a view só escolhe o recorte e formata.
+        """
+        from apps.stores import metrics
+
+        qs = self.filter_queryset(self.get_queryset())
+        resumo = metrics.resumo_de_lista(qs)
+        ticket = resumo['ticket_medio']
+
+        return Response({
+            'pedidos': resumo['pedidos'],
+            'cancelados': resumo['cancelados'],
+            'pedidos_faturados': resumo['pedidos_faturados'],
+            'faturamento': f"{resumo['receita']:.2f}",
+            'ticket_medio': f'{ticket:.2f}' if ticket is not None else None,
+            'por_pagamento': [
+                {**linha, 'total': f"{linha['total']:.2f}"}
+                for linha in metrics.quebra_de_lista(qs, 'payment_method')
+            ],
+            'por_canal': [
+                {**linha, 'total': f"{linha['total']:.2f}"}
+                for linha in metrics.quebra_de_lista(qs, 'source')
+            ],
+            # A régua junto do número: sem isto ninguém sabe por que o
+            # faturamento é menor que a soma visível das linhas.
+            'definicoes': {
+                'faturamento': 'soma dos pedidos pagos, sem cancelados e sem pedidos de teste',
+                'ticket_medio': 'faturamento ÷ pedidos que faturaram',
+                'periodo': 'pela data de entrada do pedido, no fuso da loja',
+            },
+        })
+
     def get_serializer_class(self):
         if self.action == 'create':
             return StoreOrderCreateSerializer

@@ -46,6 +46,8 @@ from .janelas import (
 from .series import (
     comparar_periodo,
     contagem_operacional,
+    quebra_de_lista,
+    resumo_de_lista,
     serie_completa,
     serie_temporal,
     top_produtos,
@@ -76,6 +78,8 @@ __all__ = [
     # séries
     'comparar_periodo',
     'contagem_operacional',
+    'quebra_de_lista',
+    'resumo_de_lista',
     'serie_completa',
     'serie_temporal',
     'top_produtos',
