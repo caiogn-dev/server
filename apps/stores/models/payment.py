@@ -117,24 +117,27 @@ class StorePayment(BaseModel):
     Supports multiple payments per order (installments, retries, partial refunds).
     """
 
+    # Vocabulário PRÓPRIO da cobrança: aqui o dinheiro fica `completed`,
+    # enquanto o pedido fica `paid`. Reusar o mapa do pedido no frontend foi o
+    # que fez a tela exibir "completed" cru.
     class PaymentStatus(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        PROCESSING = 'processing', 'Processing'
-        COMPLETED = 'completed', 'Completed'
-        FAILED = 'failed', 'Failed'
-        CANCELLED = 'cancelled', 'Cancelled'
-        REFUNDED = 'refunded', 'Refunded'
-        PARTIALLY_REFUNDED = 'partially_refunded', 'Partially Refunded'
+        PENDING = 'pending', 'Aguardando'
+        PROCESSING = 'processing', 'Processando'
+        COMPLETED = 'completed', 'Recebido'
+        FAILED = 'failed', 'Falhou'
+        CANCELLED = 'cancelled', 'Cancelada'
+        REFUNDED = 'refunded', 'Estornada'
+        PARTIALLY_REFUNDED = 'partially_refunded', 'Estornada em parte'
 
     class PaymentMethod(models.TextChoices):
-        CREDIT_CARD = 'credit_card', 'Credit Card'
-        DEBIT_CARD = 'debit_card', 'Debit Card'
+        CREDIT_CARD = 'credit_card', 'Cartão de crédito'
+        DEBIT_CARD = 'debit_card', 'Cartão de débito'
         PIX = 'pix', 'PIX'
         BOLETO = 'boleto', 'Boleto'
-        CASH = 'cash', 'Cash'
-        BANK_TRANSFER = 'bank_transfer', 'Bank Transfer'
-        WALLET = 'wallet', 'Digital Wallet'
-        OTHER = 'other', 'Other'
+        CASH = 'cash', 'Dinheiro'
+        BANK_TRANSFER = 'bank_transfer', 'Transferência bancária'
+        WALLET = 'wallet', 'Carteira digital'
+        OTHER = 'other', 'Outro'
 
     # Relationships
     # order é NULLABLE: cobrança avulsa (link de pagamento de valor arbitrário

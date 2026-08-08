@@ -43,37 +43,45 @@ class StoreOrder(BaseModel):
     Comprehensive order tracking with payment and delivery integration.
     """
 
+    # O segundo elemento é o que `get_status_display()` devolve, e é o texto
+    # que chega na home do painel, no app e no e-mail do cliente. Estava em
+    # inglês: o dono via "Cancelled" e "Delivered" na própria loja.
+    #
+    # O VALOR (primeiro elemento) não muda — filtros da API, o kanban que casa
+    # por `status`, os webhooks de pagamento e tudo já gravado no banco
+    # continuam iguais. Traduzir o rótulo é apresentação; mudar o valor seria
+    # migração de dados.
     class OrderStatus(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        CONFIRMED = 'confirmed', 'Confirmed'
-        PROCESSING = 'processing', 'Processing'
-        PAID = 'paid', 'Paid'
-        PREPARING = 'preparing', 'Preparing'
-        READY = 'ready', 'Ready for Pickup/Delivery'
-        SHIPPED = 'shipped', 'Shipped'
-        OUT_FOR_DELIVERY = 'out_for_delivery', 'Out for Delivery'
-        DELIVERED = 'delivered', 'Delivered'
-        COMPLETED = 'completed', 'Completed'
-        CANCELLED = 'cancelled', 'Cancelled'
-        REFUNDED = 'refunded', 'Refunded'
-        FAILED = 'failed', 'Failed'
+        PENDING = 'pending', 'Pendente'
+        CONFIRMED = 'confirmed', 'Confirmado'
+        PROCESSING = 'processing', 'Processando'
+        PAID = 'paid', 'Pago'
+        PREPARING = 'preparing', 'Em preparo'
+        READY = 'ready', 'Pronto'
+        SHIPPED = 'shipped', 'Despachado'
+        OUT_FOR_DELIVERY = 'out_for_delivery', 'Saiu para entrega'
+        DELIVERED = 'delivered', 'Entregue'
+        COMPLETED = 'completed', 'Concluído'
+        CANCELLED = 'cancelled', 'Cancelado'
+        REFUNDED = 'refunded', 'Estornado'
+        FAILED = 'failed', 'Falhou'
 
     class PaymentStatus(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        PROCESSING = 'processing', 'Processing'
-        PAID = 'paid', 'Paid'
-        FAILED = 'failed', 'Failed'
-        REFUNDED = 'refunded', 'Refunded'
-        PARTIALLY_REFUNDED = 'partially_refunded', 'Partially Refunded'
+        PENDING = 'pending', 'Pendente'
+        PROCESSING = 'processing', 'Processando'
+        PAID = 'paid', 'Pago'
+        FAILED = 'failed', 'Falhou'
+        REFUNDED = 'refunded', 'Estornado'
+        PARTIALLY_REFUNDED = 'partially_refunded', 'Estornado em parte'
         # Pedido cancelado sem estorno pelo gateway: venda de balcão desfeita,
         # dinheiro devolvido na mão, PIX que nunca chegou a ser pago. Sem este
         # estado o pedido ficava 'paid' para sempre e entrava no faturamento.
-        CANCELLED = 'cancelled', 'Cancelled'
+        CANCELLED = 'cancelled', 'Cancelado'
 
     class DeliveryMethod(models.TextChoices):
-        DELIVERY = 'delivery', 'Delivery'
-        PICKUP = 'pickup', 'Pickup'
-        DIGITAL = 'digital', 'Digital Delivery'
+        DELIVERY = 'delivery', 'Entrega'
+        PICKUP = 'pickup', 'Retirada'
+        DIGITAL = 'digital', 'Entrega digital'
 
     store = models.ForeignKey(
         Store,

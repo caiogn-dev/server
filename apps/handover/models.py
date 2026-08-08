@@ -20,7 +20,7 @@ User = get_user_model()
 
 class HandoverStatus(models.TextChoices):
     BOT = 'bot', 'Bot'
-    HUMAN = 'human', 'Human'
+    HUMAN = 'human', 'Humano'
     PENDING = 'pending', 'Pendente'
 
 
