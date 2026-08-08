@@ -227,3 +227,21 @@ class LoyaltyGuestStatusView(APIView):
         user = self._resolve_user(store, phone)
         loyalty = CheckoutService.get_loyalty_status(store, user)
         return Response(loyalty)
+
+
+class ConquistasView(APIView):
+    """GET /api/v1/stores/{slug}/conquistas/ — marcos, próxima meta e metas.
+
+    Tudo numa chamada só: a página mostra resumo, próxima conquista e a linha
+    do tempo juntos, e três requisições produziriam três estados de carga
+    piscando em sequência na mesma tela.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, store_slug):
+        store = get_active_store(store_slug)
+        if not (request.user.is_superuser or store.owner_id == request.user.id):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+
+        from ...services.conquistas import painel_de_conquistas
+        return Response(painel_de_conquistas(store))

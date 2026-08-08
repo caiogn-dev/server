@@ -174,7 +174,7 @@ from .api.analytics_views import (
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
-from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView, LoyaltyGuestStatusView
+from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView, LoyaltyGuestStatusView, ConquistasView
 from .api.views.crm_views import (
     CustomerSearchView,
     CustomerAddressViewSet,
@@ -274,6 +274,7 @@ store_frontend_patterns = [
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
     path('loyalty/accounts/', LoyaltyAccountsView.as_view(), name='store-loyalty-accounts'),
+    path('conquistas/', ConquistasView.as_view(), name='store-conquistas'),
     path('loyalty/guest-status/', LoyaltyGuestStatusView.as_view(), name='store-loyalty-guest-status'),
 
     # Histórico do cliente guest por telefone (sem login) — mesma decisão do loyalty/guest-status
