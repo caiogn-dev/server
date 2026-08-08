@@ -1690,6 +1690,24 @@ class WebhookService:
         event.related_message = message
         event.save(update_fields=['related_message'])
         
+        # O MESMO recibo alimenta os contadores da campanha. Sem esta linha,
+        # `Campaign.messages_delivered` era estruturalmente zero — nenhuma
+        # outra parte do código escrevia nele, e as campanhas concluídas da Cê
+        # Saladas apareciam com "0 entregues" no painel de 08/ago.
+        #
+        # Falha em silêncio de propósito: recibo de conversa normal do inbox
+        # não pertence a campanha nenhuma, e é a imensa maioria deles.
+        try:
+            from apps.campaigns.services.recibos import registrar_recibo
+
+            registrar_recibo(
+                whatsapp_message_id,
+                status,
+                erro=(payload.get('errors') or [None])[0],
+            )
+        except Exception:  # pragma: no cover - contabilidade não derruba webhook
+            logger.exception('Falha ao registrar recibo de campanha')
+
         # Broadcast status update
         self.broadcast.broadcast_status_update(
             account_id=str(event.account.id),
