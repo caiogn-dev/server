@@ -294,6 +294,7 @@ class DashboardOverviewView(APIView):
         }
 
         return Response({
+            'sparkline': _sparkline(stores_qs, dias=14),
             'accounts': accounts_summary,
             'messages': {
                 'today': messages_today,
@@ -325,6 +326,49 @@ class DashboardOverviewView(APIView):
             },
             'timestamp': now.isoformat(),
         })
+
+
+def _sparkline(stores_qs, dias: int = 14) -> dict:
+    """Série curta de receita e pedidos, para o mini-gráfico do card.
+
+    Um número sozinho não diz se é bom: "R$ 1.557 hoje" pode ser o melhor dia
+    do mês ou metade do normal. O comparativo com ontem responde só metade —
+    ontem pode ter sido atípico. Uma linha de 14 dias responde de relance, sem
+    eixo, sem legenda e sem ocupar espaço.
+
+    DUAS DECISÕES:
+
+    1. `serie_completa` e não `serie_temporal`: os dias sem venda vêm como
+       ZERO. Série com buracos mente sobre a tendência — uma semana com venda
+       só na sexta viraria uma linha reta.
+
+    2. Loja sem venda nenhuma devolve zeros, não lista vazia. Lista vazia faria
+       o card esconder o gráfico e mudar de altura de uma loja para outra;
+       zeros desenham a linha rente ao chão, que é a verdade.
+    """
+    from apps.stores.metrics import serie_completa, ultimos_dias
+
+    loja = stores_qs.first()
+    if loja is None:
+        return {'revenue': [0] * dias, 'orders': [0] * dias}
+
+    janela = ultimos_dias(dias)
+    pontos = serie_completa(loja, janela)
+
+    receita = [round(float(p.get('receita') or 0), 2) for p in pontos]
+    pedidos = [int(p.get('pedidos') or 0) for p in pontos]
+
+    # `ultimos_dias(n)` inclui hoje, então a série pode vir com n ou n+1 pontos
+    # conforme o fuso. Fixar o tamanho evita o gráfico "pulando" de largura.
+    def _ajustar(valores, preencher):
+        if len(valores) >= dias:
+            return valores[-dias:]
+        return [preencher] * (dias - len(valores)) + valores
+
+    return {
+        'revenue': _ajustar(receita, 0),
+        'orders': _ajustar(pedidos, 0),
+    }
 
 
 class DashboardProjectHealthView(APIView):

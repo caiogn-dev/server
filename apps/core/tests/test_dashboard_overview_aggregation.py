@@ -64,7 +64,17 @@ class DashboardOverviewAggregationTest(APITestCase):
             self.client.get(URL)
         # Após consolidar os blocos de mesmo queryset em .aggregate(), o total
         # de queries do endpoint deve ficar bem abaixo do padrão antigo (~20+).
+        #
+        # 17 e não 16 desde 08/ago: a série de 14 dias do mini-gráfico é UMA
+        # query agrupada a mais. Foi orçada de propósito — o número sozinho no
+        # card não diz se é bom ("R$ 1.557" pode ser o melhor dia do mês ou
+        # metade do normal), e o comparativo com ontem responde só metade,
+        # porque ontem pode ter sido atípico.
+        #
+        # O teto existe para pegar N+1, não para congelar o endpoint: subir por
+        # uma agregação justificada é diferente de subir por descuido — e é por
+        # isso que o número muda com comentário, nunca em silêncio.
         self.assertLessEqual(
-            len(ctx.captured_queries), 16,
-            f'dashboard fez {len(ctx.captured_queries)} queries (esperado ≤16 após consolidação)',
+            len(ctx.captured_queries), 17,
+            f'dashboard fez {len(ctx.captured_queries)} queries (esperado ≤17)',
         )
