@@ -47,7 +47,14 @@ class DailySummaryTest(_Base):
         self._order(yesterday, total=100, items=[('Lasanha', 2)])
         self._order(yesterday, total=50, items=[('Rondelli', 1)])
         self._order(yesterday, total=30, status='cancelled')
-        with patch('apps.stores.services.ai_insights._llm_text', return_value='Resumo gerado pela IA.'):
+        # O resumo passou a ser estruturado: o modelo devolve BLOCOS, porque
+        # parágrafo corrido não se lê no celular entre um pedido e outro, e a
+        # ação — a única parte acionável — ficava enterrada na última frase.
+        resposta = (
+            '{"blocos":[{"tipo":"resultado","titulo":"Como foi ontem",'
+            '"texto":"2 pedidos e R$ 150,00."}]}'
+        )
+        with patch('apps.stores.services.ai_insights._llm_text', return_value=resposta):
             resp = self.client.get('/api/v1/stores/ai/daily-summary/', {'store': 'loja-ia'})
         self.assertEqual(resp.status_code, 200)
         data = resp.json()
@@ -55,8 +62,11 @@ class DailySummaryTest(_Base):
         self.assertEqual(data['stats']['revenue'], 150.0)
         self.assertEqual(data['stats']['cancelled'], 1)
         self.assertEqual(data['stats']['top_products'][0]['name'], 'Lasanha')
-        self.assertEqual(data['summary'], 'Resumo gerado pela IA.')
         self.assertEqual(data['source'], 'llm')
+        self.assertEqual(data['blocos'][0]['tipo'], 'resultado')
+        # `summary` sobrevive para WhatsApp e e-mail, montado a partir dos
+        # blocos — não de uma segunda chamada ao modelo.
+        self.assertIn('2 pedidos e R$ 150,00.', data['summary'])
 
     def test_llm_down_falls_back_to_template(self):
         self._order(timezone.now() - timedelta(days=1), total=80)
@@ -75,7 +85,8 @@ class DailySummaryTest(_Base):
 
     def test_llm_result_is_cached(self):
         self._order(timezone.now() - timedelta(days=1))
-        with patch('apps.stores.services.ai_insights._llm_text', return_value='ok') as llm:
+        resposta = '{"blocos":[{"tipo":"acao","titulo":"Hoje","texto":"Reforce as 19h."}]}'
+        with patch('apps.stores.services.ai_insights._llm_text', return_value=resposta) as llm:
             self.client.get('/api/v1/stores/ai/daily-summary/', {'store': 'loja-ia'})
             resp2 = self.client.get('/api/v1/stores/ai/daily-summary/', {'store': 'loja-ia'})
         self.assertEqual(llm.call_count, 1)

@@ -7,6 +7,7 @@
 LLM indisponível NUNCA quebra o painel: cai no resumo template/estatísticas.
 """
 import json
+import re
 import logging
 from datetime import timedelta
 from decimal import Decimal
@@ -240,6 +241,123 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     }
 
 
+# Tipos de bloco do resumo diário.
+#
+# Quatro, e só quatro: são as quatro perguntas que o dono faz ao abrir o painel
+# de manhã — como foi ontem, para onde está indo, o que precisa de atenção, e o
+# que eu faço hoje. Mais tipos que isso vira taxonomia sem uso, e o frontend
+# precisa de um ícone e uma cor por tipo.
+TIPOS_DE_BLOCO = ('resultado', 'tendencia', 'atencao', 'acao')
+
+
+def _normalizar_bloco(bruto: dict) -> dict | None:
+    """Um bloco do LLM vira bloco nosso, ou vira None.
+
+    O modelo inventa rótulo — `insight_incrivel` já apareceu. Tipo fora do
+    conjunto quebraria o ícone e a cor no frontend, então cai em 'resultado'
+    (neutro) em vez de sumir: a informação continua valendo.
+
+    Bloco sem texto é descartado: card com título e nada embaixo lê como falha
+    nossa.
+    """
+    if not isinstance(bruto, dict):
+        return None
+    texto = str(bruto.get('texto') or '').strip()
+    if not texto:
+        return None
+    tipo = str(bruto.get('tipo') or '').strip().lower()
+    if tipo not in TIPOS_DE_BLOCO:
+        tipo = 'resultado'
+    return {
+        'tipo': tipo,
+        'titulo': str(bruto.get('titulo') or '').strip() or 'Resumo',
+        'texto': texto,
+    }
+
+
+def _blocos_do_json(bruto: str) -> list:
+    """Extrai os blocos da resposta do LLM.
+
+    Modelo instruído a devolver JSON devolve ```json … ``` boa parte das vezes.
+    Falhar nisso jogaria todo mundo no template sem motivo — a resposta estava
+    certa, só embrulhada.
+    """
+    texto = (bruto or '').strip()
+    if texto.startswith('```'):
+        texto = re.sub(r'^```[a-zA-Z]*\s*', '', texto)
+        texto = re.sub(r'\s*```$', '', texto)
+    try:
+        dados = json.loads(texto)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    brutos = dados.get('blocos') if isinstance(dados, dict) else dados
+    if not isinstance(brutos, list):
+        return []
+    return [b for b in (_normalizar_bloco(x) for x in brutos) if b]
+
+
+def _template_blocos(store, stats: dict, forecast: dict = None) -> list:
+    """Os MESMOS blocos, sem LLM.
+
+    O provedor é externo e cai. Quando cair, a tela não pode mudar de forma —
+    se o fallback devolvesse só texto, o card alternaria entre dois layouts sem
+    ninguém entender por quê.
+    """
+    forecast = forecast or {}
+    blocos = []
+
+    resultado = (
+        f"{stats['orders']} pedidos e R$ {stats['revenue']:.2f} de receita "
+        f"(ticket médio R$ {stats['avg_ticket']:.2f})."
+    )
+    if stats.get('orders_prev_day'):
+        delta = stats['orders'] - stats['orders_prev_day']
+        resultado += f" {'+' if delta >= 0 else ''}{delta} pedidos contra o dia anterior."
+    blocos.append({'tipo': 'resultado', 'titulo': 'Como foi ontem', 'texto': resultado})
+
+    t = forecast.get('trend_pct')
+    if t is not None:
+        direcao = 'subindo' if t > 0 else ('estável' if t == 0 else 'caindo')
+        texto = f"O movimento está {direcao} ({t:+.1f}% desde o início do período)."
+        proj = forecast.get('month_projection')
+        if proj:
+            texto += (
+                f" Projeção de fechamento do mês: R$ {proj:.2f}, com "
+                f"R$ {forecast.get('month_realized', 0):.2f} já realizados."
+            )
+        blocos.append({'tipo': 'tendencia', 'titulo': 'Para onde está indo', 'texto': texto})
+
+    atencao = []
+    if stats.get('cancelled'):
+        atencao.append(f"{stats['cancelled']} pedido(s) cancelado(s) ontem.")
+    if forecast.get('days_without_sale'):
+        atencao.append(f"{forecast['days_without_sale']} dia(s) sem venda nenhuma no período.")
+    if atencao:
+        blocos.append({'tipo': 'atencao', 'titulo': 'Precisa de atenção', 'texto': ' '.join(atencao)})
+
+    acao = []
+    if stats.get('top_products'):
+        top = stats['top_products'][0]
+        acao.append(f"{top['name']} foi o mais vendido ({top['qty']}x) — vale virar combo.")
+    if stats.get('peak_hour') is not None:
+        acao.append(f"O pico foi às {stats['peak_hour']}h; reforce a equipe nesse horário.")
+    if forecast.get('worst_weekday'):
+        acao.append(f"{forecast['worst_weekday']} é o dia mais fraco — bom alvo para promoção.")
+    if acao:
+        blocos.append({'tipo': 'acao', 'titulo': 'O que fazer hoje', 'texto': ' '.join(acao)})
+
+    return blocos
+
+
+def _texto_dos_blocos(blocos: list) -> str:
+    """Versão em texto corrido, para quem só sabe ler string.
+
+    WhatsApp e e-mail consomem `summary`. Trocar o contrato sem manter o campo
+    quebraria os dois em silêncio.
+    """
+    return ' '.join(f"{b['titulo']}: {b['texto']}" for b in blocos)
+
+
 def _template_summary(store, stats: dict, forecast: dict = None) -> str:
     parts = [
         f"📊 {stats['date']}: {stats['orders']} pedidos, R$ {stats['revenue']:.2f} de receita"
@@ -287,31 +405,52 @@ def generate_daily_summary(store, day=None) -> dict:
 
     prompt = (
         "Você é o analista de negócios do dono do restaurante "
-        f"\"{store.name}\". Escreva 4 a 6 frases em português do Brasil, tom "
-        "direto, como quem conversa com o dono — sem jargão e sem bullet.\n\n"
-        "Estrutura obrigatória, nesta ordem:\n"
-        "1. Como foi ontem, em uma frase, com o número.\n"
-        "2. A TENDÊNCIA: está subindo ou caindo, e quanto (use trend_pct).\n"
-        "3. A PROJEÇÃO de fechamento do mês (month_projection) comparada ao que já "
-        "foi realizado (month_realized).\n"
-        "4. UMA ação concreta para hoje, derivada dos dados — o dia fraco da semana "
-        "(worst_weekday), o produto campeão que pode virar combo, o horário de pico "
-        "que pede reforço, ou os dias sem venda nenhuma.\n\n"
-        "Regras: não invente número que não esteja nos dados. Se a projeção for "
-        "menor que o realizado do mês passado, diga isso sem suavizar. Se não houve "
-        "venda, diga com franqueza e sugira o que fazer. Nunca use as palavras "
-        "'insight', 'otimizar' ou 'alavancar'.\n\n"
+        f"\"{store.name}\". Responda APENAS com JSON válido, sem texto antes ou "
+        "depois, sem cercas de código.\n\n"
+        "Formato:\n"
+        '{"blocos":[{"tipo":"...","titulo":"...","texto":"..."}]}\n\n'
+        "Gere de 3 a 4 blocos, nesta ordem, usando SÓ estes tipos:\n"
+        "- resultado: como foi ontem, com os números.\n"
+        "- tendencia: subindo ou caindo e quanto (trend_pct), e a projeção do "
+        "mês (month_projection) contra o já realizado (month_realized).\n"
+        "- atencao: só se houver cancelamento, dia sem venda ou projeção abaixo "
+        "do mês passado. Se não houver, omita o bloco.\n"
+        "- acao: UMA coisa concreta para hoje, tirada dos dados — o dia fraco "
+        "(worst_weekday), o campeão que pode virar combo, o horário de pico que "
+        "pede reforço.\n\n"
+        "titulo: no máximo 4 palavras. texto: 1 a 2 frases, português do Brasil, "
+        "tom de quem conversa com o dono, sem jargão.\n\n"
+        "Regras: não invente número fora dos dados. Se a projeção for menor que "
+        "o mês passado, diga sem suavizar. Se não houve venda, diga com "
+        "franqueza. Nunca use 'insight', 'otimizar' ou 'alavancar'.\n\n"
         "Dados de ontem (JSON):\n" + json.dumps(stats, ensure_ascii=False) +
         "\n\nTendência e projeção (JSON):\n" + json.dumps(forecast, ensure_ascii=False)
     )
+
+    blocos = []
+    source = 'template'
     try:
-        summary = _llm_text(prompt)
-        source = 'llm'
+        blocos = _blocos_do_json(_llm_text(prompt))
+        if blocos:
+            source = 'llm'
     except Exception as exc:
         logger.warning('[ai_insights] LLM indisponível para resumo diário: %s', exc)
-        summary = _template_summary(store, stats, forecast)
+
+    if not blocos:
+        # JSON inválido, lista vazia ou todos os blocos sem texto: o template
+        # tem o que dizer, e um card vazio leria como falha nossa.
+        blocos = _template_blocos(store, stats, forecast)
         source = 'template'
-    return {'stats': stats, 'forecast': forecast, 'summary': summary, 'source': source}
+
+    return {
+        'stats': stats,
+        'forecast': forecast,
+        'blocos': blocos,
+        # Mantido para WhatsApp e e-mail, que só sabem ler string. Sai DOS
+        # blocos, não de uma segunda chamada ao modelo.
+        'summary': _texto_dos_blocos(blocos),
+        'source': source,
+    }
 
 
 # ── Análise de conversas ─────────────────────────────────────────────────────
