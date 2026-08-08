@@ -1171,14 +1171,62 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
             'addresses', 'default_address_index', 'default_address',
             'address_list',
             'total_orders', 'total_spent', 'last_order_at',
+            'gasto_real', 'pedidos_reais', 'dias_sem_comprar', 'perfil',
             'tags', 'notes',
             'accepts_marketing', 'marketing_opt_in_at',
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = [
             'id', 'store', 'user', 'total_orders', 'total_spent', 'last_order_at',
+            'gasto_real', 'pedidos_reais', 'dias_sem_comprar', 'perfil',
             'created_at', 'updated_at'
         ]
+
+    # ── Campos derivados dos PEDIDOS, não dos contadores ──────────────────
+    #
+    # `total_spent`, `total_orders` e `last_order_at` são gravados por signal.
+    # Em 07/ago, 12 dos 78 clientes da Cê Saladas estavam errados: a lista
+    # somava R$ 2.726,01 e os pedidos somavam R$ 2.613,21. Contador
+    # denormalizado que ninguém reconcilia sempre diverge — pedido editado,
+    # cancelado depois de pago, restauração de backup.
+    #
+    # Os campos antigos ficam (há consumidor que os lê); estes é que a tela usa.
+
+    gasto_real = serializers.SerializerMethodField()
+    pedidos_reais = serializers.SerializerMethodField()
+    dias_sem_comprar = serializers.SerializerMethodField()
+    perfil = serializers.SerializerMethodField()
+
+    def get_gasto_real(self, obj):
+        return float(getattr(obj, '_gasto_real', 0) or 0)
+
+    def get_pedidos_reais(self, obj):
+        return int(getattr(obj, '_pedidos_reais', 0) or 0)
+
+    def get_dias_sem_comprar(self, obj):
+        """Dias desde a última compra que conta como receita.
+
+        `None` — e não 0 — para quem nunca comprou: zero lê como "comprou
+        hoje", mentira perigosa numa lista ordenada por reengajamento.
+        """
+        ultima = getattr(obj, '_ultima_compra', None)
+        if not ultima:
+            return None
+        from apps.stores.metrics import hoje_local
+        return (hoje_local() - ultima.astimezone().date()).days
+
+    def get_perfil(self, obj):
+        """Classificação por número de pedidos, com régua explícita.
+
+        novo 0–1 · ocasional 2–4 · vip 5+. Sem régua, "VIP" é rótulo mágico
+        que ninguém consegue explicar nem contestar.
+        """
+        n = int(getattr(obj, '_pedidos_reais', 0) or 0)
+        if n >= 5:
+            return 'vip'
+        if n >= 2:
+            return 'ocasional'
+        return 'novo'
 
     def get_user_name(self, obj):
         return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.email

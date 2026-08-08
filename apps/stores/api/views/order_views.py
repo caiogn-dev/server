@@ -847,6 +847,41 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response(StoreOrderSerializer(queryset[:20], many=True).data)
 
 
+def _anotar_crm(qs):
+    """Gasto, pedidos e última compra REAIS, por subquery.
+
+    Vem dos pedidos e não de `total_spent`/`total_orders`: os contadores são
+    gravados por signal e divergem — 12 dos 78 clientes da Cê Saladas tinham
+    valor errado em 07/ago.
+
+    Subquery correlacionada e não `annotate(Sum(...))` com join: o join
+    multiplicaria as linhas de endereço já trazidas pelo prefetch e somaria o
+    mesmo pedido várias vezes. Continua sendo UMA query para a lista inteira.
+    """
+    from django.db.models import OuterRef, Subquery
+    from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
+
+    # `customer` é a FK do pedido para auth.User; `StoreCustomer.user` é o
+    # mesmo User visto do lado do perfil da loja.
+    do_cliente = pedidos_de_receita().filter(
+        store=OuterRef('store_id'), customer=OuterRef('user_id'),
+    )
+
+    return qs.annotate(
+        _gasto_real=Subquery(
+            do_cliente.values('customer').annotate(t=Sum('total')).values('t')[:1]
+        ),
+        _pedidos_reais=Subquery(
+            do_cliente.values('customer').annotate(n=Count('id')).values('n')[:1]
+        ),
+        _ultima_compra=Subquery(
+            do_cliente.annotate(_quando=eixo_de_receita())
+            .order_by('-_quando')
+            .values('_quando')[:1]
+        ),
+    )
+
+
 class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     """ViewSet for managing store customers."""
 
@@ -871,7 +906,8 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         # prefetch_related('address_list'): get_default_address() e o campo
         # 'addresses' do serializer eram lidos por linha → N+1 em
         # store_customer_addresses. Com o prefetch, é 1 query p/ todos os endereços.
-        return qs.select_related('user', 'store').prefetch_related('address_list')
+        qs = qs.select_related('user', 'store').prefetch_related('address_list')
+        return _anotar_crm(qs)
 
     def perform_create(self, serializer):
         """Injeta a store no create garantindo isolamento por tenant.
@@ -921,7 +957,55 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             'active': agg['active'],
             'with_orders': agg['with_orders'],
             'total_revenue': f"{revenue:.2f}",
+            'segmentos': self._segmentos(),
         })
+
+    # Réguas dos segmentos, em dias sem comprar.
+    #
+    # 30 dias porque o ciclo de recompra de delivery é semanal a quinzenal:
+    # um mês sem aparecer já é sinal. 45 porque, passado isso, quem some
+    # raramente volta sozinho — vira campanha, não lembrete.
+    DIAS_ATIVO = 30
+    DIAS_RISCO = 45
+
+    def _segmentos(self):
+        """Quantos clientes em cada estágio, com a régua declarada.
+
+        "2.386 clientes cadastrados" não é acionável; "106 em risco, 30 a 45
+        dias sem comprar" é — dá para disparar campanha hoje à tarde.
+
+        A RÉGUA VAI JUNTO. "Em risco" sem o corte é opinião nossa disfarçada de
+        dado: quem lê não tem como julgar se concorda, nem como explicar o
+        número para outra pessoa.
+        """
+        from apps.stores.metrics import hoje_local
+
+        hoje = hoje_local()
+        corte_ativo = hoje - timedelta(days=self.DIAS_ATIVO)
+        corte_risco = hoje - timedelta(days=self.DIAS_RISCO)
+
+        qs = self.get_queryset()
+        agg = qs.aggregate(
+            ativos=Count('id', filter=Q(_ultima_compra__date__gte=corte_ativo)),
+            em_risco=Count('id', filter=Q(
+                _ultima_compra__date__lt=corte_ativo,
+                _ultima_compra__date__gte=corte_risco,
+            )),
+            inativos=Count('id', filter=Q(_ultima_compra__date__lt=corte_risco)),
+            # Cadastro sem compra é LEAD, não cliente perdido. Somar os dois
+            # inflaria "inativos" e mandaria campanha de reativação para quem
+            # nunca ativou.
+            sem_compra=Count('id', filter=Q(_ultima_compra__isnull=True)),
+        )
+        return {
+            **agg,
+            'reguas': {
+                'ativos': f'comprou nos últimos {self.DIAS_ATIVO} dias',
+                'em_risco': f'{self.DIAS_ATIVO} a {self.DIAS_RISCO} dias sem comprar',
+                'inativos': f'mais de {self.DIAS_RISCO} dias sem comprar',
+                'sem_compra': 'cadastrado, nunca comprou',
+            },
+        }
 
     @action(detail=True, methods=['post'])
     def update_stats(self, request, pk=None):
