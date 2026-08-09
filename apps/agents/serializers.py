@@ -77,6 +77,11 @@ class ProcessMessageSerializer(serializers.Serializer):
     message = serializers.CharField(required=True, max_length=10000, help_text="Mensagem do usuário")
     session_id = serializers.CharField(required=False, allow_blank=True, help_text="ID da sessão (opcional)")
     phone_number = serializers.CharField(required=False, allow_blank=True, help_text="Número de telefone")
+    # Sem a loja, `buscar_produto` devolve "Cardápio indisponível no momento" e
+    # quem testa conclui que o catálogo quebrou. O Agent é global (não tem
+    # vínculo com loja), então ela precisa vir na requisição — é o mesmo que
+    # acontece no WhatsApp, onde vem da conversa.
+    store = serializers.CharField(required=False, allow_blank=True, help_text="Slug ou id da loja")
     context = serializers.DictField(required=False, default=dict, help_text="Contexto adicional")
 
 

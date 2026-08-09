@@ -5,6 +5,18 @@ import logging
 from rest_framework import viewsets, status
 
 logger = logging.getLogger(__name__)
+
+
+def _uuid_ok(valor: str) -> bool:
+    """O identificador da loja pode vir como slug ou uuid; filtrar por `id`
+    com um slug qualquer estoura ValidationError no Postgres."""
+    import uuid as _uuid
+
+    try:
+        _uuid.UUID(str(valor))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -117,12 +129,32 @@ class AgentViewSet(viewsets.ModelViewSet):
         serializer = ProcessMessageSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        # A loja precisa chegar às ferramentas: sem ela, `buscar_produto`
+        # responde "Cardápio indisponível no momento" e quem testa conclui que
+        # o catálogo caiu, quando é a tela que não disse de qual loja fala.
+        loja = None
+        slug = (serializer.validated_data.get('store') or '').strip()
+        if slug:
+            from apps.stores.models import Store
+
+            qs = Store.objects.all()
+            # Escopo do dono: informar um slug não pode abrir o catálogo alheio.
+            if not request.user.is_superuser:
+                qs = qs.filter(owner=request.user)
+            loja = qs.filter(slug=slug).first() or qs.filter(id=slug).first() if _uuid_ok(slug) else qs.filter(slug=slug).first()
+            if not loja:
+                return Response(
+                    {'error': 'Loja não encontrada ou sem acesso.'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
         try:
             service = LangchainService(agent)
             result = service.process_message(
                 message=serializer.validated_data['message'],
                 session_id=serializer.validated_data.get('session_id'),
                 phone_number=serializer.validated_data.get('phone_number'),
+                store=loja,
             )
             return Response(result)
         except Exception as e:
