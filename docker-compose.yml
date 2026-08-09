@@ -79,6 +79,10 @@ x-django-env: &django-env
   BILLING_ENFORCEMENT_ENABLED: ${BILLING_ENFORCEMENT_ENABLED:-false}
   BILLING_SETUP_FEE_ENABLED: ${BILLING_SETUP_FEE_ENABLED:-false}
   BILLING_AUTOCHARGE_ENABLED: ${BILLING_AUTOCHARGE_ENABLED:-false}
+  # Faltava repassar: a flag estava true no .env e o container nunca a via,
+  # então settings.BILLING_PIX_ENABLED caía no default false e a geração de
+  # fatura PIX nunca rodava. Era este o "go-live de cobrança pausado".
+  BILLING_PIX_ENABLED: ${BILLING_PIX_ENABLED:-false}
   # Email
   RESEND_API_KEY: ${RESEND_API_KEY}
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL}
