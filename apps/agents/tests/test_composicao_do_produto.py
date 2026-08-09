@@ -83,6 +83,59 @@ def test_produto_traz_descricao_inteira_sem_truncar(agent, loja_com_salada_e_mol
     assert "..." not in out.replace("…", "")
 
 
+def test_produto_que_declara_o_que_inclui_nao_e_desmentido(agent, loja_com_salada_e_molho):
+    """Caso real: SEXTA DO BACALHAU = 1 rondelli de bacalhau + 1 molho branco.
+
+    É um produto único, não um combo. Sem lugar para declarar a composição, a
+    tool afirmava "não acompanha nada" — e desmentia a própria loja.
+    """
+    store, _, _ = loja_com_salada_e_molho
+    prato = make_product(store, name="Sexta do Bacalhau", price=Decimal("45.00"))
+    prato.attributes = {"inclui": ["1 Rondelli de Bacalhau", "1 Molho Branco"]}
+    prato.save()
+
+    out = _tools(agent, store)['detalhes_do_produto'].invoke({"nome": "Sexta"})
+
+    assert "Acompanha" in out
+    assert "1 Rondelli de Bacalhau" in out
+    assert "1 Molho Branco" in out
+    assert "Não acompanha nenhum item extra" not in out
+
+
+def test_produto_que_declara_composicao_ainda_fecha_a_lista(agent, loja_com_salada_e_molho):
+    """Declarar o que inclui não pode virar porta para o modelo somar extras."""
+    store, _, _ = loja_com_salada_e_molho
+    prato = make_product(store, name="Sexta do Bacalhau", price=Decimal("45.00"))
+    prato.attributes = {"inclui": ["1 Rondelli de Bacalhau", "1 Molho Branco"]}
+    prato.save()
+
+    out = _tools(agent, store)['detalhes_do_produto'].invoke({"nome": "Sexta"})
+
+    assert "Nada além disso" in out
+
+
+def test_inclui_vazio_volta_a_dizer_que_nada_acompanha(agent, loja_com_salada_e_molho):
+    store, salada, _ = loja_com_salada_e_molho
+    salada.attributes = {"inclui": []}
+    salada.save()
+
+    out = _tools(agent, store)['detalhes_do_produto'].invoke({"nome": "Caesar"})
+
+    assert "Não acompanha" in out
+
+
+def test_inclui_malformado_nao_derruba_a_tool(agent, loja_com_salada_e_molho):
+    """attributes é JSON livre — alguém vai salvar string em vez de lista."""
+    store, salada, _ = loja_com_salada_e_molho
+    salada.attributes = {"inclui": "molho branco"}
+    salada.save()
+
+    out = _tools(agent, store)['detalhes_do_produto'].invoke({"nome": "Caesar"})
+
+    assert "molho branco" in out
+    assert "Erro" not in out
+
+
 def test_produto_inexistente_nao_inventa(agent, loja_com_salada_e_molho):
     store, _, _ = loja_com_salada_e_molho
     out = _tools(agent, store)['detalhes_do_produto'].invoke({"nome": "Feijoada"})
@@ -134,6 +187,18 @@ def test_combo_marca_grupo_obrigatorio_e_quantidade(agent, combo_com_molho_inclu
 
     assert "2" in out
     assert "obrigat" in out.lower()
+
+
+def test_combo_declara_brinde_fixo(agent, combo_com_molho_incluso):
+    """Caso real: 'na compra de 8 rondellis, ganhe 2 molhos' vivia só na
+    descrição — a tool listava os grupos e parecia desmentir a promessa."""
+    store, combo = combo_com_molho_incluso
+    combo.metadata = {"inclui": ["2 molhos grátis"]}
+    combo.save()
+
+    out = _tools(agent, store)['detalhes_do_combo'].invoke({"nome": "Kit Família"})
+
+    assert "2 molhos grátis" in out
 
 
 def test_combo_inexistente_nao_inventa(agent, combo_com_molho_incluso):

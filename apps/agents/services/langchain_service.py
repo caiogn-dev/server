@@ -1112,11 +1112,31 @@ class LangchainService:
         if nomes_combo:
             linhas.append("Vem incluso nestes combos: " + ", ".join(nomes_combo))
 
-        linhas.append(
-            "Não acompanha nenhum item extra por padrão — molho, bebida e "
-            "complementos são vendidos à parte, exceto dentro dos combos citados."
-        )
+        # Prato composto que não é combo (ex.: "Sexta do Bacalhau" = 1 rondelli
+        # + 1 molho por um preço só). `attributes` é JSON livre e o lojista
+        # pode salvar string em vez de lista — normalizar, não confiar.
+        inclui = self._itens_inclusos(getattr(produto, 'attributes', None))
+        if inclui:
+            linhas.append("Acompanha: " + ", ".join(inclui))
+            linhas.append("Nada além disso está incluso — o resto é vendido à parte.")
+        else:
+            linhas.append(
+                "Não acompanha nenhum item extra por padrão — molho, bebida e "
+                "complementos são vendidos à parte, exceto dentro dos combos citados."
+            )
         return "\n".join(linhas)
+
+    @staticmethod
+    def _itens_inclusos(attributes) -> list:
+        """Lê attributes['inclui'] tolerando string, lista ou lixo."""
+        if not isinstance(attributes, dict):
+            return []
+        bruto = attributes.get('inclui')
+        if isinstance(bruto, str):
+            bruto = [bruto]
+        if not isinstance(bruto, (list, tuple)):
+            return []
+        return [str(item).strip() for item in bruto if str(item).strip()]
 
     def _descrever_combo(self, combo) -> str:
         linhas = [f"{combo.name} — {self._brl(combo.price)}"]
@@ -1142,6 +1162,13 @@ class LangchainService:
             ]
             sufixo = f": {', '.join(opcoes)}" if opcoes else ""
             linhas.append(f"  • {rotulo} ({regra}, {quantos}){sufixo}")
+
+        # Brinde/item fixo que não é grupo de escolha (ex.: "na compra de 8,
+        # ganhe 2 molhos"). Sem isto a promessa só existe no texto solto da
+        # descrição e a tool parecia contradizê-la.
+        brindes = self._itens_inclusos(getattr(combo, 'metadata', None))
+        if brindes:
+            linhas.append("Também vem incluso: " + ", ".join(brindes))
 
         linhas.append("Só vem o que está listado acima. Qualquer outro item é à parte.")
         return "\n".join(linhas)
