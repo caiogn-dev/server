@@ -50,30 +50,35 @@ def cenario(db):
 
 
 def _clicar(cenario, nota):
+    """Clica num botão de avaliação e devolve o TEXTO que o cliente recebe.
+
+    `HandlerResult` guarda o texto em `response_text` quando é mensagem simples
+    e em `interactive_data['body']` quando tem botões — nos botões o
+    `response_text` é só o marcador 'BUTTONS_SENT'. Testar o objeto direto
+    compararia contra o `repr`, que passa em qualquer asserção de "não contém".
+    """
     from apps.whatsapp.intents.handlers.interactive import InteractiveReplyHandler
 
     _, conta, perfil, conversa, pedido = cenario
     h = InteractiveReplyHandler(conta, conversa, perfil)
-    return h._handle_feedback_rating(f'rating_{nota}_{pedido.id}')
+    r = h._handle_feedback_rating(f'rating_{nota}_{pedido.id}')
+    return f"{r.response_text or ''} {(r.interactive_data or {}).get('body', '')}"
 
 
 @pytest.mark.django_db
 class TestNotaBaixa:
     def test_uma_estrela_recebe_o_link_da_avaliacao_detalhada(self, cenario):
         pedido = cenario[4]
-        r = _clicar(cenario, 1)
-        corpo = str(r.text or getattr(r, 'body', '') or r)
-        assert str(pedido.access_token) in corpo
+        assert str(pedido.access_token) in _clicar(cenario, 1)
 
     def test_tres_estrelas_tambem(self, cenario):
         pedido = cenario[4]
-        r = _clicar(cenario, 3)
-        assert str(pedido.access_token) in str(r.text or getattr(r, 'body', '') or r)
+        assert str(pedido.access_token) in _clicar(cenario, 3)
 
     def test_nota_baixa_nomeia_os_pilares(self, cenario):
         # "Conte o que aconteceu" é convite vago. Nomear comida, entrega e
         # atendimento diz ao cliente que a resposta cabe em três toques.
-        corpo = str(_clicar(cenario, 1))
+        corpo = _clicar(cenario, 1)
         assert 'comida' in corpo.lower()
         assert 'entrega' in corpo.lower()
         assert 'atendimento' in corpo.lower()
@@ -81,14 +86,14 @@ class TestNotaBaixa:
     def test_nota_baixa_NAO_manda_para_o_google(self, cenario):
         # Pedir avaliação pública a quem acabou de reclamar é pedir uma nota
         # ruim no Google. O insatisfeito vai para o canal privado.
-        corpo = str(_clicar(cenario, 1))
+        corpo = _clicar(cenario, 1)
         assert 'g.page' not in corpo
         assert 'google' not in corpo.lower()
 
     def test_nota_baixa_nao_oferece_cupom(self, cenario):
         # Cupom aqui soa como compra do silêncio, e o cliente ainda não disse o
         # que deu errado — que é o dado que interessa.
-        corpo = str(_clicar(cenario, 1)).lower()
+        corpo = _clicar(cenario, 1).lower()
         assert 'desconto' not in corpo
         assert 'cupom' not in corpo
 
@@ -102,7 +107,7 @@ class TestNotaBaixa:
 class TestNotaAlta:
     def test_cinco_estrelas_continua_indo_para_o_google_com_cupom(self, cenario):
         # O caminho que já funcionava não pode regredir.
-        corpo = str(_clicar(cenario, 5))
+        corpo = _clicar(cenario, 5)
         assert 'g.page' in corpo
         assert 'desconto' in corpo.lower()
 
@@ -112,6 +117,6 @@ class TestNotaAlta:
         loja.save(update_fields=['metadata'])
         pedido = cenario[4]
 
-        corpo = str(_clicar(cenario, 5))
+        corpo = _clicar(cenario, 5)
         # Sem Google não há para onde mandar: aproveita para pedir o detalhe.
         assert str(pedido.access_token) in corpo
