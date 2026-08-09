@@ -72,5 +72,26 @@ CHANNEL_LAYERS = {
     'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
 }
 
+# ── Cobrança DESLIGADA e credenciais falsas ───────────────────────────────
+#
+# O harness roda com `--env-file .env`, que é o de PRODUÇÃO: em 08/ago/2026 a
+# suíte gerou SEIS cobranças PIX reais de R$ 179 na conta Mercado Pago da
+# empresa. `test_active_untouched` cria a loja `s4` com trial vencido e chama
+# `enforce_subscription_lifecycle()` sem mockar o SDK; com
+# `BILLING_PIX_ENABLED=true` herdado do .env, a task foi até a API do MP.
+#
+# O rastro no extrato era `s4@cardapidex.com.br` — o padrão
+# `{slug}@cardapidex.com.br` que o serviço usa quando a loja não tem email.
+#
+# Aqui as duas travas ficam desligadas por padrão. Teste que precisa do
+# comportamento liga com `override_settings` E mocka o SDK.
+BILLING_PIX_ENABLED = False
+BILLING_ENFORCEMENT_ENABLED = False
+
+# Credenciais obviamente inválidas: se algum caminho escapar dos mocks, ele
+# falha na autenticação em vez de mexer na conta real.
+MERCADOPAGO_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
+MP_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
+
 # Hash rápido: a suíte cria muitos usuários e o PBKDF2 domina o tempo.
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']

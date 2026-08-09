@@ -251,10 +251,23 @@ class InteractiveReplyHandler(IntentHandler):
                 ),
                 buttons=[{'id': f'refer_friend_{order.id}', 'title': '🎁 Indicar um amigo'}],
             )
+        # Nota baixa vai para a avaliação PRÓPRIA, não para o Google: pedir
+        # nota pública a quem acabou de reclamar é pedir uma nota ruim no
+        # Google. E sem cupom — cupom antes de o cliente dizer o que houve soa
+        # como compra de silêncio, e o que interessa é o motivo.
+        #
+        # Antes esta resposta não tinha link nenhum: "responda aqui se quiser
+        # contar" transformava a insatisfação numa estrela solta na média, e o
+        # dono ficava sabendo que alguém não gostou sem saber de quê.
+        from apps.stores.services.checkout_service import CheckoutService
+        base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
         return HandlerResult.text(
-            'Sentimos muito que a experiência não tenha sido boa. 😔\n'
-            'Sua avaliação foi registrada e vamos usá-la para melhorar. '
-            'Se quiser contar o que aconteceu, é só responder aqui.'
+            'Sentimos muito que a experiência não tenha sido boa. 😔\n\n'
+            # Nomear os três diz que a resposta cabe em três toques — bem mais
+            # provável que um "conte o que aconteceu" em aberto.
+            'Conta pra gente o que deu errado: a comida, a entrega ou o '
+            f'atendimento?\n{base}/orders/{order.access_token}\n\n'
+            'Leva menos de um minuto e é o que nos ajuda a melhorar.'
         )
 
     def _handle_refer_friend(self, reply_id: str) -> HandlerResult:

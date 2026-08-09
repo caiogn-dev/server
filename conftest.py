@@ -101,3 +101,37 @@ def _cache_limpo_entre_testes():
     cache.clear()
     yield
     cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _sem_chamada_real_ao_mercadopago(monkeypatch):
+    """Nenhum teste fala com o Mercado Pago de verdade.
+
+    Em 08/ago/2026 a suíte gerou SEIS cobranças PIX reais de R$ 179 na conta da
+    empresa. O harness roda com `--env-file .env` (o de produção), e
+    `test_active_untouched` chamava `enforce_subscription_lifecycle()` sem
+    mockar o SDK: com `BILLING_PIX_ENABLED=true` herdado do ambiente, a task foi
+    até a API e criou cobrança de verdade, uma por execução.
+
+    Desligar a flag no settings de teste resolve ESTE caminho. Esta trava
+    resolve a CLASSE: qualquer chamada ao SDK que escape de um mock estoura na
+    hora, com a mensagem dizendo o que fazer, em vez de gastar dinheiro em
+    silêncio e aparecer semanas depois no extrato.
+
+    Teste que precisa exercitar o fluxo continua livre para mockar
+    `subscription_service._sdk` — o patch dele tem precedência sobre este.
+    """
+    def _proibido(*args, **kwargs):
+        raise AssertionError(
+            'Teste tentou chamar o Mercado Pago DE VERDADE.\n'
+            'Mocke `apps.stores.services.subscription_service._sdk` no seu teste.\n'
+            'Isto já custou 6 cobranças reais de R$ 179 na conta da empresa.'
+        )
+
+    try:
+        from apps.stores.services import subscription_service
+
+        monkeypatch.setattr(subscription_service, '_sdk', _proibido, raising=False)
+    except Exception:  # pragma: no cover - app pode não estar carregado
+        pass
+    yield
