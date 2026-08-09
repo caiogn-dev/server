@@ -5,14 +5,18 @@ import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
 from apps.whatsapp.models import Message
 from apps.stores.models import StoreOrder
 from apps.conversations.models import Conversation
-from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
+from apps.core.permissions import (
+    IsSuperUser,
+    accessible_whatsapp_account_ids,
+    accessible_store_ids,
+)
 
 from ..models import AuditLog, DataExportLog
 from ..services import AuditService, ExportService
@@ -32,7 +36,7 @@ logger = logging.getLogger(__name__)
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """ViewSet for AuditLog operations."""
     serializer_class = AuditLogSerializer
-    permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsSuperUser]
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['action', 'module', 'user_email']
     

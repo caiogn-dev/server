@@ -132,12 +132,20 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         return False
 
 
+class IsSuperUser(permissions.BasePermission):
+    """Apenas superuser. Nunca is_staff: em ambiente multi-tenant is_staff
+    não implica acesso cross-tenant."""
+
+    def has_permission(self, request: Request, view: View) -> bool:
+        return bool(request.user and request.user.is_authenticated and request.user.is_superuser)
+
+
 class IsSuperUserOrReadOnly(permissions.BasePermission):
     """
     Permission that allows read-only access to anyone,
     but only superusers can modify.
     """
-    
+
     def has_permission(self, request: Request, view: View) -> bool:
         if request.method in permissions.SAFE_METHODS:
             return True
@@ -327,6 +335,7 @@ __all__ = [
     'IsStoreStaff',
     'HasStoreAccess',
     'IsOwnerOrReadOnly',
+    'IsSuperUser',
     'IsSuperUserOrReadOnly',
     'ReadOnly',
     'IsWhatsAppAccountOwner',
