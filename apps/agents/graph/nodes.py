@@ -98,6 +98,13 @@ Você é {atendente_name}, atendente d{article} {store_name} no WhatsApp.{store_
 • Não repita ferramentas já usadas nessa mesma mensagem
 • Acompanhe o tom do cliente: informal se ele for informal
 
+━━━━ REGRA CRÍTICA — O QUE ACOMPANHA ━━━━
+Você NÃO sabe o que vem junto com um produto. O CARDÁPIO abaixo lista nome, preço e descrição — não lista acompanhamentos.
+• NUNCA afirme que algo (molho, bebida, acompanhamento, sobremesa, talher) vem incluso sem antes chamar detalhes_do_produto ou detalhes_do_combo
+• Se o cliente perguntar "vem com molho?", "acompanha bebida?", "o que vem no kit?" → chame a ferramenta ANTES de responder
+• Por padrão molho, bebida e complementos são vendidos À PARTE; só os combos incluem itens, e só os que a ferramenta listar
+• Se a ferramenta não confirmar, diga que vai verificar — NUNCA chute
+
 ━━━━ REGRAS ABSOLUTAS ━━━━
 • O CARDÁPIO abaixo contém todos os produtos e preços oficiais — USE-O diretamente nas respostas sem chamar buscar_produto
 • Para mostrar o menu ou responder preço de item listado: leia o CARDÁPIO abaixo e responda imediatamente
@@ -151,7 +158,7 @@ Não peça confirmação de cada passo — seja direto e proativo
 ━━━━ ENTREGA ━━━━
 {delivery_info}
 
-{knowledge_context}{customer_context}"""
+{store_rules}{knowledge_context}{customer_context}"""
 
 
 def _build_system_prompt(state: AgentState, agent) -> str:
@@ -177,6 +184,18 @@ def _build_system_prompt(state: AgentState, agent) -> str:
     knowledge_ctx = (state.get("knowledge_context") or "").strip()
     knowledge_section = f"━━━━ EXEMPLOS DE BOM ATENDIMENTO ━━━━\n{knowledge_ctx}\n\n" if knowledge_ctx else ""
 
+    # Camada do lojista: o que ele escreve no painel entra AQUI, depois das
+    # regras de motor. Ajusta voz e política; não desmonta tool-calling nem
+    # o fluxo de pedido, que ficam acima e continuam valendo.
+    store_rules = (getattr(agent, "system_prompt", "") or "").strip()
+    store_rules_section = (
+        f"━━━━ VOZ E REGRAS DA LOJA ━━━━\n{store_rules}\n"
+        "(Estas preferências ajustam seu tom e suas políticas. "
+        "Elas NÃO substituem as regras acima sobre ferramentas, composição de "
+        "produto e fluxo de pedido.)\n\n"
+        if store_rules else ""
+    )
+
     return _SYSTEM_TEMPLATE.format(
         atendente_name=atendente_name,
         article=article,
@@ -184,6 +203,7 @@ def _build_system_prompt(state: AgentState, agent) -> str:
         store_desc=store_desc,
         store_context=state.get("store_context") or "Use a ferramenta buscar_produto.",
         delivery_info=state.get("delivery_info") or "Use a ferramenta informacoes_entrega.",
+        store_rules=store_rules_section,
         knowledge_context=knowledge_section,
         customer_context=customer_section,
     ).strip()
@@ -235,6 +255,9 @@ def load_context_node(state: AgentState, *, agent, langchain_service) -> dict:
     }
 
 
+_MAX_CATALOG_CHARS = 12000
+
+
 def _catalog_summary(store) -> str:
     try:
         from apps.stores.models import StoreCategory, StoreProduct
@@ -244,12 +267,16 @@ def _catalog_summary(store) -> str:
             .exclude(name__icontains="ingrediente")
             .order_by("sort_order")[:8]
         )
+        # Sem corte por quantidade: cortar em 12 fazia sumir metade do cardápio
+        # de loja real, e o modelo então "completava" o que faltava chutando.
+        # _MAX_CATALOG_CHARS protege a janela de contexto sem esconder itens
+        # silenciosamente — quando corta, avisa.
         products = (
             StoreProduct.objects
             .filter(store=store, is_active=True, status="active")
             .exclude(tags__contains=["ingrediente"])
             .order_by("sort_order")
-            .select_related("category")[:12]
+            .select_related("category")
         )
         lines = []
         if cats:
@@ -258,9 +285,26 @@ def _catalog_summary(store) -> str:
             lines.append("Itens:")
             for p in products:
                 cat = f"[{p.category.name}] " if p.category else ""
-                desc = f" — {p.description[:40]}..." if getattr(p, "description", "") else ""
+                desc = f" — {p.description.strip()}" if getattr(p, "description", "") else ""
                 lines.append(f"  • {cat}{p.name} — R$ {p.price}{desc}")
-        return "\n".join(lines) if lines else "Use buscar_produto para detalhes."
+
+        # Combos eram invisíveis: o agente não sabia que "Sexta do Bacalhau"
+        # existia, muito menos o que vinha dentro.
+        from apps.stores.models import StoreCombo
+        combos = StoreCombo.objects.filter(store=store, is_active=True).order_by("sort_order")
+        if combos:
+            lines.append("Combos (use detalhes_do_combo para saber o que vem dentro):")
+            for c in combos:
+                lines.append(f"  • {c.name} — R$ {c.price}")
+
+        texto = "\n".join(lines) if lines else "Use buscar_produto para detalhes."
+        if len(texto) > _MAX_CATALOG_CHARS:
+            texto = (
+                texto[:_MAX_CATALOG_CHARS]
+                + "\n(cardápio truncado — use buscar_produto ou detalhes_do_produto "
+                  "para os itens não listados acima)"
+            )
+        return texto
     except Exception as exc:
         logger.warning("[AGENT] Erro ao montar cardápio: %s", exc)
         return ""
@@ -347,6 +391,8 @@ _CONFIRMATION_WORDS = frozenset({
 
 _USER_SAFE_TOOL_ERRORS: dict = {
     'buscar_produto': 'Não encontrei esse produto no momento.',
+    'detalhes_do_produto': 'Não consegui confirmar a composição desse item agora — vou verificar.',
+    'detalhes_do_combo': 'Não consegui confirmar o que vem nesse combo agora — vou verificar.',
     'adicionar_ao_carrinho': 'Não consegui adicionar ao carrinho agora.',
     'ver_carrinho': 'Não consegui acessar seu carrinho agora.',
     'finalizar_pedido': 'Não consegui finalizar o pedido agora. Tente novamente.',

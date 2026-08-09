@@ -118,11 +118,26 @@ class AccessibleAgentsFallbackTest(SimpleTestCase):
     testes deste arquivo: langchain_core indisponível no container de CI.
     """
 
-    def test_fallback_sem_contas_retorna_none(self):
+    def test_nao_existe_retorno_irrestrito_fora_do_superuser(self):
+        """Todo caminho que não é superuser tem que passar por .filter().
+
+        Antes isto era verificado exigindo `queryset.none()` literal no código.
+        Passou a haver um caminho legítimo a mais (lojista dono da loja sem
+        conta WhatsApp vinculada), então a garantia migrou para a propriedade:
+        nenhum `return queryset` cru depois do early return de superuser.
+        O isolamento real é provado em
+        test_agent_write_response_contract.py::test_usuario_de_outro_tenant_nao_ve_o_agente.
+        """
         source = _read_views_source()
         func = _extract_function(source, '_accessible_agents')
-        self.assertIn('queryset.none()', func,
-                      '_accessible_agents deve retornar queryset.none() quando '
-                      'o usuário não tem contas WhatsApp acessíveis')
+
         self.assertNotIn('fall back to all active agents', func,
                          'fallback perigoso (todos os agentes) não pode voltar')
+
+        retornos = re.findall(r'^\s*return\s+(.+)$', func, flags=re.MULTILINE)
+        # O primeiro é o early return do superuser; os demais têm que ser filtrados.
+        for expr in retornos[1:]:
+            self.assertTrue(
+                '.filter(' in expr or '.none()' in expr,
+                f'retorno sem escopo de tenant em _accessible_agents: {expr!r}',
+            )

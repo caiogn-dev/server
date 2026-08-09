@@ -40,8 +40,15 @@ class AgentDetailSerializer(serializers.ModelSerializer):
 
 
 class AgentCreateUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for creating/updating agents."""
-    
+    """Serializer for creating/updating agents.
+
+    Responde com o MESMO contrato da leitura (AgentDetailSerializer). Sem isso,
+    o painel recebia um objeto sem `id` e com `accounts` em PKs: `agent.id`
+    virava undefined (o botão de salvar voltava a dizer "Criar Agente") e o
+    save seguinte mandava `accounts: [null]`, que o DRF rejeitava com
+    "Pk inválido \"None\"".
+    """
+
     class Meta:
         model = Agent
         fields = [
@@ -50,6 +57,18 @@ class AgentCreateUpdateSerializer(serializers.ModelSerializer):
             'timeout', 'system_prompt', 'context_prompt',
             'status', 'use_memory', 'memory_ttl', 'accounts'
         ]
+
+    def to_internal_value(self, data):
+        # Front antigo em cache continua mandando [null]; descartar um nulo é
+        # mais honesto que devolver 400 para um campo que nem é obrigatório.
+        accounts = data.get('accounts') if hasattr(data, 'get') else None
+        if isinstance(accounts, list) and any(a in (None, '') for a in accounts):
+            data = data.copy()
+            data['accounts'] = [a for a in accounts if a not in (None, '')]
+        return super().to_internal_value(data)
+
+    def to_representation(self, instance):
+        return AgentDetailSerializer(instance, context=self.context).data
 
 
 class AgentMessageSerializer(serializers.ModelSerializer):

@@ -51,16 +51,16 @@ def _accessible_agents(user):
 
     account_ids = list(accessible_whatsapp_account_ids(user))
 
-    if not account_ids:
-        # Sem conta WhatsApp acessível → NENHUM agente. O fallback antigo
-        # (todos os ativos) expunha conversations/history/process/clear_memory
-        # de agentes alheios a qualquer usuário autenticado (PII cross-tenant).
-        return queryset.none()
-
+    # Escopo continua fechado por tenant — o fallback antigo (todos os ativos)
+    # expunha conversations/history de agentes alheios. A diferença é que a
+    # loja também é dona do agente: sem os dois últimos Q, um lojista sem conta
+    # WhatsApp vinculada não via o próprio agente e o painel caía no modo criar.
     return queryset.filter(
         Q(accounts__id__in=account_ids) |
         Q(whatsapp_accounts__id__in=account_ids) |
-        Q(company_profiles__account__id__in=account_ids)
+        Q(company_profiles__account__id__in=account_ids) |
+        Q(company_profiles__store__owner=user) |
+        Q(company_profiles__store__staff=user)
     ).distinct()
 
 

@@ -7,6 +7,7 @@ import uuid
 import logging
 import re
 import unicodedata
+from decimal import Decimal
 from typing import List, Dict, Any, Optional
 
 from django.conf import settings
@@ -1035,6 +1036,116 @@ class LangchainService:
             return remove_accents(full_context)
         return full_context
 
+    # ── Composição do cardápio ───────────────────────────────────────────────
+    # O modelo só para de inventar "o molho vem incluso" quando a composição
+    # chega como DADO. Nada aqui é opinião: sai tudo do que está cadastrado.
+
+    @staticmethod
+    def _brl(valor) -> str:
+        try:
+            return f"R$ {Decimal(str(valor)):.2f}".replace('.', ',')
+        except Exception:
+            return "R$ —"
+
+    @staticmethod
+    def _slug_compare(texto: str) -> str:
+        import unicodedata
+        return unicodedata.normalize('NFD', texto or '').encode('ascii', 'ignore').decode().lower()
+
+    def _match_product(self, store, nome: str):
+        """Melhor casamento por nome. Empate resolve pelo nome mais curto —
+        'Molho' ganha de 'Molho Especial da Casa' quando o cliente diz 'molho'."""
+        from apps.stores.models import StoreProduct
+        alvo = self._slug_compare(nome).strip()
+        if not alvo:
+            return None
+        candidatos = [
+            p for p in StoreProduct.objects.filter(store=store, is_active=True)
+                                           .select_related('category')
+            if alvo in self._slug_compare(p.name)
+        ]
+        if not candidatos:
+            return None
+        return sorted(
+            candidatos,
+            key=lambda p: (self._slug_compare(p.name) != alvo, len(p.name)),
+        )[0]
+
+    def _match_combo(self, store, nome: str):
+        from apps.stores.models import StoreCombo
+        alvo = self._slug_compare(nome).strip()
+        if not alvo:
+            return None
+        candidatos = [
+            c for c in StoreCombo.objects.filter(store=store, is_active=True)
+            if alvo in self._slug_compare(c.name)
+        ]
+        if not candidatos:
+            return None
+        return sorted(
+            candidatos,
+            key=lambda c: (self._slug_compare(c.name) != alvo, len(c.name)),
+        )[0]
+
+    def _descrever_produto(self, produto) -> str:
+        from apps.stores.models import ComboProductGroup
+
+        cat = produto.category.name if produto.category else 'Geral'
+        linhas = [f"{produto.name} — {self._brl(produto.price)}  [{cat}]"]
+
+        if getattr(produto, 'description', ''):
+            linhas.append(produto.description)
+
+        variantes = [v for v in produto.variants.filter(is_active=True)]
+        if variantes:
+            opcoes = ", ".join(
+                f"{v.name} ({self._brl(v.get_price())})" for v in variantes
+            )
+            linhas.append(f"Opções/sabores: {opcoes}")
+
+        # Onde esse item REALMENTE vem incluso — o contraexemplo honesto.
+        combos = ComboProductGroup.objects.filter(
+            models.Q(product=produto) | models.Q(product_options__product=produto)
+            | models.Q(variant_limits__variant__product=produto)
+        ).select_related('combo').distinct()
+        nomes_combo = sorted({g.combo.name for g in combos if g.combo.is_active})
+        if nomes_combo:
+            linhas.append("Vem incluso nestes combos: " + ", ".join(nomes_combo))
+
+        linhas.append(
+            "Não acompanha nenhum item extra por padrão — molho, bebida e "
+            "complementos são vendidos à parte, exceto dentro dos combos citados."
+        )
+        return "\n".join(linhas)
+
+    def _descrever_combo(self, combo) -> str:
+        linhas = [f"{combo.name} — {self._brl(combo.price)}"]
+        if getattr(combo, 'description', ''):
+            linhas.append(combo.description)
+
+        grupos = combo.groups.all().select_related('product').prefetch_related(
+            'product_options__product', 'variant_limits__variant__product'
+        )
+        if grupos:
+            linhas.append("O que vem dentro:")
+        for g in grupos:
+            rotulo = g.title or (g.product.name if g.product else 'Escolha')
+            regra = "obrigatório" if g.is_required else "opcional"
+            if g.min_selections == g.max_selections:
+                quantos = f"escolha {g.max_selections}"
+            else:
+                quantos = f"escolha de {g.min_selections} a {g.max_selections}"
+            opcoes = [o.product.name for o in g.product_options.all()]
+            opcoes += [
+                f"{l.variant.product.name} {l.variant.name}".strip()
+                for l in g.variant_limits.all()
+            ]
+            sufixo = f": {', '.join(opcoes)}" if opcoes else ""
+            linhas.append(f"  • {rotulo} ({regra}, {quantos}){sufixo}")
+
+        linhas.append("Só vem o que está listado acima. Qualquer outro item é à parte.")
+        return "\n".join(linhas)
+
     def _build_tools(self, phone_number: str = "", store=None):
         """Build Langchain tools bound to the current customer/store context."""
         self._last_created_order = None
@@ -1074,6 +1185,44 @@ class LangchainService:
                 return "\n".join(lines)
             except Exception as exc:
                 return f"Erro ao buscar produto: {exc}"
+
+        @tool
+        def detalhes_do_produto(nome: str) -> str:
+            """Composição EXATA de um produto: descrição completa, opções/sabores e o
+            que acompanha ou não acompanha. Use SEMPRE antes de afirmar que algum
+            item (molho, bebida, acompanhamento) vem incluso."""
+            if not store:
+                return "Cardápio indisponível no momento."
+            try:
+                produto = self._match_product(store, nome)
+                if not produto:
+                    return (
+                        f"Não encontrei '{nome}' no cardápio. "
+                        "Não afirme nada sobre esse item — ofereça buscar outro."
+                    )
+                return self._descrever_produto(produto)
+            except Exception as exc:
+                logger.exception("[AGENT TOOL] detalhes_do_produto falhou")
+                return f"Erro ao consultar o produto: {exc}"
+
+        @tool
+        def detalhes_do_combo(nome: str) -> str:
+            """Composição EXATA de um combo/kit: preço, grupos de escolha, quantos itens
+            o cliente escolhe em cada grupo e quais opções existem. Use SEMPRE antes de
+            dizer o que vem dentro de um combo."""
+            if not store:
+                return "Cardápio indisponível no momento."
+            try:
+                combo = self._match_combo(store, nome)
+                if not combo:
+                    return (
+                        f"Não encontrei o combo '{nome}'. "
+                        "Não invente o conteúdo — ofereça ver os combos disponíveis."
+                    )
+                return self._descrever_combo(combo)
+            except Exception as exc:
+                logger.exception("[AGENT TOOL] detalhes_do_combo falhou")
+                return f"Erro ao consultar o combo: {exc}"
 
         @tool
         def listar_categorias() -> str:
@@ -1460,7 +1609,7 @@ class LangchainService:
                 return f"Erro ao finalizar pedido: {exc}"
 
         return [
-            buscar_produto, listar_categorias,
+            buscar_produto, detalhes_do_produto, detalhes_do_combo, listar_categorias,
             adicionar_ao_carrinho, ver_carrinho, remover_do_carrinho,
             salvar_endereco_entrega, finalizar_pedido,
             verificar_pedido_pendente, consultar_historico_pedidos,
@@ -1494,7 +1643,8 @@ class LangchainService:
         message: str,
         session_id: Optional[str] = None,
         phone_number: Optional[str] = None,
-        conversation_id: Optional[str] = None
+        conversation_id: Optional[str] = None,
+        store=None,
     ) -> Dict[str, Any]:
         """
         Process a message through the agent.
@@ -1551,7 +1701,14 @@ class LangchainService:
         # Build tools and bind to LLM (tool calling).
         # Kimi doesn't handle tool loops reliably.  NVIDIA (Llama 70b+), OpenAI,
         # and Anthropic support function calling correctly.
-        store = self._get_store_for_context(conversation_id)
+        # `store` explícito ganha da descoberta automática.
+        #
+        # No WhatsApp a loja vem da conversa ou da conta vinculada ao agente.
+        # Na tela "Testar Assistente" não existe conversa, e um agente sem
+        # conta vinculada resolvia `None` — aí toda pergunta sobre produto
+        # respondia "Cardápio indisponível no momento", e quem testava concluía
+        # que o catálogo tinha caído.
+        store = store or self._get_store_for_context(conversation_id)
         direct_reply = self._get_direct_runtime_reply(message, store=store)
         if direct_reply:
             processing_time = time.time() - start_time

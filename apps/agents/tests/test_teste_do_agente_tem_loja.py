@@ -42,6 +42,25 @@ def cenario(db):
     return dono, loja, agente
 
 
+def test_process_message_aceita_store_de_verdade():
+    """A assinatura real, sem mock.
+
+    O teste abaixo mocka `process_message` para inspecionar o que a view passa
+    — e um mock aceita qualquer argumento. Foi assim que um `store=` inválido
+    passou nos testes e estourou `TypeError: unexpected keyword argument` na
+    primeira mensagem em produção.
+    """
+    import inspect
+
+    from apps.agents.services.langchain_service import LangchainService
+
+    params = inspect.signature(LangchainService.process_message).parameters
+    assert 'store' in params, (
+        'process_message não aceita `store` — a view passa esse argumento e '
+        'toda mensagem viraria TypeError.'
+    )
+
+
 @pytest.mark.django_db
 def test_o_endpoint_aceita_a_loja_no_payload(cenario):
     """Sem este campo não existe como a tela informar a loja."""
