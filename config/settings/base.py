@@ -637,6 +637,13 @@ BILLING_ENFORCEMENT_ENABLED = os.environ.get('BILLING_ENFORCEMENT_ENABLED', 'fal
 # Kill-switch para geração automática de fatura PIX (enforce_subscription_lifecycle).
 # Permanece OFF até o go-live do billing PIX para que o deploy seja no-op em produção.
 BILLING_PIX_ENABLED = os.environ.get('BILLING_PIX_ENABLED', 'false').lower() == 'true'
+# Lojas autorizadas a receber o dinheiro do cliente final na conta da PLATAFORMA.
+# São as lojas do próprio dono (grandfather). Qualquer outra precisa cadastrar o
+# próprio StorePaymentGateway — sem isso o checkout falha de propósito, em vez de
+# rotear silenciosamente a receita de terceiro para a conta da plataforma.
+PLATFORM_GATEWAY_STORE_SLUGS = [
+    s.strip() for s in os.environ.get('PLATFORM_GATEWAY_STORE_SLUGS', '').split(',') if s.strip()
+]
 # Token de SANDBOX (TEST-...) só para a assinatura SaaS. Se setado, billing usa ele
 # em vez do token de produção — permite testar sem cobrar de verdade e sem mexer
 # no token dos pedidos. Vazio = usa produção (cobrança real).

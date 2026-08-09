@@ -256,6 +256,27 @@ def load_context_node(state: AgentState, *, agent, langchain_service) -> dict:
 
 
 _MAX_CATALOG_CHARS = 12000
+_MAX_DESC_CHARS = 180
+
+
+def _resumo_da_descricao(texto: str) -> str:
+    """Primeiro parágrafo da descrição, curto.
+
+    O cardápio inteiro viaja em CADA ida ao LLM, então cada caractere aqui é
+    latência multiplicada pelo número de rodadas de tool. "Modo de preparo:
+    forno a 180°C por 30 minutos" não ajuda o agente a vender e representava
+    quase metade do bloco. A descrição completa continua disponível sob
+    demanda em detalhes_do_produto.
+    """
+    primeiro = (texto or "").strip().split("\n\n")[0].strip()
+    # Alguns cadastros não separam por parágrafo — cortar no marcador também.
+    for marcador in ("Modo de preparo", "Modo de Preparo", "MODO DE PREPARO"):
+        if marcador in primeiro:
+            primeiro = primeiro.split(marcador)[0].strip()
+    primeiro = " ".join(primeiro.split())
+    if len(primeiro) > _MAX_DESC_CHARS:
+        primeiro = primeiro[:_MAX_DESC_CHARS].rsplit(" ", 1)[0] + "…"
+    return primeiro
 
 
 def _catalog_summary(store) -> str:
@@ -285,7 +306,7 @@ def _catalog_summary(store) -> str:
             lines.append("Itens:")
             for p in products:
                 cat = f"[{p.category.name}] " if p.category else ""
-                desc = f" — {p.description.strip()}" if getattr(p, "description", "") else ""
+                desc = f" — {_resumo_da_descricao(p.description)}" if getattr(p, "description", "") else ""
                 lines.append(f"  • {cat}{p.name} — R$ {p.price}{desc}")
 
         # Combos eram invisíveis: o agente não sabia que "Sexta do Bacalhau"
@@ -380,7 +401,11 @@ def agent_node(state: AgentState, *, agent, langchain_service) -> dict:
 # NÓ 3: execute_tools (loop de tool calling — ativado pelo roteador)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_MAX_TOOL_ITERATIONS = 6
+# Cada iteração é uma ida completa ao LLM, com o prompt inteiro de volta na
+# rede. Em produção, 3 rodadas deram 78s e estouraram o timeout de 90s do
+# orquestrador. Duas rodadas cobrem "pergunta → consulta → responde", que é o
+# padrão real; a terceira quase sempre era o modelo repetindo ferramenta.
+_MAX_TOOL_ITERATIONS = 2
 
 
 _CONFIRMATION_WORDS = frozenset({

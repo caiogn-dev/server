@@ -83,6 +83,8 @@ x-django-env: &django-env
   # então settings.BILLING_PIX_ENABLED caía no default false e a geração de
   # fatura PIX nunca rodava. Era este o "go-live de cobrança pausado".
   BILLING_PIX_ENABLED: ${BILLING_PIX_ENABLED:-false}
+  # Lojas do próprio dono, únicas autorizadas a receber na conta da plataforma.
+  PLATFORM_GATEWAY_STORE_SLUGS: ${PLATFORM_GATEWAY_STORE_SLUGS:-}
   # Email
   RESEND_API_KEY: ${RESEND_API_KEY}
   DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL}

@@ -1220,15 +1220,28 @@ class CheckoutService:
                 'sandbox': integration.settings.get('sandbox', False),
             }
 
-        # Fallback to global credentials
+        # Credenciais da PLATAFORMA: opt-in explícito, nunca fallback silencioso.
+        #
+        # Sem esta trava, toda loja sem gateway próprio recebia o dinheiro do
+        # cliente final na conta do dono da plataforma — intermediação de
+        # pagamento de terceiro sem contrato, e a promessa "o PIX cai direto na
+        # sua conta" virava mentira. Loja nova agora falha no cadastro (alto),
+        # em vez de falhar no extrato (baixo).
+        permitidas = set(getattr(settings, 'PLATFORM_GATEWAY_STORE_SLUGS', []) or [])
         access_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', None)
-        if access_token:
+        if access_token and store.slug in permitidas:
             return {
                 'provider': 'mercadopago',
                 'access_token': access_token,
                 'sandbox': getattr(settings, 'MERCADO_PAGO_SANDBOX', False),
             }
 
+        if access_token:
+            logger.warning(
+                '[checkout] Loja %s sem gateway próprio e fora de '
+                'PLATFORM_GATEWAY_STORE_SLUGS — pagamento bloqueado de propósito.',
+                store.slug,
+            )
         return None
     
     @staticmethod

@@ -843,6 +843,11 @@ class WebhookService:
         orchestrator_response = None
         orchestrator_error = None
         _t0 = _time.monotonic()
+        # A thread é daemon e continua rodando depois do join estourar. Sem este
+        # evento, a resposta que chega atrasada era simplesmente descartada e o
+        # fallback reprocessava a mensagem inteira — em 09/ago isso fez o cliente
+        # esperar ~3min por uma resposta que já estava pronta aos 78s.
+        _desistiu = threading.Event()
 
         def _run_orchestrator():
             nonlocal orchestrator_response, orchestrator_error
@@ -863,6 +868,8 @@ class WebhookService:
                     '[pipeline] UnifiedService responded',
                     extra={'pipeline.source': _source, 'message_id': str(message.id)},
                 )
+                if _desistiu.is_set():
+                    self._enviar_resposta_atrasada(event, message, orchestrator_response)
             except Exception as exc:
                 orchestrator_error = exc
                 logger.warning(
@@ -880,6 +887,9 @@ class WebhookService:
         timed_out = _thread.is_alive()
 
         if timed_out:
+            # Avisa a thread que o join desistiu: quando ela terminar, ela mesma
+            # entrega a resposta em vez de deixá-la morrer na memória.
+            _desistiu.set()
             orchestrator_error = TimeoutError(f'UnifiedService timeout after {_orchestrator_timeout_s}s')
             logger.warning(
                 '[pipeline] UnifiedService timeout after %ss',
@@ -888,6 +898,52 @@ class WebhookService:
             )
 
         return orchestrator_response, orchestrator_error, orchestrator_ms, timed_out
+
+    def _enviar_resposta_atrasada(self, event, message, orchestrator_response) -> None:
+        """Entrega a resposta que ficou pronta DEPOIS do timeout do join.
+
+        Chegar tarde é ruim; jogar fora e reprocessar é pior — foi o que fez uma
+        resposta pronta aos 78s virar ~3min de espera para o cliente. Só entrega
+        texto: resposta interativa fora de ordem confundiria um fluxo que o
+        fallback pode já ter avançado.
+        """
+        from apps.automation.services import UnifiedResponse
+
+        if not isinstance(orchestrator_response, UnifiedResponse):
+            return
+        conteudo = (orchestrator_response.content or '').strip()
+        if not conteudo:
+            return
+
+        message.refresh_from_db(fields=['processed_by_agent'])
+        if message.processed_by_agent:
+            # O fallback já respondeu — mandar de novo seria mensagem duplicada.
+            logger.info(
+                '[pipeline] Resposta atrasada descartada: fallback já respondeu',
+                extra={'message_id': str(message.id)},
+            )
+            return
+
+        try:
+            from ..tasks import send_agent_response
+            self._mark_processed_by_agent(message)
+            send_agent_response.delay(
+                str(event.account.id),
+                message.from_number,
+                conteudo,
+                str(message.whatsapp_message_id),
+                'unified_atrasada',
+            )
+            logger.warning(
+                '[pipeline] Resposta entregue APÓS o timeout — latência alta, '
+                'mas sem reprocessamento',
+                extra={'pipeline.late_delivery': True, 'message_id': str(message.id)},
+            )
+        except Exception:
+            logger.exception(
+                '[pipeline] Falha ao entregar resposta atrasada',
+                extra={'message_id': str(message.id)},
+            )
 
     def _dispatch_orchestrator_response(self, event, message, orchestrator_response,
                                         orchestrator_error, orchestrator_ms, timed_out):
