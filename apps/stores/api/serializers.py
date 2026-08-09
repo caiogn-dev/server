@@ -1586,6 +1586,10 @@ class StoreComboSerializer(serializers.ModelSerializer):
             'image', 'image_url',
             'is_active', 'featured',
             'track_stock', 'stock_quantity', 'dynamic_pricing',
+            # `metadata` guarda loyalty_units e `inclui` (o brinde fixo que o
+            # agente de WhatsApp lê). Sem ele nos fields, o painel não tinha
+            # como cadastrar e o dado só entrava por shell.
+            'metadata',
             'groups', 'catalog_role', 'merchandising_flags',
             'created_at', 'updated_at'
         ]
