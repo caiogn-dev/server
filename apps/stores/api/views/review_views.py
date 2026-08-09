@@ -2,6 +2,8 @@
 from rest_framework import permissions, serializers, status
 from rest_framework.generics import ListAPIView
 from rest_framework.response import Response
+from decimal import Decimal, ROUND_HALF_UP
+
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
@@ -31,9 +33,36 @@ class StoreReviewSerializer(serializers.ModelSerializer):
         model = StoreReview
         fields = [
             'id', 'order', 'order_number', 'rating', 'comment',
+            'rating_comida', 'rating_entrega', 'rating_atendimento',
             'customer_name', 'is_public', 'created_at', 'items',
         ]
         read_only_fields = ['id', 'order', 'is_public', 'created_at']
+        extra_kwargs = {
+            # A nota geral deixa de ser obrigatória no payload: quem responde
+            # só os pilares tem a geral DERIVADA deles (validate). Continua
+            # obrigatória no banco — a média da loja depende dela.
+            'rating': {'required': False},
+        }
+
+    PILARES = ('rating_comida', 'rating_entrega', 'rating_atendimento')
+
+    def validate(self, attrs):
+        pilares = [attrs.get(campo) for campo in self.PILARES]
+        informados = [n for n in pilares if n is not None]
+
+        if attrs.get('rating') is None:
+            if not informados:
+                # Comentário sem nota nenhuma não vira avaliação: a média da
+                # loja é justamente o que esta tela alimenta.
+                raise serializers.ValidationError(
+                    {'rating': 'Dê ao menos uma nota — geral ou por item avaliado.'}
+                )
+            # Arredonda para CIMA no meio (4,5 → 5): para baixo puniria uma
+            # avaliação que o cliente deu como boa.
+            media = sum(informados) / len(informados)
+            attrs['rating'] = int(Decimal(str(media)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+        return attrs
 
 
 class _ReviewWriteThrottle(AnonRateThrottle):
@@ -77,6 +106,19 @@ class OrderReviewByTokenView(APIView):
             return Response(
                 {'detail': 'Este pedido já foi avaliado.'},
                 status=status.HTTP_409_CONFLICT,
+            )
+
+        # Retirada no balcão não tem o que avaliar em "entrega". A checagem
+        # mora aqui, e não no serializer, porque depende do PEDIDO — que o
+        # serializer não conhece. Aceitar a nota produziria média inventada num
+        # pilar que existe para orientar decisão (contratar entregador ou não).
+        if (
+            order.delivery_method == StoreOrder.DeliveryMethod.PICKUP
+            and request.data.get('rating_entrega') is not None
+        ):
+            return Response(
+                {'rating_entrega': 'Este pedido foi retirado no balcão — não há entrega para avaliar.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         serializer = StoreReviewSerializer(data=request.data)

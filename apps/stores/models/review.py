@@ -5,13 +5,40 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
+# Configuração comum dos pilares. Fora da classe: dentro dela viraria atributo
+# do modelo, e atributo que não é Field no meio dos campos confunde quem lê.
+_PILAR = dict(
+    null=True, blank=True,
+    validators=[MinValueValidator(1), MaxValueValidator(5)],
+)
+
+
 class StoreReview(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='reviews')
     order = models.OneToOneField('stores.StoreOrder', on_delete=models.CASCADE, related_name='review')
+    # Nota geral. Continua sendo a fonte de verdade da média da loja — quando
+    # o cliente responde só os pilares, ela é derivada deles (ver
+    # StoreReviewSerializer), senão a loja teria duas médias diferentes na
+    # mesma tela.
     rating = models.PositiveSmallIntegerField(
         validators=[MinValueValidator(1), MaxValueValidator(5)],
     )
+
+    # ── Pilares ───────────────────────────────────────────────────────────
+    # "Nota 4,6" não diz o que consertar: a comida pode estar impecável e a
+    # entrega atrasando, e a decisão é oposta em cada caso — contratar
+    # entregador ou revisar a cozinha.
+    #
+    # Todos OPCIONAIS: a avaliação já funcionava com uma nota só, e exigir três
+    # derruba a taxa de resposta, que numa loja com poucas avaliações é o
+    # recurso mais escasso.
+    rating_comida = models.PositiveSmallIntegerField('Qualidade da comida', **_PILAR)
+    # Só existe para pedido entregue: quem retira no balcão não tem o que
+    # avaliar aqui, e nota inventada estraga um pilar que orienta decisão.
+    rating_entrega = models.PositiveSmallIntegerField('Tempo de entrega', **_PILAR)
+    rating_atendimento = models.PositiveSmallIntegerField('Atendimento', **_PILAR)
+
     comment = models.TextField(blank=True)
     customer_name = models.CharField(max_length=255, blank=True)
     # Moderação: lojista pode ocultar avaliações abusivas sem apagar

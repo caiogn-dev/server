@@ -1189,6 +1189,35 @@ class ReviewsReportView(BaseAnalyticsView):
             .annotate(avg=Avg('rating'), count=Count('id'))
             .order_by('avg')  # piores primeiro: é onde o dono precisa agir
         ]
+        # ── Pilares ───────────────────────────────────────────────────────
+        # "Nota 4,6" não diz o que consertar. Cada pilar leva o PRÓPRIO volume
+        # porque eles divergem: quem retira no balcão não avalia entrega, e
+        # responder os pilares é opcional. Média sem o volume ao lado repete o
+        # problema que a nota geral já tinha.
+        PILARES = (
+            ('comida', 'rating_comida', 'Qualidade da comida'),
+            ('entrega', 'rating_entrega', 'Tempo de entrega'),
+            ('atendimento', 'rating_atendimento', 'Atendimento'),
+        )
+        pilares = []
+        for chave, campo, rotulo in PILARES:
+            agg = reviews.exclude(**{f'{campo}__isnull': True}).aggregate(
+                media=Avg(campo), total=Count('id'),
+            )
+            pilares.append({
+                'chave': chave,
+                'rotulo': rotulo,
+                # `None` sem nenhuma nota: "Entrega 0,0" leria como serviço
+                # péssimo, quando a verdade é que ninguém avaliou esse pilar.
+                'media': round(float(agg['media']), 2) if agg['media'] is not None else None,
+                'total': agg['total'],
+            })
+
+        # O pior pilar é a única leitura que vira ação direta: diz o que atacar
+        # primeiro. Só entram pilares com nota — senão o vazio venceria sempre.
+        avaliados = [p for p in pilares if p['media'] is not None]
+        pior_pilar = min(avaliados, key=lambda p: p['media'])['chave'] if avaliados else None
+
         return Response({
             'summary': {
                 'avg_rating': round(float(summary['avg_rating']), 2) if summary['avg_rating'] else None,
@@ -1197,4 +1226,6 @@ class ReviewsReportView(BaseAnalyticsView):
             'distribution': distribution,
             'recent': recent,
             'by_product': by_product,
+            'pilares': pilares,
+            'pior_pilar': pior_pilar,
         })

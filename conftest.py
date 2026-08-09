@@ -54,6 +54,19 @@ def pytest_configure(config):
             f"TEST['NAME'] é '{nome_de_teste}' — isso é PRODUÇÃO."
         )
 
+    # O cache também não pode ser o de produção. O banco foi isolado em
+    # 07/ago e o cache ficou para trás: a suíte escrevia no Redis da loja viva
+    # (cardápio, sessões do bot) e, de quebra, herdava o contador de rate limit
+    # entre rodadas — 43 testes falhavam com 429 sem nenhuma regressão real.
+    cache_backend = (settings.CACHES.get('default', {}).get('BACKEND') or '')
+    cache_local = (settings.CACHES.get('default', {}).get('LOCATION') or '')
+    if 'redis' in cache_backend.lower() or 'redis://' in str(cache_local).lower():
+        problemas.append(
+            f"o cache aponta para Redis ({cache_local or cache_backend}) — "
+            f"os testes escreveriam no cache de produção e herdariam o "
+            f"contador de rate limit entre rodadas."
+        )
+
     if problemas:
         raise pytest.UsageError(
             '\n\n  RECUSANDO RODAR: a suíte apontaria para o banco de produção.\n\n'
@@ -64,3 +77,27 @@ def pytest_configure(config):
               '  banco da loja. O rollback do TestCase não cobre TransactionTestCase\n'
               '  nem execução interrompida.\n'
         )
+
+
+@pytest.fixture(autouse=True)
+def _cache_limpo_entre_testes():
+    """Cada teste começa com o cache vazio.
+
+    O contador de rate limit do DRF mora no cache. Sem esta limpeza ele ACUMULA
+    ao longo da sessão: a suíte faz milhares de requisições, estoura `anon`
+    (120/min) e, a partir daí, testes que nada têm a ver com throttle começam a
+    receber 429 — fidelidade, contratos do app, IDOR, LGPD.
+
+    O sintoma é traiçoeiro porque depende da ORDEM e do RELÓGIO: os mesmos
+    testes passam quando rodados sozinhos e falham na suíte inteira, o que se
+    parece muito com regressão. Em 08/ago isso custou três diagnósticos errados
+    antes de alguém ler o corpo da resposta e encontrar `rate_limit_exceeded`.
+
+    Os testes que verificam o rate limit de propósito continuam funcionando:
+    eles fazem as 121 requisições DENTRO do próprio teste.
+    """
+    from django.core.cache import cache
+
+    cache.clear()
+    yield
+    cache.clear()

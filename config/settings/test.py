@@ -42,5 +42,35 @@ DATABASES = {
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# ── Cache em memória, NUNCA o Redis compartilhado ─────────────────────────
+#
+# O banco foi isolado em 07/ago; o cache não. A suíte continuava usando
+# `redis://redis:6379/1` — o mesmo Redis da loja viva — e isso causava dois
+# estragos:
+#
+# 1. O contador de rate limit do DRF mora no cache e tem TTL de 1 hora. Cada
+#    rodada da suíte deixava a cota consumida, então a rodada seguinte começava
+#    saturada e ~43 testes (fidelidade, contratos do app, IDOR, LGPD) falhavam
+#    com 429. Passavam isolados e falhavam na suíte inteira — o sintoma perfeito
+#    para ser confundido com regressão, e foi.
+#
+# 2. Testes escreviam no cache de PRODUÇÃO: cardápio, sessões do bot, throttle
+#    de clientes reais. A mesma classe de problema do banco, um andar acima.
+#
+# `locmem` nasce vazio a cada processo: a cota de throttle é sempre a mesma, e
+# nada do teste sai do processo.
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'testes',
+    }
+}
+
+# Channels em memória pelo mesmo motivo: o layer padrão aponta para o Redis da
+# produção e os testes de WebSocket passariam a disputar canais com a loja viva.
+CHANNEL_LAYERS = {
+    'default': {'BACKEND': 'channels.layers.InMemoryChannelLayer'},
+}
+
 # Hash rápido: a suíte cria muitos usuários e o PBKDF2 domina o tempo.
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
