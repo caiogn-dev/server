@@ -888,3 +888,81 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-05
+
+**Baseline de testes:** 9 testes `SimpleTestCase` (análise estática, sem Docker/PostgreSQL).
+9/9 GREEN após o fix. Dependências Django/DRF instaladas via pip no container.
+Falhas pré-existentes com `AddIndexConcurrently` (requer psycopg2/PostgreSQL) — não regressão.
+
+**Gate anti-acúmulo:** PRs abertos: #318–#325 (8 PRs).
+Confirmado que nenhum cobre info-disclosure nos módulos `apps/instagram/`, `apps/messaging/` ou
+`apps/whatsapp/api/views.py` (handler `embedded_signup`).
+Novos módulos verificados desde 2026-07-26: analytics/BI, gamificação, referral com recompensa,
+WhatsApp SMB echo, billing gate. Confirmado que `BaseAnalyticsView` já herda de `BaseExportView`
+(fix de IDOR do PR #316) — sem lacuna nova nestes módulos.
+
+**Bug encontrado e corrigido:** `str(exc)` em handlers de exceção em views Meta API [P2]
+
+- **Tipo:** P2 — Info-disclosure: erros internos das APIs Meta (Graph API token, SSL, conexão,
+  OAuth) expostos em respostas HTTP para usuários autenticados
+- **Padrão vulnerável:** `except Exception as exc: return Response({"error": str(exc)}, ...)`
+  e `f'Falha no onboarding: {exc}'` em handler genérico. Clientes da Meta Graph API/Instagram
+  Graph API podem lançar exceções contendo: tokens Bearer, URLs internas (endpoints Meta),
+  certificados SSL, hostnames internos, detalhes de conexão TCP.
+- **Arquivos corrigidos (3):**
+  1. `apps/instagram/api/views.py` — 9 handlers substituídos:
+     - `InstagramAccountViewSet.sync` — adicionado `logger.exception`; mensagem genérica pt-BR
+     - `InstagramAccountViewSet.refresh_page_token` — `logger.exception`; mensagem genérica
+     - `InstagramAccountViewSet.insights` — `logger.exception`; mensagem genérica
+     - `InstagramMediaViewSet.publish` — `logger.exception`; mensagem genérica
+     - `InstagramMediaViewSet.insights` — `logger.exception`; mensagem genérica
+     - `InstagramMediaViewSet.comments` — `logger.exception`; mensagem genérica
+     - `InstagramShoppingViewSet.add_tag` — `logger.exception`; mensagem genérica
+     - `InstagramLiveViewSet.start` — `logger.exception`; mensagem genérica
+     - `InstagramConversationViewSet.send_message` — `str(exc)` removido; `logger.warning`
+       pré-existente preservado
+     - **Deixado intacto:** linha de OAuth code exchange (usa `raw.text` preferindo o corpo
+       HTTP da resposta — comportamento intencional para mensagens de erro Meta)
+  2. `apps/messaging/api/views.py` — 2 handlers substituídos:
+     - `MessengerAccountViewSet.sync` — `logger.exception`; mensagem genérica pt-BR
+     - `MessengerConversationViewSet.send_message` — `logger.exception`; mensagem genérica
+  3. `apps/whatsapp/api/views.py` — 1 handler substituído:
+     - `EmbeddedSignupViewSet.embedded_signup` — `f'Falha no onboarding: {exc}'` →
+       string literal genérica (o `logger.exception('Embedded Signup falhou')` já existia)
+     - **Deixado intacto:** `except EmbeddedSignupError as exc: Response({'error': str(exc)})` —
+       exceção de domínio com mensagem controlada e intencional para o cliente
+- **Testes (9 SimpleTestCase):** `apps/instagram/tests/test_str_exc_views.py`
+  - `InstagramViewsStrExcTest` (6 casos): refresh_token, account insights, publish, media
+    insights, comments, logger.exception presente no módulo
+  - `MessagingViewsStrExcTest` (2 casos): sync e send_message Messenger sem str(exc)
+  - `WhatsAppEmbeddedSignupStrExcTest` (1 caso): embedded_signup sem `{exc}` na resposta genérica
+- **RED→GREEN confirmado:** análise estática verificou `str(exc)` presente antes e ausente depois
+  em todos os handlers, sem alterar o comportamento dos handlers de domínio (EmbeddedSignupError,
+  OAuth exchange)
+- **PR:** `bot/server-2026-08-05-str-exc-instagram-messaging-whatsapp`
+
+**PRs abertos aguardando merge (8 PRs, não criados nesta sessão):**
+
+| PR | Tipo | Descrição |
+|---|---|---|
+| #318 | P0/P1 | Instagram serializer account IDOR |
+| #319 | P1 | CustomerSearchView cross-tenant |
+| #320 | P1 | Marketing email IDOR |
+| #321 | P2 | Campaign/marketing str(e) |
+| #322 | P1 | Checkout contracts |
+| #323 | P0 | PII em logs WhatsApp/referral |
+| #324 | P0/P1 | str(e) em health_views AllowAny + base_consumer is_staff |
+| #325 | P1 | CustomersViewSet debug IDOR |
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Merge urgente dos PRs P0/P1: #318 (Instagram IDOR), #323 (PII logs), #324 (health str/e).
+2. **P1** — Testes de contrato para checkout payload e pedido por token
+   (pendência crítica do CLAUDE.md há várias sessões, ainda não coberta).
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md).
+4. **P2** — N+1 queries em analytics/BI — varredura de `select_related`/`prefetch_related` em
+   endpoints recém-adicionados (gamificação, store-score, BI fase 2).
+
