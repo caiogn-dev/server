@@ -96,8 +96,22 @@ class InteractiveReplyHandler(IntentHandler):
             )
 
         if reply_id == 'continue_checkout':
-            from .payment import PaymentStatusHandler
-            return PaymentStatusHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
+            # "Continuar pedido" retoma o PEDIDO. Antes ia para o
+            # PaymentStatusHandler, que responde "não encontrei pagamentos
+            # pendentes — quer fazer um pedido novo?"; o "Sim" do cliente
+            # voltava para os mesmos dois botões. Loop fechado, 4 minutos
+            # perdidos em 09/ago. Pagamento só entra se houver um pendente.
+            try:
+                from apps.automation.models import CustomerSession
+                sessao = self._get_session_manager().get_or_create_session()
+                if sessao and sessao.status == CustomerSession.SessionStatus.PAYMENT_PENDING:
+                    from .payment import PaymentStatusHandler
+                    return PaymentStatusHandler(
+                        self.account, self.conversation, self.company_profile
+                    ).handle(intent_data)
+            except Exception as exc:
+                logger.warning('[InteractiveReply] Falha ao ler sessão em continue_checkout: %s', exc)
+            return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle(intent_data)
 
         if reply_id == 'cancel_order':
             return CancelOrderHandler(self.account, self.conversation, self.company_profile).handle(intent_data)

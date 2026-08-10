@@ -291,6 +291,28 @@ class IntentHandler:
                 lines.append(f"📍 {address}")
             lines.append("\nPara pedir, escolha os produtos no cardápio e selecione *Retirada* na finalização!")
             return "\n".join(lines)
+        # Endereço que o cliente JÁ mandou não pode ser pedido de novo.
+        # Em 09/ago o cliente enviou a localização, recebeu o frete de R$ 7,00
+        # calculado, disse "esse é o endereço de entrega" — e 15 segundos depois
+        # ouviu "me envie sua localização pelo alfinete do WhatsApp".
+        salvo = {}
+        try:
+            salvo = self._get_session_manager().get_delivery_address_info() or {}
+        except Exception:
+            salvo = {}
+        if salvo.get('address'):
+            lines = ["🚚 *Entrega*", "", f"📍 {salvo['address']}"]
+            taxa = salvo.get('fee')
+            if taxa is not None:
+                distancia = salvo.get('distance_km')
+                sufixo = f" ({distancia} km)" if distancia else ""
+                lines.append(f"🛵 Taxa de entrega{sufixo}: *R$ {float(taxa):.2f}*".replace('.', ','))
+            else:
+                lines.append("🛵 Vou calcular a taxa para esse endereço.")
+            if self.store.min_order_value:
+                lines.extend(["", f"Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*"])
+            return "\n".join(lines)
+
         lines = [
             "🚚 *Entrega e Retirada*",
             "",

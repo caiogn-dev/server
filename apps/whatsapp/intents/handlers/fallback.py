@@ -66,13 +66,14 @@ class AffirmativeHandler(IntentHandler):
                     CustomerSession.SessionStatus.CART_CREATED,
                     CustomerSession.SessionStatus.CHECKOUT,
                 ):
-                    return HandlerResult.buttons(
-                        body="Quer continuar seu pedido ou ver o cardápio?",
-                        buttons=[
-                            {'id': 'continue_checkout', 'title': '✅ Continuar pedido'},
-                            {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-                        ],
-                    )
+                    # "Sim" com carrinho aberto significa CONTINUAR — mandar o
+                    # catálogo é a ação. Devolver a pergunta "quer continuar ou
+                    # ver o cardápio?" era exatamente o botão que o cliente
+                    # tinha acabado de apertar: o loop de 09/ago.
+                    from .catalog import MenuRequestHandler
+                    return MenuRequestHandler(
+                        self.account, self.conversation, self.company_profile
+                    ).handle(intent_data)
         except Exception as exc:
             logger.warning('[AffirmativeHandler] Erro ao verificar sessão: %s', exc)
 

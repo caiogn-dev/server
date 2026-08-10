@@ -3,6 +3,7 @@ Webhook Service - Process incoming webhooks from Meta.
 """
 import logging
 import hashlib
+from contextlib import contextmanager
 import mimetypes
 import re
 from typing import Dict, Any, Optional, List, Tuple
@@ -27,6 +28,10 @@ from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
 from ..repositories import WebhookEventRepository, WhatsAppAccountRepository
 from .broadcast_service import get_broadcast_service
+# Trava distribuída: importada aqui em cima (e não dentro da função) para que
+# o teste consiga substituí-la. tasks/__init__ não importa services no topo,
+# então não há ciclo.
+from ..tasks import acquire_lock, release_lock
 from .whatsapp_api_service import WhatsAppAPIService
 
 logger = logging.getLogger(__name__)
@@ -600,11 +605,12 @@ class WebhookService:
             return
 
         # Orquestrador (UnifiedService) com timeout, em thread daemon.
-        orchestrator_response, orchestrator_error, orchestrator_ms, timed_out = (
-            self._run_orchestrator_with_timeout(
-                event, message, llm_enabled, interactive_reply, location_data,
+        with self._conversa_serializada(message):
+            orchestrator_response, orchestrator_error, orchestrator_ms, timed_out = (
+                self._run_orchestrator_with_timeout(
+                    event, message, llm_enabled, interactive_reply, location_data,
+                )
             )
-        )
 
         response_sent, orchestrator_error = self._dispatch_orchestrator_response(
             event, message,
@@ -626,6 +632,52 @@ class WebhookService:
                 message.id, event.account.id, timed_out, orchestrator_error,
                 extra={'pipeline.dropped': True, 'message_id': str(message.id)},
             )
+            # O log de ERROR ninguém lê em tempo real, e o cliente fica falando
+            # com uma parede. Em 09/ago foram 14 minutos de silêncio em duas
+            # perguntas de compra ("serve quantas pessoas?", "o que recomenda
+            # para as visitas?"). Silêncio nunca é o desfecho aceitável.
+            self._ultimo_recurso(event, message)
+
+    def _ultimo_recurso(self, event, message) -> bool:
+        """Resposta de último recurso quando nenhum caminho respondeu.
+
+        Reconhece a mensagem, não inventa informação nenhuma e oferece um
+        humano — que é a única coisa honesta a fazer quando o sistema não sabe
+        responder. Nunca levanta: acima dela não há mais ninguém para tratar.
+        """
+        from apps.automation.services import ResponseSource, UnifiedResponse
+
+        try:
+            resposta = UnifiedResponse(
+                content=(
+                    'Recebi sua mensagem, mas não consegui responder direito agora 😕\n\n'
+                    'Quer falar com uma pessoa da equipe?'
+                ),
+                source=ResponseSource.FALLBACK,
+                buttons=[
+                    {'id': 'contact_support', 'title': '👤 Falar com atendente'},
+                    {'id': 'view_menu', 'title': '📋 Ver cardápio'},
+                ],
+                interactive_type='buttons',
+                interactive_data={'buttons': [
+                    {'id': 'contact_support', 'title': '👤 Falar com atendente'},
+                    {'id': 'view_menu', 'title': '📋 Ver cardápio'},
+                ]},
+                metadata={'intent': 'ultimo_recurso'},
+            )
+            self._send_unified_interactive(event, message, resposta)
+            self._mark_processed_by_agent(message)
+            logger.warning(
+                '[pipeline] Último recurso enviado — cliente não ficou sem resposta',
+                extra={'pipeline.last_resort': True, 'message_id': str(message.id)},
+            )
+            return True
+        except Exception:
+            logger.exception(
+                '[pipeline] Último recurso também falhou',
+                extra={'message_id': str(message.id)},
+            )
+            return False
 
     def _mark_processed_by_agent(self, message) -> None:
         """Marca a mensagem como processada pelo agente (idempotente)."""
@@ -829,6 +881,66 @@ class WebhookService:
             extra={'message_id': str(message.id), 'reply_id': reply_id},
         )
         return False
+
+    @staticmethod
+    def _chave_de_lock_da_conversa(message) -> str:
+        """Chave de serialização por CLIENTE, não por mensagem.
+
+        `acquire_lock` já existia em whatsapp/tasks, mas com message_id: impede
+        processar a MESMA mensagem duas vezes, e não duas mensagens diferentes
+        do mesmo cliente ao mesmo tempo.
+        """
+        conversa = getattr(message, 'conversation', None)
+        if conversa is not None and getattr(conversa, 'id', None):
+            return f'orquestrador:conversa:{conversa.id}'
+        return f'orquestrador:telefone:{getattr(message, "from_number", "?")}'
+
+    @contextmanager
+    def _conversa_serializada(self, message, espera_s: int = 45):
+        """Uma mensagem por vez por cliente.
+
+        Em 09/ago "Sim monta" e "Repetir" chegaram com 12s de diferença, rodaram
+        em threads daemon paralelas, leram o mesmo carrinho do Redis e
+        escreveram por cima: o cliente ficou com 2x de cada item.
+
+        Se a trava não vier dentro do orçamento, processa mesmo assim — uma
+        duplicata rara é menos grave que MESSAGE DROPPED, que é o pior desfecho
+        possível do pipeline.
+        """
+        import time as _t
+
+        chave = self._chave_de_lock_da_conversa(message)
+        limite = _t.monotonic() + espera_s
+        obteve = False
+        while True:
+            try:
+                obteve = bool(acquire_lock(chave, timeout=120))
+            except Exception as exc:
+                # `acquire_lock` promete "sem Redis, sem trava", mas `from_url`
+                # é preguiçoso: a ConnectionError só estoura no .set(). Sem este
+                # except, uma oscilação do Redis derrubaria TODA mensagem que
+                # entra. Sem trava é pior que com trava, e muito melhor que sem
+                # atendimento.
+                logger.warning('[pipeline] Trava da conversa indisponível (%s) — seguindo sem ela', exc)
+                break
+            if obteve or _t.monotonic() >= limite:
+                break
+            _t.sleep(0.5)
+
+        if not obteve:
+            logger.warning(
+                '[pipeline] Sem trava da conversa após %ss — processando assim mesmo',
+                espera_s,
+                extra={'message_id': str(getattr(message, 'id', '?'))},
+            )
+        try:
+            yield obteve
+        finally:
+            if obteve:
+                try:
+                    release_lock(chave)
+                except Exception:
+                    logger.exception('[pipeline] Falha ao liberar a trava da conversa')
 
     def _run_orchestrator_with_timeout(self, event, message, llm_enabled,
                                        interactive_reply, location_data):
