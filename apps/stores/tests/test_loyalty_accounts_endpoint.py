@@ -32,9 +32,9 @@ class LoyaltyAccountsEndpointTest(APITestCase):
         assert row['available_rewards'] == 0  # 13//10 - 1
         assert row['display_name'] == 'Ana'
 
-    def test_nao_dono_recebe_403(self):
+    def test_nao_membro_recebe_404(self):
         self.client.force_authenticate(user=self.other)
-        assert self.client.get(self.url).status_code == 403
+        assert self.client.get(self.url).status_code == 404
 
     def test_anonimo_recebe_401(self):
         assert self.client.get(self.url).status_code == 401
