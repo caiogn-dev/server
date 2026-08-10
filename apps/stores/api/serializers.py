@@ -52,6 +52,10 @@ class StoreSerializer(serializers.ModelSerializer):
             'meta_pixel_id', 'meta_pixel_enabled',
             'clarity_id', 'clarity_enabled',
             'plan', 'trial_ends_at', 'onboarding_completed',
+            # A aba Recebimento precisa distinguir "loja do dono, recebe na conta
+            # da plataforma" de "loja de cliente sem conta cadastrada". Sem isto
+            # a tela mostrava alerta de "sem conta" para loja que recebe normal.
+            'usa_gateway_da_plataforma',
             'integrations_count', 'products_count', 'orders_count',
             'created_at', 'updated_at', 'is_active'
         ]
