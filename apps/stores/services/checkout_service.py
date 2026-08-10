@@ -1227,9 +1227,17 @@ class CheckoutService:
         # pagamento de terceiro sem contrato, e a promessa "o PIX cai direto na
         # sua conta" virava mentira. Loja nova agora falha no cadastro (alto),
         # em vez de falhar no extrato (baixo).
+        # A decisão é da LOJA, não de uma lista no .env. A allowlist por slug foi
+        # a primeira tentativa e envelheceu mal em um dia: lista manual, invisível
+        # no painel, e loja nova do dono nascia com pagamento bloqueado porque
+        # ninguém lembrou de editar o ambiente.
         permitidas = set(getattr(settings, 'PLATFORM_GATEWAY_STORE_SLUGS', []) or [])
+        da_plataforma = bool(
+            getattr(store, 'usa_gateway_da_plataforma', False)
+            or store.slug in permitidas
+        )
         access_token = getattr(settings, 'MERCADO_PAGO_ACCESS_TOKEN', None)
-        if access_token and store.slug in permitidas:
+        if access_token and da_plataforma:
             return {
                 'provider': 'mercadopago',
                 'access_token': access_token,
@@ -1238,8 +1246,8 @@ class CheckoutService:
 
         if access_token:
             logger.warning(
-                '[checkout] Loja %s sem gateway próprio e fora de '
-                'PLATFORM_GATEWAY_STORE_SLUGS — pagamento bloqueado de propósito.',
+                '[checkout] Loja %s sem gateway próprio e sem usa_gateway_da_plataforma '
+                '— pagamento bloqueado de propósito.',
                 store.slug,
             )
         return None

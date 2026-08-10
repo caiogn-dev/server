@@ -138,6 +138,15 @@ class Store(BaseModel):
         default=False,
         help_text="Isenta de cobrança e limites de plano (grandfather: lojas pré-SaaS).",
     )
+    usa_gateway_da_plataforma = models.BooleanField(
+        default=False,
+        help_text=(
+            "Recebe os pagamentos na conta da PLATAFORMA (MERCADO_PAGO_ACCESS_TOKEN). "
+            "Só para lojas do próprio dono, com contabilidade dele. Loja de cliente "
+            "fica False e precisa cadastrar a conta dela — do contrário o dinheiro "
+            "de terceiro passaria pelo CNPJ da plataforma sem contrato."
+        ),
+    )
 
     # Branding
     logo = models.ImageField(upload_to='stores/logos/', blank=True, null=True,
