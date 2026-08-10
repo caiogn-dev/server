@@ -14,7 +14,10 @@ from django.utils import timezone
 from django.db import transaction
 
 from apps.core.pii import mask_phone
-from apps.stores.models import Store, StoreCart, StoreCartItem, StoreOrder, StoreOrderItem, StoreProduct
+from apps.stores.models import (
+    Store, StoreCart, StoreCartItem, StoreCartComboItem, StoreCombo,
+    StoreOrder, StoreOrderItem, StoreProduct,
+)
 from apps.stores.services.checkout_service import CheckoutService
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.core.services.customer_identity import CustomerIdentityService
@@ -244,7 +247,26 @@ class WhatsAppOrderService:
 
         try:
             product_quantities = {}
+            combos_do_carrinho = []
             for item in items:
+                # Linha de COMBO. Até 10/ago o WhatsApp só sabia criar
+                # StoreCartItem, então o combo não tinha como existir num
+                # pedido — o agente prometia montar e nunca montava.
+                if item.get('combo_id'):
+                    combo = StoreCombo.objects.filter(
+                        id=item['combo_id'], store=self.store, is_active=True,
+                    ).first()
+                    if not combo:
+                        # Combo de outra loja ou inativo: recusar alto. Deixar
+                        # passar seria pedido cross-tenant.
+                        logger.warning(
+                            "[create_order_from_cart] Combo %s inválido para a loja %s",
+                            item.get('combo_id'), self.store.slug,
+                        )
+                        return {'success': False, 'error': 'Combo inválido para esta loja'}
+                    combos_do_carrinho.append((combo, item))
+                    continue
+
                 product_id = item.get('product_id')
                 try:
                     product = StoreProduct.objects.get(
@@ -259,7 +281,7 @@ class WhatsAppOrderService:
                 quantity = max(int(item.get('quantity', 1)), 1)
                 product_quantities[product.id] = product_quantities.get(product.id, 0) + quantity
 
-            if not product_quantities:
+            if not product_quantities and not combos_do_carrinho:
                 return {'success': False, 'error': 'Nenhum item válido no carrinho'}
 
             cart = StoreCart.objects.create(
@@ -276,6 +298,19 @@ class WhatsAppOrderService:
                     cart=cart,
                     product=products[product_id],
                     quantity=quantity,
+                )
+
+            for combo, item in combos_do_carrinho:
+                # unit_price fica NULO de propósito: StoreCartComboItem.save()
+                # preenche com combo.price do catálogo. Aceitar o preço do
+                # payload seria deixar o cliente ditar valor — exatamente a
+                # fraude corrigida em 3f550c6.
+                StoreCartComboItem.objects.create(
+                    cart=cart,
+                    combo=combo,
+                    quantity=max(int(item.get('quantity', 1)), 1),
+                    group_selections=item.get('group_selections') or {},
+                    notes=item.get('notes', ''),
                 )
 
             address_payload = self._build_delivery_address(delivery_address, addr_info)

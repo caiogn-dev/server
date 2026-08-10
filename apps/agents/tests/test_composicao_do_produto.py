@@ -213,3 +213,58 @@ def test_tools_novas_estao_registradas(agent, loja_com_salada_e_molho):
     nomes = set(_tools(agent, store))
 
     assert {'detalhes_do_produto', 'detalhes_do_combo'} <= nomes
+
+
+# ── adicionar_combo_ao_carrinho ──────────────────────────────────────────────
+
+def test_tool_de_combo_registrada(agent, combo_com_molho_incluso):
+    store, _ = combo_com_molho_incluso
+    assert 'adicionar_combo_ao_carrinho' in _tools(agent, store)
+
+
+def test_combo_com_sabores_certos_entra_no_carrinho(agent, combo_com_molho_incluso, monkeypatch):
+    """O caso real: o cliente fecha o combo e ele PRECISA existir no carrinho."""
+    store, combo = combo_com_molho_incluso
+    guardado = {}
+    tools = _tools(agent, store, phone='5563999999999')
+
+    import apps.agents.services.langchain_service as ls
+    monkeypatch.setattr(ls.LangchainService, '_get_store_for_context', lambda self, **kw: store, raising=False)
+
+    out = tools['adicionar_combo_ao_carrinho'].invoke(
+        {"nome": "Kit Família", "sabores": "Salada Caesar, Salada Caesar"}
+    )
+    assert 'Erro' not in out
+
+
+def test_sabor_inexistente_e_recusado_com_as_opcoes(agent, combo_com_molho_incluso):
+    store, _ = combo_com_molho_incluso
+    tools = _tools(agent, store, phone='5563999999999')
+
+    out = tools['adicionar_combo_ao_carrinho'].invoke(
+        {"nome": "Kit Família", "sabores": "Feijoada, Salada Caesar"}
+    )
+
+    assert 'Feijoada' in out
+    assert 'Salada Caesar' in out
+
+
+def test_quantidade_de_sabores_errada_e_recusada(agent, combo_com_molho_incluso):
+    """Montar com menos escolhas do que o grupo exige entrega combo incompleto."""
+    store, _ = combo_com_molho_incluso
+    tools = _tools(agent, store, phone='5563999999999')
+
+    out = tools['adicionar_combo_ao_carrinho'].invoke(
+        {"nome": "Kit Família", "sabores": "Salada Caesar"}
+    )
+
+    assert 'precisa de' in out.lower()
+
+
+def test_combo_inexistente_nao_inventa_na_adicao(agent, combo_com_molho_incluso):
+    store, _ = combo_com_molho_incluso
+    tools = _tools(agent, store, phone='5563999999999')
+
+    out = tools['adicionar_combo_ao_carrinho'].invoke({"nome": "Rodizio", "sabores": "x"})
+
+    assert 'não encontrado' in out.lower()

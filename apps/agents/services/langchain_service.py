@@ -1175,9 +1175,8 @@ class LangchainService:
         # StoreOrderComboItem). Sem este aviso o agente promete "vou montar" e
         # fica preso — em 09/ago foram 40 minutos assim.
         linhas.append(
-            "ATENÇÃO OPERACIONAL: você NÃO consegue adicionar este combo ao carrinho. "
-            "Explique o combo, e para fechar direcione o cliente ao cardápio online "
-            "ou a um atendente. NUNCA diga que vai montar o combo."
+            "Para fechar este combo use adicionar_combo_ao_carrinho(nome, sabores) "
+            "com os sabores que o cliente escolheu, separados por vírgula."
         )
         return "\n".join(linhas)
 
@@ -1258,6 +1257,101 @@ class LangchainService:
             except Exception as exc:
                 logger.exception("[AGENT TOOL] detalhes_do_combo falhou")
                 return f"Erro ao consultar o combo: {exc}"
+
+        @tool
+        def adicionar_combo_ao_carrinho(nome: str, sabores: str, quantidade: int = 1) -> str:
+            """Adiciona um COMBO ao carrinho com os sabores escolhidos pelo cliente.
+            `sabores` é a lista separada por vírgula, na ordem que o cliente pediu
+            (ex.: "Frango, 4 Queijos, Bacalhau, Linguiça"). Use SEMPRE que o cliente
+            fechar um combo — não adicione os itens do combo um a um."""
+            if not store:
+                return "Loja não disponível."
+            try:
+                combo = self._match_combo(store, nome)
+                if not combo:
+                    return f"Combo '{nome}' não encontrado. Não invente — ofereça ver os combos."
+
+                escolhidos = [s.strip() for s in (sabores or '').split(',') if s.strip()]
+                grupos = list(combo.groups.all().prefetch_related('product_options__product'))
+                if not grupos:
+                    return f"O combo {combo.name} está sem grupos de escolha cadastrados."
+
+                # Cada sabor é casado com o GRUPO que o oferece. Assim um combo
+                # com "escolha 2 saladas" + "escolha 1 molho" fecha numa frase
+                # só, do jeito que o cliente fala, sem obrigar o agente a
+                # entender a estrutura interna do combo.
+                opcoes = []  # (grupo, nome, produto)
+                for g in grupos:
+                    for o in g.product_options.all():
+                        opcoes.append((g, o.product.name, o.product))
+                if not opcoes:
+                    return f"O combo {combo.name} está sem opções cadastradas."
+
+                escolhidos = [s.strip() for s in (sabores or '').split(',') if s.strip()]
+                if not escolhidos:
+                    return f"Diga quais itens o cliente escolheu para o {combo.name}."
+
+                por_grupo, nao_encontrados = {}, []
+                for termo in escolhidos:
+                    alvo = self._slug_compare(termo)
+                    exatos = [t for t in opcoes if self._slug_compare(t[1]) == alvo]
+                    parciais = [t for t in opcoes if alvo in self._slug_compare(t[1])]
+                    achado = exatos[0] if exatos else (parciais[0] if len(parciais) == 1 else None)
+                    if not achado:
+                        nao_encontrados.append(termo)
+                        continue
+                    grupo, _, produto = achado
+                    por_grupo.setdefault(str(grupo.id), []).append(produto)
+
+                if nao_encontrados:
+                    disponiveis = ", ".join(sorted({n for _, n, _ in opcoes}))
+                    return (
+                        f"Não achei no {combo.name}: {', '.join(nao_encontrados)}. "
+                        f"Opções: {disponiveis}."
+                    )
+
+                # Cada grupo obrigatório precisa da própria cota. Fechar com
+                # menos entrega combo incompleto para a cozinha.
+                for g in grupos:
+                    recebidos = len(por_grupo.get(str(g.id), []))
+                    exigidos = g.min_selections or 0
+                    if g.is_required and recebidos < exigidos:
+                        rotulo = g.title or (g.product.name if g.product else 'grupo')
+                        return (
+                            f"O {combo.name} precisa de {exigidos} escolha(s) em "
+                            f"\"{rotulo}\" e vieram {recebidos}. Peça as que faltam."
+                        )
+                    if g.max_selections and recebidos > g.max_selections:
+                        rotulo = g.title or (g.product.name if g.product else 'grupo')
+                        return (
+                            f"O {combo.name} aceita no máximo {g.max_selections} em "
+                            f"\"{rotulo}\" e vieram {recebidos}."
+                        )
+
+                resolvidos = [p for lista in por_grupo.values() for p in lista]
+
+                cart = _get_cart()
+                cart["items"].append({
+                    "combo_id": str(combo.id),
+                    "combo_name": combo.name,
+                    "quantity": max(int(quantidade), 1),
+                    # unit_price aqui é só para o resumo mostrado ao cliente; o
+                    # pedido usa o preço do catálogo (StoreCartComboItem.save).
+                    "unit_price": float(combo.price),
+                    "total": float(combo.price) * max(int(quantidade), 1),
+                    "group_selections": {gid: [str(p.id) for p in lista] for gid, lista in por_grupo.items()},
+                })
+                _save_cart(cart)
+
+                total = sum(i.get("total", 0) for i in cart["items"])
+                return (
+                    f"✓ {quantidade}x {combo.name} ({', '.join(p.name for p in resolvidos)}) "
+                    f"adicionado por R$ {combo.price} cada.\n"
+                    f"Carrinho: {len(cart['items'])} item(ns) | Total: R$ {total:.2f}"
+                )
+            except Exception as exc:
+                logger.exception("[AGENT TOOL] adicionar_combo_ao_carrinho falhou")
+                return f"Erro ao adicionar o combo: {exc}"
 
         @tool
         def listar_categorias() -> str:
@@ -1662,6 +1756,7 @@ class LangchainService:
 
         return [
             buscar_produto, detalhes_do_produto, detalhes_do_combo, listar_categorias,
+            adicionar_combo_ao_carrinho,
             adicionar_ao_carrinho, ver_carrinho, remover_do_carrinho,
             salvar_endereco_entrega, finalizar_pedido,
             verificar_pedido_pendente, consultar_historico_pedidos,
