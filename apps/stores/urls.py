@@ -419,13 +419,14 @@ urlpatterns = [
     # ==========================================================================
     
     # Payments CRUD + actions
-    path('payments/', include(payment_router.urls)),
-    
-    # Payment Gateways CRUD
+    # ORDEM IMPORTA: o router de pagamentos registra em r'' e cria a rota de
+    # detalhe `payments/<pk>/`. Com ele na frente, `payments/gateways/` casava
+    # como pagamento de id "gateways" e devolvia 404 — o CRUD de gateway existia
+    # e era inalcançável, e por isso nenhuma loja jamais configurou a conta dela.
     path('payments/gateways/', include(gateway_router.urls)),
-    
-    # Payment Webhook Events (read-only)
     path('payments/webhook-events/', include(webhook_event_router.urls)),
+
+    path('payments/', include(payment_router.urls)),
 
     # ==========================================================================
     # LOCAL PRINT AGENT ENDPOINTS

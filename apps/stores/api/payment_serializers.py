@@ -17,35 +17,63 @@ class StorePaymentGatewaySerializer(serializers.ModelSerializer):
     
     store_name = serializers.CharField(source='store.name', read_only=True)
     gateway_type_display = serializers.CharField(source='get_gateway_type_display', read_only=True)
-    
+    tem_credencial = serializers.SerializerMethodField()
+    token_expirado = serializers.BooleanField(source='token_vencido', read_only=True)
+
+    def get_tem_credencial(self, obj) -> bool:
+        """A tela precisa distinguir "sem gateway" de "gateway sem token"."""
+        return bool(obj.access_token)
+
     class Meta:
         model = StorePaymentGateway
         fields = [
             'id', 'store', 'store_name', 'name', 'gateway_type', 'gateway_type_display',
             'is_enabled', 'is_sandbox', 'is_default',
             'endpoint_url', 'webhook_url', 'configuration',
+            # Credenciais: entram, nunca saem. Antes elas nem estavam aqui e o
+            # `extra_kwargs` abaixo era letra morta — o endpoint existia e não
+            # gravava o token, então o lojista não tinha como configurar a conta
+            # dele e o dinheiro continuava indo para a plataforma.
+            'api_key', 'api_secret', 'access_token', 'webhook_secret', 'public_key',
+            # Só o estado, para a tela saber o que mostrar.
+            'connection_type', 'tem_credencial', 'token_expirado',
             'created_at', 'updated_at', 'is_active',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'connection_type']
         extra_kwargs = {
-            'api_key': {'write_only': True},
-            'api_secret': {'write_only': True},
-            'access_token': {'write_only': True},
-            'webhook_secret': {'write_only': True},
-            'public_key': {'write_only': True},
+            'api_key': {'write_only': True, 'required': False, 'allow_blank': True},
+            'api_secret': {'write_only': True, 'required': False, 'allow_blank': True},
+            'access_token': {'write_only': True, 'required': False, 'allow_blank': True},
+            'webhook_secret': {'write_only': True, 'required': False, 'allow_blank': True},
+            'public_key': {'write_only': True, 'required': False, 'allow_blank': True},
         }
+
+    def update(self, instance, validated_data):
+        # Campo de segredo em branco = "não mexi nisso". Sem esta guarda, editar
+        # o nome do gateway apagaria a credencial e derrubaria o checkout.
+        for campo in ('api_key', 'api_secret', 'access_token', 'webhook_secret', 'public_key'):
+            if campo in validated_data and not validated_data[campo]:
+                validated_data.pop(campo)
+        return super().update(instance, validated_data)
 
 
 class StorePaymentGatewayListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for gateway lists (hides sensitive data)."""
     
     gateway_type_display = serializers.CharField(source='get_gateway_type_display', read_only=True)
-    
+    tem_credencial = serializers.SerializerMethodField()
+    token_expirado = serializers.BooleanField(source='token_vencido', read_only=True)
+
+    def get_tem_credencial(self, obj) -> bool:
+        return bool(obj.access_token)
+
     class Meta:
         model = StorePaymentGateway
         fields = [
             'id', 'name', 'gateway_type', 'gateway_type_display',
             'is_enabled', 'is_sandbox', 'is_default',
+            # Estado da conexão — nunca o segredo.
+            'connection_type', 'tem_credencial', 'token_expirado',
             'created_at', 'updated_at', 'is_active',
         ]
 

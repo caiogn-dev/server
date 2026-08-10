@@ -641,6 +641,14 @@ BILLING_PIX_ENABLED = os.environ.get('BILLING_PIX_ENABLED', 'false').lower() == 
 # São as lojas do próprio dono (grandfather). Qualquer outra precisa cadastrar o
 # próprio StorePaymentGateway — sem isso o checkout falha de propósito, em vez de
 # rotear silenciosamente a receita de terceiro para a conta da plataforma.
+# OAuth do Mercado Pago (conta do lojista). Vazio = fluxo desligado; o lojista
+# cadastra o gateway colando o access_token. Ver apps/stores/services/mercadopago_oauth.py
+MP_OAUTH_CLIENT_ID = os.environ.get('MP_OAUTH_CLIENT_ID', '')
+MP_OAUTH_CLIENT_SECRET = os.environ.get('MP_OAUTH_CLIENT_SECRET', '')
+MP_OAUTH_REDIRECT_URI = os.environ.get(
+    'MP_OAUTH_REDIRECT_URI',
+    'https://backend.pastita.com.br/api/v1/stores/payments/gateways/oauth/callback/',
+)
 PLATFORM_GATEWAY_STORE_SLUGS = [
     s.strip() for s in os.environ.get('PLATFORM_GATEWAY_STORE_SLUGS', '').split(',') if s.strip()
 ]

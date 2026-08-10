@@ -35,3 +35,5 @@ __all__ = [
     'complete_print_job',
     'fail_print_job',
 ]
+
+from . import mercadopago_oauth  # noqa: F401  (import lateral: usado por views e testes)

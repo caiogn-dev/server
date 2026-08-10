@@ -47,6 +47,32 @@ class StorePaymentGateway(BaseModel):
         help_text='Payment gateway provider'
     )
 
+    class ConnectionType(models.TextChoices):
+        MANUAL = 'manual', 'Token colado pelo lojista'
+        OAUTH = 'oauth', 'Autorizado via OAuth'
+
+    # Como a loja se conectou. Token manual não expira; OAuth expira e precisa
+    # de refresh. Sem distinguir, um token vencido viraria "pagamento falhou"
+    # sem ninguém entender por quê.
+    connection_type = models.CharField(
+        max_length=10,
+        choices=ConnectionType.choices,
+        default=ConnectionType.MANUAL,
+        help_text='manual = token colado; oauth = autorizado pelo lojista',
+    )
+    refresh_token = EncryptedCharField(
+        max_length=1000, blank=True,
+        help_text='Refresh token do OAuth (encrypted). Vazio no modo manual.',
+    )
+    token_expires_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text='Validade do access_token no OAuth. Nulo no modo manual.',
+    )
+    external_account_id = models.CharField(
+        max_length=64, blank=True,
+        help_text='ID da conta no provedor (user_id do Mercado Pago).',
+    )
+
     # Status
     is_enabled = models.BooleanField(default=True, help_text='Whether this gateway is active')
     is_sandbox = models.BooleanField(default=True, help_text='Use sandbox/test mode')
@@ -91,6 +117,16 @@ class StorePaymentGateway(BaseModel):
 
     def __str__(self):
         return f"{self.store.name} - {self.name} ({self.gateway_type})"
+
+    @property
+    def token_vencido(self) -> bool:
+        """Só faz sentido no OAuth — token manual não expira."""
+        if self.connection_type != self.ConnectionType.OAUTH:
+            return False
+        if not self.token_expires_at:
+            return False
+        from django.utils import timezone
+        return self.token_expires_at <= timezone.now()
 
     def save(self, *args, **kwargs):
         # Ensure only one default gateway per store
