@@ -557,12 +557,12 @@ class UnifiedService:
         Human mode blocks normal automation, but order checkout steps are safe to
         continue because they are deterministic and write the StoreOrder.
         """
-        reply_id = str((interactive_reply or {}).get('id') or '')
-        if (
-            reply_id in {'order_delivery', 'order_pickup', 'pay_pix', 'pay_card', 'pay_pickup'}
-            or reply_id.startswith('add_')
-            or reply_id.startswith('product_')
-        ):
+        from apps.automation.services.fluxos_do_bot import eh_fluxo_do_bot
+
+        # Fonte única com o webhook_service: esta lista já foi escrita duas
+        # vezes e as duas divergiram — o webhook liberava `rating_` e aqui
+        # engolia, então o 5★ da cliente virava mensagem de último recurso.
+        if eh_fluxo_do_bot((interactive_reply or {}).get('id')):
             return True
 
         if location_data and location_data.get('lat') and location_data.get('lng'):

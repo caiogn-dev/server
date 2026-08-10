@@ -176,6 +176,18 @@ class WebhookService:
                             self._handle_message_echo(account, echo)
                     continue
 
+                # A Meta avisa aqui quando a ponte de coexistência cai. Sem tratar,
+                # a loja fica muda (todo envio vira #133010) e ninguém fica sabendo.
+                if change.get('field') == 'account_update':
+                    event = self._process_account_update_event(
+                        value=change.get('value', {}),
+                        waba_id=waba_id,
+                        headers=headers,
+                    )
+                    if event:
+                        events.append(event)
+                    continue
+
                 if change.get('field') != 'messages':
                     continue
                 
@@ -433,6 +445,89 @@ class WebhookService:
         logger.warning(f"Error event created: {event.id} - {error_code}: {error_title}")
         return event
 
+    # Eventos que derrubam a ponte de coexistência: a partir daqui a conta não
+    # envia nem recebe até o dono refazer o Embedded Signup (QR) no app Business.
+    COEX_EVENTOS_DE_QUEDA = {'PARTNER_REMOVED', 'DISCONNECTED', 'ACCOUNT_DELETED'}
+    COEX_EVENTOS_DE_VOLTA = {'PARTNER_ADDED', 'ACCOUNT_RECONNECTED', 'CONNECTED'}
+
+    def _process_account_update_event(
+        self,
+        value: Dict[str, Any],
+        waba_id: Optional[str],
+        headers: Dict[str, str]
+    ) -> Optional[WebhookEvent]:
+        """Registra mudanças de vínculo da conta (COEX) e reflete no status.
+
+        O `disconnection_info` da Meta diz o motivo (troca de aparelho, o próprio
+        dono desconectando no app, enforcement...). Guardamos em metadata['coex']
+        para o painel poder mostrar, e logamos em nível de erro para virar alerta.
+        """
+        evento = (value.get('event') or '').upper()
+
+        account = self._resolve_account(
+            phone_number_id=None,
+            display_phone=value.get('phone_number'),
+            waba_id=waba_id,
+        )
+        if not account:
+            logger.warning(
+                "account_update de conta desconhecida",
+                extra={'waba_id': waba_id, 'event': evento}
+            )
+            return None
+
+        caiu = evento in self.COEX_EVENTOS_DE_QUEDA
+        voltou = evento in self.COEX_EVENTOS_DE_VOLTA
+
+        if caiu or voltou:
+            info = value.get('disconnection_info') or {}
+            account.metadata = {
+                **(account.metadata or {}),
+                'coex': {
+                    'connected': voltou,
+                    'event': evento,
+                    'reason': info.get('reason') if caiu else None,
+                    'source': info.get('source') if caiu else None,
+                    'disconnected_at': timezone.now().isoformat() if caiu else None,
+                    'reconnected_at': timezone.now().isoformat() if voltou else None,
+                },
+            }
+            account.status = (
+                WhatsAppAccount.AccountStatus.INACTIVE if caiu
+                else WhatsAppAccount.AccountStatus.ACTIVE
+            )
+            account.save(update_fields=['metadata', 'status', 'updated_at'])
+
+            if caiu:
+                # Nível error de propósito: isto precisa acordar alguém. Enquanto
+                # durar, todo envio da loja falha com (#133010).
+                logger.error(
+                    "Ponte COEX caiu: conta desconectada da Cloud API",
+                    extra={
+                        'account_id': str(account.id),
+                        'account_name': account.name,
+                        'phone_number': account.phone_number,
+                        'event': evento,
+                        'reason': info.get('reason'),
+                        'source': info.get('source'),
+                    }
+                )
+            else:
+                logger.warning(
+                    "Ponte COEX restabelecida",
+                    extra={'account_id': str(account.id), 'event': evento}
+                )
+
+        return self.webhook_repo.create(
+            account=account,
+            event_id=generate_idempotency_key(
+                'account_update', account.id, evento, str(timezone.now().timestamp())
+            ),
+            event_type=WebhookEvent.EventType.ACCOUNT_UPDATE,
+            payload=value,
+            headers=headers,
+        )
+
     def get_pending_events(self, limit: int = 100) -> List[WebhookEvent]:
         """Get pending events for processing."""
         return list(self.webhook_repo.get_pending_events(limit))
@@ -518,7 +613,12 @@ class WebhookService:
                 self._process_error(event)
                 self.mark_event_completed(event)
                 return None
-            
+
+            elif event.event_type == WebhookEvent.EventType.ACCOUNT_UPDATE:
+                # Já aplicado no ingresso (status + metadata['coex']); aqui só fecha.
+                self.mark_event_completed(event)
+                return None
+
             else:
                 logger.warning(f"Unknown event type: {event.event_type}")
                 self.mark_event_completed(event)
@@ -850,26 +950,20 @@ class WebhookService:
         if not (message.conversation and message.conversation.mode == 'human'):
             return False
 
-        transactional_reply_ids = {
-            'order_delivery',
-            'order_pickup',
-            'pay_pix',
-            'pay_card',
-            'pay_pickup',
-        }
         # Clique em botão que o PRÓPRIO bot mandou não é "falar por cima" do
         # atendente — é a continuação de um fluxo que o bot começou. Sem isto,
         # as 3 avaliações 5★ de 06/ago (Leani, Margô, Marilene) morreram em
         # silêncio: o cliente clicou, o modo estava humano, e o link de
         # avaliação do Google nunca foi enviado.
-        fluxos_do_bot = ('add_', 'product_', 'rating_', 'review_done_',
-                         'refer_friend_', 'track_')
+        #
+        # A lista mora em apps.automation.services.fluxos_do_bot porque o
+        # orquestrador decide a MESMA coisa logo em seguida. Enquanto eram duas
+        # listas elas divergiram, e liberar aqui sem liberar lá é pior que
+        # calar: o cliente recebia a mensagem de último recurso.
+        from apps.automation.services.fluxos_do_bot import eh_fluxo_do_bot
+
         reply_id = (interactive_reply or {}).get('id', '')
-        allow_transactional = (
-            reply_id in transactional_reply_ids
-            or reply_id.startswith(fluxos_do_bot)
-            or bool(location_data)
-        )
+        allow_transactional = eh_fluxo_do_bot(reply_id) or bool(location_data)
         if not allow_transactional:
             logger.info(
                 '[pipeline] Conversation in human mode, skipping automation',

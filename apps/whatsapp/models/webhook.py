@@ -10,6 +10,7 @@ class WebhookEvent(BaseModel):
         MESSAGE = 'message', 'Message'
         STATUS = 'status', 'Status Update'
         ERROR = 'error', 'Error'
+        ACCOUNT_UPDATE = 'account_update', 'Account Update'
         UNKNOWN = 'unknown', 'Unknown'
 
     class ProcessingStatus(models.TextChoices):
