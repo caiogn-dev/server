@@ -1171,6 +1171,14 @@ class LangchainService:
             linhas.append("Também vem incluso: " + ", ".join(brindes))
 
         linhas.append("Só vem o que está listado acima. Qualquer outro item é à parte.")
+        # O pedido por WhatsApp ainda não monta combo (order_service não tem
+        # StoreOrderComboItem). Sem este aviso o agente promete "vou montar" e
+        # fica preso — em 09/ago foram 40 minutos assim.
+        linhas.append(
+            "ATENÇÃO OPERACIONAL: você NÃO consegue adicionar este combo ao carrinho. "
+            "Explique o combo, e para fechar direcione o cliente ao cardápio online "
+            "ou a um atendente. NUNCA diga que vai montar o combo."
+        )
         return "\n".join(linhas)
 
     def _build_tools(self, phone_number: str = "", store=None):
@@ -1452,7 +1460,24 @@ class LangchainService:
                 if not matches:
                     return f"Produto '{produto_nome}' não encontrado no cardápio."
 
+                # matches[0] era arbitrário: "Rondelli" casava com 6 produtos e
+                # o carrinho recebia o primeiro que o Postgres devolvesse.
+                matches.sort(key=lambda p: (_norm(p.name) != nq, len(p.name)))
                 product = matches[0]
+
+                # Estoque no ATO, não na confirmação. Em 09/ago o cliente montou
+                # o combo inteiro e só ao confirmar descobriu que o 4 Queijos
+                # estava fora de estoque — 4 minutos de trabalho jogados fora.
+                if not product.is_in_stock():
+                    disponiveis = [
+                        p.name for p in all_prods
+                        if p.id != product.id and p.is_in_stock()
+                    ][:4]
+                    sugestao = f" Disponíveis: {', '.join(disponiveis)}." if disponiveis else ""
+                    return (
+                        f"{product.name} está SEM ESTOQUE agora — não adicione."
+                        f"{sugestao}"
+                    )
                 cart = _get_cart()
                 items = cart["items"]
 

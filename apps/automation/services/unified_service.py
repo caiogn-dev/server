@@ -257,6 +257,15 @@ class UnifiedService:
         normalized = ''.join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
         return re.sub(r'[^a-z0-9\s]', ' ', normalized).strip()
 
+    def _tem_agente_conversando(self) -> bool:
+        """Loja com atendente de IA ativo — o LLM é quem conduz o diálogo."""
+        return bool(
+            self.use_llm
+            and self.agent
+            and getattr(self.company, 'use_ai_agent', False)
+            and getattr(self.company, 'default_agent', None)
+        )
+
     def _message_matches_catalog_product(self, message: str) -> bool:
         """Return True when free text is very likely a product name from this store."""
         if not self.store or not message:
@@ -280,6 +289,16 @@ class UnifiedService:
                     continue
                 if normalized_message == normalized_name:
                     return True
+                # Casamento PARCIAL só quando não há agente conversando.
+                #
+                # Com agente ativo, a mensagem curta quase sempre é RESPOSTA a
+                # uma pergunta dele. Em 09/ago o cliente respondeu "Branco" à
+                # pergunta "qual molho de cortesia você quer?" e a regra
+                # `"branco" ⊂ "molho branco cremoso"` promoveu para
+                # PRODUCT_MENTION: o handler despejou o card de venda de um
+                # molho que era grátis, no meio do fluxo do combo.
+                if self._tem_agente_conversando():
+                    continue
                 if len(normalized_message) >= 5 and (
                     normalized_message in normalized_name or normalized_name in normalized_message
                 ):
