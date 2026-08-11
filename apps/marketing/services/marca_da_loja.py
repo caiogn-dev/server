@@ -15,9 +15,12 @@ e o código saber disso.
 Loja com domínio próprio pode enviar do endereço dela (`email_remetente`), mas
 só depois de `remetente_verificado` — ver `_remetente`.
 """
+import io
 import logging
 
 import os
+
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +93,7 @@ def marca_da_loja(store) -> dict:
         logger.warning('[marca] Não consegui resolver a URL da loja: %s', exc)
         url = ''
 
-    logo = _logo_absoluta(store)
+    logo = logo_para_email(store)
 
     return {
         'nome': store.name,
@@ -147,6 +150,57 @@ def _logo_absoluta(store) -> str:
     return f'{base}{logo}' if base else ''
 
 
+#: Lado maior da logo dentro do e-mail. 480 px cobre tela retina exibindo a
+#: 240 px, e nada além disso é visto por ninguém.
+_LADO_MAXIMO_DA_LOGO = 480
+
+
+def logo_para_email(store) -> str:
+    """URL de uma versão leve da logo, gerada uma vez e reaproveitada.
+
+    A logo da Cê Saladas é 3531×3905 px e 698 KB — para ser exibida com 48 px de
+    altura. É o mesmo arquivo que causou o problema de LCP no site. Num e-mail é
+    pior: pesa na abertura e imagem grande conta ponto contra em filtro de spam.
+
+    Se a geração falhar por qualquer motivo, devolve a original: e-mail com logo
+    pesada é ruim, e-mail que não sai é pior.
+    """
+    original = _logo_absoluta(store)
+    if not original:
+        return ''
+
+    arquivo = getattr(store, 'logo', None)
+    if not arquivo or not getattr(arquivo, 'name', ''):
+        return original
+
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+
+    nome = arquivo.name.rsplit('/', 1)[-1].rsplit('.', 1)[0]
+    destino = f'stores/logos/email/{nome}-{_LADO_MAXIMO_DA_LOGO}.jpg'
+
+    try:
+        if not default_storage.exists(destino):
+            with arquivo.open('rb') as fh:
+                imagem = Image.open(fh)
+                imagem = imagem.convert('RGB')
+                imagem.thumbnail(
+                    (_LADO_MAXIMO_DA_LOGO, _LADO_MAXIMO_DA_LOGO), Image.LANCZOS,
+                )
+                buffer = io.BytesIO()
+                imagem.save(buffer, format='JPEG', quality=82, optimize=True)
+            default_storage.save(destino, ContentFile(buffer.getvalue()))
+    except Exception as exc:
+        logger.warning('[marca] Não consegui gerar a logo de e-mail: %s', exc)
+        return original
+
+    from django.conf import settings
+
+    base = (getattr(settings, 'BASE_URL', '') or '').rstrip('/')
+    media = (getattr(settings, 'MEDIA_URL', '/media/') or '/media/')
+    return f'{base}{media}{destino}'
+
+
 def _reply_to(store, from_email: str) -> str:
     """Para onde volta a resposta do cliente.
 
@@ -183,11 +237,19 @@ def moldura(marca: dict, *, titulo: str, corpo: str,
     assinatura = (marca.get('assinatura') or '').strip()
     logo = marca.get('logo_url') or ''
 
-    cabecalho = (
-        f'<img src="{logo}" alt="{nome}" height="48" '
-        f'style="height:48px;max-width:220px;object-fit:contain;margin:0 0 12px;">'
+    # A logo vai numa FAIXA BRANCA, não em cima da cor da loja. Logo de lojista
+    # costuma vir com fundo próprio chapado (a da Cê Saladas é um quadrado
+    # laranja inteiro) — sobreposta a um degradê verde, vira um bloco recortado.
+    # Branco funciona com qualquer logo, com ou sem transparência.
+    faixa_da_logo = (
+        f'<tr><td style="background-color:#ffffff;padding:24px 20px 20px;text-align:center;">'
+        f'<img src="{logo}" alt="{nome}" width="120" '
+        f'style="width:120px;max-width:60%;height:auto;display:inline-block;border:0;">'
+        f'</td></tr>'
         if logo else ''
     )
+    # Sem logo o nome da loja assume o topo, senão o e-mail abre sem identidade.
+    cabecalho = '' if logo else f'<h1 style="color:#ffffff;margin:0;font-size:28px;">{nome}</h1>'
     botao = (
         f'<div style="text-align:center;margin:32px 0 0;">'
         f'<a href="{cta_url}" style="display:inline-block;background-color:{primaria};'
@@ -204,12 +266,14 @@ def moldura(marca: dict, *, titulo: str, corpo: str,
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif;background-color:#f4f4f4;">
   <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background-color:#ffffff;">
+    {faixa_da_logo}
     <tr>
-      <td style="background:linear-gradient(135deg,{primaria} 0%,{secundaria} 100%);padding:40px 20px;text-align:center;">
+      <td style="background-color:{primaria};padding:32px 20px;text-align:center;">
         {cabecalho}
-        <h1 style="color:#ffffff;margin:0;font-size:28px;">{titulo}</h1>
+        <h1 style="color:#ffffff;margin:0;font-size:26px;line-height:1.3;">{titulo}</h1>
       </td>
     </tr>
+    <tr><td style="height:4px;background-color:{secundaria};font-size:0;line-height:0;">&nbsp;</td></tr>
     <tr><td style="padding:40px 30px;">{corpo}{botao}</td></tr>
     <tr>
       <td style="background-color:#f9f9f9;padding:30px;text-align:center;">

@@ -209,10 +209,18 @@ class TestLogoAbsolutaNoEmail:
     """
 
     def test_logo_relativa_vira_absoluta(self, loja):
+        """Testa o resolvedor de endereço, não a derivada leve.
+
+        `marca_da_loja` passou a devolver a versão reduzida (ver
+        test_logo_do_email.py); quem transforma `/media/...` em URL completa
+        continua sendo esta função.
+        """
+        from apps.marketing.services.marca_da_loja import _logo_absoluta
+
         loja.logo = 'stores/logos/ce-saladas.jpg'
         loja.save(update_fields=['logo'])
 
-        logo = marca_da_loja(loja)['logo_url']
+        logo = _logo_absoluta(loja)
 
         assert logo.startswith('https://')
         assert logo.endswith('/media/stores/logos/ce-saladas.jpg')
