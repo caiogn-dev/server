@@ -481,6 +481,12 @@ class WebhookService:
 
         if caiu or voltou:
             info = value.get('disconnection_info') or {}
+            # A Meta REENTREGA o mesmo evento. Sem comparar com o estado atual,
+            # uma queda vira uma enxurrada de avisos iguais — e alerta repetido
+            # ensina a ignorar alerta.
+            coex_atual = (account.metadata or {}).get('coex') or {}
+            ja_registrado = coex_atual.get('connected')
+            mudou_de_estado = ja_registrado is None or bool(ja_registrado) == bool(caiu)
             account.metadata = {
                 **(account.metadata or {}),
                 'coex': {
@@ -517,6 +523,25 @@ class WebhookService:
                     "Ponte COEX restabelecida",
                     extra={'account_id': str(account.id), 'event': evento}
                 )
+
+            if mudou_de_estado:
+                # Aviso ativo. Envolvido em try porque o webhook precisa terminar
+                # de qualquer jeito: canal de alerta fora do ar não pode virar
+                # mensagem de cliente perdida.
+                try:
+                    from . import alerta_coex
+
+                    alerta_coex.enviar_alerta(
+                        account=account,
+                        caiu=caiu,
+                        reason=info.get('reason'),
+                        source=info.get('source'),
+                    )
+                except Exception as exc:
+                    logger.error(
+                        '[coex] Alerta falhou (o webhook segue normalmente): %s', exc,
+                        extra={'account_id': str(account.id)},
+                    )
 
         return self.webhook_repo.create(
             account=account,

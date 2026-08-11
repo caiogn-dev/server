@@ -792,10 +792,15 @@ class MessageService:
         # Mesma conversa em qualquer forma do telefone (com/sem nono dígito,
         # com/sem DDI). Sem isto o envio de notificação criava uma thread
         # fantasma paralela à conversa real do cliente.
-        existente = Conversation.objects.filter(
-            account=account,
-            phone_number__in=phone_variants(phone_number),
-        ).order_by('-last_message_at', '-created_at').first()
+        #
+        # A escolha era `-last_message_at`, e por isso mudava conforme quem
+        # tinha escrito por último: em 10/ago a mesma cliente recebeu uma
+        # mensagem em cada thread com 3 minutos de diferença. Agora a regra é
+        # determinística e mora junto do comando de fusão, para as duas não
+        # divergirem como já aconteceu com o bypass do modo humano.
+        from .fusao_de_conversas import conversa_canonica
+
+        existente = conversa_canonica(account, phone_number)
         if existente is not None:
             return existente
 

@@ -338,6 +338,13 @@ else:
 WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v22.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
+
+# Quem recebe o aviso de queda da ponte de coexistência, ALÉM do dono da loja.
+# Existe para a operação ficar sabendo mesmo quando o e-mail do dono está
+# desatualizado — foi o silêncio de 2 dias da Cê Saladas que motivou isto.
+COEX_ALERT_EMAILS = [
+    e.strip() for e in os.environ.get('COEX_ALERT_EMAILS', '').split(',') if e.strip()
+]
 WHATSAPP_APP_SECRET = os.environ.get('WHATSAPP_APP_SECRET', '')
 # App ID do Meta — necessário para o Embedded Signup (troca code->token OAuth).
 # É o ID público do app (não secreto). Defina META_APP_ID no .env.
