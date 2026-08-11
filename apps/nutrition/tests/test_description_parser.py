@@ -25,3 +25,8 @@ class DescriptionParserTests(SimpleTestCase):
         parsed = parse_weighted_ingredients("120g frango desfiado. 20g de mussarela")
         self.assertEqual([(i["ingredient_name"], i["quantity_g"]) for i in parsed["items"]], [("Frango cozido", Decimal("120"))])
         self.assertEqual(parsed["unmatched_weights"], ["20g"])
+
+    def test_does_not_confuse_couve_flor_or_composite_preparation(self):
+        parsed = parse_weighted_ingredients("20g de couve-flor, 80g de brócolis gratinado")
+        self.assertEqual(parsed["items"], [])
+        self.assertEqual(parsed["unmatched_weights"], ["20g", "80g"])

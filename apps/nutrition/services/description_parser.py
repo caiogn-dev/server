@@ -64,11 +64,17 @@ def parse_weighted_ingredients(description):
         after = re.split(r"[,;\n]", after)[0]
         if re.search(r"(?:porcao total|peso liquido|total)\s*:?\s*$", before):
             continue
+        if re.search(r"\b(?:pure|creme|molho|gratinad\w*|estrogonofe|bobo)\b", f"{before} {after}"):
+            unmatched.append(weight_match.group(0))
+            continue
         before_candidates = []
         after_candidates = []
         for alias, display in ALIASES.items():
-            before_pos = before.rfind(alias)
-            after_pos = after.find(alias)
+            pattern = re.compile(rf"(?<![\w-]){re.escape(alias)}(?![\w-])")
+            before_hits = list(pattern.finditer(before))
+            after_hit = pattern.search(after)
+            before_pos = before_hits[-1].start() if before_hits else -1
+            after_pos = after_hit.start() if after_hit else -1
             if before_pos >= 0:
                 before_candidates.append((len(before) - (before_pos + len(alias)), -len(alias), display, alias))
             if 0 <= after_pos <= 18:
