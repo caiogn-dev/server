@@ -10,7 +10,9 @@ from django.db.models import Count, Sum, Q
 
 logger = logging.getLogger(__name__)
 
-from .marca_da_loja import contatos_reais, marca_da_loja, moldura
+from .marca_da_loja import (
+    NOME_DA_PLATAFORMA, REMETENTE_DA_PLATAFORMA, contatos_reais, marca_da_loja, moldura,
+)
 
 try:
     import resend
@@ -25,8 +27,10 @@ class EmailMarketingService:
     
     def __init__(self):
         self.api_key = os.getenv('RESEND_API_KEY')
-        self.default_from_email = os.getenv('RESEND_FROM_EMAIL', 'contato@pastita.com.br')
-        self.default_from_name = os.getenv('RESEND_FROM_NAME', 'Pastita')
+        # Fonte única com marca_da_loja: o endereço duplicado em três arquivos
+        # foi o que derrubou o envio quando o domínio verificado mudou.
+        self.default_from_email = REMETENTE_DA_PLATAFORMA
+        self.default_from_name = NOME_DA_PLATAFORMA
         
         if RESEND_AVAILABLE and self.api_key:
             resend.api_key = self.api_key

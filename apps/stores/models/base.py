@@ -148,6 +148,23 @@ class Store(BaseModel):
         ),
     )
 
+    # Opção B do remetente de e-mail: loja com domínio próprio envia do
+    # endereço dela. Fica DESLIGADO por padrão — o padrão é o domínio da
+    # plataforma, que serve inclusive as lojas que nunca terão domínio.
+    #
+    # São dois campos e não um de propósito: preencher o endereço é do lojista,
+    # confirmar que o domínio está verificado no Resend é operação. Se o envio
+    # confiasse só no texto, uma loja que digitasse um domínio não verificado
+    # pararia de enviar tudo, sem erro visível.
+    email_remetente = models.EmailField(
+        'E-mail remetente próprio', blank=True, default='',
+        help_text='Só é usado depois que o domínio for verificado no Resend.',
+    )
+    remetente_verificado = models.BooleanField(
+        'Remetente verificado', default=False,
+        help_text='Marque só quando o domínio estiver verificado no provedor de e-mail.',
+    )
+
     # Branding
     logo = models.ImageField(upload_to='stores/logos/', blank=True, null=True,
                              validators=[_validate_image_upload])

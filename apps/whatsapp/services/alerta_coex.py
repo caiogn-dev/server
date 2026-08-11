@@ -17,6 +17,8 @@ import os
 
 from django.conf import settings
 
+from apps.marketing.services.marca_da_loja import REMETENTE_DA_PLATAFORMA
+
 logger = logging.getLogger(__name__)
 
 _ASSUNTO_QUEDA = '🔴 {loja}: WhatsApp desconectado — a loja está muda'
@@ -123,7 +125,7 @@ def enviar_alerta(*, account, caiu: bool, reason=None, source=None) -> bool:
 
         resend.api_key = api_key
         resend.Emails.send({
-            'from': os.getenv('RESEND_FROM_EMAIL', 'contato@pastita.com.br'),
+            'from': REMETENTE_DA_PLATAFORMA,
             'to': para,
             'subject': assunto,
             'html': corpo,

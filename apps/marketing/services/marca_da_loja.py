@@ -6,10 +6,14 @@ paleta vinho da Pastita antiga e rodapé "Massas Artesanais" — numa loja de
 saladas, para 39 pessoas. Nada disso precisava ser inventado: nome, tagline,
 logo e as duas cores já estavam no `Store` e eram simplesmente ignorados.
 
-⚠️ O ENDEREÇO do remetente continua em `@pastita.com.br`: é o único domínio
-verificado no Resend (`GET /domains`). Enviar de um domínio não verificado não é
-"menos bonito", é entrega falhando. Quando `cardapidex.com.br` for verificado
-lá, basta mexer em `RESEND_FROM_EMAIL` — nada aqui muda.
+⚠️ O ENDEREÇO do remetente é o do domínio verificado no Resend, hoje
+`cardapidex.com.br` (`GET /domains`). O NOME exibido é o da loja. Enviar de um
+domínio não verificado não é "menos bonito", é entrega falhando com
+`domain is not verified` — aconteceu em 11/ago, entre trocar o domínio no Resend
+e o código saber disso.
+
+Loja com domínio próprio pode enviar do endereço dela (`email_remetente`), mas
+só depois de `remetente_verificado` — ver `_remetente`.
 """
 import logging
 
@@ -26,6 +30,14 @@ ENDERECOS_FALSOS = (
     '@cliente.pastita.com.br',
     '@pastita.local',
 )
+
+#: Remetente da plataforma. FONTE ÚNICA — este endereço já esteve escrito à mão
+#: em três arquivos, e quando o dono trocou o domínio verificado no Resend
+#: (pastita.com.br → cardapidex.com.br) o envio caiu inteiro porque nenhum dos
+#: três sabia da troca. A env continua mandando: trocar de domínio de novo não
+#: pode exigir deploy.
+REMETENTE_DA_PLATAFORMA = os.getenv('RESEND_FROM_EMAIL', 'contato@cardapidex.com.br')
+NOME_DA_PLATAFORMA = os.getenv('RESEND_FROM_NAME', 'Cardapidex')
 
 _COR_PRIMARIA_PADRAO = '#1f2937'
 _COR_SECUNDARIA_PADRAO = '#6b7280'
@@ -54,8 +66,8 @@ def contatos_reais(destinatarios):
 
 def marca_da_loja(store) -> dict:
     """Identidade visual e de remetente para um e-mail desta loja."""
-    from_email = os.getenv('RESEND_FROM_EMAIL', 'contato@pastita.com.br')
-    plataforma = os.getenv('RESEND_FROM_NAME', 'Cardapidex')
+    from_email = REMETENTE_DA_PLATAFORMA
+    plataforma = NOME_DA_PLATAFORMA
 
     if store is None:
         return {
@@ -78,12 +90,7 @@ def marca_da_loja(store) -> dict:
         logger.warning('[marca] Não consegui resolver a URL da loja: %s', exc)
         url = ''
 
-    logo = getattr(store, 'logo_url', '') or ''
-    if not logo and getattr(store, 'logo', None):
-        try:
-            logo = store.logo.url
-        except Exception:  # pragma: no cover - storage ausente
-            logo = ''
+    logo = _logo_absoluta(store)
 
     return {
         'nome': store.name,
@@ -95,18 +102,59 @@ def marca_da_loja(store) -> dict:
         'cor_primaria': (getattr(store, 'primary_color', '') or '').strip() or _COR_PRIMARIA_PADRAO,
         'cor_secundaria': (getattr(store, 'secondary_color', '') or '').strip() or _COR_SECUNDARIA_PADRAO,
         'from_name': store.name,
-        'from_email': from_email,
-        'reply_to': _reply_to(store, from_email),
+        'from_email': _remetente(store, from_email),
+        'reply_to': _reply_to(store, _remetente(store, from_email)),
     }
+
+
+def _remetente(store, padrao_da_plataforma: str) -> str:
+    """De qual endereço a loja envia.
+
+    Padrão: o domínio da plataforma, com o NOME da loja — é o que serve todas
+    as lojas, inclusive as que nunca terão domínio próprio.
+
+    A loja só envia do endereço dela quando alguém confirmou que o domínio está
+    verificado no provedor. Endereço em domínio não verificado não é "menos
+    bonito": é todo envio daquela loja falhando, sem erro visível para ela.
+    """
+    proprio = (getattr(store, 'email_remetente', '') or '').strip()
+    if proprio and getattr(store, 'remetente_verificado', False):
+        return proprio
+    return padrao_da_plataforma
+
+
+def _logo_absoluta(store) -> str:
+    """Endereço completo da logo.
+
+    `store.logo.url` devolve `/media/...`, que só resolve para quem está
+    navegando no domínio do backend. Num e-mail aberto no Gmail aquilo é caminho
+    para lugar nenhum — foi por isso que a logo não apareceu no primeiro teste
+    real. O arquivo já era público; faltava o host.
+    """
+    logo = (getattr(store, 'logo_url', '') or '').strip()
+    if not logo and getattr(store, 'logo', None):
+        try:
+            logo = store.logo.url
+        except Exception:  # pragma: no cover - storage ausente
+            return ''
+    if not logo:
+        return ''
+    if logo.startswith(('http://', 'https://')):
+        return logo
+    from django.conf import settings
+
+    base = (getattr(settings, 'BASE_URL', '') or '').rstrip('/')
+    return f'{base}{logo}' if base else ''
 
 
 def _reply_to(store, from_email: str) -> str:
     """Para onde volta a resposta do cliente.
 
     O remetente é uma caixa que existe só para ENVIAR: o Resend exige o domínio
-    verificado, não o mailbox. `contato@pastita.com.br` não é lido por ninguém,
-    e `cardapidex.com.br` não tem sequer registro MX — lá a resposta nem bounce
-    gera, evapora.
+    verificado, não o mailbox. `contato@cardapidex.com.br` não é lido por
+    ninguém: o MX que o Resend pede fica em `send.cardapidex.com.br` e serve só
+    para bounce do SES — a raiz não recebe nada, então a resposta do cliente nem
+    bounce gera, evapora.
 
     Ordem: e-mail cadastrado da loja → e-mail do dono. Nunca o próprio
     remetente, que equivale a não ter reply_to.

@@ -20,7 +20,8 @@ verificar derruba o envio inteiro.
 import pytest
 
 from apps.marketing.services.marca_da_loja import (
-    ENDERECOS_FALSOS, contatos_reais, marca_da_loja, moldura,
+    ENDERECOS_FALSOS, REMETENTE_DA_PLATAFORMA, contatos_reais, marca_da_loja,
+    moldura,
 )
 from apps.stores.tests.factories import make_store
 
@@ -59,8 +60,13 @@ class TestMarcaDaLoja:
         assert marca_da_loja(loja)['from_name'] == 'Cê Saladas'
 
     def test_remetente_fica_no_dominio_verificado(self, loja):
-        """Trocar para um domínio não verificado no Resend derruba tudo."""
-        assert marca_da_loja(loja)['from_email'].endswith('@pastita.com.br')
+        """Trocar para um domínio não verificado no Resend derruba tudo.
+
+        Travar a CONSTANTE e não o domínio da vez: em 11/ago ele mudou de
+        pastita.com.br para cardapidex.com.br, e teste com literal só teria
+        avisado depois do envio já ter caído.
+        """
+        assert marca_da_loja(loja)['from_email'] == REMETENTE_DA_PLATAFORMA
 
     def test_loja_sem_tagline_nao_inventa_assinatura(self, db):
         """Melhor sem assinatura do que com a de outra loja."""
@@ -188,3 +194,130 @@ class TestRespostaChegaEmAlguem:
         marca = marca_da_loja(loja)
         assert marca['reply_to'] != marca['from_email']
         assert marca['reply_to'] == ''
+
+
+class TestLogoAbsolutaNoEmail:
+    """Logo em caminho relativo não existe dentro de um e-mail.
+
+    11/ago, teste real na caixa do dono: a logo não apareceu. `store.logo.url`
+    devolve `/media/stores/logos/ce-saladas-logo.jpg`, que só resolve em quem
+    está navegando no domínio do backend. O cliente abre no Gmail — para ele
+    aquilo é caminho para lugar nenhum.
+
+    O arquivo já era público (HEAD 200 image/jpeg em backend.pastita.com.br),
+    só faltava o endereço completo.
+    """
+
+    def test_logo_relativa_vira_absoluta(self, loja):
+        loja.logo = 'stores/logos/ce-saladas.jpg'
+        loja.save(update_fields=['logo'])
+
+        logo = marca_da_loja(loja)['logo_url']
+
+        assert logo.startswith('https://')
+        assert logo.endswith('/media/stores/logos/ce-saladas.jpg')
+
+    def test_logo_ja_absoluta_nao_e_remexida(self, loja):
+        loja.logo_url = 'https://cdn.exemplo.com/logo.png'
+        loja.save(update_fields=['logo_url'])
+
+        assert marca_da_loja(loja)['logo_url'] == 'https://cdn.exemplo.com/logo.png'
+
+    def test_sem_logo_continua_vazio(self, db):
+        assert marca_da_loja(make_store(name='Sem Logo'))['logo_url'] == ''
+
+    def test_moldura_nao_desenha_img_quebrada(self, db):
+        html = moldura(marca_da_loja(make_store(name='Sem Logo')), titulo='Oi', corpo='<p>x</p>')
+
+        assert '<img' not in html
+
+
+class TestRemetenteProprioDaLoja:
+    """Opção B: loja com domínio próprio verificado envia do endereço dela.
+
+    Decisão de 11/ago: manter a opção A como padrão (um domínio da plataforma
+    serve todas as lojas, inclusive as que nunca terão domínio) e deixar a B
+    pronta e DESLIGADA, como foi feito com o OAuth do Mercado Pago.
+
+    A guarda que justifica o campo separado: se a loja preencher um domínio que
+    NÃO está verificado no Resend, todo envio dela para de sair. Por isso o
+    remetente próprio só vale quando alguém confirmou a verificação — o campo de
+    texto sozinho não basta.
+    """
+
+    def test_desligado_por_padrao_usa_o_dominio_da_plataforma(self, loja):
+        assert marca_da_loja(loja)['from_email'] == REMETENTE_DA_PLATAFORMA
+
+    def test_endereco_proprio_sem_verificacao_e_ignorado(self, loja):
+        """Estado perigoso: preencheu mas ninguém verificou no Resend."""
+        loja.email_remetente = 'contato@cesaladas.com.br'
+        loja.remetente_verificado = False
+        loja.save(update_fields=['email_remetente', 'remetente_verificado'])
+
+        assert marca_da_loja(loja)['from_email'] == REMETENTE_DA_PLATAFORMA
+
+    def test_endereco_proprio_verificado_e_usado(self, loja):
+        loja.email_remetente = 'contato@cesaladas.com.br'
+        loja.remetente_verificado = True
+        loja.save(update_fields=['email_remetente', 'remetente_verificado'])
+
+        assert marca_da_loja(loja)['from_email'] == 'contato@cesaladas.com.br'
+
+    def test_verificado_sem_endereco_nao_inventa(self, loja):
+        loja.email_remetente = ''
+        loja.remetente_verificado = True
+        loja.save(update_fields=['email_remetente', 'remetente_verificado'])
+
+        assert marca_da_loja(loja)['from_email'] == REMETENTE_DA_PLATAFORMA
+
+    def test_reply_to_nao_repete_o_remetente_proprio(self, loja):
+        """Com remetente próprio, responder para ele mesmo não acrescenta nada."""
+        loja.email_remetente = 'contato@cesaladas.com.br'
+        loja.remetente_verificado = True
+        loja.email = 'contato@cesaladas.com.br'
+        loja.save(update_fields=['email_remetente', 'remetente_verificado', 'email'])
+
+        marca = marca_da_loja(loja)
+        assert marca['reply_to'] != marca['from_email']
+
+
+class TestRemetentePadraoDaPlataforma:
+    """O domínio de envio da plataforma tem UMA fonte.
+
+    11/ago: o dono trocou `pastita.com.br` por `cardapidex.com.br` no Resend e o
+    envio caiu inteiro ("domain is not verified"), porque o endereço padrão
+    estava escrito à mão em três arquivos (marca_da_loja, email_marketing_service
+    e alerta_coex) e nenhum sabia da troca.
+    """
+
+    def test_o_padrao_e_o_dominio_verificado_atual(self):
+        from apps.marketing.services.marca_da_loja import REMETENTE_DA_PLATAFORMA
+
+        assert REMETENTE_DA_PLATAFORMA.endswith('@cardapidex.com.br')
+
+    def test_loja_sem_remetente_proprio_usa_o_padrao(self, loja):
+        from apps.marketing.services.marca_da_loja import REMETENTE_DA_PLATAFORMA
+
+        assert marca_da_loja(loja)['from_email'] == REMETENTE_DA_PLATAFORMA
+
+    def test_o_alerta_de_queda_usa_o_mesmo_remetente(self):
+        """O aviso de ponte caída não pode ser o único que não sai."""
+        import inspect
+
+        from apps.whatsapp.services import alerta_coex
+
+        assert 'pastita.com.br' not in inspect.getsource(alerta_coex)
+
+    def test_variavel_de_ambiente_ainda_manda(self):
+        """Trocar de domínio de novo não pode exigir deploy."""
+        import importlib
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {'RESEND_FROM_EMAIL': 'x@outro.com'}):
+            from apps.marketing.services import marca_da_loja as m
+            importlib.reload(m)
+            try:
+                assert m.marca_da_loja(None)['from_email'] == 'x@outro.com'
+            finally:
+                importlib.reload(m)
