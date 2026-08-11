@@ -1,7 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.nutrition.models import NutritionIngredient, ProductRecipe, RecipeItem
+from apps.nutrition.models import NutritionIngredient, ProductNutritionProfile, ProductRecipe, RecipeItem
+from apps.nutrition.services.calculator import calculate_recipe
 from apps.nutrition.services.description_parser import parse_weighted_ingredients
 from apps.stores.models import StoreProduct
 
@@ -49,5 +50,12 @@ class Command(BaseCommand):
                     RecipeItem(recipe=recipe, ingredient=ingredient, quantity_g=row["quantity_g"], sort_order=index)
                     for index, (ingredient, row) in enumerate(resolved)
                 ])
+                calculated = calculate_recipe(recipe)
+                ProductNutritionProfile.objects.create(
+                    product=product, recipe=recipe, serving_size_g=total,
+                    value_source=ProductNutritionProfile.ValueSource.CALCULATED,
+                    is_print_approved=False,
+                    **calculated["per_100g"],
+                )
                 stats["created"] += 1
         self.stdout.write(self.style.SUCCESS(" | ".join(f"{key}={value}" for key, value in stats.items())))
