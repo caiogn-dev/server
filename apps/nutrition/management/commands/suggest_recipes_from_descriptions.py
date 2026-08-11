@@ -12,10 +12,11 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--store", action="append", dest="stores", required=True)
         parser.add_argument("--apply", action="store_true")
-        parser.add_argument("--verbose", "-v", action="store_true", dest="detail")
+        parser.add_argument("--detail", action="store_true", help="Lista cada produto pronto ou pulado.")
 
     @transaction.atomic
     def handle(self, *args, **options):
+        detail = options["detail"] or options.get("verbosity", 1) >= 2
         products = StoreProduct.objects.filter(store__slug__in=options["stores"], is_active=True).exclude(description="").select_related("store")
         ingredient_by_name = {i.display_name: i for i in NutritionIngredient.objects.filter(store__isnull=True, is_active=True)}
         stats = {"analyzed": 0, "ready": 0, "created": 0, "skipped_existing": 0, "ambiguous": 0}
@@ -30,12 +31,12 @@ class Command(BaseCommand):
             if len(resolved) < 2 or parsed["unmatched_weights"] or missing:
                 if parsed["items"] or parsed["unmatched_weights"]:
                     stats["ambiguous"] += 1
-                    if options["detail"]:
+                    if detail:
                         self.stdout.write(f"PULAR | {product.store.slug} | {product.name} | pesos_sem_item={parsed['unmatched_weights']} | base_sem_item={missing}")
                 continue
             stats["ready"] += 1
             total = sum((row["quantity_g"] for _, row in resolved), start=0)
-            if options["detail"]:
+            if detail:
                 summary = ", ".join(f"{row['ingredient_name']}={row['quantity_g']}g" for _, row in resolved)
                 self.stdout.write(f"PRONTO | {product.store.slug} | {product.name} | {summary}")
             if options["apply"]:
