@@ -34,11 +34,67 @@ ALIASES = {
 
 WEIGHT_RE = re.compile(r"(?<!\d)(?P<value>\d+(?:[,.]\d+)?)\s*g\b", re.I)
 RANGE_RE = re.compile(r"\d+(?:[,.]\d+)?\s*~\s*\d+(?:[,.]\d+)?\s*g\b", re.I)
+LIST_COMPONENT_RE = re.compile(
+    r"(?:^|[,;\n])\s*[-*]?\s*(?P<name>[a-z][^,;\n]{1,55}?)\s+(?P<value>\d+(?:[,.]\d+)?)\s*g\b",
+    re.I,
+)
+WEIGHT_FIRST_RE = re.compile(
+    r"(?P<value>\d+(?:[,.]\d+)?)\s*g\s+(?:de\s+)?(?P<name>[a-z][^,;\n.]*?)(?=\s+\d+(?:[,.]\d+)?\s*g\b|[,;\n.]|$)",
+    re.I,
+)
+AND_COMPONENT_RE = re.compile(
+    r"\be\s+(?P<name>[a-z][^,;\n]{1,45}?)\s+(?P<value>\d+(?:[,.]\d+)?)\s*g\b",
+    re.I,
+)
 
 
 def normalize(value):
     value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().lower()
     return re.sub(r"\s+", " ", value)
+
+
+def parse_raw_components(description):
+    """Extract explicit component names and fixed gram weights for drafting.
+
+    This intentionally ignores ranges and total/package weights. It does not
+    claim nutritional equivalence: unresolved names become pending ingredients.
+    """
+    original = description or ""
+    normalized = unicodedata.normalize("NFKD", original).encode("ascii", "ignore").decode().lower()
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    range_spans = [match.span() for match in RANGE_RE.finditer(normalized)]
+    found = []
+    occupied_weights = set()
+    for pattern in (LIST_COMPONENT_RE, AND_COMPONENT_RE, WEIGHT_FIRST_RE):
+        for match in pattern.finditer(normalized):
+            value_span = match.span("value")
+            if any(start <= value_span[0] < end for start, end in range_spans):
+                continue
+            name = re.sub(r"^[-*\s]+|\s+$", "", match.group("name"))
+            name = re.sub(r"^(?:de|do|da)\s+", "", name)
+            if re.search(r"\b(?:porcao total|peso liquido|total)\b", name) or not name:
+                continue
+            key = (value_span[0], value_span[1])
+            if key in occupied_weights:
+                continue
+            occupied_weights.add(key)
+            found.append({"raw_name": name, "quantity_g": Decimal(match.group("value").replace(",", ".")), "position": match.start()})
+    found.sort(key=lambda item: item["position"])
+    return found
+
+
+def format_recipe_description(product_name, components, original_description):
+    lines = [f"- {item['raw_name'].strip().capitalize()} {item['quantity_g']:g} g" for item in components]
+    notes = []
+    for pattern in (r"acompanha[^.!\n]*(?:[.!]|$)", r"al[eé]rgicos?[^.\n]*(?:[.]|$)", r"cont[eé]m\s+[^.\n]*(?:[.]|$)"):
+        for match in re.finditer(pattern, original_description or "", re.I):
+            note = match.group(0).strip().strip("*")
+            if note and note.lower() not in {value.lower() for value in notes}:
+                notes.append(note)
+    total = sum((item["quantity_g"] for item in components), Decimal("0"))
+    footer = [f"*Porção total cadastrada: {total:g} g*"]
+    footer.extend(f"*{note}*" for note in notes)
+    return "\n".join(lines + [""] + footer)
 
 
 def parse_weighted_ingredients(description):
