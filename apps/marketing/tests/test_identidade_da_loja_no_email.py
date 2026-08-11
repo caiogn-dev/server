@@ -149,3 +149,42 @@ class TestMoldura:
 
         assert 'Loja Nova' in html
         assert '<br>\n' not in html.split('Loja Nova')[-1][:20]
+
+
+class TestRespostaChegaEmAlguem:
+    """Se o cliente responder o e-mail, alguém tem que receber.
+
+    11/ago: o remetente é `contato@pastita.com.br` — endereço que existe só para
+    ENVIAR (o Resend só exige o domínio verificado, não a caixa). O dono não tem
+    essa caixa. E `cardapidex.com.br` não tem MX nenhum, então lá a resposta
+    nem bounce gera: evapora.
+
+    O `reply_to` caía em `store.email`, vazio na Cê Saladas — então a resposta
+    voltava para a caixa inexistente. Agora cai no dono da loja.
+    """
+
+    def test_sem_email_na_loja_a_resposta_vai_para_o_dono(self, db):
+        loja = make_store(name='Cê Saladas')
+        loja.owner.email = 'dono@gmail.com'
+        loja.owner.save(update_fields=['email'])
+
+        assert marca_da_loja(loja)['reply_to'] == 'dono@gmail.com'
+
+    def test_email_da_loja_ganha_do_email_do_dono(self, db):
+        loja = make_store(name='Cê Saladas')
+        loja.owner.email = 'dono@gmail.com'
+        loja.owner.save(update_fields=['email'])
+        loja.email = 'contato@cesaladas.com.br'
+        loja.save(update_fields=['email'])
+
+        assert marca_da_loja(loja)['reply_to'] == 'contato@cesaladas.com.br'
+
+    def test_nunca_devolve_o_proprio_remetente_como_reply_to(self, db):
+        """Responder para a caixa que ninguém lê é o mesmo que não ter reply_to."""
+        loja = make_store(name='Sem Contato')
+        loja.owner.email = ''
+        loja.owner.save(update_fields=['email'])
+
+        marca = marca_da_loja(loja)
+        assert marca['reply_to'] != marca['from_email']
+        assert marca['reply_to'] == ''

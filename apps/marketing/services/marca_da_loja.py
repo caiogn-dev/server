@@ -96,8 +96,29 @@ def marca_da_loja(store) -> dict:
         'cor_secundaria': (getattr(store, 'secondary_color', '') or '').strip() or _COR_SECUNDARIA_PADRAO,
         'from_name': store.name,
         'from_email': from_email,
-        'reply_to': (getattr(store, 'email', '') or '').strip(),
+        'reply_to': _reply_to(store, from_email),
     }
+
+
+def _reply_to(store, from_email: str) -> str:
+    """Para onde volta a resposta do cliente.
+
+    O remetente é uma caixa que existe só para ENVIAR: o Resend exige o domínio
+    verificado, não o mailbox. `contato@pastita.com.br` não é lido por ninguém,
+    e `cardapidex.com.br` não tem sequer registro MX — lá a resposta nem bounce
+    gera, evapora.
+
+    Ordem: e-mail cadastrado da loja → e-mail do dono. Nunca o próprio
+    remetente, que equivale a não ter reply_to.
+    """
+    candidatos = [
+        (getattr(store, 'email', '') or '').strip(),
+        (getattr(getattr(store, 'owner', None), 'email', '') or '').strip(),
+    ]
+    for candidato in candidatos:
+        if candidato and candidato.lower() != (from_email or '').lower():
+            return candidato
+    return ''
 
 
 def moldura(marca: dict, *, titulo: str, corpo: str,
