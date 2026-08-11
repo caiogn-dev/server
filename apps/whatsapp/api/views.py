@@ -420,29 +420,14 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         Mora AQUI e não no MessageService de propósito: o service é usado
         pelos dois lados, e o bot se silenciaria ao responder.
+
+        A troca de modo em si vive em `conversations.services.assumir_atendimento`
+        porque o eco do app do WhatsApp Business precisa fazer exatamente o
+        mesmo — e enquanto eram dois códigos, só o painel calava o bot.
         """
-        from apps.conversations.models import Conversation
+        from apps.conversations.services import assumir_atendimento
 
-        conversa = getattr(message, 'conversation', None)
-        if conversa is None:
-            return
-        if conversa.mode == Conversation.ConversationMode.HUMAN:
-            return
-        try:
-            from apps.conversations.services import ConversationService
-
-            ConversationService().switch_to_human(str(conversa.id))
-            logger.info(
-                '[handover] Operador respondeu — conversa assumida',
-                extra={'conversation_id': str(conversa.id)},
-            )
-        except Exception as exc:
-            # Nunca derrubar o envio por causa do handover: a mensagem já foi
-            # para o cliente; falhar aqui só esconderia isso do operador.
-            logger.error(
-                '[handover] Falha ao assumir a conversa: %s', exc,
-                exc_info=True, extra={'conversation_id': str(conversa.id)},
-            )
+        assumir_atendimento(getattr(message, 'conversation', None), origem='painel')
 
     @extend_schema(
         summary="Send text message",

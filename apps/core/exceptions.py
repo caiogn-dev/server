@@ -181,12 +181,28 @@ def custom_exception_handler(exc, context):
         )
 
     if isinstance(exc, DRFValidationError):
+        detalhes = response.data if response else {}
+        # Sem este log, "Invalid data provided." era tudo o que existia sobre a
+        # falha — no painel E no servidor. Em 11/ago a dona da loja tentou
+        # lançar um pedido pelo PDV, levou a frase genérica, e não havia como
+        # saber qual campo o serializer recusou nem depois, olhando o log.
+        logger.warning(
+            'Validação recusou %s %s: %s',
+            getattr(request, 'method', '?'),
+            getattr(request, 'path', '?'),
+            detalhes,
+            extra={
+                'validation.path': getattr(request, 'path', ''),
+                'validation.details': detalhes,
+                'validation.view': view.__class__.__name__ if view else None,
+            },
+        )
         return Response(
             {
                 'error': {
                     'code': 'validation_error',
                     'message': 'Invalid data provided.',
-                    'details': response.data if response else {},
+                    'details': detalhes,
                 }
             },
             status=status.HTTP_400_BAD_REQUEST

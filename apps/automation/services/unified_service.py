@@ -460,28 +460,14 @@ class UnifiedService:
         return True
 
     def _has_pending_delivery_address_session(self) -> bool:
-        """Return True when this customer has an order waiting for delivery address."""
-        if not self.conversation:
-            return False
+        """Return True when this customer has an order waiting for delivery address.
 
-        phone_number = self.conversation.phone_number
-        digits_only = re.sub(r'\D', '', phone_number or '')
-        phone_candidates = [phone_number]
-        if digits_only:
-            phone_candidates.extend([digits_only, f'+{digits_only}'])
-        phone_candidates = [value for value in dict.fromkeys(phone_candidates) if value]
+        A consulta mora em `fluxos_do_bot` porque o webhook precisa da MESMA
+        resposta antes de deixar a localização passar pelo modo humano.
+        """
+        from apps.automation.services.fluxos_do_bot import espera_endereco
 
-        sessions = CustomerSession.objects.filter(
-            phone_number__in=phone_candidates,
-            status__in=['active', 'cart_created', 'checkout', 'payment_pending'],
-            cart_data__waiting_for_address=True,
-        )
-        if self.company:
-            sessions = sessions.filter(company=self.company)
-        elif self.store:
-            sessions = sessions.filter(company__store=self.store)
-
-        return sessions.exists()
+        return espera_endereco(self.conversation, company=self.company, store=self.store)
 
     def _has_pending_notes_session(self) -> bool:
         """Return True when this customer is in the notes collection step of checkout."""

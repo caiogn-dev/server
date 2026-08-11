@@ -72,6 +72,48 @@ class MpOrdersTestCase(TestCase):
         self.assertEqual(payer['address']['zip_code'], '77000000')
         self.assertEqual(payer['address']['street_number'], '123')
 
+    def test_numero_longo_do_endereco_nao_derruba_o_pagamento(self):
+        """11/ago/2026, pedido CE-2608113992 (Aline, R$ 270,37), cartão:
+
+            400 '$.payer.address.street_number' - length must be <= 10, but got 12
+
+        O endereço era "Quadra 505, Lt 11 casa 2" e o número veio como
+        "Lt 11 casa 2". Truncávamos em 20, mas a Orders API aceita 10 — o MP
+        rejeitou o payload INTEIRO e o checkout marcou o pedido como `failed`.
+        Para a dona da loja o pedido apareceu e sumiu do painel, e a venda foi
+        embora sem o cartão da cliente ter sido consultado.
+
+        Endereço em Palmas é assim mesmo (quadra/lote/casa): truncar não pode
+        custar a venda.
+        """
+        self.order.delivery_address = {
+            'zip_code': '77000-000', 'street_name': 'Quadra 505',
+            'number': 'Lt 11 casa 2', 'city': 'Palmas', 'state': 'TO',
+        }
+        self.order.save(update_fields=['delivery_address'])
+
+        payer = mp_orders.build_payer(self.order, 'aline@x.com', None)
+        numero = payer['address']['street_number']
+
+        self.assertLessEqual(len(numero), 10, 'a Orders API recusa acima de 10')
+        self.assertEqual(numero, '11', 'o número do lote é o dado útil ao antifraude')
+
+    def test_numero_sem_digito_nenhum_e_truncado(self):
+        """Sem número não há o que extrair — trunca, mas nunca estoura o limite."""
+        self.order.delivery_address = {
+            'street_name': 'Rua A', 'number': 'casa dos fundos ao lado da praça',
+            'city': 'Palmas', 'state': 'TO',
+        }
+        self.order.save(update_fields=['delivery_address'])
+
+        numero = mp_orders.build_payer(self.order, 'x@x.com', None)['address']['street_number']
+        self.assertLessEqual(len(numero), 10)
+        self.assertTrue(numero)
+
+    def test_numero_curto_continua_intacto(self):
+        payer = mp_orders.build_payer(self.order, 'maria@x.com', None)
+        self.assertEqual(payer['address']['street_number'], '123')
+
     def test_build_order_payload(self):
         p = mp_orders.build_order_payload(self.order, card_token='TKN', payment_method_id='master',
                                           installments=1, payer_email='maria@x.com',

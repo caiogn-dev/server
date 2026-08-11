@@ -41,6 +41,42 @@ def _get_account_for_profile(profile):
     return WhatsAppAccount.objects.filter(company_profile=profile).first()
 
 
+#: Templates de lembrete em ordem de preferência: o nome específico da etapa
+#: primeiro, o nome semeado em todas as lojas como fallback.
+#:
+#: Antes disso a busca era por um único nome por etapa — e nenhum deles existia
+#: no banco. O seeder cria `pix_reminder`, `pix_expired` e `cart_abandoned`; as
+#: tasks pediam `payment_reminder_1` e `cart_reminder_30`. Toda tentativa caía
+#: em AutoMessage.DoesNotExist e virava um logger.warning, então nenhum cliente
+#: recebeu lembrete de PIX ou de carrinho. `payment_expired` era pior: nem
+#: constava em EventType, era um valor impossível de casar.
+PIX_TEMPLATES = {
+    'first': ('payment_reminder_1', 'pix_reminder'),
+    'second': ('payment_reminder_2', 'pix_reminder'),
+    'final': ('pix_expired',),
+}
+
+CART_TEMPLATES = {
+    '30min': ('cart_reminder_30', 'cart_abandoned'),
+    '2h': ('cart_reminder_2h', 'cart_abandoned'),
+    '24h': ('cart_reminder_24h', 'cart_abandoned'),
+}
+
+
+def _resolve_template(profile, candidates):
+    """Primeiro template ativo da lista de preferência, ou None se não houver."""
+    from apps.automation.models import AutoMessage
+    for event_type in candidates:
+        template = AutoMessage.objects.filter(
+            company=profile,
+            event_type=event_type,
+            is_active=True,
+        ).first()
+        if template is not None:
+            return template
+    return None
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def send_payment_reminder(self, order_id: str, reminder_type: str):
     """
@@ -72,43 +108,35 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
             logger.warning(f"No CompanyProfile for store {order.store_id}, skipping payment reminder")
             return
 
-        event_type_map = {
-            'first': 'payment_reminder_1',
-            'second': 'payment_reminder_2',
-            'final': 'payment_expired',
-        }
-        event_type = event_type_map.get(reminder_type, 'payment_reminder_1')
-
-        try:
-            template = AutoMessage.objects.get(
-                company=profile,
-                event_type=event_type,
-                is_active=True
+        candidates = PIX_TEMPLATES.get(reminder_type, PIX_TEMPLATES['first'])
+        template = _resolve_template(profile, candidates)
+        if template is None:
+            logger.warning(
+                "Nenhum template ativo (%s) na loja %s — lembrete de PIX não enviado",
+                '/'.join(candidates), order.store_id,
             )
+            return
 
-            time_remaining = {'first': '30 minutos', 'second': '2 horas'}.get(reminder_type, 'expirado')
+        time_remaining = {'first': '30 minutos', 'second': '2 horas'}.get(reminder_type, 'expirado')
 
-            message = template.render_message({
-                'customer_name': order.customer_name,
-                'order_number': order.order_number,
-                'amount': order.total,
-                'pix_code': order.pix_code or 'N/A',
-                'time_remaining': time_remaining,
-            })
+        message = template.render_message({
+            'customer_name': order.customer_name,
+            'order_number': order.order_number,
+            'amount': order.total,
+            'pix_code': order.pix_code or 'N/A',
+            'time_remaining': time_remaining,
+        })
 
-            account = _get_account_for_profile(profile)
-            if account:
-                service = WhatsAppAPIService(account)
-                service.send_text_message(to=order.customer_phone, text=message)
-                logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
+        account = _get_account_for_profile(profile)
+        if account:
+            service = WhatsAppAPIService(account)
+            service.send_text_message(to=order.customer_phone, text=message)
+            logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
 
-                if not order.metadata:
-                    order.metadata = {}
-                order.metadata[f'payment_reminder_{reminder_type}_sent'] = timezone.now().isoformat()
-                order.save(update_fields=['metadata'])
-
-        except AutoMessage.DoesNotExist:
-            logger.warning(f"Template {event_type} not found for store {order.store_id}")
+            if not order.metadata:
+                order.metadata = {}
+            order.metadata[f'payment_reminder_{reminder_type}_sent'] = timezone.now().isoformat()
+            order.save(update_fields=['metadata'])
 
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found")
@@ -244,47 +272,39 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
             logger.warning(f"No CompanyProfile for store {cart.store_id}, skipping cart reminder")
             return
 
-        event_type_map = {
-            '30min': 'cart_reminder_30',
-            '2h': 'cart_reminder_2h',
-            '24h': 'cart_reminder_24h',
-        }
-        event_type = event_type_map.get(reminder_type, 'cart_reminder')
-
-        try:
-            template = AutoMessage.objects.get(
-                company=profile,
-                event_type=event_type,
-                is_active=True
+        candidates = CART_TEMPLATES.get(reminder_type, CART_TEMPLATES['30min'])
+        template = _resolve_template(profile, candidates)
+        if template is None:
+            logger.warning(
+                "Nenhum template ativo (%s) na loja %s — lembrete de carrinho não enviado",
+                '/'.join(candidates), cart.store_id,
             )
+            return
 
-            items_summary = "\n".join([
-                f"• {item.product.name} x{item.quantity} = R$ {item.total}"
-                for item in cart.items.all()[:5]
-            ])
+        items_summary = "\n".join([
+            f"• {item.product.name} x{item.quantity} = R$ {item.total}"
+            for item in cart.items.all()[:5]
+        ])
 
-            message = template.render_message({
-                'customer_name': customer_name,
-                'cart_items': items_summary,
-                'cart_total': cart.total,
-                'cart_item_count': cart.items.count(),
-            })
+        message = template.render_message({
+            'customer_name': customer_name,
+            'cart_items': items_summary,
+            'cart_total': cart.total,
+            'cart_item_count': cart.items.count(),
+        })
 
-            account = _get_account_for_profile(profile)
-            if account:
-                service = WhatsAppAPIService(account)
-                service.send_interactive_buttons(
-                    to=customer_phone,
-                    body_text=message,
-                    buttons=[
-                        {'id': f'checkout_{cart.id}', 'title': '✅ Finalizar Pedido'},
-                        {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
-                    ]
-                )
-                logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
-
-        except AutoMessage.DoesNotExist:
-            logger.warning(f"Template {event_type} not found for store {cart.store_id}")
+        account = _get_account_for_profile(profile)
+        if account:
+            service = WhatsAppAPIService(account)
+            service.send_interactive_buttons(
+                to=customer_phone,
+                body_text=message,
+                buttons=[
+                    {'id': f'checkout_{cart.id}', 'title': '✅ Finalizar Pedido'},
+                    {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
+                ]
+            )
+            logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
 
     except Cart.DoesNotExist:
         logger.error(f"Cart {cart_id} not found")

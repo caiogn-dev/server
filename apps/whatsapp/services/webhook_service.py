@@ -328,8 +328,22 @@ class WebhookService:
             )
             Conversation.objects.filter(pk=conversation.pk).update(last_message_at=message.created_at)
 
-            from apps.whatsapp.services.broadcast_service import BroadcastService
-            BroadcastService().broadcast_message_sent(
+            # Digitar no app do Business é assumir a conversa, igual ao painel.
+            # Sem isto o bot respondia por cima do dono — foi o que aconteceu
+            # com o Diogo em 11/ago, duas vezes na mesma conversa.
+            if not self._eco_e_do_proprio_bot(conversation, text_body, ignorar_id=message.id):
+                from apps.conversations.services import assumir_atendimento
+
+                assumir_atendimento(conversation, origem='eco_do_app_business')
+
+            # O nome da classe é WhatsAppBroadcastService. Importar
+            # `BroadcastService` levantava ImportError a CADA eco, engolido
+            # pelo except lá embaixo: 85 mensagens digitadas no celular pelo
+            # dono em 24h nunca chegaram ao inbox do painel, sem nenhum
+            # sintoma além de um warning que ninguém lê.
+            from apps.whatsapp.services.broadcast_service import WhatsAppBroadcastService
+
+            WhatsAppBroadcastService().broadcast_message_sent(
                 account_id=str(account.id),
                 message={
                     'id': str(message.id),
@@ -347,6 +361,36 @@ class WebhookService:
             )
         except Exception:
             logger.warning('Falha ao processar eco de mensagem do app Business', exc_info=True)
+
+    @staticmethod
+    def _eco_e_do_proprio_bot(conversation, text_body: str, ignorar_id=None) -> bool:
+        """True quando o eco é a mensagem que o próprio bot acabou de enviar.
+
+        O dedupe por `whatsapp_message_id` já cobre o caso normal, mas há uma
+        corrida real: o eco pode chegar antes de o envio gravar o wamid. Sem
+        esta guarda, a primeira resposta do bot silenciaria o bot para sempre
+        naquela conversa — o oposto exato do que se quer.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone as dj_tz
+
+        from apps.whatsapp.models import Message
+
+        texto = (text_body or '').strip()
+        if not texto:
+            return False
+        anteriores = Message.objects.filter(
+            conversation=conversation,
+            direction='outbound',
+            text_body=texto,
+            created_at__gte=dj_tz.now() - timedelta(seconds=120),
+        )
+        if ignorar_id is not None:
+            # A própria linha do eco já está gravada — comparar com ela mesma
+            # daria "é do bot" para toda mensagem do lojista.
+            anteriores = anteriores.exclude(pk=ignorar_id)
+        return anteriores.exists()
 
     def _process_message_event(
         self,
@@ -726,7 +770,9 @@ class WebhookService:
             return
 
         # Modo humano suprime chat geral, mas NÃO eventos transacionais determinísticos.
-        if self._should_suppress_for_human_mode(message, interactive_reply, location_data):
+        if self._should_suppress_for_human_mode(
+            message, interactive_reply, location_data, context=context,
+        ):
             return
 
         # Orquestrador (UnifiedService) com timeout, em thread daemon.
@@ -769,8 +815,21 @@ class WebhookService:
         Reconhece a mensagem, não inventa informação nenhuma e oferece um
         humano — que é a única coisa honesta a fazer quando o sistema não sabe
         responder. Nunca levanta: acima dela não há mais ninguém para tratar.
+
+        Salvo quando o humano JÁ ESTÁ na conversa: aí oferecer "falar com um
+        atendente" é o bot atropelando quem está atendendo. Em 11/ago a Damery
+        recebeu exatamente isso 1min18 depois de o dono assumir e começar a
+        resolver o endereço dela na mão — foi a mensagem que ele apagou.
         """
         from apps.automation.services import ResponseSource, UnifiedResponse
+
+        conversa = getattr(message, 'conversation', None)
+        if conversa is not None and getattr(conversa, 'mode', None) == 'human':
+            logger.info(
+                '[pipeline] Último recurso suprimido — atendente humano na conversa',
+                extra={'message_id': str(message.id), 'pipeline.last_resort_suppressed': True},
+            )
+            return False
 
         try:
             resposta = UnifiedResponse(
@@ -967,7 +1026,9 @@ class WebhookService:
             )
             return False
 
-    def _should_suppress_for_human_mode(self, message, interactive_reply, location_data) -> bool:
+    def _should_suppress_for_human_mode(
+        self, message, interactive_reply, location_data, context=None,
+    ) -> bool:
         """Modo humano suprime chat geral, mas libera eventos transacionais.
 
         Retorna True quando a automação deve ser totalmente ignorada (sem resposta).
@@ -985,10 +1046,22 @@ class WebhookService:
         # orquestrador decide a MESMA coisa logo em seguida. Enquanto eram duas
         # listas elas divergiram, e liberar aqui sem liberar lá é pior que
         # calar: o cliente recebia a mensagem de último recurso.
-        from apps.automation.services.fluxos_do_bot import eh_fluxo_do_bot
+        # Localização segue a MESMA regra do orquestrador: só é fluxo do bot
+        # quando existe checkout esperando endereço. Liberar qualquer
+        # localização foi o que atropelou o dono na conversa da Damery em
+        # 11/ago — ele resolvia o endereço na mão, a cliente mandou o pin, o
+        # orquestrador calou (não havia checkout pendente) e o último recurso
+        # respondeu por cima dele.
+        from apps.automation.services.fluxos_do_bot import eh_fluxo_do_bot, espera_endereco
 
         reply_id = (interactive_reply or {}).get('id', '')
-        allow_transactional = eh_fluxo_do_bot(reply_id) or bool(location_data)
+        allow_transactional = eh_fluxo_do_bot(reply_id)
+        if not allow_transactional and location_data:
+            allow_transactional = espera_endereco(
+                message.conversation,
+                company=getattr(context, 'profile', None),
+                store=getattr(context, 'store', None),
+            )
         if not allow_transactional:
             logger.info(
                 '[pipeline] Conversation in human mode, skipping automation',

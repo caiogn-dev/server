@@ -101,6 +101,33 @@ def build_preference_items(order):
     return items
 
 
+#: A Orders API recusa o payload inteiro acima disto (não trunca sozinha).
+LIMITE_STREET_NUMBER = 10
+
+
+def numero_do_endereco(valor) -> str:
+    """Número da rua no formato que a Orders API aceita.
+
+    11/ago/2026: "Lt 11 casa 2" (12 caracteres) devolveu 400 e derrubou uma
+    venda de R$ 270,37 no cartão — o MP valida `street_number` em 10 e recusa
+    a ordem inteira, não o campo. Em Palmas quadra/lote/casa é o padrão do
+    endereço, então isto acontece o tempo todo.
+
+    Prefere o primeiro número (é o que serve ao antifraude); se não houver
+    número nenhum, corta no limite. O endereço de entrega de verdade continua
+    inteiro no pedido — isto aqui é só o que vai para o Mercado Pago.
+    """
+    texto = str(valor or '').strip()
+    if len(texto) <= LIMITE_STREET_NUMBER:
+        return texto
+
+    encontrado = re.search(r'\d+', texto)
+    if encontrado and len(encontrado.group()) <= LIMITE_STREET_NUMBER:
+        return encontrado.group()
+
+    return texto[:LIMITE_STREET_NUMBER].strip()
+
+
 def _order_address(order):
     addr = order.delivery_address if isinstance(order.delivery_address, dict) else {}
     zip_code = addr.get('zip_code') or addr.get('cep') or addr.get('zip')
@@ -114,7 +141,7 @@ def _order_address(order):
     if street:
         address['street_name'] = str(street)[:256]
     if number:
-        address['street_number'] = str(number)[:20]
+        address['street_number'] = numero_do_endereco(number)
     if city:
         address['city'] = str(city)
     if state:
@@ -215,6 +242,26 @@ def create_order(access_token, payload, device_id=None, timeout=25):
     except ValueError:
         body = {}
     return r.status_code, body
+
+
+def eh_erro_de_payload(status_code, body) -> bool:
+    """True quando o MP recusou o NOSSO payload, não o cartão do cliente.
+
+    A Orders API responde 400 com `errors[].code` de schema ('property_value',
+    'validation_error', ...) quando algum campo nosso está fora do formato —
+    o cartão nem chega a ser consultado. Confundir isso com recusa do emissor
+    foi o que matou o pedido CE-2608113992: um `street_number` de 12
+    caracteres derrubou uma venda de R$ 270,37 e sumiu com o pedido da tela.
+    """
+    if status_code not in (400, 422):
+        return False
+    erros = (body or {}).get('errors') or []
+    if not isinstance(erros, list):
+        return False
+    return any(
+        str((erro or {}).get('code', '')).lower() in ('property_value', 'validation_error', 'bad_request')
+        for erro in erros
+    )
 
 
 def interpret(status_code, body):

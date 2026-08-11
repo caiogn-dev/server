@@ -6,9 +6,20 @@ ficava `payment_status='pending'` como se existisse uma cobrança ativa, e o
 checkout respondia 201 com `payment_status: 'pending'` no corpo. O caminho de
 cartão já marca o pedido como FAILED; o de PIX não marcava nada.
 
+11/ago/2026 — o contrato foi corrigido pela metade que faltava. Marcar
+`order.status=FAILED` era honesto e destrutivo ao mesmo tempo: some com o
+pedido da tela de quem está trabalhando. Foi o que aconteceu com o pedido da
+Aline (CE-2608113992, R$ 270,37) pelo caminho do cartão — apareceu no painel e
+sumiu um segundo depois, "como se tivesse sido excluído".
+
+`payment_status=FAILED` já cumpre a honestidade inteira: ninguém finge
+cobrança ativa. O `status` do pedido não é lugar de contar história de
+pagamento — cobrança recusada é venda a recuperar (mandar PIX, cobrar na
+entrega), não pedido morto.
+
 Contrato honesto (sem quebrar os frontends, que já leem `payment_error` no
 corpo 2xx — CheckoutPage.jsx:620 do cardapidex-web):
-- service: PIX recusado marca order.status=FAILED e payment_status=FAILED;
+- service: PIX recusado marca payment_status=FAILED e NÃO mexe no status;
 - service: cobrança avulsa (order=None) recusada não explode;
 - view: mantém 201 (o pedido FOI criado) + `payment_error`, mas o corpo passa
   a dizer `payment_status='failed'` em vez de fingir cobrança pendente.
@@ -74,10 +85,11 @@ class CreatePaymentPixFailureTests(APITestCase):
         self.assertEqual(result['error'], 'collector inválido')
         # Nenhuma cobrança fantasma
         self.assertEqual(StorePayment.objects.filter(order=order).count(), 0)
-        # Pedido honesto: FAILED, não 'pending' fingindo cobrança ativa
+        # Pedido honesto: pagamento FALHOU, sem fingir cobrança ativa...
         order.refresh_from_db()
         self.assertEqual(order.payment_status, StoreOrder.PaymentStatus.FAILED)
-        self.assertEqual(order.status, StoreOrder.OrderStatus.FAILED)
+        # ...e continua visível no painel: honestidade não é apagar a venda.
+        self.assertNotEqual(order.status, StoreOrder.OrderStatus.FAILED)
 
     @patch('apps.stores.services.checkout_service.CheckoutService.get_payment_credentials',
            return_value={'access_token': 'TOKEN'})

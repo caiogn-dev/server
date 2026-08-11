@@ -1448,12 +1448,13 @@ class CheckoutService:
                 }
 
             logger.error(f"Payment creation failed: {result}")
-            # Honesto: sem cobrança criada, o pedido não pode ficar 'pending'
-            # fingindo cobrança ativa (o caminho de cartão já marca FAILED).
+            # Honesto sem ser destrutivo: `payment_status=FAILED` já impede o
+            # pedido de fingir cobrança ativa. Mexer no `status` era o que
+            # sumia com a venda da tela de quem está trabalhando — foi o susto
+            # do pedido da Aline em 11/ago, pelo caminho do cartão.
             if order is not None:
-                order.status = StoreOrder.OrderStatus.FAILED
                 order.payment_status = StoreOrder.PaymentStatus.FAILED
-                order.save(update_fields=['status', 'payment_status', 'updated_at'])
+                order.save(update_fields=['payment_status', 'updated_at'])
                 CheckoutService._release_coupon(order)
             return {
                 'success': False,
@@ -1534,10 +1535,33 @@ class CheckoutService:
                         'requires_redirect': False,
                     }
 
+                # O pedido NUNCA vira FAILED por causa do pagamento: em 11/ago
+                # o pedido da Aline (R$ 270,37) apareceu no painel e sumiu um
+                # segundo depois, e para a dona da loja foi como se alguém
+                # tivesse excluído a venda. Cartão recusado é venda a
+                # recuperar — quem conta essa história é o `payment_status`.
+                if mp_orders.eh_erro_de_payload(status_code, body):
+                    # Erro NOSSO de formato: o cartão nem foi consultado. Marcar
+                    # o pagamento como falho seria mentira no histórico.
+                    logger.error(
+                        'Orders API recusou nosso payload (pedido %s): %s %s',
+                        order.order_number, status_code, body,
+                        extra={'payment.payload_error': True, 'order_id': str(order.id)},
+                    )
+                    order.payment_status = StoreOrder.PaymentStatus.PENDING
+                    order.save(update_fields=['payment_status', 'updated_at'])
+                    CheckoutService._release_coupon(order)
+                    return {
+                        'success': False,
+                        'error': (
+                            'Não conseguimos enviar o pagamento ao Mercado Pago. '
+                            'O pedido foi mantido — tente outra forma de pagamento.'
+                        ),
+                    }
+
                 logger.error(f"Orders API card payment failed: {status_code} {body}")
-                order.status = StoreOrder.OrderStatus.FAILED
                 order.payment_status = StoreOrder.PaymentStatus.FAILED
-                order.save(update_fields=['status', 'payment_status', 'updated_at'])
+                order.save(update_fields=['payment_status', 'updated_at'])
                 CheckoutService._release_coupon(order)
                 return {
                     'success': False,
