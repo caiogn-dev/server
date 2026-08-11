@@ -25,6 +25,7 @@ ALIASES = {
     "alface": "Alface",
     "tomate": "Tomate",
     "batata doce": "Batata doce",
+    "batata palha": "Batata palha (aproximação TACO chips)",
     "batata inglesa": "Batata cozida",
     "batata": "Batata cozida",
     "talharim": "Macarrão cozido",
