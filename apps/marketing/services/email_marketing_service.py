@@ -10,6 +10,8 @@ from django.db.models import Count, Sum, Q
 
 logger = logging.getLogger(__name__)
 
+from .marca_da_loja import contatos_reais, marca_da_loja, moldura
+
 try:
     import resend
     RESEND_AVAILABLE = True
@@ -299,13 +301,33 @@ class EmailMarketingService:
         sent_count = 0
         failed_count = 0
         
-        from_email = campaign.from_email or self.default_from_email
-        from_name = campaign.from_name or self.default_from_name
+        # A identidade é da LOJA. Em 10/ago uma campanha da Cê Saladas saiu
+        # assinada "Pastita <contato@pastita.com.br>" para 39 pessoas, com o
+        # botão apontando para pastita.com.br — o nome, as cores e a tagline da
+        # loja estavam no banco e eram ignorados.
+        marca = marca_da_loja(getattr(campaign, 'store', None))
+        from_email = campaign.from_email or marca['from_email']
+        from_name = campaign.from_name or marca['from_name']
+        store_name = marca['nome']
         
-        # Get store name for personalization
-        store_name = campaign.store.name if campaign.store else 'Loja'
-        
+        # Endereço inventado pelo próprio sistema (@whatsapp.bot,
+        # @local.invalid) não é caixa de e-mail: 15 dos 39 destinatários da
+        # campanha de 10/ago eram assim. Cada bounce corrói a reputação do
+        # domínio no Resend e prejudica a entrega de quem tem e-mail real.
+        emails_brutos = [
+            s_['email'] if isinstance(s_, dict) else s_.email for s_ in subscribers
+        ]
+        descartados = len(emails_brutos) - len(contatos_reais(emails_brutos))
+        if descartados:
+            logger.info(
+                '[campanha] %s destinatários descartados por serem endereços '
+                'internos (WhatsApp/balcão)', descartados,
+            )
+
         for subscriber in subscribers:
+            email_bruto = subscriber['email'] if isinstance(subscriber, dict) else subscriber.email
+            if not contatos_reais([email_bruto]):
+                continue
             if isinstance(subscriber, dict):
                 email = subscriber['email']
                 name = subscriber.get('name', '')
@@ -325,9 +347,11 @@ class EmailMarketingService:
             if recipient.status != 'pending':
                 continue
             
-            # Get store URL
-            store_url = 'https://pastita.com.br'
-            store_domain = 'pastita.com.br'
+            # A URL vem do SSOT do storefront, não de uma constante: a
+            # variável {store_url} do template levava todo cliente, de toda
+            # loja, para pastita.com.br.
+            store_url = marca['url']
+            store_domain = store_url.replace('https://', '').replace('http://', '')
             
             # Personalize content with multiple variables
             personalization_vars = {
@@ -469,73 +493,45 @@ class EmailMarketingService:
             return {'success': False, 'error': 'Store not found'}
         
         expiry_text = f"Válido até {expiry_date}" if expiry_date else "Por tempo limitado"
-        
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f4f4;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                <tr>
-                    <td style="background: linear-gradient(135deg, #722F37 0%, #8B3A44 100%); padding: 40px 20px; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 28px;">🎁 Presente Especial!</h1>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 40px 30px;">
-                        <p style="font-size: 18px; color: #333; margin: 0 0 20px;">
-                            Olá, <strong>{customer_name}</strong>!
-                        </p>
-                        <p style="font-size: 16px; color: #666; line-height: 1.6; margin: 0 0 30px;">
-                            Preparamos um cupom exclusivo para você aproveitar nossas deliciosas massas artesanais.
-                        </p>
-                        
-                        <div style="background: linear-gradient(135deg, #C9A050 0%, #D4AF61 100%); border-radius: 12px; padding: 30px; text-align: center; margin: 0 0 30px;">
-                            <p style="color: #722F37; font-size: 14px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 2px;">
-                                Seu cupom de desconto
-                            </p>
-                            <p style="color: #722F37; font-size: 36px; font-weight: bold; margin: 0 0 10px; letter-spacing: 4px;">
-                                {coupon_code}
-                            </p>
-                            <p style="color: #722F37; font-size: 24px; font-weight: bold; margin: 0;">
-                                {discount_value} OFF
-                            </p>
-                        </div>
-                        
-                        <p style="font-size: 14px; color: #999; text-align: center; margin: 0 0 30px;">
-                            {expiry_text}
-                        </p>
-                        
-                        <div style="text-align: center;">
-                            <a href="https://pastita.com.br/cardapio" 
-                               style="display: inline-block; background-color: #722F37; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-size: 16px; font-weight: bold;">
-                                Usar Cupom Agora →
-                            </a>
-                        </div>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="background-color: #f9f9f9; padding: 30px; text-align: center;">
-                        <p style="color: #999; font-size: 12px; margin: 0;">
-                            {store.name}<br>
-                            Massas Artesanais
-                        </p>
-                    </td>
-                </tr>
-            </table>
-        </body>
-        </html>
+
+        marca = marca_da_loja(store)
+        corpo = f"""
+            <p style="font-size:18px;color:#333;margin:0 0 20px;">
+                Olá, <strong>{customer_name}</strong>!
+            </p>
+            <p style="font-size:16px;color:#666;line-height:1.6;margin:0 0 30px;">
+                Preparamos um cupom exclusivo para você usar na {marca['nome']}.
+            </p>
+            <div style="background:{marca['cor_secundaria']};border-radius:12px;padding:30px;text-align:center;margin:0 0 30px;">
+                <p style="color:#ffffff;font-size:14px;margin:0 0 10px;text-transform:uppercase;letter-spacing:2px;">
+                    Seu cupom de desconto
+                </p>
+                <p style="color:#ffffff;font-size:36px;font-weight:bold;margin:0 0 10px;letter-spacing:4px;">
+                    {coupon_code}
+                </p>
+                <p style="color:#ffffff;font-size:24px;font-weight:bold;margin:0;">
+                    {discount_value} OFF
+                </p>
+            </div>
+            <p style="font-size:14px;color:#999;text-align:center;margin:0;">{expiry_text}</p>
         """
-        
+        html = moldura(
+            marca,
+            titulo='🎁 Presente especial!',
+            corpo=corpo,
+            cta_texto='Usar cupom agora',
+            cta_url=marca['url'],
+        )
+
         return self.send_single_email(
             to_email=to_email,
-            subject=f"🎁 {discount_value} de desconto esperando por você!",
+            subject=f"🎁 {discount_value} de desconto na {marca['nome']}!",
             html_content=html,
+            from_name=marca['from_name'],
+            from_email=marca['from_email'],
+            reply_to=marca['reply_to'] or None,
         )
-    
+
     def send_welcome_email(
         self,
         store_id: str,
@@ -550,67 +546,42 @@ class EmailMarketingService:
         except Store.DoesNotExist:
             return {'success': False, 'error': 'Store not found'}
         
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        </head>
-        <body style="margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; background-color: #f4f4f4;">
-            <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background-color: #ffffff;">
-                <tr>
-                    <td style="background: linear-gradient(135deg, #722F37 0%, #8B3A44 100%); padding: 40px 20px; text-align: center;">
-                        <h1 style="color: #ffffff; margin: 0; font-size: 28px;">🍝 Bem-vindo à {store.name}!</h1>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="padding: 40px 30px;">
-                        <p style="font-size: 18px; color: #333; margin: 0 0 20px;">
-                            Olá, <strong>{customer_name}</strong>!
-                        </p>
-                        <p style="font-size: 16px; color: #666; line-height: 1.6; margin: 0 0 20px;">
-                            Estamos muito felizes em ter você conosco! 🎉
-                        </p>
-                        <p style="font-size: 16px; color: #666; line-height: 1.6; margin: 0 0 30px;">
-                            A partir de agora você receberá novidades, promoções exclusivas e muito mais diretamente no seu email.
-                        </p>
-                        
-                        <div style="background-color: #f9f9f9; border-radius: 12px; padding: 25px; margin: 0 0 30px;">
-                            <h3 style="color: #722F37; margin: 0 0 15px; font-size: 18px;">O que você pode esperar:</h3>
-                            <ul style="color: #666; font-size: 14px; line-height: 1.8; margin: 0; padding-left: 20px;">
-                                <li>Cupons exclusivos de desconto</li>
-                                <li>Novidades do cardápio</li>
-                                <li>Promoções especiais</li>
-                                <li>Dicas e receitas</li>
-                            </ul>
-                        </div>
-                        
-                        <div style="text-align: center;">
-                            <a href="https://pastita.com.br/cardapio" 
-                               style="display: inline-block; background-color: #722F37; color: #ffffff; text-decoration: none; padding: 16px 40px; border-radius: 8px; font-size: 16px; font-weight: bold;">
-                                Conhecer o Cardápio →
-                            </a>
-                        </div>
-                    </td>
-                </tr>
-                <tr>
-                    <td style="background-color: #f9f9f9; padding: 30px; text-align: center;">
-                        <p style="color: #999; font-size: 12px; margin: 0;">
-                            {store.name}<br>
-                            Massas Artesanais
-                        </p>
-                    </td>
-                </tr>
-            </table>
-        </body>
-        </html>
+        marca = marca_da_loja(store)
+        corpo = f"""
+            <p style="font-size:18px;color:#333;margin:0 0 20px;">
+                Olá, <strong>{customer_name}</strong>!
+            </p>
+            <p style="font-size:16px;color:#666;line-height:1.6;margin:0 0 20px;">
+                Estamos muito felizes em ter você com a gente! 🎉
+            </p>
+            <p style="font-size:16px;color:#666;line-height:1.6;margin:0 0 30px;">
+                A partir de agora você recebe novidades e promoções exclusivas da
+                {marca['nome']} direto no seu e-mail.
+            </p>
+            <div style="background-color:#f9f9f9;border-radius:12px;padding:25px;margin:0;">
+                <h3 style="color:{marca['cor_primaria']};margin:0 0 15px;font-size:18px;">O que você pode esperar:</h3>
+                <ul style="color:#666;font-size:14px;line-height:1.8;margin:0;padding-left:20px;">
+                    <li>Cupons exclusivos de desconto</li>
+                    <li>Novidades do cardápio</li>
+                    <li>Promoções especiais</li>
+                </ul>
+            </div>
         """
-        
+        html = moldura(
+            marca,
+            titulo=f"Bem-vindo à {marca['nome']}!",
+            corpo=corpo,
+            cta_texto='Conhecer o cardápio',
+            cta_url=marca['url'],
+        )
+
         return self.send_single_email(
             to_email=to_email,
-            subject=f"🍝 Bem-vindo à {store.name}!",
+            subject=f"Bem-vindo à {marca['nome']}!",
             html_content=html,
+            from_name=marca['from_name'],
+            from_email=marca['from_email'],
+            reply_to=marca['reply_to'] or None,
         )
 
 

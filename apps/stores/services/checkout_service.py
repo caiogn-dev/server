@@ -331,6 +331,19 @@ class CheckoutService:
         if not candidate:
             return ''
 
+        # A env pode trazer uma LISTA no estilo de origens permitidas —
+        # FRONTEND_URL em produção vale
+        # 'https://cardapidex.com.br,https://painel.pastita.com.br'. Sem
+        # separar, o host virava 'cardapidex.com.br,https:' e o link ia
+        # quebrado para o cliente: é a mesma função que monta o redirect
+        # pós-pagamento e o link de avaliação do pedido no WhatsApp.
+        if ',' in candidate:
+            for parte in candidate.split(','):
+                normalizada = CheckoutService._normalize_base_url(parte)
+                if normalizada:
+                    return normalizada
+            return ''
+
         if candidate.startswith('//'):
             candidate = f'https:{candidate}'
         elif not re.match(r'^[a-z][a-z0-9+.-]*://', candidate, re.IGNORECASE):

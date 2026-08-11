@@ -54,7 +54,7 @@ class Command(BaseCommand):
 <p style="font-size:16px;color:#666;line-height:1.6;">Na {{store_name}}, preparamos massas artesanais com muito carinho e ingredientes selecionados.</p>
 <p style="font-size:16px;color:#666;line-height:1.6;">Use o cupom <strong style="color:#722F37;">BEMVINDO10</strong> na sua primeira compra e ganhe 10% de desconto!</p>
 <div style="text-align:center;margin:30px 0;">
-<a href="https://pastita.com.br/cardapio" style="display:inline-block;background:#722F37;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-size:16px;font-weight:bold;">Ver Cardápio →</a>
+<a href="{store_url}" style="display:inline-block;background:#722F37;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-size:16px;font-weight:bold;">Ver Cardápio →</a>
 </div>
 </td></tr>
 <tr><td style="background:#f9f9f9;padding:30px;text-align:center;">
@@ -203,7 +203,7 @@ class Command(BaseCommand):
 <p style="color:#92400e;font-size:14px;margin:5px 0 0;">Seus itens ainda estão disponíveis</p>
 </div>
 <div style="text-align:center;margin:30px 0;">
-<a href="https://pastita.com.br/checkout" style="display:inline-block;background:#722F37;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-size:16px;font-weight:bold;">Finalizar Pedido →</a>
+<a href="{store_url}/carrinho" style="display:inline-block;background:#722F37;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-size:16px;font-weight:bold;">Finalizar Pedido →</a>
 </div>
 </td></tr>
 <tr><td style="background:#f9f9f9;padding:30px;text-align:center;">
@@ -232,7 +232,7 @@ class Command(BaseCommand):
 <p style="font-size:16px;color:#666;line-height:1.6;">Se você não solicitou o cancelamento ou tem alguma dúvida, entre em contato conosco.</p>
 <p style="font-size:16px;color:#666;line-height:1.6;">Esperamos vê-lo novamente em breve!</p>
 <div style="text-align:center;margin:30px 0;">
-<a href="https://pastita.com.br/cardapio" style="display:inline-block;background:#722F37;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-size:16px;font-weight:bold;">Ver Cardápio →</a>
+<a href="{store_url}" style="display:inline-block;background:#722F37;color:#fff;text-decoration:none;padding:16px 40px;border-radius:8px;font-size:16px;font-weight:bold;">Ver Cardápio →</a>
 </div>
 </td></tr>
 <tr><td style="background:#f9f9f9;padding:30px;text-align:center;">
