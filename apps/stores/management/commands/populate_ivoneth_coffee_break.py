@@ -38,11 +38,15 @@ logger = logging.getLogger(__name__)
 STORE_SLUG = 'ivoneth-banqueteria'
 IMG_PATH = 'stores/products/ivoneth-banqueteria'
 
+# Slug fica em `coffee-break` mesmo com o nome mudando: é o que aparece na
+# âncora da barra de categorias do cardápio e no link já compartilhado.
 CATEGORY = {
     'slug': 'coffee-break',
-    'name': 'Coffee Break',
-    'description': 'Pacotes fechados de coffee break para eventos, de 15 a 50 pessoas. '
-                   'Salgados, bolos, bebidas e descartáveis inclusos.',
+    'name': 'Encomenda Coffee Break',
+    'description': 'Pacotes fechados de coffee break por encomenda, de 15 a 50 pessoas — '
+                   'entregues prontos para servir, com salgados, bolos, bebidas e '
+                   'descartáveis inclusos. Não é buffet: não acompanha equipe nem '
+                   'serviço no local.',
     'sort_order': 0,
 }
 
@@ -66,7 +70,7 @@ PACOTES = [
         'pessoas': 20,
         'price': Decimal('455.00'),
         'featured': True,
-        'subtitulo': 'Combo Corporativo',
+        'subtitulo': 'Combo Corporativo — encomenda para 20 pessoas.',
         'inclui': [
             '1 bolo vulcão',
             '1 torta empadão',
@@ -176,11 +180,18 @@ PACOTES = [
 ]
 
 
+# O cliente lia "coffee break" como buffet — equipe servindo no local. Não é:
+# é encomenda, entregue pronta. Isso precisa estar no nome, na primeira linha
+# da descrição (que é o preview do card) e na arte, não só na categoria.
+AVISO_ENCOMENDA = ('Encomenda entregue pronta para servir — não acompanha '
+                   'equipe, montagem nem serviço no local.')
+
+
 def monta_descricao(pacote):
     """Primeira linha vira o preview do card; o resto vira <ul> no modal."""
-    cabecalho = f"Pacote fechado de coffee break para {pacote['pessoas']} pessoas."
+    cabecalho = f"Encomenda de coffee break para {pacote['pessoas']} pessoas."
     itens = '\n'.join(f'- {item}' for item in pacote['inclui'])
-    return f"{cabecalho}\n{itens}"
+    return f"{cabecalho}\n{itens}\n\n{AVISO_ENCOMENDA}"
 
 
 class Command(BaseCommand):
@@ -209,8 +220,11 @@ class Command(BaseCommand):
 
         for ordem, pacote in enumerate(PACOTES, start=1):
             pessoas = pacote['pessoas']
-            nome = f'Coffee Break {pessoas} Pessoas'
-            arquivo = f'coffee-break-{pessoas}.webp'
+            nome = f'Encomenda Coffee Break {pessoas} Pessoas'
+            # O nome carrega a versão da arte de propósito: o /_next/image do
+            # storefront cacheia por URL, então sobrescrever o arquivo mantém a
+            # arte antiga no ar. Arte nova = nome novo.
+            arquivo = f'coffee-break-encomenda-{pessoas}.webp'
             caminho = Path(settings.MEDIA_ROOT) / IMG_PATH / arquivo
             if caminho.exists():
                 image_url = f"{settings.MEDIA_URL.rstrip('/')}/{IMG_PATH}/{arquivo}"
@@ -218,7 +232,7 @@ class Command(BaseCommand):
                 image_url = ''
                 self.stdout.write(self.style.WARNING(f'  ⚠️  Imagem ausente: {arquivo}'))
 
-            curta = pacote.get('subtitulo') or f'Serve {pessoas} pessoas.'
+            curta = pacote.get('subtitulo') or f'Encomenda para {pessoas} pessoas, pronta para servir.'
             produto, criado = StoreProduct.objects.update_or_create(
                 store=store,
                 slug=f'coffee-break-{pessoas}-pessoas',
@@ -235,7 +249,7 @@ class Command(BaseCommand):
                     'attributes': {'inclui': pacote['inclui'], 'serve': pessoas},
                     # Sem a tag "coffee break": o modal já mostra o chip da
                     # categoria e as duas viravam duas etiquetas idênticas.
-                    'tags': ['evento', 'corporativo', 'festa', f'{pessoas} pessoas'],
+                    'tags': ['encomenda', 'evento', 'corporativo', f'{pessoas} pessoas'],
                     'track_stock': False,
                     'status': 'active',
                     'is_active': True,
