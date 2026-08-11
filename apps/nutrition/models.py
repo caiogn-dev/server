@@ -1,0 +1,149 @@
+from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models import Q
+
+from apps.core.models import BaseModel
+
+
+NUTRIENT_FIELDS = (
+    "energy_kcal", "carbohydrates_g", "total_sugars_g", "added_sugars_g",
+    "protein_g", "total_fat_g", "saturated_fat_g", "trans_fat_g",
+    "fiber_g", "sodium_mg",
+)
+
+
+class NutritionIngredient(BaseModel):
+    class Source(models.TextChoices):
+        TACO = "taco", "TACO/NEPA-Unicamp"
+        TBCA = "tbca", "TBCA"
+        MANUFACTURER = "manufacturer", "Fabricante"
+        LAB = "lab", "Laudo laboratorial"
+        MANUAL = "manual", "Manual"
+
+    store = models.ForeignKey("stores.Store", null=True, blank=True, on_delete=models.CASCADE, related_name="nutrition_ingredients")
+    canonical_name = models.CharField(max_length=255, db_index=True)
+    display_name = models.CharField(max_length=255)
+    category = models.CharField(max_length=80, blank=True, db_index=True)
+    preparation_state = models.CharField(max_length=80, blank=True)
+    default_unit = models.CharField(max_length=4, choices=(("g", "g"), ("ml", "ml")), default="g")
+    density_g_ml = models.DecimalField(max_digits=8, decimal_places=4, null=True, blank=True)
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.MANUAL)
+    source_code = models.CharField(max_length=80, blank=True)
+    source_edition = models.CharField(max_length=80, blank=True)
+    source_reference = models.URLField(blank=True)
+    source_accessed_at = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    energy_kcal = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    carbohydrates_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    total_sugars_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    added_sugars_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    protein_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    total_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    saturated_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    trans_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    fiber_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    sodium_mg = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+
+    class Meta:
+        ordering = ("display_name",)
+        constraints = [
+            models.UniqueConstraint(fields=("store", "canonical_name", "preparation_state"), name="uniq_nutrition_ingredient_store_name_state"),
+            models.CheckConstraint(condition=Q(density_g_ml__isnull=True) | Q(density_g_ml__gt=0), name="nutrition_density_positive"),
+        ]
+
+    def clean(self):
+        errors = {field: "O valor não pode ser negativo." for field in NUTRIENT_FIELDS if getattr(self, field) is not None and getattr(self, field) < 0}
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return self.display_name
+
+
+class ProductRecipe(BaseModel):
+    class Mode(models.TextChoices):
+        CALCULATED = "calculated", "Calculado"
+        MANUAL = "manual", "Manual"
+        HYBRID = "hybrid", "Híbrido"
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Rascunho"
+        ESTIMATED = "estimated", "Estimado"
+        REVIEWED = "reviewed", "Revisado"
+        APPROVED = "approved", "Aprovado"
+
+    product = models.OneToOneField("stores.StoreProduct", on_delete=models.CASCADE, related_name="nutrition_recipe")
+    serving_size_g = models.DecimalField(max_digits=10, decimal_places=3, default=100)
+    household_measure = models.CharField(max_length=100, blank=True)
+    servings_per_container = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True)
+    prepared_weight_g = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
+    calculation_mode = models.CharField(max_length=20, choices=Mode.choices, default=Mode.CALCULATED)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    source_notes = models.TextField(blank=True)
+    calculation_version = models.PositiveIntegerField(default=1)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="nutrition_recipes_reviewed")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    def clean(self):
+        if self.serving_size_g <= 0:
+            raise ValidationError({"serving_size_g": "A porção deve ser maior que zero."})
+
+
+class RecipeItem(BaseModel):
+    recipe = models.ForeignKey(ProductRecipe, on_delete=models.CASCADE, related_name="items")
+    ingredient = models.ForeignKey(NutritionIngredient, on_delete=models.PROTECT, related_name="recipe_items")
+    quantity_g = models.DecimalField(max_digits=10, decimal_places=3)
+    prepared_quantity_g = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
+    yield_factor = models.DecimalField(max_digits=8, decimal_places=4, null=True, blank=True)
+    notes = models.CharField(max_length=255, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("sort_order", "created_at")
+        constraints = [models.UniqueConstraint(fields=("recipe", "ingredient"), name="uniq_recipe_ingredient")]
+
+    def clean(self):
+        if self.quantity_g <= 0:
+            raise ValidationError({"quantity_g": "A quantidade deve ser maior que zero."})
+        if self.ingredient_id and self.recipe_id:
+            ingredient_store = self.ingredient.store_id
+            product_store = self.recipe.product.store_id
+            if ingredient_store and ingredient_store != product_store:
+                raise ValidationError({"ingredient": "O ingrediente pertence a outra loja."})
+
+
+class ProductNutritionProfile(BaseModel):
+    class ValueSource(models.TextChoices):
+        CALCULATED = "calculated", "Calculado"
+        MANUAL = "manual", "Manual"
+        HYBRID = "hybrid", "Híbrido"
+
+    product = models.OneToOneField("stores.StoreProduct", on_delete=models.CASCADE, related_name="nutrition_profile")
+    recipe = models.OneToOneField(ProductRecipe, null=True, blank=True, on_delete=models.SET_NULL, related_name="profile")
+    value_source = models.CharField(max_length=20, choices=ValueSource.choices, default=ValueSource.CALCULATED)
+    serving_size_g = models.DecimalField(max_digits=10, decimal_places=3, default=100)
+    household_measure = models.CharField(max_length=100, blank=True)
+    manual_override_reason = models.TextField(blank=True)
+    is_print_approved = models.BooleanField(default=False, db_index=True)
+    approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="nutrition_profiles_approved")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    energy_kcal = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    carbohydrates_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    total_sugars_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    added_sugars_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    protein_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    total_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    saturated_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    trans_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    fiber_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    sodium_mg = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+
+
+class NutritionProfileRevision(BaseModel):
+    profile = models.ForeignKey(ProductNutritionProfile, on_delete=models.CASCADE, related_name="revisions")
+    version = models.PositiveIntegerField()
+    snapshot = models.JSONField(default=dict)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("profile", "version"), name="uniq_nutrition_profile_revision")]

@@ -79,6 +79,7 @@ urlpatterns = [
 
         # Unified Store API
         path('stores/', include('apps.stores.urls')),
+        path('nutrition/', include('apps.nutrition.urls')),
 
         # Dashboard/Admin APIs
         path('notifications/', include('apps.notifications.urls')),

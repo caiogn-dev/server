@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     'apps.campaigns',
     'apps.automation',
     'apps.stores',  # Multi-store management (unified)
+    'apps.nutrition',  # TACO ingredients, recipes and ANVISA nutrition profiles
     'apps.fiscal',  # NFC-e (Focus NFe hoje, SEFAZ direto quando houver certificado)
     'apps.marketing',  # Email marketing with Resend
     'apps.instagram',  # Instagram Messaging API integration
@@ -797,7 +798,6 @@ UNFOLD = {
         ],
     },
 }
-
 
 
 
