@@ -63,3 +63,26 @@ def test_falha_ao_gerar_cai_na_original_e_nao_derruba_o_email(loja_com_logo, mon
     monkeypatch.setattr(m.Image, 'open', lambda *a, **k: (_ for _ in ()).throw(OSError('corrompida')))
 
     assert logo_para_email(loja_com_logo).startswith('https://')
+
+
+def test_logo_e_cartao_saem_arredondados(loja_com_logo):
+    """Pedido do dono em 11/ago: quadrado seco parece caixa de sistema.
+
+    Outlook ignora border-radius e mostra reto — degrada sozinho, sem quebrar.
+    """
+    from apps.marketing.services.marca_da_loja import marca_da_loja, moldura
+
+    html = moldura(
+        marca_da_loja(loja_com_logo), titulo='Oi', corpo='<p>x</p>',
+        cta_texto='Ver', cta_url='https://exemplo.com',
+    )
+
+    assert html.count('border-radius') >= 3  # cartão, logo e botão
+
+
+def test_cartao_tem_borda_sutil(loja_com_logo):
+    from apps.marketing.services.marca_da_loja import marca_da_loja, moldura
+
+    html = moldura(marca_da_loja(loja_com_logo), titulo='Oi', corpo='<p>x</p>')
+
+    assert 'border:1px solid' in html

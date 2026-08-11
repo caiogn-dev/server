@@ -242,9 +242,10 @@ def moldura(marca: dict, *, titulo: str, corpo: str,
     # laranja inteiro) — sobreposta a um degradê verde, vira um bloco recortado.
     # Branco funciona com qualquer logo, com ou sem transparência.
     faixa_da_logo = (
-        f'<tr><td style="background-color:#ffffff;padding:24px 20px 20px;text-align:center;">'
-        f'<img src="{logo}" alt="{nome}" width="120" '
-        f'style="width:120px;max-width:60%;height:auto;display:inline-block;border:0;">'
+        f'<tr><td style="background-color:#ffffff;padding:28px 20px 22px;text-align:center;">'
+        f'<img src="{logo}" alt="{nome}" width="112" '
+        f'style="width:112px;max-width:55%;height:auto;display:inline-block;border:0;'
+        f'border-radius:18px;">'
         f'</td></tr>'
         if logo else ''
     )
@@ -253,7 +254,7 @@ def moldura(marca: dict, *, titulo: str, corpo: str,
     botao = (
         f'<div style="text-align:center;margin:32px 0 0;">'
         f'<a href="{cta_url}" style="display:inline-block;background-color:{primaria};'
-        f'color:#ffffff;text-decoration:none;padding:16px 40px;border-radius:8px;'
+        f'color:#ffffff;text-decoration:none;padding:16px 40px;border-radius:10px;'
         f'font-size:16px;font-weight:bold;">{cta_texto} →</a></div>'
         if cta_texto and cta_url else ''
     )
@@ -265,21 +266,27 @@ def moldura(marca: dict, *, titulo: str, corpo: str,
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
 <body style="margin:0;padding:0;font-family:'Segoe UI',Arial,sans-serif;background-color:#f4f4f4;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background-color:#ffffff;">
-    {faixa_da_logo}
-    <tr>
-      <td style="background-color:{primaria};padding:32px 20px;text-align:center;">
-        {cabecalho}
-        <h1 style="color:#ffffff;margin:0;font-size:26px;line-height:1.3;">{titulo}</h1>
-      </td>
-    </tr>
-    <tr><td style="height:4px;background-color:{secundaria};font-size:0;line-height:0;">&nbsp;</td></tr>
-    <tr><td style="padding:40px 30px;">{corpo}{botao}</td></tr>
-    <tr>
-      <td style="background-color:#f9f9f9;padding:30px;text-align:center;">
-        <p style="color:#999;font-size:12px;margin:0;">{nome}{rodape_assinatura}</p>
-      </td>
-    </tr>
+  <!-- Tabela externa só para respirar nas bordas da tela: o cartão arredondado
+       precisa de fundo em volta, senão o canto some no branco do cliente. -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f4;">
+    <tr><td align="center" style="padding:24px 12px;">
+      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:16px;border:1px solid #e5e7eb;overflow:hidden;">
+        {faixa_da_logo}
+        <tr>
+          <td style="background-color:{primaria};padding:32px 20px;text-align:center;">
+            {cabecalho}
+            <h1 style="color:#ffffff;margin:0;font-size:26px;line-height:1.3;">{titulo}</h1>
+          </td>
+        </tr>
+        <tr><td style="height:4px;background-color:{secundaria};font-size:0;line-height:0;">&nbsp;</td></tr>
+        <tr><td style="padding:36px 30px;">{corpo}{botao}</td></tr>
+        <tr>
+          <td style="background-color:#fafafa;border-top:1px solid #f0f0f0;padding:26px 30px;text-align:center;">
+            <p style="color:#9ca3af;font-size:12px;margin:0;line-height:1.6;">{nome}{rodape_assinatura}</p>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
   </table>
 </body>
 </html>"""
