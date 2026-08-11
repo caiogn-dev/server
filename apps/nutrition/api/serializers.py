@@ -1,5 +1,6 @@
 from django.db import transaction
 from rest_framework import serializers
+from django.urls import reverse
 
 from apps.nutrition.models import NutritionIngredient, ProductRecipe, RecipeItem, ProductNutritionProfile, NUTRIENT_FIELDS
 from apps.nutrition.services.calculator import calculate_recipe
@@ -102,6 +103,7 @@ class ProductRecipeSerializer(serializers.ModelSerializer):
 class ProductNutritionProfileSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     calculation = serializers.SerializerMethodField()
+    public_url = serializers.SerializerMethodField()
     class Meta:
         model = ProductNutritionProfile
         fields = "__all__"
@@ -109,3 +111,8 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
 
     def get_calculation(self, obj):
         return calculate_recipe(obj.recipe) if obj.recipe_id else None
+
+    def get_public_url(self, obj):
+        path = reverse("public-nutrition-label", kwargs={"product_id": obj.product_id})
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
