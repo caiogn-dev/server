@@ -71,11 +71,13 @@ def parse_weighted_ingredients(description):
             after_pos = after.find(alias)
             if before_pos >= 0:
                 before_candidates.append((len(before) - (before_pos + len(alias)), -len(alias), display, alias))
-            if 0 <= after_pos <= 28:
+            if 0 <= after_pos <= 18:
                 after_candidates.append((after_pos, -len(alias), display, alias))
-        # "120 g de frango" wins over an ingredient left by the previous
-        # component; if nothing follows, use "alface 90 g" on the left.
-        candidates = after_candidates or before_candidates
+        # If words follow the weight ("20 g de muçarela"), only an alias on
+        # that side is valid. Falling back to the left would reuse the prior
+        # component ("frango ... 20 g de muçarela") and corrupt the recipe.
+        has_words_after = bool(re.search(r"[a-z]", after))
+        candidates = after_candidates if has_words_after else before_candidates
         if not candidates:
             unmatched.append(weight_match.group(0))
             continue

@@ -20,3 +20,8 @@ class DescriptionParserTests(SimpleTestCase):
         parsed = parse_weighted_ingredients("30~50g de legumes")
         self.assertEqual(parsed["items"], [])
         self.assertEqual(parsed["unmatched_weights"], ["50g"])
+
+    def test_does_not_assign_unknown_component_to_previous_ingredient(self):
+        parsed = parse_weighted_ingredients("120g frango desfiado. 20g de mussarela")
+        self.assertEqual([(i["ingredient_name"], i["quantity_g"]) for i in parsed["items"]], [("Frango cozido", Decimal("120"))])
+        self.assertEqual(parsed["unmatched_weights"], ["20g"])
