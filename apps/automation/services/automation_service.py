@@ -340,9 +340,12 @@ class AutomationService:
             {
                 'event_type': AutoMessage.EventType.ORDER_READY,
                 'name': 'Pedido pronto',
+                # `{proximo_passo}` vira "Pode vir buscar!" ou "Já vai sair
+                # para entrega." conforme o pedido. O texto antigo dizia as
+                # duas coisas na mesma frase e se contradizia.
                 'message_text': (
-                    "⏱️ Pedido #{order_number} pronto para retirada.\n\n"
-                    "Aguarde a chegada do entregador ou venha buscar!"
+                    "⏱️ Pedido #{order_number} está pronto!\n\n"
+                    "{proximo_passo}"
                 ),
                 'priority': 1,
             },
