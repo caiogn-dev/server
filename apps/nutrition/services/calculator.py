@@ -37,7 +37,15 @@ def calculate_recipe(recipe):
             totals[field] = None
             missing.append(field)
         else:
-            totals[field] = sum(getattr(item.ingredient, field) * weight / Decimal("100") for item, weight in zip(items, weights))
+            # Início Decimal explícito: `sum()` de gerador vazio devolve int 0,
+            # e int não tem quantize. Receita vazia nunca chegava aqui porque a
+            # tela só calculava ao salvar; com a prévia ao vivo, chega a cada
+            # tecla — inclusive antes de existir o primeiro ingrediente.
+            totals[field] = sum(
+                (getattr(item.ingredient, field) * weight / Decimal("100")
+                 for item, weight in zip(items, weights)),
+                Decimal("0"),
+            )
     per_100g = {field: (_q(value * Decimal("100") / total_weight) if value is not None and total_weight else None) for field, value in totals.items()}
     serving = recipe.serving_size_g
     per_serving = {field: (_q(value * serving / Decimal("100")) if value is not None else None) for field, value in per_100g.items()}

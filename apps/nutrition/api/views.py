@@ -1,10 +1,13 @@
 from django.db.models import Q
 from rest_framework import filters, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.nutrition.allergens import ALERGENICOS
+from apps.nutrition.services.calculator import calculate_recipe
+from apps.nutrition.services.previa import montar as montar_previa
 
 from apps.nutrition.models import NutritionIngredient, ProductRecipe, ProductNutritionProfile
 from .serializers import NutritionIngredientSerializer, ProductRecipeSerializer, ProductNutritionProfileSerializer
@@ -59,6 +62,23 @@ class ProductRecipeViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
+
+
+    @action(detail=False, methods=["post"])
+    def previa(self, request):
+        """Calcula sem gravar, para a tela responder enquanto a pessoa digita.
+
+        Mesmo cálculo do salvo: duas implementações divergiriam justamente
+        onde dói, com o número visto na tela diferente do impresso.
+        """
+        dados = request.data or {}
+        receita = montar_previa(
+            itens_crus=dados.get("items") or [],
+            serving_size_g=dados.get("serving_size_g", 100),
+            prepared_weight_g=dados.get("prepared_weight_g"),
+            physical_form=dados.get("physical_form", "solido"),
+        )
+        return Response(calculate_recipe(receita))
 
 
 class ProductNutritionProfileViewSet(viewsets.ModelViewSet):
