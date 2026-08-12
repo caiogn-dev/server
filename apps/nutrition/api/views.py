@@ -49,6 +49,22 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
             qs = qs.filter(category=category)
         return qs
 
+    @action(detail=False, methods=["get"], url_path="pendentes")
+    def pendentes(self, request):
+        """Ingredientes EM USO em receita que ainda não tiveram alergênico revisado.
+
+        Só os que estão em receita: revisar os 2.500 da base inteira seria
+        trabalho sem consequência, porque só entra na etiqueta o que compõe um
+        prato. É isso que transforma "51 pendências" em algo que acaba.
+        """
+        qs = self.get_queryset().filter(allergens_reviewed=False, recipe_items__isnull=False)
+        loja = request.query_params.get("store")
+        if loja:
+            qs = qs.filter(Q(store_id=loja) | Q(store__isnull=True),
+                           recipe_items__recipe__product__store_id=loja)
+        return Response(NutritionIngredientSerializer(
+            qs.distinct().order_by("display_name"), many=True).data)
+
     @action(detail=True, methods=["post"])
     def adotar(self, request, pk=None):
         """Cria uma cópia do alimento oficial dentro da loja e adota-a.
