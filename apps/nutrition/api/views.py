@@ -27,7 +27,16 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(store__isnull=True) | stores_for(self.request.user)).distinct()
         store = self.request.query_params.get("store")
         category = self.request.query_params.get("category")
-        if store:
+        # `escopo` separa o que é da loja do catálogo oficial. Sem isso os ~70
+        # ingredientes do lojista ficam espalhados em ordem alfabética no meio
+        # de 2.555 alimentos de TACO e POF, e a tela dele mostra um punhado ao
+        # acaso — foi o que aconteceu quando a base pública cresceu.
+        escopo = self.request.query_params.get("escopo")
+        if escopo == "loja":
+            qs = qs.filter(store_id=store) if store else qs.filter(store__isnull=False)
+        elif escopo == "base":
+            qs = qs.filter(store__isnull=True)
+        elif store:
             qs = qs.filter(Q(store__isnull=True) | Q(store_id=store))
         if category:
             qs = qs.filter(category=category)
