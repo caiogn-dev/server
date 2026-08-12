@@ -199,7 +199,7 @@ class LoyaltyService:
 
     @staticmethod
     @transaction.atomic
-    def recalculate_order_credit(order):
+    def recalculate_order_credit(order, apply: bool = True):
         """Recalcula o crédito de um pedido já entregue pelas regras de HOJE.
 
         `credit_order` é uma fotografia: grava a quantidade no momento da
@@ -212,6 +212,10 @@ class LoyaltyService:
         ajustado pela diferença (pra mais ou pra menos). Nunca duplica o
         crédito e nunca deixa o saldo negativo. Devolve
         {before, after, delta, changed, reason}.
+
+        `apply=False` percorre exatamente as mesmas decisões sem gravar nada —
+        é o que o `--dry-run` do comando usa, pra que a prévia não possa
+        divergir do que a execução real faria.
         """
         def _resultado(before, after, changed, reason=''):
             return {
@@ -240,8 +244,21 @@ class LoyaltyService:
             return _resultado(before, after, False, 'sem_mudanca')
 
         if tx is None:
-            LoyaltyService.credit_qualified(store, order.customer, order, after)
+            # Criar crédito onde nunca houve exige que o pedido seja elegível —
+            # os mesmos estados que creditam na entrega. Senão o recálculo vira
+            # porta dos fundos pra premiar pedido pendente ou cancelado.
+            elegivel = (
+                order.status in ('paid', 'delivered', 'completed')
+                or getattr(order, 'payment_status', None) == 'paid'
+            )
+            if not elegivel:
+                return _resultado(before, 0, False, 'pedido_nao_elegivel')
+            if apply:
+                LoyaltyService.credit_qualified(store, order.customer, order, after)
             return _resultado(before, after, True, 'creditado')
+
+        if not apply:
+            return _resultado(before, after, True, 'ajustado')
 
         account = StoreLoyaltyAccount.objects.select_for_update().get(id=tx.account_id)
         delta = after - before

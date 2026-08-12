@@ -55,16 +55,11 @@ class Command(BaseCommand):
         mudados = 0
         saldo_delta = 0
         for order in qs.iterator():
-            if options['dry_run']:
-                atual = (
-                    order.loyalty_transactions.filter(kind='earn')
-                    .values_list('quantity', flat=True).first()
-                ) or 0
-                novo = LoyaltyService.order_qualified_units(order.store, order)
-                resultado = {'before': atual, 'after': novo, 'delta': novo - atual,
-                             'changed': novo != atual}
-            else:
-                resultado = LoyaltyService.recalculate_order_credit(order)
+            # Mesma função nos dois modos: prévia que diverge da execução é
+            # pior que não ter prévia.
+            resultado = LoyaltyService.recalculate_order_credit(
+                order, apply=not options['dry_run'],
+            )
 
             if not resultado['changed']:
                 continue

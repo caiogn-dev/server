@@ -127,6 +127,8 @@ class LoyaltyRecalculoTest(TestCase):
         """Pedido entregue antes do produto ganhar selos: cria o crédito."""
         produto = self._produto(attributes={'loyalty_units': 5})
         order = self._pedido_com_produto(produto)
+        order.status = 'delivered'
+        order.save(update_fields=['status'])
         self.assertFalse(StoreLoyaltyTransaction.objects.filter(order=order).exists())
 
         resultado = LoyaltyService.recalculate_order_credit(order)
@@ -134,6 +136,54 @@ class LoyaltyRecalculoTest(TestCase):
         self.assertEqual(resultado['before'], 0)
         self.assertEqual(resultado['after'], 5)
         self.assertEqual(self._saldo(), 5)
+
+    def test_recalculo_nao_credita_pedido_nao_elegivel(self):
+        """Pedido cancelado/pendente nunca ganhou selo — o recálculo não pode
+        ser a porta dos fundos que credita o que a entrega nunca creditou."""
+        produto = self._produto(attributes={'loyalty_units': 5})
+        for status in ('pending', 'cancelled'):
+            order = self._pedido_com_produto(produto)
+            order.status = status
+            order.save(update_fields=['status'])
+
+            resultado = LoyaltyService.recalculate_order_credit(order)
+
+            self.assertEqual(resultado['changed'], False, status)
+            self.assertEqual(resultado['reason'], 'pedido_nao_elegivel', status)
+            self.assertFalse(StoreLoyaltyTransaction.objects.filter(order=order).exists())
+
+    def test_recalculo_ajusta_pedido_ja_creditado_mesmo_apos_cancelamento(self):
+        """Se o selo JÁ existe, o recálculo continua sendo a via de correção —
+        inclusive pra tirar de um pedido que virou cancelado."""
+        produto = self._produto(attributes={'loyalty_units': 6})
+        order = self._pedido_com_produto(produto)
+        order.status = 'delivered'
+        order.save(update_fields=['status'])
+        LoyaltyService.credit_order(order)
+        order.status = 'cancelled'
+        order.save(update_fields=['status'])
+
+        produto.attributes = {'loyalty_units': 2}
+        produto.save(update_fields=['attributes'])
+        resultado = LoyaltyService.recalculate_order_credit(order)
+
+        self.assertEqual(resultado['after'], 2)
+        self.assertEqual(self._saldo(), 2)
+
+    def test_dry_run_preve_o_mesmo_e_nao_grava(self):
+        """A prévia do --dry-run tem que ser exatamente o que a execução faria."""
+        produto = self._produto()
+        order = self._pedido_com_produto(produto)
+        LoyaltyService.credit_order(order)
+        produto.attributes = {'loyalty_units': 8}
+        produto.save(update_fields=['attributes'])
+
+        previa = LoyaltyService.recalculate_order_credit(order, apply=False)
+        self.assertEqual(self._saldo(), 1)  # nada gravado
+
+        real = LoyaltyService.recalculate_order_credit(order, apply=True)
+        self.assertEqual(previa, real)
+        self.assertEqual(self._saldo(), 8)
 
     def test_recalculo_de_pedido_sem_cliente_nao_quebra(self):
         produto = self._produto(attributes={'loyalty_units': 5})
