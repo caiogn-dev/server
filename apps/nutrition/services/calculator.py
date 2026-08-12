@@ -1,6 +1,7 @@
 from decimal import Decimal, ROUND_HALF_UP
 
 from apps.nutrition.allergens import da_receita as allergens_da_receita
+from apps.nutrition.lactose import da_receita as lactose_da_receita
 from apps.nutrition.models import NUTRIENT_FIELDS
 from apps.nutrition.services.rotulagem import (
     LIMITES_FRONTAIS as FORMAS_VALIDAS, alertas_frontais, arredondar_tabela,
@@ -114,4 +115,5 @@ def calculate_recipe(recipe):
         "label_per_serving": arredondar_tabela(per_serving),
         "front_of_pack": frontal,
         "allergens": allergens_da_receita(recipe),
+        "lactose": lactose_da_receita(recipe),
     }

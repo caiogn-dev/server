@@ -5,6 +5,7 @@ from django.views.decorators.cache import cache_page
 from django.views.decorators.http import require_GET
 
 from .allergens import da_receita as allergens_da_receita
+from .lactose import da_receita as lactose_da_receita
 from .models import NUTRIENT_FIELDS, ProductNutritionProfile
 from .services.rotulagem import alertas_frontais
 
@@ -66,12 +67,23 @@ def public_nutrition_label(request, product_id):
         frontal_html = ("<section><h2>Rotulagem frontal</h2><p class='note'>Ainda não é possível "
                         "concluir: faltam dados de açúcar adicionado, gordura saturada ou sódio.</p></section>")
 
+    lact = lactose_da_receita(profile.recipe) if profile.recipe_id else None
+    if lact and lact["revisado"]:
+        lact_html = f"<p class='alerg'>{escape(lact['texto'])}</p>"
+    elif lact:
+        lact_html = ("<p class='note'>Presença de lactose em revisão. Consulte a loja "
+                     "em caso de intolerância.</p>")
+    else:
+        lact_html = ""
+
     alerg = allergens_da_receita(profile.recipe) if profile.recipe_id else None
     if alerg and alerg["revisado"]:
-        alerg_html = f"<section><h2>Alergênicos</h2><p class='alerg'>{escape(alerg['texto'])}</p></section>"
+        alerg_html = (f"<section><h2>Alergênicos</h2><p class='alerg'>{escape(alerg['texto'])}</p>"
+                      f"{lact_html}</section>")
     elif alerg:
         alerg_html = ("<section><h2>Alergênicos</h2><p class='note'>Informação em revisão. "
-                      "Consulte a loja antes de consumir em caso de alergia alimentar.</p></section>")
+                      "Consulte a loja antes de consumir em caso de alergia alimentar.</p>"
+                      f"{lact_html}</section>")
     else:
         alerg_html = ""
     product_name = escape(profile.product.name)

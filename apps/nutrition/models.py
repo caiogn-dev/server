@@ -48,6 +48,19 @@ class NutritionIngredient(BaseModel):
     # A etiqueta não pode afirmar "NÃO CONTÉM GLÚTEN" em cima da segunda —
     # por isso a revisão é explícita, e o import automático não a marca.
     allergens_reviewed = models.BooleanField(default=False, db_index=True)
+    # RDC 136/2017. Lactose NÃO é alergênico — intolerância é deficiência de
+    # enzima, não resposta imune —, então tem norma e campo próprios. É estado
+    # declarado, não miligrama: nem TACO nem POF medem lactose, e o dado real
+    # é o que vem impresso na embalagem.
+    lactose = models.CharField(max_length=20, default="nao_revisado", db_index=True, choices=(
+        ("contem", "Contém lactose"), ("baixo_teor", "Baixo teor de lactose"),
+        ("zero", "Zero lactose"), ("isento", "Não contém lactose"),
+        ("nao_revisado", "Não revisado"),
+    ))
+    # Peso do preparo PRONTO, quando o ingrediente é composto. Bobó feito com
+    # 1 kg de insumos não rende 1 kg: a água evapora. Dividir pela soma do cru
+    # dilui todos os valores. Nulo = sem perda declarada.
+    prepared_weight_g = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
     energy_kcal = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     carbohydrates_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     total_sugars_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
@@ -81,6 +94,57 @@ class NutritionIngredient(BaseModel):
 
     def __str__(self):
         return self.display_name
+
+
+class IngredientComponent(BaseModel):
+    """Um ingrediente que é feito de outros — bobó, purê, molho da casa.
+
+    Sem isto, "Bobó de frango" só existe como nome sem número: tabela nenhuma
+    mede o bobó DA SUA cozinha, porque a proporção de leite de coco é sua. A
+    saída era o lojista estimar à mão, que é a fonte de erro que este app
+    inteiro tenta evitar.
+
+    Os valores do composto são CALCULADOS e gravados nos campos dele, então
+    todo o resto da cadeia — etiqueta, lupa, alergênico — continua funcionando
+    sem saber que aquele ingrediente é composto.
+    """
+    composto = models.ForeignKey(
+        "NutritionIngredient", on_delete=models.CASCADE, related_name="componentes")
+    ingrediente = models.ForeignKey(
+        "NutritionIngredient", on_delete=models.PROTECT, related_name="usado_em_compostos")
+    quantity_g = models.DecimalField(max_digits=10, decimal_places=3)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ("sort_order", "created_at")
+        constraints = [
+            models.UniqueConstraint(fields=("composto", "ingrediente"), name="uniq_componente_do_composto"),
+            models.CheckConstraint(condition=~Q(composto=models.F("ingrediente")),
+                                   name="componente_nao_e_ele_mesmo"),
+        ]
+
+    def clean(self):
+        if self.quantity_g is not None and self.quantity_g <= 0:
+            raise ValidationError({"quantity_g": "A quantidade deve ser maior que zero."})
+        if self.composto_id and self.ingrediente_id:
+            if self.composto_id == self.ingrediente_id:
+                raise ValidationError({"ingrediente": "Um preparo não pode ser componente de si mesmo."})
+            # Ciclo: A feito de B feito de A calcularia para sempre.
+            if _depende_de(self.ingrediente, self.composto_id):
+                raise ValidationError({"ingrediente":
+                                       "Isso criaria um ciclo: esse preparo já usa o que você está montando."})
+
+
+def _depende_de(ingrediente, alvo_id, vistos=None):
+    """O `ingrediente` usa `alvo_id` em algum nível da composição?"""
+    vistos = vistos or set()
+    if ingrediente.id in vistos:
+        return False
+    vistos.add(ingrediente.id)
+    for componente in IngredientComponent.objects.filter(composto=ingrediente).select_related("ingrediente"):
+        if componente.ingrediente_id == alvo_id or _depende_de(componente.ingrediente, alvo_id, vistos):
+            return True
+    return False
 
 
 class ProductRecipe(BaseModel):
