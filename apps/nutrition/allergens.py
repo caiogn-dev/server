@@ -112,7 +112,7 @@ def da_receita(recipe):
     impresso em cima de cadastro não revisado é pior que nenhuma etiqueta.
     """
     contem, pode_conter, pendentes = set(), set(), []
-    for item in recipe.items.select_related("ingredient"):
+    for item in recipe.items.select_related("ingredient").all():
         ing = item.ingredient
         if not ing.allergens_reviewed:
             pendentes.append(ing.display_name)

@@ -2,7 +2,9 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from apps.nutrition.allergens import da_receita as allergens_da_receita
 from apps.nutrition.models import NUTRIENT_FIELDS
-from apps.nutrition.services.rotulagem import alertas_frontais, arredondar_tabela
+from apps.nutrition.services.rotulagem import (
+    LIMITES_FRONTAIS as FORMAS_VALIDAS, alertas_frontais, arredondar_tabela,
+)
 
 
 DAILY_VALUES = {
@@ -44,7 +46,14 @@ def calculate_recipe(recipe):
     }
     ingredientes_incompletos = sorted({nome for nomes in faltando_por_nutriente.values() for nome in nomes})
 
-    forma = getattr(getattr(recipe, "profile", None), "physical_form", "solido") or "solido"
+    # A forma vem do perfil, que pode nem existir ainda. Validar contra a lista
+    # em vez de confiar no atributo: `alertas_frontais` é estrita de propósito
+    # (chamada explícita com forma inválida deve estourar), mas aqui um perfil
+    # ausente ou estranho não pode derrubar o cálculo inteiro — cai no default
+    # do modelo, que é sólido.
+    forma = getattr(getattr(recipe, "profile", None), "physical_form", None)
+    if forma not in FORMAS_VALIDAS:
+        forma = "solido"
     frontal = alertas_frontais(per_100g, forma)
 
     return {

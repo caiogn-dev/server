@@ -9,6 +9,12 @@ class RecipeCalculatorTests(SimpleTestCase):
         ingredient = Mock(**{field: values.get(field, Decimal("0")) for field in (
             "energy_kcal", "carbohydrates_g", "total_sugars_g", "added_sugars_g", "protein_g",
             "total_fat_g", "saturated_fat_g", "trans_fat_g", "fiber_g", "sodium_mg")})
+        # O cálculo passou a ler alergênicos junto (RDC 26/2015). Sem estes
+        # campos o Mock devolve outro Mock, que não é iterável.
+        ingredient.display_name = values.get("display_name", "Ingrediente")
+        ingredient.allergens = values.get("allergens", [])
+        ingredient.may_contain = values.get("may_contain", [])
+        ingredient.allergens_reviewed = values.get("allergens_reviewed", True)
         return Mock(ingredient=ingredient, quantity_g=Decimal(str(grams)), prepared_quantity_g=None)
 
     def recipe(self, items, serving=100):
