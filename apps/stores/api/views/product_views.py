@@ -6,13 +6,16 @@ from rest_framework import viewsets, permissions
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from django.db import transaction
 from django.db.models import Q
 
 from apps.stores.models import (
+    Store,
     StoreCategory, StoreProduct, StoreProductVariant,
     StoreCombo, StoreProductType
 )
 from apps.core.permissions import StoreQuerysetMixin
+from apps.stores.services.codigo_interno import gerar_codigo_interno
 from ..serializers import (
     StoreCategorySerializer,
     StoreProductSerializer, StoreProductCreateSerializer,
@@ -35,6 +38,7 @@ class StoreCategoryViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     serializer_class = StoreCategorySerializer
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
+
 
     def initialize_request(self, request, *args, **kwargs):
         """Override to resolve store slug to UUID if needed."""
@@ -79,6 +83,67 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     pagination_class = StoreCatalogPagination
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
+
+    @action(detail=False, methods=["post"], url_path="gerar-codigos-internos")
+    def gerar_codigos_internos(self, request, store_pk=None):
+        """Dá código de barras interno a quem ainda não tem.
+
+        Existia só no painel, que sorteava um EAN-13 aleatório na hora de
+        imprimir. Três problemas: o código não dizia de que loja era; dois
+        operadores imprimindo ao mesmo tempo podiam sortear o mesmo número,
+        porque a lista de "já usados" era local; e o código só nascia se
+        alguém por acaso imprimisse aquele produto.
+
+        Aqui usa o mesmo gerador do comando: determinístico, com o número da
+        loja embutido, e nunca sobrescreve código existente — o de fabricante
+        é a identidade real do produto, e o interno já impresso está colado
+        na prateleira.
+        """
+        # A loja vem da URL aninhada ou do corpo — o painel usa a rota plana
+        # (/stores/products/...), onde não há store_pk.
+        loja = Store.objects.filter(pk=store_pk).first() if store_pk else None
+        if not loja:
+            # Aceita id ou slug: filtrar por pk com um slug estoura, porque a
+            # chave é UUID.
+            identificador = str(request.data.get("store") or "")
+            try:
+                uuid_module.UUID(identificador)
+                loja = Store.objects.filter(pk=identificador).first()
+            except (ValueError, AttributeError):
+                loja = Store.objects.filter(slug=identificador).first()
+        if not loja:
+            return Response({"detail": "Informe a loja."}, status=400)
+
+        numero_da_loja = list(
+            Store.objects.order_by("created_at").values_list("id", flat=True)
+        ).index(loja.id) + 1
+
+        alvo = StoreProduct.objects.filter(store=loja, is_active=True).filter(
+            Q(barcode="") | Q(barcode__isnull=True)
+        )
+        ids = request.data.get("produtos") or []
+        if ids:
+            alvo = alvo.filter(id__in=ids)
+
+        usados = set(StoreProduct.objects.filter(store=loja)
+                     .exclude(Q(barcode="") | Q(barcode__isnull=True))
+                     .values_list("barcode", flat=True))
+        sequencial = len(usados)
+        gerados = {}
+        with transaction.atomic():
+            for produto in alvo.order_by("created_at"):
+                codigo = gerar_codigo_interno(numero_da_loja, sequencial)
+                while codigo in usados:
+                    sequencial += 1
+                    codigo = gerar_codigo_interno(numero_da_loja, sequencial)
+                produto.barcode = codigo
+                produto.save(update_fields=["barcode", "updated_at"])
+                usados.add(codigo)
+                gerados[str(produto.id)] = codigo
+                sequencial += 1
+
+        return Response({"gerados": gerados, "total": len(gerados)})
+
 
     def initialize_request(self, request, *args, **kwargs):
         """Override to resolve store slug to UUID if needed."""
