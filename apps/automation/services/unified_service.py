@@ -735,6 +735,83 @@ class UnifiedService:
         interactive_reply: Optional[Dict[str, Any]] = None,
         location_data: Optional[Dict[str, Any]] = None,
     ) -> Optional['UnifiedResponse']:
+        """Invólucro que PERSISTE o que o pipeline já sabe.
+
+        A tela "Intenções" do painel ficou permanentemente vazia porque
+        `IntentLog.objects.create` não existia em lugar nenhum do código: o
+        modelo, a API e a tela foram feitos, e a escrita nunca. O pipeline
+        calcula intenção, origem, handler e duração a cada mensagem e emitia
+        isso só num log de texto, que morre no stdout do container.
+
+        O log fica AQUI, e não dentro do processamento, porque
+        `_processar_mensagem` tem dezenas de `return` (atalho de localização,
+        checkout pendente, modo humano, erro…). Gravar em cada um garantiria
+        que algum ficasse de fora — que é como uma tela nasce meio vazia e
+        deixa de merecer confiança.
+        """
+        import time as _time
+        inicio = _time.monotonic()
+        resposta = self._processar_mensagem(
+            message_text,
+            interactive_reply=interactive_reply,
+            location_data=location_data,
+        )
+        self._registrar_intencao(
+            message_text=message_text,
+            resposta=resposta,
+            duracao_ms=round((_time.monotonic() - inicio) * 1000, 1),
+        )
+        return resposta
+
+    def _registrar_intencao(self, message_text, resposta, duracao_ms) -> None:
+        """Grava a linha da tela "Intenções". Nunca estoura para o chamador."""
+        from apps.automation.models import IntentLog
+
+        if not getattr(self, 'company', None):
+            return
+        try:
+            fonte = getattr(getattr(resposta, 'source', None), 'value', None) or 'sem_resposta'
+            meta = getattr(resposta, 'metadata', None) or {}
+            telefone = (
+                getattr(self, 'phone_number', None)
+                or getattr(getattr(self, 'conversation', None), 'phone_number', '')
+                or ''
+            )
+            IntentLog.objects.create(
+                company=self.company,
+                conversation=getattr(self, 'conversation', None),
+                phone_number=telefone,
+                message_text=message_text or '',
+                # Sem resposta é informação, não ausência dela: é o caso que a
+                # dona precisa ver para saber onde o bot está calando.
+                intent_type=str(meta.get('intent') or ('sem_resposta' if resposta is None else fonte)),
+                method=(
+                    IntentLog.MethodType.LLM if fonte == 'llm'
+                    else IntentLog.MethodType.NONE if resposta is None
+                    else IntentLog.MethodType.REGEX
+                ),
+                confidence=float(meta.get('confidence') or 0.0),
+                handler_used=str(meta.get('handler') or ''),
+                response_text=(getattr(resposta, 'content', '') or ''),
+                response_type=(
+                    IntentLog.ResponseType.INTERACTIVE
+                    if getattr(resposta, 'interactive_type', None) or getattr(resposta, 'buttons', None)
+                    else IntentLog.ResponseType.TEXT
+                ),
+                processing_time_ms=duracao_ms,
+                entities=(meta.get('entities') or {}),
+                metadata={'source': fonte},
+            )
+        except Exception:
+            # Observabilidade nunca pode custar a resposta ao cliente.
+            logger.warning('[unified] falha ao gravar IntentLog', exc_info=True)
+
+    def _processar_mensagem(
+        self,
+        message_text: str,
+        interactive_reply: Optional[Dict[str, Any]] = None,
+        location_data: Optional[Dict[str, Any]] = None,
+    ) -> Optional['UnifiedResponse']:
         """
         Processa uma mensagem e retorna a melhor resposta disponível.
 

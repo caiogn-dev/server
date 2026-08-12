@@ -153,15 +153,21 @@ class RenderTemplateTestCase(TestCase):
 class UnifiedServiceProcessMessageTestCase(TestCase):
     """Testa o fluxo principal do UnifiedService."""
 
-    def test_empty_message_returns_fallback(self):
+    # Mensagem sem texto é sticker, foto ou áudio — não é pergunta. Responder
+    # "não entendi" a uma figurinha é o bot falando sozinho, então o pipeline
+    # cala (`_suppressed('empty_message')`). Estes dois testes ainda cobravam o
+    # FALLBACK antigo e falhavam desde então: duas luzes vermelhas permanentes,
+    # que é justamente o que faz uma regressão de verdade passar batida.
+    def test_empty_message_is_suppressed(self):
         svc = _make_unified_service()
         resp = svc.process_message('')
-        self.assertEqual(resp.source, ResponseSource.FALLBACK)
+        self.assertEqual(resp.source, ResponseSource.SUPPRESSED)
+        self.assertEqual(resp.metadata['reason'], 'empty_message')
 
-    def test_whitespace_message_returns_fallback(self):
+    def test_whitespace_message_is_suppressed(self):
         svc = _make_unified_service()
         resp = svc.process_message('   ')
-        self.assertEqual(resp.source, ResponseSource.FALLBACK)
+        self.assertEqual(resp.source, ResponseSource.SUPPRESSED)
 
     def test_handler_response_takes_priority(self):
         svc = _make_unified_service()
