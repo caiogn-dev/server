@@ -7,6 +7,13 @@ from apps.nutrition.services.rotulagem import (
 )
 
 
+# A TACO nunca traz açúcares nem gordura trans (colunas inexistentes), e marca
+# "NA" (não analisado) espalhado no resto — 187 alimentos sem gordura saturada,
+# 236 sem fibra. Por isso a regra não é uma lista de campos: num alimento da
+# TACO, valor nulo JÁ significa que a fonte não mediu. O lojista não tem como
+# preencher, e cobrar dele é mandá-lo procurar dado que não existe.
+FONTES_COMPLETAS = {"manual", "manufacturer", "lab"}
+
 DAILY_VALUES = {
     "energy_kcal": Decimal("2000"), "carbohydrates_g": Decimal("300"),
     "added_sugars_g": Decimal("50"), "protein_g": Decimal("50"),
@@ -44,7 +51,31 @@ def calculate_recipe(recipe):
                        if getattr(item.ingredient, field) is None})
         for field in missing
     }
-    ingredientes_incompletos = sorted({nome for nomes in faltando_por_nutriente.values() for nome in nomes})
+    # Duas ausências diferentes, que antes vinham na mesma lista e faziam
+    # parecer que o lojista tinha esquecido de cadastrar:
+    #   - ingrediente SEM NADA: ninguém preencheu, é trabalho dele;
+    #   - nutriente que a FONTE não mede: a TACO não traz açúcares nem gordura
+    #     trans, então todo alimento dela "falta" esses três. Cobrar isso do
+    #     lojista é mandá-lo procurar um dado que não existe na tabela.
+    # O discriminador é a FONTE do ingrediente, não "tem algum valor": um
+    # ingrediente manual preenchido pela metade continua sendo trabalho do
+    # lojista, enquanto um da TACO sem açúcar é limite da tabela.
+    def _fonte_nao_mede(ingrediente, campo):
+        return ingrediente.source not in FONTES_COMPLETAS
+
+    nao_medidos, cobrar_do_lojista = {}, set()
+    for campo in missing:
+        for item in items:
+            ing = item.ingredient
+            if getattr(ing, campo) is not None:
+                continue
+            if _fonte_nao_mede(ing, campo):
+                nao_medidos.setdefault(campo, set()).add(ing.display_name)
+            else:
+                cobrar_do_lojista.add(ing.display_name)
+
+    faltando_com_dado = {campo: sorted(nomes) for campo, nomes in nao_medidos.items()}
+    ingredientes_incompletos = sorted(cobrar_do_lojista)
 
     # A forma vem do perfil, que pode nem existir ainda. Validar contra a lista
     # em vez de confiar no atributo: `alertas_frontais` é estrita de propósito
@@ -64,7 +95,11 @@ def calculate_recipe(recipe):
         "daily_values_percent": daily_values,
         "missing_nutrients": missing,
         "missing_by_nutrient": faltando_por_nutriente,
+        # Ingredientes que ninguém preencheu — o que o lojista precisa resolver.
         "incomplete_ingredients": ingredientes_incompletos,
+        # Nutriente ausente em ingrediente que TEM dado: a fonte não mede.
+        # Resolve com valor de fabricante ou laudo, não com cadastro.
+        "unmeasured_by_nutrient": {c: n for c, n in faltando_com_dado.items() if n},
         # Valores como vão para a etiqueta impressa (IN 75/2020). Os de cima
         # continuam crus, porque relatório e conferência precisam do número real.
         "label_per_100g": arredondar_tabela(per_100g),

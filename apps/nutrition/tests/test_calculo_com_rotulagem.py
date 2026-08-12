@@ -21,9 +21,11 @@ def ingrediente(nome, **valores):
     padrao = dict(energy_kcal=0, carbohydrates_g=0, total_sugars_g=0, added_sugars_g=0,
                   protein_g=0, total_fat_g=0, saturated_fat_g=0, trans_fat_g=0,
                   fiber_g=0, sodium_mg=0)
+    fonte = valores.pop("source", "manual")
     padrao.update(valores)
     return NutritionIngredient.objects.create(
-        canonical_name=nome, display_name=nome, allergens_reviewed=True, **padrao,
+        canonical_name=nome, display_name=nome, allergens_reviewed=True,
+        source=fonte, **padrao,
     )
 
 
@@ -39,7 +41,7 @@ class CalculoComRotulagemTest(TestCase):
     def test_diz_qual_ingrediente_esta_sem_dado(self):
         RecipeItem.objects.create(recipe=self.recipe, ingredient=ingrediente("Arroz"), quantity_g=100)
         RecipeItem.objects.create(recipe=self.recipe,
-                                  ingredient=ingrediente("Bacalhau", sodium_mg=None),
+                                  ingredient=ingrediente("Bacalhau", sodium_mg=None, source="manual"),
                                   quantity_g=100)
 
         r = calculate_recipe(self.recipe)
@@ -47,6 +49,32 @@ class CalculoComRotulagemTest(TestCase):
         self.assertIn("sodium_mg", r["missing_nutrients"])
         self.assertEqual(r["missing_by_nutrient"]["sodium_mg"], ["Bacalhau"])
         self.assertEqual(r["incomplete_ingredients"], ["Bacalhau"])
+
+    def test_nutriente_que_a_fonte_nao_mede_nao_vira_culpa_do_lojista(self):
+        # Todo alimento da TACO vem sem açúcares e sem gordura trans. Antes,
+        # isso listava o ingrediente como "incompleto" e mandava o lojista
+        # procurar um dado que a tabela não tem.
+        taco = ingrediente("Arroz, tipo 1, cozido", total_sugars_g=None,
+                           added_sugars_g=None, trans_fat_g=None)
+        taco.source = "taco"
+        taco.save()
+        RecipeItem.objects.create(recipe=self.recipe, ingredient=taco, quantity_g=100)
+
+        r = calculate_recipe(self.recipe)
+
+        self.assertEqual(r["incomplete_ingredients"], [])
+        self.assertEqual(r["unmeasured_by_nutrient"]["added_sugars_g"], ["Arroz, tipo 1, cozido"])
+
+    def test_ingrediente_sem_nada_continua_sendo_culpa_do_lojista(self):
+        vazio = ingrediente("Camarao a provencal", energy_kcal=None, sodium_mg=None)
+        vazio.source = "manual"
+        vazio.save()
+        RecipeItem.objects.create(recipe=self.recipe, ingredient=vazio, quantity_g=100)
+
+        r = calculate_recipe(self.recipe)
+
+        self.assertEqual(r["incomplete_ingredients"], ["Camarao a provencal"])
+        self.assertNotIn("Camarao a provencal", r.get("unmeasured_by_nutrient", {}).get("sodium_mg", []))
 
     def test_receita_completa_nao_acusa_ingrediente(self):
         RecipeItem.objects.create(recipe=self.recipe, ingredient=ingrediente("Arroz"), quantity_g=100)
