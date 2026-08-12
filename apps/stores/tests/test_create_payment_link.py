@@ -72,6 +72,24 @@ class CreatePaymentLinkTests(APITestCase):
         self.assertEqual(sp.external_id, 'PREFAV')  # preference id (até o pagto existir)
         self.assertTrue(sp.external_reference.startswith('splink:'))
         self.assertEqual(sp.status, StorePayment.PaymentStatus.PENDING)
+        # Sem gravar a descrição, a lista de cobranças do painel vira uma pilha
+        # de valores sem rótulo — em prod havia 5 pendentes assim, e o lojista
+        # não tinha como saber qual link era de quem.
+        self.assertEqual((sp.metadata or {}).get('description'), 'Sinal do evento')
+
+    @patch('apps.stores.services.checkout_service.CheckoutService.get_payment_credentials',
+           return_value={'access_token': 'TOKEN', 'provider': 'mercadopago'})
+    @patch('mercadopago.SDK')
+    def test_link_avulso_sem_descricao_nao_inventa_rotulo(self, mock_sdk, _creds):
+        from apps.stores.services.checkout_service import CheckoutService
+        mock_sdk.return_value = _mp_pref_mock('PREFAV2', 'https://mp.example/c/PREFAV2')
+
+        result = CheckoutService.create_payment(
+            None, 'link', {}, amount=Decimal('20.00'), store=self.store,
+        )
+
+        sp = StorePayment.objects.get(id=result['payment_db_id'])
+        self.assertNotIn('description', sp.metadata or {})
 
     @patch('apps.stores.services.checkout_service.CheckoutService.get_payment_credentials',
            return_value={'access_token': 'TOKEN'})

@@ -1759,6 +1759,10 @@ class CheckoutService:
                     payment_url=init_point or "",
                     payer_email=link_payer_email or "",
                     payer_name=link_payer_name,
+                    # A descrição ia só para o título da preference no MP. Sem
+                    # ela aqui, a lista de cobranças do painel é uma pilha de
+                    # valores sem rótulo e o lojista não sabe qual link é de quem.
+                    metadata=({'description': description} if description else {}),
                 )
 
                 if order is not None:

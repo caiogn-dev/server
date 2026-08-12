@@ -116,14 +116,21 @@ class StorePaymentListSerializer(serializers.ModelSerializer):
     order_number = serializers.CharField(source='order.order_number', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
-    
+    # Cobrança avulsa não tem pedido para se identificar: o link, o rótulo e o
+    # pagador SÃO a identidade dela. Sem isso a tela lista valores anônimos.
+    description = serializers.SerializerMethodField()
+
     class Meta:
         model = StorePayment
         fields = [
             'id', 'payment_id', 'external_id', 'order', 'order_number',
             'status', 'status_display', 'payment_method', 'payment_method_display',
             'amount', 'currency', 'paid_at', 'created_at',
+            'payment_url', 'payer_name', 'payer_email', 'expires_at', 'description',
         ]
+
+    def get_description(self, obj):
+        return (obj.metadata or {}).get('description') or ''
 
 
 class CreatePaymentSerializer(serializers.Serializer):

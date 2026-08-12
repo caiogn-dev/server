@@ -111,6 +111,10 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         order_number = self.request.query_params.get('order_number')
         if order_number:
             qs = qs.filter(order__order_number__icontains=order_number)
+        # Cobrança avulsa (link de pagamento sem pedido). `order=` vazio não
+        # serve: o filtro por UUID rejeita string vazia.
+        if self.request.query_params.get('sem_pedido') in ('1', 'true', 'True'):
+            qs = qs.filter(order__isnull=True)
         return qs.order_by('-created_at')
     
     def get_serializer_class(self):
