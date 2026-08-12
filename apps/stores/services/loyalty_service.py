@@ -199,6 +199,69 @@ class LoyaltyService:
 
     @staticmethod
     @transaction.atomic
+    def recalculate_order_credit(order):
+        """Recalcula o crédito de um pedido já entregue pelas regras de HOJE.
+
+        `credit_order` é uma fotografia: grava a quantidade no momento da
+        entrega e nunca mais volta nela (idempotente por unique(order, kind)).
+        Quando a loja corrige `loyalty_units` DEPOIS da venda, o pedido antigo
+        fica congelado no valor errado — caso Aline Nasche/CE-2608113992, que
+        creditou 1 selo por um combo que vale 8.
+
+        Aqui a transação EARN existente é reaberta e o saldo da conta é
+        ajustado pela diferença (pra mais ou pra menos). Nunca duplica o
+        crédito e nunca deixa o saldo negativo. Devolve
+        {before, after, delta, changed, reason}.
+        """
+        def _resultado(before, after, changed, reason=''):
+            return {
+                'before': before, 'after': after, 'delta': after - before,
+                'changed': changed, 'reason': reason,
+            }
+
+        if not order or not getattr(order, 'customer_id', None):
+            return _resultado(0, 0, False, 'sem_cliente')
+
+        store = order.store
+        _, enabled = LoyaltyService._config(store)
+        if not enabled:
+            return _resultado(0, 0, False, 'fidelidade_desligada')
+
+        tx = (
+            StoreLoyaltyTransaction.objects
+            .select_for_update()
+            .filter(order=order, kind=StoreLoyaltyTransaction.Kind.EARN)
+            .first()
+        )
+        before = int(tx.quantity) if tx else 0
+        after = LoyaltyService.order_qualified_units(store, order)
+
+        if after == before:
+            return _resultado(before, after, False, 'sem_mudanca')
+
+        if tx is None:
+            LoyaltyService.credit_qualified(store, order.customer, order, after)
+            return _resultado(before, after, True, 'creditado')
+
+        account = StoreLoyaltyAccount.objects.select_for_update().get(id=tx.account_id)
+        delta = after - before
+        # Saldo pode ter sido mexido por fora (resgate, ajuste manual): o piso
+        # é zero, senão o recálculo cria dívida que o cliente nunca contraiu.
+        novo_saldo = max(0, int(account.qualified_count) + delta)
+
+        if after:
+            tx.quantity = after
+            tx.note = 'recálculo pelas regras atuais'
+            tx.save(update_fields=['quantity', 'note'])
+        else:
+            # Zerou: apagar a transação libera o pedido pra um crédito futuro.
+            tx.delete()
+
+        StoreLoyaltyAccount.objects.filter(id=account.id).update(qualified_count=novo_saldo)
+        return _resultado(before, after, True, 'ajustado')
+
+    @staticmethod
+    @transaction.atomic
     def redeem(store, user, order, rewards: int = 1):
         """Registra resgate de recompensa. Levanta ValueError sem saldo."""
         threshold, _ = LoyaltyService._config(store)

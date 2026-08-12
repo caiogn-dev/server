@@ -677,6 +677,20 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         return Response(StoreOrderSerializer(order).data)
 
+    @action(detail=True, methods=['post'], url_path='recalcular-fidelidade')
+    def recalcular_fidelidade(self, request, pk=None, **kwargs):
+        """Recalcula os selos deste pedido pelas regras atuais da loja.
+
+        Existe porque o crédito é uma fotografia tirada na entrega: quando a
+        loja corrige `loyalty_units` depois da venda, o pedido antigo fica
+        congelado no valor errado e não havia caminho no painel pra ajustar.
+        """
+        from apps.stores.services.loyalty_service import LoyaltyService
+
+        order = self.get_object()
+        resultado = LoyaltyService.recalculate_order_credit(order)
+        return Response(resultado)
+
     @staticmethod
     def _credit_loyalty(order):
         try:
