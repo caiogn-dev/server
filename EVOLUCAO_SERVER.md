@@ -888,3 +888,52 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-12
+
+**Baseline de testes:** 30 testes SimpleTestCase (sem Docker/PostgreSQL) — 30/30 OK antes e após o fix.
+CI do GitHub Actions com `runner_id=0` (infra pré-existente desde 2026-07-18) — não é regressão.
+
+**Gate anti-acúmulo:** 14 PRs abertos (#318–#331). Varredura confirmou que nenhum cobre o módulo `apps/nutrition`.
+HEAD de `development`: `202a2c5` (fix nutrition Queridinha). `apps.nutrition` não estava em `INSTALLED_APPS`
+do settings de teste — adicionado junto ao fix.
+
+**Bug encontrado e corrigido:** IDOR de escrita em `ProductNutritionProfileSerializer` [P1]
+
+- **Tipo:** P1 — IDOR de escrita cross-tenant com impacto direto em dados públicos (rótulo ANVISA)
+- **Contexto:** O módulo `apps/nutrition` é novo (introduzido em commits recentes). A view pública
+  `GET /api/v1/nutrition/public/<product_id>/` (AllowAny, servida por QR Code ANVISA impresso)
+  exibe dados do `ProductNutritionProfile`. Se um atacante criar ou sobrescrever um perfil de produto
+  de outro tenant, informações nutricionais falsas aparecem no rótulo público do produto da vítima.
+- **Causa raiz:** `ProductNutritionProfileSerializer` não tinha `validate_product`, ao contrário de
+  `ProductRecipeSerializer` (que tem o método desde a criação). Um `POST /api/v1/nutrition/profiles/`
+  com `{"product": <uuid_de_produto_alheio>}` criava um perfil sem verificação de ownership.
+  O gate de tenant em `get_queryset()` protege `list/retrieve/update/delete` (usa `get_object()`),
+  mas `create` nunca chama `get_object()` — passa direto para `serializer.save()`.
+- **Arquivo corrigido (1):** `apps/nutrition/api/serializers.py`
+  — Adicionado `validate_product` em `ProductNutritionProfileSerializer` com padrão idêntico
+  ao `ProductRecipeSerializer.validate_product`: verifica `owner_id == user.id` ou
+  `staff.filter(id=user.id).exists()`; superuser bypassa; mensagem genérica ('Produto não autorizado.').
+- **Bônus:** `apps/nutrition` adicionado a `INSTALLED_APPS` em `config/settings/test_serializer.py`
+  (estava ausente, impossibilitando testes do módulo neste ambiente).
+- **Testes:** 9 `SimpleTestCase` em `apps/nutrition/tests/test_nutrition_profile_idor.py` (RED→GREEN):
+  - Análise estática: `validate_product` existe e é callable
+  - Dono da loja → produto retornado (acesso permitido)
+  - Staff da loja → produto retornado (acesso permitido)
+  - Superuser → qualquer produto, sem chamar `staff.filter` (bypass sem DB hit)
+  - Atacante (não-dono, não-staff) → `DRFValidationError` levantado (IDOR bloqueado)
+  - Mensagem de erro não revela existência do produto (info-hiding)
+  - Usuário sem relação nenhuma com a loja → bloqueado
+- **PR:** `bot/server-2026-08-12-nutrition-profile-idor`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs #318–#331 (14 PRs aguardando revisão) |
+| P1 | `apps/messaging/api/views.py:68,227` — `str(exc)` em sync e send_message do Messenger (Facebook Graph API errors expostos para autenticados) |
+| P1 | Testes de contrato para checkout payload e pedido por token (pendência crítica do CLAUDE.md) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | `apps/stores/api/views/order_views.py:267` — `payment_error = str(exc)` retornado no body da resposta HTTP (informação interna do erro exposta no campo `payment_error`) |
+
