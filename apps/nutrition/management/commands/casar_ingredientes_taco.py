@@ -54,6 +54,10 @@ class Command(BaseCommand):
                             help=f"Nota mínima para sugerir (padrão {CONFIANCA_PADRAO})")
         parser.add_argument("--aplicar", action="store_true",
                             help="Copia os valores da base pública para o ingrediente da loja")
+        parser.add_argument("--par", action="append", default=[], metavar="ORIGEM::DESTINO[::PREPARO]",
+                            help="Casamento confirmado por uma pessoa, quando o comparador de "
+                                 "nome não chega lá (ex.: 'Frango, peito, sem pele, cozido::"
+                                 "Peito De Galinha Ou Frango::COZIDO(A)'). Repetível.")
         parser.add_argument("--completar", action="store_true",
                             help="Preenche SÓ os nutrientes que faltam em ingredientes que já "
                                  "têm dado (ex.: açúcar e trans, que a TACO não mede e a POF sim)")
@@ -75,6 +79,9 @@ class Command(BaseCommand):
         por_fonte = Counter(i.source for i in taco)
         self.stdout.write(f"📚 {len(taco)} alimentos de referência: "
                           + ", ".join(f"{n} {f}" for f, n in por_fonte.most_common()))
+
+        if options["par"]:
+            return self._pares_confirmados(options)
 
         if options["completar"]:
             return self._completar(taco, options)
@@ -210,3 +217,67 @@ class Command(BaseCommand):
                 ing.save(update_fields=[*campos, "notes", "updated_at"])
 
         self.stdout.write(self.style.SUCCESS(f"\n✅ {len(planos)} ingredientes complementados"))
+
+    def _pares_confirmados(self, options):
+        """Aplica casamentos que uma pessoa confirmou, por nome exato.
+
+        O comparador de nome erra nos casos que dependem de saber o mundo:
+        "Frango, peito, sem pele, cozido" e "Peito De Galinha Ou Frango" são a
+        mesma comida, mas nenhuma métrica de string sabe que galinha e frango
+        são sinônimos. Em vez de baixar o corte — o que deixaria passar
+        "Estrogonofe de frango" casando com "Steak de frango" —, a decisão
+        humana entra explícita e fica no histórico do comando.
+
+        Preenche só o que falta, como o --completar: os valores que a loja já
+        tem medidos são mais específicos que os da base pública.
+        """
+        aplicados = 0
+        for par in options["par"]:
+            partes = [p.strip() for p in par.split("::")]
+            if len(partes) < 2:
+                self.stdout.write(self.style.ERROR(f"  ✗ formato inválido: {par!r}"))
+                continue
+            origem, destino, preparo = partes[0], partes[1], (partes[2] if len(partes) > 2 else None)
+
+            alvo = NutritionIngredient.objects.filter(display_name=origem).first()
+            if not alvo:
+                self.stdout.write(self.style.ERROR(f"  ✗ ingrediente não encontrado: {origem!r}"))
+                continue
+
+            candidatos = NutritionIngredient.objects.filter(store__isnull=True, display_name=destino)
+            if preparo is not None:
+                candidatos = candidatos.filter(preparation_state=preparo)
+            fonte = candidatos.first()
+            if not fonte:
+                self.stdout.write(self.style.ERROR(
+                    f"  ✗ referência não encontrada: {destino!r}"
+                    + (f" [{preparo}]" if preparo else "")))
+                continue
+
+            buracos = [c for c in NUTRIENT_FIELDS
+                       if getattr(alvo, c) is None and getattr(fonte, c) is not None]
+            if not buracos:
+                self.stdout.write(f"  = {origem[:40]} já está completo")
+                continue
+
+            self.stdout.write(f"  {origem[:34]:36} ← {fonte.display_name[:26]:28} "
+                              f"[{fonte.preparation_state or '-'}] {', '.join(buracos)}")
+            if not options["aplicar"]:
+                continue
+
+            for campo in buracos:
+                setattr(alvo, campo, getattr(fonte, campo))
+            origem_nota = (f"Complementado com {fonte.get_source_display()} #{fonte.source_code} "
+                           f"({fonte.display_name}"
+                           + (f", {fonte.preparation_state}" if fonte.preparation_state else "")
+                           + f") nos campos {', '.join(buracos)}. "
+                           "Correspondência confirmada por uma pessoa, não pelo comparador de nome. "
+                           "Valores já medidos foram preservados.")
+            alvo.notes = f"{alvo.notes}\n{origem_nota}".strip() if alvo.notes else origem_nota
+            alvo.save(update_fields=[*buracos, "notes", "updated_at"])
+            aplicados += 1
+
+        if options["aplicar"]:
+            self.stdout.write(self.style.SUCCESS(f"\n✅ {aplicados} pares confirmados aplicados"))
+        else:
+            self.stdout.write(self.style.WARNING("\nNada gravado — rode com --aplicar."))

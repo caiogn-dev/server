@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 from django.urls import reverse
 
@@ -111,6 +112,26 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
 
     def get_calculation(self, obj):
         return calculate_recipe(obj.recipe) if obj.recipe_id else None
+
+    def update(self, instance, validated_data):
+        """Carimba quem aprovou e quando.
+
+        Aprovação sem autor e sem data não é aprovação — é um booleano. Quando
+        a etiqueta impressa for questionada, é este par que responde quem
+        assumiu a responsabilidade pelo que foi declarado.
+        """
+        aprovando = validated_data.get("is_print_approved")
+        if aprovando is not None and aprovando != instance.is_print_approved:
+            usuario = getattr(self.context.get("request"), "user", None)
+            if aprovando:
+                validated_data["approved_by"] = usuario if usuario and usuario.is_authenticated else None
+                validated_data["approved_at"] = timezone.now()
+            else:
+                # Revogar limpa o carimbo: manter o nome antigo daria a
+                # entender que aquela pessoa aprovou o estado atual.
+                validated_data["approved_by"] = None
+                validated_data["approved_at"] = None
+        return super().update(instance, validated_data)
 
     def get_public_url(self, obj):
         path = reverse("public-nutrition-label", kwargs={"product_id": obj.product_id})

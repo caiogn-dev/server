@@ -1,6 +1,10 @@
 from django.db.models import Q
 from rest_framework import filters, viewsets
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.nutrition.allergens import ALERGENICOS
 
 from apps.nutrition.models import NutritionIngredient, ProductRecipe, ProductNutritionProfile
 from .serializers import NutritionIngredientSerializer, ProductRecipeSerializer, ProductNutritionProfileSerializer
@@ -57,3 +61,21 @@ class ProductNutritionProfileViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
+
+
+class AlergenicosView(APIView):
+    """Lista os grupos alergênicos da RDC 26/2015 para o painel montar a UI.
+
+    Vem da API de propósito: repetir a lista legal em TypeScript garante que
+    um dia as duas divirjam, e a que o lojista marca na tela é a que vale na
+    etiqueta.
+    """
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        return Response({
+            "alergenicos": [
+                {"valor": chave, "rotulo": rotulo, "gluten": gluten}
+                for chave, (rotulo, gluten) in ALERGENICOS.items()
+            ],
+        })
