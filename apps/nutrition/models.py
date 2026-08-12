@@ -4,6 +4,7 @@ from django.db import models
 from django.db.models import Q
 
 from apps.core.models import BaseModel
+from apps.nutrition.allergens import validar as validar_alergenicos
 
 
 NUTRIENT_FIELDS = (
@@ -34,6 +35,15 @@ class NutritionIngredient(BaseModel):
     source_reference = models.URLField(blank=True)
     source_accessed_at = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    # RDC 26/2015. `allergens` é o que o ingrediente TEM; `may_contain` é
+    # contaminação cruzada do fornecedor. Listas separadas porque a norma
+    # proíbe declarar como "pode conter" o que de fato está lá.
+    allergens = models.JSONField(default=list, blank=True)
+    may_contain = models.JSONField(default=list, blank=True)
+    # Lista vazia é ambígua: pode ser "não tem alergênico" ou "ninguém olhou".
+    # A etiqueta não pode afirmar "NÃO CONTÉM GLÚTEN" em cima da segunda —
+    # por isso a revisão é explícita, e o import automático não a marca.
+    allergens_reviewed = models.BooleanField(default=False, db_index=True)
     energy_kcal = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     carbohydrates_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     total_sugars_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
@@ -54,6 +64,14 @@ class NutritionIngredient(BaseModel):
 
     def clean(self):
         errors = {field: "O valor não pode ser negativo." for field in NUTRIENT_FIELDS if getattr(self, field) is not None and getattr(self, field) < 0}
+        for campo in ("allergens", "may_contain"):
+            valor = getattr(self, campo) or []
+            if not isinstance(valor, list):
+                errors[campo] = "Informe uma lista de alergênicos."
+                continue
+            desconhecidos = validar_alergenicos(valor)
+            if desconhecidos:
+                errors[campo] = f"Alergênico não previsto na RDC 26/2015: {', '.join(desconhecidos)}."
         if errors:
             raise ValidationError(errors)
 
@@ -118,9 +136,16 @@ class ProductNutritionProfile(BaseModel):
         MANUAL = "manual", "Manual"
         HYBRID = "hybrid", "Híbrido"
 
+    class PhysicalForm(models.TextChoices):
+        SOLIDO = "solido", "Sólido"
+        LIQUIDO = "liquido", "Líquido"
+
     product = models.OneToOneField("stores.StoreProduct", on_delete=models.CASCADE, related_name="nutrition_profile")
     recipe = models.OneToOneField(ProductRecipe, null=True, blank=True, on_delete=models.SET_NULL, related_name="profile")
     value_source = models.CharField(max_length=20, choices=ValueSource.choices, default=ValueSource.CALCULATED)
+    # Decide o limite da lupa frontal (RDC 429/2020): líquido tem metade do
+    # valor de corte do sólido. Errar aqui é imprimir selo a menos.
+    physical_form = models.CharField(max_length=10, choices=PhysicalForm.choices, default=PhysicalForm.SOLIDO)
     serving_size_g = models.DecimalField(max_digits=10, decimal_places=3, default=100)
     household_measure = models.CharField(max_length=100, blank=True)
     manual_override_reason = models.TextField(blank=True)
