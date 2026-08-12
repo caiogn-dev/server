@@ -353,7 +353,10 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             logger.exception('Embedded Signup falhou')
-            return Response({'error': f'Falha no onboarding: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {'error': 'Falha no onboarding. Verifique os dados e tente novamente.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return Response(WhatsAppAccountSerializer(acc).data, status=status.HTTP_201_CREATED)
 

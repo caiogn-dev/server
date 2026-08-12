@@ -1373,7 +1373,7 @@ class CheckoutService:
                 name = payment_payload.get('payer_name') or 'Cliente'
                 mp_description = description or f"Cobranca - {target_store.name}"
                 external_reference = f"avulso:{target_store.id}"
-            logger.info(f"Using email for payment: {payer_email}")
+            logger.info("Using email for payment: %s", payer_email[:3] + "***")
 
             pix_payment_data = {
                 "transaction_amount": float(amount),

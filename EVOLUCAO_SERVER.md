@@ -60,6 +60,58 @@ Confirmado via leitura do source de `development` HEAD (`fef1b06`).
    ou tornar o método abstrato.
 
 
+### 2026-08-08
+
+**Baseline:** HEAD de `development` em `ff2a68a`. 10 PRs abertos (#318–#327). Novos módulos varridos:
+`apps/stores/api/views/loyalty_views.py`, `apps/stores/metrics/definicoes.py`,
+`apps/notifications/api/views.py`, `apps/panel/views.py`, `apps/mobile_api/`,
+`apps/stores/services/ai_insights.py`, `apps/stores/services/loyalty_service.py`,
+`apps/whatsapp/api/views.py` (EmbeddedSignup), `apps/stores/api/views/order_views.py` (PDV PIX),
+`apps/stores/services/checkout_service.py`.
+
+**Gate anti-acúmulo:** PRs #318–#327 não cobrem os três achados desta sessão.
+
+**Achados confirmados (não cobertos por nenhum PR aberto):**
+
+| # | Prioridade | Arquivo | Linha | Descrição |
+|---|---|---|---|---|
+| P1-1 | P1 | `apps/whatsapp/api/views.py` | 356 | `str(exc)` em `except Exception` → campo `error` na resposta 502 do Embedded Signup |
+| P1-2 | P1 | `apps/stores/api/views/order_views.py` | 181 | `str(exc)` em `except Exception` → campo `payment_error` na resposta 201 do PDV |
+| P2-1 | P2 | `apps/stores/services/checkout_service.py` | 1342 | PII (email completo) em `logger.info` — exposto em logs de produção |
+
+**Corrigidos (todos em um único PR):**
+
+1. **P1-2 `apps/stores/api/views/order_views.py:181`** — Substituído `payment_error = str(exc)` por
+   `payment_error = 'Falha ao gerar pagamento PIX'`. Qualquer falha de rede/timeout no MercadoPago
+   durante criação de pedido PDV expunha mensagem interna (URL, token, traceback snippet) na resposta 201.
+2. **P1-1 `apps/whatsapp/api/views.py:356`** — Substituído `f'Falha no onboarding: {exc}'` por
+   `'Falha no onboarding. Verifique os dados e tente novamente.'`. Exceções da API da Meta
+   (ex: timeout, 500 interno, URL/token) eram retornadas diretamente ao cliente 502.
+3. **P2-1 `apps/stores/services/checkout_service.py:1342`** — Substituído `f"Using email for payment: {payer_email}"`
+   por `"Using email for payment: %s", payer_email[:3] + "***"`. Email do pagador (PII) estava sendo
+   logado em texto plano no nível INFO, visível em todos os sistemas de log.
+
+**Confirmados seguros (não requerem ação):**
+- `NotificationViewSet`: queries escopadas por `user=request.user` ✓
+- `apps/panel/views.py`: `_get_accessible_stores()` usa `is_superuser` + Q correto ✓
+- `apps/mobile_api/`: rota `/api/v1/mobile/orders/by-token/{access_token}/` já implementada ✓
+- `LoyaltyGuestStatusView`: AllowAny + throttle + sem PII na resposta ✓
+- `pedidos_de_receita()` sem `loja`: sem chamadores desprotegidos na base atual ✓
+
+**Testes:** 4 casos em dois arquivos novos (RED → GREEN confirmado por análise estática,
+Docker indisponível no ambiente remoto):
+- `apps/stores/tests/test_order_pdv_pix_exc_leak.py` (2 testes)
+- `apps/whatsapp/tests/test_embedded_signup_exc_leak.py` (2 testes)
+
+**PR:** `bot/server-2026-08-08-str-exc-payment-signup`
+
+**Achado adicional (backlog próxima execução):**
+- **P2-2** `apps/stores/api/views/loyalty_views.py:LoyaltyAccountsView.get` — verifica permissão com
+  `store.owner_id == request.user.id` em vez de `user_can_access_store()`. Staff members da loja
+  não conseguem acessar dashboard de fidelidade. Usar `user_can_access_store()` + `Http404`.
+
+---
+
 ### 2026-07-27
 
 **Baseline de testes:** 10 PRs abertos (#307–#316) aguardando merge; nenhum novo desde #316 (2026-07-26).
