@@ -45,6 +45,90 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
             qs = qs.filter(category=category)
         return qs
 
+    @action(detail=True, methods=["post"])
+    def adotar(self, request, pk=None):
+        """Copia um alimento oficial (TACO/POF) para dentro da loja.
+
+        O catálogo oficial é compartilhado entre todos os lojistas e por isso é
+        somente leitura. Só que a etiqueta se recusa a declarar alergênico
+        enquanto houver ingrediente não revisado na receita — e o lojista não
+        podia revisar nenhum alimento oficial. As 27 receitas em produção
+        ficaram assim: travadas, com um botão de revisar que só sabia dar 400.
+
+        Adotar cria uma cópia editável na loja (com a procedência preservada),
+        aplica a revisão de alergênicos que veio no mesmo POST e reaponta as
+        receitas DAQUELA loja para a cópia. O oficial fica intocado.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from django.db import transaction
+        from rest_framework import status
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        from apps.nutrition.models import NUTRIENT_FIELDS, RecipeItem
+        from apps.stores.models import Store
+
+        oficial = self.get_object()
+        if oficial.store_id is not None:
+            raise DRFValidationError(
+                "Este ingrediente já é da loja — edite direto, não há o que adotar."
+            )
+
+        store_id = request.data.get("store")
+        store = Store.objects.filter(id=store_id).first() if store_id else None
+        if not store:
+            raise DRFValidationError({"store": "Informe a loja que vai adotar o alimento."})
+        user = request.user
+        if not (user.is_superuser or store.owner_id == user.id
+                or store.staff.filter(id=user.id).exists()):
+            raise DRFValidationError({"store": "Loja não autorizada."})
+
+        campos_copiados = (
+            "canonical_name", "display_name", "category", "preparation_state",
+            "default_unit", "density_g_ml", "source", "source_code",
+            "source_edition", "source_reference", "source_accessed_at", "notes",
+            "allergens", "may_contain", "allergens_reviewed", *NUTRIENT_FIELDS,
+        )
+        valores = {campo: getattr(oficial, campo) for campo in campos_copiados}
+
+        # A revisão de alergênicos pode vir junto: o lojista clica no alimento,
+        # marca o que contém e salva uma vez só.
+        for campo in ("allergens", "may_contain", "allergens_reviewed",
+                      "display_name", "category", *NUTRIENT_FIELDS):
+            if campo in request.data:
+                valores[campo] = request.data[campo]
+
+        with transaction.atomic():
+            copia, criada = NutritionIngredient.objects.get_or_create(
+                store=store,
+                canonical_name=valores["canonical_name"],
+                preparation_state=valores["preparation_state"],
+                defaults=valores,
+            )
+            if not criada:
+                # Adotar de novo é a via de reeditar: aplica o que veio agora
+                # sem criar uma segunda cópia (o unique da loja proibiria).
+                for campo, valor in valores.items():
+                    setattr(copia, campo, valor)
+                copia.is_active = True
+            try:
+                copia.full_clean(exclude=("store",))
+            except DjangoValidationError as erro:
+                # Sem traduzir, um alergênico fora da RDC 26 virava 500 e a
+                # tela mostrava "erro interno" no lugar do campo errado.
+                raise DRFValidationError(erro.message_dict)
+            copia.save()
+
+            # Sem reapontar, a cópia nasce órfã e a etiqueta segue travada.
+            RecipeItem.objects.filter(
+                ingredient=oficial, recipe__product__store=store,
+            ).update(ingredient=copia)
+
+        dados = self.get_serializer(copia).data
+        return Response(
+            dados,
+            status=status.HTTP_201_CREATED if criada else status.HTTP_200_OK,
+        )
+
     def perform_destroy(self, instance):
         if instance.store_id is None and not self.request.user.is_superuser:
             from rest_framework.exceptions import PermissionDenied
