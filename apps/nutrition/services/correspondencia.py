@@ -29,9 +29,27 @@ def normalizar(texto):
     return re.sub(r"\s+", " ", texto).strip()
 
 
+def _singular(palavra):
+    """Plural português cru o bastante para casar nome de comida.
+
+    "ovos"→"ovo", "pães"→"pao", "legumes"→"legume". Não é morfologia séria; é
+    o suficiente para "Ovos de codorna" encontrar "Ovo De Codorna", que é onde
+    o casamento estava falhando.
+    """
+    if len(palavra) <= 3:
+        return palavra
+    if palavra.endswith("oes") or palavra.endswith("aes"):
+        return palavra[:-3] + "ao"
+    if palavra.endswith("is"):
+        return palavra[:-2] + "l"
+    if palavra.endswith("ns"):
+        return palavra[:-2] + "m"
+    return palavra[:-1] if palavra.endswith("s") else palavra
+
+
 def _tokens(texto, tirar_preparo=False):
     fora = RUIDO | (PREPARO if tirar_preparo else set())
-    return {t for t in normalizar(texto).split() if t not in fora}
+    return {_singular(t) for t in normalizar(texto).split() if t not in fora}
 
 
 def pontuar(nome_loja, nome_taco):
@@ -64,6 +82,18 @@ def pontuar(nome_loja, nome_taco):
     if a and a == _tokens(nome_taco.split(",")[0], tirar_preparo=True):
         nota = max(nota, 0.95)
 
+    # Caso simétrico: o nome do LOJISTA é o mais específico ("Alface, crespa,
+    # crua" x "Alface"; "Almondega bovina" x "Almondega"). Exigir duas coisas
+    # juntas separa isso de "Molho de tomate" x "Tomate":
+    #   - mesma primeira palavra, que é onde mora a identidade do alimento
+    #     (em "molho de tomate" a identidade é molho, não tomate);
+    #   - um conjunto contido no outro, o que barra "Carne bovina" x "Carne
+    #     de porco", que compartilham a primeira palavra mas divergem depois.
+    inicio_a = normalizar(nome_loja).split()[:1]
+    inicio_b = normalizar(nome_taco).split()[:1]
+    if inicio_a and inicio_a == inicio_b and (a <= b or b <= a):
+        nota = max(nota, 0.90)
+
     # Preparo é desempate, não filtro: "Mandioca cozida" tem que ficar acima de
     # "Mandioca, crua", mas as duas continuam candidatas plausíveis.
     prep_a = _tokens(nome_loja) & PREPARO
@@ -74,13 +104,25 @@ def pontuar(nome_loja, nome_taco):
     return round(min(1.0, max(0.0, nota)), 3)
 
 
-def sugerir(nome_loja, candidatos, minimo=0.55, quantos=3):
+def nome_completo(candidato):
+    """Nome + preparo. A POF guarda "Macarrao" e "COZIDO(A)" em campos
+    separados; comparar só o primeiro faz as três preparações ficarem
+    idênticas para o comparador e empatarem sem critério."""
+    preparo = getattr(candidato, "preparation_state", "") or ""
+    return f"{candidato.display_name} {preparo}".strip()
+
+
+def sugerir(nome_loja, candidatos, minimo=0.55, quantos=3, nome_do_candidato=nome_completo):
     """Ordena os candidatos por nota e devolve os que passam do mínimo.
 
-    `candidatos` é uma lista de objetos com `display_name`. Devolve
-    [(candidato, nota), ...] do melhor para o pior.
+    `candidatos` é uma lista de objetos com `display_name` (e, opcionalmente,
+    `preparation_state`). Devolve [(candidato, nota), ...] do melhor ao pior.
     """
-    notas = ((c, pontuar(nome_loja, c.display_name)) for c in candidatos)
+    notas = ((c, pontuar(nome_loja, nome_do_candidato(c))) for c in candidatos)
     acima = [(c, n) for c, n in notas if n >= minimo]
-    acima.sort(key=lambda par: (-par[1], par[0].display_name))
+    # Ordena SÓ pela nota. O sort do Python é estável, então empate preserva a
+    # ordem em que o chamador entregou os candidatos — é assim que ele impõe o
+    # próprio critério de desempate (hoje: quem tem mais nutriente preenchido).
+    # Desempatar por nome aqui jogaria fora essa informação.
+    acima.sort(key=lambda par: -par[1])
     return acima[:quantos]

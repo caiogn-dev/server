@@ -18,6 +18,10 @@ class NutritionIngredient(BaseModel):
     class Source(models.TextChoices):
         TACO = "taco", "TACO/NEPA-Unicamp"
         TBCA = "tbca", "TBCA"
+        # POF/IBGE: compilação do que o brasileiro come de fato, com preparo
+        # como dimensão própria e — ao contrário da TACO — açúcar de adição,
+        # gordura trans e saturada medidos.
+        POF = "pof", "POF/IBGE (Composição Nutricional)"
         MANUFACTURER = "manufacturer", "Fabricante"
         LAB = "lab", "Laudo laboratorial"
         MANUAL = "manual", "Manual"

@@ -10,8 +10,9 @@ from apps.nutrition.services.correspondencia import normalizar, pontuar, sugerir
 
 
 class Falso:
-    def __init__(self, display_name):
+    def __init__(self, display_name, preparation_state=""):
         self.display_name = display_name
+        self.preparation_state = preparation_state
 
 
 class NormalizarTest(SimpleTestCase):
@@ -60,6 +61,16 @@ class PontuarTest(SimpleTestCase):
         # tomate", mas são coisas nutricionalmente diferentes.
         self.assertLess(pontuar("Molho de tomate industrializado", "Tomate, cru"), 0.55)
 
+    def test_nome_do_lojista_mais_especifico_que_o_da_base(self):
+        # O caso inverso do "Manga": aqui quem detalha é o lojista.
+        self.assertGreater(pontuar("Alface, crespa, crua", "Alface"), 0.85)
+        self.assertGreater(pontuar("Almondega bovina", "Almondega"), 0.85)
+
+    def test_mesma_primeira_palavra_nao_basta(self):
+        # "Carne bovina" e "Carne de porco" começam igual e divergem depois —
+        # nenhum conjunto contém o outro, então não ganham piso.
+        self.assertLess(pontuar("Carne bovina", "Carne de porco"), 0.7)
+
     def test_vazio_nao_quebra(self):
         self.assertEqual(pontuar("", "Abacaxi, cru"), 0.0)
         self.assertEqual(pontuar("Abacaxi", ""), 0.0)
@@ -85,3 +96,22 @@ class SugerirTest(SimpleTestCase):
 
     def test_lista_vazia_de_candidatos(self):
         self.assertEqual(sugerir("Abacaxi", []), [])
+
+    def test_plural_do_lojista_encontra_singular_da_pof(self):
+        # "Ovos de codorna" x "Ovo De Codorna" estava caindo fora do corte.
+        pof = [Falso("Ovo De Codorna", "COZIDO(A)"), Falso("Codorna", "FRITO(A)")]
+        r = sugerir("Ovos de codorna", pof)
+        self.assertEqual(r[0][0].display_name, "Ovo De Codorna")
+
+    def test_preparo_do_candidato_entra_na_comparacao(self):
+        # A POF guarda o preparo em campo separado; sem ele as três linhas de
+        # "Macarrao" ficam idênticas para o comparador.
+        pof = [Falso("Macarrao", "CRU(A)"), Falso("Macarrao", "COZIDO(A)")]
+        r = sugerir("Macarrao cozido", pof)
+        self.assertEqual(r[0][0].preparation_state, "COZIDO(A)")
+
+    def test_empate_preserva_a_ordem_de_entrada(self):
+        # É assim que o comando impõe seu desempate (mais nutriente preenchido).
+        primeiro, segundo = Falso("Mandioca", "CRU(A)"), Falso("Mandioca", "CRU(A)")
+        r = sugerir("Mandioca crua", [primeiro, segundo])
+        self.assertIs(r[0][0], primeiro)

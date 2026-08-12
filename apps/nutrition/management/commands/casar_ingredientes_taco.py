@@ -22,18 +22,27 @@ Usage:
     python manage.py casar_ingredientes_taco --minimo 0.75 --aplicar
 """
 import logging
+from collections import Counter
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from apps.nutrition.models import NUTRIENT_FIELDS, NutritionIngredient
-from apps.nutrition.services.correspondencia import sugerir
+from apps.nutrition.services.correspondencia import nome_completo, sugerir
 
 logger = logging.getLogger(__name__)
 
 # Acima disso o casamento é seguro o bastante para aplicar em lote quando o
 # dono pedir; abaixo, entra na lista de conferência manual.
 CONFIANCA_PADRAO = 0.70
+
+BASES_PUBLICAS = (NutritionIngredient.Source.TACO, NutritionIngredient.Source.POF,
+                  NutritionIngredient.Source.TBCA)
+
+
+def _completude(ingrediente):
+    """Quantos dos 10 nutrientes da etiqueta o candidato tem preenchido."""
+    return sum(getattr(ingrediente, campo) is not None for campo in NUTRIENT_FIELDS)
 
 
 class Command(BaseCommand):
@@ -44,17 +53,31 @@ class Command(BaseCommand):
         parser.add_argument("--minimo", type=float, default=CONFIANCA_PADRAO,
                             help=f"Nota mínima para sugerir (padrão {CONFIANCA_PADRAO})")
         parser.add_argument("--aplicar", action="store_true",
-                            help="Copia os valores da TACO para o ingrediente da loja")
+                            help="Copia os valores da base pública para o ingrediente da loja")
+        parser.add_argument("--completar", action="store_true",
+                            help="Preenche SÓ os nutrientes que faltam em ingredientes que já "
+                                 "têm dado (ex.: açúcar e trans, que a TACO não mede e a POF sim)")
 
     def handle(self, *args, **options):
         minimo = options["minimo"]
 
         taco = list(NutritionIngredient.objects.filter(
-            source=NutritionIngredient.Source.TACO, store__isnull=True, energy_kcal__isnull=False,
+            source__in=BASES_PUBLICAS, store__isnull=True, energy_kcal__isnull=False,
         ))
         if not taco:
-            raise CommandError("Nenhum alimento TACO na base. Rode import_taco_table antes.")
-        self.stdout.write(f"📚 {len(taco)} alimentos TACO disponíveis como referência")
+            raise CommandError("Nenhum alimento de base pública. Rode import_taco_table "
+                               "e/ou import_pof_table antes.")
+        # Com TACO e POF na mesma base, o mesmo alimento aparece duas vezes. A
+        # POF costuma ganhar por ter açúcar de adição, saturada e trans, mas a
+        # decisão é por candidato: vence quem tem mais nutriente preenchido,
+        # não a fonte "preferida" no abstrato.
+        taco.sort(key=_completude, reverse=True)
+        por_fonte = Counter(i.source for i in taco)
+        self.stdout.write(f"📚 {len(taco)} alimentos de referência: "
+                          + ", ".join(f"{n} {f}" for f, n in por_fonte.most_common()))
+
+        if options["completar"]:
+            return self._completar(taco, options)
 
         # Só o que está EM USO numa receita e sem dado — o resto é ruído de
         # cadastro que ninguém vai imprimir.
@@ -87,7 +110,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"      alternativa: {outro.display_name:36.36} ({n:.2f})")
 
         if sem_par:
-            self.stdout.write(self.style.WARNING(f"\n⚠️  {len(sem_par)} sem equivalente na TACO "
+            self.stdout.write(self.style.WARNING(f"\n⚠️  {len(sem_par)} sem equivalente nas bases públicas "
                                                  "(prato pronto, receita composta ou nome muito próprio):"))
             for ing in sem_par:
                 self.stdout.write(f"      {ing.display_name}")
@@ -100,7 +123,7 @@ class Command(BaseCommand):
             return
 
         aplicados = self._aplicar(casados)
-        self.stdout.write(self.style.SUCCESS(f"\n✅ {aplicados} ingredientes receberam valores da TACO"))
+        self.stdout.write(self.style.SUCCESS(f"\n✅ {aplicados} ingredientes receberam valores das bases públicas"))
         self.stdout.write("   A origem ficou gravada em source_code/source_edition e nas notas.")
 
     @transaction.atomic
@@ -110,16 +133,80 @@ class Command(BaseCommand):
             melhor, nota = propostas[0]
             for campo in NUTRIENT_FIELDS:
                 setattr(ing, campo, getattr(melhor, campo))
-            ing.source = NutritionIngredient.Source.TACO
+            # A fonte é a do candidato, não "TACO" fixo: com a POF na base o
+            # match vem das duas, e gravar a fonte errada quebra a auditoria da
+            # etiqueta lá na frente.
+            ing.source = melhor.source
             ing.source_code = melhor.source_code
             ing.source_edition = melhor.source_edition
             # A nota fica registrada: quem abrir o cadastro daqui a seis meses
             # precisa saber que o valor veio de um palpite de nome, não de laudo.
-            origem = (f"Valores copiados de TACO #{melhor.source_code} "
-                      f"({melhor.display_name}) por correspondência de nome "
-                      f"(confiança {nota:.2f}). Revisar se a preparação for diferente.")
+            origem = (f"Valores copiados de {melhor.get_source_display()} "
+                      f"#{melhor.source_code} ({melhor.display_name}) por "
+                      f"correspondência de nome (confiança {nota:.2f}). "
+                      f"Revisar se a preparação for diferente.")
             ing.notes = f"{ing.notes}\n{origem}".strip() if ing.notes else origem
             ing.save(update_fields=[*NUTRIENT_FIELDS, "source", "source_code",
                                     "source_edition", "notes", "updated_at"])
             aplicados += 1
         return aplicados
+
+    def _completar(self, publicos, options):
+        """Preenche só os nutrientes ausentes, sem tocar no que já foi medido.
+
+        É a mescla de fontes que a etiqueta precisa: a TACO mede muito bem o
+        que mede, mas não tem açúcar de adição nem gordura trans em alimento
+        nenhum — e esses são dois dos três gatilhos da lupa frontal. A POF tem.
+
+        Regra: valor existente NUNCA é sobrescrito. Misturar duas medições do
+        mesmo nutriente produziria um número que não é verdade em fonte
+        nenhuma; preencher buraco com a outra fonte, registrando qual, é
+        prática normal de rotulagem.
+        """
+        from django.db.models import Q
+
+        falta_algum = Q()
+        for campo in NUTRIENT_FIELDS:
+            falta_algum |= Q(**{f"{campo}__isnull": True})
+
+        alvos = NutritionIngredient.objects.filter(
+            falta_algum, recipe_items__isnull=False, energy_kcal__isnull=False,
+        ).distinct()
+        if options["loja"]:
+            alvos = alvos.filter(Q(store__slug=options["loja"]) | Q(store__isnull=True))
+        alvos = list(alvos.order_by("display_name"))
+
+        self.stdout.write(f"🧩 {len(alvos)} ingredientes de receita com dado incompleto\n")
+
+        planos = []
+        for ing in alvos:
+            buracos = [c for c in NUTRIENT_FIELDS if getattr(ing, c) is None]
+            candidatos = [c for c in publicos if c.pk != ing.pk]
+            propostas = sugerir(nome_completo(ing), candidatos, minimo=options["minimo"])
+            escolhido = next(
+                ((c, n) for c, n in propostas
+                 if any(getattr(c, campo) is not None for campo in buracos)), None)
+            if not escolhido:
+                continue
+            fonte, nota = escolhido
+            preenche = [c for c in buracos if getattr(fonte, c) is not None]
+            planos.append((ing, fonte, nota, preenche))
+            self.stdout.write(f"  {ing.display_name:34.34} ← {fonte.display_name:30.30} "
+                              f"({nota:.2f}) {', '.join(preenche)}")
+
+        if not options["aplicar"]:
+            self.stdout.write(self.style.WARNING(
+                f"\n{len(planos)} complementos possíveis. Nada gravado — rode com --aplicar."))
+            return
+
+        with transaction.atomic():
+            for ing, fonte, nota, campos in planos:
+                for campo in campos:
+                    setattr(ing, campo, getattr(fonte, campo))
+                origem = (f"Complementado com {fonte.get_source_display()} #{fonte.source_code} "
+                          f"({fonte.display_name}) nos campos {', '.join(campos)} "
+                          f"(confiança {nota:.2f}). Valores já medidos foram preservados.")
+                ing.notes = f"{ing.notes}\n{origem}".strip() if ing.notes else origem
+                ing.save(update_fields=[*campos, "notes", "updated_at"])
+
+        self.stdout.write(self.style.SUCCESS(f"\n✅ {len(planos)} ingredientes complementados"))
