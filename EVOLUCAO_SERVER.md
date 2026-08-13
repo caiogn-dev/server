@@ -888,3 +888,48 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+
+### 2026-08-09
+
+**Baseline de testes:** 348 `SimpleTestCase` passando (após instalar `langchain-core`,
+`langchain-community`, `daphne`, `channels`, `django-celery-beat`, `django-storages`,
+`psycopg2-binary`). PostgreSQL indisponível no ambiente cloud — testes de integração com banco
+pulados (pré-existente). CI `check`/`complexity` falhando em `development` antes deste PR
+(3 runs consecutivos com falha — `rest_framework_nested` ausente + `receipt_service.py` rank D).
+
+**Varreduras antes de escolher o fix:**
+- 11 PRs abertos (#318–#328): nenhum cobre `AuditLogViewSet`.
+- `AuditLogViewSet` usava `IsAdminUser` (is_staff) para proteger `AuditLog.objects.all()`.
+- `AuditLog` contém `user_email`, `user_ip`, `user_agent`, `old_values`, `new_values` de todos
+  os tenants — cross-tenant PII/business data.
+- Padrão do projeto é `is_superuser` como bypass, nunca `is_staff`.
+- Todos os outros falsos positivos (11 testes com ImportError de langchain) eram infra, não bugs.
+
+**Bug encontrado e corrigido:** `AuditLogViewSet` acessível por qualquer `is_staff` [P1]
+
+- **Tipo:** P1 — Exposição cross-tenant de PII e dados de negócio via `IsAdminUser` (is_staff)
+- **Arquivo:** `apps/audit/api/views.py` — `AuditLogViewSet`
+- **Problema:** `permission_classes = [IsAuthenticated, IsAdminUser]` permitia que qualquer usuário
+  com `is_staff=True` de qualquer tenant lesse `AuditLog.objects.all()` (todos os tenants).
+  `IsAdminUser` do DRF verifica `is_staff`, não `is_superuser` — viola o isolamento multi-tenant.
+- **Correção:**
+  1. `apps/core/permissions.py`: nova classe `IsSuperUser` (exige `is_authenticated AND is_superuser`),
+     adicionada a `__all__`.
+  2. `apps/audit/api/views.py`: substitui `IsAdminUser` por `IsSuperUser`. Remove import morto.
+  3. `my_activity` action preserva `permission_classes=[IsAuthenticated]` — auto-serviço, correto.
+- **Testes:** 7 `SimpleTestCase` (RED→GREEN confirmado) — staff sem superuser → 403, superuser → 200,
+  anônimo → 403, `my_activity` acessível por autenticado comum, `IsSuperUser` isolado.
+- **PR:** #329 — `bot/server-2026-08-09-audit-log-superuser-gate`
+- **CI:** `check` e `complexity` falham por infra pré-existente em `development` (3 runs antes do PR
+  já falhavam). Verificado: `rest_framework_nested` ausente + `receipt_service.py` rank D.
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Merge dos PRs acumulados #318–#329 (12 PRs aguardando revisão).
+2. **P1** — `receipt_service.py` rank D quebra o gate `--max-modules C` do xenon. Refatorar para
+   descer a C ou abrir exceção documentada no CI.
+3. **P1** — `rest_framework_nested` ausente do `requirements.txt` quebra `manage.py check` em CI.
+   Verificar se o pacote está instalado em produção mas faltou ser adicionado.
+4. **P1** — Testes de contrato para checkout payload e pedido por token.
+5. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+6. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
