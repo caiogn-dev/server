@@ -112,6 +112,7 @@ class SendMessageHandlerNoStrExcTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._src = _extract_method_source(_read_views_source(), "send_message")
+        cls._full_src = _read_views_source()
 
     def test_str_exc_not_in_response(self):
         lines_with_str_exc = [
@@ -144,6 +145,28 @@ class SendMessageHandlerNoStrExcTest(unittest.TestCase):
                 line,
                 f"Linha de resposta de erro não deve referenciar a variável exc: {line}",
             )
+
+    def test_media_url_validation_in_view(self):
+        """Valida que a view verifica media_url antes de chamar o serviço."""
+        self.assertIn(
+            "media_url",
+            self._src,
+            "send_message() deve validar media_url para tipos IMAGE/VIDEO/AUDIO.",
+        )
+        self.assertIn(
+            "IMAGE",
+            self._src,
+            "send_message() deve checar tipos de mídia (IMAGE/VIDEO/AUDIO) antes do serviço.",
+        )
+        lines_with_media_validation = [
+            line for line in self._src.splitlines()
+            if "media_url" in line and ("IMAGE" in line or "AUDIO" in line or "VIDEO" in line)
+        ]
+        self.assertGreater(
+            len(lines_with_media_validation),
+            0,
+            "send_message() deve conter validação de media_url para tipos de mídia.",
+        )
 
 
 if __name__ == "__main__":

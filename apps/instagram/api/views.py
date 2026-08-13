@@ -511,6 +511,12 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         media_url = request.data.get("media_url")
         reply_to_id = request.data.get("reply_to")
 
+        if str(message_type).upper() in ("IMAGE", "VIDEO", "AUDIO") and not media_url:
+            return Response(
+                {"error": f"media_url é obrigatório para mensagens do tipo {message_type}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         api = InstagramAPI(conversation.account)
         service = InstagramDirectService(api)
 
