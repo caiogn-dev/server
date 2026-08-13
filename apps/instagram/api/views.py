@@ -157,10 +157,8 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             short_token = token_resp.json().get("access_token")
         except Exception as exc:
             logger.error("Instagram code exchange failed: %s", exc)
-            raw = getattr(exc, "response", None)
-            detail = raw.text if raw is not None else str(exc)
             return Response(
-                {"error": f"Falha ao trocar code por token: {detail}"},
+                {"error": "Falha ao trocar code por token. Verifique se o código é válido e tente novamente."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -542,7 +540,7 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
                 conversation.participant_id,
                 exc,
             )
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Falha ao enviar mensagem. Tente novamente."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"], url_path="mark_as_read")
     def mark_as_read(self, request, pk=None):
