@@ -83,7 +83,9 @@ def triar(
     if not texto:
         return Decisao(intencao=Intencao.VAZIA)
 
-    from apps.stores.services.busca_de_produto import normalizar, tem_negacao
+    from apps.stores.services.busca_de_produto import (
+        eh_pergunta, normalizar, tem_negacao,
+    )
 
     normalizado = normalizar(texto)
 
@@ -96,6 +98,11 @@ def triar(
     if tem_negacao(texto):
         if esperando == 'observacao':
             return Decisao(intencao=Intencao.OBSERVACAO, texto=texto)
+        return Decisao(intencao=Intencao.CONSULTIVA, texto=texto)
+
+    # Pergunta que cita produto é dúvida, não pedido — espelho da regra de
+    # negação. Sem isto "o molho vem junto?" adicionava molho ao carrinho.
+    if eh_pergunta(texto):
         return Decisao(intencao=Intencao.CONSULTIVA, texto=texto)
 
     achados = _produtos(store, texto)

@@ -85,6 +85,32 @@ def _casa(alvo: str, nome: str) -> bool:
     return bool(palavras_do_nome & palavras_do_alvo)
 
 
+#: Aberturas de pergunta. Interrogativa que cita produto é DÚVIDA, não pedido.
+#:
+#: Na avaliação com 4 personas (13/ago) foram 3 erros em 20, todos deste tipo:
+#: "voces so tem salada?", "qual a diferenca do combo 5 pro 8?" e — o pior —
+#: "o molho vem junto?", que faria o bot ADICIONAR molho ao carrinho em vez de
+#: explicar que ele é vendido à parte.
+#:
+#: Cliente no WhatsApp quase nunca digita "?", então a lista de aberturas vale
+#: tanto quanto o ponto de interrogação.
+_PERGUNTAS = (
+    'qual', 'quais', 'quanto', 'quantos', 'quantas', 'como', 'quando', 'onde',
+    'por que', 'porque', 'pq', 'o que', 'oq', 'tem ', 'teria', 'voces tem',
+    'voce tem', 'da pra', 'de pra', 'sera que', 'qnt', 'quanta',
+)
+
+
+def eh_pergunta(texto: str) -> bool:
+    """True quando a frase pergunta em vez de pedir."""
+    bruto = str(texto or '').strip()
+    if bruto.endswith('?'):
+        return True
+    alvo = normalizar(bruto)
+    return any(alvo.startswith(p.strip()) or f' {p.strip()} ' in f' {alvo} '
+               for p in _PERGUNTAS)
+
+
 #: Marcas de negação. Quem escreve "sem cebola" está TIRANDO, não pedindo.
 #:
 #: Sem isto o casamento vira uma armadilha em loja que vende ingrediente avulso:
@@ -99,8 +125,15 @@ _NEGACOES = (
 
 
 def tem_negacao(texto: str) -> bool:
-    alvo = normalizar(texto)
-    return any(n.strip() in f' {alvo} ' for n in _NEGACOES)
+    """Compara PALAVRA inteira, nunca substring.
+
+    A primeira versão fazia `n.strip() in f' {alvo} '`, o que transformava
+    'sem ' em 'sem' e casava dentro de "sempre", "semana", "sementes". "quero o
+    de sempre" — frase de cliente habitual — era lida como negação e nunca
+    virava item.
+    """
+    alvo = f' {normalizar(texto)} '
+    return any(f' {n.strip()} ' in alvo for n in _NEGACOES)
 
 
 def parece_pedido_de_produto(store, texto: str):
@@ -143,5 +176,14 @@ def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
         ]
         if _casa(alvo, normalizar(o.name))
     ]
-    candidatos.sort(key=lambda o: (normalizar(o.name) != alvo, len(o.name)))
+    # Ganha quem casa MAIS palavras da frase, não quem tem o nome mais curto.
+    # "quero 2 combos de 5 saladas" devolvia "Combo Salmão" — qualquer "Combo X"
+    # vencia "COMBO 5 SALADAS", que casa duas palavras.
+    def _peso(o):
+        nome = normalizar(o.name)
+        casadas = len({_raiz(p) for p in nome.split() if len(p) > 2}
+                      & {_raiz(p) for p in alvo.split() if len(p) > 2})
+        return (nome != alvo, -casadas, len(o.name))
+
+    candidatos.sort(key=_peso)
     return candidatos[:limite]

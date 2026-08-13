@@ -32,7 +32,7 @@ def loja(db):
 
     store = make_store(name='Cê Saladas')
     for nome in ('Monte sua Salada', 'Salada Caesar', 'Suco de laranja 400ml',
-                 'Cebola roxa', 'Batata rústica'):
+                 'Cebola roxa', 'Batata rústica', 'Molho'):
         StoreProduct.objects.create(
             store=store, name=nome, slug=nome.lower().replace(' ', '-'),
             price=20, is_active=True,
@@ -108,7 +108,11 @@ class TestCaminhoQuenteNaoTocaLLM:
             chamadas.append(texto)
             return Decisao(intencao=Intencao.CONSULTIVA)
 
-        triar('me explica como funciona a entrega de vocês aí', store=loja,
+        # Não pode ser pergunta: interrogativa agora resolve como consultiva
+        # SEM LLM, de propósito — pergunta é consultiva por definição, e uma
+        # chamada de modelo para confirmar isso seria dinheiro e latência a
+        # troco de nada.
+        triar('acho que vou levar aquilo de sempre mesmo viu', store=loja,
               classificador=classificador)
 
         assert chamadas, 'frase que o regex não entende tem que chegar no LLM'
@@ -224,3 +228,102 @@ class TestEstadoNaoCapturaPedidoDeProduto:
         assert self._servico(loja)._estado_deve_capturar(
             'Quadra 110 Norte Alameda 23'
         ) is True
+
+
+class TestPerguntaNaoEhPedido:
+    """Interrogativa que cita produto é DÚVIDA, não pedido.
+
+    Descoberto na avaliação com 4 personas (13/ago), 3 erros em 20 e todos do
+    mesmo tipo:
+
+        "voces so tem salada?"               -> item (era consultiva)
+        "qual a diferenca do combo 5 pro 8?" -> item (era consultiva)
+        "o molho vem junto?"                 -> item (era consultiva)
+
+    O terceiro é o mais grave: é a dúvida do molho que abriu esta sessão. O bot
+    ia ADICIONAR molho ao carrinho em vez de explicar que ele é vendido à parte.
+
+    É o espelho da regra de negação: o casador de catálogo dispara antes de
+    alguém perguntar que tipo de frase é aquela.
+    """
+
+    def test_pergunta_com_interrogacao_nao_vira_item(self, loja):
+        d = triar('voces so tem salada?', store=loja)
+        assert d.intencao is Intencao.CONSULTIVA, d
+
+    def test_pergunta_sobre_o_que_acompanha_nao_adiciona_o_acompanhamento(self, loja):
+        """O caso do molho — a dúvida que começou tudo."""
+        from apps.stores.models import StoreProduct
+
+        StoreProduct.objects.create(
+            store=loja, name='Molho branco', slug='molho-branco',
+            price=8, is_active=True,
+        )
+
+        d = triar('o molho vem junto?', store=loja)
+
+        assert d.intencao is Intencao.CONSULTIVA, d
+
+    def test_interrogativa_sem_ponto_tambem_conta(self, loja):
+        """Cliente no WhatsApp quase nunca põe o ponto de interrogação."""
+        for frase in ('qual a diferenca da salada caesar',
+                      'quanto custa o suco de laranja',
+                      'tem salada de frango'):
+            assert triar(frase, store=loja).intencao is Intencao.CONSULTIVA, frase
+
+    def test_pedido_de_verdade_continua_item(self, loja):
+        """A regra não pode engolir quem está comprando."""
+        for frase in ('quero salada', 'manda um suco de laranja', 'mais um molho'):
+            assert triar(frase, store=loja).intencao is Intencao.ITEM, frase
+
+
+class TestRankingPorPalavrasQueCasam:
+    def test_ganha_quem_casa_mais_palavras_nao_quem_tem_nome_curto(self, db):
+        """'quero 2 combos de 5 saladas' devolvia 'Combo Salmão'.
+
+        O desempate era só pelo nome mais curto, então qualquer 'Combo X' ganhava
+        de 'COMBO 5 SALADAS', que casa DUAS palavras da frase.
+        """
+        from apps.stores.models import StoreCombo
+        from apps.stores.tests.factories import make_store
+
+        store = make_store(name='CS')
+        for nome in ('COMBO 5 SALADAS', 'Combo Salmão', 'Combo Tilápia'):
+            StoreCombo.objects.create(
+                store=store, name=nome, slug=nome.lower().replace(' ', '-'),
+                price=100, is_active=True,
+            )
+
+        d = triar('quero 2 combos de 5 saladas', store=store)
+
+        assert d.itens[0].name == 'COMBO 5 SALADAS', [p.name for p in d.itens]
+
+
+class TestNegacaoNaoCasaDentroDePalavra:
+    """"sempre" contém "sem" — e isso quebrava o pedido do cliente fiel.
+
+    `tem_negacao` fazia `n.strip()` e comparava por SUBSTRING, então 'sem '
+    virava 'sem' e casava dentro de "sempre", "semana", "sementes". "quero o de
+    sempre" era lido como negação e nunca chegava a virar item.
+
+    Descoberto na avaliação com personas, não em teste sintético: a frase que
+    expõe isso é coisa de cliente habitual, não de caso de teste.
+    """
+
+    def test_sempre_nao_e_negacao(self, loja):
+        from apps.stores.services.busca_de_produto import tem_negacao
+
+        assert tem_negacao('quero o de sempre') is False
+
+    def test_semana_e_sementes_tambem_nao(self, loja):
+        from apps.stores.services.busca_de_produto import tem_negacao
+
+        assert tem_negacao('toda semana eu peço') is False
+        assert tem_negacao('poe sementes') is False
+
+    def test_negacao_de_verdade_continua_pegando(self, loja):
+        from apps.stores.services.busca_de_produto import tem_negacao
+
+        for frase in ('sem cebola', 'sem o tomate', 'tirar a alface',
+                      'nao quero queijo', 'nada de azeitona'):
+            assert tem_negacao(frase) is True, frase
