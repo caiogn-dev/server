@@ -19,6 +19,10 @@ from django.utils import timezone
 #      motivo para pagar. 15 é o número em que a loja que virou negócio percebe.
 #   2. O bot do WhatsApp é o único motivo real de compra, então ele marca a
 #      fronteira entre "Loja" e "Loja + WhatsApp". Não vem no plano de entrada.
+#   3. R$ 249 no plano com bot é o número da estratégia (LTV/CAC 5,5x contra
+#      1,97x nas faixas baixas), não um arredondamento. Ele estava 329 aqui,
+#      249 no documento e nas mensagens de prospecção — as três fontes diziam
+#      coisas diferentes ao mesmo tempo. Agora tem teste.
 #
 # Lojas grandfather (billing_exempt=True) ignoram tudo isto — ver is_billing_exempt.
 PLAN_CATALOG = {
@@ -62,7 +66,7 @@ PLAN_CATALOG = {
         'key': 'pro',
         'name': 'Loja + WhatsApp',
         'setup_fee': Decimal('1200.00'),
-        'monthly_price': Decimal('329.00'),
+        'monthly_price': Decimal('249.00'),
         'charges_setup_fee': True,
         'limits': {
             'max_products': None,
