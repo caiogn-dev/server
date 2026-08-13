@@ -648,6 +648,33 @@ class IntentHandler:
         }
         session_manager = self._get_session_manager()
         normalized = self._normalize_lookup_text(notes_text)
+
+        # Pedir produto não é observação.
+        #
+        # 13/ago, Yeda × Cê Saladas: com o resumo na tela, ela escreveu "Quero
+        # salada" e recebeu "✅ Anotado: Quero salada". O carrinho ficou com 1
+        # suco, o PIX saiu R$ 20,00, a dona cancelou o pedido e refez R$ 100,01
+        # na mão. Tudo porque aqui só existiam duas saídas: palavra de pular, ou
+        # observação.
+        if normalized not in _SKIP_WORDS:
+            from apps.stores.services.busca_de_produto import parece_pedido_de_produto
+
+            achado = parece_pedido_de_produto(self.store, notes_text)
+            if achado is not None:
+                return HandlerResult.buttons(
+                    body=(
+                        f"Ah, você quer *{achado.name}*? 🥗\n\n"
+                        "Isso é um item, não uma observação — então não anotei "
+                        "como recado pra cozinha.\n\n"
+                        "Toque abaixo pra escolher no cardápio e adicionar ao "
+                        "pedido, ou me diga a observação de outro jeito."
+                    ),
+                    buttons=[
+                        {'id': 'add_more_items', 'title': '➕ Adicionar item'},
+                        {'id': 'pay_pix', 'title': '💠 Fechar assim'},
+                    ],
+                )
+
         notes = '' if normalized in _SKIP_WORDS else notes_text.strip()
         try:
             session_manager.save_customer_notes(notes)
