@@ -56,6 +56,17 @@ def casar_combo(store, texto: str):
     return _melhor(candidatos, alvo, lambda c: c.name)
 
 
+def _raiz(palavra: str) -> str:
+    """Plural cru do português: 'batatas' e 'batata' têm que casar.
+
+    Não é stemmer de verdade e nem tenta ser — 'ões'/'ães' ficam de fora. Existe
+    porque "Batatas" não achava "Batata rústica" e virava silêncio.
+    """
+    if len(palavra) > 3 and palavra.endswith('s'):
+        return palavra[:-1]
+    return palavra
+
+
 def _casa(alvo: str, nome: str) -> bool:
     """O texto contém o nome, ou o nome contém o texto.
 
@@ -69,8 +80,8 @@ def _casa(alvo: str, nome: str) -> bool:
         return False
     if nome in alvo or alvo in nome:
         return True
-    palavras_do_nome = {p for p in nome.split() if len(p) > 2}
-    palavras_do_alvo = {p for p in alvo.split() if len(p) > 2}
+    palavras_do_nome = {_raiz(p) for p in nome.split() if len(p) > 2}
+    palavras_do_alvo = {_raiz(p) for p in alvo.split() if len(p) > 2}
     return bool(palavras_do_nome & palavras_do_alvo)
 
 
@@ -105,3 +116,32 @@ def parece_pedido_de_produto(store, texto: str):
     if tem_negacao(texto):
         return None
     return casar_produto(store, texto) or casar_combo(store, texto)
+
+
+def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
+    """TODOS os produtos que a frase pode estar nomeando, do melhor ao pior.
+
+    `casar_produto` devolve um só, e para "quero salada" numa loja com várias
+    saladas isso é um chute. Chute vira item errado no carrinho — foi assim que
+    o pedido da Yeda saiu R$ 20 em vez de R$ 100. Devolvendo a lista, quem fala
+    com o cliente pode perguntar "qual delas?" em vez de adivinhar.
+    """
+    from apps.stores.models import StoreProduct
+
+    alvo = normalizar(texto)
+    if not store or not alvo or tem_negacao(texto):
+        return []
+    # Produtos E combos. Varrer só StoreProduct fazia "Quero salada" voltar
+    # vazio na Cê Saladas, onde salada é vendida por combo — e a mensagem caía
+    # em observação de novo, que é o bug que este módulo existe para matar.
+    from apps.stores.models import StoreCombo
+
+    candidatos = [
+        o for o in [
+            *StoreProduct.objects.filter(store=store, is_active=True),
+            *StoreCombo.objects.filter(store=store, is_active=True),
+        ]
+        if _casa(alvo, normalizar(o.name))
+    ]
+    candidatos.sort(key=lambda o: (normalizar(o.name) != alvo, len(o.name)))
+    return candidatos[:limite]
