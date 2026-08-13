@@ -20,20 +20,47 @@ def get_redis_client():
         return None
 
 def acquire_lock(lock_name, timeout=60):
-    """Acquire a distributed lock using Redis."""
+    """Acquire a distributed lock using Redis.
+
+    Sem Redis o lock LIBERA em vez de explodir. `redis.from_url()` é preguiçoso
+    — não conecta, só monta o cliente —, então o try/except do get_redis_client
+    nunca via erro nenhum e a falha real estourava aqui, subia pela pilha e
+    derrubava process_webhook_event. Um soluço do Redis não deixava o lock
+    aberto: deixava TODA mensagem recebida sem processamento.
+
+    O trade-off é explícito: liberando, duas execuções simultâneas do mesmo
+    evento passam a ser possíveis. Processar duas vezes é ruim; não processar é
+    pior, e a idempotência do WebhookEvent ainda protege.
+    """
     client = get_redis_client()
     if not client:
         return True  # No Redis, no lock
-    
-    # Try to acquire lock with NX (only if not exists)
-    acquired = client.set(lock_name, "1", nx=True, ex=timeout)
-    return acquired
+
+    try:
+        # Try to acquire lock with NX (only if not exists)
+        return client.set(lock_name, "1", nx=True, ex=timeout)
+    except Exception as exc:
+        logger.warning(
+            "Redis indisponível ao pegar o lock %s — seguindo sem lock: %s",
+            lock_name, exc,
+        )
+        return True
 
 def release_lock(lock_name):
-    """Release a distributed lock."""
+    """Release a distributed lock.
+
+    Roda em finally: se levantar, mascara o erro original do bloco try.
+    """
     client = get_redis_client()
-    if client:
+    if not client:
+        return
+    try:
         client.delete(lock_name)
+    except Exception as exc:
+        logger.warning(
+            "Redis indisponível ao soltar o lock %s (ele expira sozinho): %s",
+            lock_name, exc,
+        )
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
