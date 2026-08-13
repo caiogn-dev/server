@@ -169,3 +169,58 @@ class TestCombosContam:
 
         assert d.intencao is Intencao.ITEM, d
         assert d.itens[0].name == 'COMBO 5 SALADAS'
+
+
+class TestEstadoNaoCapturaPedidoDeProduto:
+    """O portão do checkout consulta a triagem antes de engolir o texto.
+
+    `unified_service` tinha uma condição que dizia: se existe sessão esperando
+    endereço ou observação, mande TODO texto para o handler de checkout. Era ela
+    que fazia "Quero salada" virar nota antes de qualquer roteamento acontecer.
+
+    Agora a pergunta muda de "existe estado?" para "existe estado E a mensagem
+    pertence a ele?".
+    """
+
+    def _servico(self, store):
+        """Serviço COM checkout aberto esperando observação.
+
+        Sem a sessão pendente o portão nunca captura e o teste passa sem provar
+        nada — foi o que aconteceu na primeira rodada.
+        """
+        from apps.automation.models import CompanyProfile, CustomerSession
+        from apps.automation.services.unified_service import UnifiedService
+        from apps.conversations.models import Conversation
+        from apps.whatsapp.models import WhatsAppAccount
+
+        conta = WhatsAppAccount.objects.create(
+            name='T', phone_number_id='PHTRI', waba_id='WTRI',
+        )
+        # Loja e conta criam CADA UMA o seu profile por signal, e ele é 1:1 com
+        # as duas pontas — descartar o órfão antes de juntar.
+        CompanyProfile.objects.filter(store=store).exclude(account=conta).delete()
+        perfil = CompanyProfile.objects.get(account=conta)
+        perfil.store = store
+        perfil.save(update_fields=['store'])
+        conversa = Conversation.objects.create(account=conta, phone_number='5563900000000')
+        CustomerSession.objects.create(
+            company=perfil, phone_number='5563900000000',
+            session_id='whatsapp_5563900000000_tri',
+            status=CustomerSession.SessionStatus.CHECKOUT,
+            cart_data={'waiting_for_notes': True},
+        )
+        servico = UnifiedService(conta, conversa, use_llm=False)
+        servico.store = store
+        return servico
+
+    def test_pedido_de_produto_escapa_do_estado(self, loja):
+        assert self._servico(loja)._estado_deve_capturar('Quero salada') is False
+
+    def test_observacao_continua_sendo_capturada(self, loja):
+        assert self._servico(loja)._estado_deve_capturar('sem cebola') is True
+
+    def test_texto_qualquer_continua_sendo_capturado(self, loja):
+        """Endereço digitado à mão não pode escapar — é o caso comum."""
+        assert self._servico(loja)._estado_deve_capturar(
+            'Quadra 110 Norte Alameda 23'
+        ) is True

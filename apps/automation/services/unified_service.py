@@ -459,6 +459,33 @@ class UnifiedService:
             pass
         return True
 
+    def _estado_deve_capturar(self, texto: str) -> bool:
+        """O checkout em curso deve engolir esta mensagem?
+
+        A pergunta era só "existe estado?" — e por isso "Quero salada" virou
+        "✅ Anotado: Quero salada" no meio do checkout da Yeda, fechando um
+        pedido de R$ 20 quando o real era R$ 100.
+
+        Agora são duas: existe estado, E a mensagem pertence a ele. Pedir
+        produto não pertence — segue para o roteamento normal. Endereço
+        digitado, observação e qualquer outro texto continuam sendo capturados,
+        que é o caso comum e não pode regredir.
+        """
+        if not (self._has_pending_delivery_address_session()
+                or self._has_pending_notes_session()):
+            return False
+
+        try:
+            from apps.automation.services.triagem import Intencao, triar
+
+            decisao = triar(texto, store=self.store)
+            return decisao.intencao is not Intencao.ITEM
+        except Exception as exc:
+            # Triagem quebrada não pode soltar o cliente do checkout: o
+            # comportamento antigo (capturar) é o seguro aqui.
+            logger.warning('[unified] triagem falhou no portão do checkout: %s', exc)
+            return True
+
     def _has_pending_delivery_address_session(self) -> bool:
         """Return True when this customer has an order waiting for delivery address.
 
@@ -973,7 +1000,7 @@ class UnifiedService:
             r'|quero falar com|chama algu[ée]m|ajuda humana|suporte)',
             normalized,
         ))
-        if not _early_cancel and not _early_human and _restricted is None and (self._has_pending_delivery_address_session() or self._has_pending_notes_session()):
+        if not _early_cancel and not _early_human and _restricted is None and self._estado_deve_capturar(normalized):
             from apps.whatsapp.intents.handlers import UnknownHandler
             try:
                 handler = UnknownHandler(self.account, self.conversation, self.company)
