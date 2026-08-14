@@ -37,7 +37,7 @@ def casar_produto(store, texto: str):
     if not alvo:
         return None
     candidatos = [
-        p for p in StoreProduct.objects.filter(store=store, is_active=True)
+        p for p in StoreProduct.disponiveis(store)
         if _casa(alvo, normalizar(p.name))
     ]
     return _melhor(candidatos, alvo, lambda p: p.name)
@@ -171,7 +171,9 @@ def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
 
     candidatos = [
         o for o in [
-            *StoreProduct.objects.filter(store=store, is_active=True),
+            # disponiveis() e não is_active: o painel escreve em `status`, e
+            # filtrar pelo campo errado oferecia produto que o dono desativou.
+            *StoreProduct.disponiveis(store),
             *StoreCombo.objects.filter(store=store, is_active=True),
         ]
         if _casa(alvo, normalizar(o.name))

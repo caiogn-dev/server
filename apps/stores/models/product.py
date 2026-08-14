@@ -126,6 +126,33 @@ class StoreProduct(BaseModel):
     # Pausa rápida (item esgotado): produto fica indisponível até este horário
     paused_until = models.DateTimeField(null=True, blank=True)
 
+    @classmethod
+    def disponiveis(cls, store=None):
+        """A ÚNICA pergunta sobre disponibilidade de produto.
+
+        Existe porque havia duas, e elas discordavam. `status` é o campo que o
+        painel escreve; `is_active` vem de `BaseModel` com default=True e
+        praticamente ninguém o seta — então filtrar só por `is_active` mostra
+        produto que o dono desativou.
+
+        Apontado pelo dono em 13/ago com o "suco 1": desativado no painel,
+        oferecido pelo bot. Medido: 24 produtos assim em produção (12 na
+        Ivoneth, 6 na Cê Saladas, 4 na Pastita).
+
+        `paused_until` entra junto porque é a pausa de item esgotado que o dono
+        usa no meio do expediente — indisponível é indisponível, seja por
+        decisão ou por acabar o estoque.
+        """
+        from django.db.models import Q
+        from django.utils import timezone
+
+        qs = cls.objects.filter(is_active=True, status=cls.ProductStatus.ACTIVE)
+        if store is not None:
+            qs = qs.filter(store=store)
+        return qs.filter(
+            Q(paused_until__isnull=True) | Q(paused_until__lte=timezone.now())
+        )
+
     # Images
     main_image = models.ImageField(upload_to='stores/products/', blank=True, null=True)
     main_image_url = models.URLField(blank=True)
