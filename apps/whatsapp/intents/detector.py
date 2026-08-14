@@ -145,7 +145,17 @@ class IntentDetector:
             r'(paguei|j[áa] paguei|comprovante|enviei o pix|confirma pagamento|fiz o pagamento)',
         ],
         IntentType.REQUEST_PIX: [
-            r'(gerar pix|c[oó]digo pix|quero pagar|forma de pagamento|como pago|gerar c[oó]digo)',
+            # O nome da intenção é histórico: hoje ela roteia PAGAMENTO em
+            # geral, e o handler decide PIX, link de cartão ou maquininha pelo
+            # que o cliente escreveu. Sem cartão/maquininha aqui, "tem
+            # maquininha?" caía em UNKNOWN e nunca chegava ao handler — o
+            # cliente ficava sem resposta com o pedido montado.
+            r'(gerar pix|c[oó]digo pix|quero pagar|forma de pagamento|como pago|gerar c[oó]digo'
+            r'|cart[ãa]o|cr[ée]dito|d[ée]bito|maquin\w*|pag\w*\s+na\s+entrega'
+            # "manda o pix" / "quero o pix": frases comuns que não casavam com
+            # nada e caíam em UNKNOWN. Escritas por extenso em vez de um `pix`
+            # solto para não roubar "copiar pix", que é outra intenção.
+            r'|(manda|mande|envia|envie|quero)\s+(o\s+)?pix)',
         ],
         IntentType.VIEW_QR_CODE: [
             r'(qr code|qr-code|ver qr|mostrar qr|c[óo]digo qr)',

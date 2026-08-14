@@ -103,6 +103,15 @@ class ProductMentionHandler(IntentHandler):
         logger.info(f"[ProductMentionHandler] Mensagem: {message}")
         if not self.store:
             return HandlerResult.text("Cardápio não disponível. 😔")
+
+        # COMBO PRIMEIRO. Esta busca varria só `StoreProduct`, então combo não
+        # existia para o bot: medido em 14/ago, "combo 5 saladas" — R$ 239,98,
+        # o item mais caro da Cê Saladas — recebia "😕 Não encontrei no
+        # cardápio". O cliente pedia o carro-chefe e ouvia que não existe.
+        resposta_de_combo = self._tentar_combo(message)
+        if resposta_de_combo is not None:
+            return resposta_de_combo
+
         all_products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente'])
         search_term = message.lower().strip()
         normalized_search = self._normalize_lookup_text(search_term)
@@ -160,6 +169,47 @@ class ProductMentionHandler(IntentHandler):
         intro = f"😕 Não encontrei *{search_term.title()}* no cardápio.\n\nMas temos:"
         return HandlerResult.text(_build_price_list_text(self.store, intro))
 
+
+    # ── Combo ─────────────────────────────────────────────────────────────
+
+    def _tentar_combo(self, message: str):
+        """Responde quando a mensagem nomeia um combo. None = não é combo.
+
+        Quando o combo exige escolha de sabores, começa a montagem e guarda o
+        estado na sessão; a resposta do cliente é tratada em `unified_service`,
+        antes da detecção de intenção.
+        """
+        try:
+            from apps.stores.services.busca_de_produto import casar_combo
+            from apps.automation.services.montagem_de_combo import (
+                CHAVE, grupos_do_combo, iniciar,
+            )
+
+            combo = casar_combo(self.store, message)
+            if combo is None:
+                return None
+
+            grupos = grupos_do_combo(combo)
+            texto, estado = iniciar(combo, grupos)
+
+            if estado is None:
+                # Combo sem escolha: cai no fluxo normal de adicionar.
+                return HandlerResult.buttons(
+                    body=f"🥗 *{combo.name}*\n💰 R$ {combo.price}",
+                    buttons=[
+                        {'id': f'add_combo_{combo.id}_1', 'title': '🛒 Adicionar ao pedido'},
+                        {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                    ],
+                )
+
+            sessao = self._get_session_manager().get_or_create_session()
+            sessao.update_context(CHAVE, estado)
+            return HandlerResult.text(texto)
+        except Exception as exc:
+            # Combo quebrado não pode derrubar a busca de produto, que é o
+            # caminho da maioria das vendas.
+            logger.warning('[ProductMentionHandler] combo falhou: %s', exc)
+            return None
 
 class MenuRequestHandler(IntentHandler):
     """Handler para solicitação de cardápio."""

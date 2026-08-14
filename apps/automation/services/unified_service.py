@@ -471,14 +471,28 @@ class UnifiedService:
         digitado, observação e qualquer outro texto continuam sendo capturados,
         que é o caso comum e não pode regredir.
         """
-        if not (self._has_pending_delivery_address_session()
-                or self._has_pending_notes_session()):
+        espera_endereco = self._has_pending_delivery_address_session()
+        espera_observacao = self._has_pending_notes_session()
+        if not (espera_endereco or espera_observacao):
             return False
 
         try:
             from apps.automation.services.triagem import Intencao, triar
 
-            decisao = triar(texto, store=self.store)
+            # O estado já era conhecido aqui e era jogado fora: `triar` era
+            # chamado sem `esperando`, no escuro. É desempate, não atalho.
+            esperando = 'endereco' if espera_endereco else 'observacao'
+
+            # O classificador NIM entra SÓ na observação. É ali que a dúvida
+            # custa uma venda — "Quero salada" virou "✅ Anotado: Quero salada"
+            # e fechou R$ 20 no lugar de R$ 100. No estado de endereço o
+            # cliente está digitando um endereço: o catálogo não casa nada, a
+            # resposta determinística já está certa, e perguntar ao modelo
+            # seria uma ida à rede por endereço digitado sem mudar decisão.
+            decisao = triar(
+                texto, store=self.store, esperando=esperando,
+                classificador=_classificador() if espera_observacao else None,
+            )
             return decisao.intencao is not Intencao.ITEM
         except Exception as exc:
             # Triagem quebrada não pode soltar o cliente do checkout: o
@@ -1000,6 +1014,19 @@ class UnifiedService:
             r'|quero falar com|chama algu[ée]m|ajuda humana|suporte)',
             normalized,
         ))
+        # Combo em montagem: "1, 3, 5" só faz sentido para quem perguntou os
+        # sabores. Vem ANTES da detecção de intenção porque um número solto não
+        # casa com nada e cairia em UNKNOWN — o cliente responderia a pergunta
+        # do bot e receberia "não entendi".
+        #
+        # Depois do cancelamento e do pedido de atendente, de propósito: quem
+        # quer desistir ou falar com gente não pode ficar preso escolhendo
+        # salada.
+        if not _early_cancel and not _early_human:
+            resposta_combo = self._responder_montagem_de_combo(normalized)
+            if resposta_combo is not None:
+                return resposta_combo
+
         if not _early_cancel and not _early_human and _restricted is None and self._estado_deve_capturar(normalized):
             from apps.whatsapp.intents.handlers import UnknownHandler
             try:
@@ -1199,6 +1226,81 @@ class UnifiedService:
             interactive_type='buttons',
             interactive_data={'buttons': _fallback_buttons},
         )
+
+    def _responder_montagem_de_combo(self, texto: str):
+        """Continua a escolha de sabores de um combo, se houver uma em curso.
+
+        Devolve None quando não há montagem aberta — o fluxo normal segue.
+        """
+        from apps.automation.services.montagem_de_combo import (
+            CHAVE, Grupo, Opcao, grupos_do_combo, responder,
+        )
+
+        try:
+            gerente = self._get_session_manager()
+            sessao = gerente.get_or_create_session()
+            estado = (sessao.context or {}).get(CHAVE)
+            if not estado:
+                return None
+
+            from apps.stores.models import StoreCombo
+
+            combo = StoreCombo.objects.filter(
+                id=estado.get('combo_id'), store=self.store,
+            ).first()
+            if combo is None:
+                sessao.update_context(CHAVE, None)
+                return None
+
+            grupos = grupos_do_combo(combo)
+            if not grupos:
+                sessao.update_context(CHAVE, None)
+                return None
+
+            resposta, novo_estado = responder(estado, texto, grupos[0])
+            sessao.update_context(CHAVE, novo_estado)
+
+            return UnifiedResponse(
+                content=resposta,
+                source=ResponseSource.HANDLER,
+                metadata={'intent': 'combo_em_montagem'},
+            )
+        except Exception as exc:
+            # Montagem quebrada não pode engolir a mensagem do cliente: sem o
+            # None aqui, ele ficaria mudo no meio da escolha.
+            logger.warning('[unified] montagem de combo falhou: %s', exc)
+            return None
+
+
+
+
+
+#: Instância única do classificador — criar um por mensagem recriaria o cliente
+#: HTTP a cada chamada.
+_CLASSIFICADOR = None
+
+
+def _classificador():
+    """Devolve o classificador NIM, ou None quando desligado.
+
+    A chave de desligamento existe porque isto é uma chamada de rede no caminho
+    do cliente. Se a NVIDIA degradar, `BOT_CLASSIFICADOR=0` tira do caminho sem
+    deploy — e a triagem determinística continua respondendo.
+    """
+    import os
+
+    if os.getenv('BOT_CLASSIFICADOR', '1') in ('0', 'false', 'False'):
+        return None
+
+    global _CLASSIFICADOR
+    if _CLASSIFICADOR is None:
+        from apps.automation.services.classificador import ClassificadorNIM
+
+        _CLASSIFICADOR = ClassificadorNIM()
+    return _CLASSIFICADOR
+
+
+
 
 
 LLMOrchestratorService = UnifiedService
