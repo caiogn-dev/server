@@ -75,6 +75,22 @@ Responda SÓ com:
 {"intencao": "<rótulo>", "confianca": <0 a 1>}"""
 
 
+#: Sequência de 4+ dígitos (com separador ou não): CPF, telefone, cartão, CEP.
+#: Número curto fica — "quero 2 combos" precisa do 2 para ser classificado.
+_NUMERO_LONGO = re.compile(r'\b[\d][\d.\-/ ]{3,}\d\b')
+
+
+def sem_dado_pessoal(texto: str) -> str:
+    """Tira o que identifica antes de mandar para a API de terceiro.
+
+    O classificador manda a frase do cliente para a NVIDIA. Auditado em 13/ago:
+    CPF, telefone e número de endereço iam íntegros. Ele precisa da FORMA da
+    frase, não dos dígitos — sequência longa de número não ajuda a distinguir
+    "item" de "consultiva", só cria exposição.
+    """
+    return _NUMERO_LONGO.sub('[num]', str(texto or ''))
+
+
 def _decisao_do_json(bruto) -> Optional[Decisao]:
     """Extrai a decisão do que o modelo respondeu.
 
@@ -170,7 +186,7 @@ class ClassificadorNIM:
                 '\nContexto: o pedido já está montado e o sistema perguntou se '
                 'há alguma observação.'
             )
-        partes.append(f'\nMensagem do cliente:\n{texto}')
+        partes.append(f'\nMensagem do cliente:\n{sem_dado_pessoal(texto)}')
         return '\n'.join(partes)
 
     @staticmethod

@@ -175,3 +175,50 @@ class TestModeloPequenoDeProposito:
                 ClassificadorNIM()._carregar()
 
         assert fake.call_args.kwargs['model'] == 'outro/modelo'
+
+
+class TestNaoMandaDadoPessoalParaFora:
+    """O classificador manda a frase do cliente para uma API de terceiro.
+
+    Auditado em 13/ago: CPF, endereço e telefone iam íntegros para a NVIDIA.
+    Numa operação brasileira isso é LGPD, não preciosismo — e é código escrito
+    hoje, então não havia decisão anterior a respeitar.
+
+    O classificador precisa da FORMA da frase, não dos dígitos. Sequência longa
+    de número não ajuda a distinguir "item" de "consultiva"; ela só cria
+    exposição.
+
+    ⚠️ Número CURTO fica: "quero 2 combos" precisa do 2 para ser item.
+    """
+
+    def _prompt(self, texto):
+        return ClassificadorNIM()._prompt(texto, None, None)
+
+    def test_cpf_nao_sai_do_servidor(self, db):
+        p = self._prompt('meu cpf é 123.456.789-00')
+
+        assert '123.456.789-00' not in p
+        assert '123456789' not in p
+
+    def test_telefone_nao_sai_do_servidor(self, db):
+        p = self._prompt('meu zap é 63 99999-8888')
+
+        assert '99999' not in p
+        assert '8888' not in p
+
+    def test_numero_de_cartao_nao_sai(self, db):
+        p = self._prompt('4111 1111 1111 1111')
+
+        assert '4111' not in p
+
+    def test_quantidade_pequena_e_preservada(self, db):
+        """Sem o número, "quero 2 combos" deixa de ser classificável."""
+        p = self._prompt('quero 2 combos de 5 saladas')
+
+        assert 'quero 2 combos de 5 saladas' in p
+
+    def test_o_texto_util_sobrevive(self, db):
+        p = self._prompt('meu endereço é Quadra 110 Norte, quero 3 saladas')
+
+        assert 'quero 3 saladas' in p
+        assert 'Quadra' in p  # rua não é identificador direto; o número, sim
