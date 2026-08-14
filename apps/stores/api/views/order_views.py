@@ -30,6 +30,27 @@ from .base import IsStoreOwnerOrStaff, filter_by_store
 logger = logging.getLogger(__name__)
 
 
+def _nfce_payload(doc) -> dict:
+    """Forma única do estado fiscal — emitir, consultar e cancelar devolvem
+    o mesmo objeto, então o painel tem um só caminho de leitura."""
+    if doc is None:
+        return {'id': None, 'status': None, 'modelo': None}
+    return {
+        'id': str(doc.id),
+        'status': doc.status,
+        'modelo': doc.modelo,
+        'provider': doc.provider,
+        'chave_acesso': doc.chave_acesso,
+        'numero': doc.numero,
+        'serie': doc.serie,
+        'qrcode_url': doc.qrcode_url,
+        'danfe_url': doc.danfe_url,
+        'xml_url': doc.xml_url,
+        'error_message': doc.error_message,
+        'created_at': doc.created_at,
+    }
+
+
 class StoreOperationsPagination(PageNumberPagination):
     page_size = 500
     page_size_query_param = 'page_size'
@@ -722,29 +743,93 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], url_path='emit_nfce')
     def emit_nfce(self, request, pk=None, **kwargs):
-        """Emite a NFC-e do pedido via provider fiscal configurado na loja."""
+        """Emite a nota do pedido: `modelo` 65 = NFC-e (padrão), 55 = NF-e."""
+        from apps.fiscal.documents import classificar
+        from apps.fiscal.models import FiscalDocument
         from apps.fiscal.providers.base import FiscalNotConfigured
         from apps.fiscal.services import emit_nfce_for_order
 
         order = self.get_object()
+
+        modelo = str(request.data.get('modelo') or FiscalDocument.Modelo.NFCE)
+        if modelo not in FiscalDocument.Modelo.values:
+            return Response(
+                {'error': 'Modelo de nota inválido. Use 65 (NFC-e) ou 55 (NF-e).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # CPF/CNPJ informado agora (PDV/painel) sobrescreve o do checkout.
+        # Recusar aqui é o único momento em que ainda dá pra corrigir o número
+        # — depois da emissão, nota errada só se cancela.
+        documento = str(request.data.get('cpf') or '').strip()
+        if documento:
+            tipo, numero = classificar(documento)
+            if not tipo:
+                return Response(
+                    {'error': 'CPF/CNPJ inválido. Confira o número ou emita sem identificação.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            order.metadata = {**(order.metadata or {}), 'cpf_nota': numero}
+            order.save(update_fields=['metadata', 'updated_at'])
+
         try:
-            doc = emit_nfce_for_order(order)
+            doc = emit_nfce_for_order(order, modelo=modelo)
         except FiscalNotConfigured as exc:
             logger.warning('emit_nfce: config inválida pedido=%s loja=%s: %s',
                            order.id, order.store_id, exc)
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        return Response(
+            _nfce_payload(doc),
+            status=status.HTTP_201_CREATED if doc.status == 'authorized' else status.HTTP_200_OK,
+        )
+
+    @action(detail=True, methods=['get'], url_path='nfce')
+    def nfce(self, request, pk=None, **kwargs):
+        """Estado fiscal do pedido: lista de documentos (o mesmo pedido pode ter
+        NFC-e e NF-e). Pedido sem nota responde lista vazia, não 404 — o painel
+        pergunta isso de todo pedido."""
+        from apps.fiscal.models import FiscalDocument
+        from apps.fiscal.services import get_fiscal_config, refresh_fiscal_document
+
+        order = self.get_object()
+        docs = [
+            _nfce_payload(refresh_fiscal_document(doc))
+            for doc in FiscalDocument.objects.filter(order=order)
+        ]
         return Response({
-            'id': str(doc.id),
-            'status': doc.status,
-            'provider': doc.provider,
-            'chave_acesso': doc.chave_acesso,
-            'numero': doc.numero,
-            'serie': doc.serie,
-            'qrcode_url': doc.qrcode_url,
-            'danfe_url': doc.danfe_url,
-            'error_message': doc.error_message,
-        }, status=status.HTTP_201_CREATED if doc.status == 'authorized' else status.HTTP_200_OK)
+            'habilitado': bool(get_fiscal_config(order.store).get('habilitado')),
+            'documentos': docs,
+        })
+
+    @action(detail=True, methods=['post'], url_path='cancel_nfce')
+    def cancel_nfce(self, request, pk=None, **kwargs):
+        """Cancela a nota do pedido (janela legal de 30 min). `modelo` escolhe
+        qual, quando o pedido tem NFC-e e NF-e."""
+        from apps.fiscal.models import FiscalDocument
+        from apps.fiscal.providers.base import FiscalNotConfigured
+        from apps.fiscal.services import cancel_nfce as cancel_service
+
+        order = self.get_object()
+        docs = FiscalDocument.objects.filter(order=order)
+        modelo = request.data.get('modelo')
+        if modelo:
+            docs = docs.filter(modelo=str(modelo))
+        doc = docs.filter(status=FiscalDocument.Status.AUTHORIZED).first() or docs.first()
+        if doc is None:
+            return Response({'error': 'Este pedido não tem nota emitida.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            doc = cancel_service(doc, request.data.get('justificativa', ''))
+        except (ValueError, FiscalNotConfigured) as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('Falha ao cancelar NFC-e do pedido %s', order.id)
+            return Response(
+                {'error': 'Falha de comunicação com o provedor fiscal. Tente novamente.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(_nfce_payload(doc))
 
     @action(detail=True, methods=['post'], url_path='generate_payment')
     def generate_payment(self, request, pk=None, **kwargs):

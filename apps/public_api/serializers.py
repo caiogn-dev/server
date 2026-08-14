@@ -66,6 +66,14 @@ class PublicCategorySerializer(serializers.ModelSerializer):
 
 
 class PublicProductSerializer(serializers.ModelSerializer):
+    # O preço que a vitrine mostra é o mesmo que o carrinho cobra. São dois
+    # caminhos diferentes lendo o mesmo dado, e discordar aqui é reclamação
+    # certa — por isso os dois passam por preco_vigente().
+    price = serializers.SerializerMethodField()
+
+    def get_price(self, obj):
+        return obj.preco_vigente()
+
     category_name = serializers.CharField(source='category.name', read_only=True)
     category_slug = serializers.CharField(source='category.slug', read_only=True)
     image_url = serializers.SerializerMethodField()

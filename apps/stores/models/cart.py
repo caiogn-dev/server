@@ -170,9 +170,19 @@ class StoreCartItem(models.Model):
 
     @property
     def unit_price(self):
+        """O que o cliente paga por unidade.
+
+        `preco_vigente()` e não `price`: mostrar R$ 30,75 na vitrine e cobrar
+        R$ 44,90 aqui é pior que não ter promoção — vira reclamação e estorno.
+        Os dois lados leem a mesma função de propósito.
+
+        Variante com preço próprio continua mandando: quem escolheu 'tamanho G'
+        escolheu um item com preço próprio, e a promoção do produto base não se
+        aplica a ele sem cadastro explícito.
+        """
         if self.variant and self.variant.price:
             return self.variant.price
-        return self.product.price
+        return self.product.preco_vigente()
 
     @property
     def subtotal(self):

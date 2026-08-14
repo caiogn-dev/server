@@ -144,6 +144,20 @@ class StoreViewSet(viewsets.ModelViewSet):
             serializer.save()
         return Response(StoreMetaTrackingSerializer(store).data)
 
+    @action(detail=True, methods=['get', 'patch'], url_path='fiscal-config')
+    def fiscal_config(self, request, pk=None):
+        """Configuração de NFC-e da loja — opt-in, uma loja por vez."""
+        from apps.fiscal.serializers import ConfigFiscalSerializer, aplicar_config
+        from apps.fiscal.services import get_fiscal_config
+
+        store = self.get_object()
+        config = get_fiscal_config(store)
+        if request.method == 'PATCH':
+            serializer = ConfigFiscalSerializer(instance=config, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            config = aplicar_config(store, serializer.validated_data)
+        return Response(ConfigFiscalSerializer().to_representation(config))
+
     @action(detail=True, methods=['get'], url_path='bio-stats')
     def bio_stats(self, request, pk=None):
         """Estatísticas do Link na Bio (page views + cliques por link) — gated por plano."""

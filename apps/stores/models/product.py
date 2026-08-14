@@ -123,8 +123,52 @@ class StoreProduct(BaseModel):
     )
     featured = models.BooleanField(default=False)
 
+    # Promoção que se repete toda semana ("Quarta da Almôndega").
+    #
+    # O `price` NUNCA é alterado por isto. A alternativa óbvia — uma tarefa que
+    # troca o preço no dia e devolve no dia seguinte — é justamente o bug que
+    # motivou a feature: em 12/08 a Almôndega Premium ficou a R$ 42,99 depois
+    # que a quarta acabou, e ninguém percebeu por dois dias. Se a tarefa que
+    # devolve falhar, o preço fica errado indefinidamente.
+    #
+    # Calculando na leitura não há estado para travar: se nada rodar, nada
+    # quebra, porque não há nada rodando.
+    promo_price = models.DecimalField(
+        'Preço promocional', max_digits=10, decimal_places=2,
+        null=True, blank=True,
+    )
+    promo_weekday = models.PositiveSmallIntegerField(
+        'Dia da promoção', null=True, blank=True,
+        choices=[(0, 'Segunda'), (1, 'Terça'), (2, 'Quarta'), (3, 'Quinta'),
+                 (4, 'Sexta'), (5, 'Sábado'), (6, 'Domingo')],
+        help_text='A promoção vale toda semana neste dia.',
+    )
+
     # Pausa rápida (item esgotado): produto fica indisponível até este horário
     paused_until = models.DateTimeField(null=True, blank=True)
+
+
+    def preco_vigente(self):
+        """O preço que vale AGORA. Fonte única — vitrine, bot, PDV e checkout.
+
+        O risco desta feature nunca foi o cálculo: é mostrar R$ 30,75 na
+        vitrine e cobrar R$ 44,90 no checkout. Por isso existe um método só, e
+        quem lê `price` direto para cobrar está errado.
+
+        Cadastro pela metade (promo sem dia, ou dia sem promo) não vale — e
+        promo MAIOR que o preço normal não pode aumentar o valor do cliente.
+        """
+        from django.utils import timezone
+
+        if self.promo_price is None or self.promo_weekday is None:
+            return self.price
+        if timezone.localtime().weekday() != self.promo_weekday:
+            return self.price
+        return self.promo_price if self.promo_price < self.price else self.price
+
+    @property
+    def em_promocao(self) -> bool:
+        return self.preco_vigente() < self.price
 
     @classmethod
     def disponiveis(cls, store=None):

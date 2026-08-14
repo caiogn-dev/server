@@ -58,3 +58,27 @@ def test_cada_degrau_acrescenta_algo():
         if (b.get('max_stores') or 1) > (a.get('max_stores') or 1):
             ganhou.append('max_stores')
         assert ganhou, f'{atual} não acrescenta nada sobre {anterior}'
+
+
+def test_nenhum_outro_teste_afirma_preco_diferente():
+    """Duas suítes afirmando preços diferentes é o bug da semana, em teste.
+
+    `test_plan_catalog_golive` travava 329 enquanto este arquivo trava 249 — e
+    as duas passavam isoladas. Quem rodasse só uma acreditaria nela.
+
+    Este teste lê os literais do OUTRO arquivo e cobra que batam com o catálogo.
+    Preço é a coisa que mais silenciosamente diverge neste projeto: em 11/ago o
+    billing dizia 329, o documento de estratégia 249 e as mensagens de
+    prospecção 249, tudo ao mesmo tempo.
+    """
+    import re
+    from pathlib import Path
+
+    outro = Path(__file__).with_name('test_plan_catalog_golive.py').read_text()
+    afirmados = dict(re.findall(r"\('(\w+)', '([\d.]+)'\)", outro))
+
+    for chave, preco in afirmados.items():
+        assert PLAN_CATALOG[chave]['monthly_price'] == Decimal(preco), (
+            f'{chave}: catálogo diz {PLAN_CATALOG[chave]["monthly_price"]}, '
+            f'test_plan_catalog_golive diz {preco}'
+        )

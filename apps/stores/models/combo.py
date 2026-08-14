@@ -36,6 +36,10 @@ class StoreCombo(models.Model):
     # Config livre por combo (ex.: loyalty_units — quantos selos de fidelidade
     # o combo vale por unidade; mesma convenção do StoreProduct.attributes).
     metadata = models.JSONField(default=dict, blank=True)
+    # Combo também vai pra etiqueta e pro leitor do balcão: sem código, o
+    # operador precisa achar o combo na busca manual enquanto a fila anda.
+    # Mesmo campo e mesma convenção do StoreProduct.barcode.
+    barcode = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

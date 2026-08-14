@@ -10,7 +10,9 @@ que ninguém atingia, com margem de -R$ 31/mês depois do custo de suporte
 Catálogo novo (estrategia-monetizacao-2026-08-02.md):
   Grátis            R$   0    20 produtos, 15 pedidos/mês
   Loja              R$ 179    ilimitado, PDV/KDS/impressão/fidelidade
-  Loja + WhatsApp   R$ 329    + bot oficial, BI, domínio próprio
+  Loja + WhatsApp   R$ 249    + bot oficial, BI, domínio próprio
+                              (era 329 até 11/ago; 249 é o número da estratégia,
+                               LTV/CAC 5,5x contra 1,97x nas faixas baixas)
   Rede              R$ 549    + até 3 lojas
   Implantação       R$ 1.200  única (gated por BILLING_SETUP_FEE_ENABLED)
 """
@@ -35,7 +37,7 @@ class TestCatalogoDePlanos:
 
     @pytest.mark.parametrize('chave,preco', [
         ('starter', '179.00'),
-        ('pro', '329.00'),
+        ('pro', '249.00'),
         ('premium', '549.00'),
     ])
     def test_precos_do_go_live(self, chave, preco):
