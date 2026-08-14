@@ -303,6 +303,23 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         if amount <= Decimal('0.00'):
             return Response({'error': 'O valor deve ser maior que zero.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Pedido OPCIONAL. Sem isto todo link nascia avulso, e a dona precisava
+        # colar link à mão no pedido que tinha acabado de lançar — foi o que
+        # aconteceu na conversa da Yeda em 13/ago.
+        order = None
+        order_id = request.data.get('order')
+        if order_id:
+            from apps.stores.models import StoreOrder
+
+            order = StoreOrder.objects.filter(id=order_id, store=store).first()
+            if order is None:
+                # Escopado por loja de propósito: sem isso dá para cobrar pelo
+                # pedido de qualquer loja da plataforma.
+                return Response(
+                    {'error': 'Pedido não encontrado nesta loja.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         description = request.data.get('description', '')
         payment_data = {
             'payer_name': request.data.get('payer_name', ''),
@@ -312,7 +329,7 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         try:
             result = CheckoutService.create_payment(
-                None, 'link', payment_data,
+                order, 'link', payment_data,
                 amount=amount, store=store, description=description,
             )
         except ValueError as exc:
