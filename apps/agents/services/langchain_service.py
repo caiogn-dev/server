@@ -1093,8 +1093,21 @@ class LangchainService:
         cat = produto.category.name if produto.category else 'Geral'
         linhas = [f"{produto.name} — {self._brl(produto.price)}  [{cat}]"]
 
-        if getattr(produto, 'description', ''):
-            linhas.append(produto.description)
+        descricao = (getattr(produto, 'description', '') or '').strip()
+        if descricao:
+            linhas.append(descricao)
+        else:
+            # Dizer que NÃO SABE, em vez de omitir a linha.
+            #
+            # Para um modelo de linguagem, ausência de dado lê como permissão
+            # para preencher com o que ele "sabe" de salada em geral; um
+            # "não cadastrada" explícito lê como proibição. 7 dos 41 produtos
+            # ativos da Cê Saladas estão assim — e numa loja de comida
+            # ingrediente inventado é risco de alergia, não deslize de texto.
+            linhas.append(
+                'Composição NÃO CADASTRADA. Não descreva os ingredientes deste '
+                'item: diga que vai confirmar com a equipe.'
+            )
 
         variantes = [v for v in produto.variants.filter(is_active=True)]
         if variantes:
