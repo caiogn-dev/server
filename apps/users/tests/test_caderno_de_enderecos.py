@@ -25,7 +25,7 @@ import pytest
 from apps.stores.models import StoreOrder
 from apps.stores.tests.factories import make_store
 from apps.users.models import UnifiedUser, UserAddress
-from apps.users.services.caderno_de_enderecos import guardar_endereco_do_pedido
+from apps.users.caderno_de_enderecos import guardar_endereco_do_pedido
 
 # Os cinco formatos medidos em produção, com a contagem de cada um.
 COMPLETO = {  # 32 pedidos

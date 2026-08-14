@@ -116,7 +116,7 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         # Sem isto, o PDV mostrava cliente conhecido sem endereço enquanto o
         # bot achava o mesmo endereço sem dificuldade: o bot lê o último
         # pedido, o PDV lê `UserAddress`.
-        from apps.users.services.caderno_de_enderecos import (
+        from apps.users.caderno_de_enderecos import (
             guardar_endereco_do_pedido,
         )
         guardar_endereco_do_pedido(instance)

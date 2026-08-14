@@ -16,7 +16,7 @@ existe. Rodar duas vezes não duplica nada.
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from apps.users.services.caderno_de_enderecos import guardar_endereco_do_pedido
+from apps.users.caderno_de_enderecos import guardar_endereco_do_pedido
 
 
 class Command(BaseCommand):
