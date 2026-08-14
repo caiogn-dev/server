@@ -109,6 +109,26 @@ def texto_das_opcoes(grupo: Grupo) -> str:
 #: "2 de frango", "3x camarão", "2 camarão". O número vem antes do nome.
 _QUANTIDADE = re.compile(r'(\d+)\s*(?:x|de|do|da)?\s+([a-z].*)')
 
+#: Um par quantidade+nome, parando no próximo dígito. É o que permite quebrar
+#: "2 queridinha 2 almondega 1 tilapia" sem depender de vírgula.
+_UM_PAR = re.compile(r'\d+\s*(?:x|de|do|da)?\s*[^\d]+')
+
+
+def _quebrar_por_quantidade(pedaco: str) -> list:
+    """Separa "2 queridinha 2 almondega 1 tilapia" em três pedidos.
+
+    Sem isto o texto inteiro virava UM pedaço: o parser lia "2" + o resto como
+    nome, casava só o primeiro sabor pela palavra e DESCARTAVA os outros dois
+    em silêncio. Entender metade sem avisar é pior que não entender — o cliente
+    escreve os cinco, lê "Faltam 3" e desconfia do bot.
+
+    Só quebra quando há mais de um par; um pedaço normal passa intacto.
+    """
+    achados = _UM_PAR.findall(pedaco)
+    if len(achados) < 2:
+        return [pedaco]
+    return [a.strip() for a in achados if a.strip()]
+
 
 def interpretar(texto: str, grupo: Grupo) -> Escolha:
     """Traduz a resposta do cliente em opções concretas.
@@ -137,7 +157,7 @@ def interpretar(texto: str, grupo: Grupo) -> Escolha:
         if re.fullmatch(r'\d+(\s+\d+)+', pedaco):
             expandidos.extend(pedaco.split())
         else:
-            expandidos.append(pedaco)
+            expandidos.extend(_quebrar_por_quantidade(pedaco))
     pedacos = expandidos
 
     for pedaco in pedacos:

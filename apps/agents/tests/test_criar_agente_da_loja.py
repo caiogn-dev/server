@@ -134,3 +134,30 @@ class TestOQueNaoPodeAcontecer:
         assert perfil.default_agent.name != Agent.objects.get(
             name__icontains='Kero Kero',
         ).name
+
+
+@pytest.mark.django_db
+class TestAVozProibeCompletarOCombo:
+    """Encontrado testando com o dono em 14/ago.
+
+    O cliente mandou 4 saladas num combo de 5 e o modelo COMPLETOU o quinto
+    repetindo a almôndega por conta própria. Pediu confirmação, então não
+    decidiu calado — mas contar é obrigação, não improviso.
+
+    A ferramenta de adicionar já valida a conta e responde "peça as que
+    faltam". O problema é que o modelo raciocinou sozinho e nem chegou a
+    chamá-la. Por isso a instrução tem que estar na camada de VOZ.
+    """
+
+    def test_manda_contar_e_nao_completar(self, loja, perfil):
+        call_command('criar_agente_da_loja', loja=loja.slug)
+
+        p = Agent.objects.get(name__icontains='Cê Saladas').system_prompt.lower()
+        assert 'nunca repita' in p
+        assert 'faltam' in p
+
+    def test_diz_para_so_adicionar_quando_a_conta_bater(self, loja, perfil):
+        call_command('criar_agente_da_loja', loja=loja.slug)
+
+        p = Agent.objects.get(name__icontains='Cê Saladas').system_prompt.lower()
+        assert 'quando a conta bater' in p

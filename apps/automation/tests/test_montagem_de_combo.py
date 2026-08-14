@@ -271,3 +271,44 @@ class TestOComboVAIProCarrinho:
 
     def test_passar_do_limite_tambem_nao_devolve_item(self):
         assert self._pronto('1,2,3,4,5,6,7').item is None
+
+
+class TestVariasQuantidadesSemVirgula:
+    """"2 queridinha 2 almondega 1 tilapia" — como as pessoas escrevem no zap.
+
+    Encontrado testando com o dono em 14/ago. Sem vírgula, o pedaço inteiro
+    virava UM só: o parser lia "2" + "queridinha 2 almondega 1 tilapia", casava
+    Queridinha pela palavra e **descartava a almôndega e a tilápia em silêncio**.
+
+    Entender metade e não avisar é pior que não entender: o cliente vê "Faltam
+    3" depois de ter escrito os cinco, e conclui que o bot é burro — ou pior,
+    não confere e recebe o combo errado.
+    """
+
+    def test_tres_quantidades_sem_virgula(self):
+        e = interpretar('2 queridinha 2 almondega 1 tilapia', COMBO5)
+
+        assert e.quantidade == 5
+        assert resumo(e) == '2x Queridinha, 2x Almôndega Premium, Tilápia Suprema'
+
+    def test_duas_quantidades_sem_virgula(self):
+        assert interpretar('3 frango 2 camarao', COMBO5).quantidade == 5
+
+    def test_com_x_sem_virgula(self):
+        assert interpretar('2x salmao 3x tilapia', COMBO5).quantidade == 5
+
+    def test_com_virgula_continua_funcionando(self):
+        e = interpretar('1 especial file de frango, 2 queridinha, 1 almondega', COMBO5)
+
+        assert e.quantidade == 4
+
+    def test_nome_com_numero_no_meio_nao_se_perde(self):
+        """"1 especial filé de frango" — o nome tem 3 palavras e nenhum dígito."""
+        e = interpretar('1 especial file de frango 1 queridinha', COMBO5)
+
+        assert [o.nome for o in e.selecionados] == [
+            'Especial Filé de Frango', 'Queridinha',
+        ]
+
+    def test_um_nome_so_sem_quantidade_continua_valendo(self):
+        assert interpretar('queridinha', COMBO5).quantidade == 1

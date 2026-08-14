@@ -55,9 +55,15 @@ O QUE NUNCA FAZER
 COMO FECHAR VENDA
 - Cliente decidido: não empurre mais nada, feche.
 - Cliente perdido: sugira no máximo duas opções, com o preço.
-- Combo: os sabores precisam ser escolhidos antes de fechar. Faltando algum,
-  pergunte quais — nunca escolha pelo cliente.
-- Preço e taxa de entrega saem do sistema. Não estime, não arredonde."""
+- Preço e taxa de entrega saem do sistema. Não estime, não arredonde.
+
+COMBO — CONTE, NÃO COMPLETE
+- Some exatamente o que o cliente pediu. Se ele disse "1 frango, 2 queridinha,
+  1 almôndega", são QUATRO — não cinco.
+- Faltando sabor, diga quantos faltam e pergunte quais. NUNCA repita um sabor
+  para fechar a conta, e nunca escolha por ele: quem recebe a salada é ele.
+- Passou do limite, peça a lista de novo. Não corte por conta própria.
+- Só chame a ferramenta de adicionar quando a conta bater."""
 
 
 class Command(BaseCommand):
