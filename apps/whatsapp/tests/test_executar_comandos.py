@@ -163,3 +163,31 @@ class TestOQueNaoPodeAcontecer:
         for nome in ('pedido', 'status', 'nota', 'bot', 'pixx'):
             r = executar(nome, 'off', conversa=_conversa(), store=loja)
             assert r.enviar_ao_cliente is False, nome
+
+
+@pytest.mark.django_db
+class TestCardapio:
+    """"/cardapio" — o dono digitou esperando que existisse.
+
+    Atalho que a pessoa tenta sozinha é atalho que faltava. Antes respondia
+    "Não conheço /cardapio".
+    """
+
+    def test_manda_o_link_pra_cliente(self, loja):
+        r = executar('cardapio', '', conversa=_conversa(), store=loja)
+
+        assert r.ok
+        assert r.enviar_ao_cliente is True
+        assert 'http' in r.texto
+
+    def test_a_url_e_da_LOJA(self, loja):
+        """Nunca domínio fixo: foi assim que campanha da Cê Saladas saiu como "Pastita"."""
+        r = executar('cardapio', '', conversa=_conversa(), store=loja)
+
+        assert loja.slug in r.texto or getattr(loja, 'custom_domain', '') in r.texto
+
+    def test_nao_precisa_de_pedido_aberto(self, loja):
+        """Mandar cardápio é o começo da venda, não o meio."""
+        r = executar('cardapio', '', conversa=_conversa('+5563900000000'), store=loja)
+
+        assert r.ok

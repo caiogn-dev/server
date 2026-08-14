@@ -74,26 +74,29 @@ class ExecutarComandoView(APIView):
     def _loja_do_usuario(user, conversa):
         """A loja da conversa, se este usuário puder agir nela.
 
-        ⚠️ `Conversation` NÃO tem campo `store`. A primeira versão fazia
-        `getattr(conversa, 'store')`, recebia None e devolvia 403 em TODA
-        conversa — "Conversa não pertence a esta loja" numa que pertencia.
+        ⚠️ Duas armadilhas, as duas encontradas em produção em 14/ago.
 
-        O caminho real é o mesmo que os handlers usam:
-        conversa → account → company_profile → store.
+        **1. `Conversation` NÃO tem campo `store`.** A primeira versão fazia
+        `getattr(conversa, 'store', None)`, recebia None e devolvia 403 em TODA
+        conversa. O default do getattr engoliu o erro: nenhuma exceção, só uma
+        negativa silenciosa. O caminho real é o que os handlers do bot já
+        usavam: conversa → account → company_profile → store.
+
+        **2. A regra de acesso é `user_can_access_store`, e não uma minha.** A
+        segunda versão checava `owner` e `StoreTeamMember` à mão e continuava
+        negando: existem DOIS usuários com o mesmo e-mail (`graccius` id 1 e
+        `graco` id 14), a loja pertence a um e a sessão do painel é do outro. A
+        regra canônica cobre owner, staff M2M e membro de equipe — e é a mesma
+        que o resto do painel usa para listar pedidos e produtos.
+
+        Escrever a terceira versão de uma regra que já existe é o defeito que
+        este projeto repete: a cópia sempre diverge da original.
         """
-        from apps.stores.models import Store, StoreTeamMember
+        from apps.core.permissions import user_can_access_store
 
         perfil = getattr(getattr(conversa, 'account', None), 'company_profile', None)
         loja = getattr(perfil, 'store', None)
         if loja is None:
             return None
 
-        if Store.objects.filter(id=loja.id, owner=user).exists():
-            return loja
-        # `tenant`, não `store`: o campo do StoreTeamMember chama tenant, e
-        # `store=` levantava FieldError — ou seja, funcionário que não é dono
-        # derrubava a requisição com 500 em vez de receber permissão.
-        if StoreTeamMember.objects.filter(tenant=loja, user=user, is_active=True).exists():
-            return loja
-        return None
-
+        return loja if user_can_access_store(user, loja) else None

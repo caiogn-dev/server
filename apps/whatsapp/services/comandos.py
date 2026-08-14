@@ -56,6 +56,12 @@ COMANDOS = {
         'descricao': 'Liga ou desliga o bot nesta conversa — /bot on | off',
         'confirmar': False,
     },
+    # Entrou depois do resto: o dono digitou /cardapio esperando que
+    # existisse. Atalho que a pessoa tenta sozinha é atalho que faltava.
+    'cardapio': {
+        'descricao': 'Envia o link do cardápio para a cliente',
+        'confirmar': False,
+    },
 }
 
 
@@ -199,6 +205,9 @@ def executar(nome: str, argumento: str = '', *, conversa=None, store=None,
 
 
 def _executar(nome, argumento, conversa, store, confirmado) -> Resultado:
+    if nome == 'cardapio':
+        return _mandar_cardapio(store)
+
     if nome == 'bot':
         alvo = (argumento or '').strip().lower()
         if alvo not in ('on', 'off'):
@@ -296,5 +305,28 @@ def _gerar_pix(pedido) -> Resultado:
     return Resultado(
         True,
         f'PIX de R$ {pedido.total}:\n\n{codigo}',
+        enviar_ao_cliente=True,
+    )
+
+
+def _mandar_cardapio(store) -> Resultado:
+    """Link do cardápio da loja. Vai para a CLIENTE — é o ponto dele.
+
+    Multi-tenant: a URL sai do storefront da própria loja. Nunca hardcode de
+    domínio aqui; foi assim que campanha da Cê Saladas saiu assinada "Pastita".
+    """
+    from django.conf import settings
+
+    if store is None:
+        return Resultado(False, 'Sem loja nesta conversa.')
+
+    base = (getattr(settings, 'STOREFRONT_BASE_URL', '')
+            or 'https://cardapidex.com.br').rstrip('/')
+    dominio = (getattr(store, 'custom_domain', '') or '').strip()
+    url = f'https://{dominio}' if dominio else f'{base}/{store.slug}'
+
+    return Resultado(
+        True,
+        f'Nosso cardápio completo: 🥗\n\n{url}',
         enviar_ao_cliente=True,
     )

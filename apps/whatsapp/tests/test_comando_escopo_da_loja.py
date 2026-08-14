@@ -11,6 +11,8 @@ que só aparece como "não pertence" para quem é dono.
 O caminho real é o mesmo que os handlers do bot já usavam:
 conversa → account → company_profile → store.
 """
+from unittest.mock import patch
+
 import pytest
 
 
@@ -48,6 +50,38 @@ class TestOCaminhoDaLoja:
         conversa.account.company_profile.store = loja
 
         assert ExecutarComandoView._loja_do_usuario(estranho, conversa) is None
+
+    def test_membro_da_equipe_PODE_agir(self):
+        """Segunda causa do 403 em produção: a regra caseira só olhava owner.
+
+        Existem dois usuários com o mesmo e-mail — `graccius` (id 1) e `graco`
+        (id 14). A loja pertence a um, a sessão do painel é do outro, e a
+        checagem à mão negava. `user_can_access_store` é a regra que o resto do
+        painel usa para listar pedidos e produtos.
+        """
+        from unittest.mock import MagicMock
+
+        from apps.stores.tests.factories import make_store
+        from apps.whatsapp.api.comando_views import ExecutarComandoView
+
+        loja = make_store(name='Cê Saladas')
+        conversa = MagicMock()
+        conversa.account.company_profile.store = loja
+
+        with patch(
+            'apps.core.permissions.user_can_access_store', return_value=True,
+        ):
+            assert ExecutarComandoView._loja_do_usuario(MagicMock(), conversa) == loja
+
+    def test_usa_a_regra_canonica_e_nao_uma_propria(self):
+        """Trava contra escrever a QUARTA versão da regra de acesso."""
+        import inspect
+
+        from apps.whatsapp.api import comando_views
+
+        fonte = inspect.getsource(comando_views.ExecutarComandoView._loja_do_usuario)
+        assert 'user_can_access_store' in fonte
+        assert 'StoreTeamMember.objects' not in fonte, 'voltou a checar permissão à mão'
 
     def test_conversa_sem_perfil_nao_estoura(self):
         from unittest.mock import MagicMock
