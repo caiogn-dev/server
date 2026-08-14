@@ -17,6 +17,9 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+#: Segundos que o painel espera pelo modelo antes de mostrar o template.
+LLM_TIMEOUT_PAINEL = 18
+
 INSIGHTS_MAX_MESSAGES = 300
 
 
@@ -47,7 +50,10 @@ def get_insights_llm():
                 model_name=model,
                 temperature=0.3,
                 max_tokens=1200,
-                timeout=45,
+                # 45s era mais do que o dono espera olhando uma tela. O
+                # template já está pronto e responde na hora; passar disso é
+                # trocar uma resposta boa por uma tela parada.
+                timeout=LLM_TIMEOUT_PAINEL,
                 # O default do campo é a URL da Anthropic — zera p/ o factory
                 # resolver a base_url correta do provider escolhido.
                 base_url='',

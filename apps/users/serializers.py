@@ -59,7 +59,7 @@ class UserAddressSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAddress
         fields = [
-            'id', 'label', 'street', 'number', 'neighborhood',
+            'id', 'label', 'street', 'number', 'neighborhood', 'complement',
             'city', 'state', 'zip_code', 'lat', 'lng', 'is_default',
             'created_at',
         ]

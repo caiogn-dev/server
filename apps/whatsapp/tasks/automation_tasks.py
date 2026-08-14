@@ -588,14 +588,25 @@ def request_feedback(order_id: str):
 
 @shared_task
 def schedule_feedback_request(order_id: str):
-    """Agenda solicitação de feedback para 30 min depois"""
-    from celery import current_app
+    """Agenda o convite de avaliação para 30 min depois.
 
-    current_app.send_task(
-        'apps.whatsapp.tasks.automation_tasks.request_feedback',
-        args=[order_id],
-        countdown=30 * 60  # 30 minutos
-    )
+    `apply_async` da própria task, e não `current_app.send_task`: send_task NÃO
+    respeita `task_always_eager` e fala com o broker de verdade. Isto nasce de um
+    signal em post_save de StoreOrder, dentro de `transaction.on_commit` — um
+    soluço do Redis levantava no meio do commit e derrubava a atualização de
+    status do pedido.
+
+    Agendar avaliação é acessório; a venda é o principal. Falhou, registra e
+    segue — mesma regra do `acquire_lock`.
+    """
+    try:
+        request_feedback.apply_async(args=[order_id], countdown=30 * 60)
+    except Exception as exc:
+        logger.warning(
+            "Não consegui agendar o convite de avaliação do pedido %s: %s",
+            order_id, exc,
+        )
+        return
 
     logger.info(f"Scheduled feedback request for order {order_id} in 30 minutes")
 

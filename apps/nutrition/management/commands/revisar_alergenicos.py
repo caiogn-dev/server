@@ -48,6 +48,15 @@ SUSPEITAS = {
                  "pistache", "macadamia", "macadâmia", "pecã", "peca", "amendoim"),
 }
 
+# Nome de PRATO que carrega alergênico pela receita, não pela palavra: entram
+# como reforço, mas a trava de verdade é a regra de preparação abaixo.
+PRATOS_SUSPEITOS = (
+    "parmegiana", "parmigiana", "estrogonofe", "strogonoff", "estrogonof",
+    "pure", "purê", "gratinado", "bechamel", "molho branco", "quatro queijos",
+    "3 queijos", "tres queijos", "à milanesa", "a milanesa", "nhoque", "torta",
+    "bobo", "bobó", "escondidinho", "lasanha", "empadao", "empadão", "quiche",
+)
+
 
 def _sem_acento(texto):
     texto = unicodedata.normalize("NFKD", str(texto or ""))
@@ -61,7 +70,25 @@ def suspeitas_no_nome(nome):
     for grupo, palavras in SUSPEITAS.items():
         if any(re.search(rf"\b{re.escape(_sem_acento(p))}", limpo) for p in palavras):
             achados.append(grupo)
+    if not achados and any(_sem_acento(p) in limpo for p in PRATOS_SUSPEITOS):
+        achados.append("preparo")
     return achados
+
+
+def e_preparacao_da_loja(ing):
+    """Prato feito pela loja, e não alimento íntegro de tabela oficial.
+
+    A heurística de nome funciona para ingrediente único — "leite" tem leite,
+    "alface" não tem nada. Ela NÃO funciona para prato: os alergênicos de uma
+    parmegiana vêm da receita (queijo, empanado, ovo), e nenhuma palavra do
+    nome denuncia isso. "Estrogonofe" tem creme de leite; "purê" tem leite e
+    manteiga.
+
+    Então preparação da loja nunca entra no bloco automático, por mais
+    inocente que o nome pareça. É a diferença entre errar para o lado de
+    perguntar e errar para o lado de alguém passar mal.
+    """
+    return ing.store_id is not None and ing.source not in ("taco", "pof", "tbca")
 
 
 class Command(BaseCommand):
@@ -90,7 +117,8 @@ class Command(BaseCommand):
 
         limpos, decidir = [], []
         for ing in pendentes:
-            (decidir if suspeitas_no_nome(ing.display_name) else limpos).append(ing)
+            suspeito = bool(suspeitas_no_nome(ing.display_name)) or e_preparacao_da_loja(ing)
+            (decidir if suspeito else limpos).append(ing)
 
         self.stdout.write(f"\n🟢 {len(limpos)} sem suspeita no nome (candidatos a 'sem alergênico'):")
         for ing in limpos:
@@ -100,7 +128,8 @@ class Command(BaseCommand):
         self.stdout.write(self.style.WARNING(f"\n🔴 {len(decidir)} precisam da SUA decisão:"))
         for ing in decidir:
             grupos = ", ".join(suspeitas_no_nome(ing.display_name))
-            self.stdout.write(f"    {ing.display_name[:44]:46} → provável: {grupos}")
+            motivo = grupos or "preparação da loja — depende da receita"
+            self.stdout.write(f"    {ing.display_name[:44]:46} → {motivo}")
 
         if not options["sem_alergenico"]:
             self.stdout.write(self.style.WARNING(

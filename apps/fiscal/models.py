@@ -4,7 +4,7 @@ from django.db import models
 
 
 class FiscalDocument(models.Model):
-    """NFC-e (ou futura NF-e) emitida para um pedido.
+    """Documento fiscal emitido para um pedido — NFC-e (65) ou NF-e (55).
 
     A configuração fiscal vive em `store.metadata['fiscal']`:
         provider: 'focus' | 'sefaz'
@@ -18,6 +18,13 @@ class FiscalDocument(models.Model):
         FOCUS = 'focus', 'Focus NFe'
         SEFAZ = 'sefaz', 'SEFAZ direto'
 
+    class Modelo(models.TextChoices):
+        """65 = NFC-e (consumidor final, balcão/delivery).
+        55 = NF-e (venda a empresa; exige destinatário e endereço completos)."""
+
+        NFCE = '65', 'NFC-e'
+        NFE = '55', 'NF-e'
+
     class Status(models.TextChoices):
         PENDING = 'pending', 'Processando'
         AUTHORIZED = 'authorized', 'Autorizada'
@@ -30,6 +37,7 @@ class FiscalDocument(models.Model):
     order = models.ForeignKey('stores.StoreOrder', on_delete=models.PROTECT, related_name='fiscal_documents')
 
     provider = models.CharField(max_length=20, choices=Provider.choices)
+    modelo = models.CharField(max_length=2, choices=Modelo.choices, default=Modelo.NFCE)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
 
     # ref idempotente enviada ao provedor (re-emissão consulta em vez de duplicar)
@@ -54,4 +62,4 @@ class FiscalDocument(models.Model):
         ]
 
     def __str__(self):
-        return f'{self.get_provider_display()} {self.status} pedido={self.order_id}'
+        return f'{self.get_modelo_display()} {self.status} pedido={self.order_id}'

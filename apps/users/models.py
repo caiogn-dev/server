@@ -324,6 +324,10 @@ class UserAddress(TenantModel):
     street = models.CharField(max_length=255, blank=True, verbose_name='Rua')
     number = models.CharField(max_length=20, blank=True, verbose_name='Número')
     neighborhood = models.CharField(max_length=100, blank=True, verbose_name='Bairro')
+    complement = models.CharField(
+        max_length=255, blank=True, verbose_name='Complemento',
+        help_text='"ao lado da GoFit", "portão azul", "apto 302".',
+    )
     city = models.CharField(max_length=100, verbose_name='Cidade')
     state = models.CharField(max_length=2, verbose_name='Estado')
     zip_code = models.CharField(max_length=10, blank=True, verbose_name='CEP')

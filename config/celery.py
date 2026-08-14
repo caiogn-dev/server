@@ -14,6 +14,7 @@ app = Celery('whatsapp_business')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 app.autodiscover_tasks()
 
+
 app.conf.task_routes = {
     'apps.whatsapp.tasks.*': {'queue': 'whatsapp'},
     'apps.agents.tasks.*': {'queue': 'agents'},

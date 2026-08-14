@@ -17,6 +17,7 @@ FISCAL_CFG = {
     'focus_token': 'tok-teste',
     'cnpj': '12.345.678/0001-90',
     'serie': '1',
+    'habilitado': True,
 }
 
 
@@ -94,6 +95,15 @@ class EmitNfceTests(APITestCase):
         resp = self.client.post(self.url, {}, format='json')
         self.assertEqual(resp.status_code, 400)
         self.assertIn('certificado A1', resp.data['error'])
+        self.assertFalse(FiscalDocument.objects.exists())
+
+    def test_emissao_desligada_na_loja_bloqueia_o_endpoint(self):
+        """A chave 'Emitir nota fiscal nesta loja' tem que valer: config
+        preenchida mas desligada não pode emitir nada."""
+        self.store.metadata = {'fiscal': {**FISCAL_CFG, 'habilitado': False}}
+        self.store.save(update_fields=['metadata'])
+        resp = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp.status_code, 400)
         self.assertFalse(FiscalDocument.objects.exists())
 
     def test_cliente_vinculado_vai_como_destinatario(self):

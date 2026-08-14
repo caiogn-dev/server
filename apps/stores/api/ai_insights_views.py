@@ -15,6 +15,12 @@ from ..models import Store
 logger = logging.getLogger(__name__)
 
 CACHE_TTL_SUMMARY = 6 * 3600
+
+#: Prazo do fallback de template. Curto de propósito: guardar a versão pobre
+#: pelas mesmas 6 horas prenderia o dono nela mesmo depois de o LLM voltar.
+#: 10 minutos evitam repetir o timeout na mesma sessão e ainda tentam de novo
+#: logo em seguida.
+CACHE_TTL_FALLBACK = 10 * 60
 CACHE_TTL_INSIGHTS = 12 * 3600
 
 
@@ -50,8 +56,17 @@ class AIDailySummaryView(BaseAIInsightsView):
             if cached:
                 return Response({**cached, 'cached': True})
         data = generate_daily_summary(store)
-        if data['source'] == 'llm':
-            cache.set(cache_key, data, CACHE_TTL_SUMMARY)
+        # O fallback de template TAMBÉM é cacheado, com prazo curto.
+        #
+        # Antes só o resultado do LLM entrava no cache, então quando o modelo
+        # caía cada visita ao painel pagava o timeout inteiro de novo — o painel
+        # ficava lento exatamente quando a IA estava quebrada, que é o pior
+        # momento possível.
+        #
+        # Prazo curto de propósito: guardar o template pelas mesmas horas do
+        # resultado bom prenderia o dono na versão pobre até o dia seguinte.
+        ttl = CACHE_TTL_SUMMARY if data['source'] == 'llm' else CACHE_TTL_FALLBACK
+        cache.set(cache_key, data, ttl)
         return Response({**data, 'cached': False})
 
 

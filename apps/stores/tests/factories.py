@@ -21,13 +21,20 @@ def _uid():
     return _counter[0]
 
 
-def make_store(name=None, slug=None):
-    """Create a minimal Store with a unique slug."""
+def make_store(name=None, slug=None, **extra):
+    """Create a minimal Store with a unique slug.
+
+    `**extra` passa direto para o model — usado por testes que precisam de um
+    campo específico da loja (city/state, por exemplo) sem inventar uma factory
+    nova para cada um.
+    """
     n = _uid()
     name = name or f"Test Store {n}"
     slug = slug or f"test-store-{n}"
     owner = User.objects.create_user(username=f"owner-{n}", password="pw")
-    return Store.objects.create(name=name, slug=slug, owner=owner, status="active")
+    return Store.objects.create(
+        name=name, slug=slug, owner=owner, status="active", **extra,
+    )
 
 
 def make_product(store, name=None, slug=None, price=Decimal("10.00")):

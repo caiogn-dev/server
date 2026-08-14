@@ -48,9 +48,9 @@ class FocusProvider(FiscalProvider):
             raw=data,
         )
 
-    def emit_nfce(self, *, ref: str, payload: dict) -> EmitResult:
+    def _emit(self, recurso: str, ref: str, payload: dict) -> EmitResult:
         resp = requests.post(
-            f'{self.base_url}/v2/nfce',
+            f'{self.base_url}/v2/{recurso}',
             params={'ref': ref},
             json=payload,
             auth=self._auth(),
@@ -58,21 +58,38 @@ class FocusProvider(FiscalProvider):
         )
         if resp.status_code == 422:
             # ref já usada — consulta o que existe (idempotência)
-            return self.consult(ref=ref)
+            return self._consult(recurso, ref)
         data = resp.json() if resp.content else {}
         if resp.status_code >= 400 and 'status' not in data:
             return EmitResult(status='error', error_message=str(data or resp.status_code), raw=data)
         return self._to_result(data)
 
-    def consult(self, *, ref: str) -> EmitResult:
-        resp = requests.get(f'{self.base_url}/v2/nfce/{ref}', auth=self._auth(), timeout=30)
+    def _consult(self, recurso: str, ref: str) -> EmitResult:
+        resp = requests.get(f'{self.base_url}/v2/{recurso}/{ref}', auth=self._auth(), timeout=30)
         return self._to_result(resp.json() if resp.content else {})
 
-    def cancel_nfce(self, *, ref: str, justificativa: str) -> EmitResult:
+    def _cancel(self, recurso: str, ref: str, justificativa: str) -> EmitResult:
         resp = requests.delete(
-            f'{self.base_url}/v2/nfce/{ref}',
+            f'{self.base_url}/v2/{recurso}/{ref}',
             json={'justificativa': justificativa},
             auth=self._auth(),
             timeout=30,
         )
         return self._to_result(resp.json() if resp.content else {})
+
+    # NFC-e (modelo 65) e NF-e (modelo 55) são recursos distintos na API;
+    # só muda o caminho, o resto do contrato é idêntico.
+    def emit_nfce(self, *, ref: str, payload: dict) -> EmitResult:
+        return self._emit('nfce', ref, payload)
+
+    def emit_nfe(self, *, ref: str, payload: dict) -> EmitResult:
+        return self._emit('nfe', ref, payload)
+
+    def consult(self, *, ref: str, modelo: str = '65') -> EmitResult:
+        return self._consult('nfe' if modelo == '55' else 'nfce', ref)
+
+    def cancel_nfce(self, *, ref: str, justificativa: str) -> EmitResult:
+        return self._cancel('nfce', ref, justificativa)
+
+    def cancel_nfe(self, *, ref: str, justificativa: str) -> EmitResult:
+        return self._cancel('nfe', ref, justificativa)

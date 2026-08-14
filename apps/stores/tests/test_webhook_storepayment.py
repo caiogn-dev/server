@@ -107,13 +107,26 @@ class WebhookStorePaymentTests(APITestCase):
         self.assertEqual(order.status, StoreOrder.OrderStatus.CONFIRMED)
 
     def test_avulso_charge_no_order(self):
+        """Cobrança avulsa paga agora VIRA VENDA — contrato mudou em 14/ago.
+
+        Este teste travava o comportamento antigo: "avulso (order=None) só marca
+        a cobrança". Era literalmente o bug relatado pelo dono — o cliente
+        pagava, a cobrança virava `completed` e morria ali, sem nunca nascer um
+        `StoreOrder`. Como faturamento se conta por pedido, o dinheiro entrava e
+        não aparecia como venda. Medido em produção: 2 cobranças completed sem
+        pedido, R$ 249,01.
+
+        O que continua valendo está preservado abaixo; o que mudou é que agora
+        existe um pedido. Contrato completo em `test_link_pago_vira_venda.py`.
+        """
         sp = _charge(None, self.store, '25.00', 'MPAV')
 
         result = CheckoutService.process_payment_webhook('MPAV', 'approved')
 
-        self.assertIsNone(result)  # sem pedido a sincronizar
         sp.refresh_from_db()
         self.assertEqual(sp.status, StorePayment.PaymentStatus.COMPLETED)
+        self.assertIsNotNone(sp.order, 'link pago continuou sem virar venda')
+        self.assertEqual(result, sp.order)
 
     def test_rejected_single_charge_cancels_order(self):
         """Regressão: cobrança única rejeitada cancela o pedido (comportamento legado)."""

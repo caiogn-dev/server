@@ -42,6 +42,48 @@ DATABASES = {
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
+# ── O Redis CRU também, não só o cache do Django ──────────────────────────
+#
+# A correção de 07/ago isolou CACHES e CHANNEL_LAYERS, mas deixou `REDIS_URL`
+# apontando para `redis://redis:6379/1` — a loja viva. Quem chama
+# `redis.from_url(settings.REDIS_URL)` direto (create_redis_client, memória do
+# agente, acquire_lock) continuava indo no Redis de produção.
+#
+# Na rede de teste esse host nem resolve, então o sintoma era pior que um
+# vazamento: `socket.gaierror -3` derrubando testes que nada tinham a ver com
+# Redis, e parecendo falha de infraestrutura sem conserto.
+#
+# 🔑 O valor chega aqui pelo AMBIENTE DA IMAGEM: `docker commit` de um container
+# em execução leva as variáveis dele junto, então a imagem de teste carrega o
+# .env de produção. Não adianta "não passar --env-file".
+#
+# localhost de propósito: conexão recusada na hora, em vez de DNS pendurado.
+REDIS_URL = 'redis://localhost:6379/0'
+CELERY_BROKER_URL = 'memory://'
+CELERY_RESULT_BACKEND = 'cache+memory://'
+
+# ⚠️ Sem este `pop`, as duas linhas acima são decorativas.
+#
+# Em Celery 5, `app.conf.broker_url` é uma *property* que consulta
+# `os.environ['CELERY_BROKER_URL']` A CADA LEITURA, antes de olhar o settings.
+# Ou seja: o ambiente do processo passa por cima do Django, e escrever
+# `app.conf.broker_url = ...` não vence — a property lê o env de novo.
+#
+# E o ambiente aqui é o de PRODUÇÃO: `pastita_backend:latest` nasce de
+# `docker commit pastita_web`, então carrega o env da loja viva assado dentro
+# da imagem. Medido em 14/ago: a suíte tentava alcançar `redis://redis:6379`,
+# levava 20 retries de 1s e queimava 129s POR TESTE antes de falhar. Parecia
+# problema de ambiente sem conserto.
+#
+# Corrigir passando `-e` no runner seria tapa-buraco: protegeria só quem
+# lembrasse de usar o runner. Removendo a variável, a property cai no settings
+# e a regra vale para qualquer invocação — pytest, manage.py, CI, qualquer uma.
+#
+# É seguro apagar aqui: `base.py` já foi importado acima e já leu o env para
+# dentro do settings. Produção não passa por este arquivo.
+for _var in ('CELERY_BROKER_URL', 'CELERY_RESULT_BACKEND', 'REDIS_URL'):
+    os.environ.pop(_var, None)
+
 # ── Cache em memória, NUNCA o Redis compartilhado ─────────────────────────
 #
 # O banco foi isolado em 07/ago; o cache não. A suíte continuava usando

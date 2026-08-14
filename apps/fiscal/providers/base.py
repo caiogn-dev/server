@@ -26,9 +26,17 @@ class FiscalProvider:
         self.config = config or {}
 
     def emit_nfce(self, *, ref: str, payload: dict) -> EmitResult:
+        """NFC-e, modelo 65 — consumidor final."""
+        raise NotImplementedError
+
+    def emit_nfe(self, *, ref: str, payload: dict) -> EmitResult:
+        """NF-e, modelo 55 — venda a empresa."""
         raise NotImplementedError
 
     def cancel_nfce(self, *, ref: str, justificativa: str) -> EmitResult:
+        raise NotImplementedError
+
+    def cancel_nfe(self, *, ref: str, justificativa: str) -> EmitResult:
         raise NotImplementedError
 
 

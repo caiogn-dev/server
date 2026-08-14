@@ -110,6 +110,17 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         if not user:
             return
 
+        # O endereço do pedido alimenta o caderno do cliente. Fica aqui, e não
+        # no checkout, porque existem TRÊS implementações de criação de pedido
+        # neste repo — corrigir numa só deixaria o bug vivo nas outras duas.
+        # Sem isto, o PDV mostrava cliente conhecido sem endereço enquanto o
+        # bot achava o mesmo endereço sem dificuldade: o bot lê o último
+        # pedido, o PDV lê `UserAddress`.
+        from apps.users.services.caderno_de_enderecos import (
+            guardar_endereco_do_pedido,
+        )
+        guardar_endereco_do_pedido(instance)
+
         # Recalcula os totais a partir de todos os pedidos deste telefone
         from apps.stores.models import StoreOrder
         # `total_spent` é quanto o cliente REALMENTE gastou: somar tudo

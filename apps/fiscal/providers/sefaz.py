@@ -26,5 +26,11 @@ class SefazProvider(FiscalProvider):
             'Use provider "focus" enquanto o provedor SEFAZ não estiver ativado.'
         )
 
+    def emit_nfe(self, *, ref: str, payload: dict) -> EmitResult:
+        return self.emit_nfce(ref=ref, payload=payload)
+
     def cancel_nfce(self, *, ref: str, justificativa: str) -> EmitResult:
+        raise FiscalNotConfigured('Emissão direta SEFAZ ainda não ativada.')
+
+    def cancel_nfe(self, *, ref: str, justificativa: str) -> EmitResult:
         raise FiscalNotConfigured('Emissão direta SEFAZ ainda não ativada.')
