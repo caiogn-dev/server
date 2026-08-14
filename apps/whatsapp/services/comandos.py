@@ -116,3 +116,185 @@ def _parecido(nome: str) -> Optional[str]:
     """
     achados = difflib.get_close_matches(nome, COMANDOS.keys(), n=1, cutoff=0.6)
     return achados[0] if achados else None
+
+
+# ── Execução ──────────────────────────────────────────────────────────────
+#
+# O interpretador acima existia desde 13/ago e o painel já mostrava a paleta,
+# mas a execução respondia "ainda não está ligado — em breve". Ou seja: a dona
+# digitava `/pix`, lia um aviso de obra e ia fazer à mão do mesmo jeito. Atalho
+# que não age não economiza os 5 minutos que motivaram tudo — só adiciona um
+# passo.
+#
+# Duas regras aqui valem dinheiro:
+#
+# - **Só o pedido daquela conversa, daquela loja.** Agir no pedido errado é
+#   pior que não agir: cancelar a venda de outro cliente é irreversível.
+# - **Destrutivo exige `confirmado=True`.** Sem isso, erro de digitação vira
+#   venda perdida. Quem confirma é a tela; aqui só se recusa.
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Resultado:
+    ok: bool
+    texto: str
+    #: Só `/pix` fala com a cliente, e de propósito. O resto é para a dona ler.
+    enviar_ao_cliente: bool = False
+
+
+def _pedido_da_conversa(conversa, store):
+    """O pedido aberto DAQUELA conversa, DAQUELA loja. Nunca outro."""
+    from apps.stores.models import StoreOrder
+
+    telefone = (getattr(conversa, 'phone_number', '') or '').strip()
+    if not telefone or store is None:
+        return None
+
+    from apps.users.signals import _phone_candidates
+
+    return (
+        StoreOrder.objects
+        .filter(store=store, customer_phone__in=_phone_candidates(telefone))
+        .exclude(status__in=['delivered', 'cancelled'])
+        .order_by('-created_at')
+        .first()
+    )
+
+
+def _mudar_bot(conversa, ligado: bool):
+    """Liga/desliga o bot nesta conversa.
+
+    O estado canônico é `ConversationHandover.status` — o mesmo que o botão de
+    assumir/devolver do inbox usa. Guardar isto em outro lugar criaria duas
+    verdades sobre quem está falando com o cliente, que é exatamente o defeito
+    que produziu MESSAGE DROPPED no bypass do modo humano.
+    """
+    from apps.handover.models import ConversationHandover, HandoverStatus
+
+    ConversationHandover.objects.update_or_create(
+        conversation=conversa,
+        defaults={'status': HandoverStatus.BOT if ligado else HandoverStatus.HUMAN},
+    )
+
+
+def executar(nome: str, argumento: str = '', *, conversa=None, store=None,
+             confirmado: bool = False) -> Resultado:
+    """Executa um atalho. Nunca levanta — devolve `Resultado(ok=False)`."""
+    meta = COMANDOS.get(nome)
+    if meta is None:
+        return Resultado(False, f'Não conheço /{nome}.')
+
+    if meta['confirmar'] and not confirmado:
+        return Resultado(False, f'/{nome} precisa de confirmação.')
+
+    try:
+        return _executar(nome, argumento, conversa, store, confirmado)
+    except Exception as exc:
+        logger.warning('[comandos] /%s falhou: %s', nome, exc)
+        return Resultado(False, f'Não consegui executar /{nome} agora.')
+
+
+def _executar(nome, argumento, conversa, store, confirmado) -> Resultado:
+    if nome == 'bot':
+        alvo = (argumento or '').strip().lower()
+        if alvo not in ('on', 'off'):
+            return Resultado(False, 'Use /bot on ou /bot off.')
+        _mudar_bot(conversa, alvo == 'on')
+        return Resultado(True, f'Bot {"ligado" if alvo == "on" else "desligado"} nesta conversa.')
+
+    pedido = _pedido_da_conversa(conversa, store)
+    if pedido is None:
+        return Resultado(False, 'Não encontrei nenhum pedido aberto desta cliente.')
+
+    if nome == 'pedido':
+        return Resultado(True, _resumo_do_pedido(pedido))
+
+    if nome == 'status':
+        from apps.stores.models import StoreOrder
+
+        rotulo = dict(StoreOrder.OrderStatus.choices).get(pedido.status, pedido.status)
+        return Resultado(True, f'Pedido {pedido.order_number}: *{rotulo}*')
+
+    if nome == 'nota':
+        recado = (argumento or '').strip()
+        if not recado:
+            return Resultado(False, 'Escreva o recado: /nota o que anotar')
+        metadata = pedido.metadata if isinstance(pedido.metadata, dict) else {}
+        notas = list(metadata.get('notas_internas') or [])
+        notas.append(recado)
+        metadata['notas_internas'] = notas
+        type(pedido).objects.filter(id=pedido.id).update(metadata=metadata)
+        return Resultado(True, f'Anotado (só você vê): {recado}')
+
+    if nome == 'entregue':
+        from apps.stores.models import StoreOrder
+
+        pedido.status = StoreOrder.OrderStatus.DELIVERED
+        pedido.save(update_fields=['status', 'updated_at'])
+        return Resultado(True, f'Pedido {pedido.order_number} marcado como entregue.')
+
+    if nome == 'cancelar':
+        from apps.stores.models import StoreOrder
+
+        pedido.status = StoreOrder.OrderStatus.CANCELLED
+        pedido.save(update_fields=['status', 'updated_at'])
+        return Resultado(True, f'Pedido {pedido.order_number} cancelado.')
+
+    if nome == 'cupom':
+        codigo = (argumento or '').strip().upper()
+        if not codigo:
+            return Resultado(False, 'Informe o cupom: /cupom CODIGO')
+        return _aplicar_cupom(pedido, codigo)
+
+    if nome == 'pix':
+        return _gerar_pix(pedido)
+
+    return Resultado(False, f'/{nome} ainda não faz nada.')
+
+
+def _resumo_do_pedido(pedido) -> str:
+    linhas = [f'*{pedido.order_number}* — R$ {pedido.total}']
+    for item in pedido.items.all()[:15]:
+        linhas.append(f'• {item.quantity}x {item.product_name}')
+    return '\n'.join(linhas)
+
+
+def _aplicar_cupom(pedido, codigo: str) -> Resultado:
+    from apps.stores.models import StoreCoupon
+
+    cupom = StoreCoupon.objects.filter(
+        store=pedido.store, code__iexact=codigo, is_active=True,
+    ).first()
+    if cupom is None:
+        return Resultado(False, f'Cupom {codigo} não existe ou está inativo.')
+
+    pedido.coupon = cupom
+    pedido.save(update_fields=['coupon', 'updated_at'])
+
+    from apps.stores.services.checkout_service import CheckoutService
+
+    if hasattr(CheckoutService, 'recalculate_totals'):
+        CheckoutService.recalculate_totals(pedido)
+        pedido.refresh_from_db()
+
+    return Resultado(True, f'Cupom {codigo} aplicado. Novo total: R$ {pedido.total}')
+
+
+def _gerar_pix(pedido) -> Resultado:
+    """O único comando que fala com a cliente — é o ponto dele."""
+    from apps.stores.services.checkout_service import CheckoutService
+
+    resultado = CheckoutService.create_payment(pedido, payment_method='pix')
+    codigo = (resultado or {}).get('pix_code') or getattr(pedido, 'pix_code', '')
+    if not codigo:
+        return Resultado(False, 'Não consegui gerar o PIX agora.')
+
+    return Resultado(
+        True,
+        f'PIX de R$ {pedido.total}:\n\n{codigo}',
+        enviar_ao_cliente=True,
+    )

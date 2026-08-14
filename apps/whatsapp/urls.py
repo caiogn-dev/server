@@ -3,6 +3,7 @@ WhatsApp API URLs.
 """
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
+from .api.comando_views import ExecutarComandoView
 from .api import WhatsAppAccountViewSet, MessageViewSet, MessageTemplateViewSet
 from .api.intent_views import (
     IntentStatsViewSet,
@@ -25,5 +26,8 @@ router.register(r'automation/dashboard', AutomationDashboardViewSet, basename='a
 router.register(r'automation/settings', AutomationSettingsViewSet, basename='automation-settings')
 
 urlpatterns = [
+    # Atalhos "/" do inbox. Interpretados de novo no servidor de propósito: o
+    # cliente HTTP não decide se /cancelar precisa de confirmação.
+    path('comandos/executar/', ExecutarComandoView.as_view(), name='comando-executar'),
     path('', include(router.urls)),
 ]

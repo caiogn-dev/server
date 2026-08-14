@@ -400,6 +400,11 @@ class StoreProductSerializer(serializers.ModelSerializer):
             'name', 'slug', 'description', 'short_description',
             'sku', 'barcode',
             'price', 'compare_at_price', 'cost_price',
+            # Promoção que se repete toda semana ("quarta da almôndega"). O
+            # `price` NUNCA é alterado: `preco_vigente()` decide na leitura.
+            # Sem estes campos aqui o recurso existia no model e no cálculo mas
+            # não tinha como ser cadastrado por ninguém.
+            'promo_price', 'promo_weekday',
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
             'allow_backorder', 'is_low_stock', 'is_in_stock',
