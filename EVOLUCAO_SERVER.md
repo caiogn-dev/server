@@ -10,6 +10,68 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-14
+
+**Baseline de testes:** 77 testes SimpleTestCase (sem Docker/PostgreSQL) — 77/77 OK após instalação de deps.
+Falha pré-existente de infra CI (`check`/`complexity`, `runner_id=0`, output vazio, duração ~2s) desde 2026-07-18 — presente em todos os PRs do bot, não é regressão.
+
+**Gate anti-acúmulo:** 16 PRs abertos (#318–#333). Confirmado via leitura do source de `development` HEAD (`fedf527`).
+Nenhum PR cobre o endpoint `gerar_codigos_internos` (commit `456556c`, 2026-08-12).
+
+**Bug encontrado e corrigido:** IDOR de escrita em `gerar_codigos_internos` — sem gate de tenant [P0]
+
+- **Tipo:** P0 — IDOR de escrita cross-tenant (modifica catálogo de outra loja) + info-disclosure (retorna catálogo)
+- **Arquivo corrigido (1):** `apps/stores/api/views/product_views.py`
+- **Problema:** A action `gerar_codigos_internos` (adicionada em `456556c`) aceitava o identificador da loja pelo corpo
+  da requisição (`request.data["store"]`) via rota plana `/api/v1/stores/products/gerar-codigos-internos/`, sem verificar
+  se o usuário tinha acesso àquela loja. `IsStoreOwnerOrStaff.has_permission()` retorna `True` para qualquer
+  autenticado quando `store_pk` não está em `view.kwargs` (rota plana sem nested router).
+  Vetor: `POST /api/v1/stores/products/gerar-codigos-internos/` com `{"store": "<uuid-loja-alheia>"}` sobrescrevia o
+  `barcode` de todos os produtos ativos do tenant vítima e retornava a lista de IDs e códigos gerados.
+- **Correção:** Após resolver `loja`, verifica `user_can_access_store(request.user, loja)` para não-superusers;
+  sem acesso → `Http404` (info-hiding). Mesmo padrão de `cash_views`, `export_views`, `review_views`.
+- **Testes:** 8 `SimpleTestCase` em `apps/stores/tests/test_barcode_endpoint_idor.py` (RED→GREEN confirmado):
+  - Análise estática: `user_can_access_store` importado e chamado na action; `Http404` presente
+  - Atacante sem acesso → `Http404` (mock comportamental)
+  - Dono da loja → 200
+  - Superuser → 200 sem chamar `user_can_access_store`
+  - Loja não encontrada → 400
+  - `store_pk` na URL → funciona normalmente
+- **PR:** #334 — `bot/server-2026-08-14-barcode-endpoint-idor`
+- **CI:** jobs `check`/`complexity` falharam com output vazio, duração ~2s — infra pré-existente, não causado por este PR.
+
+**PRs abertos aguardando merge (não criados nesta sessão):**
+
+| PR | Tipo | Descrição |
+|---|---|---|
+| #318 | P1 | IDOR via account gravável em Instagram serializers |
+| #319 | P2 | CustomerSearchView retorna clientes de outros tenants |
+| #320 | P1 | IDOR de escrita em serializers de e-mail marketing |
+| #321 | P2 | info-disclosure str(e) em envio de campanha e e-mail |
+| #322 | P1 | Contratos de regressão para checkout (calculate_totals, placeholder email) |
+| #323 | P0 | PII (telefone) em logs de notificação WhatsApp e indicação |
+| #324 | P0/P2 | str(e) em health check AllowAny + is_staff em base_consumer |
+| #325 | P0/P1 | IDOR + PII leak no debug action de CustomersViewSet |
+| #326 | P2 | str(exc) em views Meta API |
+| #327 | P2 | N+1 em CashHistoryReportView |
+| #328 | P1 | str(exc) em respostas HTTP + PII em logs |
+| #329 | P1 | AuditLogViewSet exige is_superuser não is_staff |
+| #330 | P1 | Staff da loja pode acessar contas de fidelidade de outros tenants |
+| #331 | P0/P1 | IDOR em conversation_history/stats + str(exc) em embedded_signup |
+| #332 | P1 | IDOR de escrita em ProductNutritionProfileSerializer |
+| #333 | P1 | info-disclosure em Instagram connect() e send_message() |
+| #334 | P0 | IDOR de escrita em gerar_codigos_internos (este PR) |
+
+**Próximo backlog priorizado:**
+
+1. **P0** — Merge urgente dos PRs #323–#325, #331 (IDOR/PII criticos).
+2. **P1** — Merge dos PRs #318–#322, #328–#333 (IDOR + str(exc) + contratos).
+3. **P2** — Varredura de segurança no módulo `apps/automation/services/triagem.py` e
+   `classificador.py` (novos desde `ef8e43e`/`544de2f`): confirmar que prompt do LLM
+   não vaza dados de outros tenants (`store` sempre escopado).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md ainda pendente).
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
