@@ -460,3 +460,41 @@ def reconcile_pending_pix_payments():
 
     if checked:
         logger.info('Reconcile PIX: %d consultados, %d reconciliados', checked, reconciled)
+
+
+@shared_task(name='stores.conferir_endereco_do_pedido')
+def conferir_endereco_do_pedido(order_id: str):
+    """Compara o pin do pedido com o endereço que o cliente escreveu.
+
+    Assíncrona de propósito: é chamada de rede (reverse geocode) e não pode
+    entrar no caminho do checkout. O cliente não deve esperar o Google para
+    fechar pedido.
+
+    Nasceu do CE-2608140823: texto dizia "110 sul", pin caiu na 706 Sul, 5,15 km
+    de distância. O Maps segue a coordenada e o frete também — ela pagou R$ 11
+    onde antes pagou R$ 7, e a entrega foi para o lugar errado.
+
+    Grava em `metadata` porque o serializer do pedido já expõe esse campo: o
+    aviso chega ao painel sem encanamento novo. Usa `.update()` para não
+    disparar o post_save de novo.
+    """
+    from apps.stores.models import StoreOrder
+    from apps.stores.services.conferencia_de_endereco import conferir
+
+    order = StoreOrder.objects.filter(id=order_id).first()
+    if order is None:
+        return None
+
+    divergencia = conferir(order.delivery_address)
+    if not divergencia:
+        return None
+
+    metadata = order.metadata if isinstance(order.metadata, dict) else {}
+    metadata['endereco_divergente'] = divergencia
+    StoreOrder.objects.filter(id=order_id).update(metadata=metadata)
+
+    logger.warning(
+        '[endereco] pedido %s: cliente escreveu %r, pin cai em %r',
+        order.order_number, divergencia['digitado'], divergencia['pin'],
+    )
+    return divergencia

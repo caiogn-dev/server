@@ -205,3 +205,31 @@ def on_order_confirmed_dispatch_toca(sender, instance, created, **kwargs):
         transaction.on_commit(lambda: dispatch_order_to_toca_delivery.delay(order_id))
     except Exception as exc:
         logger.error('on_order_confirmed_dispatch_toca: failed to enqueue task: %s', exc)
+
+
+@receiver(post_save, sender='stores.StoreOrder')
+def conferir_endereco_ao_criar_pedido(sender, instance, created, **kwargs):
+    """Pin e endereço escrito têm que concordar — ninguém conferia.
+
+    Só na criação: a conferência custa uma chamada de reverse geocode, e o
+    endereço não muda a cada troca de status. Vai para a fila porque é rede —
+    o cliente não espera o Google para fechar pedido.
+
+    Origem: CE-2608140823, pin a 5,15 km do endereço digitado. O Maps segue a
+    coordenada, e o frete também.
+    """
+    if not created or not instance.delivery_address:
+        return
+
+    from django.db import transaction
+
+    def _enfileirar():
+        from apps.stores.tasks import conferir_endereco_do_pedido
+        try:
+            conferir_endereco_do_pedido.delay(str(instance.id))
+        except Exception as exc:
+            # Broker fora do ar não pode derrubar a venda.
+            logger.warning('Não consegui conferir o endereço do pedido %s: %s',
+                           instance.id, exc)
+
+    transaction.on_commit(_enfileirar)
