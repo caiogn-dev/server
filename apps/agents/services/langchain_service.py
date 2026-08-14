@@ -1060,7 +1060,7 @@ class LangchainService:
         if not alvo:
             return None
         candidatos = [
-            p for p in StoreProduct.objects.filter(store=store, is_active=True)
+            p for p in StoreProduct.disponiveis(store)
                                            .select_related('category')
             if alvo in self._slug_compare(p.name)
         ]

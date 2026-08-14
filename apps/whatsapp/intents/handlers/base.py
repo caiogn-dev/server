@@ -41,7 +41,7 @@ def _parse_items_from_text_dynamic(text: str, store) -> List[Dict[str, Any]]:
     if not text_lower:
         return []
 
-    products = list(StoreProduct.objects.filter(store=store, is_active=True).exclude(tags__contains=['ingrediente']))
+    products = list(StoreProduct.disponiveis(store).exclude(tags__contains=['ingrediente']))
     if not products:
         return []
 

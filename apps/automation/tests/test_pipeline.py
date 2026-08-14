@@ -367,7 +367,9 @@ class ParseItemsDynamicTestCase(TestCase):
         with patch('apps.whatsapp.intents.handlers.base.StoreProduct') as mock_model:
             mock_qs = MagicMock()
             mock_qs.exclude.return_value = [product]
-            mock_model.objects.filter.return_value = mock_qs
+            # disponiveis() e nao objects.filter: o painel escreve em `status`,
+            # e filtrar por is_active oferecia produto que o dono desativou.
+            mock_model.disponiveis.return_value = mock_qs
             result = _parse_items_from_text_dynamic('quero 2 lasanha de frango', store=store)
 
         self.assertEqual(len(result), 1)
@@ -387,7 +389,9 @@ class ParseItemsDynamicTestCase(TestCase):
         with patch('apps.whatsapp.intents.handlers.base.StoreProduct') as mock_model:
             mock_qs = MagicMock()
             mock_qs.exclude.return_value = [product]
-            mock_model.objects.filter.return_value = mock_qs
+            # disponiveis() e nao objects.filter: o painel escreve em `status`,
+            # e filtrar por is_active oferecia produto que o dono desativou.
+            mock_model.disponiveis.return_value = mock_qs
             result = _parse_items_from_text_dynamic('nhoque', store=store)
 
         self.assertEqual(len(result), 1)

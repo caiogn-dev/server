@@ -181,7 +181,7 @@ class ClassificadorNIM:
             from apps.stores.models import StoreCombo, StoreProduct
 
             nomes = [
-                *StoreProduct.objects.filter(store=store, is_active=True)
+                *StoreProduct.disponiveis(store)
                 .values_list('name', flat=True)[:limite],
                 *StoreCombo.objects.filter(store=store, is_active=True)
                 .values_list('name', flat=True)[:limite],

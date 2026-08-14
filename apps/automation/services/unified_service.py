@@ -331,7 +331,7 @@ class UnifiedService:
         if self.store:
             from apps.stores.models import StoreProduct
 
-            products = StoreProduct.objects.filter(store=self.store, is_active=True).exclude(tags__contains=['ingrediente'])[:5]
+            products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente'])[:5]
             if products:
                 product_lines = [f'- {product.name}: R$ {product.price:.2f}' for product in products]
                 parts.append('Produtos ativos:')

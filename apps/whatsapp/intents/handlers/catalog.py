@@ -25,9 +25,7 @@ def _is_drink_product(product) -> bool:
 
 def _build_price_list_text(store, intro: Optional[str] = None) -> str:
     """Retorna lista de preços categorizada como texto."""
-    all_products = StoreProduct.objects.filter(
-        store=store, is_active=True
-    ).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
+    all_products = StoreProduct.disponiveis(store).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
         'category__sort_order', 'category__name', 'name'
     )
     if not all_products.exists():
@@ -105,7 +103,7 @@ class ProductMentionHandler(IntentHandler):
         logger.info(f"[ProductMentionHandler] Mensagem: {message}")
         if not self.store:
             return HandlerResult.text("Cardápio não disponível. 😔")
-        all_products = StoreProduct.objects.filter(store=self.store, is_active=True).exclude(tags__contains=['ingrediente'])
+        all_products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente'])
         search_term = message.lower().strip()
         normalized_search = self._normalize_lookup_text(search_term)
         search_term = search_term.replace('de ', '').replace('com ', '').replace('e ', '')
@@ -180,9 +178,7 @@ class MenuRequestHandler(IntentHandler):
                 "Desculpe, não consegui carregar o cardápio agora. "
                 "Um atendente já vai te ajudar. 🙏"
             )
-        all_products = StoreProduct.objects.filter(
-            store=self.store, is_active=True
-        ).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
+        all_products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente']).select_related('category').order_by(
             'category__sort_order', 'category__name', 'name'
         )
         total_products = all_products.count()
@@ -263,9 +259,7 @@ class ProductNotFoundHandler(IntentHandler):
                 "❌ Não encontrei esse produto.\n\n"
                 "Digite *cardápio* para ver o que temos disponível! 📋"
             )
-        products = StoreProduct.objects.filter(
-            store=self.store, is_active=True
-        ).exclude(tags__contains=['ingrediente'])[:5]
+        products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente'])[:5]
         product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in products])
         return HandlerResult.text(
             f"❌ Não encontrei esse produto.\n\n"

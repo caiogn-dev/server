@@ -93,7 +93,7 @@ def resolve_catalog_products(store, retailer_ids):
             consulta |= Q(sku__iexact=rid)
         por_sku = {
             (p.sku or '').lower(): p
-            for p in StoreProduct.objects.filter(consulta, store=store, is_active=True)
+            for p in StoreProduct.disponiveis(store).filter(consulta)
             if p.sku
         }
         for rid in faltando:

@@ -551,7 +551,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
 
         # Products excluding ingredients (same logic as MenuRequestHandler)
         products = (
-            StoreProduct.objects.filter(store=store, is_active=True)
+            StoreProduct.disponiveis(store)
             .exclude(tags__contains=['ingrediente'])
             .select_related('category')
             .order_by('category__sort_order', 'category__name', 'name')
