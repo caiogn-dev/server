@@ -1837,6 +1837,44 @@ class CheckoutService:
 
         return CheckoutService._apply_order_webhook_status(order, status)
 
+
+    @staticmethod
+    def _venda_de_cobranca_avulsa(store_payment):
+        """Cria o pedido de uma cobrança avulsa que foi paga.
+
+        Nasce PAGO: nascer pendente faria o dono cobrar de novo quem já pagou.
+        E carrega `metadata['origem']` porque, sem isso, vira um pedido fantasma
+        que ninguém sabe explicar de onde veio.
+        """
+        from apps.stores.models import StoreOrder
+
+        # A cobrança pode ser reprocessada (o Mercado Pago reentrega webhook);
+        # sem esta guarda, cada reentrega criaria um pedido novo.
+        store_payment.refresh_from_db()
+        if store_payment.order_id:
+            return store_payment.order
+
+        order = StoreOrder.objects.create(
+            store=store_payment.store,
+            total=store_payment.amount,
+            subtotal=store_payment.amount,
+            status=StoreOrder.OrderStatus.CONFIRMED,
+            payment_status=StoreOrder.PaymentStatus.PAID,
+            payment_method=store_payment.payment_method or 'other',
+            paid_at=store_payment.paid_at or timezone.now(),
+            metadata={
+                'origem': 'link_de_pagamento',
+                'store_payment_id': str(store_payment.id),
+            },
+        )
+        store_payment.order = order
+        store_payment.save(update_fields=['order', 'updated_at'])
+        logger.info(
+            '[checkout] cobrança avulsa %s virou o pedido %s',
+            store_payment.id, order.order_number,
+        )
+        return order
+
     @staticmethod
     def _handle_storepayment_webhook(store_payment, status: str):
         """Atualiza UMA cobrança (StorePayment) e reconcilia o pedido.
@@ -1878,7 +1916,18 @@ class CheckoutService:
                 pix_billing_service.apply_invoice_paid(store_payment)
 
             if order is None:
-                return None
+                # Cobrança avulsa PAGA vira venda.
+                #
+                # Antes o código parava aqui — o docstring dizia "avulso só marca
+                # a cobrança" — e o dinheiro entrava sem virar pedido. Como
+                # faturamento se conta por pedido, a venda simplesmente não
+                # aparecia: em 14/ago eram 2 cobranças completed sem pedido,
+                # R$ 249,01, dinheiro real invisível no relatório.
+                #
+                # Só no APPROVED: cobrança gerada e não paga é orçamento, e
+                # contá-la inflaria o faturamento com dinheiro que nunca entrou
+                # (havia 8 links pendentes que ninguém chegou a pagar).
+                return CheckoutService._venda_de_cobranca_avulsa(store_payment)
 
             order.refresh_from_db()
             if order.amount_paid >= order.total:

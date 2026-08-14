@@ -78,8 +78,18 @@ class ReconcilePixPollerTests(TestCase):
         view_cls.return_value._send_payment_confirmation_whatsapp.assert_not_called()
 
     def test_old_payments_outside_window_are_skipped(self):
+        """A janela é de 24h, não de 1h.
+
+        Este teste usava 2 horas e ficou vermelho desde `b0e3dc8`, que alargou a
+        janela de propósito: com 1 hora, o poller NUNCA alcançava um pagamento
+        que o webhook tivesse perdido — quando a chave de idempotência expirava
+        (TTL 3600s), o StorePayment já tinha saído da janela.
+
+        24h é o horizonte certo porque é quanto dura o PIX do Mercado Pago
+        (`expires_at = now + 24h`). Fora disso não há o que reconciliar.
+        """
         StorePayment.objects.filter(pk=self.payment.pk).update(
-            created_at=timezone.now() - timedelta(hours=2)
+            created_at=timezone.now() - timedelta(hours=30)
         )
         sdk = _mp_sdk_mock('approved')
         proc, _ = self._run(sdk)
