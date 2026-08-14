@@ -28,7 +28,14 @@ class FeaturedCouponModelTest(TestCase):
         assert StoreCoupon.objects.get(id=c.id).is_featured is True
 
     def test_plan_gate_coupon_banner(self):
+        """O banner de cupom entra no plano Loja — mudou em `3deb837`.
+
+        O gate nasceu em `eeb9f07` com starter=False. O catálogo do go-live deu
+        o banner ao Loja de propósito: é o degrau dele acima do Grátis, junto
+        com links da bio. Este teste ficou preso na regra anterior e estava
+        vermelho desde então — não foi a mudança de preço que o quebrou.
+        """
         assert billing.plan_allows('free', 'coupon_banner') is False
-        assert billing.plan_allows('starter', 'coupon_banner') is False
+        assert billing.plan_allows('starter', 'coupon_banner') is True
         assert billing.plan_allows('pro', 'coupon_banner') is True
         assert billing.plan_allows('premium', 'coupon_banner') is True

@@ -6,7 +6,7 @@ class PlanCatalogTest(TestCase):
     def test_quatro_planos_com_precos_aprovados(self):
         self.assertEqual(float(billing.get_plan('free')['monthly_price']), 0.0)
         self.assertEqual(float(billing.get_plan('starter')['monthly_price']), 179.00)
-        self.assertEqual(float(billing.get_plan('pro')['monthly_price']), 329.00)
+        self.assertEqual(float(billing.get_plan('pro')['monthly_price']), 249.00)
         self.assertEqual(float(billing.get_plan('premium')['monthly_price']), 549.00)
         self.assertEqual(billing.get_plan('starter')['name'], 'Loja')
         self.assertEqual(billing.get_plan('free')['name'], 'Grátis')

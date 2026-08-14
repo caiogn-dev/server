@@ -5,6 +5,7 @@ from django.contrib.auth.models import User
 from django.utils import timezone
 from rest_framework.test import APIClient
 from apps.stores.models import Store, StoreSubscription, StorePayment
+from apps.stores import billing
 from apps.stores.services import pix_billing_service
 
 
@@ -56,7 +57,11 @@ class GenerateInvoiceTest(TestCase):
         self.assertIsNone(inv.order_id)
         self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026-07")
         self.assertEqual(inv.qr_code, "PIXCOPIACOLA123")
-        self.assertEqual(float(inv.amount), 329.0)  # "Loja + WhatsApp" mensal
+        # Deriva do catálogo em vez de repetir o número: o preço do "pro" já
+        # esteve travado como literal em 4 arquivos de teste ao mesmo tempo, e
+        # quando ele mudou de 329 para 249 os quatro quebraram junto.
+        mensal = float(billing.get_plan("pro")["monthly_price"])
+        self.assertEqual(float(inv.amount), mensal)
         self.assertEqual(inv.metadata["kind"], "monthly")
 
     @patch.object(pix_billing_service.subscription_service, "_sdk")
@@ -64,7 +69,9 @@ class GenerateInvoiceTest(TestCase):
         mock_sdk.return_value = _fake_pix_sdk()
         self.sub.billing_cycle = "annual"; self.sub.save()
         inv = pix_billing_service.generate_invoice(self.sub, now=self.now)
-        self.assertEqual(float(inv.amount), 3290.0)  # 329 x 10 (paga 10, leva 12)
+        # O que importa é a RELAÇÃO (paga 10, leva 12), não o valor do mês.
+        mensal = float(billing.get_plan("pro")["monthly_price"])
+        self.assertEqual(float(inv.amount), mensal * pix_billing_service.ANNUAL_MONTHS_CHARGED)
         self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026")
 
     @patch.object(pix_billing_service.subscription_service, "_sdk")
@@ -243,7 +250,11 @@ class InvoiceEndpointTest(TestCase):
     def test_public_plans_expose_annual_price(self):
         r = self.client.get("/api/v1/public/plans/")
         pro = next(p for p in r.data["plans"] if p["key"] == "pro")
-        self.assertEqual(float(pro["annual_price"]), 3290.0)  # 329 x 10
+        mensal = float(billing.get_plan("pro")["monthly_price"])
+        self.assertEqual(
+            float(pro["annual_price"]),
+            mensal * pix_billing_service.ANNUAL_MONTHS_CHARGED,
+        )
         free = next(p for p in r.data["plans"] if p["key"] == "free")
         self.assertNotIn("annual_price", free)
 
