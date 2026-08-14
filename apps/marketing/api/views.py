@@ -509,9 +509,13 @@ class CustomersViewSet(viewsets.ViewSet):
 
         return Response({'count': max(user_count, subscriber_count, order_emails)})
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def debug(self, request):
-        """Debug endpoint to check data sources for a store. Admin only."""
+        """Debug endpoint to check data sources for a store. Superuser only."""
+        if not request.user.is_superuser:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied()
+
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder, StoreCustomer
 
