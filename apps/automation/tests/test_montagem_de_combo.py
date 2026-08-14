@@ -26,7 +26,8 @@ SABORES = [
     Opcao('7', 'Salmão Sublime'),
 ]
 
-COMBO5 = Grupo(titulo='Escolha suas 5 saladas', minimo=5, maximo=5, opcoes=SABORES)
+COMBO5 = Grupo(titulo='Escolha suas 5 saladas', minimo=5, maximo=5, opcoes=SABORES,
+               id_do_grupo='grupo-1')
 
 
 class TestOClienteEscolhePorNumero:
@@ -173,46 +174,100 @@ class TestAConversaEmDoisTurnos:
         from apps.automation.services.montagem_de_combo import iniciar, responder
 
         _, estado = iniciar(self._combo(), [COMBO5])
-        texto, estado = responder(estado, '1, 2', COMBO5)
+        r = responder(estado, '1, 2', COMBO5)
 
-        assert 'Faltam *3*' in texto
-        assert estado is not None
+        assert 'Faltam *3*' in r.texto
+        assert r.estado is not None
 
     def test_a_escolha_ACUMULA_entre_os_turnos(self):
         """Sem acumular, o cliente recomeça do zero a cada mensagem."""
         from apps.automation.services.montagem_de_combo import iniciar, responder
 
         _, estado = iniciar(self._combo(), [COMBO5])
-        _, estado = responder(estado, '1, 2', COMBO5)
-        texto, estado = responder(estado, '3, 4, 5', COMBO5)
+        estado = responder(estado, '1, 2', COMBO5).estado
+        r = responder(estado, '3, 4, 5', COMBO5)
 
-        assert estado is None
-        assert 'Fechado' in texto
+        assert r.estado is None
+        assert 'Fechado' in r.texto
 
     def test_o_resumo_final_diz_o_que_vai_pra_cozinha(self):
         from apps.automation.services.montagem_de_combo import iniciar, responder
 
         _, estado = iniciar(self._combo(), [COMBO5])
-        texto, _ = responder(estado, '2 de frango e 3 de camarão', COMBO5)
+        r = responder(estado, '2 de frango e 3 de camarão', COMBO5)
 
-        assert 'Especial Filé de Frango' in texto
-        assert 'Magnifico Camarão' in texto
+        assert 'Especial Filé de Frango' in r.texto
+        assert 'Magnifico Camarão' in r.texto
 
     def test_palavra_desconhecida_e_avisada_sem_travar(self):
         from apps.automation.services.montagem_de_combo import iniciar, responder
 
         _, estado = iniciar(self._combo(), [COMBO5])
-        texto, estado = responder(estado, '1, picanha', COMBO5)
+        r = responder(estado, '1, picanha', COMBO5)
 
-        assert 'picanha' in texto
-        assert 'Faltam *4*' in texto
+        assert 'picanha' in r.texto
+        assert 'Faltam *4*' in r.texto
 
     def test_passar_do_limite_NAO_corta_sozinho(self):
         """Cortar calado entrega salada que o cliente não pediu."""
         from apps.automation.services.montagem_de_combo import iniciar, responder
 
         _, estado = iniciar(self._combo(), [COMBO5])
-        texto, estado = responder(estado, '1,2,3,4,5,6,7', COMBO5)
+        r = responder(estado, '1,2,3,4,5,6,7', COMBO5)
 
-        assert 'Tira 2' in texto
-        assert estado is not None
+        assert 'Tira 2' in r.texto
+        assert r.estado is not None
+
+
+class TestOComboVAIProCarrinho:
+    """O último passo: a escolha confirmada vira linha de pedido.
+
+    Sem isto o bot conduzia a escolha inteira, dizia "Fechado!" e o combo
+    sumia — a conversa toda terminava em nada. O formato é o que
+    `create_order_from_whatsapp` já aceita desde 10/ago: `combo_id` +
+    `group_selections`, com a REPETIÇÃO na lista virando quantidade.
+    """
+
+    def _pronto(self, resposta_do_cliente='1,2,3,4,5'):
+        from unittest.mock import MagicMock
+        from apps.automation.services.montagem_de_combo import iniciar, responder
+
+        combo = MagicMock()
+        combo.id = 'combo-5'
+        combo.name = 'COMBO 5 SALADAS'
+        combo.price = '239.98'
+        _, estado = iniciar(combo, [COMBO5])
+        return responder(estado, resposta_do_cliente, COMBO5)
+
+    def test_devolve_a_linha_do_carrinho(self):
+        assert self._pronto().item is not None
+
+    def test_no_formato_que_o_pedido_aceita(self):
+        item = self._pronto().item
+
+        assert item['combo_id'] == 'combo-5'
+        assert item['quantity'] == 1
+        assert 'group_selections' in item
+
+    def test_as_escolhas_vao_indexadas_pelo_GRUPO(self):
+        """`group_selections` é {grupo: [produtos]} — chave errada perde tudo."""
+        item = self._pronto().item
+
+        assert list(item['group_selections'].keys()) == ['grupo-1']
+
+    def test_manda_os_cinco_sabores(self):
+        assert len(self._pronto().item['group_selections']['grupo-1']) == 5
+
+    def test_repeticao_vira_quantidade_no_pedido(self):
+        """"5 de camarão" são cinco ids iguais — é assim que o checkout conta."""
+        ids = self._pronto('5 de camarão').item['group_selections']['grupo-1']
+
+        assert len(ids) == 5
+        assert len(set(ids)) == 1
+
+    def test_montagem_incompleta_NAO_devolve_item(self):
+        """Combo pela metade no carrinho vai pra cozinha sem dizer o quê."""
+        assert self._pronto('1, 2').item is None
+
+    def test_passar_do_limite_tambem_nao_devolve_item(self):
+        assert self._pronto('1,2,3,4,5,6,7').item is None

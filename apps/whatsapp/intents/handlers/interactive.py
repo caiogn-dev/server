@@ -771,26 +771,81 @@ class InteractiveReplyHandler(IntentHandler):
                 logger.warning('[InteractiveReplyHandler] Erro ao salvar itens: %s', exc)
         return self._cart_summary_result(items, last_product=product)
 
-    def _cart_summary_result(self, items, last_product=None) -> HandlerResult:
-        """Resumo parcial do pedido + ações: adicionar mais, quantidade, fechar."""
+    def _texto_do_carrinho(self, items) -> str:
+        """As linhas do carrinho + subtotal, sem os botões.
+
+        Separado do `_cart_summary_result` porque a montagem de combo precisa do
+        MESMO texto e não do mesmo componente interativo. Duas versões do resumo
+        divergiriam — e resumo divergente é o cliente conferindo um total que
+        não é o que vai ser cobrado.
+        """
+        from apps.stores.models import StoreCombo
+
+        ids_de_produto = [i['product_id'] for i in items if i.get('product_id')]
+        ids_de_combo = [i['combo_id'] for i in items if i.get('combo_id')]
+
         products = {
-            str(pr.id): pr
-            for pr in StoreProduct.objects.filter(id__in=[i['product_id'] for i in items])
+            str(pr.id): pr for pr in StoreProduct.objects.filter(id__in=ids_de_produto)
         }
+        combos = {
+            str(c.id): c for c in StoreCombo.objects.filter(id__in=ids_de_combo)
+        }
+
         lines, total = [], 0.0
         for it in items:
-            pr = products.get(str(it['product_id']))
+            qty = int(it.get('quantity', 1))
+
+            # Linha de COMBO. Sem este ramo o combo entrava no carrinho e
+            # sumia do resumo: o cliente via um total menor do que ia pagar.
+            if it.get('combo_id'):
+                combo = combos.get(str(it['combo_id']))
+                if not combo:
+                    continue
+                total += qty * float(combo.price)
+                lines.append(f"• {qty}x {combo.name} — R$ {qty * float(combo.price):.2f}")
+                sabores = self._sabores_do_combo(it)
+                if sabores:
+                    lines.append(f"   _{sabores}_")
+                continue
+
+            pr = products.get(str(it.get('product_id')))
             if not pr:
                 continue
-            qty = int(it.get('quantity', 1))
             total += qty * float(pr.price)
             lines.append(f"• {qty}x {pr.name} — R$ {qty * float(pr.price):.2f}")
-        header = f"✅ *{last_product.name}* adicionado!\n\n" if last_product else ""
-        body = (
-            f"{header}🛒 *Seu pedido até agora:*\n"
+
+        return (
+            "🛒 *Seu pedido até agora:*\n"
             + "\n".join(lines)
             + f"\n\n💰 Subtotal: *R$ {total:.2f}*"
         )
+
+    @staticmethod
+    def _sabores_do_combo(item) -> str:
+        """"2x Especial Filé de Frango, 3x Magnifico Camarão".
+
+        O cliente acabou de escolher: não ver a escolha de volta é o momento em
+        que ele desconfia que o bot não anotou.
+        """
+        ids = [
+            i for lista in (item.get('group_selections') or {}).values() for i in lista
+        ]
+        if not ids:
+            return ''
+        nomes = {str(p.id): p.name for p in StoreProduct.objects.filter(id__in=ids)}
+        contagem = {}
+        for i in ids:
+            nome = nomes.get(str(i))
+            if nome:
+                contagem[nome] = contagem.get(nome, 0) + 1
+        return ', '.join(
+            f'{n}x {nome}' if n > 1 else nome for nome, n in contagem.items()
+        )
+
+    def _cart_summary_result(self, items, last_product=None) -> HandlerResult:
+        """Resumo parcial do pedido + ações: adicionar mais, quantidade, fechar."""
+        header = f"✅ *{last_product.name}* adicionado!\n\n" if last_product else ""
+        body = header + self._texto_do_carrinho(items)
         buttons = [
             {'id': 'add_more_items', 'title': '➕ Adicionar mais'},
             {'id': 'edit_cart', 'title': '✏️ Editar carrinho'},

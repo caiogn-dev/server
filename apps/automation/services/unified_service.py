@@ -1227,6 +1227,34 @@ class UnifiedService:
             interactive_data={'buttons': _fallback_buttons},
         )
 
+    def _por_no_carrinho(self, item: dict) -> str:
+        """Acrescenta a linha aos itens pendentes e devolve o resumo do carrinho.
+
+        Usa o MESMO `pending_order_items` dos produtos: é ele que a finalização
+        lê para criar o pedido, e `create_order_from_whatsapp` já aceita linha
+        de combo (`combo_id` + `group_selections`) desde 10/ago. Guardar combo
+        num lugar separado criaria dois carrinhos para o mesmo cliente.
+        """
+        from apps.whatsapp.intents.handlers.interactive import InteractiveReplyHandler
+
+        try:
+            gerente = self._get_session_manager()
+            itens = gerente.get_pending_order_items() or []
+            itens.append(item)
+            gerente.save_pending_order_items(itens)
+        except Exception as exc:
+            logger.warning('[unified] não consegui pôr o combo no carrinho: %s', exc)
+            return 'Não consegui adicionar ao pedido agora — me chama que eu resolvo.'
+
+        try:
+            handler = InteractiveReplyHandler(self.account, self.conversation, self.company)
+            if self.store:
+                handler.store = self.store
+            return handler._texto_do_carrinho(itens)
+        except Exception as exc:
+            logger.warning('[unified] resumo do carrinho falhou: %s', exc)
+            return 'Adicionado ao seu pedido! 🛒'
+
     def _responder_montagem_de_combo(self, texto: str):
         """Continua a escolha de sabores de um combo, se houver uma em curso.
 
@@ -1257,11 +1285,18 @@ class UnifiedService:
                 sessao.update_context(CHAVE, None)
                 return None
 
-            resposta, novo_estado = responder(estado, texto, grupos[0])
-            sessao.update_context(CHAVE, novo_estado)
+            r = responder(estado, texto, grupos[0])
+            sessao.update_context(CHAVE, r.estado)
+
+            texto_final = r.texto
+            if r.item is not None:
+                # A escolha confirmada vira linha do carrinho AGORA. Sem isto o
+                # bot conduzia a montagem inteira, dizia "Fechado!" e o combo
+                # sumia — a conversa toda terminava em nada.
+                texto_final = f'{r.texto}\n\n{self._por_no_carrinho(r.item)}'
 
             return UnifiedResponse(
-                content=resposta,
+                content=texto_final,
                 source=ResponseSource.HANDLER,
                 metadata={'intent': 'combo_em_montagem'},
             )

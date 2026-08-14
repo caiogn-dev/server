@@ -72,16 +72,28 @@ class ExecutarComandoView(APIView):
 
     @staticmethod
     def _loja_do_usuario(user, conversa):
-        from apps.stores.models import Store
+        """A loja da conversa, se este usuário puder agir nela.
 
-        loja = getattr(conversa, 'store', None)
+        ⚠️ `Conversation` NÃO tem campo `store`. A primeira versão fazia
+        `getattr(conversa, 'store')`, recebia None e devolvia 403 em TODA
+        conversa — "Conversa não pertence a esta loja" numa que pertencia.
+
+        O caminho real é o mesmo que os handlers usam:
+        conversa → account → company_profile → store.
+        """
+        from apps.stores.models import Store, StoreTeamMember
+
+        perfil = getattr(getattr(conversa, 'account', None), 'company_profile', None)
+        loja = getattr(perfil, 'store', None)
         if loja is None:
             return None
+
         if Store.objects.filter(id=loja.id, owner=user).exists():
             return loja
-        from apps.stores.models import StoreTeamMember
-
-        if StoreTeamMember.objects.filter(store=loja, user=user, is_active=True).exists():
+        # `tenant`, não `store`: o campo do StoreTeamMember chama tenant, e
+        # `store=` levantava FieldError — ou seja, funcionário que não é dono
+        # derrubava a requisição com 500 em vez de receber permissão.
+        if StoreTeamMember.objects.filter(tenant=loja, user=user, is_active=True).exists():
             return loja
         return None
 
