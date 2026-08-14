@@ -129,7 +129,11 @@ class ThrottledWebSocketConsumer(AsyncJsonWebsocketConsumer):
 
         Default policy:
         - Unauthenticated / missing account_id → deny.
-        - Django staff / superusers → allow (admin access).
+        - Superuser → allow (cross-tenant admin access).
+        - Django staff (is_staff) → deny: is_staff concede acesso ao /admin
+          mas NÃO acesso cross-tenant via WebSocket — só superuser tem esse
+          privilégio. Subclasses que queiram conceder acesso a membros da loja
+          devem sobrescrever este método com checagem de membership explícita.
         - Regular users → deny unless a subclass overrides this method
           with platform-specific ownership checks.
 
@@ -139,7 +143,8 @@ class ThrottledWebSocketConsumer(AsyncJsonWebsocketConsumer):
         """
         if not self.user or not account_id:
             return False
-        return self.user.is_staff or self.user.is_superuser
+        # is_staff NÃO concede acesso cross-tenant — só superuser.
+        return self.user.is_superuser
     
     async def get_conversation_cached(self, conversation_id: str):
         """Get conversation with caching."""
