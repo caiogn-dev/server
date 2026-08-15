@@ -104,6 +104,22 @@ class TestOQueNaoPodeSerTocado:
         p.refresh_from_db()
         assert p.payment_status == 'pending'
 
+    def test_estornado_nao_vira_pago(self, loja):
+        """Estornado é diferente de pendente: já liquidou e foi devolvido.
+
+        `.exclude(payment_status=PAID)` deixaria passar `refunded` — o comando
+        promoveria de volta a `paid` um dinheiro que já saiu da loja de novo,
+        inventando receita revertida. Por isso o filtro é
+        `payment_status=PENDING`, não um exclude de PAID.
+        """
+        p = _entregue_sem_liquidar(loja)
+        StoreOrder.objects.filter(id=p.id).update(payment_status='refunded')
+
+        call_command('liquidar_entregas_em_dinheiro')
+
+        p.refresh_from_db()
+        assert p.payment_status == 'refunded'
+
     def test_sem_delivered_at_nao_inventa_data(self, loja):
         """Sem data de entrega não há data de pagamento defensável."""
         p = StoreOrder.objects.create(
