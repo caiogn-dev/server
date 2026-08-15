@@ -91,11 +91,30 @@ class DeliveryQuoteService:
                 'message': 'Distância acima de 16 km — entrar em contato para combinar frete',
             }
 
+        # Segundo degrau (opcional): acima de `delivery_far_km` o quilômetro
+        # custa `delivery_fee_per_km_far`. Sem essas chaves o cálculo é o de
+        # sempre — nenhuma loja muda de preço por causa disto.
+        #
+        # A soma é ACUMULATIVA por trecho: `base + distância*caro` faria o
+        # preço saltar reais num único metro na virada. Cada trecho cobra o
+        # seu próprio por-km sobre o pedaço que lhe cabe.
+        far_km_raw = metadata.get('delivery_far_km')
+        far_km = Decimal(str(far_km_raw)) if far_km_raw not in (None, '') else None
+        fee_per_km_far = Decimal(str(metadata.get('delivery_fee_per_km_far') or fee_per_km))
+
         if distance <= flat_km:
             fee = base_fee
             zone_name = 'Próximo'
         else:
-            fee = base_fee + ((distance - flat_km) * fee_per_km)
+            if far_km is not None and distance > far_km and far_km > flat_km:
+                fee = (
+                    base_fee
+                    + ((far_km - flat_km) * fee_per_km)
+                    + ((distance - far_km) * fee_per_km_far)
+                )
+            else:
+                fee = base_fee + ((distance - flat_km) * fee_per_km)
+
             if distance <= 8:
                 zone_name = 'Padrão'
             elif distance <= 12:
