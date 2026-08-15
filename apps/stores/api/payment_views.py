@@ -362,18 +362,19 @@ class StorePaymentViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     @extend_schema(summary="Get payments by order")
     @action(detail=False, methods=['get'])
     def by_order(self, request):
-        """Get all payments for a specific order."""
+        """Get all payments for a specific order, scoped to the caller's stores."""
         order_id = request.query_params.get('order_id')
-        
+
         if not order_id:
             return Response(
                 {'error': 'order_id query parameter is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
-        service = get_payment_service()
-        payments = service.list_order_payments(order_id)
-        
+
+        # get_queryset() já aplica Q(order__store_id__in=...) | Q(store_id__in=...)
+        # — garante que o filtro por order_id não atravesse o isolamento de tenant.
+        payments = self.get_queryset().filter(order_id=order_id)
+
         serializer = StorePaymentListSerializer(payments, many=True)
         return Response(serializer.data)
     
