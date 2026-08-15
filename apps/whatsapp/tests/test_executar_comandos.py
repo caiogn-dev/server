@@ -191,3 +191,41 @@ class TestCardapio:
         r = executar('cardapio', '', conversa=_conversa('+5563900000000'), store=loja)
 
         assert r.ok
+
+
+@pytest.mark.django_db
+class TestOAtalhoLiquidaAVenda:
+    """`/entregue` também setava o status na mão e pulava a regra do dinheiro.
+
+    Escrito em 14/08 com o mesmo defeito que causou os R$ 306,00 — a terceira
+    cópia da mesma decisão.
+    """
+
+    def test_entregue_em_dinheiro_marca_pago(self, loja):
+        from apps.stores.models import StoreOrder
+
+        pedido = StoreOrder.objects.create(
+            store=loja, total=Decimal('95.00'), subtotal=Decimal('95.00'),
+            status='out_for_delivery', payment_status='pending',
+            payment_method='cash', customer_phone='+5563984143551',
+        )
+
+        r = executar('entregue', '', conversa=_conversa(), store=loja, confirmado=True)
+
+        assert r.ok
+        pedido.refresh_from_db()
+        assert pedido.payment_status == 'paid'
+
+    def test_entregue_em_pix_NAO_marca_pago(self, loja):
+        from apps.stores.models import StoreOrder
+
+        pedido = StoreOrder.objects.create(
+            store=loja, total=Decimal('95.00'), subtotal=Decimal('95.00'),
+            status='out_for_delivery', payment_status='pending',
+            payment_method='pix', customer_phone='+5563984143551',
+        )
+
+        executar('entregue', '', conversa=_conversa(), store=loja, confirmado=True)
+
+        pedido.refresh_from_db()
+        assert pedido.payment_status == 'pending'

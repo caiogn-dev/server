@@ -242,15 +242,16 @@ def _executar(nome, argumento, conversa, store, confirmado) -> Resultado:
     if nome == 'entregue':
         from apps.stores.models import StoreOrder
 
-        pedido.status = StoreOrder.OrderStatus.DELIVERED
-        pedido.save(update_fields=['status', 'updated_at'])
+        # `update_status` do model, e não `save()` na mão: é lá que a venda em
+        # dinheiro vira receita ao ser entregue. Setar o campo direto foi o que
+        # deixou R$ 306,00 fora do faturamento pelo caminho do painel.
+        pedido.update_status(StoreOrder.OrderStatus.DELIVERED, notify=False)
         return Resultado(True, f'Pedido {pedido.order_number} marcado como entregue.')
 
     if nome == 'cancelar':
         from apps.stores.models import StoreOrder
 
-        pedido.status = StoreOrder.OrderStatus.CANCELLED
-        pedido.save(update_fields=['status', 'updated_at'])
+        pedido.update_status(StoreOrder.OrderStatus.CANCELLED, notify=False)
         return Resultado(True, f'Pedido {pedido.order_number} cancelado.')
 
     if nome == 'cupom':
