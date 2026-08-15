@@ -73,6 +73,77 @@ class TestLinkPagoViraVenda:
         cobranca.refresh_from_db()
         assert cobranca.order.metadata.get('origem') == 'link_de_pagamento'
 
+    def test_a_venda_tem_uma_linha_de_item(self, loja):
+        """Pedido sem item nenhum é a queixa de 15/ago: "só sai o valor".
+
+        O pedido do link nascia com total e mais nada — a página de pedidos
+        mostrava um valor solto e a comanda saía sem uma linha sequer. Não há
+        produto de catálogo aqui (a cobrança é de valor arbitrário), mas há o
+        que foi cobrado: a descrição, o valor e a quantidade 1. `product` é
+        nulo de propósito — não inventamos um item do cardápio.
+        """
+        cobranca = _cobranca(loja)
+        cobranca.metadata = {'description': 'Encomenda de sexta'}
+        cobranca.save(update_fields=['metadata'])
+
+        CheckoutService._handle_storepayment_webhook(cobranca, 'approved')
+
+        cobranca.refresh_from_db()
+        item = cobranca.order.items.get()
+        assert item.product_id is None
+        assert item.product_name == 'Encomenda de sexta'
+        assert item.quantity == 1
+        assert item.unit_price == Decimal('142.00')
+        assert item.subtotal == Decimal('142.00')
+
+    def test_sem_descricao_a_linha_ainda_se_explica(self, loja):
+        """Descrição vazia não pode virar linha em branco na comanda."""
+        cobranca = _cobranca(loja)
+
+        CheckoutService._handle_storepayment_webhook(cobranca, 'approved')
+
+        cobranca.refresh_from_db()
+        assert cobranca.order.items.get().product_name == 'Cobrança por link de pagamento'
+
+    def test_a_venda_carrega_o_nome_de_quem_pagou(self, loja):
+        """Pedido sem cliente na lista é indistinguível de pedido corrompido."""
+        cobranca = _cobranca(loja)
+        cobranca.payer_name = 'Sillas Rodrigues'
+        cobranca.payer_email = 'sillas@exemplo.com'
+        cobranca.save(update_fields=['payer_name', 'payer_email'])
+
+        CheckoutService._handle_storepayment_webhook(cobranca, 'approved')
+
+        cobranca.refresh_from_db()
+        assert cobranca.order.customer_name == 'Sillas Rodrigues'
+        assert cobranca.order.customer_email == 'sillas@exemplo.com'
+
+    def test_o_canal_e_o_link_e_nao_o_site(self, loja):
+        """`source` caía em 'web' e o relatório por canal creditava o site.
+
+        A coluna `source` é o que o BI lê; `metadata['origem']` ninguém
+        agrupa. Enquanto os dois discordavam, a tela de canais mentia.
+        """
+        cobranca = _cobranca(loja)
+
+        CheckoutService._handle_storepayment_webhook(cobranca, 'approved')
+
+        cobranca.refresh_from_db()
+        assert cobranca.order.source == 'payment_link'
+
+    def test_nao_promete_entrega_que_ninguem_vai_fazer(self, loja):
+        """`delivery_method` caía no default 'delivery' — sem endereço nenhum.
+
+        A comanda então imprimia "*** ENTREGA ***" para uma cobrança que não
+        tem para onde ir.
+        """
+        cobranca = _cobranca(loja)
+
+        CheckoutService._handle_storepayment_webhook(cobranca, 'approved')
+
+        cobranca.refresh_from_db()
+        assert cobranca.order.delivery_method == 'digital'
+
     def test_webhook_repetido_nao_cria_dois_pedidos(self, loja):
         """O Mercado Pago reentrega notificação — é a regra, não a exceção."""
         cobranca = _cobranca(loja)

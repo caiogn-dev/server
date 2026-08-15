@@ -1845,14 +1845,30 @@ class CheckoutService:
         Nasce PAGO: nascer pendente faria o dono cobrar de novo quem já pagou.
         E carrega `metadata['origem']` porque, sem isso, vira um pedido fantasma
         que ninguém sabe explicar de onde veio.
+
+        IDENTIDADE (15/ago). Marcar a origem no metadata não bastou: o dono
+        abriu a página de pedidos e viu "um pedido que só tem o valor". O
+        pedido nascia sem UMA linha de item, sem nome de cliente, com
+        `source` caindo em 'web' e `delivery_method` no default 'delivery' —
+        ou seja, a comanda imprimia "*** ENTREGA ***" para uma cobrança que
+        não tem para onde ir, e o relatório por canal creditava o site.
+
+        Aqui a cobrança é de valor arbitrário: não existe produto de catálogo
+        para apontar. Mas existe o que foi cobrado — descrição, valor, uma
+        unidade. É isso que vira a linha, com `product` NULO de propósito:
+        inventar um item do cardápio sujaria estoque e ranking de vendas.
         """
-        from apps.stores.models import StoreOrder
+        from apps.stores.models import StoreOrder, StoreOrderItem
 
         # A cobrança pode ser reprocessada (o Mercado Pago reentrega webhook);
         # sem esta guarda, cada reentrega criaria um pedido novo.
         store_payment.refresh_from_db()
         if store_payment.order_id:
             return store_payment.order
+
+        descricao = str(
+            (store_payment.metadata or {}).get('description') or ''
+        ).strip() or 'Cobrança por link de pagamento'
 
         order = StoreOrder.objects.create(
             store=store_payment.store,
@@ -1862,10 +1878,27 @@ class CheckoutService:
             payment_status=StoreOrder.PaymentStatus.PAID,
             payment_method=store_payment.payment_method or 'other',
             paid_at=store_payment.paid_at or timezone.now(),
+            # Sem nome, a linha da lista fica indistinguível de pedido corrompido.
+            customer_name=store_payment.payer_name or 'Cliente do link',
+            customer_email=store_payment.payer_email or '',
+            # `source` é a coluna que o BI agrupa; `metadata['origem']` ninguém
+            # agrupa. Enquanto os dois discordavam, a tela de canais mentia.
+            source='payment_link',
+            # 'digital': não há endereço nem retirada combinada — é dinheiro
+            # que entrou por um link, e a comanda precisa dizer isso.
+            delivery_method=StoreOrder.DeliveryMethod.DIGITAL,
             metadata={
                 'origem': 'link_de_pagamento',
                 'store_payment_id': str(store_payment.id),
             },
+        )
+        StoreOrderItem.objects.create(
+            order=order,
+            product=None,
+            product_name=descricao,
+            unit_price=store_payment.amount,
+            quantity=1,
+            subtotal=store_payment.amount,
         )
         store_payment.order = order
         store_payment.save(update_fields=['order', 'updated_at'])
