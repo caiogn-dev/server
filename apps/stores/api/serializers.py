@@ -823,6 +823,13 @@ class StoreOrderCreateSerializer(serializers.Serializer):
     )
     adjustment_reason = serializers.CharField(required=False, allow_blank=True)
     notes = serializers.CharField(required=False, allow_blank=True)
+    # Canal de origem da venda. Quem sabe disso é o cliente da API — o mesmo
+    # endpoint serve o PDV Balcão, o drawer de pedido manual e integrações.
+    # Sem ninguém dizer, o `save()` do model cai em 'web' e o relatório por
+    # canal creditava o SITE por toda venda de balcão (medido em 15/ago).
+    # A tradução para a coluna é do model (`_SOURCE_MAP_PREFIXES`): valor
+    # desconhecido vira 'web' em vez de sujar o BI com string livre.
+    source = serializers.CharField(required=False, allow_blank=True)
     # Pedido de balcão: não enviar nenhuma mensagem automática de status
     suppress_notifications = serializers.BooleanField(required=False)
     # Balcão: além da comanda da cozinha, imprimir cupom do cliente
@@ -942,6 +949,11 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             customer_email = f'{suffix}@local.invalid'
 
         metadata = {}
+        # Guardado CRU: 'dashboard' e 'pdv' viram a mesma coluna, e sem o
+        # original não dá para distinguir os dois depois.
+        canal = (validated_data.get('source') or '').strip()
+        if canal:
+            metadata['source'] = canal
         if validated_data.get('suppress_notifications'):
             metadata['suppress_notifications'] = True
         adjustment_reason = (validated_data.get('adjustment_reason') or '').strip()
