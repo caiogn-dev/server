@@ -137,28 +137,21 @@ class OrderService:
             }
         
         old_status = order.status
-        order.status = new_status
-        
-        # Update timestamps
-        if new_status in ('processing',):
-            order.processing_at = timezone.now()
-        elif new_status in ('confirmed', 'paid'):
-            order.confirmed_at = timezone.now()
-        elif new_status == 'preparing':
-            order.preparing_at = timezone.now()
-        elif new_status == 'ready':
-            order.ready_at = timezone.now()
-        elif new_status in ('out_for_delivery', 'shipped'):
-            order.out_for_delivery_at = timezone.now()
-        elif new_status in ('delivered', 'completed'):
-            order.delivered_at = timezone.now()
-        elif new_status == 'cancelled':
-            order.cancelled_at = timezone.now()
-        
-        if notes:
-            order.notes = f"{order.notes}\n\n[{timezone.now().isoformat()}] Status: {new_status} - {notes}".strip()
 
-        order.save()
+        if notes:
+            order.notes = (
+                f"{getattr(order, 'notes', '') or ''}\n\n[{timezone.now().isoformat()}] "
+                f"Status: {new_status} - {notes}"
+            ).strip()
+
+        # Delega ao model em vez de reescrever. É lá que mora a regra que faz
+        # a venda em dinheiro virar receita ao ser entregue — e reescrever os
+        # timestamps aqui era o que deixava R$ 306,00 entregues em mãos fora
+        # do faturamento (CE-2607316642 e KER2608076764, medidos em 14/08).
+        #
+        # `notify=False`: a notificação do cliente é decidida abaixo por este
+        # serviço, e deixar os dois notificarem manda mensagem repetida.
+        order.update_status(new_status, notify=False)
 
         # O painel cancela pelo dropdown de status, não só pelo botão de cancelar
         # — os dois caminhos precisam liquidar o pagamento.
