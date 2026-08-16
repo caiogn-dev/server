@@ -298,6 +298,19 @@ class Store(BaseModel):
     def __str__(self):
         return self.name
 
+    # `custom_domain` é unique e aceita tanto NULL quanto ''. No Postgres NULL
+    # não colide com NULL, mas '' colide com '' — e o painel manda '' sempre que
+    # o campo está em branco na tela. Bastou UMA loja gravar '' para que TODA
+    # loja sem domínio próprio passasse a estourar IntegrityError ao salvar
+    # qualquer outro campo: o dono da Ivoneth via "internal server error" ao
+    # trocar o template, que nada tem a ver com domínio.
+    #
+    # Ausência de domínio tem uma representação só, e é NULL. '' não é um
+    # domínio vazio — é a ausência dele escrita errado.
+    def save(self, *args, **kwargs):
+        self.custom_domain = (self.custom_domain or '').strip().lower() or None
+        super().save(*args, **kwargs)
+
     def get_logo_url(self):
         if self.logo:
             return build_absolute_media_url(self.logo.url)
