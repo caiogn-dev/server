@@ -93,6 +93,10 @@ class Store(BaseModel):
         MINIMAL = 'minimal', 'Minimal'
         DARK = 'dark', 'Dark'
         ELEGANT = 'elegant', 'Elegant'
+        # Carta de encomendas: a lista é tipográfica em vez de cartões, então
+        # funciona em catálogo sem foto — e é o formato que uma banqueteria
+        # usa de verdade (proposta de evento, não vitrine de delivery).
+        BANQUETE = 'banquete', 'Banquete'
 
     class StorePlan(models.TextChoices):
         FREE = 'free', 'Grátis'

@@ -17,7 +17,7 @@ from .api.views import (
     # Unified storefront views
     StoreCartViewSet, StoreCheckoutView, StoreDeliveryFeeView,
     StoreCouponValidateView, StoreCatalogView, StorePublicView,
-    StoreAppConfigView, StoreCustomerProfileView,
+    StoreAppConfigView, StoreCustomerProfileView, TemplateCatalogView,
     StoreComboViewSet, StoreProductTypeViewSet,
     # Coupon and Delivery Zone views
     StoreCouponViewSet, StoreDeliveryZoneViewSet,
@@ -343,6 +343,9 @@ store_frontend_patterns = [
 app_name = 'stores'
 
 urlpatterns = [
+    # Catálogo de templates de cardápio — a fonte para o painel (público: a
+    # tela de aparência carrega antes de qualquer escolha de loja).
+    path('templates/', TemplateCatalogView.as_view(), name='template-catalog'),
     # ==========================================================================
     # ADMIN/MANAGEMENT ENDPOINTS (require auth)
     # ==========================================================================

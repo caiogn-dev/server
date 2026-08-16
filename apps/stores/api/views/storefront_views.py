@@ -404,6 +404,58 @@ def _featured_coupon_payload(store):
     }
 
 
+class TemplateCatalogView(APIView):
+    """Catálogo dos templates de cardápio — a fonte para o painel.
+
+    A lista vivia escrita à mão no painel (`StorefrontPage.tsx`), com um
+    comentário dizendo "espelha o backend". Espelho é o problema: quando o
+    `banquete` entrou no storefront, o painel não soube — o template existia na
+    tela pública, era invisível para o dono, e só dava para ligar por script.
+
+    Quem sabe quais templates existem é quem VALIDA: `Store.StoreTemplate`.
+    Derivar daí significa que adicionar um template é uma linha no model mais
+    os arquivos do storefront; o painel se atualiza sozinho.
+
+    O texto mora aqui e não no model porque é copy de produto — diz PARA QUEM o
+    template serve, que é o que faz o dono decidir. `label` cai no rótulo do
+    próprio choice quando ninguém escreveu nada, então um template novo nunca
+    aparece sem nome.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [PublicReadThrottle]
+
+    # slug → como o template se vende. Sem entrada aqui, o template ainda
+    # aparece (com o label do choice) — some da lista NUNCA.
+    APRESENTACAO = {
+        'fresh': ('🥗', 'Claro, leve e visual. Ideal para saladas, bowls e comida saudável.'),
+        'bold': ('🍔', 'Promocional, forte e direto. Ideal para salgadinhos, pizza, burger e pastel.'),
+        'classic': ('🍱', 'Tradicional e editorial. Ideal para restaurantes, marmitas e cardápios clássicos.'),
+        'minimal': ('⚡', 'Compacto e rápido. Ideal para cardápio estilo app de delivery.'),
+        'dark': ('🌙', 'Escuro e contrastado. Ideal para marcas noturnas, adegas e lanches premium.'),
+        'elegant': ('🍰', 'Cards horizontais e tipografia serifada. Ideal para confeitarias, doces e bolos.'),
+        'banquete': ('🕯️', 'Carta impressa, sem depender de fotos. Ideal para banqueterias, buffets e encomendas por peso.'),
+    }
+
+    def get(self, request):
+        from apps.stores.models import Store
+
+        resultados = []
+        for slug, rotulo in Store.StoreTemplate.choices:
+            preview, descricao = self.APRESENTACAO.get(
+                slug,
+                ('🍽️', f'Ideal para lojas que preferem o visual {rotulo}.'),
+            )
+            resultados.append({
+                'id': slug,
+                'label': rotulo,
+                'description': descricao,
+                'preview': preview,
+            })
+
+        return Response({'count': len(resultados), 'results': resultados})
+
+
 class StoreAppConfigView(APIView):
     """Public bootstrap config for the native storefront app."""
 
