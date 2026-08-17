@@ -2,6 +2,7 @@
 Public API serializers — read-only, no sensitive data exposed.
 """
 from rest_framework import serializers
+from apps.core.utils import build_absolute_media_url
 from apps.stores.models import (
     Store,
     StoreCategory,
@@ -35,7 +36,7 @@ class PublicStoreSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if obj.logo:
             url = obj.logo.url
-            return request.build_absolute_uri(url) if request else url
+            return build_absolute_media_url(url)
         return obj.logo_url or None
 
     def get_is_open(self, obj):
@@ -61,7 +62,7 @@ class PublicCategorySerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if obj.image:
             url = obj.image.url
-            return request.build_absolute_uri(url) if request else url
+            return build_absolute_media_url(url)
         return obj.image_url or None
 
 
@@ -95,7 +96,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if obj.main_image:
             url = obj.main_image.url
-            return request.build_absolute_uri(url) if request else url
+            return build_absolute_media_url(url)
         return obj.main_image_url or None
 
     def get_is_available(self, obj):
@@ -126,7 +127,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
         for variant in variants:
             image_url = None
             if variant.image:
-                image_url = request.build_absolute_uri(variant.image.url) if request else variant.image.url
+                image_url = build_absolute_media_url(variant.image.url)
             elif variant.image_url:
                 image_url = variant.image_url
 
@@ -155,7 +156,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if hasattr(obj, 'image') and obj.image:
             url = obj.image.url
-            return request.build_absolute_uri(url) if request else url
+            return build_absolute_media_url(url)
         return None
 
     def get_groups(self, obj):
@@ -170,7 +171,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
                 image_url = None
                 if variant.image:
                     request = self.context.get('request')
-                    image_url = request.build_absolute_uri(variant.image.url) if request else variant.image.url
+                    image_url = build_absolute_media_url(variant.image.url)
                 elif variant.image_url:
                     image_url = variant.image_url
 
