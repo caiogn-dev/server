@@ -1,4 +1,6 @@
-"""\nViews para UnifiedUser API.\n"""
+"""
+Views para UnifiedUser API.
+"""
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -147,8 +149,12 @@ class UnifiedUserActivityViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Filtra por usuário se especificado."""
-        queryset = super().get_queryset()
+        """Filtra atividades pelos usuários acessíveis ao tenant logado."""
+        accessible_user_ids = (
+            _accessible_unified_users(self.request.user)
+            .values_list('id', flat=True)
+        )
+        queryset = UnifiedUserActivity.objects.filter(user_id__in=accessible_user_ids)
 
         user_id = self.request.query_params.get('user_id')
         if user_id:
