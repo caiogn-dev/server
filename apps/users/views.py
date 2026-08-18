@@ -120,7 +120,7 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
         Uso interno pelo bot/automação — sem restrição de tenant na criação.
         """
         phone = request.data.get('phone_number')
-        name = request.data.get('name', 'Desconhecido')
+        name = request.data.get('name') or ''
 
         if not phone:
             return Response(
@@ -128,9 +128,14 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Sem nome: puxa o do WhatsApp (contact_name) em vez de "Desconhecido".
+        if not name:
+            from apps.core.services.customer_identity import CustomerIdentityService
+            name = CustomerIdentityService.whatsapp_name(phone)
+
         user, created = UnifiedUser.objects.get_or_create(
             phone_number=phone,
-            defaults={'name': name},
+            defaults={'name': name or ''},
         )
 
         serializer = self.get_serializer(user)

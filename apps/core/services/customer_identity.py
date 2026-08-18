@@ -4,6 +4,7 @@ Shared customer identity helpers for storefront checkout and WhatsApp auth.
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Optional, Tuple
 
 from django.contrib.auth import get_user_model
@@ -52,6 +53,35 @@ class CustomerIdentityService:
     def public_name(cls, name: str):
         """Nome seguro para exibição: None se for placeholder interno."""
         return None if cls.is_placeholder_name(name) else name
+
+    @classmethod
+    def whatsapp_name(cls, phone: str) -> str:
+        """Melhor nome vindo do contato do WhatsApp para este telefone.
+
+        O webhook já salva o nome do perfil em Conversation.contact_name. Aqui a
+        gente reaproveita isso para NÃO criar cliente como 'Desconhecido' — é a
+        raiz do problema. Limpa emojis/símbolos; '' se não houver nome usável.
+        """
+        digits = cls.digits_only(phone)
+        if not digits:
+            return ""
+        tail = digits[-10:]
+        try:
+            from apps.conversations.models import Conversation
+            conv = (
+                Conversation.objects
+                .filter(phone_number__endswith=tail)
+                .exclude(contact_name="")
+                .order_by("-updated_at")
+                .first()
+            )
+        except Exception:
+            return ""
+        if not conv or not conv.contact_name:
+            return ""
+        limpo = re.sub(r"[^\w\s.'\-]", "", conv.contact_name, flags=re.UNICODE)
+        limpo = re.sub(r"\s+", " ", limpo).strip(" .-'")
+        return "" if cls.is_placeholder_name(limpo) else limpo
 
     @classmethod
     def phone_candidates(cls, phone_number: str) -> list[str]:

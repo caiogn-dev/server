@@ -198,10 +198,15 @@ class UnifiedUser(models.Model):
         if not norm_phone:
             raise ValueError("phone ou email obrigatório para criar UnifiedUser")
 
+        # Sem nome informado: puxa o do WhatsApp (contact_name) em vez de gravar
+        # o placeholder "Desconhecido" — era a raiz do "Desconhecido Nasche".
+        if not name:
+            from apps.core.services.customer_identity import CustomerIdentityService
+            name = CustomerIdentityService.whatsapp_name(norm_phone)
         user = cls.objects.create(
             phone_number=norm_phone,
             email=norm_email,
-            name=name or "Desconhecido",
+            name=name or "",
             django_user=django_user,
         )
         return user, True
