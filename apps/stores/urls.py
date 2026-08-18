@@ -16,6 +16,7 @@ from .api.views import (
     StorePrintAgentViewSet, StorePrintJobViewSet,
     # Unified storefront views
     StoreCartViewSet, StoreCheckoutView, StoreDeliveryFeeView,
+    StoreSharedLocationView,
     StoreCouponValidateView, StoreCatalogView, StorePublicView,
     StoreAppConfigView, StoreCustomerProfileView, TemplateCatalogView,
     StoreComboViewSet, StoreProductTypeViewSet,
@@ -271,6 +272,7 @@ store_frontend_patterns = [
     path('cart/clear/', StoreCartViewSet.as_view({'delete': 'clear_cart'}), name='store-cart-clear'),
     path('checkout/', StoreCheckoutView.as_view(), name='store-checkout'),
     path('delivery-fee/', StoreDeliveryFeeView.as_view(), name='store-delivery-fee'),
+    path('shared-location/', StoreSharedLocationView.as_view(), name='store-shared-location'),
     path('subscribe/', StoreSubscribeView.as_view(), name='store-subscribe'),
     path('subscription/', StoreSubscriptionDetailView.as_view(), name='store-subscription-detail'),
     path('subscription/cancel/', StoreSubscriptionCancelView.as_view(), name='store-subscription-cancel'),

@@ -1488,3 +1488,65 @@ class MyAddressViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(address)
         return Response(serializer.data)
+
+
+class StoreSharedLocationView(APIView):
+    """Última localização (pin) que o cliente enviou no WhatsApp.
+
+    O cliente manda a localização no chat; o pino fica salvo em
+    Message.content{latitude,longitude}. Este endpoint devolve a mais recente
+    para o operador reusar no cálculo de rota e na criação de pedido (PDV e
+    Ferramentas do inbox) sem redigitar nem depender de geocodificar texto.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, store_slug):
+        from apps.stores.models import Store
+        from apps.core.permissions import user_can_access_store
+
+        store = Store.objects.filter(slug=store_slug).first() or Store.objects.filter(id=store_slug).first()
+        if not store:
+            return Response({'error': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        if not user_can_access_store(request.user, store):
+            return Response({'error': 'Sem acesso a esta loja.'}, status=status.HTTP_403_FORBIDDEN)
+
+        account = store.get_whatsapp_account()
+        if not account:
+            return Response({'location': None})
+
+        from apps.whatsapp.models import Message
+        qs = Message.objects.filter(
+            conversation__account=account,
+            direction='inbound',
+            message_type='location',
+        )
+        conv_id = request.query_params.get('conversation')
+        phone = request.query_params.get('phone')
+        if conv_id:
+            qs = qs.filter(conversation_id=conv_id)
+        elif phone:
+            # endswith nos últimos 10 dígitos (DDD+número) tolera o país (55...)
+            # divergir entre o telefone do cadastro e o phone_number da conversa.
+            tail = ''.join(c for c in str(phone) if c.isdigit())[-10:]
+            if not tail:
+                return Response({'error': 'Telefone inválido.'}, status=status.HTTP_400_BAD_REQUEST)
+            qs = qs.filter(conversation__phone_number__endswith=tail)
+        else:
+            return Response({'error': 'Informe conversation ou phone.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        msg = qs.order_by('-created_at').first()
+        if not msg:
+            return Response({'location': None})
+        c = msg.content if isinstance(msg.content, dict) else {}
+        # O webhook salva aninhado: {"location": {"latitude", "longitude", ...}}.
+        loc = c.get('location') if isinstance(c.get('location'), dict) else c
+        lat, lng = loc.get('latitude'), loc.get('longitude')
+        if lat is None or lng is None:
+            return Response({'location': None})
+        return Response({'location': {
+            'lat': float(lat),
+            'lng': float(lng),
+            'name': loc.get('name') or '',
+            'address': loc.get('address') or '',
+            'shared_at': msg.created_at.isoformat(),
+        }})
