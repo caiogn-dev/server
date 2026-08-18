@@ -246,8 +246,9 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             account.save()
             return Response({"status": "success", "message": "Conta sincronizada"})
         except Exception as exc:
+            logger.exception("[instagram] sync falhou conta=%s", getattr(account, "id", "?"))
             return Response(
-                {"status": "error", "message": str(exc)},
+                {"status": "error", "message": "Falha ao sincronizar conta Instagram."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -264,7 +265,8 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             api.refresh_page_token()
             return Response({"status": "success", "message": "Page Access Token renovado com sucesso."})
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] refresh_page_token falhou conta=%s", getattr(account, "id", "?"))
+            return Response({"error": "Falha ao renovar token da página."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["get"])
     def insights(self, request, pk=None):
@@ -280,7 +282,8 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             insights = graph_service.get_account_insights(since, until)
             return Response(insights)
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] insights falhou conta=%s", getattr(account, "id", "?"))
+            return Response({"error": "Falha ao obter insights da conta."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class InstagramMediaViewSet(viewsets.ModelViewSet):
@@ -334,7 +337,8 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             media.save(update_fields=["instagram_media_id", "status", "published_at", "updated_at"])
             return Response({"status": "success", "id": result.get("id")})
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] publish falhou media=%s", getattr(media, "id", "?"))
+            return Response({"error": "Falha ao publicar mídia no Instagram."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"])
     def schedule(self, request, pk=None):
@@ -362,7 +366,8 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             insights = graph_service.get_media_insights(media.instagram_media_id)
             return Response(insights)
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] media insights falhou media=%s", getattr(media, "id", "?"))
+            return Response({"error": "Falha ao obter insights da mídia."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["get"])
     def comments(self, request, pk=None):
@@ -374,7 +379,8 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             comments = graph_service.get_comments(media.instagram_media_id)
             return Response(comments)
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] comments falhou media=%s", getattr(media, "id", "?"))
+            return Response({"error": "Falha ao obter comentários da mídia."}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class InstagramShoppingViewSet(viewsets.ViewSet):
@@ -424,7 +430,8 @@ class InstagramShoppingViewSet(viewsets.ViewSet):
             tag = service.add_tag_to_media(media_id, product_id, x, y)
             return Response({"status": "success", "tag_id": str(tag.id)})
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] tag_product falhou media=%s produto=%s", media_id, product_id)
+            return Response({"error": "Falha ao adicionar tag de produto."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=["get"])
     def settings(self, request):
@@ -457,7 +464,8 @@ class InstagramLiveViewSet(viewsets.ModelViewSet):
             result = service.start_live(str(live.id))
             return Response(result)
         except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.exception("[instagram] start_live falhou live=%s", getattr(live, "id", "?"))
+            return Response({"error": "Falha ao iniciar live."}, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=["post"])
     def end(self, request, pk=None):

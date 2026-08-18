@@ -8,6 +8,58 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ---
 
+## 2026-08-17
+
+**Baseline de testes:** 332+ testes passando (SimpleTestCase, sem Docker/PostgreSQL).
+Falhas pré-existentes: 13 por dependências ausentes no container (langchain_core, psycopg2) — não são regressão desta sessão.
+
+**Gate anti-acúmulo:** 19 PRs abertos (#318–#336) verificados. PR #333 cobre apenas `connect()` e
+`send_message()` do Instagram. Nenhum dos 19 PRs cobre as 8 ações remanescentes de
+`InstagramAccountViewSet`/`InstagramMediaViewSet`/`InstagramShoppingViewSet`/`InstagramLiveViewSet`
+nem as 2 ações do `MessengerAccountViewSet`/`MessengerConversationViewSet`.
+
+**Varredura de segurança executada (agente especializado):** 10 achados novos encontrados:
+- P1: Instagram — 8 ações com `str(exc)` não cobertas por PR #333 (sync, refresh_page_token, insights×2, publish, comments, tag_product, start)
+- P1: Messenger — 2 ações com `str(exc)` não cobertas por nenhum PR (sync, send_message)
+- P2: WhatsApp webhook verify token — comparação não-constante (`==` vs `hmac.compare_digest`) — timing oracle
+- P2: PII em logs — telefone em `whatsapp/intents/handlers/order.py:171`, email em marketing/email_automation_service.py, lgpd_views.py e auth_views.py
+
+**Fix implementado:** info-disclosure via `str(exc)` em 10 ações Instagram + Messenger [P1]
+
+- **Tipo:** P1 — Info-disclosure: mensagens internas da Graph API (tokens Meta, IDs internos,
+  mensagens de erro com parâmetros sensíveis) expostas em respostas HTTP para usuários autenticados.
+- **Arquivos corrigidos (2):**
+  1. `apps/instagram/api/views.py` — 8 blocos `except Exception as exc`:
+     - `InstagramAccountViewSet.sync()` — `{"status": "error", "message": str(exc)}` → mensagem genérica
+     - `InstagramAccountViewSet.refresh_page_token()` — `{"error": str(exc)}` → "Falha ao renovar token da página."
+     - `InstagramAccountViewSet.insights()` — `{"error": str(exc)}` → "Falha ao obter insights da conta."
+     - `InstagramMediaViewSet.publish()` — `{"error": str(exc)}` → "Falha ao publicar mídia no Instagram."
+     - `InstagramMediaViewSet.insights()` — `{"error": str(exc)}` → "Falha ao obter insights da mídia."
+     - `InstagramMediaViewSet.comments()` — `{"error": str(exc)}` → "Falha ao obter comentários da mídia."
+     - `InstagramShoppingViewSet.tag_product()` — `{"error": str(exc)}` → "Falha ao adicionar tag de produto."
+     - `InstagramLiveViewSet.start()` — `{"error": str(exc)}` → "Falha ao iniciar live."
+  2. `apps/messaging/api/views.py` — 2 blocos:
+     - `MessengerAccountViewSet.sync()` — `{"error": str(exc)}` → "Falha ao sincronizar conta Messenger."
+     - `MessengerConversationViewSet.send_message()` — `{"error": str(exc)}` → "Falha ao enviar mensagem via Messenger."
+  - Em todos os casos: `logger.exception()` adicionado para rastrear o erro real internamente.
+- **Testes:** 15 `SimpleTestCase` em `apps/instagram/tests/test_str_exc_remaining_actions.py` (RED→GREEN confirmado):
+  - Análise estática: 10 métodos sem `str(exc)` no source
+  - Comportamental: sync Instagram não vaza token Bearer, publish não vaza access_token, Messenger sync não vaza page_token
+- **PR:** `bot/server-2026-08-17-instagram-messenger-str-exc-remaining`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge urgente dos 19 PRs abertos (#318–#336) — alguns aguardam há dias |
+| P1 | `marketing/api/views.py:154–158` — `EmailCampaignViewSet.send()` expõe `str(e)` em HTTP 500 — verificar se PR #321/#328 já cobre |
+| P1 | `stores/api/views/order_views.py:288` — PIX error retorna `str(exc)` em `payment_error` — verificar se PR #331 já cobre |
+| P2 | `apps/whatsapp/webhooks/views.py:67` — timing attack: `token == verify_token` deveria ser `hmac.compare_digest` |
+| P2 | PII em logs: telefone em `whatsapp/intents/handlers/order.py:171`; email em `marketing/services/email_automation_service.py:146`; `core/api/lgpd_views.py:19,34`; `core/auth_views.py:396,398` |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (pendência crítica CLAUDE.md) |
+
+---
+
 ## Histórico de execuções
 
 ### 2026-07-23
