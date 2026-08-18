@@ -1317,6 +1317,14 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
                 instance.user.first_name = first
                 instance.user.last_name = last
                 instance.user.save(update_fields=['first_name', 'last_name'])
+                # A identidade CANÔNICA é UnifiedUser.name — é o que a comanda, o
+                # CRM e a criação de pedido leem. Sem atualizá-la, editar o nome
+                # gravava só no auth.User e ficava invisível ("Desconhecido Nasche"
+                # continuava aparecendo). Espelha o nome cheio aqui.
+                uu = getattr(instance, 'unified_user', None)
+                if uu is not None:
+                    uu.name = f"{first} {last}".strip() or (name or '').strip()
+                    uu.save(update_fields=['name'])
             instance = super().update(instance, validated_data)
             if address_list is not None:
                 self._sync_address_list(instance, address_list)
