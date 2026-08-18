@@ -1256,7 +1256,12 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
         return 'novo'
 
     def get_user_name(self, obj):
-        return f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.email
+        full = f"{obj.user.first_name} {obj.user.last_name}".strip()
+        # Rede de segurança: nunca expõe placeholder ("Desconhecido"). Cai no
+        # telefone (a UI mostra o número), como manda o CLAUDE.md.
+        if not full or CustomerIdentityService.is_placeholder_name(obj.user.first_name):
+            return obj.phone or obj.user.email or None
+        return full
 
     def get_default_address(self, obj):
         return obj.get_default_address()
