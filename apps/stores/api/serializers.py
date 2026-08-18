@@ -1321,10 +1321,24 @@ class StoreCustomerSerializer(serializers.ModelSerializer):
                 # CRM e a criação de pedido leem. Sem atualizá-la, editar o nome
                 # gravava só no auth.User e ficava invisível ("Desconhecido Nasche"
                 # continuava aparecendo). Espelha o nome cheio aqui.
+                full = f"{first} {last}".strip() or (name or '').strip()
                 uu = getattr(instance, 'unified_user', None)
                 if uu is not None:
-                    uu.name = f"{first} {last}".strip() or (name or '').strip()
+                    uu.name = full
                     uu.save(update_fields=['name'])
+                # O pedido guarda o nome como SNAPSHOT (customer_name) do momento
+                # da criação. Corrigir o cliente não reescreve pedidos passados —
+                # daí a comanda continuava "Desconhecido". Propaga o nome novo só
+                # para os pedidos DESTE cliente cujo snapshot ainda é placeholder
+                # (nunca sobrescreve um nome real digitado no pedido).
+                if full and instance.user_id:
+                    from apps.stores.models import StoreOrder
+                    from django.db.models import Q
+                    StoreOrder.objects.filter(customer=instance.user).filter(
+                        Q(customer_name__icontains='desconhecido')
+                        | Q(customer_name='')
+                        | Q(customer_name__istartswith='cliente_')
+                    ).update(customer_name=full)
             instance = super().update(instance, validated_data)
             if address_list is not None:
                 self._sync_address_list(instance, address_list)
