@@ -1045,6 +1045,48 @@ class StoreCheckoutView(APIView):
             )
 
 
+def _coords_from_maps_url(url):
+    """Extrai lat/lng de um link do Google Maps — inclusive shortlink.
+
+    O WhatsApp gera muito o link CURTO (maps.app.goo.gl / goo.gl/maps) que não
+    tem coordenada na URL; aqui a gente segue o redirect no servidor e lê as
+    coords da URL final. Nunca levanta — retorna None quando não dá.
+    """
+    if not url or 'http' not in url or ('maps' not in url and 'goo.gl' not in url):
+        return None
+    import re as _re
+
+    patterns = [
+        r'[?&](?:query|q|destination)=(-?\d{1,3}\.\d+)(?:%2C|,)\s*(-?\d{1,3}\.\d+)',
+        r'@(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)',
+        r'!3d(-?\d{1,3}\.\d+)!4d(-?\d{1,3}\.\d+)',
+    ]
+
+    def _extract(text):
+        for pat in patterns:
+            m = _re.search(pat, text or '')
+            if m:
+                try:
+                    return float(m.group(1)), float(m.group(2))
+                except (ValueError, TypeError):
+                    pass
+        return None
+
+    hit = _extract(url)
+    if hit:
+        return hit
+    try:
+        import requests
+        resp = requests.get(
+            url, allow_redirects=True, timeout=5,
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        return _extract(resp.url) or _extract(resp.text[:8000])
+    except Exception as exc:  # rede caída não pode matar o cálculo de frete
+        logger.warning('[delivery-fee] falha ao resolver link do Maps: %s', exc)
+        return None
+
+
 class StoreDeliveryFeeView(APIView):
     """Calculate delivery fee endpoint."""
     permission_classes = [permissions.AllowAny]
@@ -1059,6 +1101,13 @@ class StoreDeliveryFeeView(APIView):
         address = request.data.get('address') or request.query_params.get('address')
         zip_code = request.data.get('zip_code') or request.query_params.get('zip_code')
         distance_km = request.data.get('distance_km') or request.query_params.get('distance_km')
+
+        # Link do Maps colado (inclusive shortlink) → resolve para coords antes
+        # de tentar geocodificar como texto. Cobre PDV e Ferramentas do inbox.
+        if not (lat and lng) and address and ('maps' in address or 'goo.gl' in address):
+            coords = _coords_from_maps_url(address.strip())
+            if coords:
+                lat, lng = coords
 
         if not (lat and lng) and not address and not zip_code:
             if distance_km is not None:
