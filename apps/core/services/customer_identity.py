@@ -55,6 +55,16 @@ class CustomerIdentityService:
         return None if cls.is_placeholder_name(name) else name
 
     @classmethod
+    def clean_name(cls, raw: str) -> str:
+        """Nome de exibição limpo: remove emojis/símbolos, colapsa espaços.
+        Retorna '' se o resultado for placeholder (não usar como nome real)."""
+        if not raw:
+            return ""
+        limpo = re.sub(r"[^\w\s.'\-]", "", raw, flags=re.UNICODE)
+        limpo = re.sub(r"\s+", " ", limpo).strip(" .-'")
+        return "" if cls.is_placeholder_name(limpo) else limpo
+
+    @classmethod
     def whatsapp_name(cls, phone: str) -> str:
         """Melhor nome vindo do contato do WhatsApp para este telefone.
 
@@ -79,9 +89,7 @@ class CustomerIdentityService:
             return ""
         if not conv or not conv.contact_name:
             return ""
-        limpo = re.sub(r"[^\w\s.'\-]", "", conv.contact_name, flags=re.UNICODE)
-        limpo = re.sub(r"\s+", " ", limpo).strip(" .-'")
-        return "" if cls.is_placeholder_name(limpo) else limpo
+        return cls.clean_name(conv.contact_name)
 
     @classmethod
     def phone_candidates(cls, phone_number: str) -> list[str]:

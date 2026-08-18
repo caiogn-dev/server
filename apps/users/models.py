@@ -221,9 +221,15 @@ class UnifiedUser(models.Model):
         if email and not user.email:
             user.email = email.strip().lower()
             updates.append("email")
-        if name and not user.name:
-            user.name = name
-            updates.append("name")
+        # Preenche o nome se estiver vazio OU ainda for placeholder ("Desconhecido")
+        # — nunca sobrescreve um nome real. É a trava que faltava: o signal da
+        # conversa chamava resolve() a cada msg, mas só preenchia se vazio, então
+        # quem já era "Desconhecido" nunca recebia o nome do WhatsApp.
+        from apps.core.services.customer_identity import CustomerIdentityService
+        if name and not CustomerIdentityService.is_placeholder_name(name):
+            if not user.name or CustomerIdentityService.is_placeholder_name(user.name):
+                user.name = name
+                updates.append("name")
         if django_user and not user.django_user_id:
             user.django_user = django_user
             updates.append("django_user")

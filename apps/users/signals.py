@@ -38,10 +38,25 @@ def sync_conversation_to_unified_user(sender, instance, created, **kwargs):
         return
 
     try:
+        from apps.core.services.customer_identity import CustomerIdentityService as CIS
+        nome_wa = CIS.clean_name(instance.contact_name or "")
         user, user_created = UnifiedUser.resolve(
             phone=instance.phone_number,
-            name=instance.contact_name or "",
+            name=nome_wa,
         )
+
+        # Trava de segurança: se o UnifiedUser ainda está placeholder e o WhatsApp
+        # trouxe um nome real, adota — e espelha no auth.User (o CRM lê first/last).
+        if nome_wa and CIS.is_placeholder_name(user.name or ''):
+            user.name = nome_wa
+            user.save(update_fields=['name'])
+        if nome_wa and user.django_user_id:
+            du = user.django_user
+            # Placeholder mora no first_name ("Desconhecido"); a string cheia
+            # "Desconhecido Nasche" não casa is_placeholder_name exato.
+            if not du.first_name or CIS.is_placeholder_name(du.first_name):
+                du.first_name, du.last_name = CIS.split_name(nome_wa)
+                du.save(update_fields=['first_name', 'last_name'])
 
         if created and user_created:
             UnifiedUserActivity.objects.create(
