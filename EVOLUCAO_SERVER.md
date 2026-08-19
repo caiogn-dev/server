@@ -888,3 +888,51 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-15
+
+**Baseline de testes:** 67 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN — incluindo os 7 novos
+desta sessão + 60 de testes anteriores (payment, delivery-zone, order-number). PRs #318–#334 abertos
+aguardando merge (17 PRs). Falhas pré-existentes de infra CI com `runner_id=0` — não são regressão.
+
+**Gate anti-acúmulo:** 17 PRs abertos (#318–#334). Nenhum cobre `StorePaymentViewSet.by_order`.
+Verificado via grep e leitura do source em `development` HEAD (`f146822`).
+
+**Bug encontrado e corrigido:** IDOR em `StorePaymentViewSet.by_order` [P1]
+
+- **Tipo:** P1 — IDOR de leitura: qualquer usuário autenticado via `by_order` podia exfiltrar
+  dados financeiros (método, valor, referência externa Mercado Pago) e PII de pagador de outros tenants.
+- **Arquivo:** `apps/stores/api/payment_views.py:364`
+- **Problema:** `by_order` chamava `service.list_order_payments(order_id)` que executa
+  `StorePayment.objects.filter(order_id=order_id)` sem filtro de tenant. A ViewSet usa
+  `permission_classes = [IsAuthenticated]` — qualquer autenticado passava `?order_id=<uuid_vítima>`
+  e recebia todos os pagamentos do pedido. A lógica de escopo em `get_queryset()` era completamente
+  bypassada porque `by_order` nunca a chamava.
+- **Vetor:** `GET /api/v1/stores/<slug>/payments/by_order/?order_id=<uuid_de_outra_loja>`
+- **Correção:** Substituído por `self.get_queryset().filter(order_id=order_id)`.
+  `get_queryset()` já aplica `Q(order__store_id__in=...) | Q(store_id__in=...)` — garante
+  isolamento tanto para cobranças com pedido vinculado quanto para cobranças avulsas (order=None).
+- **Testes:** 7 `SimpleTestCase` em `apps/stores/tests/test_payment_by_order_idor.py` (RED→GREEN):
+  - 4 análise estática: ausência de `list_order_payments`, ausência de `get_payment_service`,
+    ausência de `StorePayment.objects`, presença de `get_queryset()`, presença de `order_id`
+  - 3 comportamentais via mock: 400 quando `order_id` ausente; `get_queryset()` chamado;
+    `filter(order_id=...)` encadeado com o UUID correto
+- **PR:** `bot/server-2026-08-15-payment-by-order-idor` → base `development`
+
+**Varredura adicional (áreas auditadas sem achado novo nesta sessão):**
+
+- `create_link` action (nova — criada em 13-14/ago): IDOR de pedido protegido por
+  `StoreOrder.objects.filter(id=order_id, store=store)` — escopo confirmado no commit `f146822`.
+- `StorePaymentViewSet.stats` action: usa `self.get_queryset()` — escopo correto.
+- Classificador NVIDIA NIM: PII em chamada externa corrigida em `fedf527` (13/ago); sem achado novo.
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0/P1 | Merge urgente de PRs P0/P1 acumulados (#318–#334 — 17 PRs abertos) |
+| P1 | Testes de contrato para checkout payload completo (itens + taxa + cupom + pagamento) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido |
+| P2 | Sweep de IDOR em outros endpoints de pagamento: `stats` (OK, usa get_queryset), `by_order` (corrigido) |
+
