@@ -5,7 +5,7 @@ These views handle cart, checkout, catalog, and wishlist functionality
 for the public-facing storefront.
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlparse
 from django.conf import settings
@@ -937,6 +937,25 @@ class StoreCheckoutView(APIView):
             # 'pending' (o service já marcou o pedido como FAILED no banco).
             response_data['payment_status'] = StoreOrder.PaymentStatus.FAILED
 
+    #: Janela do retry. Carrinho reaproveitado depois disso é compra nova,
+    #: não nova tentativa da mesma compra.
+    JANELA_DE_RETRY = timedelta(hours=6)
+
+    def _pedido_recente_do_carrinho(self, store, session_id):
+        """Pedido criado a partir deste carrinho dentro da janela de retry."""
+        if not session_id:
+            return None
+        return (
+            StoreOrder.objects
+            .filter(
+                store=store,
+                metadata__cart_key=session_id,
+                created_at__gte=timezone.now() - self.JANELA_DE_RETRY,
+            )
+            .order_by('-created_at')
+            .first()
+        )
+
     def post(self, request, store_slug):
         """Process checkout and create order."""
         store = get_active_store(store_slug)
@@ -963,6 +982,18 @@ class StoreCheckoutView(APIView):
         cart = cart_service.get_or_create_cart(store, user, session_id)
 
         if not cart.items.exists() and not cart.combo_items.exists():
+            # O carrinho fica vazio DEPOIS de um pedido criado com sucesso. Se o
+            # pagamento falhou, o cliente clica "tentar de novo" e caía aqui:
+            # 400 "Cart is empty" — mensagem que não descreve nada e não oferece
+            # saída, enquanto o pedido dele já existia no painel da loja.
+            # Devolver o pedido daquele carrinho leva o cliente de volta à tela
+            # de pagamento em vez do beco sem saída, e sem duplicar a venda.
+            pedido_do_carrinho = self._pedido_recente_do_carrinho(store, session_id)
+            if pedido_do_carrinho is not None:
+                dados = self._build_response_data(store, pedido_do_carrinho)
+                dados['pedido_ja_existia'] = True
+                return Response(dados, status=status.HTTP_200_OK)
+
             return Response(
                 {'error': 'Cart is empty'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -1011,6 +1042,12 @@ class StoreCheckoutView(APIView):
                 scheduled_date=scheduled_date,
                 scheduled_time=scheduled_time,
             )
+
+            # Ligação carrinho→pedido: é o que permite o retry reencontrar
+            # esta venda em vez de responder "carrinho vazio".
+            if session_id:
+                order.metadata = {**(order.metadata or {}), 'cart_key': session_id}
+                order.save(update_fields=['metadata', 'updated_at'])
 
             self._persist_customer_session(request, order)
 
