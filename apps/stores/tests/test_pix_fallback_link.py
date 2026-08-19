@@ -16,7 +16,12 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from apps.stores.models import Store, StoreOrder, StorePayment
+from apps.stores.services import mp_orders as mp_orders_mod
 from apps.stores.services.checkout_service import CheckoutService
+
+#: Recusa da Orders API — o PIX nasce lá desde a migração de 19/08.
+RECUSA_ORDERS = (403, {'errors': [{'code': 'forbidden',
+                                   'message': 'At least one policy returned UNAUTHORIZED.'}]})
 
 BLOQUEIO_MP = {
     'status': 403,
@@ -68,7 +73,8 @@ class PixFallbackParaLinkTests(TestCase):
 
     def test_pix_bloqueado_cai_no_link(self):
         sdk = _sdk(BLOQUEIO_MP, PREFERENCE_OK)
-        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk):
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders_mod, 'create_order', return_value=RECUSA_ORDERS):
             res = CheckoutService.create_payment(self.order, payment_method='pix')
 
         self.assertTrue(res['success'], res)
@@ -77,7 +83,8 @@ class PixFallbackParaLinkTests(TestCase):
 
     def test_pedido_fica_pendente_e_nao_falhado(self):
         sdk = _sdk(BLOQUEIO_MP, PREFERENCE_OK)
-        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk):
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders_mod, 'create_order', return_value=RECUSA_ORDERS):
             CheckoutService.create_payment(self.order, payment_method='pix')
 
         self.order.refresh_from_db()
@@ -85,24 +92,34 @@ class PixFallbackParaLinkTests(TestCase):
 
     def test_cobranca_do_link_e_registrada(self):
         sdk = _sdk(BLOQUEIO_MP, PREFERENCE_OK)
-        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk):
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders_mod, 'create_order', return_value=RECUSA_ORDERS):
             CheckoutService.create_payment(self.order, payment_method='pix')
 
         self.assertTrue(StorePayment.objects.filter(order=self.order).exists())
 
     def test_pix_ok_nao_usa_fallback(self):
-        """Caminho feliz intocado: PIX que funciona não vira link."""
-        pix_ok = {
-            'status': 201,
-            'response': {
-                'id': 987654,
-                'status': 'pending',
-                'point_of_interaction': {'transaction_data': {
-                    'qr_code': 'QRCODE', 'qr_code_base64': 'BASE64', 'ticket_url': 'http://t'}},
-            },
-        }
-        sdk = _sdk(pix_ok, PREFERENCE_OK)
-        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk):
+        """Caminho feliz intocado: PIX que funciona não vira link.
+
+        O PIX nasce na Orders API — o mock é do mp_orders.create_order, não
+        mais do SDK antigo.
+        """
+        from apps.stores.services import mp_orders
+        orders_ok = (201, {
+            'status': 'action_required',
+            'transactions': {'payments': [{
+                'id': 'PAY01OK',
+                'status': 'action_required',
+                'payment_method': {
+                    'id': 'pix', 'type': 'bank_transfer',
+                    'qr_code': 'QRCODE', 'qr_code_base64': 'BASE64',
+                    'ticket_url': 'https://www.mercadopago.com.br/payments/987654/ticket',
+                },
+            }]},
+        })
+        sdk = _sdk(BLOQUEIO_MP, PREFERENCE_OK)
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders, 'create_order', return_value=orders_ok):
             res = CheckoutService.create_payment(self.order, payment_method='pix')
 
         self.assertEqual(res['payment_method'], 'pix')

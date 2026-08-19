@@ -48,7 +48,7 @@ def _soma_dos_itens(items):
     ).quantize(Decimal('0.01'))
 
 
-def build_items(order):
+def build_items(order, total=None):
     items = []
     for it in order.items.all():
         # MP limita external_code a 30 chars — UUID de product_id tem 36 e
@@ -63,7 +63,8 @@ def build_items(order):
             'description': (it.product_name or '')[:256],
         })
     if not items:  # fallback: 1 item com o total
-        return [{'title': f'Pedido {order.order_number}', 'unit_price': str(order.total),
+        return [{'title': f'Pedido {order.order_number}',
+                 'unit_price': str(total if total is not None else order.total),
                  'quantity': 1, 'category_id': 'food'}]
 
     # A Orders API recusa a order INTEIRA com 400
@@ -79,7 +80,7 @@ def build_items(order):
             'category_id': 'food',
         })
 
-    total = Decimal(str(order.total)).quantize(Decimal('0.01'))
+    total = Decimal(str(total if total is not None else order.total)).quantize(Decimal('0.01'))
     if _soma_dos_itens(items) != total:
         # Desconto (cupom/fidelidade) não tem item negativo na Orders API.
         # Item único consolidado: perde granularidade, mas fecha a conta —
@@ -157,6 +158,39 @@ def numero_do_endereco(valor) -> str:
     return texto[:LIMITE_STREET_NUMBER].strip()
 
 
+#: Nome por extenso → sigla. A Orders API recusa a order INTEIRA com 400
+#: property_value quando payer.address.state tem mais de 2 caracteres, e o
+#: storefront grava ora "TO", ora "Tocantins" (foi o que matou o CE-2608197996).
+_UFS = {
+    'acre': 'AC', 'alagoas': 'AL', 'amapa': 'AP', 'amazonas': 'AM',
+    'bahia': 'BA', 'ceara': 'CE', 'distrito federal': 'DF',
+    'espirito santo': 'ES', 'goias': 'GO', 'maranhao': 'MA',
+    'mato grosso': 'MT', 'mato grosso do sul': 'MS', 'minas gerais': 'MG',
+    'para': 'PA', 'paraiba': 'PB', 'parana': 'PR', 'pernambuco': 'PE',
+    'piaui': 'PI', 'rio de janeiro': 'RJ', 'rio grande do norte': 'RN',
+    'rio grande do sul': 'RS', 'rondonia': 'RO', 'roraima': 'RR',
+    'santa catarina': 'SC', 'sao paulo': 'SP', 'sergipe': 'SE',
+    'tocantins': 'TO',
+}
+
+
+def sigla_do_estado(valor):
+    """UF de 2 letras a partir de sigla ou nome por extenso. None se não souber.
+
+    Devolver None de propósito quando não reconhece: omitir o campo custa um
+    ponto de qualidade no MP, mandar 9 caracteres custa a venda inteira.
+    """
+    if not valor:
+        return None
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    if len(texto) == 2 and texto.isalpha():
+        return texto.upper()
+    sem_acento = unicodedata.normalize('NFKD', texto).encode('ascii', 'ignore').decode()
+    return _UFS.get(' '.join(sem_acento.lower().split()))
+
+
 def _order_address(order):
     addr = order.delivery_address if isinstance(order.delivery_address, dict) else {}
     zip_code = addr.get('zip_code') or addr.get('cep') or addr.get('zip')
@@ -173,8 +207,9 @@ def _order_address(order):
         address['street_number'] = numero_do_endereco(number)
     if city:
         address['city'] = str(city)
-    if state:
-        address['state'] = str(state)
+    uf = sigla_do_estado(state)
+    if uf:
+        address['state'] = uf
     return address
 
 
@@ -277,7 +312,10 @@ def build_pix_order_payload(order, payer_email, payer_data=None, amount=None):
         'external_reference': str(order.id),  # sem PII
         'description': f'Pedido {order.order_number} - {order.store.name}'[:256],
         'payer': build_payer(order, payer_email, payer_data),
-        'items': build_items(order),
+        # Itens reconciliados contra o valor COBRADO, não contra order.total:
+        # cobrança parcial ou pedido editado fazem os dois divergirem, e aí a
+        # Orders API recusa tudo com order_items_total_amount_mismatch.
+        'items': build_items(order, total=valor),
         'transactions': {
             'payments': [{
                 'amount': valor,

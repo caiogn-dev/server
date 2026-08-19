@@ -78,3 +78,40 @@ class ItensSomamOTotalTests(TestCase):
         corpo = {'errors': [{'code': 'order_items_total_amount_mismatch',
                              'message': 'Order items total amount sum does not match'}]}
         self.assertTrue(mp_orders.eh_erro_de_payload(400, corpo))
+
+
+class ValorParcialTests(TestCase):
+    """Cobrança de valor diferente do total do pedido também precisa fechar.
+
+    create_payment usa `order.amount_due` (ou um `amount` explícito) como valor
+    da cobrança, mas os itens saíam de `order.total`. Pedido editado ou cobrança
+    parcial faziam os dois divergirem e a Orders API recusava tudo com
+    order_items_total_amount_mismatch — foi o que aconteceu com o CE-2608190245
+    depois que o total mudou.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        owner = User.objects.create_user(username='dono_pc', email='d@pc.com', password='x')
+        self.store = Store.objects.create(name='Loja PC', slug='loja-pc', owner=owner)
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='Maria', customer_email='m@t.com',
+            customer_phone='63999990000', subtotal=Decimal('30.75'),
+            delivery_fee=Decimal('11.66'), total=Decimal('42.41'),
+        )
+        StoreOrderItem.objects.create(
+            order=self.order, product_name='Almôndega', quantity=1,
+            unit_price=Decimal('30.75'), subtotal=Decimal('30.75'),
+        )
+
+    def test_cobranca_parcial_fecha_com_o_valor_cobrado(self):
+        p = mp_orders.build_pix_order_payload(
+            self.order, 'm@t.com', amount=Decimal('20.00'),
+        )
+        self.assertEqual(p['total_amount'], '20.00')
+        self.assertEqual(soma(p['items']), Decimal('20.00'))
+
+    def test_sem_amount_usa_o_total_do_pedido(self):
+        p = mp_orders.build_pix_order_payload(self.order, 'm@t.com')
+        self.assertEqual(p['total_amount'], '42.41')
+        self.assertEqual(soma(p['items']), Decimal('42.41'))
