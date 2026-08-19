@@ -888,3 +888,79 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-07-27 — 2026-08-17 (PRs #317–#337)
+
+**Nota de rastreamento:** 20 PRs abertos (#318–#337) foram criados por execuções anteriores do bot
+mas não documentados individualmente neste arquivo. Resumo dos itens cobertos:
+
+| PR | Branch | Tipo | Cobertura |
+|---|---|---|---|
+| #318 | 2026-07-28 | P1 IDOR | Instagram account gravável via PATCH cross-tenant |
+| #319 | 2026-07-29 | P2 | CustomerSearchView retornava clientes de outros tenants |
+| #320 | 2026-07-30 | P1 IDOR | EmailTemplate/EmailAutomation perform_create sem validate_store |
+| #321 | 2026-07-31 | P2 | str(e) em envio de campanha e e-mail marketing |
+| #322 | 2026-08-01 | P1 | Contratos de regressão checkout: calculate_totals, placeholder email |
+| #323 | 2026-08-02 | P0 | PII (telefone) em logs de notificação WhatsApp e indicação |
+| #324 | 2026-08-03 | P0/P2 | str(e) em health check AllowAny + is_staff em base_consumer |
+| #325 | 2026-08-04 | P0/P1 | IDOR + PII leak em CustomersViewSet.debug action |
+| #326 | 2026-08-05 | P2 | str(exc) em handlers de exceção Meta API (Instagram/WhatsApp) |
+| #327 | 2026-08-06 | P2 | N+1 em CashHistoryReportView (1+N → 1 query) |
+| #328 | 2026-08-08 | P1 | str(exc) em respostas HTTP de pagamento e embedded_signup |
+| #329 | 2026-08-09 | P1 | AuditLogViewSet exige is_superuser (não is_staff) |
+| #330 | 2026-08-10 | P1 | Staff da loja pode acessar contas de fidelidade de outros tenants |
+| #331 | 2026-08-11 | P0/P1 | IDOR em conversation_history/stats + str(exc) em embedded_signup e order_create |
+| #332 | 2026-08-12 | P1 | IDOR de escrita em ProductNutritionProfileSerializer |
+| #333 | 2026-08-13 | P1 | str(exc) info-disclosure em Instagram connect() e send_message() |
+| #334 | 2026-08-14 | P0 | IDOR de escrita em gerar_codigos_internos sem gate de tenant |
+| #335 | 2026-08-15 | P1 | IDOR em StorePaymentViewSet.by_order (bypassa escopo de tenant) |
+| #336 | 2026-08-16 | P1 | IDOR de leitura em CustomerAddressViewSet e TeamMemberViewSet |
+| #337 | 2026-08-17 | P1 | str(exc) removido de 10 ações Instagram e Messenger |
+
+---
+
+### 2026-08-19
+
+**Baseline de testes:** 20 testes SimpleTestCase GREEN após o fix (RED→GREEN confirmado).
+Deps instaladas: django, djangorestframework, drf-spectacular, celery, channels, django-cors-headers,
+django-filter, Pillow, pytest, pytest-django. `cryptography` do sistema (41.0.7 Debian) sem upgrade.
+Falha pré-existente de infra CI (`runner_id=0`) em todos os PRs desde 2026-07-18 — não é regressão.
+
+**Gate anti-acúmulo:** 20 PRs abertos (#318–#337). Nenhum cobre `_coords_from_maps_url` ou SSRF.
+Commit `b4ffa4f` (HEAD de `development`) introduziu o novo feature sem proteção de SSRF.
+
+**Vulnerabilidade encontrada e corrigida:** SSRF em `_coords_from_maps_url` — endpoint AllowAny [P0]
+
+- **Tipo:** P0 — SSRF sem autenticação via endpoint `AllowAny` de cálculo de taxa de entrega
+- **Arquivo:** `apps/stores/api/views/storefront_views.py`
+- **Commit introdutor:** `b4ffa4f feat(frete): resolve link CURTO do Maps`
+- **Problema:** `_coords_from_maps_url(url)` faz `requests.get(url, allow_redirects=True, timeout=5)`
+  com guard insuficiente: apenas `('maps' not in url and 'goo.gl' not in url)`.
+  Bypass trivial: `http://169.254.169.254/maps` contém 'maps' → passa o guard → request para metadata AWS/GCP.
+  Outros bypasses: `http://localhost/maps`, `http://redis:6379/goo.gl`, `http://10.0.0.1/maps`.
+  O endpoint `StoreDeliveryFeeView` tem `permission_classes = [AllowAny]` — qualquer usuário anônimo
+  pode disparar requests do servidor para qualquer host interno.
+- **Impacto:** Exfiltração de metadados de cloud (token IMDSv1), varredura de portas internas
+  (Redis, banco, serviços privados) a partir de requests HTTP anônimos.
+- **Correção:**
+  1. Adicionada constante `_SAFE_MAPS_HOSTS` (frozenset com 5 domínios Google Maps).
+  2. Adicionada função `_is_safe_maps_url(url)` que valida o hostname real via `urlparse`
+     (já importado no arquivo) — retorna False para qualquer host fora da whitelist.
+  3. Inserido check `if not _is_safe_maps_url(url): return None` em `_coords_from_maps_url`,
+     ANTES da extração por regex e ANTES de qualquer chamada de rede.
+- **Testes:** 20 casos `SimpleTestCase` em `apps/stores/tests/test_maps_url_ssrf.py` (RED→GREEN):
+  - `TestIsSafeMapsUrl` (13 casos): todos os 5 domínios aceitos + 8 casos de bypass bloqueados
+  - `TestCoordsFromMapsUrlSsrfGuard` (7 casos): mock de `requests.get` confirma que NUNCA é
+    chamado para URLs SSRF; shortlinks Google legítimos AINDA chamam requests.get normalmente
+- **PR:** `bot/server-2026-08-19-maps-url-ssrf`
+
+**Próximo backlog priorizado:**
+
+1. **P0/P1** — Merge dos 20 PRs abertos (#318–#337) — todos aguardando revisão.
+2. **P1** — Verificar `allow_redirects=True` no `requests.get` de shortlinks Maps: se a URL final
+   do redirect apontar para IP interno (DNS rebinding), ainda há risco residual. Mitigação adicional:
+   validar também `resp.url` antes de usar; ou usar `max_redirects=3` com verificação do hostname final.
+3. **P1** — Varredura de outros `requests.get/post` no codebase sem guard de host (SSRF em outros lugares).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos.
+

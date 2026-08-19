@@ -1045,6 +1045,30 @@ class StoreCheckoutView(APIView):
             )
 
 
+_SAFE_MAPS_HOSTS = frozenset({
+    'maps.google.com',
+    'www.google.com',
+    'maps.app.goo.gl',
+    'goo.gl',
+    'maps.googleapis.com',
+})
+
+
+def _is_safe_maps_url(url) -> bool:
+    """Retorna True apenas para domínios Google Maps conhecidos (SSRF guard).
+
+    O filtro de string ('maps' in url) é bypassável com URLs como
+    http://169.254.169.254/maps. Esta função valida o hostname real via urlparse.
+    """
+    if not url:
+        return False
+    try:
+        host = urlparse(url).hostname or ''
+        return host.lower() in _SAFE_MAPS_HOSTS
+    except Exception:
+        return False
+
+
 def _coords_from_maps_url(url):
     """Extrai lat/lng de um link do Google Maps — inclusive shortlink.
 
@@ -1053,6 +1077,10 @@ def _coords_from_maps_url(url):
     coords da URL final. Nunca levanta — retorna None quando não dá.
     """
     if not url or 'http' not in url or ('maps' not in url and 'goo.gl' not in url):
+        return None
+    # SSRF guard: só faz request para domínios Google Maps da whitelist.
+    # O filtro acima é bypassável (ex.: http://169.254.169.254/maps).
+    if not _is_safe_maps_url(url):
         return None
     import re as _re
 
