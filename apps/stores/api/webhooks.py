@@ -82,6 +82,9 @@ class MercadoPagoWebhookView(APIView):
 
             if topic == 'payment':
                 return self._handle_payment(request, store_slug)
+            elif topic == 'order':
+                # Orders API (/v1/orders): o MP notifica com type='order'.
+                return self._handle_order(request, store_slug)
             elif topic == 'merchant_order':
                 return self._handle_merchant_order(request, store_slug)
             elif topic in ('subscription_preapproval', 'subscription_authorized_payment') \
@@ -89,7 +92,13 @@ class MercadoPagoWebhookView(APIView):
                 # Assinatura SaaS: o notification_url do preapproval aponta pra cá.
                 return self._handle_preapproval(request)
             else:
-                logger.info(f"Ignoring webhook topic: {topic}")
+                # Descarte silencioso escondia a virada para a Orders API:
+                # o MP passou a notificar com topic='order' e o aviso sumia
+                # sem deixar rastro. Se for ignorar, ao menos diga o que.
+                logger.info(
+                    "Ignoring webhook topic: %s | payload=%s | query=%s",
+                    topic, dict(request.data or {}), dict(request.query_params or {}),
+                )
                 return Response({'status': 'ignored'}, status=status.HTTP_200_OK)
         
         except Exception as e:
@@ -185,12 +194,46 @@ class MercadoPagoWebhookView(APIView):
             logger.error("MP webhook signature computation error: %s", e)
             return False  # Fail closed when secret is configured
     
-    def _handle_payment(self, request, store_slug):
+    def _handle_order(self, request, store_slug):
+        """Notificação da Orders API (topic='order').
+
+        O payload traz o ULID do pagamento (PAY01...), que NÃO é consultável:
+        GET /v1/payments/PAY01... responde 404. O id numérico está na cobrança
+        que gravamos no checkout, alcançável pelo external_reference (= id do
+        pedido). Resolvido o id, segue exatamente o mesmo caminho do topic
+        'payment' — idempotência, fidelidade e broadcast inclusive.
+        """
+        from apps.stores.models import StorePayment
+
+        dados = request.data.get('data', {}) or {}
+        referencia = (
+            dados.get('external_reference')
+            or request.query_params.get('data.external_reference')
+        )
+        if not referencia:
+            logger.warning("Webhook 'order' sem external_reference: %s", dados)
+            return Response({'status': 'no_external_reference'}, status=status.HTTP_200_OK)
+
+        cobranca = StorePayment.objects.filter(
+            external_reference=str(referencia)
+        ).exclude(external_id='').order_by('-created_at').first()
+
+        if not cobranca:
+            logger.warning("Webhook 'order': cobrança não encontrada para %s", referencia)
+            return Response({'status': 'charge_not_found'}, status=status.HTTP_200_OK)
+
+        return self._handle_payment(
+            request, store_slug or cobranca.store.slug,
+            payment_id=cobranca.external_id,
+        )
+
+    def _handle_payment(self, request, store_slug, payment_id=None):
         """Handle payment notification."""
         import mercadopago
         
         # Get payment ID
-        payment_id = request.data.get('data', {}).get('id')
+        if not payment_id:
+            payment_id = request.data.get('data', {}).get('id')
         if not payment_id:
             payment_id = request.query_params.get('data.id')
         
