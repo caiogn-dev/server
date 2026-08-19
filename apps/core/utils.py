@@ -112,10 +112,37 @@ def build_absolute_media_url(url: str) -> str:
     return f"{base}{url}"
 
 
+def _parece_brasileiro_local(digitos: str) -> bool:
+    """True quando o número é um telefone BR SEM o DDI (DDD + assinante).
+
+    - 11 dígitos: DDD + 9XXXXXXXX — celular sempre tem 9 na terceira posição.
+    - 10 dígitos: DDD + XXXXXXXX — fixo começa entre 2 e 5.
+
+    A terceira posição é o que separa um celular brasileiro de um número
+    estrangeiro completo do mesmo tamanho: `34647520824` (Espanha) e
+    `15554044637` (EUA) também têm 11 dígitos, mas não têm o 9.
+    """
+    if len(digitos) not in (10, 11):
+        return False
+    ddd = digitos[:2]
+    if not ('11' <= ddd <= '99'):
+        return False
+    if len(digitos) == 11:
+        return digitos[2] == '9'
+    return digitos[2] in '2345'
+
+
 def normalize_phone_number(phone: str) -> str:
-    """Normalize phone number to E.164 format."""
+    """Normalize phone number to E.164 format (sem o '+').
+
+    O DDI 55 só entra quando o número REALMENTE parece brasileiro sem DDI.
+    A regra antiga ("sem 55 e até 11 dígitos → gruda 55") transformava número
+    estrangeiro completo em brasileiro inexistente: a conversa da Layane
+    (wa_id `34647520824`, Espanha) virou `5534647520824` e toda resposta do
+    inbox falhou com 131026 enquanto ela tentava fazer um pedido.
+    """
     phone = ''.join(filter(str.isdigit, phone))
-    if not phone.startswith('55') and len(phone) <= 11:
+    if not phone.startswith('55') and _parece_brasileiro_local(phone):
         phone = '55' + phone
     return phone
 

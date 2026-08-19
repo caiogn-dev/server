@@ -391,6 +391,15 @@ class StoreProductSerializer(serializers.ModelSerializer):
     merchandising_flags = serializers.SerializerMethodField()
     rating_avg = serializers.SerializerMethodField()
     rating_count = serializers.SerializerMethodField()
+    # O preço que o cliente paga HOJE. `price` é o cadastro (o painel edita
+    # esse); quem MOSTRA preço tem que ler daqui, senão a vitrine anuncia
+    # R$ 42,99 numa quarta em que o carrinho cobra R$ 30,75 — foi o que
+    # escondeu a "quarta da almôndega" de todo mundo que ia comprar.
+    preco_vigente = serializers.SerializerMethodField()
+    em_promocao = serializers.ReadOnlyField()
+
+    def get_preco_vigente(self, obj):
+        return str(obj.preco_vigente())
 
     class Meta:
         model = StoreProduct
@@ -405,6 +414,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             # Sem estes campos aqui o recurso existia no model e no cálculo mas
             # não tinha como ser cadastrado por ninguém.
             'promo_price', 'promo_weekday',
+            'preco_vigente', 'em_promocao',
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
             'allow_backorder', 'is_low_stock', 'is_in_stock',
