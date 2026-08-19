@@ -2088,6 +2088,33 @@ class CheckoutService:
             update_fields.append('payment_status')
 
         elif status in {'rejected', 'cancelled'}:
+            # O gateway manda no que é dele — a cobrança. Ele NÃO manda numa
+            # venda já paga por outro meio (maquininha, dinheiro, PIX na mão)
+            # nem numa comida que já saiu para o cliente.
+            #
+            # Em 19/08 quatro cobranças órfãs do CE-2608190245 foram canceladas
+            # no MP; o pedido estava entregue e pago na maquininha, e o webhook
+            # `cancelled` rebaixou a venda inteira para cancelled/failed —
+            # sumindo com ela da tela de quem estava trabalhando. A trava que
+            # existia só cobria "há outra cobrança COMPLETED no gateway", e
+            # pagamento fora do gateway não produz StorePayment nenhum.
+            #
+            # Estorno (`refunded`) segue passando: ali existe decisão do lojista
+            # sobre dinheiro que entrou de verdade.
+            if (
+                order.payment_status == StoreOrder.PaymentStatus.PAID
+                or order.status in {
+                    StoreOrder.OrderStatus.DELIVERED,
+                    StoreOrder.OrderStatus.COMPLETED,
+                }
+            ):
+                logger.info(
+                    "Webhook '%s' ignorado para %s: venda já %s (pagamento=%s). "
+                    "Cobrança cancelada não derruba venda entregue/paga.",
+                    status, order.order_number, order.status, order.payment_status,
+                )
+                return order
+
             order.status = StoreOrder.OrderStatus.CANCELLED
             order.payment_status = StoreOrder.PaymentStatus.FAILED
             order.cancelled_at = timezone.now()
