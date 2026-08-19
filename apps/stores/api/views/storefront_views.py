@@ -1105,11 +1105,23 @@ def _coords_from_maps_url(url):
         return hit
     try:
         import requests
-        resp = requests.get(
-            url, allow_redirects=True, timeout=5,
-            headers={'User-Agent': 'Mozilla/5.0'},
-        )
-        return _extract(resp.url) or _extract(resp.text[:8000])
+        # allow_redirects=False: validamos cada redirect pela whitelist antes
+        # de segui-lo. Com allow_redirects=True, um redirect de www.google.com
+        # para 169.254.169.254 passaria a whitelist do primeiro hop.
+        current_url = url
+        for _ in range(5):
+            resp = requests.get(
+                current_url, allow_redirects=False, timeout=5,
+                headers={'User-Agent': 'Mozilla/5.0'},
+            )
+            if resp.is_redirect:
+                location = resp.headers.get('Location', '')
+                if not _is_safe_maps_url(location):
+                    return None  # redirect para host fora da whitelist Maps
+                current_url = location
+            else:
+                return _extract(current_url) or _extract(resp.text[:8000])
+        return None  # excedeu limite de redirects
     except Exception as exc:  # rede caída não pode matar o cálculo de frete
         logger.warning('[delivery-fee] falha ao resolver link do Maps: %s', exc)
         return None
