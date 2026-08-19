@@ -45,7 +45,19 @@ class MercadoPagoWebhookView(APIView):
     
     authentication_classes = []
     permission_classes = []
-    
+
+    def get(self, request, store_slug=None):
+        """Sinal de vida para o validador de URL do Mercado Pago.
+
+        O painel do MP faz um GET na URL antes de aceitá-la no campo de
+        notificações; sem isto o DRF devolvia 405 e o formulário recusava a
+        URL correta com "O endereço deve ser válido".
+
+        Não processa nada de propósito: notificação só entra pelo POST, que
+        é onde mora a validação de assinatura.
+        """
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
     def post(self, request, store_slug=None):
         """Handle Mercado Pago webhook notification."""
         try:

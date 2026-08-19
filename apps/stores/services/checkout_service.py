@@ -1375,24 +1375,52 @@ class CheckoutService:
                 external_reference = f"avulso:{target_store.id}"
             logger.info(f"Using email for payment: {payer_email}")
 
-            pix_payment_data = {
-                "transaction_amount": float(amount),
-                "description": mp_description,
-                "payment_method_id": "pix",
-                "payer": {
-                    "email": payer_email,
-                    "first_name": name.split()[0],
-                    "last_name": " ".join(name.split()[1:]) if len(name.split()) > 1 else "",
-                },
-                "external_reference": external_reference,
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
-            }
+            # PIX pela Orders API (/v1/orders), o mesmo caminho do cartão desde
+            # 17/06. A rota antiga (/v1/payments) responde 403 PolicyAgent para
+            # aplicações registradas como "Checkout Transparente via Orders" —
+            # foi o que derrubou o PIX de todas as lojas em 19/08.
+            from apps.stores.services import mp_orders
 
-            result = sdk.payment().create(pix_payment_data)
+            if order is not None:
+                order_payload = mp_orders.build_pix_order_payload(
+                    order, payer_email, payment_payload, amount=amount,
+                )
+            else:
+                # Cobrança avulsa: sem pedido não há itens nem endereço.
+                first_name, last_name = mp_orders.split_name(name)
+                order_payload = {
+                    'type': 'online',
+                    'processing_mode': 'automatic',
+                    'total_amount': str(amount),
+                    'external_reference': external_reference,
+                    'description': mp_description[:256],
+                    'payer': {
+                        'email': payer_email,
+                        'first_name': first_name,
+                        'last_name': last_name,
+                    },
+                    'transactions': {'payments': [{
+                        'amount': str(amount),
+                        'payment_method': {'id': 'pix', 'type': 'bank_transfer'},
+                    }]},
+                }
 
-            if result["status"] == 201:
-                payment = result["response"]
-                pix_data = payment.get("point_of_interaction", {}).get("transaction_data", {})
+            status_code, body = mp_orders.create_order(
+                credentials['access_token'], order_payload,
+            )
+            pix_criado, _status_pix, _pix_id, _detalhe = mp_orders.interpret(status_code, body)
+            result = {"status": status_code, "response": body}
+
+            if pix_criado:
+                dados_pix = mp_orders.extract_pix(body)
+                # `_status_pix` vem do interpret(): action_required/pending → 'pending'.
+                payment = {"id": dados_pix.get("payment_id"), "status": _status_pix}
+                pix_data = {
+                    "qr_code": dados_pix.get("qr_code", ""),
+                    "qr_code_base64": dados_pix.get("qr_code_base64", ""),
+                    "ticket_url": dados_pix.get("ticket_url", ""),
+                    "expiration_date": dados_pix.get("date_of_expiration"),
+                }
                 expires_at = timezone.now() + timedelta(hours=24)
 
                 # StorePayment é a fonte da verdade da cobrança.
@@ -1448,6 +1476,34 @@ class CheckoutService:
                 }
 
             logger.error(f"Payment creation failed: {result}")
+
+            # PIX recusado NÃO quer dizer "não dá pra pagar". Em 19/08 o MP
+            # passou a devolver 403 PolicyAgent em POST /v1/payments (conta
+            # bloqueada, chaves revogadas) enquanto o Checkout Pro seguia
+            # criando cobrança normalmente. Sem este desvio o cliente via
+            # "pagamento falhou" sem nenhuma forma de pagar, e a venda morria
+            # com o pedido já criado no painel do lojista.
+            try:
+                fallback = CheckoutService.create_payment(
+                    order,
+                    payment_method='link',
+                    payment_data=payment_payload,
+                    amount=amount,
+                    store=target_store,
+                    description=description,
+                )
+            except Exception as exc:
+                logger.warning("Fallback PIX->link falhou: %s", exc)
+                fallback = None
+
+            if fallback and fallback.get('success'):
+                logger.info(
+                    "PIX recusado pelo MP; cobranca seguiu por link de pagamento (pedido %s)",
+                    order.order_number if order is not None else 'avulso',
+                )
+                fallback['pix_fallback'] = True
+                return fallback
+
             # Honesto sem ser destrutivo: `payment_status=FAILED` já impede o
             # pedido de fingir cobrança ativa. Mexer no `status` era o que
             # sumia com a venda da tela de quem está trabalhando — foi o susto
@@ -1456,9 +1512,15 @@ class CheckoutService:
                 order.payment_status = StoreOrder.PaymentStatus.FAILED
                 order.save(update_fields=['payment_status', 'updated_at'])
                 CheckoutService._release_coupon(order)
+            corpo_erro = result.get("response", {}) or {}
+            erros = corpo_erro.get("errors") or []
+            mensagem = (
+                (erros[0] or {}).get("message") if isinstance(erros, list) and erros
+                else corpo_erro.get("message")
+            )
             return {
                 'success': False,
-                'error': result.get("response", {}).get("message", "Erro ao criar pagamento"),
+                'error': mensagem or "Erro ao criar pagamento",
             }
 
         if payment_method in {'credit_card', 'debit_card', 'card'}:

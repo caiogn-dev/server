@@ -24,20 +24,27 @@ class BillingCycleFieldTest(TestCase):
         self.assertEqual(sub.billing_cycle, "annual")
 
 
-def _fake_pix_sdk():
-    sdk = MagicMock()
-    sdk.payment.return_value.create.return_value = {
-        "status": 201,
-        "response": {
-            "id": 999001,
-            "point_of_interaction": {"transaction_data": {
-                "qr_code": "PIXCOPIACOLA123",
-                "qr_code_base64": "AAAABBBB==",
-                "ticket_url": "https://mp/ticket/999001",
-            }},
-        },
-    }
-    return sdk
+def _orders_fatura(payment_id='174599000111'):
+    """Resposta da Orders API para a fatura PIX da assinatura.
+
+    A cobrança da mensalidade também nascia em POST /v1/payments — a rota que
+    o MP bloqueia desde 19/08. Se ela ficasse para trás, o PIX das lojas
+    voltaria a funcionar e a NOSSA cobrança seguiria morta.
+    """
+    return (201, {
+        'status': 'action_required',
+        'transactions': {'payments': [{
+            'id': 'PAY01FATURA',
+            'status': 'action_required',
+            'payment_method': {
+                'id': 'pix',
+                'type': 'bank_transfer',
+                'qr_code': 'PIXFATURA',
+                'qr_code_base64': 'B64FATURA',
+                'ticket_url': f'https://www.mercadopago.com.br/payments/{payment_id}/ticket',
+            },
+        }]},
+    })
 
 
 class GenerateInvoiceTest(TestCase):
@@ -47,16 +54,19 @@ class GenerateInvoiceTest(TestCase):
         self.sub = StoreSubscription.objects.create(store=self.store, plan="pro")
         self.now = datetime(2026, 7, 4, tzinfo=dtz.utc)
 
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_generates_monthly_pix_invoice(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_generates_monthly_pix_invoice(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         inv = pix_billing_service.generate_invoice(self.sub, now=self.now)
         self.assertIsNotNone(inv)
         self.assertEqual(inv.payment_method, StorePayment.PaymentMethod.PIX)
         self.assertEqual(inv.store_id, self.store.id)
         self.assertIsNone(inv.order_id)
         self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026-07")
-        self.assertEqual(inv.qr_code, "PIXCOPIACOLA123")
+        self.assertEqual(inv.qr_code, "PIXFATURA")
+        # id NUMÉRICO consultável (do ticket_url), não o ULID da Orders API:
+        # é por ele que o webhook e o poller confirmam o pagamento.
+        self.assertEqual(inv.external_id, "174599000111")
         # Deriva do catálogo em vez de repetir o número: o preço do "pro" já
         # esteve travado como literal em 4 arquivos de teste ao mesmo tempo, e
         # quando ele mudou de 329 para 249 os quatro quebraram junto.
@@ -64,9 +74,9 @@ class GenerateInvoiceTest(TestCase):
         self.assertEqual(float(inv.amount), mensal)
         self.assertEqual(inv.metadata["kind"], "monthly")
 
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_annual_is_ten_times_monthly(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_annual_is_ten_times_monthly(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         self.sub.billing_cycle = "annual"; self.sub.save()
         inv = pix_billing_service.generate_invoice(self.sub, now=self.now)
         # O que importa é a RELAÇÃO (paga 10, leva 12), não o valor do mês.
@@ -74,17 +84,17 @@ class GenerateInvoiceTest(TestCase):
         self.assertEqual(float(inv.amount), mensal * pix_billing_service.ANNUAL_MONTHS_CHARGED)
         self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026")
 
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_idempotent_per_period(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_idempotent_per_period(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         a = pix_billing_service.generate_invoice(self.sub, now=self.now)
         b = pix_billing_service.generate_invoice(self.sub, now=self.now)
         self.assertEqual(a.id, b.id)
         self.assertEqual(StorePayment.objects.filter(store=self.store).count(), 1)
 
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_exempt_store_never_charged(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_exempt_store_never_charged(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         self.store.billing_exempt = True; self.store.save()
         self.assertIsNone(pix_billing_service.generate_invoice(self.sub, now=self.now))
         self.assertEqual(StorePayment.objects.filter(store=self.store).count(), 0)
@@ -161,27 +171,27 @@ class AutoInvoiceGenerationTest(TestCase):
         )
 
     @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_task_generates_invoice_near_trial_end(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_task_generates_invoice_near_trial_end(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         from apps.stores.tasks import enforce_subscription_lifecycle
         enforce_subscription_lifecycle()
         self.assertTrue(StorePayment.objects.filter(
             store=self.store, external_reference__startswith="subpix:").exists())
 
     @override_settings(BILLING_PIX_ENABLED=False, BILLING_ENFORCEMENT_ENABLED=True)
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_flag_off_generates_nothing(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_flag_off_generates_nothing(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         from apps.stores.tasks import enforce_subscription_lifecycle
         enforce_subscription_lifecycle()
         self.assertFalse(StorePayment.objects.filter(
             store=self.store, external_reference__startswith="subpix:").exists())
 
     @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_exempt_store_never_invoiced_by_task(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_exempt_store_never_invoiced_by_task(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         self.store.billing_exempt = True
         self.store.save(update_fields=["billing_exempt"])
         from apps.stores.tasks import enforce_subscription_lifecycle
@@ -190,9 +200,9 @@ class AutoInvoiceGenerationTest(TestCase):
             store=self.store, external_reference__startswith="subpix:").exists())
 
     @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
-    @patch.object(pix_billing_service.subscription_service, "_sdk")
-    def test_task_is_idempotent_across_runs(self, mock_sdk):
-        mock_sdk.return_value = _fake_pix_sdk()
+    @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_task_is_idempotent_across_runs(self, mock_criar):
+        mock_criar.return_value = _orders_fatura()
         from apps.stores.tasks import enforce_subscription_lifecycle
         enforce_subscription_lifecycle()
         enforce_subscription_lifecycle()

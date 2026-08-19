@@ -7,6 +7,7 @@ POST https://api.mercadopago.com/v1/orders  (a SDK 2.x não expõe orders → RE
 Single-seller: usa o access_token do gateway da loja (sem OAuth por enquanto).
 """
 import re
+from decimal import Decimal
 import unicodedata
 import uuid
 import requests
@@ -40,6 +41,13 @@ def statement_descriptor(store):
     return name or 'CARDAPIDEX'
 
 
+def _soma_dos_itens(items):
+    return sum(
+        (Decimal(str(i['unit_price'])) * int(i['quantity']) for i in items),
+        Decimal('0.00'),
+    ).quantize(Decimal('0.01'))
+
+
 def build_items(order):
     items = []
     for it in order.items.all():
@@ -55,8 +63,29 @@ def build_items(order):
             'description': (it.product_name or '')[:256],
         })
     if not items:  # fallback: 1 item com o total
-        items = [{'title': f'Pedido {order.order_number}', 'unit_price': str(order.total),
-                  'quantity': 1, 'category_id': 'food'}]
+        return [{'title': f'Pedido {order.order_number}', 'unit_price': str(order.total),
+                 'quantity': 1, 'category_id': 'food'}]
+
+    # A Orders API recusa a order INTEIRA com 400
+    # `order_items_total_amount_mismatch` quando sum(items) != total_amount, e
+    # total_amount é o order.total — que carrega frete e desconto. Os produtos
+    # sozinhos nunca fecham a conta num pedido de delivery.
+    frete = Decimal(str(getattr(order, 'delivery_fee', 0) or 0))
+    if frete > Decimal('0.00'):
+        items.append({
+            'title': 'Taxa de entrega',
+            'unit_price': str(frete.quantize(Decimal('0.01'))),
+            'quantity': 1,
+            'category_id': 'food',
+        })
+
+    total = Decimal(str(order.total)).quantize(Decimal('0.01'))
+    if _soma_dos_itens(items) != total:
+        # Desconto (cupom/fidelidade) não tem item negativo na Orders API.
+        # Item único consolidado: perde granularidade, mas fecha a conta —
+        # e uma order recusada não tem granularidade nenhuma.
+        return [{'title': f'Pedido {order.order_number}', 'unit_price': str(total),
+                 'quantity': 1, 'category_id': 'food'}]
     return items
 
 
@@ -228,6 +257,68 @@ def build_order_payload(order, *, card_token, payment_method_id, installments,
     }
 
 
+def build_pix_order_payload(order, payer_email, payer_data=None, amount=None):
+    """Payload de PIX para a Orders API.
+
+    Espelha o build_order_payload do cartão: mesmo envelope, mesmo payer rico
+    (com endereço — requisito de qualidade do MP e insumo do antifraude), só
+    troca o método.
+
+    NÃO envie `expiration_time` dentro de payment_method: a Orders API recusa
+    o payload INTEIRO com 400 `unsupported_properties`. O vencimento vem
+    pronto na resposta, em `date_of_expiration`.
+    """
+    valor = str(amount if amount is not None else order.total)
+    return {
+        'additional_info': build_additional_info(order),
+        'type': 'online',
+        'processing_mode': 'automatic',
+        'total_amount': valor,
+        'external_reference': str(order.id),  # sem PII
+        'description': f'Pedido {order.order_number} - {order.store.name}'[:256],
+        'payer': build_payer(order, payer_email, payer_data),
+        'items': build_items(order),
+        'transactions': {
+            'payments': [{
+                'amount': valor,
+                'payment_method': {
+                    'id': 'pix',
+                    'type': 'bank_transfer',
+                },
+            }],
+        },
+    }
+
+
+def extract_pix(body):
+    """Puxa QR, ticket e id da resposta da Orders API. {} quando não houver."""
+    pagamentos = ((body or {}).get('transactions') or {}).get('payments') or []
+    if not pagamentos:
+        return {}
+    pagamento = pagamentos[0] or {}
+    metodo = pagamento.get('payment_method') or {}
+    ulid = str(pagamento['id']) if pagamento.get('id') else None
+    ticket = metodo.get('ticket_url', '') or ''
+
+    # O id da Orders API é um ULID (PAY01M0D...) e GET /v1/payments/PAY01...
+    # responde 404. Quem confirma o pagamento — webhook, poller de
+    # reconciliação, tasks.reconcile — consulta por `sdk.payment().get()`, que
+    # só aceita o id NUMÉRICO. Salvar o ULID deixaria o cliente pagando e o
+    # pedido preso para sempre em "pendente". O numérico vem no ticket_url:
+    # https://www.mercadopago.com.br/payments/174584705322/ticket?...
+    casado = re.search(r'/payments/(\d+)', ticket)
+    numerico = casado.group(1) if casado else None
+
+    return {
+        'payment_id': numerico or ulid,
+        'order_payment_id': ulid,
+        'qr_code': metodo.get('qr_code', ''),
+        'qr_code_base64': metodo.get('qr_code_base64', ''),
+        'ticket_url': metodo.get('ticket_url', ''),
+        'date_of_expiration': pagamento.get('date_of_expiration'),
+    }
+
+
 def create_order(access_token, payload, device_id=None, timeout=25):
     headers = {
         'Authorization': f'Bearer {access_token}',
@@ -259,7 +350,8 @@ def eh_erro_de_payload(status_code, body) -> bool:
     if not isinstance(erros, list):
         return False
     return any(
-        str((erro or {}).get('code', '')).lower() in ('property_value', 'validation_error', 'bad_request')
+        str((erro or {}).get('code', '')).lower() in ('property_value', 'validation_error', 'bad_request',
+             'order_items_total_amount_mismatch', 'unsupported_properties')
         for erro in erros
     )
 

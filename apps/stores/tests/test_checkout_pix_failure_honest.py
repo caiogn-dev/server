@@ -43,12 +43,23 @@ from apps.stores.models import (
 User = get_user_model()
 
 
+def _orders_rejeitando(message='invalid collector'):
+    """Resposta de recusa da Orders API (o PIX nasce em /v1/orders desde 19/08)."""
+    return (400, {'errors': [{'code': 'validation_error', 'message': message}]})
+
+
 def _mp_sdk_rejeitando(message='invalid collector'):
-    """Mock do mercadopago.SDK que recusa a criação da cobrança PIX."""
+    """SDK que também recusa a preference.
+
+    Desde o fallback de 19/08, PIX recusado tenta o link de pagamento antes de
+    desistir. Para o pedido terminar FAILED — que é o que estes testes
+    garantem — as DUAS portas precisam estar fechadas. Com o link aberto o
+    comportamento correto é outro e está coberto em test_pix_fallback_link.
+    """
     sdk = MagicMock()
-    sdk.payment().create.return_value = {
+    sdk.preference().create.return_value = {
         'status': 400,
-        'response': {'message': message},
+        'response': {'message': 'link indisponivel'},
     }
     return sdk
 
@@ -74,7 +85,9 @@ class CreatePaymentPixFailureTests(APITestCase):
     @patch('apps.stores.services.checkout_service.CheckoutService.get_payment_credentials',
            return_value={'access_token': 'TOKEN', 'provider': 'mercadopago'})
     @patch('mercadopago.SDK')
-    def test_pix_recusado_marca_pedido_failed(self, mock_sdk, _creds):
+    @patch('apps.stores.services.mp_orders.create_order',
+           return_value=_orders_rejeitando('collector inválido'))
+    def test_pix_recusado_marca_pedido_failed(self, _criar, mock_sdk, _creds):
         from apps.stores.services.checkout_service import CheckoutService
         mock_sdk.return_value = _mp_sdk_rejeitando('collector inválido')
         order = self._order()
@@ -94,7 +107,9 @@ class CreatePaymentPixFailureTests(APITestCase):
     @patch('apps.stores.services.checkout_service.CheckoutService.get_payment_credentials',
            return_value={'access_token': 'TOKEN'})
     @patch('mercadopago.SDK')
-    def test_avulso_recusado_nao_explode(self, mock_sdk, _creds):
+    @patch('apps.stores.services.mp_orders.create_order',
+           return_value=_orders_rejeitando())
+    def test_avulso_recusado_nao_explode(self, _criar, mock_sdk, _creds):
         from apps.stores.services.checkout_service import CheckoutService
         mock_sdk.return_value = _mp_sdk_rejeitando()
 

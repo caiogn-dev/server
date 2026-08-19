@@ -11,7 +11,7 @@ from django.conf import settings
 from django.utils import timezone
 from apps.stores import billing
 from apps.stores.models import StorePayment, StoreSubscription
-from apps.stores.services import subscription_service
+from apps.stores.services import mp_orders, subscription_service
 
 logger = logging.getLogger(__name__)
 
@@ -51,27 +51,40 @@ def generate_invoice(subscription, now=None):
     amount = _invoice_amount(plan, subscription.billing_cycle)
     kind = "annual" if subscription.billing_cycle == StoreSubscription.BillingCycle.ANNUAL else "monthly"
 
-    sdk = subscription_service._sdk()
-    resp = sdk.payment().create({
-        "transaction_amount": float(amount),
-        "payment_method_id": "pix",
-        "description": f"Cardapidex {plan['name']} — {store.name} ({kind})",
-        "payer": {"email": getattr(store, "owner_email", None) or f"{store.slug}@cardapidex.com.br"},
+    # Orders API (/v1/orders), igual ao PIX das lojas. A rota antiga
+    # (/v1/payments) responde 403 PolicyAgent para esta aplicação desde 19/08 —
+    # deixá-la aqui manteria a NOSSA cobrança morta depois de consertar a delas.
+    valor = str(Decimal(str(amount)).quantize(Decimal("0.01")))
+    email_pagador = (
+        getattr(store, "owner_email", None) or f"{store.slug}@cardapidex.com.br"
+    )
+    payload = {
+        "type": "online",
+        "processing_mode": "automatic",
+        "total_amount": valor,
         "external_reference": ext_ref,
-        "notification_url": f"{getattr(settings, 'BACKEND_URL', '').rstrip('/')}/webhooks/payments/mercadopago/",
-    })
-    if resp.get("status") not in (200, 201):
-        logger.error("Falha ao gerar PIX de assinatura p/ %s: %s", store.slug, resp)
-        raise RuntimeError(f"MercadoPago recusou o PIX da fatura: {resp.get('status')}")
-    body = resp["response"]
-    tx = (body.get("point_of_interaction") or {}).get("transaction_data") or {}
+        "description": f"Cardapidex {plan['name']} — {store.name} ({kind})"[:256],
+        "payer": {"email": email_pagador},
+        "transactions": {"payments": [{
+            "amount": valor,
+            "payment_method": {"id": "pix", "type": "bank_transfer"},
+        }]},
+    }
+    status_code, body = mp_orders.create_order(
+        subscription_service.access_token(), payload,
+    )
+    criado, _st, _pid, _detalhe = mp_orders.interpret(status_code, body)
+    if not criado:
+        logger.error("Falha ao gerar PIX de assinatura p/ %s: %s", store.slug, body)
+        raise RuntimeError(f"MercadoPago recusou o PIX da fatura: {status_code}")
+    tx = mp_orders.extract_pix(body)
 
     return StorePayment.objects.create(
         store=store, order=None,
         amount=amount, currency="BRL",
         payment_method=StorePayment.PaymentMethod.PIX,
         status=StorePayment.PaymentStatus.PENDING,
-        external_id=str(body.get("id", "")),
+        external_id=str(tx.get("payment_id") or ""),
         external_reference=ext_ref,
         qr_code=tx.get("qr_code", ""),
         qr_code_base64=tx.get("qr_code_base64", ""),

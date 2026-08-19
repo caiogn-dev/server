@@ -20,7 +20,10 @@ class MpOrdersTestCase(TestCase):
             customer_email='maria@x.com', customer_phone='+55 (63) 99988-7766',
             delivery_address={'zip_code': '77000-000', 'street_name': 'Rua A',
                               'number': '123', 'city': 'Palmas', 'state': 'TO'},
-            subtotal=Decimal('100.00'), total=Decimal('100.00'),
+            # 60,00 x1 + 40,00 x2 = 140,00. O total PRECISA bater com a soma
+            # dos itens: a Orders API recusa a order inteira com 400
+            # `order_items_total_amount_mismatch` quando divergem.
+            subtotal=Decimal('140.00'), total=Decimal('140.00'),
         )
         StoreOrderItem.objects.create(order=self.order, product_name='Salada Caesar',
                                       sku='SKU-1', unit_price=Decimal('60.00'), quantity=1)
@@ -119,7 +122,7 @@ class MpOrdersTestCase(TestCase):
                                           installments=1, payer_email='maria@x.com',
                                           payer_data={'identification_type': 'CPF', 'identification_number': '19119119100'})
         self.assertEqual(p['type'], 'online')
-        self.assertEqual(p['total_amount'], '100.00')
+        self.assertEqual(p['total_amount'], '140.00')
         self.assertEqual(p['external_reference'], str(self.order.id))
         pay = p['transactions']['payments'][0]
         self.assertEqual(pay['payment_method']['token'], 'TKN')
