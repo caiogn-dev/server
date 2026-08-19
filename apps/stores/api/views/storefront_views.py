@@ -1045,6 +1045,30 @@ class StoreCheckoutView(APIView):
             )
 
 
+_SAFE_MAPS_HOSTS = frozenset({
+    'maps.google.com',
+    'www.google.com',
+    'maps.app.goo.gl',
+    'goo.gl',
+    'maps.googleapis.com',
+})
+
+
+def _is_safe_maps_url(url) -> bool:
+    """Retorna True apenas para domínios Google Maps conhecidos (SSRF guard).
+
+    O filtro de string ('maps' in url) é bypassável com URLs como
+    http://169.254.169.254/maps. Esta função valida o hostname real via urlparse.
+    """
+    if not url:
+        return False
+    try:
+        host = urlparse(url).hostname or ''
+        return host.lower() in _SAFE_MAPS_HOSTS
+    except Exception:
+        return False
+
+
 def _coords_from_maps_url(url):
     """Extrai lat/lng de um link do Google Maps — inclusive shortlink.
 
@@ -1053,6 +1077,10 @@ def _coords_from_maps_url(url):
     coords da URL final. Nunca levanta — retorna None quando não dá.
     """
     if not url or 'http' not in url or ('maps' not in url and 'goo.gl' not in url):
+        return None
+    # SSRF guard: só faz request para domínios Google Maps da whitelist.
+    # O filtro acima é bypassável (ex.: http://169.254.169.254/maps).
+    if not _is_safe_maps_url(url):
         return None
     import re as _re
 
@@ -1077,11 +1105,23 @@ def _coords_from_maps_url(url):
         return hit
     try:
         import requests
-        resp = requests.get(
-            url, allow_redirects=True, timeout=5,
-            headers={'User-Agent': 'Mozilla/5.0'},
-        )
-        return _extract(resp.url) or _extract(resp.text[:8000])
+        # allow_redirects=False: validamos cada redirect pela whitelist antes
+        # de segui-lo. Com allow_redirects=True, um redirect de www.google.com
+        # para 169.254.169.254 passaria a whitelist do primeiro hop.
+        current_url = url
+        for _ in range(5):
+            resp = requests.get(
+                current_url, allow_redirects=False, timeout=5,
+                headers={'User-Agent': 'Mozilla/5.0'},
+            )
+            if resp.is_redirect:
+                location = resp.headers.get('Location', '')
+                if not _is_safe_maps_url(location):
+                    return None  # redirect para host fora da whitelist Maps
+                current_url = location
+            else:
+                return _extract(current_url) or _extract(resp.text[:8000])
+        return None  # excedeu limite de redirects
     except Exception as exc:  # rede caída não pode matar o cálculo de frete
         logger.warning('[delivery-fee] falha ao resolver link do Maps: %s', exc)
         return None
