@@ -28,6 +28,7 @@ import logging
 from django.conf import settings
 from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo, StoreProductVariant
 from .models import Lead
+from .cache import cache_publico
 from .serializers import (
     PublicStoreSerializer,
     PublicCategorySerializer,
@@ -97,6 +98,7 @@ def public_store_bio_redirect(request, slug, key):
     return HttpResponseRedirect(target)
 
 
+@cache_publico(60)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
@@ -139,6 +141,7 @@ def public_store_catalog(request, slug):
     })
 
 
+@cache_publico(60)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
@@ -152,6 +155,7 @@ def public_store_categories(request, slug):
     return Response(PublicCategorySerializer(categories, many=True, context={'request': request}).data)
 
 
+@cache_publico(60)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
@@ -182,6 +186,7 @@ def public_store_products(request, slug):
     return paginator.get_paginated_response(serializer.data)
 
 
+@cache_publico(60)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
@@ -191,6 +196,7 @@ def public_product_detail(request, slug, pk):
     return Response(PublicProductSerializer(product, context={'request': request}).data)
 
 
+@cache_publico(60)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
@@ -409,6 +415,7 @@ def owner_signup(request):
     }, status=status.HTTP_201_CREATED)
 
 
+@cache_publico(300)
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
