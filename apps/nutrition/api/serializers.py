@@ -110,6 +110,13 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at", "approved_by", "approved_at")
 
+    def validate_product(self, product):
+        user = self.context["request"].user
+        store = product.store
+        if not (user.is_superuser or store.owner_id == user.id or store.staff.filter(id=user.id).exists()):
+            raise serializers.ValidationError("Produto não autorizado.")
+        return product
+
     def get_calculation(self, obj):
         return calculate_recipe(obj.recipe) if obj.recipe_id else None
 
