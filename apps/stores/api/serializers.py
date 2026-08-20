@@ -475,6 +475,13 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
             'store', 'category', 'product_type', 'type_attributes',
             'name', 'slug', 'description', 'short_description',
             'sku', 'barcode', 'price', 'compare_at_price', 'cost_price',
+            # Promoção por dia da semana. O painel SEMPRE teve os campos e o
+            # formulário sempre os enviou — mas eles não estavam nesta lista, e
+            # o DRF descarta campo fora de `fields` SEM erro. O lojista
+            # preenchia, via "Produto atualizado!" e nada era gravado. Em 20/08
+            # só 1 dos 42 produtos da Cê Saladas tinha promoção, e essa tinha
+            # sido escrita direto no banco. Nunca deu para cadastrar pelo painel.
+            'promo_price', 'promo_weekday',
             'track_stock', 'stock_quantity', 'low_stock_threshold', 'allow_backorder',
             'status', 'featured', 'main_image', 'main_image_url', 'images',
             'meta_title', 'meta_description',
