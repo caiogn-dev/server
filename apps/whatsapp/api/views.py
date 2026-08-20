@@ -351,9 +351,12 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
             )
         except EmbeddedSignupError as exc:
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
+        except Exception:
             logger.exception('Embedded Signup falhou')
-            return Response({'error': f'Falha no onboarding: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {'error': 'Não foi possível completar o cadastro WhatsApp. Tente novamente.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return Response(WhatsAppAccountSerializer(acc).data, status=status.HTTP_201_CREATED)
 
@@ -797,14 +800,15 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._check_account_access(serializer.validated_data['account_id'])
+
         service = MessageService()
         messages = service.get_conversation_history(
             account_id=str(serializer.validated_data['account_id']),
             phone_number=serializer.validated_data['phone_number'],
             limit=serializer.validated_data.get('limit', 50)
         )
-        
+
         return Response(MessageSerializer(messages, many=True).data)
 
     @extend_schema(
@@ -817,14 +821,15 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        
+        self._check_account_access(serializer.validated_data['account_id'])
+
         service = MessageService()
         stats = service.get_message_stats(
             account_id=str(serializer.validated_data['account_id']),
             start_date=serializer.validated_data['start_date'],
             end_date=serializer.validated_data['end_date']
         )
-        
+
         return Response(stats)
 
 

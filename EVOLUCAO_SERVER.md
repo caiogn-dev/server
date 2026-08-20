@@ -888,3 +888,50 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-11
+
+**Baseline de testes:** 11 novos testes `SimpleTestCase` (sem Docker/PostgreSQL) GREEN.
+PRs abertos no gate: #318–#330 (13 PRs abertos). HEAD de `development`: `eb93055` (marketing
+e-mail estético). CI `check`/`complexity` com `runner_id=0` desde 2026-07-18 — pré-existente.
+
+**Gate anti-acúmulo:** auditoria de segurança (agente Explore) varreu `conversations/api/views.py`,
+`handover/views.py`, `automation/api/views/`, `whatsapp/api/views.py`, `webhooks/dispatcher.py`.
+Confirmado: nenhum dos 13 PRs abertos cobria as duas lacunas encontradas.
+
+**Bugs encontrados e corrigidos:** P0 IDOR em `MessageViewSet` + P1 str(exc) em embedded_signup e order_create
+
+### O que estava errado
+
+| Arquivo | Linha | Tipo | Detalhe |
+|---|---|---|---|
+| `apps/whatsapp/api/views.py` | 810–823 | **P0 IDOR** | `conversation_history`: `account_id` passado sem `_check_account_access` |
+| `apps/whatsapp/api/views.py` | 830–843 | **P0 IDOR** | `stats`: mesmo problema — métricas de qualquer conta sem gate |
+| `apps/whatsapp/api/views.py` | 354–356 | **P1** | `embedded_signup`: `f'Falha no onboarding: {exc}'` no corpo 502 |
+| `apps/stores/api/views/order_views.py` | 265–267 | **P1** | `order_create`: `payment_error = str(exc)` retornado no corpo 201 |
+
+- **IDOR conversation_history/stats:** `_check_account_access` estava presente nos 10 `send_*`/`mark_as_read` do mesmo ViewSet, mas ausente nestas duas actions. Qualquer usuário autenticado enviava `account_id` da vítima e lia histórico de mensagens + estatísticas de qualquer conta WhatsApp do sistema.
+- **embedded_signup str(exc):** `except Exception as exc` retornava `f'Falha no onboarding: {exc}'`. Erros do Meta Graph API (troca code→token, WABA inválido) podem ter tokens OAuth (`Bearer EAABs...`) na mensagem de exceção.
+- **order_create payment_error:** `payment_error = str(exc)` retornado no campo `payment_error` da resposta 201 ao criar pedido PDV com PIX. Exceções do CheckoutService (MercadoPago) podem conter detalhes de gateway.
+
+### O que foi corrigido
+
+1. `conversation_history` e `stats`: `self._check_account_access(serializer.validated_data['account_id'])` adicionado após `serializer.is_valid()` — mesmo padrão dos outros 10 actions.
+2. `embedded_signup`: mensagem genérica `'Não foi possível completar o cadastro WhatsApp. Tente novamente.'`; `{exc}` removido; detalhe apenas no `logger.exception`.
+3. `order_create`: `payment_error = 'Falha ao gerar pagamento PIX'` (string fixa).
+
+**Testes:** 11 `SimpleTestCase` em 2 arquivos novos (RED→GREEN confirmado):
+- `apps/whatsapp/tests/test_conversation_stats_idor.py` (8 testes)
+- `apps/stores/tests/test_order_create_payment_error_leak.py` (3 testes)
+
+**PR:** #331 — `bot/server-2026-08-11-message-viewset-idor-embedded-signup`
+**CI:** `check`/`complexity` falham com `runner_id=0` — infra pré-existente, comentado no PR.
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Merge dos PRs acumulados #318–#331 (14 PRs aguardando revisão).
+2. **P1** — `apps/messaging/api/views.py:68,227` — dois `except Exception as exc: return Response({"error": str(exc)})` em `MessengerAccountViewSet.sync` e `MessengerConversationViewSet.send_message`. O de `send_message` expõe erros do Messenger API (tokens de página) para usuários autenticados.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (pendência crítica do CLAUDE.md).
+4. **P2** — `apps/stores/api/views/product_views.py:422` — `is_staff` filtra combos inativos dentro do mesmo tenant (risco baixo, P3 na prática).
+

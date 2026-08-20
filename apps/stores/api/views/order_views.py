@@ -285,7 +285,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 order.refresh_from_db()
             except Exception as exc:
                 logger.warning('[ORDER_CREATE] Falha ao gerar PIX do pedido %s: %s', order.id, exc)
-                payment_error = str(exc)
+                payment_error = 'Falha ao gerar pagamento PIX'
 
         data = StoreOrderSerializer(order).data
         if payment_error:
