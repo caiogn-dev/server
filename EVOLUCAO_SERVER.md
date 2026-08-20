@@ -888,3 +888,48 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-16
+
+**Baseline de testes:** 52 testes SimpleTestCase (sem Docker/PostgreSQL) rodados com
+`config.settings.test_serializer`. 52/52 GREEN após o fix (7 FAIL→GREEN antes/depois confirmado).
+Migrações com `AddIndexConcurrently` não executáveis sem psycopg2 — pré-existente, não regressão.
+
+**Gate anti-acúmulo:** Verificados PRs abertos (#318–#335 na fila de review). Nenhum cobre
+`apps/stores/api/views/crm_views.py` nas operações de leitura (GET/list). Confirmado via
+`git log --oneline` e `grep` no HEAD de `development`.
+
+**Bug encontrado e corrigido:** IDOR de leitura em `CustomerAddressViewSet` e `TeamMemberViewSet` [P1]
+
+- **Tipo:** P1 — IDOR de leitura cross-tenant: qualquer usuário autenticado lia endereços de clientes
+  (PII física) e membros de equipe de qualquer loja sem ter acesso ao tenant.
+- **Causa raiz:** `IsStoreOwnerOrStaff.has_permission()` retorna `True` incondicionalmente quando
+  `store_pk` não está em `view.kwargs`. As rotas de CRM usam `store_slug` — portanto o gate da
+  permission class nunca executava, efetivamente abrindo leitura pública para autenticados.
+- **Vetor:** `GET /api/v1/stores/{slug-da-vítima}/crm/customers/{uuid}/addresses/` e
+  `GET /api/v1/stores/{slug-da-vítima}/team/` retornavam dados completos sem verificar acesso.
+  Operações de escrita (`perform_create/update/destroy`) já estavam protegidas por `has_store_permission`.
+  Apenas as leituras (`get_queryset`) eram vulneráveis.
+- **Arquivo corrigido:** `apps/stores/api/views/crm_views.py`
+  - `CustomerAddressViewSet.get_queryset`: adicionado gate via `user_can_access_store` com `Http404`
+    (info-hiding) antes de consultar endereços.
+  - `TeamMemberViewSet.get_queryset`: mesmo padrão — `user_can_access_store` + `Http404`.
+  - Padrão idêntico ao já aplicado em `cash_views.py` (PR #310) e `review_views.py` (PR #312).
+- **Testes:** 7 `SimpleTestCase` em `apps/stores/tests/test_crm_address_team_idor.py` (RED→GREEN):
+  - `CustomerAddressViewSetStaticTest` (3 casos): gate presente, Http404/PermissionDenied levantado,
+    não apenas filtra sem verificar acesso.
+  - `TeamMemberViewSetStaticTest` (2 casos): gate presente, Http404/PermissionDenied levantado.
+  - `IsStoreOwnerOrStaffStaticTest` (2 casos): documenta que `has_permission` verifica `store_pk`;
+    garante que ambas as ViewSets têm gate próprio (não dependem só da permission class).
+- **PR:** `bot/server-2026-08-16-crm-address-team-idor` → base `development`
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Merge dos PRs acumulados (#307–#335) aguardando revisão.
+2. **P2** — `CustomerSearchView` (`GET /stores/{slug}/crm/customers/search/?q=`) retorna usuários
+   de todos os tenants (sem filtro por tenant — apenas filtra por nome/telefone globalmente).
+   Ponto de origem: backlog do 2026-07-22 item #5.
+3. **P1** — Testes de contrato para checkout payload e pedido por token (OTP já coberto).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+
