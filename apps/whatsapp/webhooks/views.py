@@ -68,7 +68,9 @@ class WhatsAppWebhookView(APIView):
             logger.error('WHATSAPP_WEBHOOK_VERIFY_TOKEN não configurado — verificação rejeitada')
             return Response({'error': 'Webhook não configurado'}, status=403)
 
-        if mode == 'subscribe' and hmac.compare_digest(token or '', verify_token):
+        if mode == 'subscribe' and hmac.compare_digest(
+            (token or '').encode(), verify_token.encode()
+        ):
             logger.info("Webhook verificado — challenge=%s", challenge)
             return HttpResponse(challenge)
         else:

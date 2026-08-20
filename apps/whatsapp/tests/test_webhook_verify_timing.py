@@ -102,6 +102,15 @@ class TestWebhookVerifyToken(SimpleTestCase):
         resp = _get(token=_TOKEN, mode='unsubscribe')
         self.assertEqual(resp.status_code, 403)
 
+    @override_settings(WHATSAPP_WEBHOOK_VERIFY_TOKEN=_TOKEN)
+    def test_token_nao_ascii_retorna_403_sem_500(self):
+        """Token com char não-ASCII → 403, não 500 (TypeError em compare_digest str-mode)."""
+        resp = _get(token='tôken-inválido-ção')
+        self.assertEqual(
+            resp.status_code, 403,
+            "Token não-ASCII deve retornar 403, não 500 — use .encode() antes de compare_digest.",
+        )
+
 
 # ---------------------------------------------------------------------------
 # 3. Fail-closed quando verify_token não configurado
