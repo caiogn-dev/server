@@ -8,6 +8,52 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ---
 
+## 2026-08-20
+
+**Baseline de testes:** 63 testes SimpleTestCase (sem Docker/PostgreSQL) — 63/63 OK.
+Falhas pré-existentes: migrações com `AddIndexConcurrently` requerem psycopg2 — não são regressão.
+
+**Gate anti-acúmulo:** 21 PRs abertos (#318–#338) verificados.
+- PR #321 cobre `marketing/api/views.py:154-158` (EmailCampaignViewSet.send str(e)).
+- PR #331 cobre `order_views.py:288` (payment_error = str(exc)).
+- PR #337 cobre `messaging/api/views.py:68,227` (MessengerAccountViewSet.sync e send_message).
+- Nenhum PR cobre `whatsapp/webhooks/views.py:67` (timing oracle verify_token).
+
+**Bug encontrado e corrigido:** timing oracle + None==None bypass em WhatsAppWebhookView.get [P2]
+
+- **Tipo:** P2 — Timing oracle + fail-open quando WHATSAPP_WEBHOOK_VERIFY_TOKEN não configurado
+- **Arquivo:** `apps/whatsapp/webhooks/views.py:67`
+- **Problema 1 (timing oracle):** `token == verify_token` usa comparação Python normal, que
+  short-circuits ao primeiro byte diferente. Um atacante com rede dedicada pode medir o tempo de
+  resposta e aprender o `verify_token` carácter a carácter — comprometendo a autenticação de
+  todos os webhooks do WhatsApp Business.
+- **Problema 2 (fail-open):** `verify_token = getattr(settings, 'WHATSAPP_WEBHOOK_VERIFY_TOKEN', None)`.
+  Se a variável não está configurada, `verify_token = None`. Se o atacante não manda o parâmetro
+  `hub.verify_token`, `token = None`. A comparação `None == None` retorna `True` → webhook verificado
+  sem autenticação. Meta sempre manda o token, mas a falha seria explorada em ambientes novos/staging.
+- **Correção (2 linhas mudadas):**
+  1. `verify_token = getattr(..., '') or ''` + fail-closed explícito quando vazio (`not verify_token → 403`)
+  2. `if mode == 'subscribe' and hmac.compare_digest(token or '', verify_token):` — tempo constante
+  3. `import hmac` adicionado ao topo do módulo
+  4. f-string removida do logger.info (bonus — não afeta segurança)
+- **Testes:** 9 `SimpleTestCase` em `apps/whatsapp/tests/test_webhook_verify_timing.py` (RED→GREEN):
+  - Análise estática: `compare_digest` presente; `token == verify_token` ausente (2 testes)
+  - Comportamental: token correto → 200 com challenge; token errado → 403; token ausente → 403;
+    mode errado → 403 (4 testes)
+  - Fail-closed: `WHATSAPP_WEBHOOK_VERIFY_TOKEN=None` → 403; `=''` → 403; `=None` com token → 403 (3 testes)
+- **PR:** `bot/server-2026-08-20-webhook-verify-timing`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente dos 21 PRs abertos (#318–#338 + este) — alguns aguardando há semanas |
+| P2 | PII em logs: telefone em `whatsapp/intents/handlers/order.py:171`; email em `marketing/services/email_automation_service.py:146`; `core/api/lgpd_views.py:19,34`; `core/auth_views.py:396,398` |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (pendência crítica CLAUDE.md) |
+| P3 | Logger.info com f-string em `webhooks/views.py` (challenge user-controlled — risco baixo, log apenas) |
+
+---
+
 ## Histórico de execuções
 
 ### 2026-07-23
