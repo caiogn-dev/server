@@ -2,10 +2,12 @@ import re
 
 from django.db.models import Count, ExpressionWrapper, F, IntegerField, Sum, Value
 from django.db.models.functions import Coalesce, Greatest
+from django.http import Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
+from apps.core.permissions import user_can_access_store
 from .storefront_views import get_active_store, PublicWriteThrottle
 from ...models import StoreLoyaltyAccount, StoreOrder
 from ...services.checkout_service import CheckoutService
@@ -95,8 +97,8 @@ class LoyaltyAccountsView(APIView):
 
     def get(self, request, store_slug):
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
-            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+        if not user_can_access_store(request.user, store):
+            raise Http404
         threshold, _enabled = LoyaltyService._config(store)
         # ORDEM: quem está mais perto de fechar o cartão primeiro.
         #
@@ -240,8 +242,8 @@ class ConquistasView(APIView):
 
     def get(self, request, store_slug):
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
-            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+        if not user_can_access_store(request.user, store):
+            raise Http404
 
         from ...services.conquistas import painel_de_conquistas
         return Response(painel_de_conquistas(store))

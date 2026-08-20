@@ -183,4 +183,4 @@ class TestEndpointDeConquistas:
         c = APIClient()
         c.force_authenticate(user=outro)
         r = c.get(f'/api/v1/stores/{loja.slug}/conquistas/')
-        assert r.status_code == 403
+        assert r.status_code == 404

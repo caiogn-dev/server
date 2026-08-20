@@ -888,3 +888,56 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+
+---
+
+### 2026-08-10
+
+**Baseline de testes:** 8 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN após o fix.
+Deps instaladas: django, djangorestframework e derivados disponíveis no container.
+Falha pré-existente em migrações com `AddIndexConcurrently` (requerem psycopg2/PostgreSQL) — não é regressão desta sessão.
+
+**Gate anti-acúmulo:** 12 PRs abertos (#318–#329) — todos P0/P1 de varreduras de segurança anteriores.
+Nenhum deles cobre `LoyaltyAccountsView` nem `ConquistasView`.
+Confirmado via leitura do source e do backlog do EVOLUCAO_SERVER.md (PR #329).
+
+**Bug encontrado e corrigido:** `LoyaltyAccountsView` e `ConquistasView` bloqueavam staff da loja [P2]
+
+- **Tipo:** P2 — Funcionalidade quebrada: staff (funcionários) cadastrados na loja não conseguiam
+  acessar a tela de contas de fidelidade (`/stores/{slug}/loyalty/accounts/`) nem a tela de
+  conquistas (`/stores/{slug}/conquistas/`), recebendo 403. Apenas o dono e superusers conseguiam.
+- **Causa raiz:** Ambas as views usavam `store.owner_id == request.user.id` como check de acesso,
+  ignorando o padrão multi-tenant do projeto: `user_can_access_store()`, que inclui owner,
+  staff M2M e `StoreTeamMember`.
+- **Arquivo corrigido:** `apps/stores/api/views/loyalty_views.py`
+  - `LoyaltyAccountsView.get` (linha 100): substituído `owner_id == request.user.id` → `user_can_access_store`
+  - `ConquistasView.get` (linha 245): idem
+  - Resposta ao acesso negado alterada de `Response({'error': ...}, 403)` → `raise Http404`
+    (info-hiding: consistente com `cash_views`, `review_views`, `export_views`)
+- **Testes (8 SimpleTestCase):** `apps/stores/tests/test_loyalty_accounts_staff_access.py`
+  - Análise estática: padrão `owner_id == request.user.id` não está mais no source
+  - `user_can_access_store` importada no módulo
+  - Superuser recebe 200 (via mock do serviço)
+  - Não-membro recebe 403 ou `Http404`
+  - `user_can_access_store` é chamada para não-superuser em `LoyaltyAccountsView`
+  - `user_can_access_store` é chamada para não-superuser em `ConquistasView`
+  - `ConquistasView` não contém padrão legado
+  - Não-membro de `ConquistasView` recebe 403 ou `Http404`
+- **PR:** `bot/server-2026-08-10-loyalty-staff-access`
+
+**PRs abertos aguardando merge (não criados nesta sessão):**
+
+| PR | Prioridade | Descrição |
+|---|---|---|
+| #318–#329 | P0/P1 | Varredura de segurança: IDOR, PII, str(e), is_staff, webhooks HMAC, etc. |
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Merge urgente dos PRs #318–#329 (todos aguardando revisão há vários dias).
+2. **P1** — `receipt_service.py:generate_order_receipt_pdf` — complexidade ciclomática CC=56 (rank F);
+   causa falha do job `complexity` (xenon gate) para todos os PRs. Fix cirúrgico para extrair
+   subfunções e reduzir CC abaixo do threshold.
+3. **P1** — `rest_framework_nested` — compatibilidade com DRF 3.17+ quebrou o CI (`check` job).
+   Verificar se há PR aberto para atualizar a dependência.
+4. **P2** — Testes de contrato para checkout payload (fluxo completo: itens, taxa de entrega, cupom).
+5. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos.
