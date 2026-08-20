@@ -10,6 +10,50 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-13
+
+**Baseline de testes:** 15 PRs abertos (#318–#332) aguardando merge. HEAD de `development` local:
+`e1e5662` (inclui commits de gamificação, billing, BI, relatórios desde `202a2c5b` no GitHub cache).
+
+**Gate anti-acúmulo:** PR #326 (`bot/server-2026-08-05-str-exc-instagram-messaging-whatsapp`) cobre
+8 de 10 instâncias de `str(exc)` em `apps/instagram/api/views.py`. Duas lacunas confirmadas por leitura
+direta do HEAD do branch #326 (`62f60bf`):
+1. `connect()` — linha 161 retornava `raw.text if raw is not None else str(exc)` (corpo bruto Meta API)
+2. `send_message()` — linha 545 retornava `str(exc)` para qualquer exceção do serviço
+
+**Bug encontrado e corrigido:** info-disclosure dupla em `apps/instagram/api/views.py` [P1]
+
+- **Tipo:** P1 — Info-disclosure via dois vetores distintos não cobertos pelo PR #326:
+  1. `connect()` (POST /instagram/accounts/connect/): `exc.response.text` expunha corpo bruto da Meta
+     API (pode conter fbtrace_ids, detalhes de token inválido, mensagens de erro internas do Facebook)
+  2. `send_message()` (POST /instagram/conversations/{pk}/send_message/): `str(exc)` expunha detalhes
+     de `InstagramAPIException` incluindo endpoint URLs, tokens Bearer e IDs internos da Graph API
+- **Arquivo corrigido:** `apps/instagram/api/views.py`
+  - `connect()` (ex-linhas 158-165): removidos `raw = getattr(exc, "response", None)` e
+    `detail = raw.text if raw is not None else str(exc)`. Handler agora retorna mensagem estática:
+    `"Falha ao trocar code por token. Verifique se o código é válido e tente novamente."`
+  - `send_message()` (ex-linha 545): `str(exc)` substituído por
+    `"Falha ao enviar mensagem. Tente novamente."`
+  - `logger.error` e `logger.warning` preservados com `exc` para auditoria interna.
+- **Testes:** 7 `unittest.TestCase` em `apps/instagram/tests/test_instagram_str_exc_connect_send.py`
+  (sem Django/Docker — leitura direta do arquivo-fonte):
+  - `connect()`: raw.text ausente; str(exc) ausente em Response; variável `detail` ausente em Response;
+    mensagem genérica "Falha ao trocar" presente
+  - `send_message()`: str(exc) ausente em Response; mensagem genérica "Falha ao enviar" presente;
+    linhas de Response não referenciam variável `exc`
+  - Todos 7/7 passando (RED→GREEN confirmado em ambiente sem Docker)
+- **PR:** `bot/server-2026-08-13-instagram-connect-send-str-exc` → base `development`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0/P1 | Merge dos PRs acumulados #318–#332 (14+ PRs aguardando revisão) |
+| P1 | Instâncias residuais de `str(exc)` em `apps/instagram/api/views.py` linhas 248, 265, 281, 335, 363, 375, 425, 458 (cobertas pelo PR #326) — verificar merge |
+| P1 | Testes de contrato para checkout payload e pedido por token |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido |
+| P2 | N+1 em `emit_nfce_for_order` (prefetch_related para order.items__product) |
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
