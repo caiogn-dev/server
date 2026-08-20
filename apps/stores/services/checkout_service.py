@@ -481,13 +481,44 @@ class CheckoutService:
             ]
             address_text = ', '.join(filter(None, parts)) or None
 
-        logger.info(f"calculate_delivery_fee_for_payload: lat={payload.get('lat')}, lng={payload.get('lng')}, address_text={address_text}")
+        lat, lng = payload.get('lat'), payload.get('lng')
+
+        # O pin não pode contradizer o endereço escrito. Em 20/08 dois pedidos
+        # saíram com o texto certo e a coordenada a 4,45 km e 5,16 km — o
+        # entregador segue o pin, e o frete é calculado por ele. A coordenada
+        # velha entra quando a pessoa mexe no mapa, não consegue finalizar e
+        # digita na mão; e uma vez gravada no endereço salvo, repete em todo
+        # pedido seguinte (a Barbara errou igual em 14/08 e 20/08, com a mesma
+        # coordenada). A checagem vive aqui porque este é o único ponto por
+        # onde TODOS os caminhos do front passam.
+        if lat is not None and lng is not None and address_text:
+            from apps.stores.services.coerencia_do_ponto import ponto_confere_com_texto
+            try:
+                from apps.stores.services.geo.service import GeoService
+                geo = GeoService().geocode(address_text)
+                lat_txt = (geo or {}).get('lat')
+                lng_txt = (geo or {}).get('lng')
+            except Exception as exc:
+                logger.warning("Coerência do ponto: geocodificação falhou (%s) — mantendo o pin", exc)
+                lat_txt = lng_txt = None
+
+            if not ponto_confere_com_texto(lat, lng, lat_txt, lng_txt):
+                logger.warning(
+                    "PIN DESCARTADO: coordenada (%s, %s) não confere com '%s' "
+                    "(texto fica em %s, %s). Usando o endereço escrito.",
+                    lat, lng, address_text, lat_txt, lng_txt,
+                )
+                # O texto ganha: é o que a pessoa escreveu e o que ela lê na
+                # confirmação do pedido.
+                lat = lng = None
+
+        logger.info(f"calculate_delivery_fee_for_payload: lat={lat}, lng={lng}, address_text={address_text}")
         result = UnifiedDeliveryService.calculate_delivery_fee(
             store=store,
             delivery_method=payload.get('method', 'delivery'),
             address_text=address_text,
-            lat=payload.get('lat'),
-            lng=payload.get('lng'),
+            lat=lat,
+            lng=lng,
             rain_surcharge=payload.get('rain_surcharge', False),
         )
 
