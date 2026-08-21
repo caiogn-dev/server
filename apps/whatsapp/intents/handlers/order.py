@@ -168,7 +168,7 @@ class CreateOrderHandler(IntentHandler):
         return items
 
     def _create_real_order(self, items: List[Dict], message_text: str) -> HandlerResult:
-        logger.info(f"[CreateOrderHandler] Perguntando método de entrega para {self.conversation.phone_number}")
+        logger.info("[CreateOrderHandler] Perguntando método de entrega (conversa=%s)", self.conversation.id)
         return self._ask_delivery_method(items)
 
     def _show_catalog(self) -> HandlerResult:

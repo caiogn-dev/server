@@ -16,7 +16,7 @@ class LGPDViewSet(viewsets.ViewSet):
     def data_export(self, request):
         """Export all user personal data (DSAR)."""
         user = request.user
-        logger.info(f"LGPD: Data export requested by {user.email}")
+        logger.info("LGPD: Data export requested by user_id=%s", user.id)
         return Response({
             'user': {
                 'id': str(user.id),
@@ -31,7 +31,7 @@ class LGPDViewSet(viewsets.ViewSet):
     def request_deletion(self, request):
         """Request account deletion (right to be forgotten)."""
         user = request.user
-        logger.warning(f"LGPD: Deletion requested by {user.email}")
+        logger.warning("LGPD: Deletion requested by user_id=%s", user.id)
         return Response({
             'status': 'deletion_requested',
             'message': 'Account deletion request registered.',
