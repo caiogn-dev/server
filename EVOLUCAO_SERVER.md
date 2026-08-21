@@ -888,3 +888,43 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-21
+
+**Baseline de testes:** 10 testes SimpleTestCase (sem Docker/PostgreSQL) — 10/10 OK antes do fix.
+CI GitHub Actions com `runner_id=0`/`check`/`complexity` falhando por infra desde 2026-07-18 — pré-existente.
+
+**Gate anti-acúmulo:** 22 PRs abertos (#318–#339). Nenhum PR cobre os 4 pontos de PII em logs
+identificados na sessão de 2026-08-20.
+
+**Bug encontrado e corrigido:** PII (telefone e e-mail) em logs — 4 arquivos [P0 LGPD]
+
+- **Tipo:** P0 — PII em logs de servidor viola LGPD art. 46 (medidas técnicas de segurança)
+- **Arquivos corrigidos (4):**
+  1. `apps/whatsapp/intents/handlers/order.py:171`
+     — `self.conversation.phone_number` removido; substituído por `conversation.id` (interno).
+  2. `apps/marketing/services/email_automation_service.py:146`
+     — `log.recipient_email` removido; substituído por `log.id` (interno, sem PII).
+  3. `apps/core/api/lgpd_views.py:19,34`
+     — `user.email` removido em data_export e request_deletion; substituído por `user.id`.
+     (Ironia: os próprios endpoints LGPD vazavam e-mail nos logs.)
+  4. `apps/core/auth_views.py:396,398`
+     — `email` (variável local com e-mail do cliente) removido em logger.info e logger.error;
+     substituído por `user.id` + `type(e).__name__` (sem PII).
+- **Padrão:** f-strings que interpolavam campos PII diretamente; migrado para lazy `%s`
+  com identificadores internos (IDs, tipos de exceção).
+- **Testes:** 4 `SimpleTestCase` em `apps/core/tests/test_pii_in_logs.py` (RED→GREEN confirmado).
+  Varredura de código-fonte via regex — não requer banco de dados.
+  Total acumulado: 10/10 passando.
+- **PR:** `bot/server-2026-08-21-pii-logs` (#340)
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente dos 22 PRs abertos (#318–#339 + este) — alguns aguardando há semanas |
+| P1 | Testes de contrato para checkout payload e pedido por token (OTP já coberto) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo |
+

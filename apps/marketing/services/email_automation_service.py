@@ -143,7 +143,7 @@ class EmailAutomationService:
                 automation.total_sent += 1
                 automation.save(update_fields=['total_sent'])
                 
-                logger.info(f"Automation email sent: {automation.trigger_type} to {log.recipient_email}")
+                logger.info("Automation email sent: trigger=%s log_id=%s", automation.trigger_type, log.id)
                 return {'success': True, 'log_id': str(log.id)}
             else:
                 log.status = 'failed'

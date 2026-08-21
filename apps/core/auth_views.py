@@ -393,9 +393,9 @@ class RegisterView(APIView):
                             'whatsapp': phone,
                         }
                     )
-                    logger.info(f"[Register] StoreCustomer created for {email} at store '{store_slug}'")
+                    logger.info("[Register] StoreCustomer criado: user_id=%s store='%s'", user.id, store_slug)
             except Exception as e:
-                logger.error(f"[Register] Failed to create StoreCustomer for {email}: {e}")
+                logger.error("[Register] Falha ao criar StoreCustomer: user_id=%s store='%s' erro=%s", user.id, store_slug, type(e).__name__)
 
         # Trigger new user email automation for all stores (or default store)
         self._trigger_new_user_automation(user, store_slug or None)
