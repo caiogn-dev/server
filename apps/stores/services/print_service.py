@@ -3,11 +3,13 @@ Services for automatic print job generation and agent orchestration.
 """
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Iterable
 
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -15,6 +17,74 @@ from django.utils import timezone
 from apps.stores.models import StoreOrder, StorePrintAgent, StorePrintJob
 
 logger = logging.getLogger(__name__)
+
+
+# Largura/altura máxima do selo no papel de 80mm. 96 dots ~ 12mm: grande o
+# bastante para reconhecer a loja de longe, pequeno o bastante para não comer
+# meia comanda. Múltiplo de 8 porque o GS v 0 empacota 8 pixels por byte.
+LOGO_MAX_DOTS = 96
+LOGO_CACHE_SECONDS = 60 * 60 * 24
+
+
+def build_store_logo_escpos(store) -> dict | None:
+    """Logo da loja como bitmap 1 bit, pronto para o `GS v 0` do print agent.
+
+    A conversão vive aqui, e não no agent, por três motivos: o Pillow já está
+    instalado, o resultado é cacheável por loja, e o agent continua sem
+    dependência de imagem — ele só decodifica base64 e despeja os bytes.
+
+    Devolve None quando a loja não tem logo; o agent cai no nome em corpo
+    duplo e a comanda sai igual.
+    """
+    logo_file = getattr(store, 'logo', None)
+    if not logo_file:
+        return None
+
+    # O nome do arquivo entra na chave: trocar a logo no painel gera um nome
+    # novo, então o cache velho é abandonado sozinho.
+    cache_key = f'print:logo:{store.pk}:{LOGO_MAX_DOTS}:{logo_file.name}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached or None
+
+    result = None
+    try:
+        from PIL import Image, ImageOps
+
+        with logo_file.open('rb') as fh:
+            image = Image.open(fh)
+            image.load()
+
+        # PNG com transparência vira preto sólido no 'L' se não achatar antes.
+        if image.mode in ('RGBA', 'LA', 'P'):
+            image = image.convert('RGBA')
+            image = Image.alpha_composite(
+                Image.new('RGBA', image.size, (255, 255, 255, 255)), image
+            )
+
+        image = ImageOps.autocontrast(image.convert('L'), cutoff=2)
+
+        ratio = min(LOGO_MAX_DOTS / image.width, LOGO_MAX_DOTS / image.height)
+        width = max(8, (int(image.width * ratio) // 8) * 8)
+        height = max(1, int(image.height * ratio))
+        image = image.resize((width, height), Image.LANCZOS)
+
+        # convert('1') aplica Floyd-Steinberg: sem dithering, foto vira mancha.
+        bitmap = image.convert('1').tobytes()
+        # No Pillow o bit 1 é branco; no ESC/POS o bit 1 é ponto impresso.
+        inverted = bytes((~b) & 0xFF for b in bitmap)
+
+        if len(inverted) == (width // 8) * height:
+            result = {
+                'width': width,
+                'height': height,
+                'data': base64.b64encode(inverted).decode('ascii'),
+            }
+    except Exception as exc:  # noqa: BLE001 — logo quebrada não pode derrubar comanda
+        logger.warning('Logo ESC/POS falhou para a loja %s: %s', store.pk, exc)
+
+    cache.set(cache_key, result or {}, LOGO_CACHE_SECONDS)
+    return result
 
 
 def _money(value: Decimal | int | float | str | None) -> str:
@@ -51,6 +121,26 @@ def _extract_address_lines(order: StoreOrder) -> list[str]:
         return structured
     fallback = address.get('raw_address') or address.get('address')
     return [fallback] if fallback else []
+
+
+def _address_warning_lines(order: StoreOrder) -> list[str]:
+    """Aviso de endereço divergente (pin do mapa longe do que o cliente escreveu).
+
+    Só serve se chegar antes da moto sair, então vai no papel, não só na tela.
+    """
+    metadata = order.metadata if isinstance(order.metadata, dict) else {}
+    divergencia = metadata.get('endereco_divergente')
+    if not isinstance(divergencia, dict):
+        return []
+    digitado = str(divergencia.get('digitado') or '').strip()
+    pin = str(divergencia.get('pin') or '').strip()
+    if not digitado or not pin:
+        return []
+    return [
+        '!! CONFERIR ENDERECO ANTES DE SAIR !!',
+        f'Cliente escreveu: {digitado}',
+        f'Pin do mapa cai em: {pin}',
+    ]
 
 
 def _ingredient_lines(ingredients) -> list[str]:
@@ -174,6 +264,7 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
         'store': {
             'id': str(order.store_id),
             'name': order.store.name,
+            'logo_escpos': build_store_logo_escpos(order.store),
             'slug': order.store.slug,
             'phone': order.store.phone or order.store.whatsapp_number or '',
             'address': order.store.address or '',
@@ -189,6 +280,9 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'payment_method': order.payment_method or '',
             'payment_status': order.payment_status,
             'status': order.status,
+            # Canal de origem: WhatsApp, PDV e site se comportam diferente
+            # quando dá problema, e a cozinha lê isso na comanda.
+            'source': order.source or '',
             'coupon_code': order.coupon_code or '',
             'customer_notes': order.customer_notes or '',
             'internal_notes': order.internal_notes or '',
@@ -200,6 +294,10 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'email': order.customer_email if order.customer_email and not any(order.customer_email.endswith(s) for s in ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')) else '',
         },
         'address_lines': _extract_address_lines(order),
+        # Pin do mapa x endereço escrito. O painel já avisa disso na comanda
+        # que ele imprime; sem isto o papel do print agent saía sem o aviso —
+        # e é este papel que o entregador leva.
+        'address_warning': _address_warning_lines(order),
         'items': items,
         'totals': {
             'subtotal': _money(order.subtotal),
