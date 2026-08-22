@@ -14,9 +14,9 @@ from datetime import datetime, timezone as dt_tz
 from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 
-# Mock transitive deps que não fazem parte da lógica testada
-# (langchain_core, celery tasks, etc.) para que o módulo session_manager
-# possa ser importado sem infraestrutura completa.
+# Stubs de deps transientes para permitir importar session_manager sem infra.
+# Salvamos o estado atual, instalamos os stubs, primamos o cache do módulo e
+# restauramos — assim os stubs não vazam para outros testes do processo.
 _STUB_MODULES = [
     'langchain_core', 'langchain_core.messages', 'langchain_core.tools',
     'langchain_core.language_models', 'langchain_core.language_models.base',
@@ -29,15 +29,31 @@ _STUB_MODULES = [
     'apps.automation.services.unified_messaging',
     'apps.automation.services.automation_service',
 ]
+_saved_modules = {m: sys.modules.get(m) for m in _STUB_MODULES}
 for _mod in _STUB_MODULES:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+try:
+    import apps.automation.services.session_manager  # prime o cache antes de restaurar
+finally:
+    for _mod, _val in _saved_modules.items():
+        if _val is None:
+            sys.modules.pop(_mod, None)
+        else:
+            sys.modules[_mod] = _val
+
+# Sentinel para distinguir "não passou cart_data" de "passou explicitamente None".
+_MISSING = object()
 
 
-def _make_session(cart_data=None):
-    """Retorna um mock de CustomerSession com cart_data controlável."""
+def _make_session(cart_data=_MISSING):
+    """Retorna um mock de CustomerSession com cart_data controlável.
+
+    Sem argumento → cart_data={}.  cart_data=None → valor None real no mock,
+    exercitando o branch `session.cart_data or {}` dos métodos testados.
+    """
     session = MagicMock()
-    session.cart_data = cart_data if cart_data is not None else {}
+    session.cart_data = {} if cart_data is _MISSING else cart_data
     session.save = MagicMock()
     return session
 
