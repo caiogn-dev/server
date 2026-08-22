@@ -84,7 +84,7 @@ salad-builder string ingredients, str(e) em handlers. Nenhum cobre o módulo `ap
      continha `store.metadata["fiscal"]` revelando a estrutura interna de metadados do modelo Store.
      Substituída por mensagem sem referência a chave interna.
   3. `apps/fiscal/services.py` (except Exception) — `emit_nfce_for_order()` capturava qualquer
-     exceção (ConnectionError, Timeout) e armazenava `str(exc)` em `doc.error_message`, que é devolvido
+     excessão (ConnectionError, Timeout) e armazenava `str(exc)` em `doc.error_message`, que é devolvido
      na resposta HTTP. Uma `requests.ConnectionError` expõe URL interna da Focus API
      (`api.focusnfe.com.br`) e parâmetros de query com UUID do pedido.
      Substituído por mensagem genérica; erro real preservado apenas no `logger.exception`.
@@ -287,7 +287,7 @@ em `add_index concurrently` — pré-existente, não regressão.
 - **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
 - **Pontos corrigidos (3):**
   1. `StoreSlugOrIdField.to_internal_value` — adicionado tenant gate via `user_can_access_store`
-     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupons em loja alheia
+     - Usado em `StoreCouponCreateSerializer.store`; qualquer autenticado criava cupões em loja alheia
   2. `StoreDeliveryZoneCreateSerializer.validate_store` — método adicionado com mesmo tenant gate
      - Campo `store` era `PrimaryKeyRelatedField` sem check; qualquer autenticado criava zonas em loja alheia
   3. `StoreOrderCreateSerializer._resolve_store` — `not is_staff` → `not is_superuser`
@@ -351,7 +351,7 @@ PostgreSQL/Docker; migrações com `add_index concurrently` continuam falhando p
 
 ### Próximo backlog (prioridade)
 
-1. **P0** — Varredura de `str(e)` em handlers de exceção que vazam mensagens internas
+1. **P0** — Varredura de `str(e)` em handlers de excessão que vazam mensagens internas
    (PR #297 aberto: cobre `apps/orders/views.py` e `apps/campaigns/api/views.py` — aguarda merge).
    Bônus desta execução: `agents/views.py:process` também corrigido.
 2. **P1** — Testes de contrato (regressão) para OTP WhatsApp, zonas de entrega e checkout
@@ -400,7 +400,7 @@ pulados por `langchain_core` ausente no container mínimo — rodarão no Docker
 `test_order_token_rate_definida_no_settings` falha com `test_serializer` settings (config mínima
 sem o throttle `order_token`) — não é regressão desta sessão.
 
-**Bug encontrado e corrigido:** Info-disclosure via `str(e)` em handlers de exceção [P0]
+**Bug encontrado e corrigido:** Info-disclosure via `str(e)` em handlers de excessão [P0]
 
 - **Tipo:** P0 — Info-disclosure: mensagens internas (Uber API tokens, mensagens ORM, stack info)
   expostas em respostas HTTP para usuários autenticados
@@ -415,7 +415,7 @@ sem o throttle `order_token`) — não é regressão desta sessão.
      - `ContactListViewSet.import_csv` (linha 591) → `'Erro ao importar contatos do CSV.'`
 - **Risco:** Uber API pode incluir tokens Bearer, IDs de rastreamento e endpoints internos em
   mensagens de erro. ORM Django expõe nomes de colunas, chaves estrangeiras e stack traces em
-  exceções não tratadas. Com `str(e)` direto na resposta, qualquer usuário autenticado com acesso
+  excessões não tratadas. Com `str(e)` direto na resposta, qualquer usuário autenticado com acesso
   ao endpoint obtém esses dados.
 - **Testes:** 6 novos casos em `apps/orders/tests/test_delivery_str_e_leak.py` (RED→GREEN confirmado
   antes e após o fix); 4 casos em `apps/campaigns/tests.py` (skipUnless langchain_core).
@@ -770,7 +770,7 @@ que nenhum cobre `apps/campaigns/api/serializers.py`.
 | Achado | Prioridade | Arquivo | Vetor |
 |---|---|---|---|
 | Toca Delivery webhook sem auth | P0 | `apps/webhooks/dispatcher.py` + handler | POST sem assinatura → falso-entrega de pedido |
-| `CampaignSerializer.account` gravável no PATCH | P1 | `apps/campaigns/api/serializers.py` | Sequestro de conta WA da vítima para mass message |
+| `CampaignSerializer.account` gravável no PATCH | P1 | `apps/campaigns/api/serializers.py` | Sequêstro de conta WA da vítima para mass message |
 | `InstagramMediaSerializer.account` gravável | P1 | `apps/instagram/api/serializers.py` | Injeção de mídia na fila de publicação da vítima |
 | `InstagramConversationSerializer.account` gravável | P1 | `apps/instagram/api/serializers.py` | Injeção de conversa na inbox DM da vítima |
 | `ContactListSerializer.account` gravável no PATCH | P1 | `apps/campaigns/api/serializers.py` | Movimentação de PII (telefones) para tenant alheio |
@@ -888,3 +888,53 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+### 2026-08-18
+
+**Baseline de testes:** 8 novos testes SimpleTestCase GREEN (sem Docker/PostgreSQL).
+Deps instaladas via pip no container: django, drf, celery, channels. Falha pré-existente de
+`AddIndexConcurrently` (PostgreSQL) e ausência de psycopg2 — não são regressão desta sessão.
+
+**Gate anti-acúmulo:** 20 PRs abertos (#318–#337) aguardando merge. Varredura confirmou que nenhum
+cobre `apps/users/views.py:UnifiedUserActivityViewSet`. HEAD de development: `2eead0f`.
+
+**Varredura executada antes do fix:**
+- `str(e)` em respostas HTTP: residual apenas em `storefront_views.py:745` (ValueError de regra de
+  negócio intencional — mensagem própria do domínio, P3).
+- `is_staff` como bypass cross-tenant: limpo em todos os módulos verificados.
+- OTP timing attack: `hmac.compare_digest` já em uso — protegido.
+- Candidato escolhido: IDOR de leitura em `UnifiedUserActivityViewSet` (P1).
+
+**Bug encontrado e corrigido:** IDOR de leitura em `UnifiedUserActivityViewSet` — PII de clientes de todos os tenants exposto [P1]
+
+- **Tipo:** P1 — IDOR de leitura cross-tenant (PII: mensagens WA, pedidos, logins de clientes alheios)
+- **Arquivo corrigido (1):** `apps/users/views.py` — `UnifiedUserActivityViewSet.get_queryset()`
+- **Problema:** `get_queryset()` herdava `super().get_queryset()` que retorna
+  `UnifiedUserActivity.objects.all()` sem nenhum filtro de tenant.
+  - `GET /api/v1/users/activities/` → listava TODAS as atividades do banco (PII global)
+  - `GET /api/v1/users/activities/?user_id=<uuid-alheio>` → atividades de qualquer cliente
+  - `activity_type` inclui `whatsapp_message`, `site_order`, `cart_updated`, `site_login`
+    e o campo `metadata` (JSONField) pode conter pedidos, endereços, telefones, dados de sessão.
+  - O `UnifiedUserViewSet` no mesmo arquivo já tinha `_accessible_unified_users()` corretamente —
+    a inconsistência estava apenas no `UnifiedUserActivityViewSet` secundário.
+- **Correção:** `get_queryset()` agora chama `_accessible_unified_users(request.user)` para obter
+  os IDs dos usuários acessíveis ao tenant, e filtra `UnifiedUserActivity.objects.filter(user_id__in=...)`
+  antes de qualquer query param. Filtros por `user_id` e `activity_type` aplicados em cima do
+  queryset já escopado — `?user_id` de tenant alheio retorna queryset vazio (info-hiding).
+- **Testes:** 8 casos em `apps/users/test_activity_idor.py` (RED→GREEN confirmado):
+  - `TestUnifiedUserActivityViewSetIsolamento` (3): análise estática — presença de `_accessible_unified_users`
+    em `get_queryset()`, ausência de `objects.all()` no método, presença de `accessible_user_ids`
+  - `TestUnifiedUserActivityViewSetComportamento` (3): mocks comportamentais — superuser chama
+    `_accessible_unified_users`, usuário comum idem, `?user_id` de alheio ainda chama escopo de tenant primeiro
+  - `TestUnifiedUserActivityViewSetAnaliseeEstatica` (2): análise de código — filtros `user_id`
+    e `activity_type` preservados após o fix
+- **PR:** `bot/server-2026-08-18-activity-idor-tenant-scope` → base `development`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente dos PRs abertos #318–#337 (20 PRs acumulados) |
+| P1 | Varredura de IDOR em viewsets de `apps/fiscal/` (NFC-e) — ainda não inspecionados |
+| P1 | Testes de regressão para anti-loop de endereço do agente WA e cooldown UnknownHandler |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | N+1 em `UnifiedUserViewSet.get_queryset()` — `phones_in_conversations` pode ser subquery lazy |
