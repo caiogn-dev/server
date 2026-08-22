@@ -888,3 +888,66 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-22
+
+**Baseline de testes:** 18/18 testes SimpleTestCase GREEN (sem Docker/PostgreSQL/Redis).
+`config.settings.test_serializer` + `sys.modules` stubs para deps ausentes (langchain_core, etc.).
+
+**Gate anti-acúmulo:** 23 PRs abertos (#318–#340) — incluindo PR #341 aberto nesta sessão para
+branch pré-existente `bot/server-2026-08-18-activity-idor-tenant-scope`. Nenhum dos 23 PRs
+cobria `session_manager` cooldown/anti-loop. Branch `bot/server-2026-08-22-session-manager-cooldown-tests` criado sem duplicata.
+
+**Situação encontrada durante varredura:**
+- PR #341 aberto para branch pré-existente sem PR (`bot/server-2026-08-18-activity-idor-tenant-scope`):
+  corrige IDOR em `UnifiedUserActivityViewSet` — `.all()` sem escopo de tenant substituído por
+  filtro via `_accessible_unified_users(request.user).values_list('id', flat=True)`.
+- `bump_address_attempts`, `clear_address_attempts` e `should_send_unknown_helper` em
+  `apps/automation/services/session_manager.py`: **zero cobertura de testes** (commits 58986f17 e
+  7a2653ad de julho/2026, item P1 no backlog desde 2026-07-21).
+
+**Fix implementado:** Testes de regressão para contratos de cooldown/anti-loop do SessionManager [P1]
+
+- **Tipo:** P1 — Cobertura de testes em lógica crítica de controle de fluxo do bot WhatsApp
+- **Problema:** Os métodos que implementam o anti-loop de geocode e o cooldown de mensagem de ajuda
+  não tinham qualquer cobertura. Refatorações ou mudanças de constante poderiam silenciosamente
+  fazer o bot: (1) travar em loop infinito pedindo endereço; (2) disparar a mensagem "não entendi"
+  a cada mensagem não reconhecida em vez de aplicar cooldown de 15 min.
+- **Arquivo criado:** `apps/automation/tests/test_session_manager_cooldown.py`
+- **Cobertura (18 casos SimpleTestCase, todos sem DB/Docker/Redis):**
+  - `TestBumpAddressAttempts` (7 casos):
+    - Primeira falha retorna 1; segunda retorna 2; valor persiste em `cart_data`
+    - `session.save()` é chamado; `cart_data=None` tratado como vazio; sem sessão → retorna 0
+    - Acumulação correta ao atingir limiar 2 (anti-loop do geocode)
+  - `TestClearAddressAttempts` (4 casos):
+    - Chave removida após geocode bem-sucedido; ausência da chave não lança exceção
+    - Sem sessão não lança; campos não-relacionados preservados em `cart_data`
+  - `TestShouldSendUnknownHelper` (7 casos):
+    - Primeira mensagem retorna True; dentro de cooldown (10 min < 15 min) retorna False
+    - Após expirar cooldown (16 min > 15 min) retorna True; timestamp atualizado ao enviar
+    - Sem sessão → fail-open (True) para não silenciar indefinidamente
+    - Timestamp corrompido tratado sem exceção (tratado como ausente)
+    - `cooldown_seconds` customizável (testado com 60s e 30s)
+- **Técnica:** `object.__new__(SessionManager)` + atributos manuais; `get_or_create_session`
+  mockado; `django.utils.timezone.now` patchado para controle determinístico de tempo.
+  `sys.modules` stubs para `langchain_core`, `langchain_openai`, `langchain_anthropic` e
+  demais deps transientes — isolam o teste sem infraestrutura.
+- **Resultado:** 18/18 GREEN (confirmado antes do push).
+- **PR:** `bot/server-2026-08-22-session-manager-cooldown-tests` → base `development`
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Merge dos PRs acumulados #318–#342 (vários aguardando revisão).
+2. **P1** — `UnifiedUserActivity` sem proveniência de tenant: quando um `UnifiedUser` é
+   `StoreCustomer` de múltiplas lojas, o owner de qualquer uma delas vê atividades das outras.
+   Fix: adicionar `store = FK(Store, null=True)` em `UnifiedUserActivity`, preencher em todos
+   os pontos de criação, filtrar por `store_id__in=accessible_store_ids(user)`. (Identificado
+   via revisão Codex em PR #341 — respondido no thread.)
+3. **P1** — Testes de contrato para checkout payload completo (itens, taxa, cupom, pagamento).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+5. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de
+   outros tenants sem escopo de tenant.
+6. **P2** — Suporte a itens customizados de salada (Flutter builder) — verificar cobertura dos
+   PRs de `receipt_service` + `print_service` e integração com checkout.
+
