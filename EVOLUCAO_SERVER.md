@@ -938,11 +938,16 @@ cobria `session_manager` cooldown/anti-loop. Branch `bot/server-2026-08-22-sessi
 
 **Próximo backlog priorizado:**
 
-1. **P1** — Merge dos PRs acumulados #318–#341 (vários aguardando revisão).
-2. **P1** — Testes de contrato para checkout payload completo (itens, taxa, cupom, pagamento).
-3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
-4. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de
+1. **P1** — Merge dos PRs acumulados #318–#342 (vários aguardando revisão).
+2. **P1** — `UnifiedUserActivity` sem proveniência de tenant: quando um `UnifiedUser` é
+   `StoreCustomer` de múltiplas lojas, o owner de qualquer uma delas vê atividades das outras.
+   Fix: adicionar `store = FK(Store, null=True)` em `UnifiedUserActivity`, preencher em todos
+   os pontos de criação, filtrar por `store_id__in=accessible_store_ids(user)`. (Identificado
+   via revisão Codex em PR #341 — respondido no thread.)
+3. **P1** — Testes de contrato para checkout payload completo (itens, taxa, cupom, pagamento).
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+5. **P2** — `stores/api/views/crm_views.py:71–81` — `CustomerSearchView` retorna usuários de
    outros tenants sem escopo de tenant.
-5. **P2** — Suporte a itens customizados de salada (Flutter builder) — verificar cobertura dos
+6. **P2** — Suporte a itens customizados de salada (Flutter builder) — verificar cobertura dos
    PRs de `receipt_service` + `print_service` e integração com checkout.
 
