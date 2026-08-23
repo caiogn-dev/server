@@ -341,7 +341,17 @@ class ConversationViewSet(viewsets.ModelViewSet):
                     {'error': 'Agent not found'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-        
+            # is_staff NÃO concede acesso cross-tenant; só superuser pode ser
+            # atribuído a conversas de qualquer conta sem verificação.
+            if not agent.is_superuser:
+                from apps.core.permissions import accessible_whatsapp_account_ids
+                agent_account_ids = set(accessible_whatsapp_account_ids(agent))
+                if conversation.account_id not in agent_account_ids:
+                    return Response(
+                        {'error': 'Agent does not have access to this conversation'},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+
         conversation = service.switch_to_human(str(conversation.id), agent)
         return Response(ConversationSerializer(conversation).data)
 

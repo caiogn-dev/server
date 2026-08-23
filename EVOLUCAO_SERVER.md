@@ -10,6 +10,51 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-23
+
+**Gate anti-acúmulo:** 25 PRs abertos (#318–#342) mapeados; nenhum cobre `ConversationViewSet.switch_to_human`.
+HEAD de `development`: `b4ffa4f` (feat frete: resolve link curto do Maps).
+
+**Bug encontrado e corrigido:** `switch_to_human` sem verificação de acesso cross-tenant [P2]
+
+- **Tipo:** P2 — IDOR: usuário autenticado de tenant A pode atribuir qualquer conversa a um agente de tenant B,
+  expondo histórico e PII de clientes de um tenant para um usuário de outro tenant.
+  Também funciona como user-ID oracle (404 = ID inexistente, 200 = usuário confirmado).
+- **Arquivo corrigido:** `apps/conversations/api/views.py` — `ConversationViewSet.switch_to_human` (~linha 335)
+- **Problema:** `switch_to_human` aceitava `agent_id` via POST e chamava `User.objects.get(id=agent_id)`
+  sem nenhuma verificação de que o agente tem acesso à conta WhatsApp da conversa.
+  Em contraste, `assign_agent` no mesmo ViewSet (linhas ~380–388) já possuía esse guarda desde sessão anterior.
+- **Correção:** adicionado o mesmo bloco de verificação de `assign_agent`:
+  - Se `agent.is_superuser` → bypass (acesso cross-tenant concedido, convenção do projeto).
+  - Caso contrário: `accessible_whatsapp_account_ids(agent)` e `HTTP_403_FORBIDDEN` se a conta não constar.
+- **Testes:** 4 `SimpleTestCase` em `apps/conversations/tests/test_switch_to_human_idor.py` (RED→GREEN):
+  1. `is_superuser` presente na fonte de `switch_to_human`
+  2. `accessible_whatsapp_account_ids` chamado
+  3. `HTTP_403_FORBIDDEN` retornado quando sem acesso
+  4. `agent.is_staff` não usado como bypass
+- **PR:** `bot/server-2026-08-23-switch-to-human-idor`
+
+**Varredura adicional (agente especializado):** encontradas mais issues não cobertas por PRs existentes:
+
+| Prioridade | Arquivo | Issue |
+|---|---|---|
+| P2 | `apps/automation/api/views/report_views.py:69` | `ReportScheduleViewSet` — `Q(created_by=user)` permite que usuário removido do tenant dispare nova geração de relatório via `run_now` |
+| P2 | `apps/automation/api/views/report_views.py:213` | `GeneratedReportViewSet.resend_email` — mesma residual-access; `recipients` é controlado pelo atacante |
+| P3 | `apps/automation/api/views/flow_views.py:132,158` | `FlowSessionViewSet`/`FlowExecutionLogViewSet` usam M2M `store__staff` legado; usuários via `StoreTeamMember` recebem lista vazia silenciosa |
+| P3 | `apps/automation/api/views/scheduled_message_views.py:38` | `ScheduledMessageViewSet.get_queryset` filtra só por `account__owner`; team members que criaram agendamentos não conseguem listá-los |
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge urgente dos PRs abertos (25 PRs #318–#342, todos sem merge) |
+| P2 | `ReportScheduleViewSet` — remover `Q(created_by=user)` do `get_queryset`; ou restringir `run_now`/`resend_email` a `account_id__in` somente |
+| P2 | `GeneratedReportViewSet.resend_email` — validar que o usuário ainda tem acesso à conta antes de enviar relatório histórico |
+| P3 | `FlowSessionViewSet`/`FlowExecutionLogViewSet` — migrar de `store__staff` M2M para `accessible_store_ids(user)` |
+| P3 | `ScheduledMessageViewSet.get_queryset` — alinhar com o padrão `Q(account__stores__owner=user) | Q(account__stores__staff=user)` |
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
