@@ -305,20 +305,22 @@ def user_can_access_store(user, store) -> bool:
 def accessible_whatsapp_account_ids(user):
     """
     Return a QuerySet of WhatsApp account IDs the user can access.
-    Staff/superusers get all active accounts.
-    Regular users get accounts they own directly or via their stores.
+    Superusers get all active accounts. Regular users get accounts they own
+    directly or via stores they can access (owner, staff M2M, or StoreTeamMember).
+
+    Usa accessible_store_ids() como fonte canônica de lojas acessíveis para não
+    divergir do modelo de permissões de loja (StoreTeamMember incluído).
     """
     from django.db.models import Q
     from apps.whatsapp.models import WhatsAppAccount
     qs = WhatsAppAccount.objects.filter(is_active=True)
     if user.is_superuser:
         return qs.values_list('id', flat=True)
+    store_ids = accessible_store_ids(user)
     return qs.filter(
         Q(owner=user) |
-        Q(stores__owner=user) |
-        Q(stores__staff=user) |
-        Q(company_profile__store__owner=user) |
-        Q(company_profile__store__staff=user)
+        Q(stores__id__in=store_ids) |
+        Q(company_profile__store__id__in=store_ids)
     ).distinct().values_list('id', flat=True)
 
 
