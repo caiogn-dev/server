@@ -120,3 +120,18 @@ def aplicar_frete_gratis(cotacao: dict, store, subtotal=None) -> dict:
     cotacao['delivery_fee'] = 0.0
     cotacao['frete_gratis'] = info
     return cotacao
+
+
+def promocao_para_vitrine(store) -> dict | None:
+    """Bloco que o cardápio consome, ou None quando não há promoção ativa.
+
+    A vitrine não pode zerar frete (não conhece o carrinho nem a distância),
+    mas pode ANUNCIAR e mostrar quanto falta — é o que puxa o ticket.
+    """
+    promo = promocao_de_frete(store)
+    if not promo:
+        return None
+    return {
+        'ate_km': float(promo['ate_km']),
+        'pedido_minimo': float(promo['pedido_minimo']),
+    }

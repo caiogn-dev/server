@@ -66,6 +66,7 @@ from apps.stores import billing as billing_service
 from apps.stores.services.delivery_quote_service import delivery_quote_service
 from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
+from apps.stores.services.frete_promocional import promocao_para_vitrine
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
@@ -490,6 +491,11 @@ class StoreAppConfigView(APIView):
                 'free_delivery_threshold': float(store.free_delivery_threshold or 0) if store.free_delivery_threshold else None,
                 'max_distance_km': float(metadata.get('max_delivery_distance_km', 20)),
                 'max_time_minutes': float(metadata.get('max_delivery_time_minutes', 45)),
+                # Promoção de frete grátis por raio. Vai como bloco próprio em
+                # vez de reaproveitar `free_delivery_threshold`, que é só valor
+                # e não conhece distância: a vitrine precisa dizer "até 4 km",
+                # senão promete frete grátis para quem mora longe.
+                'frete_gratis': promocao_para_vitrine(store),
             },
             'branding': {
                 'primary_color': store.primary_color or '',
