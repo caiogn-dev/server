@@ -30,6 +30,7 @@ from apps.stores.models import (
     StoreCoupon
 )
 from apps.stores.services.delivery_quote_service import DeliveryQuoteService
+from apps.stores.services.frete_promocional import aplicar_frete_gratis
 from .cart_service import cart_service
 
 logger = logging.getLogger(__name__)
@@ -426,7 +427,7 @@ class CheckoutService:
         return DeliveryQuoteService.calculate_for_distance(store, distance_km=distance_km, zip_code=zip_code)
     
     @staticmethod
-    def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
+    def _calculate_dynamic_fee(store: Store, distance_km: Decimal = None, subtotal: Decimal = None) -> dict:
         """Calculate delivery fee dynamically based on distance.
 
         Delega a DeliveryQuoteService.calculate_dynamic_fee — a fonte única da
@@ -446,7 +447,7 @@ class CheckoutService:
           delivery_max_km        (default 16.0 — acima disso retorna fee=None)
           delivery_max_fee       (optional legacy cap; when present, caps fee instead of out-of-range)
         """
-        return DeliveryQuoteService.calculate_dynamic_fee(store, distance_km)
+        return DeliveryQuoteService.calculate_dynamic_fee(store, distance_km, subtotal)
 
     @staticmethod
     def normalize_delivery_quote(info: dict, route: dict = None) -> dict:
@@ -938,6 +939,14 @@ class CheckoutService:
             subtotal += item.subtotal
         for combo_item in cart.combo_items.select_related('combo').all():
             subtotal += combo_item.subtotal
+
+        # Frete grátis promocional. Só AQUI o subtotal do carrinho existe: a
+        # taxa pode ter chegado pronta por qualquer um dos caminhos acima
+        # (WhatsApp, GeoService, precomputed), então a promoção é aplicada uma
+        # vez só, no ponto onde o pedido de fato nasce. Sem distância conhecida
+        # a promoção não pega — não dá para afirmar que o cliente está no raio.
+        delivery_info = aplicar_frete_gratis(delivery_info, store, subtotal)
+        delivery_fee = Decimal(str(delivery_info['fee']))
 
         customer_record = CustomerIdentityService.sync_checkout_customer(
             store=store,

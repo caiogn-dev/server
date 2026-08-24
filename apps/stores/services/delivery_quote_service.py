@@ -32,11 +32,14 @@ def delivery_address_text(delivery_address: dict) -> str:
     )
 
 
+from apps.stores.services.frete_promocional import aplicar_frete_gratis
+
+
 class DeliveryQuoteService:
     """Resolve and normalize delivery quotes from every supported input."""
 
     @staticmethod
-    def calculate_dynamic_fee(store: Store, distance_km: Decimal = None) -> dict:
+    def calculate_dynamic_fee(store: Store, distance_km: Decimal = None, subtotal: Decimal = None) -> dict:
         """FONTE ÚNICA da matemática de taxa dinâmica por distância.
 
         GeoService e CheckoutService afunilam tudo aqui — não reimplementar fórmula
@@ -46,6 +49,11 @@ class DeliveryQuoteService:
           taxa = base + (distância - flat_km)*per_km   acima disso (per_km default 1.00)
           distância > max_km (default 16) → fee=None (a combinar), salvo se delivery_max_fee
             estiver setado (nesse caso a taxa é limitada por ele em vez de virar None).
+
+        No fim, `metadata['frete_gratis']` pode zerar a taxa dentro de um raio.
+        Sem `subtotal`, uma promoção com pedido mínimo é só ANUNCIADA — quem não
+        conhece o carrinho não pode prometer frete grátis. Ver
+        `apps.stores.services.frete_promocional`.
         """
         metadata = store.metadata or {}
         base_fee = Decimal(str(metadata.get('delivery_base_fee', store.default_delivery_fee or '9.00')))
@@ -63,7 +71,7 @@ class DeliveryQuoteService:
         max_fee = Decimal(str(max_fee_raw)) if max_fee_raw not in (None, '') else None
 
         if distance_km is None:
-            return {
+            return aplicar_frete_gratis({
                 'fee': float(base_fee),
                 'delivery_fee': float(base_fee),
                 'is_valid': True,
@@ -73,11 +81,11 @@ class DeliveryQuoteService:
                 'estimated_days': 0,
                 'distance_km': None,
                 'calculation': 'dynamic',
-            }
+            }, store, subtotal)
 
         distance = Decimal(str(distance_km))
         if max_fee is None and distance > max_km:
-            return {
+            return aplicar_frete_gratis({
                 'fee': None,
                 'delivery_fee': None,
                 'is_valid': False,
@@ -89,7 +97,7 @@ class DeliveryQuoteService:
                 'calculation': 'out_of_range',
                 'reason': 'out_of_range',
                 'message': 'Distância acima de 16 km — entrar em contato para combinar frete',
-            }
+            }, store, subtotal)
 
         # Segundo degrau (opcional): acima de `delivery_far_km` o quilômetro
         # custa `delivery_fee_per_km_far`. Sem essas chaves o cálculo é o de
@@ -126,7 +134,7 @@ class DeliveryQuoteService:
             fee = min(fee, max_fee)
 
         fee = fee.quantize(Decimal('0.01'))
-        return {
+        return aplicar_frete_gratis({
             'fee': float(fee),
             'delivery_fee': float(fee),
             'is_valid': True,
@@ -136,10 +144,10 @@ class DeliveryQuoteService:
             'estimated_days': 0,
             'distance_km': float(distance),
             'calculation': 'dynamic',
-        }
+        }, store, subtotal)
 
     @staticmethod
-    def calculate_for_distance(store: Store, distance_km: Decimal = None, zip_code: str = None) -> dict:
+    def calculate_for_distance(store: Store, distance_km: Decimal = None, zip_code: str = None, subtotal: Decimal = None) -> dict:
         if distance_km is not None:
             logger.info("Calculating delivery fee for distance: %s km", distance_km)
             distance = Decimal(str(distance_km))
@@ -156,7 +164,7 @@ class DeliveryQuoteService:
                         fee = Decimal(str(zone.delivery_fee or 0))
                         logger.info("Zone matched: %s (min=%s, max=%s) → fee R$%.2f",
                                     zone.name, zone.min_km, zone.max_km, fee)
-                        return {
+                        return aplicar_frete_gratis({
                             'fee': float(fee),
                             'delivery_fee': float(fee),
                             'is_valid': True,
@@ -167,9 +175,9 @@ class DeliveryQuoteService:
                             'estimated_days': zone.estimated_days or 0,
                             'distance_km': float(distance),
                             'calculation': 'zone_based',
-                        }
+                        }, store, subtotal)
 
-        return DeliveryQuoteService.calculate_dynamic_fee(store, distance_km)
+        return DeliveryQuoteService.calculate_dynamic_fee(store, distance_km, subtotal)
 
     @staticmethod
     def normalize(info: dict, route: dict = None) -> dict:
