@@ -135,3 +135,16 @@ def promocao_para_vitrine(store) -> dict | None:
         'ate_km': float(promo['ate_km']),
         'pedido_minimo': float(promo['pedido_minimo']),
     }
+
+
+def subtotal_ou_none(carrinho):
+    """Subtotal do carrinho como Decimal, ou None quando não dá para saber.
+
+    None e zero são coisas diferentes aqui: zero é "carrinho vazio, não alcança
+    o mínimo"; None é "não sei", e a promoção então só é anunciada. Devolver
+    zero por engano faria a cotação afirmar que o cliente não alcançou o mínimo
+    quando, na verdade, ninguém perguntou ao carrinho.
+    """
+    if carrinho is None:
+        return None
+    return _decimal(getattr(carrinho, 'subtotal', None))

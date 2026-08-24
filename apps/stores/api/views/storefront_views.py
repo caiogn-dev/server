@@ -66,7 +66,11 @@ from apps.stores import billing as billing_service
 from apps.stores.services.delivery_quote_service import delivery_quote_service
 from apps.stores.services.geo import geo_service
 from apps.stores.services.realtime_service import broadcast_order_event
-from apps.stores.services.frete_promocional import promocao_para_vitrine
+from apps.stores.services.frete_promocional import (
+    aplicar_frete_gratis,
+    promocao_para_vitrine,
+    subtotal_ou_none,
+)
 from ..serializers import (
     StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
@@ -1135,9 +1139,36 @@ class StoreDeliveryFeeView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_classes = [PublicWriteThrottle]
 
+    def _subtotal_do_carrinho(self, request, store):
+        """Subtotal do carrinho DESTE visitante, para a promoção de frete grátis.
+
+        Vem do servidor, nunca do cliente: o endpoint é AllowAny e um subtotal
+        forjado por query param viraria frete grátis anunciado na tela.
+        """
+        try:
+            from apps.stores.models import StoreCart
+
+            # Leitura pura: `CartService.get_or_create_cart` CRIA carrinho, e
+            # cotar frete não pode gravar uma linha por visitante que só
+            # digitou o endereço.
+            carrinhos = StoreCart.objects.filter(store=store, is_active=True)
+            if request.user.is_authenticated:
+                cart = carrinhos.filter(user=request.user).first()
+            else:
+                chave = get_request_cart_key(request)
+                cart = carrinhos.filter(
+                    session_key=chave, user__isnull=True
+                ).first() if chave else None
+            return subtotal_ou_none(cart)
+        except Exception as e:
+            # Sem carrinho a cotação segue viva, só sem zerar o frete.
+            logger.warning("Frete grátis: subtotal do carrinho indisponível (%s)", e)
+            return None
+
     def _calculate(self, request, store_slug):
         """Calculate delivery fee from either query params or JSON payload."""
         store = get_active_store(store_slug)
+        subtotal = self._subtotal_do_carrinho(request, store)
 
         lat = request.data.get('lat') or request.query_params.get('lat')
         lng = request.data.get('lng') or request.query_params.get('lng')
@@ -1159,8 +1190,11 @@ class StoreDeliveryFeeView(APIView):
                         store,
                         distance_km=Decimal(str(distance_km)),
                         zip_code=zip_code,
+                        subtotal=subtotal,
                     )
-                    return Response(delivery_quote_service.normalize(delivery_info))
+                    return Response(aplicar_frete_gratis(
+                        delivery_quote_service.normalize(delivery_info), store, subtotal,
+                    ))
                 except Exception as e:
                     logger.error(f"Delivery fee calculation error: {e}")
                     return Response(
@@ -1195,7 +1229,12 @@ class StoreDeliveryFeeView(APIView):
                 lng=float(lng) if lng else None,
                 address_text=address or zip_code or None,
             )
-            return Response(delivery_quote_service.normalize(delivery_info))
+            # O UnifiedDeliveryService devolve a taxa como número e monta o
+            # próprio dicionário, então a promoção se perderia lá dentro: ela
+            # é aplicada aqui, sobre a cotação já normalizada.
+            return Response(aplicar_frete_gratis(
+                delivery_quote_service.normalize(delivery_info), store, subtotal,
+            ))
         except Exception as e:
             logger.error(f"Delivery fee calculation error: {e}")
             return Response(

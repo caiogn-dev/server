@@ -184,3 +184,54 @@ class CotacaoComPromocaoTests(SimpleTestCase):
         )
         self.assertEqual(cotacao['fee'], 9.0)
         self.assertNotIn('frete_gratis', cotacao)
+
+
+class SubtotalDoCarrinhoTests(SimpleTestCase):
+    """O subtotal da COTAÇÃO vem do carrinho no servidor, nunca do cliente.
+
+    O checkout mostrava "Taxa: R$ 8,00" num pedido de R$ 95 dentro de 4 km: os
+    endpoints de cotação não passavam subtotal, então a promoção só era
+    aplicada no `_create_order_atomic` — tarde demais para a tela.
+
+    O valor não pode vir por query param: quem chama é AllowAny, e um subtotal
+    forjado viraria frete grátis anunciado na tela.
+    """
+
+    def test_carrinho_ausente_devolve_none_em_vez_de_zero(self):
+        from apps.stores.services.frete_promocional import subtotal_ou_none
+
+        # zero significaria "carrinho vazio, não alcança o mínimo"; None
+        # significa "não sei", que é a verdade quando não há carrinho.
+        self.assertIsNone(subtotal_ou_none(None))
+
+    def test_valor_do_carrinho_vira_decimal(self):
+        from apps.stores.services.frete_promocional import subtotal_ou_none
+
+        class CarrinhoFalso:
+            subtotal = 95.0
+
+        self.assertEqual(subtotal_ou_none(CarrinhoFalso()), Decimal('95.0'))
+
+    def test_carrinho_sem_subtotal_nao_quebra_a_cotacao(self):
+        from apps.stores.services.frete_promocional import subtotal_ou_none
+
+        class CarrinhoTorto:
+            subtotal = None
+
+        self.assertIsNone(subtotal_ou_none(CarrinhoTorto()))
+
+    def test_cotacao_normalizada_zera_com_o_subtotal_do_carrinho(self):
+        # é a forma exata que sai de DeliveryQuoteService.normalize()
+        normalizada = {
+            'fee': 8.0,
+            'delivery_fee': 8.0,
+            'is_valid': True,
+            'distance_km': 1.2,
+            'zone_name': 'Próximo',
+            'calculation': 'dynamic',
+        }
+        saida = aplicar_frete_gratis(normalizada, _promo(pedido_minimo=55), Decimal('95'))
+
+        self.assertEqual(saida['fee'], 0.0)
+        self.assertEqual(saida['delivery_fee'], 0.0)
+        self.assertTrue(saida['frete_gratis']['aplicado'])
