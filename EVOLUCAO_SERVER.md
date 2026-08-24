@@ -888,3 +888,35 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-24
+
+**Varreduras antes de escolher o fix:**
+- PRs abertos (#307–#316): nenhum cobria N+1 em `order_service.py`.
+- `is_staff` bypass: nenhum encontrado em sessões anteriores (limpo).
+- N+1 em `cancel_order` e `generate_order_summary`: **encontrado**.
+
+**Bug encontrado e corrigido:** N+1 queries em cancelamento de pedido e geração de resumo [P2]
+
+- **Tipo:** P2 — Performance — N queries extras por pedido (1 query por item/combo sem prefetch)
+- **Arquivos:**
+  - `apps/stores/services/order_service.py` — métodos `cancel_order` e `generate_order_summary`
+- **Problema:**
+  - `cancel_order` (restore_stock=True): iterava `order.items.all()` e acessava `item.product.track_stock`
+    (FK sem prefetch = N queries extras) e `order.combo_items.all()` + `combo_item.combo.track_stock`
+    (= M queries extras). Para 10 itens + 5 combos: 16 queries em vez de 2.
+  - `generate_order_summary`: iterava `order.combo_items.all()` + `combo_item.combo.name` (M queries extras).
+- **Correção:** `select_related('product')` nos items e `select_related('combo')` nos combo_items
+  em ambos os métodos. Reduz de O(N+M) para O(1) queries nos loops.
+- **Testes:** 7 testes em `test_order_service_select_related.py` (3 análise estática + 2 unitários
+  para cada método). RED→GREEN confirmado.
+- **PR:** #344 — `bot/server-2026-08-24-order-service-n1-select-related`
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Merge dos PRs acumulados #307–#316 + #344.
+2. **P1** — Testes de contrato para checkout payload e pedido por token (OTP já coberto).
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
+

@@ -305,13 +305,13 @@ class OrderService:
         # Restore stock if requested — use F() to avoid read-modify-write race conditions
         if restore_stock:
             from apps.stores.models import StoreProduct, StoreCombo
-            for item in order.items.all():
+            for item in order.items.select_related('product').all():
                 if item.product_id and item.product.track_stock:
                     StoreProduct.objects.filter(id=item.product_id).update(
                         stock_quantity=F('stock_quantity') + item.quantity
                     )
 
-            for combo_item in order.combo_items.all():
+            for combo_item in order.combo_items.select_related('combo').all():
                 if combo_item.combo_id and combo_item.combo.track_stock:
                     StoreCombo.objects.filter(id=combo_item.combo_id).update(
                         stock_quantity=F('stock_quantity') + combo_item.quantity
@@ -514,7 +514,7 @@ class OrderService:
         for item in order.items.all():
             lines.append(f"  • {item.quantity}x {item.product_name} - R$ {item.subtotal:.2f}")
         
-        for combo_item in order.combo_items.all():
+        for combo_item in order.combo_items.select_related('combo').all():
             if getattr(combo_item, 'order_item_id', None):
                 continue
             combo_name = combo_item.combo.name if combo_item.combo else combo_item.display_data.get('combo_name', 'Combo')
