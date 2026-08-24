@@ -49,6 +49,9 @@ def _user_can_use_account(user, account_id):
     return str(account_id) in {str(i) for i in accessible_whatsapp_account_ids(user)}
 
 
+from apps.campaigns.services.contatos import contatos_para_resposta, mesclar_contato
+
+
 class SystemContactsView(APIView):
     """
     Get contacts from the system (conversations, orders, subscribers).
@@ -88,7 +91,9 @@ class SystemContactsView(APIView):
         limit = int(request.query_params.get('limit', 100))
         user = request.user
 
-        contacts = {}  # Use dict to deduplicate by phone
+        # Chaveado pela forma canônica do telefone: a mesma pessoa chega por
+        # origens diferentes com/sem DDI e com/sem o nono dígito.
+        contacts = {}
 
         # Resolve accessible account IDs for this user
         from apps.stores.models import Store
@@ -113,13 +118,9 @@ class SystemContactsView(APIView):
                 ).order_by('-last_activity')[:limit]
 
                 for conv in conversations:
-                    phone = conv['phone_number']
-                    if phone and phone not in contacts:
-                        contacts[phone] = {
-                            'phone': phone,
-                            'name': conv['contact_name'] or '',
-                            'source': 'conversation'
-                        }
+                    mesclar_contato(
+                        contacts, conv['phone_number'], conv['contact_name'], 'conversation'
+                    )
             except Exception as e:
                 logger.warning(f"Error fetching conversations: {e}")
 
@@ -154,13 +155,9 @@ class SystemContactsView(APIView):
                 ).order_by('-last_order')[:limit]
                 
                 for order in orders:
-                    phone = order['customer_phone']
-                    if phone and phone not in contacts:
-                        contacts[phone] = {
-                            'phone': phone,
-                            'name': order['customer_name'] or '',
-                            'source': 'order'
-                        }
+                    mesclar_contato(
+                        contacts, order['customer_phone'], order['customer_name'], 'order'
+                    )
             except Exception as e:
                 logger.warning(f"Error fetching orders: {e}")
         
@@ -176,14 +173,9 @@ class SystemContactsView(APIView):
                 ).order_by('-created_at')[:limit]
                 
                 for sub in subscribers:
-                    phone = sub['phone']
-                    if phone and phone not in contacts:
-                        name = sub['name'] or sub['email'] or ''
-                        contacts[phone] = {
-                            'phone': phone,
-                            'name': name,
-                            'source': 'subscriber'
-                        }
+                    mesclar_contato(
+                        contacts, sub['phone'], sub['name'] or sub['email'], 'subscriber'
+                    )
             except Exception as e:
                 logger.warning(f"Error fetching subscribers: {e}")
         
@@ -205,18 +197,14 @@ class SystemContactsView(APIView):
                 ).order_by('-last_activity')[:limit]
                 
                 for session in sessions:
-                    phone = session['phone_number']
-                    if phone and phone not in contacts:
-                        contacts[phone] = {
-                            'phone': phone,
-                            'name': session['customer_name'] or '',
-                            'source': 'session'
-                        }
+                    mesclar_contato(
+                        contacts, session['phone_number'], session['customer_name'], 'session'
+                    )
             except Exception as e:
                 logger.warning(f"Error fetching sessions: {e}")
         
         # Convert to list and limit
-        contact_list = list(contacts.values())[:limit]
+        contact_list = contatos_para_resposta(contacts, limit)
         
         return Response({
             'count': len(contact_list),
