@@ -350,6 +350,7 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                 store=store, owner=request.user, pin=pin,
             )
         except EmbeddedSignupError:
+            logger.exception('Embedded Signup: EmbeddedSignupError')
             return Response(
                 {'error': 'Não foi possível completar o cadastro WhatsApp. Verifique os dados e tente novamente.'},
                 status=status.HTTP_400_BAD_REQUEST,
