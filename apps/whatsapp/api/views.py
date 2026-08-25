@@ -349,11 +349,17 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
                 code=code, waba_id=waba_id, phone_number_id=phone_number_id,
                 store=store, owner=request.user, pin=pin,
             )
-        except EmbeddedSignupError as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as exc:
+        except EmbeddedSignupError:
+            return Response(
+                {'error': 'Não foi possível completar o cadastro WhatsApp. Verifique os dados e tente novamente.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
             logger.exception('Embedded Signup falhou')
-            return Response({'error': f'Falha no onboarding: {exc}'}, status=status.HTTP_502_BAD_GATEWAY)
+            return Response(
+                {'error': 'Não foi possível completar o cadastro WhatsApp. Tente novamente.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
         return Response(WhatsAppAccountSerializer(acc).data, status=status.HTTP_201_CREATED)
 
