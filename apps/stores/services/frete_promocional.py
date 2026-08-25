@@ -1,4 +1,9 @@
-"""Frete grátis por raio, com pedido mínimo opcional.
+"""Frete grátis por DISTÂNCIA DE ROTA, com pedido mínimo opcional.
+
+`ate_km` é comparado com `cotacao['distance_km']`, que vem do Google
+Directions — percurso real de carro, não linha reta. O círculo que o painel
+desenha no mapa é só referência visual: 3 km de rota cobrem menos chão do que
+3 km de raio, e num bairro cortado por avenida a diferença passa de 40%.
 
 Mora no `metadata` da loja e é aplicado DEPOIS que a taxa já foi calculada,
 para não existir uma segunda matemática de frete concorrendo com
@@ -6,7 +11,7 @@ para não existir uma segunda matemática de frete concorrendo com
 
     store.metadata['frete_gratis'] = {
         'ativo': True,
-        'ate_km': 4,             # raio da promoção
+        'ate_km': 3,             # km de ROTA, medidos pelo Directions
         'pedido_minimo': 60,     # 0 ou ausente = sem mínimo
         'inicio': '2026-08-24T00:00:00-03:00',   # opcional
         'fim': '2026-08-31T23:59:59-03:00',      # opcional
@@ -87,10 +92,17 @@ def aplicar_frete_gratis(cotacao: dict, store, subtotal=None) -> dict:
     ate_km = promo['ate_km']
     minimo = promo['pedido_minimo']
 
+    # Directions fora do ar faz a distância cair para linha reta (haversine),
+    # que SUBESTIMA o percurso — endereço a 3,0 km de reta pode estar a 4 km de
+    # rota. A promoção continua valendo (o cliente não paga por falha nossa),
+    # mas a cotação carrega a marca para o painel e os logs não mentirem.
+    aproximada = bool(cotacao.get('distancia_aproximada'))
+
     info = {
         'aplicado': False,
         'ate_km': float(ate_km),
         'pedido_minimo': float(minimo),
+        'distancia_aproximada': aproximada,
     }
 
     distancia = _decimal(cotacao.get('distance_km'))
@@ -113,6 +125,13 @@ def aplicar_frete_gratis(cotacao: dict, store, subtotal=None) -> dict:
             info['faltam'] = float((minimo - subtotal).quantize(Decimal('0.01')))
             cotacao['frete_gratis'] = info
             return cotacao
+
+    if aproximada:
+        logger.warning(
+            "frete_gratis: loja %s zerou frete com distância ESTIMADA (%s km) — "
+            "Directions indisponível",
+            getattr(store, 'slug', getattr(store, 'id', '?')), distancia,
+        )
 
     info['aplicado'] = True
     info['frete_original'] = float(frete_atual)

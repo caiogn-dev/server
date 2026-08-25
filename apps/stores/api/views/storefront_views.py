@@ -495,10 +495,11 @@ class StoreAppConfigView(APIView):
                 'free_delivery_threshold': float(store.free_delivery_threshold or 0) if store.free_delivery_threshold else None,
                 'max_distance_km': float(metadata.get('max_delivery_distance_km', 20)),
                 'max_time_minutes': float(metadata.get('max_delivery_time_minutes', 45)),
-                # Promoção de frete grátis por raio. Vai como bloco próprio em
-                # vez de reaproveitar `free_delivery_threshold`, que é só valor
-                # e não conhece distância: a vitrine precisa dizer "até 4 km",
-                # senão promete frete grátis para quem mora longe.
+                # Promoção de frete grátis por DISTÂNCIA DE ROTA. Vai como
+                # bloco próprio em vez de reaproveitar `free_delivery_threshold`,
+                # que é só valor e não conhece distância: a vitrine precisa
+                # dizer "até 3 km", senão promete frete grátis para quem mora
+                # longe.
                 'frete_gratis': promocao_para_vitrine(store),
             },
             'branding': {

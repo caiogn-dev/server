@@ -235,3 +235,29 @@ class SubtotalDoCarrinhoTests(SimpleTestCase):
         self.assertEqual(saida['fee'], 0.0)
         self.assertEqual(saida['delivery_fee'], 0.0)
         self.assertTrue(saida['frete_gratis']['aplicado'])
+
+
+
+class DistanciaAproximadaTests(SimpleTestCase):
+    """Quando o Google Directions falha, a distância vira LINHA RETA.
+
+    Linha reta subestima o percurso (~1,3x em cidade): um endereço a 3,0 km de
+    reta pode estar a 4 km de rota. A promoção continua valendo — o cliente não
+    pode pagar por uma falha nossa — mas a cotação precisa DIZER que a medida é
+    aproximada, senão o dono nunca descobre que a régua mudou.
+    """
+
+    LOJA = {'frete_gratis': {'ativo': True, 'ate_km': 3, 'pedido_minimo': 0}}
+
+    def test_marca_a_cotacao_quando_a_distancia_e_estimada(self):
+        cotacao = {'fee': 8.0, 'distance_km': 2.5, 'available': True,
+                   'distancia_aproximada': True}
+        resultado = aplicar_frete_gratis(cotacao, LojaFalsa(self.LOJA))
+        self.assertTrue(resultado['frete_gratis']['aplicado'])
+        self.assertTrue(resultado['frete_gratis']['distancia_aproximada'])
+
+    def test_distancia_medida_pela_rota_nao_e_marcada(self):
+        cotacao = {'fee': 8.0, 'distance_km': 2.5, 'available': True}
+        resultado = aplicar_frete_gratis(cotacao, LojaFalsa(self.LOJA))
+        self.assertTrue(resultado['frete_gratis']['aplicado'])
+        self.assertFalse(resultado['frete_gratis']['distancia_aproximada'])

@@ -97,6 +97,7 @@ class UnifiedDeliveryService:
 
         distance_km = distance_info['distance_km']
         duration_minutes = distance_info['duration_minutes']
+        distancia_aproximada = bool(distance_info.get('aproximada'))
 
         # 3. Verificar se está dentro da área de entrega máxima
         max_km = store.metadata.get('delivery_max_km', 16)
@@ -106,6 +107,7 @@ class UnifiedDeliveryService:
                 'fee': None,
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
+                'distancia_aproximada': distancia_aproximada,
                 'reason': f'Endereço muito longe ({distance_km:.1f} km, máximo {max_km} km)',
             }
 
@@ -126,6 +128,7 @@ class UnifiedDeliveryService:
                 'fee': float(fee),
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
+                'distancia_aproximada': distancia_aproximada,
                 'method': 'delivery',
                 'zone_name': fixed_zone_fee['zone_name'],
                 'reason': f'Zona fixa: {fixed_zone_fee["zone_name"]}',
@@ -148,6 +151,7 @@ class UnifiedDeliveryService:
                 'fee': float(fee),
                 'distance_km': distance_km,
                 'duration_minutes': duration_minutes,
+                'distancia_aproximada': distancia_aproximada,
                 'method': 'delivery',
                 'zone_name': db_zone_fee['zone_name'],
                 'reason': f'Zona do banco: {db_zone_fee["zone_name"]}',
@@ -169,6 +173,7 @@ class UnifiedDeliveryService:
             'fee': float(dynamic_fee),
             'distance_km': distance_km,
             'duration_minutes': duration_minutes,
+            'distancia_aproximada': distancia_aproximada,
             'method': 'delivery',
             'zone_name': 'Dinâmica',
             'reason': f'Cálculo dinâmico ({distance_km:.1f} km)',
@@ -235,6 +240,10 @@ class UnifiedDeliveryService:
                     'success': True,
                     'distance_km': result.get('distance_km', 0),
                     'duration_minutes': result.get('duration_minutes', 0),
+                    # `fallback` = o Directions falhou e isto é haversine.
+                    # Ninguém lia esta flag: a régua trocava de rota para linha
+                    # reta em silêncio, e toda a área de entrega crescia junto.
+                    'aproximada': bool(result.get('fallback')),
                 }
         except Exception as e:
             logger.error(f"[UnifiedDeliveryService] Route calculation error: {e}", exc_info=True)
