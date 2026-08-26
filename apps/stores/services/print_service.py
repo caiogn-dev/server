@@ -231,27 +231,58 @@ def _limpa_markdown_whatsapp(texto: str) -> str:
     return re.sub(r'[*_~`]', '', texto)
 
 
-def linhas_de_preparo(descricao: str | None, quantidade: int) -> list[str]:
-    """O que a cozinha precisa ler, derivado da descrição do produto.
+# Sinais de que a linha foi escrita para VENDER, não para montar. Rodando a
+# regra contra o catálogo real, sem este filtro a comanda da cozinha saía com
+# "Com 15% de desconto!", "Economize: R$ 43.60" e "Peça agora e não fique de
+# fora dessa promoção!". Papel térmico é caro; atenção de cozinha em sábado de
+# evento é mais ainda.
+_MARKETING = re.compile(
+    r'R\$|%|\bdesconto|\beconomiz|\bpromo|\bpeça agora|\baproveite|\bperfeito para'
+    r'|\bnão fique|\bpara quem ama|\bpara sua vida|\bpara o seu dia|\bpronto para o consumo'
+    r'|\bdividir com|\bagilidade|\bpraticidade|\bde graça',
+    re.IGNORECASE,
+)
+
+# Uma linha vale para a cozinha quando carrega QUANTIDADE ("120 g", "1
+# terrine", "500g") ou quando é um nome curto de item ("chocolate e ninho").
+# Frase longa sem número é quase sempre texto de venda.
+_TEM_QUANTIDADE = re.compile(r'\d\s*(g|kg|ml|l|un|und|unid)\b|^\s*\d+\s+\S', re.IGNORECASE)
+_LIMITE_NOME_CURTO = 42
+
+
+def _linha_serve_para_montar(linha: str) -> bool:
+    if _MARKETING.search(linha):
+        return False
+    if _TEM_QUANTIDADE.search(linha):
+        return True
+    return len(linha) <= _LIMITE_NOME_CURTO and not linha.endswith('!')
+
+
+def linhas_de_preparo(
+    descricao: str | None,
+    quantidade: int,
+    variante: str | None = None,
+    produto: str | None = None,
+) -> list[str]:
+    """O que a cozinha precisa ler, derivado do cadastro do produto.
 
     Duas coisas, nesta ordem:
 
-    1. **O rendimento já multiplicado.** `>> 100 UNIDADES (2 x 50)`. A conta na
-       cabeça, às 11h de um sábado de evento, é onde o erro acontece — então a
-       comanda faz a conta e mostra a origem dela.
-    2. **A composição**, uma linha por item, quando a descrição tem várias
-       linhas (é assim que o "trio entradas" está cadastrado).
+    1. **O rendimento já multiplicado.** `>> 100 UNIDADES (2 x 50)`. A conta de
+       cabeça, num sábado de evento, é onde o erro acontece — então a comanda
+       faz a conta e mostra a origem dela. Procura primeiro na descrição e, se
+       não achar, no nome da variante: a Tábua de Frios guarda o rendimento em
+       "Tábua - 20 Pessoas", e sem isso o item mais caro do pedido saía sem
+       dizer para quantas pessoas é.
+    2. **A composição**, uma linha por item — mas só as linhas que servem para
+       montar (ver `_linha_serve_para_montar`).
 
-    Descrição de venda ("O combo perfeito para quem ama salmão!") devolve
-    lista vazia: ela não ajuda a montar nada e consome papel.
+    Descrição puramente de venda devolve lista vazia de propósito.
     """
-    if not descricao:
-        return []
-
-    texto = _limpa_markdown_whatsapp(str(descricao)).replace('\r\n', '\n').replace('\r', '\n')
+    texto = _limpa_markdown_whatsapp(str(descricao or '')).replace('\r\n', '\n').replace('\r', '\n')
     linhas: list[str] = []
 
-    rendimento = rendimento_por_embalagem(texto)
+    rendimento = rendimento_por_embalagem(texto) or rendimento_por_embalagem(variante)
     if rendimento:
         por_unidade, unidade = rendimento
         qtd = max(int(quantidade or 1), 1)
@@ -259,11 +290,26 @@ def linhas_de_preparo(descricao: str | None, quantidade: int) -> list[str]:
         conta = f' ({qtd} x {por_unidade})' if qtd > 1 else ''
         linhas.append(f'>> {total} {unidade.upper()}{conta}')
 
-    partes = [l.strip(' .;') for l in texto.split('\n')]
+    # A descrição já pode trazer o próprio marcador ('- Frango 120 g'); somar
+    # outro produz '- - Frango 120 g'.
+    partes = [l.strip().lstrip('-•·').strip(' .;') for l in texto.split('\n')]
     partes = [l for l in partes if l]
+
     if len(partes) > 1:
-        # Várias linhas = composição cadastrada item a item.
-        linhas.extend(f'- {l}' for l in partes)
+        nome_do_produto = str(produto or '').strip().casefold()
+        for parte in partes:
+            # A ficha costuma abrir repetindo o nome do produto, que já está em
+            # corpo duplo na linha do item logo acima. Compara por IGUALDADE:
+            # descartar por "contém" apagaria "Massa de bolo 300 g" num produto
+            # chamado "Bolo".
+            if nome_do_produto and parte.strip().casefold() == nome_do_produto:
+                continue
+            if not _linha_serve_para_montar(parte):
+                continue
+            # O que já virou a linha `>>` não se repete embaixo dela.
+            if rendimento and rendimento_por_embalagem(parte) == rendimento:
+                continue
+            linhas.append(f'- {parte}')
 
     return linhas
 
@@ -273,7 +319,12 @@ def _preparo_do_item(item) -> list[str]:
     produto = getattr(item, 'product', None)
     if produto is None:
         return []
-    return linhas_de_preparo(getattr(produto, 'description', ''), item.quantity)
+    return linhas_de_preparo(
+        getattr(produto, 'description', ''),
+        item.quantity,
+        variante=getattr(item, 'variant_name', '') or '',
+        produto=getattr(produto, 'name', '') or item.product_name,
+    )
 
 
 def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:

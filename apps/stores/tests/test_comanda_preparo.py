@@ -194,3 +194,112 @@ class ApiDoPedidoTests(TestCase):
         itens = list(self.order.items.select_related('product').all())
         with self.assertNumQueries(0):
             [StoreOrderItemSerializer(i).data['prep'] for i in itens]
+
+
+class NaoImprimirMarketingTests(TestCase):
+    """Descrição é escrita para VENDER. A comanda só quer o que se monta.
+
+    Rodando a primeira versão da regra contra o catálogo real das duas lojas,
+    10/42 produtos da Cê Saladas e 35/58 da Ivoneth ganhavam preparo — mas
+    junto vinha promoção. O que ia sair no papel da cozinha:
+
+        - Com 15% de desconto!
+        - Economize: R$ 43.60
+        - Peça agora e não fique de fora dessa promoção!
+
+    Papel térmico é caro e atenção de cozinha em sábado de evento é mais
+    ainda. Linha que não ajuda a montar não entra.
+    """
+
+    def test_preco_e_desconto_nunca_entram(self):
+        linhas = linhas_de_preparo(
+            '*8 unidades da queridinha*\r\n\r\nCom 15% de desconto!\r\n\r\n*Economize: R$ 43.60*', 1
+        )
+        self.assertIn('>> 8 UNIDADES', linhas)
+        self.assertFalse(any('R$' in l or '%' in l for l in linhas), linhas)
+
+    def test_chamariz_de_venda_nao_entra(self):
+        linhas = linhas_de_preparo(
+            'Combo promocional de *5 saladas*!\n\nNa compra de 4 filé de frango, '
+            'você ganha *1 de graça!*\n\nPeça agora e não fique de fora dessa promoção!', 1
+        )
+        self.assertFalse(any('Peça agora' in l for l in linhas), linhas)
+        self.assertFalse(any('promoção' in l.lower() for l in linhas), linhas)
+
+    def test_gramatura_da_salada_entra_inteira(self):
+        """A ficha da Cê Saladas é exatamente o que a montagem precisa."""
+        linhas = linhas_de_preparo(
+            'Tropical do Cê\n- Frango 120 g\n- abacaxi 70 g\n- manga 50 g\n'
+            '- pepino 20 g\n- cebola roxa 15 g\n- gergelim 2 g', 1
+        )
+        self.assertIn('- Frango 120 g', linhas)
+        self.assertIn('- gergelim 2 g', linhas)
+
+    def test_marcador_nao_e_duplicado(self):
+        """A descrição já vem com '-'; somar outro produz '- - Frango 120 g'."""
+        linhas = linhas_de_preparo('Salada\n- Frango 120 g\n- alface 90 g', 1)
+        self.assertFalse(any(l.startswith('- -') for l in linhas), linhas)
+
+    def test_composicao_repetida_no_rendimento_nao_sai_duas_vezes(self):
+        """'100 unidades de brigadeiro' já virou '>> 100 UNIDADES'."""
+        linhas = linhas_de_preparo(
+            '100 unidades de brigadeiro caseiro.\nExtremamente *delicioso* e pronto para o consumo.', 1
+        )
+        self.assertEqual(['>> 100 UNIDADES'], linhas)
+
+    def test_sabores_do_bolo_entram(self):
+        """Lista curta de sabores é o que a confeiteira precisa ler."""
+        linhas = linhas_de_preparo(
+            'Bolo recheado recheio\nchocolate\nchocolate e ninho\nninho\nbombom', 1
+        )
+        self.assertIn('- chocolate e ninho', linhas)
+        self.assertIn('- bombom', linhas)
+
+
+class RendimentoNaVarianteTests(TestCase):
+    """A Tábua de Frios guarda o rendimento no NOME DA VARIANTE.
+
+    Produto "Tábua de Frios", variante "Tábua - 20 Pessoas". A descrição só
+    tem a composição. Sem ler a variante, justamente o item mais caro do
+    pedido da Fabiana (R$ 139,99) saía sem dizer para quantas pessoas é.
+    """
+
+    def test_le_o_rendimento_do_nome_da_variante(self):
+        linhas = linhas_de_preparo(
+            'Provolone, parmesão, gorgonzola, mussarela e snacks.', 1,
+            variante='Tábua - 20 Pessoas',
+        )
+        self.assertIn('>> 20 PESSOAS', linhas)
+
+    def test_variante_sem_numero_nao_inventa(self):
+        linhas = linhas_de_preparo('Quiche variado.', 1, variante='Lorraine')
+        self.assertFalse(any(l.startswith('>>') for l in linhas), linhas)
+
+    def test_descricao_vence_a_variante(self):
+        """A descrição é mais específica; a variante é o palpite de reserva."""
+        linhas = linhas_de_preparo('Embalagem com 50 unidades.', 2, variante='Kit - 20 Pessoas')
+        self.assertIn('>> 100 UNIDADES (2 x 50)', linhas)
+        self.assertFalse(any('PESSOAS' in l for l in linhas), linhas)
+
+
+class NomeDoProdutoNaoSeRepeteTests(TestCase):
+    """A ficha da Cê Saladas começa repetindo o nome do produto.
+
+    "Tropical do Cê\n- Frango 120 g\n..." — o nome já está em corpo duplo na
+    linha do item, logo acima. Repetir gasta papel e faz a lista de montagem
+    começar com uma linha que não é ingrediente.
+    """
+
+    def test_primeira_linha_igual_ao_nome_do_produto_e_descartada(self):
+        linhas = linhas_de_preparo(
+            'Tropical do Cê\n- Frango 120 g\n- manga 50 g', 1, produto='Tropical do Cê'
+        )
+        self.assertNotIn('- Tropical do Cê', linhas)
+        self.assertIn('- Frango 120 g', linhas)
+
+    def test_ingrediente_com_o_nome_do_produto_dentro_sobrevive(self):
+        """Descartar por 'contém' apagaria ingrediente legítimo."""
+        linhas = linhas_de_preparo(
+            'Bolo\n- Massa de bolo 300 g\n- cobertura 80 g', 1, produto='Bolo'
+        )
+        self.assertIn('- Massa de bolo 300 g', linhas)
