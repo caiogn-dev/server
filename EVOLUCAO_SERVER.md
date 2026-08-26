@@ -888,3 +888,39 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+## 2026-08-26 — Loop diário: PII em logs — signals, agents, notifications
+
+**Problema:** 4 locais expunham PII em plain-text nos logs, violando LGPD art. 46.
+Nenhum deles estava coberto pelos 28 PRs abertos (#318–#345) no gate anti-acúmulo.
+
+| Arquivo | Linha | PII exposta |
+|---------|-------|-------------|
+| `apps/users/signals.py` | 175 | `{phone}` sem máscara |
+| `apps/agents/services/langchain_service.py` | 769 | `{phone_number}` sem máscara |
+| `apps/notifications/services/email_service.py` | 46, 64 | `{to}` (e-mail) sem máscara |
+| `apps/automation/tasks/scheduled.py` | 491 | `{recipients}` (lista de e-mails) sem máscara |
+
+**Correção (GREEN):**
+- Importa `mask_phone` de `apps.core.pii` em `signals.py` e `langchain_service.py`
+- Importa `mask_email` de `apps.core.pii` em `email_service.py` e `scheduled.py`
+- Substitui variáveis brutas por `mask_phone(phone)`, `mask_phone(phone_number)`,
+  `mask_email(to)` e `[mask_email(r) for r in recipients]`
+- Testes: 8 `SimpleTestCase` em `apps/core/tests/test_pii_remaining_logs.py`
+  (4 estáticos RED→GREEN + 4 comportamentais com mock de logger)
+- **PR:** #346 — `bot/server-2026-08-26-pii-logs-signals-agents-notifications`
+
+**Gate anti-acúmulo (28 PRs verificados):**
+- PR #340 e #323 cobriram os lotes anteriores de PII nos logs.
+- Estes 4 arquivos estavam fora do escopo desses PRs — confirmado via grep.
+
+**Próximo backlog (atualizado 2026-08-26):**
+
+1. **P0** — Merge dos PRs acumulados (#318–#346) — fila cresce, bloqueia evolução.
+2. **P1** — Testes de contrato para checkout payload, pedido por token, e OTP.
+3. **P2** — Namespace mobile/customer para detalhe/status/rastreio/reordenação.
+4. **P2** — Varredura de PII em logs em outros apps ainda não auditados
+   (`apps/campaigns/`, `apps/marketing/`, `apps/instagram/`).
+5. **P2** — IDOR em `apps/audit/` (verificar cobertura do fix de 2026-06-28).
+
