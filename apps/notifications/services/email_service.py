@@ -6,6 +6,8 @@ import logging
 import os
 from typing import Optional
 
+from apps.core.pii import mask_email
+
 logger = logging.getLogger(__name__)
 
 # Try to import resend, but don't fail if not installed
@@ -43,7 +45,7 @@ class EmailService:
     ) -> dict:
         """Send an email using Resend."""
         if not self.enabled:
-            logger.warning(f"Email not sent (disabled): {subject} to {to}")
+            logger.warning(f"Email not sent (disabled): {subject} to {mask_email(to)}")
             return {'success': False, 'error': 'Email service not configured'}
         
         try:
@@ -61,7 +63,7 @@ class EmailService:
                 params['reply_to'] = reply_to
             
             response = resend.Emails.send(params)
-            logger.info(f"Email sent successfully: {subject} to {to}")
+            logger.info(f"Email sent successfully: {subject} to {mask_email(to)}")
             return {'success': True, 'id': response.get('id')}
         
         except Exception as e:

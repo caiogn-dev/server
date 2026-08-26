@@ -7,6 +7,7 @@ import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.db.models import Sum, Count
+from apps.core.pii import mask_phone
 from apps.core.utils import normalize_phone_number
 
 from .models import UnifiedUser, UnifiedUserActivity
@@ -172,7 +173,7 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         if update_fields:
             update_fields.append('last_seen_at')
             user.save(update_fields=update_fields)
-            logger.info(f"[UnifiedUser] Updated order stats for {phone}: orders={new_total_orders}, spent={new_total_spent}")
+            logger.info(f"[UnifiedUser] Updated order stats for {mask_phone(phone)}: orders={new_total_orders}, spent={new_total_spent}")
 
         if created:
             UnifiedUserActivity.objects.create(
