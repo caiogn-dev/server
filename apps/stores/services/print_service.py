@@ -300,7 +300,10 @@ def _quebra_lista_em_uma_linha(linha: str) -> list[str]:
     if len(uteis) < _MINIMO_DE_ITENS_NA_LISTA:
         return []
 
-    cabecalho = cabecalho.strip(' .;')
+    # O cabeçalho é a ÚLTIMA oração antes do ':'. Em "Suco natural de polpa 1
+    # litro. Sabores:" o que interessa à cozinha é "Sabores:" — o resto é o
+    # nome do produto, já impresso em corpo duplo logo acima.
+    cabecalho = cabecalho.rsplit('.', 1)[-1].strip(' .;')
     # O cabeçalho ("Ingredientes", "Sabores") diz o que a lista É; sem ele,
     # "acerola / caju / goiaba" solto na comanda não significa nada.
     return ([f'{cabecalho}:'] if cabecalho and _linha_serve_para_montar(cabecalho) else []) + uteis

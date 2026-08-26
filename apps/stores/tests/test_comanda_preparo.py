@@ -411,3 +411,25 @@ class FraseComAdjetivosNaoEListaTests(TestCase):
             'Suco natural de polpa 1 litro. Sabores: acerola, caju, abacaxi ou goiaba.', 1
         )
         self.assertTrue(any('acerola' in l for l in linhas), linhas)
+
+
+class CabecalhoDaListaTests(TestCase):
+    """O cabeçalho é a última oração antes do ':', não a frase inteira.
+
+    "Suco natural de polpa 1 litro. Sabores: acerola, caju..." — o que
+    interessa à cozinha é "Sabores:", não a repetição do nome do produto que
+    já está em corpo duplo logo acima.
+    """
+
+    def test_cabecalho_descarta_a_frase_anterior(self):
+        linhas = linhas_de_preparo(
+            'Suco natural de polpa 1 litro. Sabores: acerola, caju, abacaxi ou goiaba.', 1
+        )
+        self.assertIn('- Sabores:', linhas)
+        self.assertFalse(any('polpa 1 litro' in l for l in linhas), linhas)
+
+    def test_cabecalho_de_uma_oracao_so_fica_inteiro(self):
+        linhas = linhas_de_preparo(
+            'Caixa com 200g de cada: terrine de gorgonzola, pasta de frango, queijo cremoso', 1
+        )
+        self.assertIn('- Caixa com 200g de cada:', linhas)
