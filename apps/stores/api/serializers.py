@@ -619,16 +619,30 @@ class WishlistAddRemoveSerializer(serializers.Serializer):
 
 class StoreOrderItemSerializer(serializers.ModelSerializer):
     """Serializer for StoreOrderItem model."""
-    
+
+    prep = serializers.SerializerMethodField()
+
     class Meta:
         model = StoreOrderItem
         fields = [
             'id', 'product', 'variant',
             'product_name', 'variant_name', 'sku',
             'unit_price', 'quantity', 'subtotal',
-            'options', 'notes', 'created_at'
+            'options', 'notes', 'prep', 'created_at'
         ]
         read_only_fields = ['id', 'subtotal', 'created_at']
+
+    def get_prep(self, obj) -> list:
+        """O que a cozinha MONTA — rendimento multiplicado e composição.
+
+        Existem dois caminhos de impressão e eles não se falam: o print-agent
+        (automático, lê `build_order_print_payload`) e o botão "Imprimir" do
+        painel, que monta o papel no navegador a partir DESTE serializer.
+        Sem expor aqui, a comanda do painel continuaria dizendo só
+        "2x Mini Hambúrguer" enquanto a do agent diz "100 unidades".
+        """
+        from apps.stores.services.print_service import _preparo_do_item
+        return _preparo_do_item(obj)
 
 
 class StoreOrderSerializer(serializers.ModelSerializer):

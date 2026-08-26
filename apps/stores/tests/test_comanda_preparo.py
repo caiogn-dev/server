@@ -137,3 +137,60 @@ class PayloadDaComandaTests(TestCase):
         )
         item = build_order_print_payload(self.order)['items'][0]
         self.assertEqual(item['prep'], [])
+
+
+class ApiDoPedidoTests(TestCase):
+    """Os dois caminhos de impressão precisam dizer a MESMA coisa.
+
+    O print-agent lê `build_order_print_payload`; o botão "Imprimir" do painel
+    monta o papel no navegador a partir do serializer do pedido. Sem `prep`
+    nos dois, a comanda automática diria "100 unidades" e a manual diria só
+    "2x Mini Hambúrguer" — e a cozinha aprenderia a não confiar em nenhuma.
+    """
+
+    def setUp(self):
+        self.store = make_store(name='Ivoneth API', slug='ivoneth-api-teste')
+        self.produto = StoreProduct.objects.create(
+            store=self.store,
+            name='Mini Hambúrguer',
+            price=Decimal('215.00'),
+            description='Mini hambúrguer. Vendido em embalagem com 50 unidades.',
+        )
+        self.order = StoreOrder.objects.create(
+            store=self.store,
+            customer_name='Fabiana chater',
+            customer_phone='5563999999999',
+            subtotal=Decimal('430.00'),
+            total=Decimal('430.00'),
+        )
+        self.item = StoreOrderItem.objects.create(
+            order=self.order,
+            product=self.produto,
+            product_name='Mini Hambúrguer',
+            quantity=2,
+            unit_price=Decimal('215.00'),
+            subtotal=Decimal('430.00'),
+        )
+
+    def test_serializer_expoe_o_mesmo_preparo_do_print_agent(self):
+        from apps.stores.api.serializers import StoreOrderItemSerializer
+
+        do_painel = StoreOrderItemSerializer(self.item).data['prep']
+        do_agente = build_order_print_payload(self.order)['items'][0]['prep']
+        self.assertEqual(do_painel, do_agente)
+        self.assertIn('>> 100 UNIDADES (2 x 50)', do_painel)
+
+    def test_prep_nao_dispara_uma_query_por_item(self):
+        """`product` precisa vir no prefetch — senão a lista de pedidos
+        multiplica queries pelo número de itens de cada pedido."""
+        from apps.stores.api.serializers import StoreOrderItemSerializer
+
+        for i in range(5):
+            StoreOrderItem.objects.create(
+                order=self.order, product=self.produto,
+                product_name=f'Item {i}', quantity=1,
+                unit_price=Decimal('1.00'), subtotal=Decimal('1.00'),
+            )
+        itens = list(self.order.items.select_related('product').all())
+        with self.assertNumQueries(0):
+            [StoreOrderItemSerializer(i).data['prep'] for i in itens]
