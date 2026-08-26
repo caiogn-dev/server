@@ -6,7 +6,7 @@ e endereços de e-mail NÃO aparecem em claro nas mensagens de log das funções
 identificadas como pendentes no gate anti-acúmulo de 2026-08-26.
 
 Arquivos cobertos:
-  - apps/users/signals.py          → phone em _sync_unified_user_stats
+  - apps/users/signals.py          → phone em sync_store_order_to_unified_user
   - apps/agents/services/langchain_service.py → phone_number em _build_dynamic_context
   - apps/notifications/services/email_service.py → e-mail em send_email
   - apps/automation/tasks/scheduled.py → recipients (lista de e-mails) em send_report_email_task
@@ -125,42 +125,52 @@ class StaticAnalysisScheduledTaskTest(SimpleTestCase):
 # ---------------------------------------------------------------------------
 
 class SignalsPIILogTest(SimpleTestCase):
-    """Phone não deve aparecer em claro no log de _sync_unified_user_stats."""
+    """Phone não deve aparecer em claro no log de sync_store_order_to_unified_user."""
 
     def test_log_does_not_contain_raw_phone(self):
         from apps.users import signals as sig_module
 
         fake_user = MagicMock()
-        fake_user.phone_number = _PHONE
-        fake_user.total_orders = 0
+        fake_user.total_orders = 0   # difere do aggregate → update_fields não vazio → log dispara
         fake_user.total_spent = 0
         fake_user.last_order_at = None
 
-        fake_qs = MagicMock()
-        fake_qs.aggregate.return_value = {
-            'total_orders': 3,
-            'total_spent': 150,
-            'last_order': None,
-        }
+        fake_unified_qs = MagicMock()
+        fake_unified_qs.first.return_value = fake_user
+
+        fake_order_qs = MagicMock()
+        fake_order_qs.aggregate.return_value = {'total_orders': 3}
+        fake_order_qs.order_by.return_value.values_list.return_value.first.return_value = None
+
+        fake_receita_qs = MagicMock()
+        fake_receita_qs.aggregate.return_value = {'t': 200}
+
+        fake_instance = MagicMock()
+        fake_instance.customer_phone = _PHONE
+        fake_instance.id = 'order-1'
+        fake_instance.store_id = 'store-1'
+        fake_instance.total = 100
 
         with patch.object(sig_module.logger, 'info') as mock_log, \
-             patch('apps.users.signals.UnifiedUserActivity') as mock_act:
-            fake_user.save = MagicMock()
-            # Chamar internamente a parte de log: simular update_fields não vazio
-            # e invocar o logger como o código faz
-            try:
-                sig_module._sync_unified_user_stats(
-                    sender=MagicMock(),
-                    instance=MagicMock(
-                        store_id='store-1',
-                        total=100,
-                        id='order-1',
-                    ),
-                    created=True,
-                )
-            except Exception:
-                pass  # pode falhar por mocks incompletos; só verificamos o log
+             patch('apps.users.signals.normalize_phone_number', return_value=_PHONE), \
+             patch('apps.users.signals._phone_candidates', return_value=[_PHONE]), \
+             patch.object(sig_module.UnifiedUser.objects, 'filter', return_value=fake_unified_qs), \
+             patch('apps.users.signals.UnifiedUserActivity'), \
+             patch('apps.users.caderno_de_enderecos.guardar_endereco_do_pedido'), \
+             patch('apps.stores.models.StoreOrder') as mock_order_cls, \
+             patch('apps.stores.metrics.apenas_receita', return_value=fake_receita_qs):
+            mock_order_cls.objects.filter.return_value = fake_order_qs
 
+            sig_module.sync_store_order_to_unified_user(
+                sender=MagicMock(),
+                instance=fake_instance,
+                created=True,
+            )
+
+        self.assertTrue(
+            mock_log.call_args_list,
+            "logger.info não foi chamado — sync_store_order_to_unified_user não chegou ao log de PII",
+        )
         for call_args in mock_log.call_args_list:
             msg = str(call_args)
             self.assertNotIn(_PHONE, msg, f"Phone em claro no log: {msg}")
