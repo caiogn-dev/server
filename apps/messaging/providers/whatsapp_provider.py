@@ -210,30 +210,23 @@ class WhatsAppProvider(BaseProvider):
             )
     
     def validate_recipient(self, recipient: str) -> bool:
+        """Valida o destinatário.
+
+        Exigir o '+' literal rejeitava justamente o formato em que o telefone
+        chega do WhatsApp: o `wa_id` vem só com dígitos (`34647520824`). O que
+        importa é a quantidade de dígitos do E.164 — de 8 a 15.
         """
-        Validate phone number.
-        Basic validation - should start with + and country code.
-        """
-        if not recipient:
-            return False
-        
-        # Remove spaces and dashes
-        cleaned = recipient.replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
-        
-        # Should start with + followed by digits
-        return cleaned.startswith('+') and len(cleaned) >= 8 and cleaned[1:].isdigit()
-    
+        from apps.core.utils import normalize_phone_number
+        return 8 <= len(normalize_phone_number(recipient or '')) <= 15
+
     def format_recipient(self, recipient: str) -> str:
-        """Format phone number for WhatsApp."""
-        # Remove all non-digit characters except +
-        cleaned = ''.join(c for c in recipient if c.isdigit() or c == '+')
-        
-        # Ensure it starts with +
-        if not cleaned.startswith('+'):
-            # Assume Brazil if no country code
-            if len(cleaned) == 11 or len(cleaned) == 10:
-                cleaned = '+55' + cleaned
-            else:
-                cleaned = '+' + cleaned
-        
-        return cleaned
+        """Format phone number for WhatsApp.
+
+        A regra antiga decidia o país pelo TAMANHO: 10 ou 11 dígitos sem '+'
+        viravam Brasil. Um celular espanhol completo tem exatamente 11 dígitos
+        — `34647520824` virava `+5534647520824`, e todo envio para a Layane
+        falhou com 131026 enquanto ela tentava fazer um pedido.
+        """
+        from apps.core.utils import normalize_phone_number
+        normalizado = normalize_phone_number(recipient or '')
+        return f'+{normalizado}' if normalizado else ''

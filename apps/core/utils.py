@@ -115,6 +115,11 @@ def build_absolute_media_url(url: str) -> str:
 def _parece_brasileiro_local(digitos: str) -> bool:
     """True quando o número é um telefone BR SEM o DDI (DDD + assinante).
 
+    Rede de segurança para quando o libphonenumber não reconhece o número —
+    caso real e comum: o `wa_id` do WhatsApp entrega celular brasileiro SEM o
+    nono dígito (`556392429380`), formato que a biblioteca considera inválido
+    porque não existe mais na numeração oficial. Ele existe no nosso banco.
+
     - 11 dígitos: DDD + 9XXXXXXXX — celular sempre tem 9 na terceira posição.
     - 10 dígitos: DDD + XXXXXXXX — fixo começa entre 2 e 5.
 
@@ -132,29 +137,105 @@ def _parece_brasileiro_local(digitos: str) -> bool:
     return digitos[2] in '2345'
 
 
-def normalize_phone_number(phone: str) -> str:
+def _parse_telefone(valor: str, digitos: str):
+    """Interpreta o telefone com libphonenumber. Devolve o objeto ou None.
+
+    A ordem das três tentativas é o coração da regra e não é arbitrária:
+
+    1. **Veio com `+`** → o DDI é uma AFIRMAÇÃO do cliente, não um palpite.
+       `+34 647 52 08 24` é espanhol porque ela disse que é.
+    2. **Sem `+`, tenta como brasileiro** → é o caso de 99% dos pedidos:
+       `63992429380` digitado no checkout de Palmas.
+    3. **Sem `+` e não é BR válido** → o DDI já está embutido nos dígitos.
+       É assim que o `wa_id` do WhatsApp chega: `34647520824`, sem `+`.
+
+    Inverter 2 e 3 quebraria o Brasil: `6332151234` (fixo de Palmas) também
+    é um número internacional sintaticamente plausível.
+    """
+    import phonenumbers
+
+    tentativas = []
+    if valor.strip().startswith('+'):
+        tentativas.append(('+' + digitos, None))
+    else:
+        tentativas.append((digitos, 'BR'))
+        tentativas.append(('+' + digitos, None))
+
+    for texto, regiao in tentativas:
+        try:
+            numero = phonenumbers.parse(texto, regiao)
+        except phonenumbers.NumberParseException:
+            continue
+        if phonenumbers.is_valid_number(numero):
+            return numero
+    return None
+
+
+def normalize_phone_number(phone: str, default_region: str = 'BR') -> str:
     """Normalize phone number to E.164 format (sem o '+').
 
-    O DDI 55 só entra quando o número REALMENTE parece brasileiro sem DDI.
-    A regra antiga ("sem 55 e até 11 dígitos → gruda 55") transformava número
-    estrangeiro completo em brasileiro inexistente: a conversa da Layane
-    (wa_id `34647520824`, Espanha) virou `5534647520824` e toda resposta do
-    inbox falhou com 131026 enquanto ela tentava fazer um pedido.
+    Fonte única de verdade do telefone no sistema. Usa o libphonenumber, que
+    conhece DDI, DDD e regra de numeração de TODO país — então um cliente novo
+    de qualquer lugar passa a funcionar sem ninguém escrever código por país.
+
+    A regra antiga era de tamanho ("sem 55 e até 11 dígitos → gruda 55") e
+    transformava número estrangeiro completo em brasileiro inexistente: a
+    conversa da Layane (wa_id `34647520824`, Espanha) virou `5534647520824` e
+    toda resposta do inbox falhou com 131026 enquanto ela tentava fazer um
+    pedido.
+
+    Quando o libphonenumber não reconhece (celular BR legado sem o nono
+    dígito, número de teste), cai na heurística — que preserva o dígito a
+    dígito em vez de inventar um DDI.
     """
-    phone = ''.join(filter(str.isdigit, phone))
-    if not phone.startswith('55') and _parece_brasileiro_local(phone):
-        phone = '55' + phone
-    return phone
+    valor = str(phone or '')
+    digitos = ''.join(filter(str.isdigit, valor))
+    if not digitos:
+        return ''
+
+    import phonenumbers
+
+    numero = _parse_telefone(valor, digitos)
+    if numero is not None:
+        return phonenumbers.format_number(
+            numero, phonenumbers.PhoneNumberFormat.E164
+        ).lstrip('+')
+
+    if not digitos.startswith('55') and _parece_brasileiro_local(digitos):
+        digitos = '55' + digitos
+    return digitos
 
 
 def format_phone_for_display(phone: str) -> str:
-    """Format phone number for display."""
-    phone = normalize_phone_number(phone)
-    if len(phone) == 13:
-        return f"+{phone[:2]} ({phone[2:4]}) {phone[4:9]}-{phone[9:]}"
-    elif len(phone) == 12:
-        return f"+{phone[:2]} ({phone[2:4]}) {phone[4:8]}-{phone[8:]}"
-    return phone
+    """Format phone number for display.
+
+    Brasileiro sai no formato que o dono do painel lê sem pensar —
+    `+55 (63) 99250-9193`. Estrangeiro sai no formato do PRÓPRIO país: exibir
+    `+34 647520824` como `(34) 64752-0824` faz o atendente ligar para
+    Uberlândia achando que é DDD.
+    """
+    normalizado = normalize_phone_number(phone)
+    if not normalizado:
+        return ''
+
+    import phonenumbers
+
+    if not normalizado.startswith('55'):
+        try:
+            numero = phonenumbers.parse('+' + normalizado, None)
+            if phonenumbers.is_valid_number(numero):
+                return phonenumbers.format_number(
+                    numero, phonenumbers.PhoneNumberFormat.INTERNATIONAL
+                )
+        except phonenumbers.NumberParseException:
+            pass
+        return '+' + normalizado
+
+    if len(normalizado) == 13:
+        return f"+{normalizado[:2]} ({normalizado[2:4]}) {normalizado[4:9]}-{normalizado[9:]}"
+    if len(normalizado) == 12:
+        return f"+{normalizado[:2]} ({normalizado[2:4]}) {normalizado[4:8]}-{normalizado[8:]}"
+    return normalizado
 
 
 def generate_idempotency_key(*args) -> str:
@@ -286,12 +367,17 @@ def phone_variants(phone: str) -> list:
     def _alterna_nono(valor: str) -> set:
         """Gera o par com/sem o nono dígito para celular brasileiro."""
         saida = set()
-        if valor.startswith('55'):
+        if valor.startswith('55') and len(valor) > 11:
             local = valor[2:]
             prefixo = '55'
-        else:
+        elif _parece_brasileiro_local(valor):
             local = valor
             prefixo = ''
+        else:
+            # O nono dígito é regra da ANATEL. Aplicá-la a um número
+            # estrangeiro inventa telefones que não existem — e um lookup por
+            # `campo__in=phone_variants(...)` pode casar com o cliente ERRADO.
+            return saida
         # local = DDD (2) + assinante (8 ou 9)
         if len(local) == 11 and local[2] == '9':
             saida.add(prefixo + local[:2] + local[3:])      # remove o 9

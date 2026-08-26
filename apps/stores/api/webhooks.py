@@ -374,10 +374,11 @@ class MercadoPagoWebhookView(APIView):
             from apps.whatsapp.services import MessageService
             service = MessageService()
             
-            # Clean phone number
-            phone = ''.join(filter(str.isdigit, order.customer_phone))
-            if not phone.startswith('55'):
-                phone = '55' + phone
+            # DDI pela fonte única: grudar '55' na mão manda a notificação do
+            # pedido para um número brasileiro inexistente quando o cliente é
+            # estrangeiro.
+            from apps.core.utils import normalize_phone_number
+            phone = normalize_phone_number(order.customer_phone)
             
             # Build message
             items_text = []
@@ -942,10 +943,9 @@ class OrderWhatsAppView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Clean phone number
-            clean_number = ''.join(filter(str.isdigit, whatsapp_number))
-            if not clean_number.startswith('55'):
-                clean_number = '55' + clean_number
+            # DDI pela fonte única — ver comentário acima.
+            from apps.core.utils import normalize_phone_number
+            clean_number = normalize_phone_number(whatsapp_number)
             
             # Build message
             items_text = []

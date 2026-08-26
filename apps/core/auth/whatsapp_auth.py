@@ -177,15 +177,15 @@ class WhatsAppAuthService:
     
     @staticmethod
     def _normalize_phone(phone: str) -> str:
-        """Normaliza número de telefone para formato internacional"""
-        # Remove tudo exceto números
-        digits = ''.join(filter(str.isdigit, phone))
-        
-        # Adiciona código do Brasil se não tiver
-        if not digits.startswith('55'):
-            digits = '55' + digits
-            
-        return digits
+        """Normaliza número de telefone para formato internacional.
+
+        Delega para `normalize_phone_number`, a fonte única. A cópia local
+        grudava '55' em qualquer número sem ele — o código de verificação de
+        um cliente estrangeiro era enviado para um telefone brasileiro
+        inexistente e o login ficava impossível.
+        """
+        from apps.core.utils import normalize_phone_number
+        return normalize_phone_number(phone)
     
     @staticmethod
     def _get_cache_key(phone: str) -> str:

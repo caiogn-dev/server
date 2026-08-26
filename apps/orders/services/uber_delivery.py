@@ -7,6 +7,22 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 
+def _telefone_e164(telefone: str) -> str:
+    """Telefone do cliente em E.164, com o '+' que a Uber exige.
+
+    Antes: `'+55' if not x.startswith('+55') else '' + x.lstrip('+')`.
+    A precedência do `if` ternário faz o ramo verdadeiro devolver a string
+    `'+55'` SOZINHA — todo pedido cujo telefone não começasse com `+55` (ou
+    seja, praticamente todos, porque gravamos sem o '+') mandava o literal
+    `+55` como telefone do cliente e do restaurante. O entregador nunca
+    conseguiu ligar para ninguém.
+    """
+    from apps.core.utils import normalize_phone_number
+
+    normalizado = normalize_phone_number(telefone or '')
+    return f'+{normalizado}' if normalizado else ''
+
+
 class UberDeliveryClient:
     """
     Wrapper for Uber Delivery API.
@@ -96,12 +112,12 @@ class UberDeliveryClient:
             'pickup': {
                 'name': 'Restaurant',
                 'address': pickup_address,
-                'phone_number': '+55' if not customer_phone.startswith('+55') else '' + customer_phone.lstrip('+'),
+                'phone_number': _telefone_e164(customer_phone),
             },
             'dropoff': {
                 'name': 'Customer',
                 'address': dropoff_address,
-                'phone_number': '+55' if not customer_phone.startswith('+55') else '' + customer_phone.lstrip('+'),
+                'phone_number': _telefone_e164(customer_phone),
             },
             'external_order_id': str(order_id),
             'items': items or [],
