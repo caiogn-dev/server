@@ -258,6 +258,54 @@ def _linha_serve_para_montar(linha: str) -> bool:
     return len(linha) <= _LIMITE_NOME_CURTO and not linha.endswith('!')
 
 
+# Uma linha só vira ficha técnica quando é mesmo uma LISTA. Duas vírgulas numa
+# frase ("Bolo recheado, feito na hora.") não fazem dela composição, então o
+# corte é em 3 pedaços úteis.
+_MINIMO_DE_ITENS_NA_LISTA = 3
+
+
+def _quebra_lista_em_uma_linha(linha: str) -> list[str]:
+    """Separa "Provolone, parmesão, ... , tomate seco e snacks" em itens.
+
+    A Tábua de Frios — o item mais caro do pedido da Fabiana — tem a
+    composição inteira numa linha só. Exigir quebra de linha empurrava a conta
+    para o dono ("recadastre o produto"); o separador da lista é a vírgula.
+
+    Devolve [] quando não é lista, para o chamador seguir tratando como frase.
+    """
+    cabecalho, _, corpo = linha.partition(':')
+    if not corpo.strip():
+        # Sem cabeçalho, um ponto final NO MEIO denuncia frase, não lista:
+        # "Porção de 35 g. Repolho finamente fatiado, fresco, crocante" emenda
+        # duas orações, e a vírgula ali separa ADJETIVO. Quebrar isso mandava
+        # a cozinha "montar" fresco e crocante. Uma ficha de verdade
+        # ("Provolone, parmesão, gorgonzola") não tem ponto no meio.
+        if re.search(r'\.\s+\S', linha):
+            return []
+        cabecalho, corpo = '', linha
+
+    itens = [p.strip(' .;') for p in corpo.split(',')]
+    itens = [p for p in itens if p]
+    if not itens:
+        return []
+
+    # O ÚLTIMO separador de uma lista em português é " e ", não vírgula:
+    # "tomate seco e snacks" são dois frios. Só o último pedaço é quebrado —
+    # no meio, " e " pertence ao item ("terrine de gorgonzola e damasco").
+    ultimo = itens.pop()
+    partes_finais = re.split(r'\s+e\s+|\s+ou\s+', ultimo)
+    itens.extend(p.strip(' .;') for p in partes_finais if p.strip(' .;'))
+
+    uteis = [p for p in itens if _linha_serve_para_montar(p)]
+    if len(uteis) < _MINIMO_DE_ITENS_NA_LISTA:
+        return []
+
+    cabecalho = cabecalho.strip(' .;')
+    # O cabeçalho ("Ingredientes", "Sabores") diz o que a lista É; sem ele,
+    # "acerola / caju / goiaba" solto na comanda não significa nada.
+    return ([f'{cabecalho}:'] if cabecalho and _linha_serve_para_montar(cabecalho) else []) + uteis
+
+
 def linhas_de_preparo(
     descricao: str | None,
     quantidade: int,
@@ -294,6 +342,10 @@ def linhas_de_preparo(
     # outro produz '- - Frango 120 g'.
     partes = [l.strip().lstrip('-•·').strip(' .;') for l in texto.split('\n')]
     partes = [l for l in partes if l]
+
+    if len(partes) == 1:
+        # Ficha cadastrada numa linha só, separada por vírgula.
+        partes = _quebra_lista_em_uma_linha(partes[0])
 
     if len(partes) > 1:
         nome_do_produto = str(produto or '').strip().casefold()

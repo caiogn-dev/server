@@ -303,3 +303,111 @@ class NomeDoProdutoNaoSeRepeteTests(TestCase):
             'Bolo\n- Massa de bolo 300 g\n- cobertura 80 g', 1, produto='Bolo'
         )
         self.assertIn('- Massa de bolo 300 g', linhas)
+
+
+class ComposicaoEmUmaLinhaTests(TestCase):
+    """Nem toda ficha está cadastrada em várias linhas.
+
+    A Tábua de Frios — o item mais caro do pedido da Fabiana — tem a
+    composição inteira numa linha só, separada por vírgula:
+
+        "Provolone, parmesão, gorgonzola, mussarela, lombo canadense,
+         salaminho, presunto, azeitonas, tomate seco e snacks."
+
+    Exigir quebra de linha jogava a conta para o dono ("recadastre o
+    produto"). O separador da lista é a vírgula; a comanda que aprenda a ler.
+    """
+
+    TABUA = ('Provolone, parmesão, gorgonzola, mussarela, lombo canadense, '
+             'salaminho, presunto, azeitonas, tomate seco e snacks.')
+
+    def test_tabua_de_frios_vira_lista(self):
+        linhas = linhas_de_preparo(self.TABUA, 1, variante='Tábua - 20 Pessoas')
+        self.assertIn('>> 20 PESSOAS', linhas)
+        self.assertIn('- Provolone', linhas)
+        self.assertIn('- lombo canadense', linhas)
+
+    def test_o_e_final_separa_o_ultimo_item(self):
+        """'tomate seco e snacks' são DOIS frios, não um."""
+        linhas = linhas_de_preparo(self.TABUA, 1)
+        self.assertIn('- tomate seco', linhas)
+        self.assertIn('- snacks', linhas)
+
+    def test_o_e_no_meio_de_um_item_nao_separa(self):
+        """'terrine de gorgonzola e damasco' é UMA terrine."""
+        linhas = linhas_de_preparo(
+            'Caixa com 200g de cada: terrine de gorgonzola e damasco, '
+            'pasta de frango e cream cheese, queijo cremoso e nozes', 1
+        )
+        self.assertIn('- terrine de gorgonzola e damasco', linhas)
+        self.assertIn('- pasta de frango e cream cheese', linhas)
+
+    def test_prefixo_antes_dos_dois_pontos_vira_cabecalho(self):
+        linhas = linhas_de_preparo(
+            'Ingredientes: Trigo, água, sal, açúcar, mini-hambúrguer, gergelim, fermento, ovos, óleo', 1
+        )
+        self.assertIn('- Ingredientes:', linhas)
+        self.assertIn('- Trigo', linhas)
+        self.assertIn('- óleo', linhas)
+
+    def test_sabores_disponiveis_chegam_a_cozinha(self):
+        linhas = linhas_de_preparo(
+            'Suco natural de polpa 1 litro. Sabores: acerola, caju, abacaxi ou goiaba.', 1
+        )
+        self.assertTrue(any('acerola' in l for l in linhas), linhas)
+        self.assertTrue(any('goiaba' in l for l in linhas), linhas)
+
+    def test_marketing_em_uma_linha_continua_fora(self):
+        """'100 unidades de beijinho, perfeito para sua festa, ...' """
+        linhas = linhas_de_preparo(
+            '100 unidades de beijinho, perfeito para sua festa, comemoração e dividir com quem você ama!', 1
+        )
+        self.assertEqual(['>> 100 UNIDADES'], linhas)
+
+    def test_frase_comum_nao_vira_lista(self):
+        """Duas vírgulas numa frase não fazem dela uma ficha técnica."""
+        linhas = linhas_de_preparo('Bolo recheado, feito na hora.', 1)
+        self.assertEqual([], linhas)
+
+
+class FraseComAdjetivosNaoEListaTests(TestCase):
+    """Vírgula separa lista — e também adjetivo. A comanda só quer a lista.
+
+    Os ingredientes avulsos da Cê Saladas são descritos assim:
+
+        "Porção de 35 g. Repolho finamente fatiado, fresco, crocante."
+
+    Quebrar por vírgula produzia três "itens" para a cozinha montar, sendo
+    que dois deles são adjetivos:
+
+        - Porção de 35 g. Repolho finamente fatiado
+        - fresco
+        - crocante
+
+    O sinal que separa os dois casos: uma lista de composição não tem ponto
+    final no meio. "Provolone, parmesão, gorgonzola" não tem; a frase acima
+    tem, porque emenda duas orações.
+    """
+
+    def test_adjetivos_da_ce_saladas_nao_viram_itens(self):
+        for descricao in [
+            'Porção de 35 g. Repolho finamente fatiado, fresco, crocante.',
+            'Porção de 80 g. Floretes de brócolis cozidos no ponto, verdes, macios.',
+            'Porção de 50 g. Cubos de manga madura, frescos, naturalmente doces.',
+        ]:
+            self.assertEqual([], linhas_de_preparo(descricao, 1), descricao)
+
+    def test_lista_de_verdade_continua_passando(self):
+        linhas = linhas_de_preparo(
+            'Ovos, óleo, leite, queijo ralado, polvilho doce, polvilho azedo e margarina.', 1
+        )
+        self.assertIn('- queijo ralado', linhas)
+        self.assertIn('- margarina', linhas)
+
+    def test_ponto_no_meio_com_cabecalho_ainda_vale(self):
+        """"Suco natural de polpa 1 litro. Sabores: acerola, caju..." — o
+        `:` diz onde a lista começa, então o ponto antes dele não atrapalha."""
+        linhas = linhas_de_preparo(
+            'Suco natural de polpa 1 litro. Sabores: acerola, caju, abacaxi ou goiaba.', 1
+        )
+        self.assertTrue(any('acerola' in l for l in linhas), linhas)
