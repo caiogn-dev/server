@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Iterable
@@ -187,6 +188,94 @@ def _combo_selection_lines(display_data: dict) -> list[str]:
     return lines
 
 
+# ── Comanda de PREPARO ────────────────────────────────────────────────────────
+# A comanda de entrega responde "o que sai"; a de preparo responde "o que se
+# monta". Para a Ivoneth Banqueteria a diferença é o pedido inteiro: "2x Mini
+# Hambúrguer" são 100 unidades, e "trio entradas 20 pessoas" são três terrines
+# distintas. O catálogo já sabia disso na descrição do produto — só não
+# imprimia.
+
+# Só contagem de ITENS conta como rendimento. `500g` é peso e `R$ 43.60` é
+# preço; ambos aparecem em descrição e nenhum diz quanto a cozinha produz.
+_UNIDADES_DE_RENDIMENTO = (
+    'unidades', 'unidade', 'pessoas', 'pessoa', 'porcoes', 'porções', 'porção', 'porcao',
+)
+
+_RENDIMENTO_RE = re.compile(
+    r'(?<![\d,.])(\d{1,4})\s*(' + '|'.join(_UNIDADES_DE_RENDIMENTO) + r')\b',
+    re.IGNORECASE,
+)
+
+
+def rendimento_por_embalagem(descricao: str | None) -> tuple[int, str] | None:
+    """Quantos itens UMA unidade vendida rende, lido da descrição do catálogo.
+
+    Reconhece as duas formas que a Ivoneth usa na prática:
+      "Vendido em embalagem com 50 unidades."  -> (50, 'unidades')
+      "100 unidades de brigadeiro caseiro."    -> (100, 'unidades')
+
+    Devolve None quando não há contagem — o que é o caso da maioria das lojas.
+    Sem isso, a comanda passaria a imprimir texto de marketing como se fosse
+    instrução de preparo.
+    """
+    if not descricao:
+        return None
+    achado = _RENDIMENTO_RE.search(str(descricao))
+    if not achado:
+        return None
+    return int(achado.group(1)), achado.group(2).lower()
+
+
+def _limpa_markdown_whatsapp(texto: str) -> str:
+    """`*delicioso*` é negrito no WhatsApp e ruído no papel térmico."""
+    return re.sub(r'[*_~`]', '', texto)
+
+
+def linhas_de_preparo(descricao: str | None, quantidade: int) -> list[str]:
+    """O que a cozinha precisa ler, derivado da descrição do produto.
+
+    Duas coisas, nesta ordem:
+
+    1. **O rendimento já multiplicado.** `>> 100 UNIDADES (2 x 50)`. A conta na
+       cabeça, às 11h de um sábado de evento, é onde o erro acontece — então a
+       comanda faz a conta e mostra a origem dela.
+    2. **A composição**, uma linha por item, quando a descrição tem várias
+       linhas (é assim que o "trio entradas" está cadastrado).
+
+    Descrição de venda ("O combo perfeito para quem ama salmão!") devolve
+    lista vazia: ela não ajuda a montar nada e consome papel.
+    """
+    if not descricao:
+        return []
+
+    texto = _limpa_markdown_whatsapp(str(descricao)).replace('\r\n', '\n').replace('\r', '\n')
+    linhas: list[str] = []
+
+    rendimento = rendimento_por_embalagem(texto)
+    if rendimento:
+        por_unidade, unidade = rendimento
+        qtd = max(int(quantidade or 1), 1)
+        total = por_unidade * qtd
+        conta = f' ({qtd} x {por_unidade})' if qtd > 1 else ''
+        linhas.append(f'>> {total} {unidade.upper()}{conta}')
+
+    partes = [l.strip(' .;') for l in texto.split('\n')]
+    partes = [l for l in partes if l]
+    if len(partes) > 1:
+        # Várias linhas = composição cadastrada item a item.
+        linhas.extend(f'- {l}' for l in partes)
+
+    return linhas
+
+
+def _preparo_do_item(item) -> list[str]:
+    """`product` é SET_NULL: pedido antigo sobrevive ao produto excluído."""
+    produto = getattr(item, 'product', None)
+    if produto is None:
+        return []
+    return linhas_de_preparo(getattr(produto, 'description', ''), item.quantity)
+
+
 def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:
     # Combos ligados a uma linha de item são pulados no loop de combos abaixo
     # (evita duplicar a linha), então os sabores escolhidos precisam entrar
@@ -230,6 +319,9 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'subtotal': _money(item.subtotal),
             'details': details,
             'ingredients': combo_ingredients,
+            # O que a cozinha monta, não o que o cliente recebe. Ver
+            # `linhas_de_preparo`.
+            'prep': _preparo_do_item(item),
             'notes': item.notes or '',
         })
 
