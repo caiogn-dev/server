@@ -13,6 +13,8 @@ from django.conf import settings
 from django.core.mail import EmailMessage
 from django.db import models
 
+from apps.core.pii import mask_email
+
 logger = logging.getLogger(__name__)
 
 
@@ -488,7 +490,7 @@ Sistema WhatsApp Business
         report.email_recipients = recipients
         report.save()
         
-        logger.info(f"Report email sent to {recipients}")
+        logger.info(f"Report email sent to {[mask_email(r) for r in recipients]}")
         
     except Exception as e:
         logger.error(f"Failed to send report email: {str(e)}")
@@ -538,5 +540,3 @@ def cleanup_old_reports():
                 logger.warning(f"Failed to delete report file {report.file_path}: {str(e)}")
         
         report.delete()
-    
-    logger.info(f"Cleaned up {old_reports.count()} old reports")
