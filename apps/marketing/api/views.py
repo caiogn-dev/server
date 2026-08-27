@@ -4,7 +4,7 @@ Marketing API views.
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from apps.core.permissions import StoreQuerysetMixin, accessible_store_ids
 
@@ -509,9 +509,9 @@ class CustomersViewSet(viewsets.ViewSet):
 
         return Response({'count': max(user_count, subscriber_count, order_emails)})
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def debug(self, request):
-        """Debug endpoint to check data sources for a store. Admin only."""
+        """Debug endpoint to check data sources for a store."""
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder, StoreCustomer
 
@@ -520,6 +520,9 @@ class CustomersViewSet(viewsets.ViewSet):
 
         if not store_id:
             return Response({'error': 'store parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Acesso negado a esta loja.'}, status=status.HTTP_403_FORBIDDEN)
 
         # All scoped to this store only
         store_customer_users = User.objects.filter(
