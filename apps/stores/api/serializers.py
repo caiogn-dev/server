@@ -324,6 +324,10 @@ class StoreCategorySerializer(serializers.ModelSerializer):
             'id', 'store', 'name', 'slug', 'description',
             'image', 'image_url', 'parent', 'children',
             'sort_order', 'is_active', 'is_builder_group', 'products_count',
+            # Configuração do montador: o storefront monta os passos a partir
+            # daqui em vez de trazer os da Cê Saladas cravados no código.
+            'builder_step_order', 'builder_max_selections', 'builder_required',
+            'builder_included', 'builder_expand_variants',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
