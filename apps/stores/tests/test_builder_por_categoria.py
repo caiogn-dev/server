@@ -41,6 +41,24 @@ def outra_store(db):
     return Store.objects.create(name='Montador 2', slug='montador-2', owner=dono)
 
 
+def _limpar_montador_incompleto(StoreCategory):
+    """Regra: sem passo na ordem 0, a loja não tem montador. Mesma lógica da 0073."""
+    lojas_ok = set(
+        StoreCategory.objects
+        .filter(builder_step_order=0)
+        .values_list('store_id', flat=True)
+    )
+    StoreCategory.objects.filter(
+        builder_step_order__isnull=False
+    ).exclude(store_id__in=lojas_ok).update(
+        builder_step_order=None,
+        builder_max_selections=1,
+        builder_required=False,
+        builder_included=False,
+        builder_expand_variants=False,
+    )
+
+
 def _categoria(store, slug, **kwargs):
     return StoreCategory.objects.create(
         store=store, name=slug.title(), slug=slug, **kwargs
@@ -136,3 +154,40 @@ class TestSerializer:
         assert dados['builder_required'] is False
         assert dados['builder_included'] is False
         assert dados['builder_expand_variants'] is False
+
+
+class TestMontadorPrecisaDoPassoInicial:
+    """
+    A 0072 traduziu o contrato do código procurando os slugs base/proteina/
+    complemento/molhos em TODA loja. Só que "molhos" também existe em loja que
+    não monta nada: a Pastita tem molhos como categoria comum e ganhou um passo,
+    o que faria o montador aparecer lá com um passo só. Montador sem o passo
+    inicial (ordem 0) não é montador.
+    """
+
+    def test_loja_que_so_tem_molhos_fica_sem_configuracao(self, store):
+        _categoria(store, 'molhos', builder_step_order=3, builder_included=True)
+        _limpar_montador_incompleto(StoreCategory)
+        assert not StoreCategory.objects.filter(
+            store=store, builder_step_order__isnull=False
+        ).exists()
+
+    def test_loja_com_passo_inicial_mantem_todos_os_passos(self, store):
+        _categoria(store, 'base', builder_step_order=0, builder_required=True)
+        _categoria(store, 'molhos', builder_step_order=3, builder_included=True)
+        _limpar_montador_incompleto(StoreCategory)
+        assert StoreCategory.objects.filter(
+            store=store, builder_step_order__isnull=False
+        ).count() == 2
+
+    def test_uma_loja_incompleta_nao_derruba_a_outra(self, store, outra_store):
+        _categoria(store, 'base', builder_step_order=0)
+        _categoria(store, 'molhos', builder_step_order=3)
+        _categoria(outra_store, 'molhos', builder_step_order=3)
+        _limpar_montador_incompleto(StoreCategory)
+        assert StoreCategory.objects.filter(
+            store=store, builder_step_order__isnull=False
+        ).count() == 2
+        assert not StoreCategory.objects.filter(
+            store=outra_store, builder_step_order__isnull=False
+        ).exists()
