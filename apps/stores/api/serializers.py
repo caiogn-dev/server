@@ -19,6 +19,7 @@ from apps.stores.models import (
     StorePrintAgent, StorePrintJob, StoreCustomerAddress,
 )
 from apps.core.services.customer_identity import CustomerIdentityService
+from apps.core.permissions import user_can_access_store
 
 
 class StoreSerializer(serializers.ModelSerializer):
@@ -351,6 +352,25 @@ class StoreCategorySerializer(serializers.ModelSerializer):
             children = obj.children.filter(is_active=True)
         return StoreCategorySerializer(children, many=True).data
 
+    def validate_store(self, value):
+        """Bloqueia IDOR de escrita: impede mover categoria para loja alheia."""
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
+
+    def validate_parent(self, value):
+        """Bloqueia parent de outra loja: impede árvore de categorias cross-tenant."""
+        if value is None:
+            return value
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            parent_store = getattr(value, 'store', None)
+            if parent_store and not user_can_access_store(request.user, parent_store):
+                raise serializers.ValidationError('Categoria não encontrada')
+        return value
+
 
 class StoreProductVariantSerializer(serializers.ModelSerializer):
     """Serializer for StoreProductVariant model."""
@@ -493,21 +513,40 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
             'attributes', 'tags', 'sort_order'
         ]
     
+    def validate_store(self, value):
+        """Bloqueia IDOR de escrita: impede criar/mover produto para loja alheia."""
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada')
+        return value
+
+    def validate_category(self, value):
+        """Bloqueia categoria de outra loja: impede produto cross-tenant via category FK."""
+        if value is None:
+            return value
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+            category_store = getattr(value, 'store', None)
+            if category_store and not user_can_access_store(request.user, category_store):
+                raise serializers.ValidationError('Categoria não encontrada')
+        return value
+
     def validate(self, data):
         """Validate type_attributes against product_type custom_fields."""
         product_type = data.get('product_type')
         type_attributes = data.get('type_attributes', {})
-        
+
         if product_type and product_type.custom_fields:
             for field_def in product_type.custom_fields:
                 field_name = field_def.get('name')
                 is_required = field_def.get('required', False)
-                
+
                 if is_required and field_name not in type_attributes:
                     raise serializers.ValidationError({
                         'type_attributes': f"Field '{field_name}' is required for product type '{product_type.name}'"
                     })
-        
+
         return data
 
 
