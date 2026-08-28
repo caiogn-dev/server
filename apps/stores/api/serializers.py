@@ -371,6 +371,18 @@ class StoreCategorySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError('Categoria não encontrada')
         return value
 
+    def validate(self, data):
+        """Garante que parent pertence à mesma loja que a categoria (não só ao mesmo usuário)."""
+        target_store = data.get('store') or (self.instance.store if self.instance else None)
+        parent = data.get('parent')
+        if target_store and parent:
+            parent_store_id = getattr(parent, 'store_id', None)
+            if parent_store_id and parent_store_id != target_store.id:
+                raise serializers.ValidationError(
+                    {'parent': 'A categoria pai deve pertencer à mesma loja.'}
+                )
+        return data
+
 
 class StoreProductVariantSerializer(serializers.ModelSerializer):
     """Serializer for StoreProductVariant model."""
@@ -534,6 +546,15 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         """Validate type_attributes against product_type custom_fields."""
+        target_store = data.get('store') or (self.instance.store if self.instance else None)
+        category = data.get('category')
+        if target_store and category:
+            category_store_id = getattr(category, 'store_id', None)
+            if category_store_id and category_store_id != target_store.id:
+                raise serializers.ValidationError(
+                    {'category': 'A categoria deve pertencer à mesma loja do produto.'}
+                )
+
         product_type = data.get('product_type')
         type_attributes = data.get('type_attributes', {})
 

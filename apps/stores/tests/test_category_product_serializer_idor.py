@@ -194,3 +194,76 @@ class TestStaticAnalysis(SimpleTestCase):
             hasattr(StoreCategorySerializer, 'validate_parent'),
             "StoreCategorySerializer não tem validate_parent — cross-tenant parent não corrigido"
         )
+
+
+class TestSameStoreInvariant(SimpleTestCase):
+    """validate() garante que category/parent pertencem à mesma loja (invariante multi-tenant)."""
+
+    def test_product_categoria_loja_diferente_levanta_error(self):
+        """Produto com categoria de outra loja → ValidationError mesmo que usuário acesse ambas."""
+        from apps.stores.api.serializers import StoreProductCreateSerializer
+        from rest_framework import serializers as drf_serializers
+        user = _make_user(is_superuser=False)
+        request = _make_request(user)
+        ser = StoreProductCreateSerializer(context={'request': request})
+        store_a = _make_store()
+        store_b = _make_store()
+        category = MagicMock()
+        category.store_id = store_b.id
+        with self.assertRaises(drf_serializers.ValidationError) as ctx:
+            ser.validate({'store': store_a, 'category': category})
+        detail = ctx.exception.detail
+        self.assertIn('category', detail)
+
+    def test_product_categoria_mesma_loja_passa(self):
+        """Produto com categoria da mesma loja → validate() retorna data sem erro."""
+        from apps.stores.api.serializers import StoreProductCreateSerializer
+        user = _make_user(is_superuser=False)
+        request = _make_request(user)
+        ser = StoreProductCreateSerializer(context={'request': request})
+        store = _make_store()
+        category = MagicMock()
+        category.store_id = store.id
+        data = {'store': store, 'category': category}
+        result = ser.validate(data)
+        self.assertEqual(result, data)
+
+    def test_product_sem_categoria_passa(self):
+        """validate() com category=None não levanta erro."""
+        from apps.stores.api.serializers import StoreProductCreateSerializer
+        user = _make_user(is_superuser=False)
+        request = _make_request(user)
+        ser = StoreProductCreateSerializer(context={'request': request})
+        store = _make_store()
+        data = {'store': store, 'category': None}
+        result = ser.validate(data)
+        self.assertEqual(result, data)
+
+    def test_categoria_parent_loja_diferente_levanta_error(self):
+        """Categoria com parent de outra loja → ValidationError mesmo que usuário acesse ambas."""
+        from apps.stores.api.serializers import StoreCategorySerializer
+        from rest_framework import serializers as drf_serializers
+        user = _make_user(is_superuser=False)
+        request = _make_request(user)
+        ser = StoreCategorySerializer(context={'request': request})
+        store_a = _make_store()
+        store_b = _make_store()
+        parent = MagicMock()
+        parent.store_id = store_b.id
+        with self.assertRaises(drf_serializers.ValidationError) as ctx:
+            ser.validate({'store': store_a, 'parent': parent})
+        detail = ctx.exception.detail
+        self.assertIn('parent', detail)
+
+    def test_categoria_parent_mesma_loja_passa(self):
+        """Categoria com parent da mesma loja → validate() retorna data sem erro."""
+        from apps.stores.api.serializers import StoreCategorySerializer
+        user = _make_user(is_superuser=False)
+        request = _make_request(user)
+        ser = StoreCategorySerializer(context={'request': request})
+        store = _make_store()
+        parent = MagicMock()
+        parent.store_id = store.id
+        data = {'store': store, 'parent': parent}
+        result = ser.validate(data)
+        self.assertEqual(result, data)
