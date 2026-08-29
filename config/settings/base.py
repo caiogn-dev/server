@@ -196,7 +196,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        # NÃO é o TokenAuthentication do DRF: token vencido no navegador do
+        # cliente respondia 401 no CATÁLOGO, no CARRINHO e no próprio envio do
+        # código de login — a loja não abria e não havia como sair. Ver
+        # apps/core/authentication.py.
+        'apps.core.authentication.TokenOuVisitante',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',

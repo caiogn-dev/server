@@ -335,6 +335,15 @@ class Store(BaseModel):
         if not hours:
             return False
 
+        # O painel grava `is_open: false` no dia que o lojista desligou. Isto
+        # era ignorado: só `open`/`close` eram lidos, então sábado marcado como
+        # fechado continuava abrindo das 08:00 às 12:00 — o horário que ficou
+        # gravado embaixo do desligamento. A vontade de quem administra vem
+        # ANTES do relógio.
+        # Ausência do campo NÃO fecha: cadastro antigo não tem a chave.
+        if 'is_open' in hours and not self._verdadeiro(hours['is_open']):
+            return False
+
         try:
             from datetime import datetime as _dt
             open_str = hours.get('open') or hours.get('start') or '00:00'
@@ -343,7 +352,17 @@ class Store(BaseModel):
             close_time = _dt.strptime(close_str, '%H:%M').time()
             return open_time <= now.time() <= close_time
         except (ValueError, TypeError):
-            return True
+            # Era `return True`: um erro de digitação no painel ABRIA a loja.
+            # Diante da dúvida não vender é recuperável — o cliente volta.
+            # Vender sem poder entregar custa o cliente.
+            return False
+
+    @staticmethod
+    def _verdadeiro(valor):
+        """JSON de painel chega como bool, "false" ou 0 conforme o formulário."""
+        if isinstance(valor, str):
+            return valor.strip().lower() not in ('false', '0', 'no', '')
+        return bool(valor)
     
     def get_whatsapp_account(self):
         """
