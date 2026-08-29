@@ -20,6 +20,15 @@ logger = logging.getLogger(__name__)
 #: Segundos que o painel espera pelo modelo antes de mostrar o template.
 LLM_TIMEOUT_PAINEL = 18
 
+#: Dias da semana em português, na ordem de `datetime.weekday()` (segunda = 0).
+#:
+#: A grafia é a MESMA que `compute_forecast` usa em `best_weekday`/`weekday_avg`
+#: — com acento em "terça" e "sábado". Duas grafias fariam o modelo achar que
+#: são dias diferentes e comparar errado.
+DIAS_DA_SEMANA = (
+    'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado', 'domingo',
+)
+
 INSIGHTS_MAX_MESSAGES = 300
 
 
@@ -432,10 +441,24 @@ def generate_daily_summary(store, day=None) -> dict:
         logger.warning('[ai_insights] falha no forecast: %s', exc)
         forecast = {}
 
+    # QUE DIA É HOJE PRECISA ESTAR NO PROMPT.
+    #
+    # Em 28/ago/2026 — uma sexta — o resumo saiu com "Hoje é terça, nosso melhor
+    # dia". O modelo não tinha data nenhuma e o único dia da semana no texto era
+    # `best_weekday: "terça"`, o dia que mais fatura. Pedir "uma coisa concreta
+    # para HOJE" sem dizer que dia é hoje é convite à invenção.
+    hoje = timezone.localtime()
+    dia_de_hoje = DIAS_DA_SEMANA[hoje.weekday()]
+    media_de_hoje = (forecast.get('weekday_avg') or {}).get(dia_de_hoje)
+
     prompt = (
         "Você é o analista de negócios do dono do restaurante "
         f"\"{store.name}\". Responda APENAS com JSON válido, sem texto antes ou "
         "depois, sem cercas de código.\n\n"
+        f"HOJE é {dia_de_hoje}, {hoje.strftime('%d/%m/%Y')}"
+        + (f" (média histórica de {dia_de_hoje}: R$ {media_de_hoje:.2f})"
+           if media_de_hoje is not None else "")
+        + ".\n\n"
         "Formato:\n"
         '{"blocos":[{"tipo":"...","titulo":"...","texto":"..."}]}\n\n'
         "Gere de 3 a 4 blocos, nesta ordem, usando SÓ estes tipos:\n"
@@ -451,7 +474,10 @@ def generate_daily_summary(store, day=None) -> dict:
         "tom de quem conversa com o dono, sem jargão.\n\n"
         "Regras: não invente número fora dos dados. Se a projeção for menor que "
         "o mês passado, diga sem suavizar. Se não houve venda, diga com "
-        "franqueza. Nunca use 'insight', 'otimizar' ou 'alavancar'.\n\n"
+        "franqueza. Nunca use 'insight', 'otimizar' ou 'alavancar'.\n"
+        f"ATENÇÃO: hoje é {dia_de_hoje}. `best_weekday` e `worst_weekday` são o "
+        "melhor e o pior dia da semana no histórico — isso NÃO é hoje. Só diga "
+        f"que hoje é um dia da semana se for {dia_de_hoje}.\n\n"
         "Dados de ontem (JSON):\n" + json.dumps(stats, ensure_ascii=False) +
         "\n\nTendência e projeção (JSON):\n" + json.dumps(forecast, ensure_ascii=False)
     )
