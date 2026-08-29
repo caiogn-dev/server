@@ -159,5 +159,38 @@ class TestMessengerConversationSerializerAccountReadOnly(unittest.TestCase):
         self.fail("Meta.read_only_fields não encontrada em MessengerConversationSerializer")
 
 
+class TestMessengerConversationViewSetPerformCreate(unittest.TestCase):
+    """perform_create deve validar tenant antes de criar conversa [IDOR create fix]."""
+
+    def setUp(self):
+        self.src = _source(VIEWS_PATH)
+
+    def test_perform_create_existe_no_viewset(self):
+        """MessengerConversationViewSet deve ter perform_create."""
+        body = _extract_method(self.src, "MessengerConversationViewSet", "perform_create")
+        self.assertTrue(body, "perform_create não encontrado em MessengerConversationViewSet")
+
+    def test_perform_create_valida_account_id(self):
+        """perform_create deve exigir account na criação."""
+        body = _extract_method(self.src, "MessengerConversationViewSet", "perform_create")
+        self.assertIn("account", body, "perform_create não valida campo account")
+
+    def test_perform_create_filtra_por_user(self):
+        """perform_create deve filtrar a conta pelo user autenticado (não é_superuser)."""
+        body = _extract_method(self.src, "MessengerConversationViewSet", "perform_create")
+        self.assertTrue(body, "perform_create não encontrado")
+        # Deve checar is_superuser para decidir escopo
+        self.assertIn("is_superuser", body, "perform_create não verifica is_superuser para escopo")
+        # Deve filtrar por user do request
+        self.assertIn("user", body, "perform_create não filtra conta pelo user do request")
+
+    def test_perform_create_injeta_account_no_save(self):
+        """perform_create deve injetar account no serializer.save()."""
+        body = _extract_method(self.src, "MessengerConversationViewSet", "perform_create")
+        self.assertTrue(body, "perform_create não encontrado")
+        self.assertIn("serializer.save(", body, "perform_create não chama serializer.save")
+        self.assertIn("account=account", body, "perform_create não injeta account no save")
+
+
 if __name__ == "__main__":
     unittest.main()

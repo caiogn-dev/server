@@ -174,6 +174,17 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.filter(account__user=self.request.user)
 
+    def perform_create(self, serializer):
+        account_id = self.request.data.get("account")
+        if not account_id:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"account": "Este campo é obrigatório na criação."})
+        qs = MessengerAccount.objects.all()
+        if not self.request.user.is_superuser:
+            qs = qs.filter(user=self.request.user)
+        account = get_object_or_404(qs, id=account_id)
+        serializer.save(account=account)
+
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):
         conversation = self.get_object()
