@@ -479,14 +479,43 @@ def notify_order_status_change(self, order_id: str, new_status: str):
             })
 
             account = _get_account_for_profile(profile)
-            if account:
+
+            # O telefone vem do banco como "63999451408", SEM o código do país,
+            # e era assim que ia para a API — que precisa do 55. Resultado: nunca
+            # chegou uma notificação de status a ninguém (nem confirmado, nem em
+            # preparo, nem entregue, nem cancelado), enquanto o log dizia
+            # "sent". `send_text_message` NÃO normaliza; quem chama é que
+            # precisa. O outro caminho de notificação já fazia isso.
+            from apps.core.utils import normalize_phone_number
+            destino = normalize_phone_number(order.customer_phone or '')
+
+            if account and destino:
                 from apps.whatsapp.services.message_service import MessageService
                 MessageService().send_text_message(
                     account_id=str(account.id),
-                    to=order.customer_phone,
+                    to=destino,
                     text=message,
+                    metadata={
+                        'source': 'order_status_notification',
+                        'order_id': str(order_id),
+                        'order_number': order.order_number,
+                        'status': new_status,
+                    },
                 )
+                # O log só afirma o que aconteceu. Antes ele vinha solto depois
+                # da chamada e dizia "sent" mesmo quando nada saía — mandou
+                # procurar o problema no lugar errado por semanas.
                 logger.info(f"Status notification sent for order {order_id}: {new_status}")
+            elif not destino:
+                logger.warning(
+                    f"Status notification NOT sent for order {order_id}: "
+                    f"telefone inválido ({order.customer_phone!r})"
+                )
+            else:
+                logger.warning(
+                    f"Status notification NOT sent for order {order_id}: "
+                    f"loja sem conta de WhatsApp"
+                )
 
         except AutoMessage.DoesNotExist:
             # No AutoMessage template configured — fall back to the model's built-in
