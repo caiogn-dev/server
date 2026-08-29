@@ -309,12 +309,12 @@ Responda APENAS com o nome da intenção em inglês minúsculo."""),
                 logger.warning("NVIDIA_API_KEY not configured, skipping LLM intent detection")
                 return IntentType.UNKNOWN
             
-            # Usa modelo melhor da NVIDIA (Llama 3.1 70B é mais inteligente que o 8B)
-            model_name = getattr(settings, 'NVIDIA_MODEL_NAME', "meta/llama-3.1-70b-instruct")
-            # Fallback para 70B se estiver usando o 8B antigo
-            if '8b' in model_name.lower():
-                model_name = "meta/llama-3.1-70b-instruct"
-                logger.info("Upgrading to Llama 3.1 70B for better responses")
+            # `modelo_vivo` troca modelo aposentado pelo padrão atual. A
+            # troca precisa acontecer AQUI e não só no `.env` porque o env de
+            # produção mora assado na imagem: em 26/ago/2026 ele continuou
+            # apontando para o llama-3.1-70b depois do 410 Gone dele.
+            from apps.agents.runtime.modelos import modelo_vivo
+            model_name = modelo_vivo(getattr(settings, 'NVIDIA_MODEL_NAME', ''))
             
             model = ChatOpenAI(
                 model=model_name,

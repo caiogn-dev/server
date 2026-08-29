@@ -162,7 +162,7 @@ class LangchainService:
         elif provider == Agent.AgentProvider.NVIDIA:
             from langchain_openai import ChatOpenAI
             model_name = self.agent.model_name or getattr(
-                settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct'
+                settings, 'NVIDIA_MODEL_NAME', 'nvidia/nemotron-3-nano-30b-a3b'
             )
             return ChatOpenAI(
                 model=model_name,

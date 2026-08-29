@@ -83,11 +83,17 @@ class CampaignService:
         if campaign.status not in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
             raise ValueError("Cannot update campaign that is running or completed")
         
+        alterados = []
         for key, value in kwargs.items():
             if hasattr(campaign, key):
                 setattr(campaign, key, value)
-        
-        campaign.save()
+                alterados.append(key)
+
+        # Só o que foi realmente pedido. Um `save()` inteiro daqui apagaria os
+        # contadores de entrega que os recibos escrevem em paralelo — ver o
+        # comentário longo em `process_campaign_batch`.
+        if alterados:
+            campaign.save(update_fields=alterados + ['updated_at'])
         return campaign
     
     def schedule_campaign(
@@ -106,7 +112,7 @@ class CampaignService:
         
         campaign.scheduled_at = scheduled_at
         campaign.status = Campaign.CampaignStatus.SCHEDULED
-        campaign.save()
+        campaign.save(update_fields=['scheduled_at', 'status', 'updated_at'])
         
         return campaign
     
@@ -121,7 +127,7 @@ class CampaignService:
         
         campaign.status = Campaign.CampaignStatus.RUNNING
         campaign.started_at = timezone.now()
-        campaign.save()
+        campaign.save(update_fields=['status', 'started_at', 'updated_at'])
         
         logger.info(f"Campaign {campaign_id} started with {campaign.total_recipients} recipients")
         
@@ -183,8 +189,10 @@ class CampaignService:
         if campaign.status != Campaign.CampaignStatus.RUNNING:
             raise ValueError("Only running campaigns can be paused")
         
+        # Pausar acontece com a campanha no ar — exatamente quando os recibos
+        # de entrega estão chegando. Gravar o objeto inteiro os apagaria.
         campaign.status = Campaign.CampaignStatus.PAUSED
-        campaign.save()
+        campaign.save(update_fields=['status', 'updated_at'])
         
         return campaign
     
@@ -196,7 +204,7 @@ class CampaignService:
             raise ValueError("Only paused campaigns can be resumed")
         
         campaign.status = Campaign.CampaignStatus.RUNNING
-        campaign.save()
+        campaign.save(update_fields=['status', 'updated_at'])
         
         # Trigger async processing
         from ..tasks import process_campaign
@@ -212,7 +220,7 @@ class CampaignService:
             raise ValueError("Campaign is already completed or cancelled")
         
         campaign.status = Campaign.CampaignStatus.CANCELLED
-        campaign.save()
+        campaign.save(update_fields=['status', 'updated_at'])
         
         return campaign
     
@@ -308,7 +316,7 @@ class CampaignService:
             if remaining == 0:
                 campaign.status = Campaign.CampaignStatus.COMPLETED
                 campaign.completed_at = timezone.now()
-                campaign.save()
+                campaign.save(update_fields=['status', 'completed_at', 'updated_at'])
             return {'processed': 0, 'remaining': remaining}
         
         logger.info(f"Campaign {campaign_id}: Processing {len(recipients)} recipients")
@@ -316,8 +324,27 @@ class CampaignService:
         message_service = MessageService()
         processed = 0
         failed = 0
-        
+
+        # Segunda camada, e a que teria evitado o incidente de 25→28/ago: a
+        # lista pode ter sido montada ANTES do pedido de saída e disparada
+        # depois. Consultar só na montagem deixaria essa janela aberta.
+        from .contatos import chave_do_telefone
+        from .optout import chaves_bloqueadas
+        bloqueadas = chaves_bloqueadas(campaign.account)
+
         for recipient in recipients:
+            if chave_do_telefone(recipient.phone_number) in bloqueadas:
+                # `skipped`, não `failed`: a pessoa escolheu não receber. Contar
+                # como falha faria a taxa de entrega mentir e sugeriria problema
+                # técnico onde houve decisão do cliente.
+                recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
+                recipient.save(update_fields=['status', 'updated_at'])
+                logger.info(
+                    'Campanha %s: %s pulado por opt-out',
+                    campaign_id, mask_phone(recipient.phone_number),
+                )
+                continue
+
             try:
                 logger.debug("Sending message to %s", mask_phone(recipient.phone_number))
                 
@@ -396,14 +423,32 @@ class CampaignService:
         remaining = campaign.recipients.filter(
             status=CampaignRecipient.RecipientStatus.PENDING
         ).count()
-        
+
+        campos_deste_lote = ['messages_sent', 'messages_failed', 'updated_at']
+
         if remaining == 0:
             campaign.status = Campaign.CampaignStatus.COMPLETED
             campaign.completed_at = timezone.now()
+            campos_deste_lote += ['status', 'completed_at']
             logger.info(f"Campaign {campaign_id} completed: {campaign.messages_sent} sent, {campaign.messages_failed} failed")
-        
-        campaign.save()
-        
+
+        # `update_fields` NÃO é otimização aqui — é correção.
+        #
+        # Enviar um lote demora, e os recibos de entrega/leitura chegam pela
+        # Meta DURANTE esse tempo, incrementando as colunas com `F()`. Um
+        # `save()` sem lista grava TODAS as colunas com os valores lidos no
+        # começo do lote e apaga tudo o que chegou no meio.
+        #
+        # Medido em produção (28/ago/2026): a campanha de 24/ago tinha 138
+        # entregas nas linhas de destinatário e o contador dizia 16. A de
+        # 28/ago: 246 reais contra 21 no painel. Entrega real de 89% aparecia
+        # como 7,6%, e "lidas" ficava MAIOR que "entregues" — impossível, e
+        # suficiente para o dono parar de acreditar na tela.
+        #
+        # Este método só é dono do que ELE mudou: enviadas, falhas e o desfecho.
+        # Entrega e leitura pertencem ao recibo (ver `recibos.registrar_recibo`).
+        campaign.save(update_fields=campos_deste_lote)
+
         return {'processed': processed, 'failed': failed, 'remaining': remaining}
     
     def _create_recipients(
@@ -411,13 +456,30 @@ class CampaignService:
         campaign: Campaign,
         contacts: List[Dict[str, Any]],
     ) -> int:
-        """Create campaign recipients from contact list."""
+        """Create campaign recipients from contact list.
+
+        Quem pediu para sair não entra NEM COMO DESTINATÁRIO. Deixar entrar e
+        pular depois faria a tela prometer "278 destinatários" quando cinco
+        deles jamais poderiam receber.
+        """
+        from .contatos import chave_do_telefone
+        from .optout import chaves_bloqueadas
+
+        bloqueadas = chaves_bloqueadas(campaign.account)
+
         created = 0
         for contact in contacts:
             phone = contact.get('phone') or contact.get('phone_number')
             if not phone:
                 continue
-            
+
+            if chave_do_telefone(phone) in bloqueadas:
+                logger.info(
+                    'Campanha %s: %s ignorado por opt-out',
+                    campaign.id, mask_phone(phone),
+                )
+                continue
+
             _, was_created = CampaignRecipient.objects.get_or_create(
                 campaign=campaign,
                 phone_number=phone,

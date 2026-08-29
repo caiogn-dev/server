@@ -136,7 +136,13 @@ class ProviderResolutionTest(TestCase):
             with patch('apps.agents.runtime.factory.create_llm', fake_create_llm):
                 ai_insights.get_insights_llm()
         self.assertEqual(captured['provider'], Agent.AgentProvider.NVIDIA)
-        self.assertEqual(captured['model'], 'meta/llama-3.1-70b-instruct')
+        # Fixar a string do modelo aqui foi o que fez este teste passar verde
+        # durante os dois dias em que o painel estava sem IA em produção: o
+        # modelo tinha morrido no catálogo e o teste só conferia que era ELE.
+        # Agora a asserção é contra a fonte única, que o teste do módulo
+        # `test_modelo_llm_vivo` mantém fora da lista de aposentados.
+        self.assertEqual(captured['model'], ai_insights.MODELO_INSIGHTS_PADRAO)
+        self.assertNotIn(captured['model'], ai_insights.MODELOS_APOSENTADOS)
 
 
 class ConversationInsightsTest(_Base):

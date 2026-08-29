@@ -23,18 +23,32 @@ LLM_TIMEOUT_PAINEL = 18
 INSIGHTS_MAX_MESSAGES = 300
 
 
+# O catálogo vivo é do runtime dos agentes: painel e bot precisam concordar
+# sobre qual modelo existe, e duas listas viram duas verdades na próxima morte.
+from apps.agents.runtime.modelos import (  # noqa: E402
+    FAMILIAS_COM_RACIOCINIO,
+    MODELOS_APOSENTADOS,
+    corpo_extra_do_modelo,
+    modelo_vivo,
+)
+
+MODELO_INSIGHTS_PADRAO = 'nvidia/nemotron-3-nano-30b-a3b'
+
+
+def modelo_de_insights() -> str:
+    """O modelo do painel, ignorando env que aponte para lápide."""
+    return modelo_vivo(
+        getattr(dj_settings, 'NVIDIA_INSIGHTS_MODEL', ''),
+        padrao=MODELO_INSIGHTS_PADRAO,
+    )
+
+
 def get_insights_llm():
     """LLM para análises internas — pseudo-agente pelo provider disponível no env."""
     from apps.agents.models import Agent
     from apps.agents.runtime.factory import create_llm
 
-    # NVIDIA NIM é o provider da casa. O NVIDIA_MODEL_NAME do .env pode estar
-    # aposentado no catálogo (caso do llama-3.1-405b em 15/jul) — estes
-    # insights usam um modelo próprio com default vivo.
-    nvidia_model = (
-        getattr(dj_settings, 'NVIDIA_INSIGHTS_MODEL', '')
-        or 'meta/llama-3.1-70b-instruct'
-    )
+    nvidia_model = modelo_de_insights()
     candidates = [
         (Agent.AgentProvider.NVIDIA, 'NVIDIA_API_KEY', nvidia_model),
         (Agent.AgentProvider.ANTHROPIC, 'ANTHROPIC_API_KEY', 'claude-haiku-4-5-20251001'),
@@ -63,7 +77,16 @@ def get_insights_llm():
 
 
 def _llm_text(prompt: str) -> str:
+    """Texto do modelo, já com os parâmetros que a família dele exige.
+
+    O `extra_body` vai por `bind` e não no construtor porque o factory é
+    compartilhado com o agente do WhatsApp: um parâmetro específico do painel
+    não pode vazar para o fluxo do cliente.
+    """
     llm = get_insights_llm()
+    extra = corpo_extra_do_modelo(modelo_de_insights())
+    if extra:
+        llm = llm.bind(extra_body=extra)
     result = llm.invoke(prompt)
     return getattr(result, 'content', str(result)).strip()
 

@@ -237,9 +237,12 @@ class AgentViewSet(viewsets.ModelViewSet):
                 {'value': 'codellama', 'label': 'Code Llama'},
             ],
             'nvidia': [
-                {'value': 'meta/llama-3.1-70b-instruct', 'label': 'Llama 3.1 70B (Recomendado)'},
-                {'value': 'meta/llama-3.1-405b-instruct', 'label': 'Llama 3.1 405B (Melhor)'},
-                {'value': 'meta/llama-3.1-8b-instruct', 'label': 'Llama 3.1 8B (Básico)'},
+                # A família llama-3.1 de texto saiu do catálogo da NIM em
+                # 26/ago/2026 (410 Gone). Oferecer modelo morto no seletor faz
+                # o dono configurar um agente que nunca vai responder.
+                {'value': 'nvidia/nemotron-3-nano-30b-a3b', 'label': 'Nemotron Nano 30B (Recomendado — rápido)'},
+                {'value': 'deepseek-ai/deepseek-v4-flash-0731', 'label': 'DeepSeek V4 Flash'},
+                {'value': 'nvidia/nemotron-3-super-120b-a12b', 'label': 'Nemotron Super 120B (Melhor)'},
             ]
         }
         return Response(models)
@@ -267,7 +270,7 @@ class AgentViewSet(viewsets.ModelViewSet):
             },
             'nvidia': {
                 'base_url': getattr(settings, 'NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1'),
-                'model_name': getattr(settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-405b-instruct'),
+                'model_name': getattr(settings, 'NVIDIA_MODEL_NAME', 'nvidia/nemotron-3-nano-30b-a3b'),
                 'api_style': 'openai',
             },
             'ollama': {

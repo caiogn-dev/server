@@ -704,6 +704,65 @@ class WebhookService:
         metadata = getattr(account, 'metadata', None) or {}
         return bool(metadata.get('transactional_only'))
 
+    def _tratar_pedido_de_saida(self, event: WebhookEvent, message: Message) -> bool:
+        """Atende "Parar promoções" e "VOLTAR". Devolve True se consumiu a mensagem.
+
+        Nunca deixa exceção subir: falhar aqui não pode engolir a mensagem do
+        cliente. Se o registro falhar, a mensagem segue para o pipeline normal
+        e o pior caso é o comportamento antigo — que é o piso, não o alvo.
+        """
+        from apps.campaigns.services.optout import (
+            TEXTO_DE_CONFIRMACAO,
+            TEXTO_DE_VOLTA,
+            eh_pedido_de_saida,
+            eh_pedido_de_volta,
+            registrar_saida,
+            revogar_saida,
+        )
+
+        # O tipo cru do webhook, não o mapeado: a régua do botão é diferente
+        # da régua do texto livre, de propósito.
+        tipo_cru = (event.payload.get('message', {}) or {}).get('type') or 'text'
+        texto = message.text_body or ''
+
+        try:
+            if eh_pedido_de_saida(texto, tipo=tipo_cru):
+                registrar_saida(event.account, message.from_number, texto, tipo_cru)
+                self._responder_saida(event, message, TEXTO_DE_CONFIRMACAO)
+                logger.info(
+                    '[optout] Pedido de saída atendido: message_id=%s tipo=%s',
+                    message.id, tipo_cru,
+                )
+                return True
+
+            if eh_pedido_de_volta(texto, tipo=tipo_cru):
+                revogar_saida(event.account, message.from_number)
+                self._responder_saida(event, message, TEXTO_DE_VOLTA)
+                logger.info('[optout] Retorno atendido: message_id=%s', message.id)
+                return True
+        except Exception:
+            logger.exception(
+                '[optout] Falha ao tratar pedido de saída; mensagem segue para o pipeline'
+            )
+            return False
+
+        return False
+
+    def _responder_saida(self, event: WebhookEvent, message: Message, texto: str) -> None:
+        """Confirma para a pessoa. Silêncio aqui faz ela apertar o botão de novo."""
+        try:
+            from .message_service import MessageService
+            MessageService().send_text_message(
+                account_id=str(event.account.id),
+                to=message.from_number,
+                text=texto,
+                metadata={'source': 'optout'},
+            )
+        except Exception:
+            # O registro do opt-out já está feito e é o que importa; não poder
+            # confirmar é ruim, mas continuar mandando promoção seria pior.
+            logger.exception('[optout] Não consegui confirmar a saída para o cliente')
+
     def post_process_inbound_message(self, event: WebhookEvent, message: Message) -> None:
         """
         Processa mensagem inbound pelo pipeline canônico de automação.
@@ -730,6 +789,18 @@ class WebhookService:
         # "não entendi" — o cliente sabe que mandou um áudio, não precisa de eco.
         if message.message_type == Message.MessageType.AUDIO:
             logger.info('[pipeline] Áudio ignorado (sem transcrição) message_id=%s', message.id)
+            return
+
+        # "Parar promoções" precisa ser atendido ANTES do pipeline.
+        #
+        # Até 28/ago/2026 o toque no botão caía aqui como mensagem qualquer: o
+        # orquestrador tentava entender "Parar promoções" como pedido de comida
+        # e respondia com o cardápio. Oito pessoas passaram por isso e cinco
+        # receberam a campanha seguinte três dias depois.
+        #
+        # Sai por `return`: quem pediu para parar não pode receber, no mesmo
+        # segundo, uma resposta comercial do bot.
+        if self._tratar_pedido_de_saida(event, message):
             return
 
         payload = event.payload

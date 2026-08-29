@@ -50,6 +50,18 @@ def _user_can_use_account(user, account_id):
 
 
 from apps.campaigns.services.contatos import contatos_para_resposta, mesclar_contato
+from apps.campaigns.services.optout import chaves_bloqueadas
+from apps.campaigns.services.segmentos import (
+    Frequencia,
+    Recencia,
+    aplicar_filtros,
+    bairros_disponiveis,
+    chaves_dos_bairros,
+    chaves_que_pediram_produtos,
+    descrever_filtros,
+    perfis_por_telefone,
+    resumo_por_segmento,
+)
 
 
 class SystemContactsView(APIView):
@@ -138,13 +150,27 @@ class SystemContactsView(APIView):
                 if account_id:
                     try:
                         wa_account = WhatsAppAccount.objects.get(id=account_id)
-                        store_ids = StoreIntegration.objects.filter(
+                        # DUAS formas de a loja estar ligada a um número, e a
+                        # segunda era ignorada: em 28/ago/2026 NENHUMA das
+                        # quatro lojas reais tinha `StoreIntegration` — Cê
+                        # Saladas e Pastita ligam pelo `Store.whatsapp_account`
+                        # direto. Como só a integração era consultada, filtrar
+                        # por conta zerava os contatos vindos de PEDIDO e
+                        # sobrava só quem tinha conversado. Ou seja: quem
+                        # comprou sumia justamente da tela de campanha.
+                        por_integracao = StoreIntegration.objects.filter(
                             integration_type=StoreIntegration.IntegrationType.WHATSAPP
                         ).filter(
                             Q(phone_number_id=wa_account.phone_number_id) |
                             Q(waba_id=wa_account.waba_id)
                         ).values_list('store_id', flat=True)
-                        orders_qs = orders_qs.filter(store_id__in=list(store_ids))
+
+                        por_vinculo_direto = Store.objects.filter(
+                            whatsapp_account=wa_account
+                        ).values_list('id', flat=True)
+
+                        store_ids = set(por_integracao) | set(por_vinculo_direto)
+                        orders_qs = orders_qs.filter(store_id__in=store_ids)
                     except WhatsAppAccount.DoesNotExist:
                         pass
 
@@ -203,12 +229,137 @@ class SystemContactsView(APIView):
             except Exception as e:
                 logger.warning(f"Error fetching sessions: {e}")
         
-        # Convert to list and limit
-        contact_list = contatos_para_resposta(contacts, limit)
-        
+        # A segmentação entra AQUI, depois da deduplicação: filtrar antes
+        # deixaria a mesma pessoa passar por uma origem e ser barrada por
+        # outra, que é o bug que a dedup já resolveu.
+        filtros = self._filtros_da_query(request)
+        lojas = self._store_ids(user)
+        perfis = perfis_por_telefone(lojas)
+
+        # O resumo é calculado ANTES dos filtros de propósito: ele existe para
+        # mostrar o tamanho de cada balde e ajudar a escolher, e um resumo que
+        # já obedece o filtro escolhido só sabe dizer o que foi escolhido.
+        resumo = resumo_por_segmento(contacts, perfis)
+
+        chaves_produto = (
+            chaves_que_pediram_produtos(lojas, filtros['produtos'])
+            if filtros.get('produtos') else None
+        )
+        chaves_bairro = (
+            chaves_dos_bairros(lojas, filtros['bairros'])
+            if filtros.get('bairros') else None
+        )
+
+        selecionados = aplicar_filtros(
+            contacts, perfis, filtros,
+            chaves_por_produto=chaves_produto,
+            chaves_por_bairro=chaves_bairro,
+        )
+
+        # Quem pediu para sair não pode aparecer nem como sugestão: a lista
+        # desta tela é exatamente a que vira destinatário no clique seguinte.
+        fora = set()
+        if account_id and _user_can_use_account(user, account_id):
+            try:
+                conta = WhatsAppAccount.objects.get(id=account_id)
+                fora = chaves_bloqueadas(conta)
+            except WhatsAppAccount.DoesNotExist:
+                pass
+        bloqueados = len(set(selecionados) & fora)
+        for chave in fora:
+            selecionados.pop(chave, None)
+
+        contact_list = [
+            {k: v for k, v in c.items() if k != 'tem_wa_id'}
+            for c in list(selecionados.values())[:limit]
+        ]
+
         return Response({
             'count': len(contact_list),
-            'results': contact_list
+            # `total` é antes do corte por `limit`: sem ele a tela diria
+            # "500 contatos" para uma base de 1.200 e o dono acharia que é tudo.
+            'total': len(selecionados),
+            'total_sem_filtro': len(contacts),
+            'excluidos_por_optout': bloqueados,
+            'descricao': descrever_filtros(filtros),
+            'resumo': resumo,
+            'results': contact_list,
+        })
+
+    def _store_ids(self, user):
+        from apps.stores.models import Store
+        if user.is_superuser:
+            return list(Store.objects.values_list('id', flat=True))
+        return list(accessible_store_ids(user))
+
+    def _filtros_da_query(self, request):
+        """Traduz a query string nos filtros de segmento.
+
+        Valores desconhecidos são DESCARTADOS em vez de virarem erro: uma tela
+        antiga mandando um segmento que não existe mais deve ver "todos", e
+        não um 400 que quebra a página inteira.
+        """
+        from decimal import Decimal, InvalidOperation
+
+        def lista(nome):
+            bruto = request.query_params.getlist(nome) or []
+            if len(bruto) == 1 and ',' in bruto[0]:
+                bruto = bruto[0].split(',')
+            return [v.strip() for v in bruto if v.strip()]
+
+        def decimal(nome):
+            valor = (request.query_params.get(nome) or '').strip()
+            if not valor:
+                return None
+            try:
+                return Decimal(valor.replace(',', '.'))
+            except (InvalidOperation, ValueError):
+                return None
+
+        return {
+            'recencia': [v for v in lista('recencia') if v in Recencia.TODAS],
+            'frequencia': [v for v in lista('frequencia') if v in Frequencia.TODAS],
+            'produtos': lista('produtos'),
+            'bairros': lista('bairros'),
+            'ticket_min': decimal('ticket_min'),
+            'ticket_max': decimal('ticket_max'),
+        }
+
+
+class OpcoesDeAudienciaView(APIView):
+    """O que existe para escolher: bairros e produtos com pedido de verdade.
+
+    Sem isto o painel teria que oferecer o catálogo inteiro, incluindo produtos
+    que ninguém nunca pediu — e um filtro por produto sem venda devolve zero
+    contatos, o que parece bug e é só falta de dado.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.stores.models import Store, StoreProduct
+
+        user = request.user
+        store_ids = (
+            list(Store.objects.values_list('id', flat=True)) if user.is_superuser
+            else list(accessible_store_ids(user))
+        )
+
+        produtos = (
+            StoreProduct.objects
+            .filter(store_id__in=store_ids, is_active=True)
+            .values('id', 'name')
+            .order_by('name')[:200]
+        )
+
+        return Response({
+            'recencia': [
+                {'valor': v, 'rotulo': Recencia.ROTULOS[v]} for v in Recencia.TODAS
+            ],
+            'frequencia': [
+                {'valor': v, 'rotulo': Frequencia.ROTULOS[v]} for v in Frequencia.TODAS
+            ],
+            'bairros': bairros_disponiveis(store_ids),
+            'produtos': [{'id': str(p['id']), 'nome': p['name']} for p in produtos],
         })
 
 

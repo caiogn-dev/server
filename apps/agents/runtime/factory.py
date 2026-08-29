@@ -100,8 +100,12 @@ def create_llm(agent: Agent):
         )
     elif provider == Agent.AgentProvider.NVIDIA:
         from langchain_openai import ChatOpenAI
-        model_name = agent.model_name or getattr(
-            settings, 'NVIDIA_MODEL_NAME', 'meta/llama-3.1-70b-instruct'
+        # `modelo_vivo` filtra modelo aposentado venha ele do agente ou do env.
+        # O env de produção mora assado na imagem e continuou apontando para o
+        # llama-3.1-70b depois do 410 dele — obedecê-lo manteria a falha viva.
+        from .modelos import modelo_vivo
+        model_name = modelo_vivo(
+            agent.model_name or getattr(settings, 'NVIDIA_MODEL_NAME', '')
         )
         return ChatOpenAI(
             model=model_name, temperature=agent.temperature,
