@@ -46,7 +46,7 @@ class EmbeddedSignupService:
         token = data.get('access_token')
         if not token:
             logger.error('Embedded Signup: falha na troca code->token: %s', data)
-            raise EmbeddedSignupError(f"Falha ao trocar code por token: {data.get('error', data)}")
+            raise EmbeddedSignupError("Falha ao trocar code por token")
         return token
 
     def _graph_get(self, path: str, token: str, params: dict = None) -> dict:

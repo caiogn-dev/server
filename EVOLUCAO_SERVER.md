@@ -10,6 +10,41 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-08-25
+
+**Gate anti-acúmulo:** 27 PRs abertos (#318–#344) verificados. Nenhum cobre
+`EmbeddedSignupError` com dados internos da Meta API na mensagem de exceção.
+
+**Bug encontrado e corrigido:** `EmbeddedSignupError` vazava resposta interna da Meta API (P1)
+
+- **Tipo:** P1 — Info-disclosure: `fbtrace_id`, `error_subcode` e tipo interno `OAuthException`
+  expostos no response HTTP `400` de qualquer usuário que iniciasse Embedded Signup com code inválido.
+- **Causa raiz (dupla):**
+  1. `apps/whatsapp/services/embedded_signup_service.py:49` —
+     `raise EmbeddedSignupError(f"Falha ao trocar code por token: {data.get('error', data)}")`
+     embedia o dict cru da resposta da Graph API na mensagem da exceção.
+     O detalhe já era logado na linha anterior (`logger.error(..., data)`).
+  2. `apps/whatsapp/api/views.py:352-356` — dois handlers de exceção retornavam
+     detalhes internos: `str(exc)` para `EmbeddedSignupError` e `f'Falha no onboarding: {exc}'`
+     para `Exception` genérica. O handler genérico (linha 354) não havia sido corrigido
+     pelo PR #331, contrariamente ao esperado.
+- **Arquivos corrigidos (2):**
+  1. `apps/whatsapp/services/embedded_signup_service.py:49` — mensagem da exceção
+     simplificada para `"Falha ao trocar code por token"` (sem dict de resposta da Meta API).
+  2. `apps/whatsapp/api/views.py:352-360` — ambos os handlers agora capturam sem `as exc`
+     e retornam mensagem genérica fixa; o erro detalhado permanece apenas no `logger.exception`.
+- **Testes:** 5 casos em `apps/whatsapp/tests/test_embedded_signup_error_disclosure.py`
+  (RED→GREEN confirmado):
+  - 3 testes de análise estática (`EmbeddedSignupServiceCodeAnalysisTest`) — confirma que
+    `data.get('error', data)` foi removido do serviço, que o handler de `EmbeddedSignupError`
+    não usa `str(exc)`, e que o handler genérico não usa f-string com `{exc}`.
+  - 2 testes comportamentais (`EmbeddedSignupServiceBehaviorTest`) — confirma que a exceção
+    levantada pelo serviço não contém `fbtrace_id`, `OAuthException`, `error_subcode` nem
+    dict cru, mesmo quando a API retorna resposta malformada.
+- **PR:** `bot/server-2026-08-25-embedded-signup-error-disclosure`
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
