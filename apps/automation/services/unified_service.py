@@ -790,6 +790,30 @@ class UnifiedService:
         que algum ficasse de fora — que é como uma tela nasce meio vazia e
         deixa de merecer confiança.
         """
+        # O botão "Respostas Automáticas" do painel precisa DESLIGAR o bot.
+        # Ele existia, o lojista mexia, e o backend nunca lia: a única
+        # ocorrência de `auto_reply_enabled` fora do model era um eco num
+        # payload de status. Quem queria assumir a conversa desligava o botão e
+        # o bot continuava respondendo por cima.
+        #
+        # A trava fica AQUI pelo mesmo motivo que o log de intenção: lá dentro
+        # há dezenas de `return` e algum ramo escaparia.
+        #
+        # Desligado, não processa — não é só "não responde". Quem desligou vai
+        # atender à mão, e um bot mantendo carrinho por baixo do atendente é
+        # pior do que bot nenhum. A mensagem do cliente continua sendo gravada
+        # na caixa de entrada, que é trabalho do webhook.
+        #
+        # Ausência de perfil ou do campo NÃO cala o bot: calar por omissão
+        # seria um estrago maior que o defeito.
+        perfil = getattr(self, 'company', None)
+        if perfil is not None and getattr(perfil, 'auto_reply_enabled', True) is False:
+            logger.info(
+                'Resposta automática desligada no painel para o perfil %s — '
+                'mensagem não processada.', getattr(perfil, 'id', '?'),
+            )
+            return None
+
         import time as _time
         inicio = _time.monotonic()
         resposta = self._processar_mensagem(
