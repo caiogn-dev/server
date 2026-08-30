@@ -18,6 +18,7 @@ from langchain_core.tools import tool
 from langchain_community.chat_message_histories import RedisChatMessageHistory
 
 from apps.core.exceptions import BaseAPIException
+from apps.core.pii import mask_phone
 from ..models import Agent, AgentConversation, AgentMessage
 from .llm_cost import accumulate_usage, estimate_cost_brl
 
@@ -766,7 +767,7 @@ class LangchainService:
         This provides the agent with real-time business data.
         """
         # DEBUG: Log início da construção do contexto
-        logger.info(f"[AGENT CONTEXT] Building context for phone: {phone_number}, conversation: {conversation_id}")
+        logger.info(f"[AGENT CONTEXT] Building context for phone: {mask_phone(phone_number)}, conversation: {conversation_id}")
 
         context_parts = []
 
