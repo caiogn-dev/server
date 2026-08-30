@@ -888,3 +888,45 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-30
+
+**Baseline de testes:** 10/10 SimpleTestCase GREEN (sem Docker/PostgreSQL).
+CI `check`/`complexity` com falha pré-existente de infra (runner_id=0) — não é regressão desta sessão.
+
+**Gate anti-acúmulo:** 32 PRs abertos (#318–#349). Varredura de segurança completa em
+`apps/conversations/`, `apps/agents/`, `apps/stores/api/views/order_views.py`,
+`apps/stores/api/views/coupon_views.py`, `apps/stores/api/views/delivery_views.py`.
+- `str(exc)` em order_views.py linha 288 → coberto por PR #331 (aberto). NÃO duplicado.
+- `str(exc)` em order_views.py linhas 780/825 → FiscalNotConfigured cujas mensagens foram
+  sanitizadas pelo PR #317 (mergeado) — risco residual aceitável.
+- IDOR/tenant scoping em conversations/ e agents/ → limpos (is_superuser correto, escopos corretos).
+- **Lacuna confirmada:** N+1 em `apps/agents/views.py` — não coberto por nenhum PR aberto.
+
+**Fix implementado:** N+1 em AgentConversationSerializer ao listar conversas [P2]
+
+- **Tipo:** P2 — Performance: N+1 queries em dois endpoints do painel de agentes IA.
+- **Causa:** `AgentConversationSerializer` declara `messages = AgentMessageSerializer(many=True)`,
+  que resolve `obj.messages.all()` por linha sem prefetch. Com 50 conversas → 51 queries (1 + N).
+- **Endpoints afetados (2):**
+  1. `GET /api/v1/agents/{pk}/conversations/` — `AgentViewSet.conversations` action (linha 204)
+  2. `GET /api/v1/agents/conversations/` — `AgentConversationViewSet.get_queryset()` (linhas 295–298)
+- **Arquivos corrigidos (1):** `apps/agents/views.py`
+  - `AgentViewSet.conversations`: queryset reformatado para multi-linha com `.prefetch_related('messages')`
+  - `AgentConversationViewSet.get_queryset()`: mesmo padrão, mantendo escopo e ordenação existentes.
+- **Testes (10 SimpleTestCase):** `apps/agents/tests/test_agent_conversation_n1.py` (RED→GREEN confirmado)
+  - `AgentConversationSerializerHasNestedMessagesTest` (1 caso): confirma campo aninhado como fonte do N+1
+  - `AgentViewSetConversationsActionPrefetchTest` (4 casos): prefetch presente, filtro preservado, ordenação preservada
+  - `AgentConversationViewSetGetQuerysetPrefetchTest` (5 casos): prefetch presente, escopo e ordenação preservados
+- **PR:** `bot/server-2026-08-30-agent-conversation-n1-prefetch`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0/P1 | Merge urgente de PRs acumulados #318–#349 (32 PRs aguardando merge, muitos são segurança P0/P1) |
+| P1 | `apps/stores/api/views/order_views.py:875` — `except ValueError as exc: return Response({'error': str(exc)}, ...)` em `generate_payment` — ainda não coberto por nenhum PR (linhas 780/825 já OK com PR #317 mesagens sanitizadas) |
+| P2 | Namespace mobile/customer para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | Testes de contrato para checkout payload e pedido por token |
+
