@@ -201,8 +201,13 @@ class AgentViewSet(viewsets.ModelViewSet):
     def conversations(self, request, pk=None):
         """Get agent conversations."""
         agent = self.get_object()
-        conversations = AgentConversation.objects.filter(agent=agent).order_by('-last_message_at')
-        
+        conversations = (
+            AgentConversation.objects
+            .filter(agent=agent)
+            .prefetch_related('messages')
+            .order_by('-last_message_at')
+        )
+
         page = self.paginate_queryset(conversations)
         if page is not None:
             serializer = AgentConversationSerializer(page, many=True)
@@ -292,10 +297,12 @@ class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):
         if getattr(self, 'swagger_fake_view', False):
             return AgentConversation.objects.none()
         agents_qs = _accessible_agents(self.request.user)
-        return AgentConversation.objects.filter(
-            agent__is_active=True,
-            agent__in=agents_qs,
-        ).order_by('-last_message_at')
+        return (
+            AgentConversation.objects
+            .filter(agent__is_active=True, agent__in=agents_qs)
+            .prefetch_related('messages')
+            .order_by('-last_message_at')
+        )
     
     @extend_schema(summary="Histórico da conversa")
     @action(detail=True, methods=['get'])
