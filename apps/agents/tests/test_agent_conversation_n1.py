@@ -98,10 +98,14 @@ class AgentViewSetConversationsActionPrefetchTest(SimpleTestCase):
 
 
 class AgentConversationViewSetGetQuerysetPrefetchTest(SimpleTestCase):
-    """AgentConversationViewSet.get_queryset deve usar prefetch_related('messages')."""
+    """AgentConversationViewSet.get_queryset aplica prefetch_related('messages')
+    apenas nas actions list/retrieve que serializam mensagens aninhadas.
+    history e clear_memory acessam apenas Redis — prefetch seria desperdício."""
 
     def setUp(self):
         self.src = _read(_VIEWS_PATH)
+        self.viewset_block = self.src.split('class AgentConversationViewSet')[1]
+        self.get_qs_block = _extract_block(self.viewset_block, r'def get_queryset\s*\(self\)')
 
     def test_get_queryset_exists_in_viewset(self):
         self.assertIn(
@@ -111,37 +115,60 @@ class AgentConversationViewSetGetQuerysetPrefetchTest(SimpleTestCase):
         )
 
     def test_get_queryset_has_prefetch_messages(self):
-        # Extrai o bloco do get_queryset dentro de AgentConversationViewSet
-        # (não o get_queryset do AgentViewSet, que não existe)
-        viewset_block = self.src.split('class AgentConversationViewSet')[1]
-        get_qs_block = _extract_block(viewset_block, r'def get_queryset\s*\(self\)')
         self.assertIn(
             "prefetch_related('messages')",
-            get_qs_block,
+            self.get_qs_block,
             "AgentConversationViewSet.get_queryset deve chamar .prefetch_related('messages') "
-            "para evitar N+1 ao listar conversas.",
+            "para evitar N+1 em list/retrieve.",
+        )
+
+    def test_get_queryset_prefetch_conditional_on_list_retrieve(self):
+        """prefetch deve ser aplicado condicionalmente (action in list/retrieve)
+        para não carregar mensagens desnecessariamente em history/clear_memory."""
+        self.assertIn(
+            "'action'",
+            self.get_qs_block,
+            "AgentConversationViewSet.get_queryset deve verificar a action antes do prefetch.",
+        )
+        self.assertIn(
+            "'list'",
+            self.get_qs_block,
+            "Condição deve incluir 'list' para prefetch.",
+        )
+        self.assertIn(
+            "'retrieve'",
+            self.get_qs_block,
+            "Condição deve incluir 'retrieve' para prefetch.",
+        )
+
+    def test_history_action_does_not_serialize_messages(self):
+        """history usa LangchainService (Redis), não serializa conversation.messages."""
+        history_block = _extract_block(self.viewset_block, r'def history\s*\(self.*request')
+        self.assertNotIn(
+            'messages',
+            history_block,
+            "history não deve acessar conversation.messages (usa apenas LangchainService).",
+        )
+
+    def test_clear_memory_action_does_not_serialize_messages(self):
+        """clear_memory usa LangchainService (Redis), não serializa conversation.messages."""
+        clear_block = _extract_block(self.viewset_block, r'def clear_memory\s*\(self.*request')
+        self.assertNotIn(
+            'messages',
+            clear_block,
+            "clear_memory não deve acessar conversation.messages (usa apenas LangchainService).",
         )
 
     def test_get_queryset_still_filters_by_accessible_agents(self):
-        viewset_block = self.src.split('class AgentConversationViewSet')[1]
-        get_qs_block = _extract_block(viewset_block, r'def get_queryset\s*\(self\)')
         self.assertIn(
             '_accessible_agents',
-            get_qs_block,
+            self.get_qs_block,
             "AgentConversationViewSet.get_queryset deve continuar escopando por agent acessível.",
         )
 
     def test_get_queryset_orders_by_last_message(self):
-        viewset_block = self.src.split('class AgentConversationViewSet')[1]
-        get_qs_block = _extract_block(viewset_block, r'def get_queryset\s*\(self\)')
         self.assertIn(
             "order_by('-last_message_at')",
-            get_qs_block,
+            self.get_qs_block,
             "AgentConversationViewSet.get_queryset deve manter order_by('-last_message_at').",
         )
-
-    def test_no_prefetch_not_in_querysets_without_fix(self):
-        """Confirmação documentada: antes do fix os dois querysets NÃO tinham prefetch."""
-        # Este teste serve como documentação — o próprio test_*_has_prefetch_messages
-        # garante que após o fix estão presentes. Este teste sempre passa.
-        self.assertTrue(True)
