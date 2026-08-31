@@ -888,3 +888,33 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-27 — P1 IDOR: debug de clientes exigia is_staff em vez de acesso à loja
+
+**Contexto:** `CustomersViewSet.debug` (`apps/marketing/api/views.py`, ~linha 512) usava
+`permission_classes=[IsAuthenticated, IsAdminUser]` sem chamar `_user_can_use_store`.
+`IsAdminUser` do DRF verifica `user.is_staff`, que é diferente de `is_superuser` (bypass
+cross-tenant legítimo). Qualquer usuário com `is_staff=True` sem vínculo de loja podia chamar
+`GET /api/.../customers/debug/?store=<uuid-qualquer>` e receber PII (email, first_name,
+last_name, date_joined) de até 5 clientes de **outra loja**.
+
+**Gate anti-acúmulo:** 28 PRs abertos (#318–#346) verificados — nenhum cobria este item.
+Listado explicitamente no backlog de 2026-07-22 como `P1 — marketing/api/views.py:509`.
+
+**Correção aplicada:**
+- `apps/marketing/api/views.py`: `permission_classes` do `debug` action: `[IsAuthenticated, IsAdminUser]` → `[IsAuthenticated]`.
+- Adicionado `if not _user_can_use_store(request.user, store_id): return 403` logo após a checagem de store ausente, seguindo o padrão de `MarketingStatsViewSet.list` e `count`.
+- Import `IsAdminUser` removido (ficou sem uso).
+
+**Testes:** 4 `SimpleTestCase` em `apps/marketing/tests_debug_idor.py` (RED→GREEN confirmado via runner inline). Cobre: staff sem loja → 403, usuário comum → 403, store ausente → 400, sem PII em resposta de erro.
+
+**PR:** #347 — `bot/server-2026-08-27-marketing-debug-idor`
+
+**Próximo backlog (prioridade):**
+
+1. **P1** — 28 PRs aguardando merge em `development` (#318–#346); revisão e merge urgente.
+2. **P1** — Testes de contrato: checkout payload, pedido por token, OTP, zonas de entrega.
+3. **P1** — `apps/whatsapp/api/views.py:353` — `str(exc)` em EmbeddedSignupError (info-disclosure) → PR #345 aberto.
+4. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação.
+
