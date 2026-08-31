@@ -339,6 +339,44 @@ def build_pix_order_payload(order, payer_email, payer_data=None, amount=None):
     }
 
 
+# Vocabulário do Mercado Pago → o nosso (`StorePayment.PaymentMethod`).
+#
+# O MP tem dois campos: `payment_type_id` (a família) e `payment_method_id` (a
+# bandeira: master, visa, bolbradesco, pix). A família é o que interessa — a
+# bandeira muda a cada convênio novo e não cabe no nosso vocabulário.
+_TIPO_MP_PARA_METODO = {
+    'credit_card': 'credit_card',
+    'debit_card': 'debit_card',
+    'prepaid_card': 'debit_card',
+    'bank_transfer': 'pix',      # no Brasil o bank_transfer do MP é o PIX
+    'ticket': 'boleto',
+    'atm': 'boleto',
+    'account_money': 'wallet',
+    'digital_wallet': 'wallet',
+    'digital_currency': 'wallet',
+    'voucher_card': 'other',
+}
+
+
+def metodo_do_pagamento(pagamento):
+    """Como o cliente pagou, no nosso vocabulário. None quando não dá para saber.
+
+    Devolver None de propósito quando o tipo é desconhecido: chutar 'other'
+    aqui apagaria um método real com o mesmo placeholder que este trabalho
+    inteiro existe para eliminar. Sem tradução, o pedido mantém o que já sabia.
+    """
+    if not pagamento:
+        return None
+    tipo = (pagamento.get('payment_type_id') or '').strip()
+    if not tipo:
+        # A Orders API aninha em payment_method: {'id': 'pix', 'type': ...}.
+        metodo = pagamento.get('payment_method') or {}
+        tipo = (metodo.get('type') or '').strip()
+        if not tipo and (metodo.get('id') or '') == 'pix':
+            return 'pix'
+    return _TIPO_MP_PARA_METODO.get(tipo)
+
+
 def extract_pix(body):
     """Puxa QR, ticket e id da resposta da Orders API. {} quando não houver."""
     pagamentos = ((body or {}).get('transactions') or {}).get('payments') or []

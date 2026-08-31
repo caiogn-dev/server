@@ -1725,7 +1725,14 @@ class CheckoutService:
                     "pending": f"{storefront_base_url}/pendente?order={order.id}",
                 },
                 "auto_return": "approved",
-                "notification_url": f"{settings.BASE_URL}/webhooks/payments/mercadopago/",
+                # COM o slug, como o link de pagamento já fazia. O webhook chega
+                # só com o id do pagamento; para buscá-lo no MP é preciso a
+                # credencial da loja, e sem o slug na URL não há por onde
+                # descobrir qual loja é. Era o beco sem saída que descartava o
+                # aviso com 200 e fazia o MP parar de reenviar.
+                "notification_url": (
+                    f"{settings.BASE_URL}/webhooks/payments/mercadopago/{order.store.slug}/"
+                ),
             }
 
             result = sdk.preference().create(preference_data)
@@ -1741,6 +1748,26 @@ class CheckoutService:
                     'payment_status',
                     'updated_at',
                 ])
+
+                # A cobrança existe para o PIX e para o link; faltava aqui. Sem
+                # ela o pagamento por cartão não aparecia em "Cobranças" no
+                # painel e não tinha por onde ser reconciliado.
+                StorePayment.objects.create(
+                    order=order,
+                    store=order.store,
+                    amount=card_total,
+                    payment_method=(
+                        StorePayment.PaymentMethod.DEBIT_CARD
+                        if payment_method == 'debit_card'
+                        else StorePayment.PaymentMethod.CREDIT_CARD
+                    ),
+                    status=StorePayment.PaymentStatus.PENDING,
+                    external_id=str(preference['id']),
+                    external_reference=str(order.id),
+                    payment_url=preference.get('init_point') or '',
+                    payer_email=payer_email or '',
+                    payer_name=order.customer_name or 'Cliente',
+                )
 
                 return {
                     'success': True,
@@ -1902,7 +1929,12 @@ class CheckoutService:
 
     @staticmethod
     @transaction.atomic
-    def process_payment_webhook(payment_id: str, status: str, external_reference: str = None) -> StoreOrder:
+    def process_payment_webhook(
+        payment_id: str,
+        status: str,
+        external_reference: str = None,
+        payment_method: str = None,
+    ) -> StoreOrder:
         """Process payment webhook and update order/charge status.
 
         Fase 3 (Opção A): casa primeiro o StorePayment por external_id
@@ -1929,6 +1961,13 @@ class CheckoutService:
                 store_payment.save(update_fields=['external_id', 'updated_at'])
 
         if store_payment is not None:
+            # O método REAL só existe depois que o cliente escolhe no Checkout
+            # Pro. A cobrança-link nasce 'other'; aqui ela aprende, e o pedido
+            # aprende junto pelo _sync_with_order. Sem isto o painel mostrava
+            # "other" para sempre num pedido pago no cartão.
+            if payment_method and store_payment.payment_method != payment_method:
+                store_payment.payment_method = payment_method
+                store_payment.save(update_fields=['payment_method', 'updated_at'])
             return CheckoutService._handle_storepayment_webhook(store_payment, status)
 
         # Fallback legado: casa o pedido diretamente pelo payment_id.
@@ -1936,12 +1975,60 @@ class CheckoutService:
             payment_id=str(payment_id)
         ).first()
 
+        if order is None:
+            # Redirect (Checkout Pro de cartão): a preference nasce com
+            # `external_reference = str(order.id)` e NÃO cria cobrança. Sem esta
+            # linha o pagamento aprovado não casa com nada — foi assim que os
+            # R$ 35,99 da Dênia (CE-2608318490) ficaram no Mercado Pago com o
+            # pedido `pending` no painel, em 31/08.
+            #
+            # `filter(id=...)` com texto que não é UUID levanta ValidationError e
+            # derruba o webhook inteiro; `subpix:<uuid>:<competência>` e
+            # `splink:<hex>` passam por aqui o tempo todo. Daí a conversão
+            # explícita, que simplesmente não casa quando não é um id de pedido.
+            referencia_de_pedido = CheckoutService._uuid_de_pedido(external_reference)
+            if referencia_de_pedido is not None:
+                order = StoreOrder.objects.select_for_update().filter(
+                    id=referencia_de_pedido
+                ).first()
+                if order is not None and order.payment_id != str(payment_id):
+                    # O reenvio do MP passa a casar na primeira consulta.
+                    order.payment_id = str(payment_id)
+                    order.save(update_fields=['payment_id', 'updated_at'])
+
         if not order:
             logger.warning(f"Order not found for payment {payment_id}")
             return None
 
+        # Pedido sem cobrança registrada (fluxo legado): não há StorePayment
+        # para o _sync_with_order espelhar, então o método real é gravado aqui.
+        if payment_method and (order.payment_method or '') in {'', 'other', 'link', 'card'}:
+            order.payment_method = payment_method
+            order.save(update_fields=['payment_method', 'updated_at'])
+
         return CheckoutService._apply_order_webhook_status(order, status)
 
+
+    @staticmethod
+    def _uuid_de_pedido(referencia):
+        """Devolve o UUID do pedido quando `referencia` é um — senão, None.
+
+        O mesmo campo `external_reference` carrega três vocabulários:
+        `splink:<hex>` (link de pagamento), `subpix:<uuid>:<AAAA-MM>` (fatura da
+        assinatura) e o id cru do pedido (redirect de cartão). Só o terceiro
+        aponta para um StoreOrder.
+        """
+        import uuid as _uuid
+
+        if not referencia:
+            return None
+        texto = str(referencia)
+        if ':' in texto:
+            return None
+        try:
+            return _uuid.UUID(texto)
+        except (ValueError, AttributeError, TypeError):
+            return None
 
     @staticmethod
     def _venda_de_cobranca_avulsa(store_payment):

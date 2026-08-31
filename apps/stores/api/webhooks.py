@@ -20,7 +20,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.throttling import AnonRateThrottle
 
 from apps.stores.models import Store, StoreOrder, StoreIntegration
-from apps.stores.services import checkout_service
+from apps.stores.services import checkout_service, mp_orders
 from apps.stores.services.realtime_service import broadcast_order_event
 
 logger = logging.getLogger(__name__)
@@ -309,7 +309,12 @@ class MercadoPagoWebhookView(APIView):
         # cai no ramo 'duplicate' e o pagamento aprovado some para sempre.
         try:
             order = checkout_service.process_payment_webhook(
-                str(payment_id), payment_status, external_reference=payment_external_reference,
+                str(payment_id), payment_status,
+                external_reference=payment_external_reference,
+                # Como o cliente pagou de fato. O link e o Checkout Pro só
+                # descobrem isso agora; sem esta linha o pedido ficava com o
+                # placeholder 'other' na tela do dono.
+                payment_method=mp_orders.metodo_do_pagamento(payment),
             )
         except Exception:
             cache.delete(idempotency_key)

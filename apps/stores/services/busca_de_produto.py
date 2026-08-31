@@ -189,3 +189,36 @@ def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
 
     candidatos.sort(key=_peso)
     return candidatos[:limite]
+
+
+# Avisos de que o dinheiro já saiu da mão do cliente.
+#
+# Precisam ser reconhecidos ANTES de qualquer passo que trate texto livre como
+# observação do pedido. Em 31/08 a Dênia voltou do Checkout Pro com o texto que
+# a página de sucesso pré-preenche no wa.me e o bot anotou a confirmação de
+# pagamento como recado pra cozinha, pedindo pagamento de novo a quem já tinha
+# pagado — e depois mandando um segundo link de cobrança.
+_AVISOS_DE_PAGAMENTO = (
+    'ja paguei', 'ja pagei', 'paguei', 'ja foi pago', 'foi pago', 'ta pago',
+    'esta pago', 'pagamento efetuado', 'pagamento feito', 'pagamento realizado',
+    'acabei de pagar', 'acabei de fazer o pagamento', 'comprovante',
+    'ja fiz o pix', 'fiz o pix', 'ja transferi', 'efetuei o pagamento',
+    'gostaria de confirmar meu pedido', 'gostaria de confirmar',
+    'acabei de fazer um pedido',
+)
+
+
+def parece_aviso_de_pagamento(texto) -> bool:
+    """O cliente está dizendo que pagou — não deixando recado pra cozinha.
+
+    Reconhece tanto o texto que o Mercado Pago devolve pelo botão de voltar
+    quanto o que a pessoa escreve sozinha ("já foi pago", "segue o comprovante").
+
+    Deliberadamente NÃO casa "pagar na entrega" nem "pago na maquininha": aquilo
+    é escolha de forma de pagamento e tem outro caminho. Aqui só entra quem
+    afirma que o dinheiro JÁ saiu.
+    """
+    alvo = normalizar(texto)
+    if not alvo:
+        return False
+    return any(frase in alvo for frase in _AVISOS_DE_PAGAMENTO)

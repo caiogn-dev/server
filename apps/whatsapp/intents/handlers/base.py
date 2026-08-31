@@ -639,6 +639,61 @@ class IntentHandler:
             buttons.append({'id': 'pay_pickup', 'title': '💵 Pagar na Retirada'})
         return buttons
 
+    def _responder_sobre_pagamento_ja_feito(self) -> 'HandlerResult':
+        """Responde a quem diz que já pagou, olhando o pedido de verdade.
+
+        Nunca oferece um novo link antes de olhar: o pedido pode estar pago
+        (basta confirmar), ou ter cobrança pendente que só falta o gateway
+        avisar — e nos dois casos mandar cobrar de novo é o pior movimento.
+        """
+        pedido = self._pedido_recente_do_cliente()
+
+        if pedido is None:
+            return HandlerResult.text(
+                "Obrigado pelo aviso! 🙏 Só que aqui ainda não encontrei um "
+                "pedido no seu nome.\n\n"
+                "Se você pagou por um link, me manda o comprovante que a gente "
+                "confere pra você agora."
+            )
+
+        from apps.stores.models import StoreOrder
+
+        if pedido.payment_status == StoreOrder.PaymentStatus.PAID:
+            return HandlerResult.text(
+                f"Pagamento confirmado! ✅\n\n"
+                f"Pedido *#{pedido.order_number}* — R$ {float(pedido.total):.2f}"
+                .replace('.', ',')
+                + "\n\nJá está com a cozinha. Obrigado! 🎉"
+            )
+
+        # Pagou mas o gateway ainda não avisou (ou o aviso se perdeu). Não
+        # oferecer nova cobrança — conferir.
+        return HandlerResult.text(
+            f"Obrigado pelo aviso! 🙏 Anotei aqui que o pedido "
+            f"*#{pedido.order_number}* foi pago.\n\n"
+            "A confirmação do banco às vezes demora alguns minutinhos. Se você "
+            "puder mandar o comprovante, a gente já libera na hora — e não "
+            "precisa pagar de novo."
+        )
+
+    def _pedido_recente_do_cliente(self):
+        """Último pedido deste telefone nesta loja. None quando não houver."""
+        from apps.stores.models import StoreOrder
+
+        telefone = getattr(getattr(self, 'conversation', None), 'phone_number', None)
+        if not telefone:
+            return None
+        sufixo = ''.join(c for c in str(telefone) if c.isdigit())[-8:]
+        if not sufixo:
+            return None
+        return (
+            StoreOrder.objects
+            .filter(store=self.store, customer_phone__endswith=sufixo)
+            .exclude(status__in=['cancelled', 'refunded'])
+            .order_by('-created_at')
+            .first()
+        )
+
     def _handle_notes_input(self, notes_text: str) -> 'HandlerResult':
         _SKIP_WORDS = {
             'nao', 'n', 'nn', 'no', 'nope', 'nada', 'ok', 'okay', 'tudo bem',
@@ -657,7 +712,22 @@ class IntentHandler:
         # na mão. Tudo porque aqui só existiam duas saídas: palavra de pular, ou
         # observação.
         if normalized not in _SKIP_WORDS:
-            from apps.stores.services.busca_de_produto import parece_pedido_de_produto
+            from apps.stores.services.busca_de_produto import (
+                parece_aviso_de_pagamento,
+                parece_pedido_de_produto,
+            )
+
+            # Avisar que pagou não é observação.
+            #
+            # 31/08, Dênia × Cê Saladas: ela pagou R$ 35,99 no cartão e voltou
+            # pelo botão do Mercado Pago, que abre o WhatsApp com o texto pronto
+            # da página de sucesso. O bot respondeu "✅ Anotado: Olá! Gostaria de
+            # confirmar meu pedido #ac83efdc-…" e perguntou "Como prefere
+            # pagar?" a quem já tinha pagado — e depois mandou um SEGUNDO link
+            # de cobrança. Guardar isso como recado pra cozinha, além de sujar a
+            # comanda, arrisca cobrar a mesma pessoa duas vezes.
+            if parece_aviso_de_pagamento(notes_text):
+                return self._responder_sobre_pagamento_ja_feito()
 
             achado = parece_pedido_de_produto(self.store, notes_text)
             if achado is not None:

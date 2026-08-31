@@ -367,8 +367,20 @@ class StorePayment(BaseModel):
                     order.pix_ticket_url = self.ticket_url
             
             # Update payment method and ID
-            if not order.payment_method:
-                order.payment_method = self.get_payment_method_display()
+            #
+            # SLUG, nunca o rótulo. `get_payment_method_display()` devolvia
+            # 'Outro'/'Cartão de crédito' e enfiava português no mesmo campo
+            # onde o resto do sistema grava 'pix'/'cash' — o que quebra filtro,
+            # relatório por método e o mapa de rótulos do painel.
+            #
+            # E sobrescreve o PROVISÓRIO: o link de pagamento nasce 'other'
+            # porque só o Checkout Pro sabe o que o cliente vai escolher.
+            # Quando o gateway conta o método real, o pedido precisa aprender —
+            # o antigo `if not order.payment_method` congelava o 'other' para
+            # sempre, que é o que o dono via na tela do pedido.
+            _METODOS_PROVISORIOS = {'', 'other', 'link', 'card'}
+            if (order.payment_method or '') in _METODOS_PROVISORIOS:
+                order.payment_method = self.payment_method
             if not order.payment_id:
                 order.payment_id = self.external_id or self.payment_id
                 
