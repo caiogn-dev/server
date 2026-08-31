@@ -376,6 +376,43 @@ def send_meta_purchase_event(self, order_id: str, tracking_data: dict = None):
         raise self.retry(exc=exc)
 
 
+def _pagamento_no_mp(sdk, cobranca):
+    """O pagamento real desta cobrança no Mercado Pago. {} quando não há.
+
+    O PIX guarda o id NUMÉRICO do pagamento e resolve num GET direto. Link de
+    pagamento e redirect de cartão guardam o id da PREFERENCE
+    (`235180147-23105bd9-…`), porque o pagamento só nasce quando o cliente paga
+    — e `GET /v1/payments/235180147-…` responde 404. Aí o caminho é procurar
+    pelo `external_reference`, que é único por cobrança.
+
+    Sem isto o poller desistia justamente das cobranças que mais precisam dele:
+    as que o webhook não conseguiu casar.
+    """
+    identificador = str(cobranca.external_id or '')
+
+    if identificador.isdigit():
+        resposta = sdk.payment().get(identificador)
+        if (resposta or {}).get('status') != 200:
+            return {}
+        return (resposta or {}).get('response') or {}
+
+    referencia = str(cobranca.external_reference or '')
+    if not referencia:
+        return {}
+    resposta = sdk.payment().search({'external_reference': referencia})
+    if (resposta or {}).get('status') != 200:
+        return {}
+    encontrados = ((resposta or {}).get('response') or {}).get('results') or []
+    if not encontrados:
+        return {}
+    # Aprovado ganha: a mesma referência pode ter tentativa recusada antes da
+    # que deu certo, e marcar o pedido pela primeira derrubaria uma venda boa.
+    for pagamento in encontrados:
+        if (pagamento or {}).get('status') == 'approved':
+            return pagamento
+    return encontrados[0] or {}
+
+
 @shared_task(name='apps.stores.tasks.reconcile_pending_pix_payments')
 def reconcile_pending_pix_payments():
     """Reconciliação ativa de pagamentos pendentes com o Mercado Pago.
@@ -391,7 +428,7 @@ def reconcile_pending_pix_payments():
 
     from apps.stores.api.webhooks import MercadoPagoWebhookView
     from apps.stores.models import StorePayment
-    from apps.stores.services import checkout_service
+    from apps.stores.services import checkout_service, mp_orders
     from apps.stores.services.realtime_service import broadcast_order_event
 
     # A janela NÃO pode ser igual ao TTL da chave de idempotência (3600s), senão
@@ -416,19 +453,28 @@ def reconcile_pending_pix_payments():
         if not credentials or not credentials.get('access_token'):
             continue
         try:
-            resp = mercadopago.SDK(credentials['access_token']).payment().get(sp.external_id)
+            payment = _pagamento_no_mp(
+                mercadopago.SDK(credentials['access_token']), sp,
+            )
         except Exception as exc:
             logger.warning('Reconcile PIX: erro consultando MP p/ %s: %s', sp.external_id, exc)
             continue
-        if resp.get('status') != 200:
+        if not payment:
             continue
-        payment = resp.get('response') or {}
         mp_status = payment.get('status')
         checked += 1
         if mp_status in (None, 'pending', 'in_process'):
             continue
 
-        idempotency_key = f"mp_webhook:{sp.external_id}:{mp_status}"
+        # A cobrança de link/redirect guarda o id da PREFERENCE; achado o
+        # pagamento de verdade, troca — assim o próximo ciclo (e o webhook do
+        # MP, que casa por external_id) acertam de primeira.
+        id_no_mp = str(payment.get('id') or sp.external_id)
+        if id_no_mp != sp.external_id:
+            sp.external_id = id_no_mp
+            sp.save(update_fields=['external_id', 'updated_at'])
+
+        idempotency_key = f"mp_webhook:{id_no_mp}:{mp_status}"
         if not cache.add(idempotency_key, 1, timeout=3600):
             continue
 
@@ -438,8 +484,11 @@ def reconcile_pending_pix_payments():
         # pagamento achando que já foi processado.
         try:
             order = checkout_service.process_payment_webhook(
-                str(sp.external_id), mp_status,
+                id_no_mp, mp_status,
                 external_reference=payment.get('external_reference'),
+                # O poller vê o mesmo payload do webhook: se ele sabe como o
+                # cliente pagou, o pedido também precisa saber.
+                payment_method=mp_orders.metodo_do_pagamento(payment),
             )
         except Exception:
             cache.delete(idempotency_key)

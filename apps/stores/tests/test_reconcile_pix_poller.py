@@ -62,8 +62,13 @@ class ReconcilePixPollerTests(TestCase):
 
     def test_approved_on_mp_triggers_webhook_flow(self):
         proc, view_cls = self._run(_mp_sdk_mock('approved', external_reference=str(self.order.id)))
+        # `payment_method` entrou no contrato em 31/08: o poller vê o mesmo
+        # payload do webhook, então reporta também COMO o cliente pagou — sem
+        # isso o pedido pago por link ficava com o provisório 'other'. O mock
+        # deste arquivo não traz payment_type_id, logo a tradução é None.
         proc.assert_called_once_with(
-            '999001', 'approved', external_reference=str(self.order.id)
+            '999001', 'approved', external_reference=str(self.order.id),
+            payment_method=None,
         )
         view_cls.return_value._send_payment_confirmation_whatsapp.assert_called_once()
 
@@ -74,7 +79,9 @@ class ReconcilePixPollerTests(TestCase):
 
     def test_cancelled_on_mp_processed_without_whatsapp(self):
         proc, view_cls = self._run(_mp_sdk_mock('cancelled'))
-        proc.assert_called_once_with('999001', 'cancelled', external_reference=None)
+        proc.assert_called_once_with(
+            '999001', 'cancelled', external_reference=None, payment_method=None,
+        )
         view_cls.return_value._send_payment_confirmation_whatsapp.assert_not_called()
 
     def test_old_payments_outside_window_are_skipped(self):
