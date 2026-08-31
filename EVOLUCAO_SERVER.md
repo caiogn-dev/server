@@ -888,3 +888,51 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+
+### 2026-08-31
+
+**Baseline de testes:** 6/6 SimpleTestCase GREEN (sem Docker/PostgreSQL).
+Deps instaladas no container: django, djangorestframework, django-cors-headers, django-filter,
+channels, celery, Pillow, drf-spectacular. Falhas pré-existentes de infra CI com runner_id=0
+não são regressão desta sessão.
+
+**Gate anti-acúmulo:** 33 PRs abertos (#318–#350) aguardando merge.
+Varredura confirmada via leitura de código:
+- `apps/panel/`: isolamento OK (sessão + _get_selected_store).
+- `apps/notifications/`: OK (user=request.user em todas as queries).
+- `apps/postado/`: OK (webhook com HMAC, signup AllowAny sem PII relevante).
+- `apps/conversations/`, `apps/users/views.py (UnifiedUserViewSet.get_queryset)`: CORRETOS.
+- **Lacuna identificada:** `UnifiedUserViewSet.get_or_create` — não coberta por nenhum PR aberto.
+
+**Bug encontrado e corrigido:** IDOR via `get_or_create` em `UnifiedUserViewSet` [P1]
+
+- **Tipo:** P1 — IDOR de leitura cross-tenant com vazamento de PII grave
+- **Endpoint:** `POST /api/v1/users/users/get_or_create/`
+- **Problema:** A action `get_or_create` chamava `UnifiedUser.objects.get_or_create(phone_number=phone)`
+  sem qualquer escopo de tenant. Qualquer usuário `IsAuthenticated` (incluindo is_staff) podia:
+  1. Sondar se um telefone específico existe no sistema (de qualquer tenant)
+  2. Obter o perfil completo do cliente: `email`, `google_id`, `total_spent`, `abandoned_cart_items`,
+     `context_for_agent` (contexto LLM com histórico de pedidos e preferências do cliente)
+  O comentário no código ("Uso interno pelo bot/automação — sem restrição de tenant na criação")
+  indicava intenção interna, mas a permissão era `IsAuthenticated` (qualquer token de cliente/staff).
+- **Arquivo corrigido:** `apps/users/views.py` — `UnifiedUserViewSet.get_or_create` (linhas 116–145)
+  - Adicionado gate `if not request.user.is_superuser: return Response({'error': 'Não autorizado.'}, 403)`
+  - Docstring atualizada: "restrito a superuser... is_staff NÃO é suficiente"
+- **Testes:** 6 `SimpleTestCase` em `apps/users/test_get_or_create_idor.py` (RED→GREEN confirmado):
+  - `test_usuario_regular_recebe_403` — usuário comum → 403 (era: hit DB → 500)
+  - `test_is_staff_recebe_403` — is_staff=True → 403 (era: hit DB → 500)
+  - `test_usuario_regular_nao_recebe_dados_de_outro_tenant` — gate bloqueia; get_or_create não chamado
+  - `test_sem_telefone_retorna_400_para_superuser` — superuser sem phone → 400
+  - `test_superuser_pode_chamar` — superuser não recebe 403
+  - `test_unauthenticated_sem_gate_antes_do_fix` — action existe no viewset
+- **PR:** `bot/server-2026-08-31-unified-user-get-or-create-idor` → base `development`
+
+**Próximo backlog priorizado (2026-08-31):**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge de PRs acumulados (#318–#350) — 33 PRs aguardando revisão |
+| P1 | `UnifiedUserActivityViewSet.get_queryset()` sem escopo de tenant (PR #341 aberto, ainda não mergeado) |
+| P1 | Testes de contrato para checkout payload completo e pedido por token |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos |
+| P2 | N+1 em `UnifiedUserViewSet.list` (travessia store_customers → store → owner via _accessible_unified_users pode gerar subquery pesada em multi-tenant com muitas lojas) |

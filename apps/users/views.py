@@ -117,8 +117,15 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
     def get_or_create(self, request):
         """
         Busca ou cria usuário por telefone.
-        Uso interno pelo bot/automação — sem restrição de tenant na criação.
+        Uso interno pelo bot/automação — restrito a superuser porque opera
+        sem escopo de tenant. is_staff (acesso ao /admin) NÃO é suficiente.
         """
+        if not request.user.is_superuser:
+            return Response(
+                {'error': 'Não autorizado.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         phone = request.data.get('phone_number')
         name = request.data.get('name') or ''
 
