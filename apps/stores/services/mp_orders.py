@@ -16,10 +16,21 @@ ORDERS_URL = 'https://api.mercadopago.com/v1/orders'
 
 
 def split_name(full_name):
+    """Primeiro nome e sobrenome para o payer do Mercado Pago.
+
+    O sobrenome NUNCA volta vazio. A Orders API recusa o payload inteiro com
+    400 `'$.payer.last_name' - length must be >= 1, but got 0`, e como PIX
+    recusado cai no link de pagamento, quem digitava só "Ana" era jogado no
+    checkout do Mercado Pago em vez de receber o copia-e-cola — e o cartão
+    nem chegava a ser consultado. Sem sobrenome, repetimos o primeiro nome:
+    é o único valor que a validação aceita sem inventar um dado falso.
+    """
     parts = (full_name or '').strip().split()
     if not parts:
-        return 'Cliente', ''
-    return parts[0], ' '.join(parts[1:]) if len(parts) > 1 else ''
+        return 'Cliente', 'Cliente'
+    if len(parts) == 1:
+        return parts[0], parts[0]
+    return parts[0], ' '.join(parts[1:])
 
 
 def phone_parts(phone):
