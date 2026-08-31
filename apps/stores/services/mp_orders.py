@@ -405,14 +405,55 @@ def eh_erro_de_payload(status_code, body) -> bool:
     )
 
 
+#: Motivo da recusa → o que o cliente precisa fazer. O texto cru do MP vinha em
+#: inglês ("The following transactions failed"), e quem lê isso não descobre que
+#: bastava digitar o cartão outra vez — foi o que aconteceu em 31/08 com o
+#: pedido CE-2608310043 (R$ 86,39), que virou PIX depois de o cartão dar erro.
+MENSAGENS_DE_RECUSA = {
+    'invalid_card_token': 'Os dados do cartão expiraram. Digite o cartão de novo, por favor.',
+    'cc_rejected_bad_filled_card_number': 'Confira o número do cartão.',
+    'cc_rejected_bad_filled_date': 'Confira a data de validade do cartão.',
+    'cc_rejected_bad_filled_security_code': 'Confira o código de segurança (CVV) do cartão.',
+    'cc_rejected_bad_filled_other': 'Confira os dados do cartão e tente de novo.',
+    'cc_rejected_insufficient_amount': 'O cartão não tem limite disponível para este valor.',
+    'cc_rejected_high_risk': 'O banco não autorizou esta compra. Tente outro cartão ou pague no PIX.',
+    'cc_rejected_call_for_authorize': 'Ligue para o seu banco e autorize esta compra, depois tente de novo.',
+    'cc_rejected_card_disabled': 'Este cartão está desabilitado. Ligue para o seu banco ou use outro cartão.',
+    'cc_rejected_card_error': 'Não conseguimos processar este cartão. Tente de novo ou use outro.',
+    'cc_rejected_duplicated_payment': 'Este pagamento já foi feito. Confira o extrato antes de tentar de novo.',
+    'cc_rejected_max_attempts': 'Muitas tentativas com este cartão. Use outro cartão ou pague no PIX.',
+    'cc_rejected_invalid_installments': 'O cartão não aceita esse parcelamento.',
+    'cc_rejected_blacklist': 'O banco não autorizou esta compra. Tente outro cartão ou pague no PIX.',
+}
+
+#: Recusa que o MP inventar amanhã não pode vazar código técnico para a tela.
+RECUSA_GENERICA = 'O pagamento não foi autorizado. Tente outro cartão ou pague no PIX.'
+
+
+def mensagem_de_recusa(status_detail):
+    """Motivo da recusa em português, pronto para a tela do cliente."""
+    return MENSAGENS_DE_RECUSA.get((status_detail or '').strip(), RECUSA_GENERICA)
+
+
 def interpret(status_code, body):
     """Normaliza a resposta da Orders API → (ok, status, payment_id, status_detail)."""
     body = body or {}
-    payments = (body.get('transactions') or {}).get('payments') or []
+    # Numa recusa 4xx a Orders API embrulha o resultado em `data` e o corpo de
+    # fora só traz o genérico "The following transactions failed". O motivo de
+    # verdade (`invalid_card_token`, `cc_rejected_*`) mora no pagamento.
+    dados = body.get('data') if isinstance(body.get('data'), dict) else body
+    payments = (dados.get('transactions') or {}).get('payments') or []
+    if not payments:
+        payments = ((body.get('transactions') or {}).get('payments')) or []
     pid = str(payments[0]['id']) if payments and payments[0].get('id') else None
-    detail = body.get('status_detail') or (payments[0].get('status_detail') if payments else '') or ''
+    detail = (
+        (payments[0].get('status_detail') if payments else '')
+        or dados.get('status_detail')
+        or body.get('status_detail')
+        or ''
+    )
     if status_code not in (200, 201):
-        return False, 'failed', pid, (body.get('message') or detail or 'erro')
+        return False, 'failed', pid, (detail or body.get('message') or 'erro')
     status = body.get('status', '')
     if status == 'processed':
         return True, 'approved', pid, detail

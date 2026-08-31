@@ -1667,7 +1667,10 @@ class CheckoutService:
                 CheckoutService._release_coupon(order)
                 return {
                     'success': False,
-                    'error': status_detail or 'Erro ao processar pagamento com cartao',
+                    # Nunca devolver o `status_detail` cru: é código técnico em
+                    # inglês e o cliente fica sem saber o que fazer a seguir.
+                    'error': mp_orders.mensagem_de_recusa(status_detail),
+                    'status_detail': status_detail,
                 }
 
             if not allow_redirect:
