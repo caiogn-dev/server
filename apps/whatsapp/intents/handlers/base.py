@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 from decimal import Decimal
 from apps.stores.models import StoreProduct
 
+from apps.whatsapp.formatacao import moeda
+
 logger = logging.getLogger(__name__)
 
 
@@ -306,11 +308,11 @@ class IntentHandler:
             if taxa is not None:
                 distancia = salvo.get('distance_km')
                 sufixo = f" ({distancia} km)" if distancia else ""
-                lines.append(f"🛵 Taxa de entrega{sufixo}: *R$ {float(taxa):.2f}*".replace('.', ','))
+                lines.append(f"🛵 Taxa de entrega{sufixo}: *{moeda(taxa)}*".replace('.', ','))
             else:
                 lines.append("🛵 Vou calcular a taxa para esse endereço.")
             if self.store.min_order_value:
-                lines.extend(["", f"Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*"])
+                lines.extend(["", f"Pedido mínimo: *{moeda(self.store.min_order_value)}*"])
             return "\n".join(lines)
 
         lines = [
@@ -331,7 +333,7 @@ class IntentHandler:
             else:
                 lines.append("🏪 *Retirada:* disponível em nossa loja!")
         if self.store.min_order_value:
-            lines.extend(["", f"Pedido mínimo: *R$ {float(self.store.min_order_value):.2f}*"])
+            lines.extend(["", f"Pedido mínimo: *{moeda(self.store.min_order_value)}*"])
         return "\n".join(lines)
 
     def _build_location_text(self) -> str:
@@ -385,7 +387,7 @@ class IntentHandler:
             f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
             f"{items_text}\n\n"
             f"{self._scheduled_line(order)}"
-            f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
+            f"💰 *Total: {moeda(order.total)}*\n\n"
             f"💳 *Para confirmar seu pedido, realize o pagamento via PIX* — "
             f"o código está na próxima mensagem 👇\n\n"
             f"_Mudou de ideia? Responda *cancelar*._"
@@ -521,7 +523,7 @@ class IntentHandler:
         if not pending:
             dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
             time_text = f" (~{int(duration_minutes)} min)" if duration_minutes else ""
-            fee_fmt = f"R$ {fee:.2f}".replace('.', ',') if fee > 0 else "Grátis 🎉"
+            fee_fmt = moeda(fee) if fee > 0 else "Grátis 🎉"
             session_manager.set_waiting_for_notes(False)
             return HandlerResult.buttons(
                 body=(
@@ -598,7 +600,7 @@ class IntentHandler:
                     price = float(p.price)
                     item_total = qty * price
                     subtotal += item_total
-                    price_fmt = f"R$ {item_total:.2f}".replace('.', ',')
+                    price_fmt = moeda(item_total)
                     lines.append(f"• {qty}x {p.name} — {price_fmt}")
                 except Exception as exc:
                     logger.warning("[_show_order_summary_and_ask_notes] Produto %s: %s", it.get('product_id'), exc)
@@ -607,13 +609,13 @@ class IntentHandler:
         if delivery_method == 'delivery':
             dist_text = f" ({distance_km:.1f} km)" if distance_km else ""
             time_text = f" (~{int(duration_minutes)} min)" if duration_minutes else ""
-            fee_fmt = f"R$ {fee:.2f}".replace('.', ',') if fee > 0 else "Grátis 🎉"
+            fee_fmt = moeda(fee) if fee > 0 else "Grátis 🎉"
             addr_display = delivery_address or 'a definir'
             lines.append(f"\n📍 *Endereço:* {addr_display}")
             lines.append(f"🛵 *Taxa de entrega{dist_text}{time_text}:* {fee_fmt}")
         else:
             lines.append("\n🏪 *Retirada no local*")
-        total_fmt = f"R$ {total:.2f}".replace('.', ',')
+        total_fmt = moeda(total)
         lines.append(f"\n💰 *Total: {total_fmt}*")
         # Observação é OPT-IN (menos 1 passo pra todo mundo): os botões de
         # pagamento já vêm aqui; texto digitado antes vira observação
@@ -661,9 +663,8 @@ class IntentHandler:
         if pedido.payment_status == StoreOrder.PaymentStatus.PAID:
             return HandlerResult.text(
                 f"Pagamento confirmado! ✅\n\n"
-                f"Pedido *#{pedido.order_number}* — R$ {float(pedido.total):.2f}"
-                .replace('.', ',')
-                + "\n\nJá está com a cozinha. Obrigado! 🎉"
+                f"Pedido *#{pedido.order_number}* — {moeda(pedido.total)}\n\n"
+                "Já está com a cozinha. Obrigado! 🎉"
             )
 
         # Pagou mas o gateway ainda não avisou (ou o aviso se perdeu). Não
@@ -808,13 +809,27 @@ class IntentHandler:
         order = result['order']
         payment_data = result.get('payment_data', {})
         pm = result.get('payment_method', payment_method)
+
+        # O pedido existe: o checkout FECHA aqui.
+        #
+        # 31/08, Dênia: o bot perguntou "alguma observação?" (sessão marcada
+        # `waiting_for_notes`), ela não digitou — tocou no botão *Cartão*. O
+        # pedido nasceu, o link foi enviado, e a sessão continuou parada nesse
+        # passo. `fallback.py` roteia por `is_waiting_for_notes()`, então TODA
+        # mensagem seguinte dela virou observação: a confirmação de pagamento
+        # que o Mercado Pago devolveu foi "anotada" e o bot pediu pagamento de
+        # novo. O handler estava certo; a HORA em que ele rodava é que não.
+        #
+        # Só no sucesso: pedido que falhou (estoque, gateway fora) precisa
+        # deixar o cliente corrigir e tentar de novo.
+        self._fechar_checkout()
         if pm == 'pix':
             if payment_data.get('success'):
                 return self._send_pix_confirmation(order, payment_data['pix_code'])
             error_msg = payment_data.get('error', 'Tente novamente em instantes')
             return HandlerResult.text(
                 f"✅ *Pedido #{order.order_number} criado!*\n\n"
-                f"💰 Total: R$ {float(order.total):.2f}\n\n"
+                f"💰 Total: {moeda(order.total)}\n\n"
                 f"⚠️ Erro ao gerar PIX: {error_msg}\n\n"
                 f"Por favor, tente novamente ou fale com um atendente."
             )
@@ -824,22 +839,38 @@ class IntentHandler:
                 return HandlerResult.text(
                     f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
                     f"{self._scheduled_line(order)}"
-                    f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
+                    f"💰 *Total: {moeda(order.total)}*\n\n"
                     f"💳 *Para confirmar seu pedido, pague com cartão pelo link seguro do Mercado Pago:*\n"
                     f"{checkout_link}"
                 )
             error_msg = payment_data.get('error', 'Tente novamente')
             return HandlerResult.text(
                 f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
-                f"💰 Total: R$ {float(order.total):.2f}\n"
+                f"💰 Total: {moeda(order.total)}\n"
                 f"⚠️ Erro ao gerar link de pagamento: {error_msg}"
             )
         return HandlerResult.text(
             f"🧾 *Pedido #{order.order_number} recebido!*\n\n"
             f"{self._scheduled_line(order)}"
-            f"💰 *Total: R$ {float(order.total):.2f}*\n\n"
+            f"💰 *Total: {moeda(order.total)}*\n\n"
             f"💵 Pagamento na retirada — nos vemos em breve! 🏪"
         )
+
+    def _fechar_checkout(self) -> None:
+        """Encerra os estados de espera do checkout depois que o pedido nasce.
+
+        Nunca levanta: falhar aqui não pode derrubar a confirmação de um pedido
+        que já existe no banco — o cliente ficaria sem resposta com o dinheiro
+        a caminho.
+        """
+        try:
+            sessao = self._get_session_manager()
+            sessao.set_waiting_for_notes(False)
+            sessao.set_waiting_for_address(False)
+            # Sem isto o próximo pedido nasce com os itens do anterior colados.
+            sessao.clear_pending_order_items()
+        except Exception as exc:
+            logger.warning("[_fechar_checkout] Erro ao encerrar o checkout: %s", exc)
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
         raise NotImplementedError

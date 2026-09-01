@@ -137,7 +137,9 @@ class CatalogoSemCorrespondenciaTests(TestCase):
 
     def test_resposta_mostra_o_valor_para_o_atendente_fechar(self):
         r = self._responder()
-        self.assertIn('39.99', (r.content or ''))
+        # Vírgula: `moeda()` virou a fonte única do preço no bot depois que a
+        # mesma conversa mostrou 'R$ 35,99' e 'R$ 35.99' com 15s de diferença.
+        self.assertIn('R$ 39,99', (r.content or ''))
 
     def test_metadata_sinaliza_handoff(self):
         r = self._responder()

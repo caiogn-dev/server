@@ -11,6 +11,8 @@ from .fallback import HumanHandoffHandler
 from .order import CancelOrderHandler, CreateOrderHandler, TrackOrderHandler
 from .payment import CopyPixHandler
 
+from apps.whatsapp.formatacao import moeda
+
 logger = logging.getLogger(__name__)
 
 
@@ -393,7 +395,7 @@ class InteractiveReplyHandler(IntentHandler):
                 except Exception:
                     pass
                 fee = float(addr['fee'] or 0)
-                fee_fmt = f"R$ {fee:.2f}".replace('.', ',') if fee > 0 else "Grátis 🎉"
+                fee_fmt = moeda(fee) if fee > 0 else "Grátis 🎉"
                 return HandlerResult.buttons(
                     body=(
                         f"📍 *Entregar no mesmo endereço?*\n\n"
@@ -802,7 +804,7 @@ class InteractiveReplyHandler(IntentHandler):
                 if not combo:
                     continue
                 total += qty * float(combo.price)
-                lines.append(f"• {qty}x {combo.name} — R$ {qty * float(combo.price):.2f}")
+                lines.append(f"• {qty}x {combo.name} — {moeda(qty * float(combo.price))}")
                 sabores = self._sabores_do_combo(it)
                 if sabores:
                     lines.append(f"   _{sabores}_")
@@ -812,12 +814,12 @@ class InteractiveReplyHandler(IntentHandler):
             if not pr:
                 continue
             total += qty * float(pr.price)
-            lines.append(f"• {qty}x {pr.name} — R$ {qty * float(pr.price):.2f}")
+            lines.append(f"• {qty}x {pr.name} — {moeda(qty * float(pr.price))}")
 
         return (
             "🛒 *Seu pedido até agora:*\n"
             + "\n".join(lines)
-            + f"\n\n💰 Subtotal: *R$ {total:.2f}*"
+            + f"\n\n💰 Subtotal: *{moeda(total)}*"
         )
 
     @staticmethod
@@ -861,7 +863,7 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text("Produto não encontrado. 😕")
         rows = [
             {'id': f'setqty_{product.id}_{n}', 'title': f'{n} unidade' + ('s' if n > 1 else ''),
-             'description': f'R$ {n * float(product.price):.2f}'}
+             'description': moeda(n * float(product.price))}
             for n in range(1, 10)
         ]
         return HandlerResult.list_message(

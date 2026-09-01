@@ -71,7 +71,10 @@ class TestOComboApareceNoResumo:
         texto = _handler(loja)._texto_do_carrinho([item])
 
         assert 'COMBO 5 SALADAS' in texto
-        assert '239.98' in texto
+        # Vírgula: é assim que o cliente brasileiro lê preço. `moeda()` passou
+        # a ser a fonte única depois que a mesma conversa mostrou 'R$ 35,99' no
+        # resumo e 'R$ 35.99' na confirmação, quatro minutos depois.
+        assert 'R$ 239,98' in texto
 
     def test_os_sabores_escolhidos_voltam_pro_cliente(self, loja, combo, sabores):
         """Não ver a escolha de volta é quando ele desconfia que o bot não anotou."""
@@ -92,7 +95,7 @@ class TestOComboApareceNoResumo:
 
         texto = _handler(loja)._texto_do_carrinho([item])
 
-        assert 'R$ 239.98' in texto.split('Subtotal')[1]
+        assert 'R$ 239,98' in texto.split('Subtotal')[1]
 
     def test_combo_e_produto_no_mesmo_carrinho_somam(self, loja, combo, sabores):
         c, g = combo
@@ -103,8 +106,8 @@ class TestOComboApareceNoResumo:
 
         texto = _handler(loja)._texto_do_carrinho(itens)
 
-        # 239.98 + 2 × 47.99 = 335.96
-        assert '335.96' in texto
+        # 239,98 + 2 × 47,99 = 335,96
+        assert 'R$ 335,96' in texto
 
 
 @pytest.mark.django_db
@@ -115,7 +118,7 @@ class TestOQueNaoPodeRegredir:
         )
 
         assert '2x Especial Filé de Frango' in texto
-        assert '95.98' in texto
+        assert 'R$ 95,98' in texto
 
     def test_combo_apagado_nao_derruba_o_resumo(self, loja, sabores):
         """Item pendente sobrevive ao catálogo mudar — não pode explodir."""

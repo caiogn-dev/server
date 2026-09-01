@@ -34,6 +34,8 @@ from .broadcast_service import get_broadcast_service
 from ..tasks import acquire_lock, release_lock
 from .whatsapp_api_service import WhatsAppAPIService
 
+from apps.whatsapp.formatacao import moeda
+
 logger = logging.getLogger(__name__)
 
 _UUID_RE = re.compile(
@@ -1420,6 +1422,46 @@ class WebhookService:
             return False
 
     @staticmethod
+    def _linha_de_item_do_catalogo(produto, quantidade, preco_da_meta=None):
+        """Uma linha do resumo do pedido de catálogo. Devolve (linha, subtotal).
+
+        🚨 O preço vem de `StoreProduct.price`, NUNCA do payload da Meta.
+
+        31/08, Dênia: o feed da Meta tinha a Almôndega Premium a R$ 40,90 e a
+        loja cobrava R$ 35,99. O código já percebia a divergência — e usava o
+        valor da Meta assim mesmo, então a mesma conversa mostrou R$ 40,90 no
+        resumo do catálogo e R$ 35,99 no resumo do pedido, 15 segundos depois.
+
+        O pedido de verdade sempre usou o preço da loja (só `product_id` e
+        `quantity` seguem adiante). Quem mentia era a mensagem. E na direção
+        oposta — feed mais barato que a loja — o cliente veria um preço e
+        pagaria outro, maior.
+
+        A divergência continua virando WARNING: é sintoma de feed velho, e
+        alguém precisa saber para republicar o catálogo.
+        """
+        from decimal import Decimal
+
+        quantidade = max(1, int(quantidade or 1))
+        preco = Decimal(str(produto.price or 0))
+
+        if preco_da_meta is not None:
+            try:
+                da_meta = Decimal(str(preco_da_meta))
+                if abs(da_meta - preco) >= Decimal('0.01'):
+                    logger.warning(
+                        '[catalog_order] Preço do catálogo da Meta diverge da loja: '
+                        'produto=%s meta=%s loja=%s — o resumo usa o da LOJA; '
+                        'republique o feed',
+                        produto.id, da_meta, preco,
+                    )
+            except (TypeError, ValueError, ArithmeticError):
+                pass
+
+        subtotal = (preco * quantidade).quantize(Decimal('0.01'))
+        return f"• {quantidade}x {produto.name} — {moeda(subtotal)}", subtotal
+
+    @staticmethod
     def _resumo_do_pedido_de_catalogo(product_items) -> str:
         """O que o cliente pediu, com o que veio no payload da Meta.
 
@@ -1440,9 +1482,9 @@ class WebhookService:
                 preco = 0.0
             subtotal = preco * qtd
             total += subtotal
-            linhas.append(f"• {qtd}x — R$ {subtotal:.2f}")
+            linhas.append(f"• {qtd}x — {moeda(subtotal)}")
         if total:
-            linhas.append(f"\n💰 *Total:* R$ {total:.2f}")
+            linhas.append(f"\n💰 *Total:* {moeda(total)}")
         return '\n'.join(linhas)
 
     @staticmethod
@@ -1535,25 +1577,11 @@ class WebhookService:
                 missing_items.append(product_id)
                 continue
 
-            product_price = float(product.price)
-            unit_price = product_price
-            meta_price = item.get('item_price')
-            if meta_price is not None:
-                try:
-                    meta_price_float = float(meta_price)
-                    if meta_price_float >= 0:
-                        unit_price = meta_price_float
-                    if abs(meta_price_float - product_price) >= 0.01:
-                        logger.warning(
-                            '[catalog_order] Meta catalog price differs from store price: '
-                            'product=%s meta=%.2f store=%.2f',
-                            product.id,
-                            meta_price_float,
-                            product_price,
-                            extra={'message_id': str(message.id)},
-                        )
-                except (TypeError, ValueError):
-                    pass
+            # A LOJA manda no preço — o feed da Meta envelhece e mentia na tela.
+            linha, line_total = self._linha_de_item_do_catalogo(
+                product, quantity, preco_da_meta=item.get('item_price'),
+            )
+            unit_price = float(product.price)
 
             pending_items.append({
                 'product_id': str(product.id),
@@ -1561,9 +1589,8 @@ class WebhookService:
                 'unit_price': unit_price,
                 'price_source': 'whatsapp_catalog',
             })
-            line_total = unit_price * quantity
-            total += line_total
-            item_lines.append(f"• {quantity}x {product.name} - R$ {line_total:.2f}")
+            total += float(line_total)
+            item_lines.append(linha)
 
         if not pending_items:
             # Beco sem saída: a mensagem prometia um atendente e NÃO chamava
@@ -1622,7 +1649,7 @@ class WebhookService:
         body = (
             "Recebi seu pedido pelo catalogo:\n\n"
             f"{chr(10).join(item_lines)}\n\n"
-            f"Total dos itens: *R$ {total:.2f}*\n\n"
+            f"Total dos itens: *{moeda(total)}*\n\n"
             "Como prefere receber?"
         )
 
@@ -1942,11 +1969,20 @@ class WebhookService:
         elif message_type == 'reaction':
             reaction = message_data.get('reaction', {})
             content = {'reaction': reaction}
-            text_body = reaction.get('emoji', '\xf0Ÿ‘\x8d')
+            # 👍 de verdade. O default era o mesmo emoji corrompido do
+            # carrinho — UTF-8 lido como latin-1 e colado no fonte.
+            text_body = reaction.get('emoji', '👍')
         elif message_type == 'order':
             order = message_data.get('order', {})
             content = {'order': order}
-            text_body = f"\xf0Ÿ›’ Order with {len(order.get('product_items', []))} item(s)"
+            # 🛒 de verdade: o literal aqui era o emoji corrompido (UTF-8 lido
+            # como latin-1) que alguém colou no fonte, e o texto estava em
+            # inglês — num painel que o lojista brasileiro lê.
+            _qtd_itens = len(order.get('product_items', []))
+            text_body = (
+                f"🛒 Pedido pelo catálogo: {_qtd_itens} "
+                f"{'item' if _qtd_itens == 1 else 'itens'}"
+            )
         else:
             content = message_data
 
