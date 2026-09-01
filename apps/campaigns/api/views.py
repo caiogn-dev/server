@@ -457,7 +457,18 @@ class CampaignViewSet(viewsets.ModelViewSet):
             file_to_save = ContentFile(output.getvalue())
             mime = 'image/jpeg'
 
-        ext = '.jpg' if mime == 'image/jpeg' else (os.path.splitext(file_obj.name)[1] or '')
+        _MIME_TO_EXT = {
+            'image/jpeg': '.jpg',
+            'image/png': '.png',
+            'image/gif': '.gif',
+            'image/webp': '.webp',
+            'application/pdf': '.pdf',
+            'application/msword': '.doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+            'application/vnd.ms-excel': '.xls',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+        }
+        ext = _MIME_TO_EXT.get(mime, '.bin')
         saved_path = default_storage.save(
             f'campaigns/whatsapp/{uuid_mod.uuid4().hex}{ext}',
             file_to_save,
