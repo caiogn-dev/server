@@ -36,10 +36,14 @@ class StorePaymentGatewaySerializer(serializers.ModelSerializer):
             # dele e o dinheiro continuava indo para a plataforma.
             'api_key', 'api_secret', 'access_token', 'webhook_secret', 'public_key',
             # Só o estado, para a tela saber o que mostrar.
-            'connection_type', 'tem_credencial', 'token_expirado',
+            # `external_account_id` é o id da conta no MP, não credencial: a tela
+            # precisa dele para o lojista confirmar que autorizou a conta certa.
+            'connection_type', 'tem_credencial', 'token_expirado', 'external_account_id',
             'created_at', 'updated_at', 'is_active',
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'connection_type']
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'connection_type', 'external_account_id',
+        ]
         extra_kwargs = {
             'api_key': {'write_only': True, 'required': False, 'allow_blank': True},
             'api_secret': {'write_only': True, 'required': False, 'allow_blank': True},
@@ -73,7 +77,9 @@ class StorePaymentGatewayListSerializer(serializers.ModelSerializer):
             'id', 'name', 'gateway_type', 'gateway_type_display',
             'is_enabled', 'is_sandbox', 'is_default',
             # Estado da conexão — nunca o segredo.
-            'connection_type', 'tem_credencial', 'token_expirado',
+            # `external_account_id` é o id da conta no MP, não credencial: a tela
+            # precisa dele para o lojista confirmar que autorizou a conta certa.
+            'connection_type', 'tem_credencial', 'token_expirado', 'external_account_id',
             'created_at', 'updated_at', 'is_active',
         ]
 

@@ -4,12 +4,14 @@ Payment API Views.
 ViewSets for StorePayment and StorePaymentGateway.
 """
 import logging
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db.models import Q
+from django.shortcuts import redirect
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 
@@ -18,7 +20,7 @@ from apps.stores.models import (
     StorePaymentGateway,
     StorePaymentWebhookEvent,
 )
-from apps.stores.services import PaymentService, get_payment_service
+from apps.stores.services import PaymentService, get_payment_service, mercadopago_oauth
 from apps.core.permissions import StoreQuerysetMixin
 from .payment_serializers import (
     StorePaymentSerializer,
@@ -79,6 +81,108 @@ class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         gateway.is_default = True
         gateway.save()
         return Response(StorePaymentGatewaySerializer(gateway).data)
+
+    # ── OAuth do Mercado Pago ────────────────────────────────────────────────
+    #
+    # As duas rotas moram no ViewSet de propósito. O router do gateway está
+    # montado em `payments/gateways/` com prefixo `r''`, e um router em `r''`
+    # engole qualquer sub-rota registrada DEPOIS dele em urls.py — foi assim que
+    # `payments/gateways/` respondeu 404 desde sempre até 10/ago. Como @action
+    # detail=False, o DRF registra estes caminhos ANTES da rota de detalhe
+    # `<pk>/`, e o endereço sai exatamente igual ao redirect URI já cadastrado
+    # na aplicação do Mercado Pago.
+
+    @extend_schema(summary="URL de autorização OAuth do Mercado Pago")
+    @action(detail=False, methods=['get'], url_path='oauth/autorizar')
+    def oauth_autorizar(self, request):
+        """Devolve para onde mandar o lojista. Dono da loja, sempre."""
+        store_id = request.query_params.get('store')
+        if not store_id:
+            return Response(
+                {'detail': 'Informe a loja em ?store=<id>.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Escopo pelo mesmo caminho do CRUD: sem isto, o dono de uma loja
+        # montaria a URL de conexão de uma loja alheia.
+        from apps.stores.models import Store
+        lojas = Store.objects.all()
+        permitidas = self._get_user_store_ids()
+        if permitidas is not None:
+            lojas = lojas.filter(id__in=permitidas)
+        try:
+            store = lojas.get(id=store_id)
+        except (Store.DoesNotExist, ValidationError, ValueError, TypeError):
+            return Response(
+                {'detail': 'Loja não encontrada.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            url = mercadopago_oauth.url_de_autorizacao(store)
+        except mercadopago_oauth.OAuthNaoConfigurado as e:
+            # 503 e não 500: a integração está indisponível por configuração,
+            # e a tela precisa poder dizer isso em vez de "erro inesperado".
+            return Response({'detail': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        return Response({'authorization_url': url})
+
+    @extend_schema(summary="Callback OAuth do Mercado Pago")
+    @action(
+        detail=False, methods=['get'], url_path='oauth/callback',
+        permission_classes=[AllowAny], authentication_classes=[],
+    )
+    def oauth_callback(self, request):
+        """Quem chega aqui é o NAVEGADOR do lojista, vindo do Mercado Pago.
+
+        Sem sessão nossa, sem token: exigir autenticação aqui quebraria o fluxo
+        inteiro no primeiro lojista real. A defesa é o `state` de uso único.
+        Nunca devolve JSON cru — o lojista tem que cair de volta numa tela.
+        """
+        painel = getattr(settings, 'BILLING_PANEL_URL', 'https://painel.cardapidex.com.br')
+
+        def de_volta(store_id=None, resultado='erro', motivo=''):
+            if store_id:
+                destino = f'{painel}/stores/{store_id}/settings?tab=recebimento&mp={resultado}'
+            else:
+                destino = f'{painel}/stores?mp={resultado}'
+            if motivo:
+                destino = f'{destino}&motivo={motivo}'
+            return redirect(destino)
+
+        slug = mercadopago_oauth.consumir_state(request.query_params.get('state', ''))
+        if not slug:
+            logger.warning('[MP OAuth] callback com state inválido ou já usado')
+            return de_volta(motivo='state_invalido')
+
+        from apps.stores.models import Store
+        store = Store.objects.filter(slug=slug).first()
+        if not store:
+            logger.warning('[MP OAuth] callback para loja inexistente: %s', slug)
+            return de_volta(motivo='loja_nao_encontrada')
+
+        codigo = request.query_params.get('code', '')
+        if not codigo:
+            # O lojista pode ter recusado a autorização na tela do MP.
+            erro = request.query_params.get('error', 'sem_codigo')
+            logger.info('[MP OAuth] loja %s não autorizou: %s', slug, erro)
+            return de_volta(store.id, motivo='nao_autorizado')
+
+        try:
+            dados = mercadopago_oauth.trocar_codigo_por_token(codigo)
+        except Exception as e:
+            # Nada é gravado numa troca que falhou: um gateway com token vazio
+            # venceria a conta da plataforma na prioridade do checkout e a loja
+            # pararia de vender.
+            logger.error('[MP OAuth] troca de código falhou para %s: %s', slug, e)
+            return de_volta(store.id, motivo='troca_falhou')
+
+        if not dados.get('access_token'):
+            logger.error('[MP OAuth] resposta sem access_token para %s', slug)
+            return de_volta(store.id, motivo='sem_token')
+
+        mercadopago_oauth.salvar_conexao(store, dados)
+        return de_volta(store.id, resultado='ok')
 
 
 @extend_schema_view(

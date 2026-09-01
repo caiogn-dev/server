@@ -547,3 +547,52 @@ def conferir_endereco_do_pedido(order_id: str):
         order.order_number, divergencia['digitado'], divergencia['pin'],
     )
     return divergencia
+
+
+@shared_task(name='apps.stores.tasks.renovar_tokens_oauth_do_mercadopago')
+def renovar_tokens_oauth_do_mercadopago():
+    """Renova o access_token das lojas conectadas por OAuth antes de vencer.
+
+    POR QUE 7 DIAS DE ANTECEDÊNCIA
+
+    O token do Mercado Pago dura ~6 meses. Renovar no vencimento significa uma
+    única chance: se o MP estiver fora do ar naquela hora, ou o Celery parado,
+    ou o deploy travado, a loja simplesmente para de aceitar pagamento — meio
+    ano depois de conectar, sem nada no código ter mudado. Sete dias dão à task
+    uma semana de tentativas diárias antes de qualquer cliente sentir.
+
+    POR QUE UM try/except POR LOJA
+
+    Uma loja que revogou a autorização devolve `invalid_grant`. Sem isolar, essa
+    exceção abortaria o laço e as lojas seguintes ficariam sem renovar — uma
+    loja quebrada derrubando as saudáveis.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.stores.models import StorePaymentGateway
+    from apps.stores.services import mercadopago_oauth
+
+    limite = timezone.now() + timedelta(days=7)
+    candidatos = StorePaymentGateway.objects.filter(
+        gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO,
+        connection_type=StorePaymentGateway.ConnectionType.OAUTH,
+        is_enabled=True,
+        token_expires_at__lte=limite,
+    ).exclude(refresh_token='').select_related('store')
+
+    renovados = 0
+    falhas = 0
+    for gateway in candidatos:
+        try:
+            mercadopago_oauth.renovar(gateway)
+            renovados += 1
+            logger.info('[MP OAuth] token renovado para %s', gateway.store.slug)
+        except Exception as e:
+            falhas += 1
+            logger.error(
+                '[MP OAuth] falha ao renovar token de %s: %s', gateway.store.slug, e,
+            )
+
+    return {'renovados': renovados, 'falhas': falhas}

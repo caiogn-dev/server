@@ -19,11 +19,13 @@ sem tocar no checkout. Enquanto estiverem vazios, `esta_configurado()` é False
 e qualquer tentativa levanta OAuthNaoConfigurado em vez de falhar torto.
 """
 import logging
+import secrets
 from datetime import timedelta
 from urllib.parse import urlencode
 
 import requests
 from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 
 from apps.stores.models import StorePaymentGateway
@@ -32,6 +34,11 @@ logger = logging.getLogger(__name__)
 
 AUTORIZACAO_URL = 'https://auth.mercadopago.com.br/authorization'
 TOKEN_URL = 'https://api.mercadopago.com/oauth/token'
+
+# O lojista sai do painel, loga no Mercado Pago e volta. Dez minutos cobrem isso
+# com folga e mantêm curta a janela em que um state vazado ainda vale.
+STATE_TTL_SEGUNDOS = 600
+PREFIXO_STATE = 'mp_oauth_state:'
 
 
 class OAuthNaoConfigurado(Exception):
@@ -54,28 +61,43 @@ def _exigir_configuracao():
         )
 
 
-def url_de_autorizacao(store) -> str:
-    """URL para onde o lojista é enviado ao clicar em "Conectar".
+def criar_state(store) -> str:
+    """Nonce de uso único que amarra o callback à loja que iniciou a conexão.
 
-    O `state` carrega o slug da loja porque o callback do Mercado Pago não diz
-    de quem é o código — sem isso, o token voltaria órfão.
+    O callback do Mercado Pago não diz de quem é o código — só devolve o
+    `state`. A primeira versão disto era `loja:<slug>`, e slug é público: dava
+    para montar a URL de autorização com o slug de OUTRA loja e induzir o
+    lojista a plugar a conta dele lá (a conta certa, na loja errada). Um valor
+    aleatório guardado do nosso lado fecha isso, e ser de uso único também mata
+    replay do callback.
     """
+    state = secrets.token_urlsafe(32)
+    cache.set(f'{PREFIXO_STATE}{state}', store.slug, STATE_TTL_SEGUNDOS)
+    return state
+
+
+def consumir_state(state: str) -> str:
+    """Resolve o slug e QUEIMA o state. Devolve '' se inválido ou já usado."""
+    if not state:
+        return ''
+    chave = f'{PREFIXO_STATE}{state}'
+    slug = cache.get(chave) or ''
+    if slug:
+        cache.delete(chave)
+    return slug
+
+
+def url_de_autorizacao(store) -> str:
+    """URL para onde o lojista é enviado ao clicar em "Conectar"."""
     _exigir_configuracao()
     params = {
         'client_id': settings.MP_OAUTH_CLIENT_ID,
         'response_type': 'code',
         'platform_id': 'mp',
-        'state': f'loja:{store.slug}',
+        'state': criar_state(store),
         'redirect_uri': getattr(settings, 'MP_OAUTH_REDIRECT_URI', ''),
     }
     return f'{AUTORIZACAO_URL}?{urlencode(params)}'
-
-
-def loja_do_state(state: str) -> str:
-    """Extrai o slug do state devolvido pelo provedor."""
-    if not state or not state.startswith('loja:'):
-        return ''
-    return state.split('loja:', 1)[1].strip()
 
 
 def trocar_codigo_por_token(codigo: str) -> dict:

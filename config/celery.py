@@ -57,6 +57,12 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.reconcile_pending_pix_payments',
         'schedule': 180.0,  # Every 3 minutes
     },
+    # Token de OAuth do lojista vence em ~6 meses. Diária com 7 dias de margem:
+    # dá uma semana de tentativas antes de a loja parar de aceitar pagamento.
+    'renovar-tokens-oauth-mercadopago': {
+        'task': 'apps.stores.tasks.renovar_tokens_oauth_do_mercadopago',
+        'schedule': 86400.0,  # Daily
+    },
     # REMOVED: check-pending-payments-new + check-abandoned-carts-new were
     # duplicates of the tasks above with different schedules (race condition).
     # Kept only the canonical apps.automation.tasks versions.

@@ -12,6 +12,8 @@ vender: o token manual resolve hoje. O que estes testes garantem é que o OAuth
 entra depois SEM migração nova e sem tocar no checkout — só ligando as
 credenciais.
 """
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 from django.test import override_settings
 
@@ -72,13 +74,22 @@ def test_url_de_autorizacao_recusa_quando_desligado(loja):
     MP_OAUTH_REDIRECT_URI='https://backend.pastita.com.br/api/v1/stores/payments/gateways/oauth/callback/',
 )
 def test_url_de_autorizacao_carrega_a_loja_no_state(loja):
-    """Sem o slug no state, o callback não sabe de quem é o token."""
+    """O state resolve a loja — sem EXIBIR o slug.
+
+    A primeira versão mandava `loja:<slug>` no state e este teste exigia o slug
+    na URL. Slug é público: dava para montar a URL de conexão apontando para a
+    loja de terceiro e induzir o lojista a plugar a conta dele lá. Hoje o state
+    é um nonce opaco de uso único, e o vínculo mora do nosso lado.
+    """
     url = mercadopago_oauth.url_de_autorizacao(loja)
 
     assert 'auth.mercadopago.com' in url
     assert 'client_id=123456' in url
-    assert loja.slug in url
     assert 'response_type=code' in url
+    assert loja.slug not in url
+
+    state = parse_qs(urlparse(url).query)['state'][0]
+    assert mercadopago_oauth.consumir_state(state) == loja.slug
 
 
 @override_settings(MP_OAUTH_CLIENT_ID='123456', MP_OAUTH_CLIENT_SECRET='segredo')
