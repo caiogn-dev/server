@@ -888,3 +888,51 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-08-28 — P1 IDOR: `store`, `parent` e `category` graváveis sem gate de tenant
+
+**Baseline:** 10/10 testes OK antes do fix (test_builder_por_categoria + test_order_number_csprng).
+23/23 OK depois (incluindo os 13 novos casos).
+
+**Gate anti-acúmulo:** 30 PRs abertos (#318–#347) verificados via `gh pr list`. Nenhum cobria
+`StoreCategorySerializer` ou `StoreProductCreateSerializer`. Confirmado via `grep -n validate_store
+apps/stores/api/serializers.py` — apenas `StoreIntegrationCreateSerializer`, `StoreWebhookSerializer`,
+`StorePrintAgentCreateSerializer` e `StoreDeliveryZoneCreateSerializer` tinham `validate_store`.
+
+**Vulnerabilidade corrigida:** IDOR de escrita em serializers de categoria e produto [P1]
+
+- **Tipo:** P1 — IDOR de escrita cross-tenant: qualquer usuário autenticado podia mover categorias
+  ou produtos para lojas alheias via campo `store` no corpo de PATCH/PUT/POST.
+- **Arquivos corrigidos (1):** `apps/stores/api/serializers.py`
+- **Pontos corrigidos (4):**
+  1. `StoreCategorySerializer.validate_store` — adicionado: impede mover categoria para loja alheia.
+  2. `StoreCategorySerializer.validate_parent` — adicionado: impede categoria ter pai cross-tenant,
+     que criaria árvore de categorias entre tenants distintos.
+  3. `StoreProductCreateSerializer.validate_store` — adicionado: impede criar/mover produto para
+     loja alheia via POST/PUT/PATCH.
+  4. `StoreProductCreateSerializer.validate_category` — adicionado: impede produto ser ligado a
+     categoria de outra loja via campo `category` no body.
+- **Padrão:** idêntico ao já estabelecido em `StoreWebhookSerializer`, `StoreIntegrationCreateSerializer`
+  e `StorePrintAgentCreateSerializer` — `user_can_access_store` + superuser bypass + mensagem genérica
+  info-hiding ("Loja não encontrada" / "Categoria não encontrada").
+- **Bônus:** `user_can_access_store` promovida a import de módulo (`from apps.core.permissions import
+  user_can_access_store`) para eliminar os imports locais repetitivos nos dois novos métodos.
+- **Testes:** 13 `SimpleTestCase` em `apps/stores/tests/test_category_product_serializer_idor.py`
+  (RED→GREEN confirmado):
+  - `StoreCategorySerializer`: superuser bypassa, usuário com acesso passa, sem acesso levanta
+    `ValidationError`, mensagem usa info-hiding ("não encontrada")
+  - `StoreProductCreateSerializer`: idem para `validate_store`; `validate_category` bloqueia
+    categoria alheia e permite própria
+  - Análise estática: ambos os serializers têm `validate_store`, `validate_category` e `validate_parent`
+- **PR:** #348 — `bot/server-2026-08-28-category-product-serializer-idor`
+
+**Próximo backlog (prioridade):**
+
+1. **P1** — Merge urgente dos 30 PRs abertos (#318–#347); os de P0 são SSRF (#338), PII em logs (#340, #346),
+   embedded-signup disclosure (#345), barcode IDOR (#334), e IDOR em conversation_history (#331).
+2. **P1** — `StoreProductVariantSerializer` tem `product` como campo gravável sem `validate_product`;
+   um usuário pode mover variantes entre produtos de lojas diferentes (mesmo vetor deste fix).
+3. **P1** — Testes de contrato para checkout payload e pedido por token.
+4. **P2** — Namespace mobile/customer para detalhe/status/rastreio/reordenação de pedido.
+
