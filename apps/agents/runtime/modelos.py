@@ -2,15 +2,18 @@
 
 POR QUE ESTE MÓDULO EXISTE
 
-Duas vezes em seis semanas o modelo default do sistema foi aposentado pelo
+TRÊS vezes em sete semanas o modelo default do sistema foi aposentado pelo
 provedor e o sintoma chegou como degradação silenciosa:
 
-    15/jul/2026  meta/llama-3.1-405b-instruct  saiu do catálogo
-    26/ago/2026  meta/llama-3.1-70b-instruct   410 Gone
+    15/jul/2026  meta/llama-3.1-405b-instruct   saiu do catálogo
+    26/ago/2026  meta/llama-3.1-70b-instruct    410 Gone
+    01/set/2026  nvidia/nemotron-3-nano-30b-a3b 410 Gone (às 09:00 UTC)
 
 Na segunda vez o painel ficou DOIS DIAS estampando "gerado sem IA" enquanto o
 erro existia apenas como WARNING no log do container. Ninguém olha WARNING de
-container; todo mundo olha a tela.
+container; todo mundo olha a tela. Na terceira o dono percebeu no mesmo dia —
+"a IA parece que não tá funcionando" — o que é melhor, mas ainda é o cliente
+descobrindo antes do sistema.
 
 POR QUE FILTRAR EM CÓDIGO E NÃO SÓ CORRIGIR O `.env`
 
@@ -33,18 +36,24 @@ MODELOS_APOSENTADOS = frozenset({
     'meta/llama-3.1-405b-instruct',
     'meta/llama-3.1-70b-instruct',
     'meta/llama-3.1-8b-instruct',
+    'nvidia/nemotron-3-nano-30b-a3b',
 })
 
-#: Escolhido medindo contra o catálogo real de 28/ago/2026, não pelo nome:
+#: Escolhido medindo contra o catálogo real de 01/set/2026 com o prompt DE
+#: VERDADE do painel (stats + forecast da Cê Saladas), não pelo nome:
 #:
-#:   nemotron-3-nano-30b-a3b     4/4 JSON válido   3,7s   ← escolhido
-#:   nemotron-3-super-120b-a12b  4/4 JSON válido  10,0s   raciocínio no content
-#:   nemotron-3.5-lightning-30b  0/3               ~0,7s   resposta vazia
-#:   llama-3.1-nemotron-70b      404 para a conta
+#:   openai/gpt-oss-120b            3/3 JSON válido   5,2s  ← escolhido
+#:   nemotron-3-super-120b-a12b     3/3 JSON válido   9,6s
+#:   openai/gpt-oss-20b             3/3 JSON válido  13,9s
+#:   nemotron-3.5-lightning-30b     0/3              47,4s
+#:   nemotron-nano-3-30b-a3b        404 para a conta        (sucessor de nome
+#:                                                           trocado, não liberado)
 #:
-#: O nano separa o raciocínio em `reasoning_content` e devolve `content` limpo,
-#: que é o que o parser de JSON do painel precisa.
-MODELO_PADRAO = 'nvidia/nemotron-3-nano-30b-a3b'
+#: ATENÇÃO ao nome: `openai/gpt-oss-120b` é um modelo de PESO ABERTO servido
+#: pela própria NVIDIA NIM — mesma chave, mesma base_url, mesmo endpoint. Não
+#: é a API da OpenAI, e trocar para ela seria mudar de provedor, o que este
+#: sistema não faz.
+MODELO_PADRAO = 'openai/gpt-oss-120b'
 
 #: Famílias que raciocinam antes de responder. Com `thinking` ligado o
 #: raciocínio consome o orçamento de `max_tokens` ANTES da resposta e o JSON

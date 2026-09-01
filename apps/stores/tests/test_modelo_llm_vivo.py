@@ -27,11 +27,28 @@ class ModeloPadraoTests(SimpleTestCase):
     def test_o_default_nao_e_um_modelo_ja_aposentado(self):
         self.assertNotIn(MODELO_INSIGHTS_PADRAO, MODELOS_APOSENTADOS)
 
-    def test_os_dois_modelos_que_morreram_estao_na_lapide(self):
+    def test_os_modelos_que_morreram_estao_na_lapide(self):
         # A lista existe para que a próxima morte apareça em teste, e não em
         # produção três dias depois.
         self.assertIn('meta/llama-3.1-70b-instruct', MODELOS_APOSENTADOS)
         self.assertIn('meta/llama-3.1-405b-instruct', MODELOS_APOSENTADOS)
+        self.assertIn('nvidia/nemotron-3-nano-30b-a3b', MODELOS_APOSENTADOS)
+
+    def test_o_painel_nao_tem_um_default_proprio(self):
+        """Um nome de modelo, um lugar.
+
+        Este arquivo já dizia que "duas listas viram duas verdades na próxima
+        morte" — e o painel mantinha a sua: `MODELO_INSIGHTS_PADRAO` era uma
+        CÓPIA literal da string, não o valor do catálogo. Em 01/set/2026
+        enterrar o nano no catálogo não bastou, porque o painel seguia pedindo
+        o defunto pela cópia.
+
+        Comparar por identidade (`is`) e não por igualdade: uma string idêntica
+        redigitada passaria no `==` e traria o problema de volta intacto.
+        """
+        from apps.agents.runtime.modelos import MODELO_PADRAO
+
+        self.assertIs(MODELO_INSIGHTS_PADRAO, MODELO_PADRAO)
 
     @override_settings(NVIDIA_INSIGHTS_MODEL='meta/llama-3.1-70b-instruct')
     def test_env_apontando_para_modelo_morto_e_ignorado(self):

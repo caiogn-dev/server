@@ -36,12 +36,20 @@ INSIGHTS_MAX_MESSAGES = 300
 # sobre qual modelo existe, e duas listas viram duas verdades na próxima morte.
 from apps.agents.runtime.modelos import (  # noqa: E402
     FAMILIAS_COM_RACIOCINIO,
+    MODELO_PADRAO,
     MODELOS_APOSENTADOS,
     corpo_extra_do_modelo,
     modelo_vivo,
 )
 
-MODELO_INSIGHTS_PADRAO = 'nvidia/nemotron-3-nano-30b-a3b'
+#: Alias do default do catálogo — NÃO redeclare a string aqui.
+#:
+#: Era exatamente isto que o comentário logo acima alertava ("duas listas viram
+#: duas verdades na próxima morte") e a linha seguinte fazia: uma cópia literal
+#: do nome do modelo. Quando a NIM enterrou o nano em 01/set/2026, atualizar o
+#: catálogo não bastou — este arquivo continuou pedindo o defunto, e o painel
+#: seguiu estampando "gerado sem IA".
+MODELO_INSIGHTS_PADRAO = MODELO_PADRAO
 
 
 def modelo_de_insights() -> str:

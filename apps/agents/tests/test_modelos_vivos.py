@@ -20,6 +20,28 @@ class ModeloVivoTests(SimpleTestCase):
     def test_o_padrao_nao_e_um_modelo_enterrado(self):
         self.assertNotIn(MODELO_PADRAO, MODELOS_APOSENTADOS)
 
+    def test_as_lapides_conhecidas_estao_todas_registradas(self):
+        """Cada 410 que já aconteceu vira uma linha aqui, para sempre.
+
+        01/set/2026, terceira morte em sete semanas: o painel do dono passou o
+        dia inteiro estampando "gerado sem IA" e o motivo existia só como
+        WARNING no log do container —
+
+            410 Gone: The model 'nvidia/nemotron-3-nano-30b-a3b' has reached
+            its end of life on 2026-09-01T09:00:00Z
+
+        Sem esta lista o env de produção, assado na imagem, continuaria pedindo
+        o modelo enterrado mesmo depois do deploy da correção.
+        """
+        for lapide in (
+            'meta/llama-3.1-405b-instruct',     # 15/jul/2026
+            'meta/llama-3.1-70b-instruct',      # 26/ago/2026
+            'nvidia/nemotron-3-nano-30b-a3b',   # 01/set/2026
+        ):
+            with self.subTest(lapide=lapide):
+                self.assertIn(lapide, MODELOS_APOSENTADOS)
+                self.assertEqual(modelo_vivo(lapide), MODELO_PADRAO)
+
     def test_modelo_vivo_passa_intacto(self):
         self.assertEqual(
             modelo_vivo('deepseek-ai/deepseek-v4-flash-0731'),
