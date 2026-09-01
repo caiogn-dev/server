@@ -416,21 +416,30 @@ class CampaignViewSet(viewsets.ModelViewSet):
     )
     def upload_media(self, request):
         """Upload an image/document to be used as WhatsApp campaign media."""
-        import os
         import uuid as uuid_mod
 
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({'error': 'file is required'}, status=status.HTTP_400_BAD_REQUEST)
 
+        _DOCUMENT_MIME_TO_EXT = {
+            'application/pdf': '.pdf',
+            'application/msword': '.doc',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
+            'application/vnd.ms-excel': '.xls',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+            'application/vnd.ms-powerpoint': '.ppt',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation': '.pptx',
+        }
+
         mime = file_obj.content_type or ''
         if mime.startswith('image/'):
             media_type = 'image'
-        elif mime == 'application/pdf' or mime.startswith('application/'):
+        elif mime in _DOCUMENT_MIME_TO_EXT:
             media_type = 'document'
         else:
             return Response(
-                {'error': 'Only image or document files are supported for campaigns'},
+                {'error': 'Tipo de arquivo não suportado. Envie uma imagem ou documento (PDF, DOC, DOCX, XLS, XLSX, PPT, PPTX).'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -457,18 +466,13 @@ class CampaignViewSet(viewsets.ModelViewSet):
             file_to_save = ContentFile(output.getvalue())
             mime = 'image/jpeg'
 
-        _MIME_TO_EXT = {
+        _IMAGE_MIME_TO_EXT = {
             'image/jpeg': '.jpg',
             'image/png': '.png',
             'image/gif': '.gif',
             'image/webp': '.webp',
-            'application/pdf': '.pdf',
-            'application/msword': '.doc',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-            'application/vnd.ms-excel': '.xls',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
         }
-        ext = _MIME_TO_EXT.get(mime, '.bin')
+        ext = _IMAGE_MIME_TO_EXT.get(mime) or _DOCUMENT_MIME_TO_EXT.get(mime, '.bin')
         saved_path = default_storage.save(
             f'campaigns/whatsapp/{uuid_mod.uuid4().hex}{ext}',
             file_to_save,

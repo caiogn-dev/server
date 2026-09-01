@@ -100,12 +100,20 @@ class UploadMediaExtensionTest(SimpleTestCase):
         )
         self.assertTrue(paths[0].endswith('.pdf'), f"Esperado .pdf, obtido: {paths[0]}")
 
-    def test_unknown_document_mime_gets_bin_extension(self):
-        """MIME desconhecido de documento → .bin (sem vazar extensão do filename)."""
+    def test_pptx_extension_from_mime(self):
+        """application/vnd...presentationml.presentation → .pptx."""
+        paths = []
+        resp, paths = self._call_upload(
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'slides.pptx',
+            paths,
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertTrue(paths[0].endswith('.pptx'), f"Esperado .pptx, obtido: {paths[0]}")
+
+    def test_unsupported_application_mime_is_rejected(self):
+        """application/octet-stream e outros fora da whitelist devem retornar 400."""
         paths = []
         resp, paths = self._call_upload('application/octet-stream', 'evil.exe', paths)
-        self.assertEqual(resp.status_code, 200, resp.data)
-        self.assertFalse(
-            paths[0].endswith('.exe'),
-            f"Extensão do filename vazou: {paths[0]}"
-        )
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertEqual(len(paths), 0, "Arquivo não deveria ter sido salvo")
