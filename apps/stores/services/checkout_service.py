@@ -1735,6 +1735,12 @@ class CheckoutService:
                 ),
             }
 
+            # Comissão da plataforma. Na preference o campo é NÚMERO — string
+            # devolve 400 invalid_field_type, ao contrário da Orders API.
+            comissao = mp_orders.comissao_para_preferencia(order.store, card_total)
+            if comissao:
+                preference_data["marketplace_fee"] = comissao
+
             result = sdk.preference().create(preference_data)
 
             if result["status"] == 201:
@@ -1873,6 +1879,10 @@ class CheckoutService:
             }
             if payer_block:
                 preference_data["payer"] = payer_block
+
+            comissao = mp_orders.comissao_para_preferencia(target_store, amount)
+            if comissao:
+                preference_data["marketplace_fee"] = comissao
 
             result = sdk.preference().create(preference_data)
 

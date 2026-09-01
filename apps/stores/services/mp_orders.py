@@ -7,7 +7,7 @@ POST https://api.mercadopago.com/v1/orders  (a SDK 2.x não expõe orders → RE
 Single-seller: usa o access_token do gateway da loja (sem OAuth por enquanto).
 """
 import re
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 import unicodedata
 import uuid
 import requests
@@ -277,9 +277,87 @@ def build_additional_info(order):
     return info
 
 
+def comissao_da_plataforma(store, valor):
+    """Comissão do Cardapidex sobre o pagamento, ou None para não enviar nada.
+
+    ONDE E COMO O MERCADO PAGO ACEITA (sondado com token real em 01/set)
+
+    Na RAIZ do payload e como STRING. Dentro de `transactions.payments[]` tanto
+    `marketplace_fee` quanto `application_fee` voltam `unsupported_properties`;
+    na raiz, um número devolve `'$.marketplace_fee' - expected string, but got
+    number` — e o MP só reclama de tipo em propriedade que ele conhece.
+
+    SÓ COBRA DE QUEM CONECTOU POR OAUTH
+
+    No gateway manual a loja colou a própria credencial e não há vínculo de
+    marketplace com o nosso app. Na conta da PLATAFORMA o dinheiro já é nosso —
+    cobrar comissão de si mesmo faz o MP recusar o pagamento INTEIRO, o que
+    derrubaria o checkout das lojas do dono num deploy que só queria ligar a
+    comissão de um cliente.
+
+    ARREDONDA PARA BAIXO
+
+    1% de R$ 35,99 é R$ 0,3599. Para cima seriam R$ 0,36 — cobrar acima do
+    combinado é o erro caro num contrato de comissão. E comissão que arredonda
+    para R$ 0,00 não vira campo: mandar '0.00' é oferecer ao MP um motivo de
+    recusa por um campo que não queria dizer nada.
+    """
+    from django.conf import settings
+
+    from apps.stores.models import StorePaymentGateway
+
+    percentual = Decimal(str(getattr(settings, 'PLATFORM_APPLICATION_FEE_PERCENT', 0) or 0))
+    if percentual <= 0:
+        return None
+
+    if getattr(store, 'usa_gateway_da_plataforma', False):
+        return None
+
+    conectada = StorePaymentGateway.objects.filter(
+        store=store,
+        gateway_type=StorePaymentGateway.GatewayType.MERCADOPAGO,
+        connection_type=StorePaymentGateway.ConnectionType.OAUTH,
+        is_enabled=True,
+    ).exists()
+    if not conectada:
+        return None
+
+    comissao = (Decimal(str(valor)) * percentual / Decimal('100')).quantize(
+        Decimal('0.01'), rounding=ROUND_DOWN,
+    )
+    if comissao <= 0:
+        return None
+    return str(comissao)
+
+
+def comissao_para_preferencia(store, valor):
+    """A mesma comissão, no dialeto do Checkout Pro.
+
+    As duas APIs do Mercado Pago discordam do TIPO e cada uma recusa o da
+    outra — medido com o token real da Agrião em 01/set:
+
+        POST /checkout/preferences  com '0.10'  → 400 invalid_field_type
+        POST /v1/orders             com  0.10   → 400 expected string
+
+    Por isso são duas funções e não uma com `str()` no fim: um único tipo
+    quebraria metade dos pagamentos, e o erro só apareceria no caminho menos
+    usado (o link de pagamento), muito depois do deploy.
+    """
+    comissao = comissao_da_plataforma(store, valor)
+    return float(comissao) if comissao else None
+
+
+def _com_comissao(payload, store, valor):
+    """Acrescenta a comissão ao payload só quando ela existe."""
+    comissao = comissao_da_plataforma(store, valor)
+    if comissao:
+        payload['marketplace_fee'] = comissao
+    return payload
+
+
 def build_order_payload(order, *, card_token, payment_method_id, installments,
                         payer_email, payer_data=None, payment_type='credit_card'):
-    return {
+    payload = {
         'additional_info': build_additional_info(order),
         'type': 'online',
         'processing_mode': 'automatic',
@@ -301,6 +379,7 @@ def build_order_payload(order, *, card_token, payment_method_id, installments,
             }],
         },
     }
+    return _com_comissao(payload, order.store, order.total)
 
 
 def build_pix_order_payload(order, payer_email, payer_data=None, amount=None):
@@ -315,7 +394,7 @@ def build_pix_order_payload(order, payer_email, payer_data=None, amount=None):
     pronto na resposta, em `date_of_expiration`.
     """
     valor = str(amount if amount is not None else order.total)
-    return {
+    payload = {
         'additional_info': build_additional_info(order),
         'type': 'online',
         'processing_mode': 'automatic',
@@ -337,6 +416,9 @@ def build_pix_order_payload(order, payer_email, payer_data=None, amount=None):
             }],
         },
     }
+    # A comissão segue o valor COBRADO, não order.total: numa cobrança parcial
+    # os dois divergem, e 1% do total seria comissão sobre dinheiro não recebido.
+    return _com_comissao(payload, order.store, valor)
 
 
 # Vocabulário do Mercado Pago → o nosso (`StorePayment.PaymentMethod`).

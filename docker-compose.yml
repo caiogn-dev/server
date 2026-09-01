@@ -74,6 +74,11 @@ x-django-env: &django-env
   # OAuth do lojista (app "Cardapidex"). Sem estas três aqui, preencher o .env
   # não adianta: este compose passa variável por variável, e o que não está
   # listado simplesmente não chega no container.
+  # Comissão da plataforma sobre a loja conectada por OAuth, em %. Vazio/0 =
+  # desligada. Como o compose lista variável por variável, esquecer esta linha
+  # faria o .env preenchido não chegar no container — e a comissão simplesmente
+  # não seria cobrada, sem erro nenhum apontando o motivo.
+  PLATFORM_APPLICATION_FEE_PERCENT: ${PLATFORM_APPLICATION_FEE_PERCENT:-0}
   MP_OAUTH_CLIENT_ID: ${MP_OAUTH_CLIENT_ID:-}
   MP_OAUTH_CLIENT_SECRET: ${MP_OAUTH_CLIENT_SECRET:-}
   MP_OAUTH_REDIRECT_URI: ${MP_OAUTH_REDIRECT_URI:-}

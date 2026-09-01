@@ -137,6 +137,13 @@ class PaymentService:
                 "auto_return": "approved",
             }
 
+            from apps.stores.services import mp_orders
+            comissao = mp_orders.comissao_para_preferencia(
+                payment.order.store, payment.amount,
+            )
+            if comissao:
+                preference_data["marketplace_fee"] = comissao
+
             preference_response = sdk.preference().create(preference_data)
             
             if preference_response["status"] == 201:

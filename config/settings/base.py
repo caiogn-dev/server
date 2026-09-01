@@ -2,6 +2,7 @@
 Django base settings for WhatsApp Business Platform.
 """
 import os
+from decimal import Decimal
 from pathlib import Path
 from datetime import timedelta
 from urllib.parse import parse_qs, unquote, urlparse
@@ -655,6 +656,12 @@ BILLING_PIX_ENABLED = os.environ.get('BILLING_PIX_ENABLED', 'false').lower() == 
 # rotear silenciosamente a receita de terceiro para a conta da plataforma.
 # OAuth do Mercado Pago (conta do lojista). Vazio = fluxo desligado; o lojista
 # cadastra o gateway colando o access_token. Ver apps/stores/services/mercadopago_oauth.py
+# Comissão da plataforma sobre o pagamento da loja conectada por OAuth, em %.
+# Default 0 = desligada: nenhuma loja existente muda de comportamento ao subir
+# esta versão. Só vira dinheiro quando alguém escrever o valor no ambiente.
+PLATFORM_APPLICATION_FEE_PERCENT = Decimal(
+    os.environ.get('PLATFORM_APPLICATION_FEE_PERCENT', '0') or '0'
+)
 MP_OAUTH_CLIENT_ID = os.environ.get('MP_OAUTH_CLIENT_ID', '')
 MP_OAUTH_CLIENT_SECRET = os.environ.get('MP_OAUTH_CLIENT_SECRET', '')
 MP_OAUTH_REDIRECT_URI = os.environ.get(
