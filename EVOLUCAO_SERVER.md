@@ -888,3 +888,46 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+## Sessão 2026-09-01
+
+**Gate anti-acúmulo:** 34 PRs abertos (#318–#351) listados. `EVOLUCAO_SERVER.md` verificado.
+Varredura completa de código adicionado à `development` desde 2026-07-26:
+`TokenOuVisitante`, `frete_promocional.py`, segmentação de campanhas (`segmentos.py`, `optout.py`),
+gate `auto_reply_enabled`, normalização de número de telefone em notificação de pedido.
+
+**Baseline de testes:** Sem Docker/PostgreSQL no container — testes que exigem `AddIndexConcurrently`
+não rodam localmente. Pré-existente, não regressão.
+
+**Varreduras realizadas:**
+- `str(exc)` em respostas HTTP: PRs #331, #345 cobrem os casos críticos em `whatsapp/api/views.py`.
+- `is_staff` como bypass cross-tenant: PR #324 cobre `base_consumer.py`.
+- PII em logs: PR aberto cobre mascaramento de telefone.
+- SSRF em `_coords_from_maps_url`: PR #338 aberto.
+- Upload de mídia de campanha (`upload_media`): **encontrado e corrigido nesta sessão** (ver abaixo).
+- Novos serviços (`frete_promocional.py`, `segmentos.py`, `optout.py`): sem vulnerabilidades — escopados por
+  store/account pelo chamador.
+
+**Bug encontrado e corrigido:** Extensão arbitrária em upload de mídia de campanha [P2]
+
+- **Tipo:** P2 — Arbitrary file extension via client-controlled filename
+- **Arquivo:** `apps/campaigns/api/views.py` — `CampaignViewSet.upload_media` (linha 460)
+- **Problema:** Para uploads de documentos (`media_type == 'document'`), a extensão era extraída
+  diretamente do nome do arquivo fornecido pelo cliente: `os.path.splitext(file_obj.name)[1]`.
+  Um usuário autenticado podia enviar `Content-Type: application/pdf` com `filename='shell.php'`
+  e o arquivo seria salvo como `<uuid>.php` no storage.
+- **Risco real:** Armazenamento em cloud mitiga execução remota de código, mas extensões maliciosas
+  podem enganar scanners de malware, CDNs e regras de proxy. Usuário precisa estar autenticado.
+- **Correção:** Mapa estático `_MIME_TO_EXT` com tipos permitidos; extensão vem do MIME,
+  nunca do `file_obj.name`. MIME desconhecido → `.bin` (neutro, sem vazar extensão do cliente).
+- **Testes:** 4 `SimpleTestCase` em `apps/campaigns/tests/test_upload_media_ext.py`.
+- **PR:** #352 — `bot/server-2026-09-01-upload-media-ext-validation`
+
+**Próximo backlog:**
+
+1. **P1** — Merge/revisão dos 34+ PRs acumulados (#318–#351) — nenhum mergeado desde julho.
+2. **P1** — Testes de contrato para checkout payload e pedido por token.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação.
+4. **P2** — Investigar PRs não mergeados com bloqueios de CI (infra pré-existente vs. regressão real).
+
