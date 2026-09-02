@@ -181,11 +181,7 @@ class TokenExpirationMiddleware:
             # do __dict__ faz o HttpHeaders ser remontado a partir do META já
             # limpo.
             request.__dict__.pop('headers', None)
-            response = self.get_response(request)
-            # Deixa o cliente saber que o crachá venceu, para ele poder apagar
-            # o token guardado em vez de reenviá-lo em toda visita.
-            response['X-Token-Expired'] = '1'
-            return response
+            return self.get_response(request)
 
         return self.get_response(request)
 
