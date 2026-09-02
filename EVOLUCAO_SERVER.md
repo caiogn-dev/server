@@ -888,3 +888,44 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+### 2026-08-29
+
+**Baseline de testes:** 8 SimpleTestCase (análise estática, sem Docker/PostgreSQL) — 0/8 GREEN antes
+do fix. CI com falha de infra pré-existente (runner_id=0 desde 2026-07-18). PRs abertos: #318–#348
+(30 PRs); branch trunk = `development` HEAD `b4ffa4f`.
+
+**Gate anti-acúmulo:** 30 PRs abertos cobrem IDOR em Instagram/Campaign/Marketing/Conversations/Stores,
+PII em logs, str(exc) em Instagram/WhatsApp/Fiscal, N+1 em Cash/Orders, timing oracle no webhook.
+Varredura estática confirmou que `apps/messaging/api/views.py` e `apps/messaging/api/serializers.py`
+**não** estavam cobertos pelos PRs de str(exc) (#326, #337) nem pelo IDOR de account (#314, #318).
+
+**Bugs corrigidos — PR #349 `bot/server-2026-08-29-messenger-str-exc-account-idor`:**
+
+- **Tipo 1 — P1 info-disclosure:** `MessengerAccountViewSet.sync` e
+  `MessengerConversationViewSet.send_message` capturavam `Exception` e devolviam `str(exc)` diretamente
+  em `Response({"error": str(exc)})`. Erros da Graph API da Meta (access token fragmentado, rate-limit
+  com payload JSON, erros SSL com detalhes de conexão) eram expostos a qualquer usuário autenticado.
+  Correção: substituído por mensagem genérica + `logger.exception` para rastreio interno.
+
+- **Tipo 2 — P1 IDOR de escrita cross-tenant:** `MessengerConversationSerializer.Meta.read_only_fields`
+  omitia `'account'`. Um PATCH com `{"account": <id_da_vítima>}` movia a conversa para a inbox de
+  outro tenant. Correção: adicionado `'account'` a `read_only_fields` (mesmo padrão do PR #314 para
+  CampaignSerializer e #318 para Instagram serializers).
+
+- **Arquivos corrigidos (2):**
+  - `apps/messaging/api/views.py` — linhas 67–68 e 226–227
+  - `apps/messaging/api/serializers.py` — `MessengerConversationSerializer.Meta.read_only_fields`
+- **Testes:** 8 SimpleTestCase em `apps/messaging/tests_str_exc_account_idor.py` (RED→GREEN confirmado)
+
+**Backlog priorizado (atualizado — 2026-08-29):**
+
+1. **P1** — `apps/marketing/api/views.py:154–158` — `EmailCampaignViewSet.send` captura `Exception`
+   e devolve `str(e)` em HTTP 500: pode vazar mensagens SMTP, endpoint/token do provedor de e-mail.
+   Mesmo padrão corrigido nos PRs #326/#337. Não coberto por #320 (IDOR escrita) nem #328 (scope geral).
+2. **P2** — `apps/stores/api/views/crm_views.py:207` — `places_search_view` usa `IsAdminUser`
+   (is_staff) em vez de `is_superuser`. Permite a staff de lojas fazer chamadas à Google Places API
+   sem restrição de tenant, consumindo cota e potencialmente expondo dados de concorrentes.
+3. **P1** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos
+   (item crítico do CLAUDE.md há várias sessões, ainda pendente).
+4. **P1** — Merge dos PRs acumulados #318–#349 (31 PRs aguardando revisão).
+

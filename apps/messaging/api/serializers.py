@@ -108,7 +108,7 @@ class MessengerConversationSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "account", "created_at", "updated_at"]
 
     def get_last_message(self, obj):
         last_msg = obj.messages.order_by("-created_at").first()
