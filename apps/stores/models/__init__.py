@@ -60,6 +60,7 @@ from .review import StoreReview, StoreProductReview
 
 # Loyalty
 from .loyalty import StoreLoyaltyAccount, StoreLoyaltyTransaction
+from .cashback import StoreCashbackLot, StoreCashbackRedemption
 
 # Cash (PDV)
 from .cash import StoreCashSession, StoreCashMovement
@@ -117,6 +118,8 @@ __all__ = [
     # Loyalty
     'StoreLoyaltyAccount',
     'StoreLoyaltyTransaction',
+    'StoreCashbackLot',
+    'StoreCashbackRedemption',
     # Cash (PDV)
     'StoreCashSession',
     'StoreCashMovement',

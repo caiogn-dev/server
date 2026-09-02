@@ -1106,9 +1106,14 @@ class CheckoutService:
 
         if coupon is not None:
             CheckoutService.record_coupon_redemption(order, coupon)
-            # Indicação: amigo usou cupom INDICA → premia o indicador (best-effort)
-            from apps.stores.services.referral_service import ReferralService
-            ReferralService.reward_referrer_if_applicable(order, coupon)
+            # A indicação NÃO é premiada aqui. O prêmio virou cashback e depende
+            # do pedido ter sido PAGO — sai em CashbackService.credit_order, na
+            # transição de status. Premiar no checkout dava prêmio por pedido
+            # que ainda podia ser cancelado.
+            #
+            # O ReferralService antigo criava um cupom AMIGO5-XXXX por indicação:
+            # 0 criados, 0 usados desde que existe, e os 13 AVALIA5-XXXXXX irmãos
+            # dele entulharam a lista do painel sem uma única redenção.
 
         # Fidelidade persistida: registra o resgate na trilha auditável
         if loyalty_reward.get('applied'):
@@ -1627,6 +1632,9 @@ class CheckoutService:
                             LoyaltyService.credit_order(order)
                         except Exception:
                             logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
+
+                        from apps.stores.services.cashback_service import CashbackService
+                        CashbackService.credit_order(order)
 
                     return {
                         'success': True,
@@ -2286,6 +2294,10 @@ class CheckoutService:
                 LoyaltyService.credit_order(order)
             except Exception:
                 logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
+
+            from apps.stores.services.cashback_service import CashbackService
+            CashbackService.credit_order(order)
+
             try:
                 from apps.stores.services.meta_pixel_service import send_purchase_event
                 send_purchase_event(order)

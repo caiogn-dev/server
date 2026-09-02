@@ -181,6 +181,12 @@ class OrderService:
                 LoyaltyService.credit_order(order)
             except Exception:
                 logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
+
+            # Cashback: crédito da compra + crédito de indicação (dono do cupom).
+            # Chaveado por TELEFONE, então funciona no pedido de convidado —
+            # que a fidelidade acima, presa a `user`, nunca creditou.
+            from apps.stores.services.cashback_service import CashbackService
+            CashbackService.credit_order(order)
         
         return {
             'success': True,
