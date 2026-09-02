@@ -1050,6 +1050,11 @@ class StoreCheckoutView(APIView):
                     request.data.get('use_loyalty_reward')
                     or request.data.get('loyalty_reward')
                 ),
+                # Só a INTENÇÃO vem do cliente. O quanto de saldo entra é
+                # calculado no servidor a partir do banco — aceitar um valor
+                # do payload seria o comprador escrevendo o próprio desconto.
+                use_cashback=bool(request.data.get('use_cashback')),
+                indicado_por=str(request.data.get('indicado_por') or '')[:20],
                 scheduled_date=scheduled_date,
                 scheduled_time=scheduled_time,
             )

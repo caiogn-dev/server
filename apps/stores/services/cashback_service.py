@@ -97,6 +97,21 @@ class CashbackService:
         return _para_centavos(total or Decimal('0'))
 
     @staticmethod
+    def aplicavel(store, phone: str, total) -> Decimal:
+        """Quanto do saldo pode virar desconto NESTE pedido.
+
+        Nunca mais que o próprio total: saldo maior que a compra viraria total
+        negativo ou troco, e cashback é crédito de loja, não dinheiro.
+        """
+        if not CashbackService.is_enabled(store):
+            return Decimal('0.00')
+        saldo = CashbackService.balance(store, phone)
+        teto = _para_centavos(Decimal(str(total or 0)))
+        if teto <= 0:
+            return Decimal('0.00')
+        return min(saldo, teto)
+
+    @staticmethod
     def expires_next(store, phone: str):
         """Data do saldo que vence primeiro — é o que dá urgência à mensagem."""
         lote = CashbackService._lotes_vivos(store, phone).order_by('expires_at').first()
@@ -145,7 +160,7 @@ class CashbackService:
         )
 
     @staticmethod
-    def credit_referral(order, coupon):
+    def credit_referral(order, coupon, owner_phone: str = ''):
         """Crédito de indicação: o DONO do cupom ganha % do que o amigo gastou.
 
         Substitui o cupom-por-indicação (INDICA-XXXX/AMIGO5-XXXX), que gerava
@@ -157,7 +172,9 @@ class CashbackService:
         store = order.store
         if not CashbackService.is_enabled(store):
             return None
-        dono = ((getattr(coupon, 'metadata', None) or {}).get('owner_phone') or '').strip()
+        dono = (owner_phone or '').strip() or (
+            (getattr(coupon, 'metadata', None) or {}).get('owner_phone') or ''
+        ).strip()
         if not dono:
             return None
         # Auto-indicação é desconto, não indicação.
@@ -231,6 +248,19 @@ class CashbackService:
             if order is None:
                 return
             CashbackService.credit_purchase(order)
+
+            # Quem indicou vem do LINK primeiro. O cupom voltou a ser fixo
+            # (INDICA10) para ser ditável no WhatsApp, e código igual para
+            # todos não carrega identidade — o link carrega.
+            #
+            # A ordem importa: link ganha do cupom de parceiro, e sai UM
+            # crédito só. Dois créditos de indicação no mesmo pedido é a loja
+            # pagando duas vezes pela mesma venda.
+            indicador = ((getattr(order, 'metadata', None) or {}).get('indicado_por') or '').strip()
+            if indicador:
+                CashbackService.credit_referral(order, None, owner_phone=indicador)
+                return
+
             codigo = (getattr(order, 'coupon_code', '') or '').strip()
             if not codigo:
                 return

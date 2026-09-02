@@ -327,3 +327,37 @@ class CashbackResumoView(APIView):
                 for linha in linhas[start:start + self.PAGE_SIZE]
             ],
         })
+
+
+class CashbackSaldoView(APIView):
+    """Saldo do cliente no cardápio — por TELEFONE, sem login.
+
+    O storefront é guest-first: exigir login para ver o próprio saldo
+    esconderia o cashback de quase todo mundo, que é o erro que a fidelidade
+    antiga cometeu ao chavear por `user`.
+
+    AllowAny com throttle: o telefone vem na query e não é segredo, mas
+    responder saldo sem limite viraria oráculo para descobrir quem é cliente
+    da loja. O throttle de escrita pública já existe para isto.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [PublicWriteThrottle]
+
+    def get(self, request, store_slug):
+        from apps.stores.services.cashback_service import CashbackService
+
+        store = get_active_store(store_slug)
+        phone = (request.query_params.get('phone') or '').strip()
+        if not CashbackService.is_enabled(store):
+            return Response({'enabled': False, 'saldo': '0.00'})
+
+        saldo = CashbackService.balance(store, phone) if phone else Decimal('0.00')
+        vence = CashbackService.expires_next(store, phone) if phone else None
+        return Response({
+            'enabled': True,
+            'percent': CashbackService.percent(store),
+            'referral_percent': CashbackService.referral_percent(store),
+            'expiry_days': CashbackService.expiry_days(store),
+            'saldo': saldo,
+            'vence_em': vence.isoformat() if vence else None,
+        })

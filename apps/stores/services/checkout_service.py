@@ -802,6 +802,8 @@ class CheckoutService:
         coupon_code: str = None,
         notes: str = '',
         use_loyalty_reward: bool = False,
+        use_cashback: bool = False,
+        indicado_por: str = '',
         trusted_delivery_fee: "Decimal | None" = None,
         scheduled_date=None,
         scheduled_time='',
@@ -845,6 +847,8 @@ class CheckoutService:
             coupon_code=coupon_code,
             notes=notes,
             use_loyalty_reward=use_loyalty_reward,
+            use_cashback=use_cashback,
+            indicado_por=indicado_por,
             trusted_delivery_fee=trusted_delivery_fee,
             scheduled_date=scheduled_date,
             scheduled_time=scheduled_time,
@@ -860,6 +864,8 @@ class CheckoutService:
         coupon_code: str = None,
         notes: str = '',
         use_loyalty_reward: bool = False,
+        use_cashback: bool = False,
+        indicado_por: str = '',
         trusted_delivery_fee: "Decimal | None" = None,
         scheduled_date=None,
         scheduled_time='',
@@ -1031,6 +1037,24 @@ class CheckoutService:
                 'threshold': loyalty_status.get('threshold', 10),
             }
         
+        # Cashback: opt-in. O cliente decide no carrinho se gasta agora ou
+        # guarda — o saldo é dele e vence em 60 dias, então quem escolhe
+        # quando queimar é quem vai sentir falta.
+        #
+        # O valor NUNCA vem do cliente: ele manda só o "quero usar", e o
+        # quanto sai de `aplicavel`, que lê o saldo real do banco. Aceitar um
+        # valor do payload seria deixar o comprador escrever o próprio
+        # desconto — o mesmo buraco do unit_price corrigido em 3f550c6.
+        cashback_aplicado = Decimal('0.00')
+        if use_cashback:
+            from apps.stores.services.cashback_service import CashbackService
+            telefone_cashback = (customer_data or {}).get('phone') or ''
+            base_para_cashback = subtotal + delivery_fee - discount
+            cashback_aplicado = CashbackService.aplicavel(
+                store, telefone_cashback, base_para_cashback,
+            )
+            discount += cashback_aplicado
+
         # Calculate total (no tax - just subtotal + delivery - discount).
         # HOTFIX: cupom percentual gera desconto com 3+ casas (ex: 44.99*10% =
         # 4.499 -> total 40.491). float(40.491) faz o Mercado Pago rejeitar com
@@ -1078,6 +1102,11 @@ class CheckoutService:
                 'delivery_quote': delivery_info,
                 'estimated_minutes': delivery_info.get('estimated_minutes'),
                 'loyalty_reward': loyalty_reward,
+                'cashback_aplicado': float(cashback_aplicado),
+                # Quem indicou vem do link (?indica=). Fica no pedido porque o
+                # crédito só sai quando o pedido é PAGO, e nesse momento o
+                # carrinho e a sessão do navegador já não existem.
+                **({'indicado_por': indicado_por} if indicado_por else {}),
                 'customer': {
                     'user_id': str(customer_user.id) if customer_user else '',
                     'store_customer_id': str(store_customer.id) if store_customer else '',
@@ -1114,6 +1143,14 @@ class CheckoutService:
             # O ReferralService antigo criava um cupom AMIGO5-XXXX por indicação:
             # 0 criados, 0 usados desde que existe, e os 13 AVALIA5-XXXXXX irmãos
             # dele entulharam a lista do painel sem uma única redenção.
+
+        # Baixa do cashback: só DEPOIS do pedido existir, para o resgate
+        # ficar amarrado a ele (unique por pedido = idempotente).
+        if cashback_aplicado > 0:
+            from apps.stores.services.cashback_service import CashbackService
+            CashbackService.redeem(
+                store, (customer_data or {}).get('phone') or '', order, cashback_aplicado,
+            )
 
         # Fidelidade persistida: registra o resgate na trilha auditável
         if loyalty_reward.get('applied'):
