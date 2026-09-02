@@ -108,6 +108,44 @@ salad-builder string ingredients, str(e) em handlers. Nenhum cobre o módulo `ap
 | P2 | Varredura de N+1 queries em `emit_nfce_for_order` (prefetch_related para order.items__product) |
 | P2 | Namespace mobile: rota `/api/v1/mobile/` já existe — verificar contratos de reordenação |
 
+### 2026-09-02
+
+**Gate anti-acúmulo:** 35 PRs abertos (#318–#352); nenhum cobre `apps/core/export_views.py`.
+Confirmado: `apps/stores/api/export_views.py` (coberto pelo PR #316) é arquivo diferente do corrigido aqui.
+HEAD de `development` verificado via `git log`: sem fix de tenant em `apps/core/export_views.py`.
+
+**Bug encontrado e corrigido:** IDOR P0 — todos os 5 endpoints de export em `apps/core/export_views.py` sem escopo de tenant
+
+- **Tipo:** P0 — IDOR crítico. Qualquer usuário autenticado podia exportar até 10.000 registros de
+  mensagens, pedidos, sessões, logs de automação e conversas de **todos os tenants**.
+- **Arquivos corrigidos (1):**
+  `apps/core/export_views.py` — 5 funções (`export_messages`, `export_orders`, `export_sessions`,
+  `export_automation_logs`, `export_conversations`) todas iniciavam o queryset com `.all()` irrestrito.
+  O parâmetro de filtro opcional (`account_id`, `store`, `company_id`) era aceito sem verificar
+  se o tenant do usuário tem acesso ao recurso pedido.
+- **Correção:**
+  - Adicionado import: `from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids`
+  - Superuser → `.all()` (comportamento original preservado)
+  - Não-superuser → queryset escoped ANTES de qualquer filtro extra do usuário:
+    - `export_messages`, `export_conversations`: `.filter(account_id__in=accessible_whatsapp_account_ids(user))`
+    - `export_orders`: `.filter(store_id__in=accessible_store_ids(user))`
+    - `export_sessions`, `export_automation_logs`: `.filter(company__account_id__in=accessible_whatsapp_account_ids(user))`
+- **Testes:** 13 casos em `apps/core/tests/test_core_export_idor.py` (RED→GREEN confirmado):
+  - Análise estática: `.all()` não aparece antes de `accessible_*` em nenhuma das 5 funções
+  - Mock comportamental: `accessible_whatsapp_account_ids`/`accessible_store_ids` são chamadas para não-superuser
+  - Superuser: `.all()` irrestrito sem chamar funções de escopo (comportamento esperado)
+  - Imports: ambas as funções de escopo estão importadas no módulo
+- **PR:** `bot/server-2026-09-02-core-export-idor` (abrindo agora)
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge urgente dos PRs P0/P1 acumulados (#318–#352, 35 PRs abertos) |
+| P1 | `checkout_debug` — exposure de PII em `apps/conversations/views.py` (`checkout_debug` retorna dados de sessão cross-tenant) |
+| P2 | `str(exc)` em `FiscalNotConfigured` em `apps/stores/api/order_views.py` — info-disclosure |
+| P2 | Resposta HTTP raw em views OAuth Instagram — expõe corpo da resposta de API externa |
+
 ### 2026-06-28
 
 **Baseline de testes:** Ambiente de checkout limpo sem Docker (sem PostgreSQL/Redis).

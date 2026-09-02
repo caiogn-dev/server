@@ -14,6 +14,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +129,14 @@ def export_messages(request):
     direction = request.query_params.get('direction')
     message_status = request.query_params.get('status')
     
-    # Build queryset
-    queryset = Message.objects.select_related('account').all()
-    
+    # Build queryset — escopo por tenant
+    user = request.user
+    if user.is_superuser:
+        queryset = Message.objects.select_related('account').all()
+    else:
+        allowed_ids = accessible_whatsapp_account_ids(user)
+        queryset = Message.objects.select_related('account').filter(account_id__in=allowed_ids)
+
     if account_id:
         queryset = queryset.filter(account_id=account_id)
     
@@ -211,8 +217,14 @@ def export_orders(request):
     export_format = request.query_params.get('format', 'csv')
     order_status = request.query_params.get('status')
     
-    # Build queryset
-    queryset = StoreOrder.objects.select_related('store').all()
+    # Build queryset — escopo por tenant
+    user = request.user
+    if user.is_superuser:
+        queryset = StoreOrder.objects.select_related('store').all()
+    else:
+        allowed_ids = accessible_store_ids(user)
+        queryset = StoreOrder.objects.select_related('store').filter(store_id__in=allowed_ids)
+
     if store_param:
         try:
             import uuid as uuid_module
@@ -300,9 +312,16 @@ def export_sessions(request):
     export_format = request.query_params.get('format', 'csv')
     session_status = request.query_params.get('status')
     
-    # Build queryset
-    queryset = CustomerSession.objects.select_related('company').all()
-    
+    # Build queryset — escopo por tenant
+    user = request.user
+    if user.is_superuser:
+        queryset = CustomerSession.objects.select_related('company').all()
+    else:
+        allowed_ids = accessible_whatsapp_account_ids(user)
+        queryset = CustomerSession.objects.select_related('company').filter(
+            company__account_id__in=allowed_ids
+        )
+
     if company_id:
         queryset = queryset.filter(company_id=company_id)
     
@@ -376,9 +395,16 @@ def export_automation_logs(request):
     action_type = request.query_params.get('action_type')
     is_error = request.query_params.get('is_error')
     
-    # Build queryset
-    queryset = AutomationLog.objects.select_related('company').all()
-    
+    # Build queryset — escopo por tenant
+    user = request.user
+    if user.is_superuser:
+        queryset = AutomationLog.objects.select_related('company').all()
+    else:
+        allowed_ids = accessible_whatsapp_account_ids(user)
+        queryset = AutomationLog.objects.select_related('company').filter(
+            company__account_id__in=allowed_ids
+        )
+
     if company_id:
         queryset = queryset.filter(company_id=company_id)
     
@@ -452,9 +478,14 @@ def export_conversations(request):
     conv_status = request.query_params.get('status')
     mode = request.query_params.get('mode')
     
-    # Build queryset
-    queryset = Conversation.objects.select_related('account').all()
-    
+    # Build queryset — escopo por tenant
+    user = request.user
+    if user.is_superuser:
+        queryset = Conversation.objects.select_related('account').all()
+    else:
+        allowed_ids = accessible_whatsapp_account_ids(user)
+        queryset = Conversation.objects.select_related('account').filter(account_id__in=allowed_ids)
+
     if account_id:
         queryset = queryset.filter(account_id=account_id)
     
