@@ -207,3 +207,39 @@ class TestResgateNoCheckout:
             delivery_data={'method': 'pickup'}, indicado_por=INDICADOR,
         )
         assert pedido.metadata['indicado_por'] == INDICADOR
+
+
+@pytest.mark.django_db
+class TestConfigNoCardapio:
+    """O cardápio decide qual card mostrar comparando os dois `enabled`."""
+
+    def _config(self, loja):
+        from apps.stores.api.views.storefront_views import (
+            _cashback_program_payload, _loyalty_program_payload,
+        )
+        return _loyalty_program_payload(loja), _cashback_program_payload(loja)
+
+    def test_cashback_ligado_aparece_na_config(self, loja):
+        loja.metadata['cashback_percent'] = 3
+        loja.save(update_fields=['metadata'])
+        _, cb = self._config(loja)
+        assert cb['enabled'] is True
+        assert cb['percent'] == 3.0
+
+    def test_loja_nova_nasce_com_cashback_DESLIGADO(self, db, dono):
+        """A fidelidade tem default True por herança. O cashback não pode ter:
+        toda loja do sistema estrearia prometendo dinheiro de volta."""
+        nova = Store.objects.create(
+            owner=dono, name='Nova', slug='nova-cb', store_type='food', status='active',
+        )
+        fid, cb = self._config(nova)
+        assert cb['enabled'] is False
+        assert fid['enabled'] is True
+
+    def test_os_dois_programas_nunca_ligados_juntos_pelo_painel(self, loja):
+        """O painel grava loyalty_enabled=False ao ligar o cashback."""
+        loja.metadata['loyalty_enabled'] = False
+        loja.save(update_fields=['metadata'])
+        fid, cb = self._config(loja)
+        assert cb['enabled'] is True
+        assert fid['enabled'] is False

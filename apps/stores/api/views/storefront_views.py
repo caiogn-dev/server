@@ -387,6 +387,27 @@ def _loyalty_program_payload(store):
     }
 
 
+def _cashback_program_payload(store):
+    """Config do cashback para o cardápio.
+
+    Espelha _loyalty_program_payload de propósito: o storefront decide qual
+    card mostrar comparando os dois `enabled`, e ter formatos diferentes
+    obrigaria a tela a saber a regra de cada um.
+
+    `enabled` aqui NÃO tem default True (o da fidelidade tem, por herança):
+    programa novo começa desligado, senão toda loja do sistema estrearia
+    prometendo dinheiro de volta sem o dono ter escolhido isso.
+    """
+    from apps.stores.services.cashback_service import CashbackService
+
+    return {
+        'enabled': CashbackService.is_enabled(store),
+        'percent': float(CashbackService.percent(store)),
+        'referral_percent': float(CashbackService.referral_percent(store)),
+        'expiry_days': CashbackService.expiry_days(store),
+    }
+
+
 def _featured_coupon_payload(store):
     from apps.stores import billing
     from apps.stores.models import StoreCoupon
@@ -479,6 +500,7 @@ class StoreAppConfigView(APIView):
                 'whatsapp_account_id': str(whatsapp_account.id) if whatsapp_account else '',
             },
             'loyalty_program': _loyalty_program_payload(store),
+            'cashback_program': _cashback_program_payload(store),
             'featured_coupon': _featured_coupon_payload(store),
             'payment': payment_config,
             'delivery': {
