@@ -1,5 +1,7 @@
 import re
+from datetime import timedelta
 
+from django.utils import timezone
 from django.db.models import Count, ExpressionWrapper, F, IntegerField, Sum, Value
 from django.db.models.functions import Coalesce, Greatest
 from rest_framework.views import APIView
@@ -245,3 +247,83 @@ class ConquistasView(APIView):
 
         from ...services.conquistas import painel_de_conquistas
         return Response(painel_de_conquistas(store))
+
+
+class CashbackResumoView(APIView):
+    """Painel do cashback: os números que viram decisão, e a fila de quem
+    perde saldo primeiro.
+
+    Agrega no BANCO, nunca devolve página para o frontend somar: somar a
+    primeira página produz um total menor que o real com cara de total, e
+    número errado com aparência de certo é pior que número ausente.
+    """
+    permission_classes = [IsAuthenticated]
+
+    PAGE_SIZE = 50
+    JANELA_DE_URGENCIA = 7  # dias
+
+    def get(self, request, store_slug):
+        from decimal import Decimal
+        from django.db.models import Min
+        from apps.stores.models import StoreCashbackLot, StoreCashbackRedemption
+        from apps.stores.services.cashback_service import CashbackService
+
+        store = get_active_store(store_slug)
+        if not (request.user.is_superuser or store.owner_id == request.user.id):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+
+        agora = timezone.now()
+        vivos = StoreCashbackLot.objects.filter(
+            store=store, remaining__gt=0, expires_at__gt=agora,
+        )
+        zero = Decimal('0.00')
+
+        resumo = {
+            'saldo_em_circulacao': vivos.aggregate(t=Coalesce(Sum('remaining'), zero))['t'],
+            'clientes_com_saldo': vivos.values('phone').distinct().count(),
+            # A campanha de hoje: saldo que morre dentro da semana. É o único
+            # número desta tela que tem prazo, e por isso o único que manda
+            # alguém agir agora.
+            'vence_em_7_dias': vivos.filter(
+                expires_at__lte=agora + timedelta(days=self.JANELA_DE_URGENCIA),
+            ).aggregate(t=Coalesce(Sum('remaining'), zero))['t'],
+            'saldo_de_indicacao': vivos.filter(
+                origin=StoreCashbackLot.Origin.REFERRAL,
+            ).aggregate(t=Coalesce(Sum('remaining'), zero))['t'],
+            # Quanto o programa JÁ custou de verdade — crédito que virou
+            # desconto. Saldo em circulação é promessa; isto é a conta paga.
+            'ja_resgatado': StoreCashbackRedemption.objects.filter(
+                store=store,
+            ).aggregate(t=Coalesce(Sum('amount'), zero))['t'],
+        }
+
+        # ORDEM: quem vence primeiro. A pergunta desta lista é "a quem eu mando
+        # mensagem hoje", e quem está prestes a perder saldo é quem responde.
+        linhas = (
+            vivos.values('phone')
+            .annotate(saldo=Sum('remaining'), vence_em=Min('expires_at'))
+            .order_by('vence_em', '-saldo')
+        )
+        try:
+            page = max(1, int(request.query_params.get('page', 1)))
+        except (TypeError, ValueError):
+            page = 1
+        start = (page - 1) * self.PAGE_SIZE
+
+        return Response({
+            'enabled': CashbackService.is_enabled(store),
+            'percent': CashbackService.percent(store),
+            'referral_percent': CashbackService.referral_percent(store),
+            'expiry_days': CashbackService.expiry_days(store),
+            'resumo': resumo,
+            'count': linhas.count(),
+            'results': [
+                {
+                    'phone': linha['phone'],
+                    'saldo': linha['saldo'],
+                    'vence_em': linha['vence_em'].isoformat(),
+                    'dias_para_vencer': max(0, (linha['vence_em'] - agora).days),
+                }
+                for linha in linhas[start:start + self.PAGE_SIZE]
+            ],
+        })
