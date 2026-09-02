@@ -14,6 +14,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
+from django.db.models import Q
 from apps.core.permissions import accessible_whatsapp_account_ids, accessible_store_ids
 
 logger = logging.getLogger(__name__)
@@ -313,13 +314,16 @@ def export_sessions(request):
     session_status = request.query_params.get('status')
     
     # Build queryset — escopo por tenant
+    # CompanyProfile pode estar ligado a uma conta WA (account) OU a uma Store,
+    # nunca os dois ao mesmo tempo. O filtro usa OR para cobrir ambos os casos.
     user = request.user
     if user.is_superuser:
         queryset = CustomerSession.objects.select_related('company').all()
     else:
-        allowed_ids = accessible_whatsapp_account_ids(user)
+        wa_ids = accessible_whatsapp_account_ids(user)
+        store_ids = accessible_store_ids(user)
         queryset = CustomerSession.objects.select_related('company').filter(
-            company__account_id__in=allowed_ids
+            Q(company__account_id__in=wa_ids) | Q(company__store_id__in=store_ids)
         )
 
     if company_id:
@@ -396,13 +400,15 @@ def export_automation_logs(request):
     is_error = request.query_params.get('is_error')
     
     # Build queryset — escopo por tenant
+    # CompanyProfile pode estar ligado a uma conta WA (account) OU a uma Store.
     user = request.user
     if user.is_superuser:
         queryset = AutomationLog.objects.select_related('company').all()
     else:
-        allowed_ids = accessible_whatsapp_account_ids(user)
+        wa_ids = accessible_whatsapp_account_ids(user)
+        store_ids = accessible_store_ids(user)
         queryset = AutomationLog.objects.select_related('company').filter(
-            company__account_id__in=allowed_ids
+            Q(company__account_id__in=wa_ids) | Q(company__store_id__in=store_ids)
         )
 
     if company_id:

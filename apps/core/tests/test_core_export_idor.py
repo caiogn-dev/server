@@ -186,7 +186,8 @@ class TestExportSessionsIDOR(unittest.TestCase):
         mock_qs.order_by.return_value = mock_qs
         mock_qs.__getitem__ = MagicMock(return_value=[])
 
-        with patch('apps.core.export_views.accessible_whatsapp_account_ids', return_value=[10]) as fn, \
+        with patch('apps.core.export_views.accessible_whatsapp_account_ids', return_value=[10]) as fn_wa, \
+             patch('apps.core.export_views.accessible_store_ids', return_value=[1]) as fn_st, \
              patch('apps.automation.models.CustomerSession.objects') as mock_mgr:
             mock_mgr.select_related.return_value = mock_qs
             mock_mgr.filter.return_value = mock_qs
@@ -194,7 +195,8 @@ class TestExportSessionsIDOR(unittest.TestCase):
                 m.export_sessions(req)
             except Exception:
                 pass
-            fn.assert_called_once_with(user)
+            fn_wa.assert_called_once_with(user)
+            fn_st.assert_called_once_with(user)
 
 
 class TestExportAutomationLogsIDOR(unittest.TestCase):
@@ -228,7 +230,8 @@ class TestExportAutomationLogsIDOR(unittest.TestCase):
         mock_qs.order_by.return_value = mock_qs
         mock_qs.__getitem__ = MagicMock(return_value=[])
 
-        with patch('apps.core.export_views.accessible_whatsapp_account_ids', return_value=[10]) as fn, \
+        with patch('apps.core.export_views.accessible_whatsapp_account_ids', return_value=[10]) as fn_wa, \
+             patch('apps.core.export_views.accessible_store_ids', return_value=[1]) as fn_st, \
              patch('apps.automation.models.AutomationLog.objects') as mock_mgr:
             mock_mgr.select_related.return_value = mock_qs
             mock_mgr.filter.return_value = mock_qs
@@ -236,7 +239,8 @@ class TestExportAutomationLogsIDOR(unittest.TestCase):
                 m.export_automation_logs(req)
             except Exception:
                 pass
-            fn.assert_called_once_with(user)
+            fn_wa.assert_called_once_with(user)
+            fn_st.assert_called_once_with(user)
 
 
 class TestExportConversationsIDOR(unittest.TestCase):
