@@ -135,9 +135,21 @@ def TokenAuthMiddlewareStack(inner):
 
 class TokenExpirationMiddleware:
     """
-    Rejects DRF Token auth requests when the token is older than AUTH_TOKEN_TTL_DAYS.
-    Tokens issued before this middleware was added are treated as expired immediately.
-    Default TTL: 30 days. Set AUTH_TOKEN_TTL_DAYS = None to disable expiration.
+    Trata como VISITANTE o pedido cujo token DRF passou de AUTH_TOKEN_TTL_DAYS.
+    Default TTL: 30 dias. AUTH_TOKEN_TTL_DAYS = None desliga a expiração.
+
+    Antes isto devolvia 401 na hora. Como middleware do Django, roda antes da
+    view, antes da permissão, antes de qualquer AllowAny — então um crachá
+    vencido no navegador derrubava o pedido INTEIRO: catálogo, carrinho,
+    consulta de fidelidade por telefone e, o pior, o envio de OTP. O login era
+    a única saída da armadilha e era ele que o 401 bloqueava; o cliente não
+    tinha como voltar sem limpar os dados do site na mão.
+
+    Agora o token vencido é apenas REMOVIDO do pedido, que segue como anônimo.
+    Rota pública responde; rota privada continua barrada pela permissão, que é
+    o lugar certo de barrar. Mesma decisão de test_token_invalido_nao_tranca
+    (27/ago) para o token que não existe — este é o irmão que faltava, o token
+    que existe e envelheceu.
     """
 
     def __init__(self, get_response):
@@ -157,15 +169,23 @@ class TokenExpirationMiddleware:
             return self.get_response(request)
 
         if self._is_expired(token_key):
-            return JsonResponse(
-                {
-                    'error': {
-                        'code': 'token_expired',
-                        'message': 'Token expirado. Faça login novamente.',
-                    }
-                },
-                status=401,
-            )
+            # Some do pedido: sem header, o DRF nem tenta autenticar e a rota
+            # decide sozinha se aceita anônimo.
+            request.META.pop('HTTP_AUTHORIZATION', None)
+            # Tirar do META não basta. O DRF lê o header por
+            # `request.headers`, que no Django é `cached_property`: qualquer
+            # middleware anterior (CORS, CSRF, tenant) já materializou o
+            # HttpHeaders com o Authorization dentro, e mexer no META depois
+            # não desfaz esse cache — o pedido seguia autenticado com o token
+            # vencido, exatamente o oposto do pretendido. Descartar a entrada
+            # do __dict__ faz o HttpHeaders ser remontado a partir do META já
+            # limpo.
+            request.__dict__.pop('headers', None)
+            response = self.get_response(request)
+            # Deixa o cliente saber que o crachá venceu, para ele poder apagar
+            # o token guardado em vez de reenviá-lo em toda visita.
+            response['X-Token-Expired'] = '1'
+            return response
 
         return self.get_response(request)
 
