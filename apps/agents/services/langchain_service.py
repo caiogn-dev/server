@@ -755,7 +755,8 @@ class LangchainService:
                     elif product.stock_quantity <= 3:
                         stock_note = f' [últimas {product.stock_quantity} unidades]'
 
-                menu_text += f"• {product.name} - R$ {product.price}{stock_note}\n"
+                # Promoção do dia: o cardápio que o agente lê é o mesmo que a loja cobra.
+                menu_text += f"• {product.name} - R$ {product.preco_vigente()}{stock_note}\n"
 
         cache.set(key, menu_text, _MENU_CTX_TTL)
         return menu_text
@@ -1592,21 +1593,21 @@ class LangchainService:
                 existing = next((i for i in items if i["product_id"] == str(product.id)), None)
                 if existing:
                     existing["quantity"] += quantidade
-                    existing["total"] = float(product.price) * existing["quantity"]
+                    existing["total"] = float(product.preco_vigente()) * existing["quantity"]
                 else:
                     items.append({
                         "product_id": str(product.id),
                         "product_name": product.name,
                         "quantity": quantidade,
-                        "unit_price": float(product.price),
-                        "total": float(product.price) * quantidade,
+                        "unit_price": float(product.preco_vigente()),
+                        "total": float(product.preco_vigente()) * quantidade,
                     })
                 cart["items"] = items
                 _save_cart(cart)
 
                 cart_total = sum(i["total"] for i in items)
                 return (
-                    f"✓ {quantidade}x {product.name} (R$ {product.price} cada) adicionado.\n"
+                    f"✓ {quantidade}x {product.name} (R$ {product.preco_vigente()} cada) adicionado.\n"
                     f"Carrinho: {len(items)} item(ns) | Total: R$ {cart_total:.2f}"
                 )
             except Exception as exc:

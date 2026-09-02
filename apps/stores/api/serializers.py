@@ -936,7 +936,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
                 })
 
             quantity = item.get('quantity', 1)
-            unit_price = product.price or Decimal('0.00')
+            # Promoção do dia: quem cobra lê `preco_vigente()`, nunca `price`.
+            # O painel já mostrava R$ 30,75 e mandava só product_id+quantity —
+            # era AQUI que o pedido renascia com o valor cheio.
+            unit_price = product.preco_vigente() or Decimal('0.00')
             line_subtotal = unit_price * quantity
             subtotal += line_subtotal
 

@@ -1425,7 +1425,8 @@ class WebhookService:
     def _linha_de_item_do_catalogo(produto, quantidade, preco_da_meta=None):
         """Uma linha do resumo do pedido de catálogo. Devolve (linha, subtotal).
 
-        🚨 O preço vem de `StoreProduct.price`, NUNCA do payload da Meta.
+        🚨 O preço vem da LOJA (`preco_vigente()`, que já resolve a promoção
+        do dia), NUNCA do payload da Meta.
 
         31/08, Dênia: o feed da Meta tinha a Almôndega Premium a R$ 40,90 e a
         loja cobrava R$ 35,99. O código já percebia a divergência — e usava o
@@ -1443,7 +1444,9 @@ class WebhookService:
         from decimal import Decimal
 
         quantidade = max(1, int(quantidade or 1))
-        preco = Decimal(str(produto.price or 0))
+        # `preco_vigente()` e não `price`: na quarta da Almôndega o resumo
+        # tem que mostrar o mesmo R$ 30,75 que a loja cobra.
+        preco = Decimal(str(produto.preco_vigente() or 0))
 
         if preco_da_meta is not None:
             try:
@@ -1581,7 +1584,7 @@ class WebhookService:
             linha, line_total = self._linha_de_item_do_catalogo(
                 product, quantity, preco_da_meta=item.get('item_price'),
             )
-            unit_price = float(product.price)
+            unit_price = float(product.preco_vigente())
 
             pending_items.append({
                 'product_id': str(product.id),

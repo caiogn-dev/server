@@ -96,7 +96,8 @@ class WhatsAppOrderService:
                 if item.get('price_source') == 'whatsapp_catalog' and item.get('unit_price') is not None:
                     unit_price = Decimal(str(item['unit_price']))
                 else:
-                    unit_price = product.price
+                    # Promoção do dia: cobrar o mesmo que a vitrine mostra.
+                    unit_price = product.preco_vigente()
                 item_total = unit_price * quantity
                 subtotal += item_total
                 order_items_data.append({

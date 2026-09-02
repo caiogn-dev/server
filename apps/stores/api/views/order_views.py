@@ -428,7 +428,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                             {'error': 'Produto não encontrado ou inativo.',
                              'code': 'product_not_found'})
                     qty = op['quantity']
-                    unit_price = product.price or Decimal('0.00')
+                    # Mesmo preço que o PDV mostra: promoção do dia entra aqui.
+                    unit_price = product.preco_vigente() or Decimal('0.00')
                     StoreOrderItem.objects.create(
                         order=order, product=product, variant=None,
                         product_name=product.name, variant_name='', sku=product.sku,
