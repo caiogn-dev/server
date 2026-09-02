@@ -247,26 +247,35 @@ class InteractiveReplyHandler(IntentHandler):
         )
 
         google_url = (order.store.metadata or {}).get('google_review_url', '').strip()
-        if rating == 5 and google_url:
-            # Loop de reputação: 5★ no WhatsApp → avaliar no Google → cupom 5%
-            return HandlerResult.buttons(
-                body=(
-                    'Que bom que você amou! ⭐⭐⭐⭐⭐\n\n'
-                    f'Avalia a gente no Google também? Leva 30 segundos:\n{google_url}\n\n'
-                    'Depois toca no botão abaixo e ganha *5% de desconto* no próximo pedido. 🎁'
-                ),
-                buttons=[{'id': f'review_done_{order.id}', 'title': '✅ Avaliei no Google'}],
-            )
         if rating >= 4:
             from apps.stores.services.checkout_service import CheckoutService
             base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
-            return HandlerResult.buttons(
-                body=(
-                    f'Obrigado pela avaliação! ⭐{"⭐" * (rating - 1)}\n\n'
-                    f'Se quiser, avalie também cada prato do pedido: {base}/orders/{order.access_token}'
-                ),
-                buttons=[{'id': f'refer_friend_{order.id}', 'title': '🎁 Indicar um amigo'}],
-            )
+            estrelas = '⭐' * rating
+
+            # DOIS botões, não um `if/return` que escolhe um.
+            #
+            # Antes o 5★ com link do Google retornava ANTES de chegar aqui, e o
+            # botão de indicar ficava atrás desse return. Como a Cê Saladas tem
+            # google_review_url preenchido e das 42 avaliações 41 são 5★ e
+            # NENHUMA é 4★, o convite para indicar nunca foi exibido uma única
+            # vez — INDICA-: 0 criados desde que o código existe.
+            #
+            # E é o inverso do que interessa: quem dá 5★ é justamente quem
+            # indica. Estava escondido de quem mais converteria.
+            botoes = [{'id': f'refer_friend_{order.id}', 'title': '🎁 Indicar um amigo'}]
+            if rating == 5 and google_url:
+                corpo = (
+                    f'Que bom que você amou! {estrelas}\n\n'
+                    f'Avalia a gente no Google também? Leva 30 segundos:\n{google_url}\n\n'
+                    'Depois toca no botão e ganha desconto no próximo pedido. 🎁'
+                )
+                botoes.insert(0, {'id': f'review_done_{order.id}', 'title': '✅ Avaliei no Google'})
+            else:
+                corpo = (
+                    f'Obrigado pela avaliação! {estrelas}\n\n'
+                    f'Se quiser, avalie também cada prato: {base}/orders/{order.access_token}'
+                )
+            return HandlerResult.buttons(body=corpo, buttons=botoes)
         # Nota baixa vai para a avaliação PRÓPRIA, não para o Google: pedir
         # nota pública a quem acabou de reclamar é pedir uma nota ruim no
         # Google. E sem cupom — cupom antes de o cliente dizer o que houve soa
@@ -287,35 +296,39 @@ class InteractiveReplyHandler(IntentHandler):
         )
 
     def _handle_refer_friend(self, reply_id: str) -> HandlerResult:
-        """Botão '🎁 Indicar um amigo' → cupom pessoal INDICA-XXXX + texto
-        pronto pra encaminhar. Guarda de telefone igual ao rating."""
+        """Botão '🎁 Indicar um amigo' → o código FIXO da loja + texto pronto.
+
+        Antes gerava um INDICA-XXXX por pessoa. Foram 0 criados desde que
+        existe: o botão fica atrás de um `return` para nota 5 com link do
+        Google, e das 42 avaliações da Cê Saladas 41 são 5 estrelas e nenhuma
+        é 4 — o caminho nunca foi alcançado. E mesmo se tivesse rodado, o
+        irmão dele já provou o problema: 13 AVALIA5-XXXXXX criados, 0 usados.
+        Ninguém digita hash no carrinho.
+
+        Quem indica não ganha mais cupom pessoal — ganha CASHBACK quando o
+        amigo compra. O código pode ser o mesmo para todos porque não precisa
+        mais carregar identidade.
+        """
         from apps.core.utils import phone_variants
         from apps.stores.models import StoreOrder
         from apps.stores.services.checkout_service import CheckoutService
-        from apps.stores.services.referral_service import ReferralService, REFERRAL_DISCOUNT_PCT
+        from apps.stores.services.cupons_fixos import CuponsFixos
 
         order_id = reply_id[len('refer_friend_'):]
         order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
         # phone_variants e não igualdade normalizada: o wa_id do WhatsApp vem
-        # sem o nono dígito e o pedido do site grava com ele. A guarda rejeitava
-        # o próprio dono do pedido (06/ago: Leani e Marilene não conseguiram
-        # avaliar; a resposta seria "Não encontrei esse pedido para avaliar").
+        # sem o nono dígito e o pedido do site grava com ele.
         conv_phones = set(phone_variants(self.conversation.phone_number or ''))
         order_phones = set(phone_variants(order.customer_phone or '')) if order else set()
         if not order or not conv_phones or not (conv_phones & order_phones):
             return HandlerResult.text('Não encontrei esse pedido. 😕')
 
-        coupon, _ = ReferralService.get_or_create_referral_coupon(
-            order.store, self.conversation.phone_number or order.customer_phone
-        )
+        cupom = CuponsFixos.de_indicacao(order.store)
         base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
         return HandlerResult.text(
-            'Seu cupom de indicação está pronto! 🎁\n\n'
-            'É só encaminhar a mensagem abaixo para os amigos:\n\n'
-            f'—\n{REFERRAL_DISCOUNT_PCT}% de desconto no primeiro pedido na '
-            f'{order.store.name}! Usa o cupom *{coupon.code}* em {base} 🥗\n—\n\n'
-            'Cada amigo que fizer o primeiro pedido com ele te rende '
-            '*5% de desconto* — te aviso por aqui quando acontecer. 😉'
+            'Show! É só encaminhar a mensagem abaixo para os amigos 🎁\n\n'
+            f'—\n{int(cupom.discount_value)}% de desconto no primeiro pedido na '
+            f'{order.store.name}! Usa o cupom *{cupom.code}* em {base} 🥗\n—'
         )
 
     def _handle_google_review_done(self, reply_id: str) -> HandlerResult:
@@ -324,11 +337,9 @@ class InteractiveReplyHandler(IntentHandler):
         Idempotente: o código fica em order.metadata['google_review_coupon'];
         clique repetido reapresenta o mesmo cupom em vez de criar outro.
         """
-        import uuid as uuid_mod
-        from datetime import timedelta
-        from django.utils import timezone as dj_tz
         from apps.core.utils import phone_variants
-        from apps.stores.models import StoreCoupon, StoreOrder
+        from apps.stores.models import StoreOrder
+        from apps.stores.services.cupons_fixos import CuponsFixos
 
         order_id = reply_id[len('review_done_'):]
         order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
@@ -343,32 +354,20 @@ class InteractiveReplyHandler(IntentHandler):
         if self.company_profile and self.company_profile.store_id and order.store_id != self.company_profile.store_id:
             return HandlerResult.text('Não encontrei esse pedido. 😕')
 
-        existing = (order.metadata or {}).get('google_review_coupon')
-        if existing:
-            return HandlerResult.text(
-                f'Seu cupom de 5% já está garantido! 🎁\n\nCódigo: *{existing}*\n'
-                'É só usar no próximo pedido (válido por 30 dias).'
-            )
-
-        code = f'AVALIA5-{uuid_mod.uuid4().hex[:6].upper()}'
-        now = dj_tz.now()
-        StoreCoupon.objects.create(
-            store=order.store,
-            code=code,
-            discount_type='percentage',
-            discount_value=5,
-            usage_limit=1,
-            valid_from=now,
-            valid_until=now + timedelta(days=30),
-        )
-        order.metadata['google_review_coupon'] = code
+        # Código FIXO da loja, não mais um AVALIA5-XXXXXX por pessoa: foram
+        # 13 gerados e ZERO usados. O limite de 1 por cliente agora é do
+        # próprio cupom (usage_limit_per_user), não do código ser único.
+        cupom = CuponsFixos.de_feedback(order.store)
+        order.metadata['google_review_coupon'] = cupom.code
         order.save(update_fields=['metadata'])
 
         return HandlerResult.text(
             'Obrigado por avaliar no Google! 💛\n\n'
-            f'Aqui está seu cupom de *5% de desconto*: *{code}*\n'
-            'Vale 1 uso no próximo pedido, nos próximos 30 dias.'
+            f'Aqui está seu cupom de *{int(cupom.discount_value)}% de desconto*: '
+            f'*{cupom.code}*\n'
+            'É só usar no próximo pedido. 🥗'
         )
+
 
     def _handle_delivery_choice(self, reply_id: str) -> HandlerResult:
         delivery_method = 'pickup' if reply_id == 'order_pickup' else 'delivery'

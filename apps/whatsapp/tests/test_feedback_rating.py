@@ -60,15 +60,38 @@ class FeedbackRatingTest(TestCase):
         button_ids = [b['id'] for b in result.interactive_data.get('buttons', [])]
         self.assertIn(f'refer_friend_{self.order.id}', button_ids)
 
-    def test_refer_friend_gera_cupom_de_indicacao(self):
+    def test_refer_friend_entrega_o_codigo_fixo_da_loja(self):
+        """Era um INDICA-XXXX por pessoa. Virou INDICA10, igual para todos.
+
+        O código pessoal existia para atribuir a indicação; a atribuição agora
+        é o cashback de quem indicou, então o código pode ser ditável.
+        """
         from apps.stores.models import StoreCoupon
+        from apps.stores.services.cupons_fixos import CODIGO_DE_INDICACAO
         result = self._click(f'refer_friend_{self.order.id}')
-        coupon = StoreCoupon.objects.get(metadata__type='referral')
+        self.assertIn(CODIGO_DE_INDICACAO, result.response_text or '')
+        coupon = StoreCoupon.objects.get(store=self.store, code=CODIGO_DE_INDICACAO)
         self.assertTrue(coupon.first_order_only)
-        self.assertIn(coupon.code, result.response_text or '')
-        # Clique repetido reapresenta o MESMO cupom
+        # Clique repetido não cria um segundo cupom
         self._click(f'refer_friend_{self.order.id}')
-        self.assertEqual(StoreCoupon.objects.filter(metadata__type='referral').count(), 1)
+        self.assertEqual(
+            StoreCoupon.objects.filter(store=self.store, code=CODIGO_DE_INDICACAO).count(), 1,
+        )
+
+    def test_nenhum_codigo_e_gerado_com_hash(self):
+        """A regressão que este arquivo existe para impedir: 13 AVALIA5-XXXXXX
+        criados em produção, ZERO usados."""
+        from apps.stores.models import StoreCoupon
+        self.store.metadata['google_review_url'] = 'https://g.page/r/ABC/review'
+        self.store.save(update_fields=['metadata'])
+        self._click(f'rating_5_{self.order.id}')
+        self._click(f'review_done_{self.order.id}')
+        self._click(f'refer_friend_{self.order.id}')
+        for code in StoreCoupon.objects.filter(store=self.store).values_list('code', flat=True):
+            self.assertFalse(
+                code.startswith(('AVALIA5-', 'INDICA-', 'AMIGO5-')),
+                f'cupom gerado com hash voltou: {code}',
+            )
 
     def test_rating_1_cria_review_e_pede_desculpas(self):
         result = self._click(f'rating_1_{self.order.id}')
@@ -92,27 +115,35 @@ class FeedbackRatingTest(TestCase):
         self.assertTrue(result.use_interactive, result.response_text)
         body = result.interactive_data.get('body', '')
         self.assertIn('g.page/r/ABC/review', body)
-        self.assertIn('5%', body)
         button_ids = [b['id'] for b in result.interactive_data.get('buttons', [])]
         self.assertIn(f'review_done_{self.order.id}', button_ids)
+        # 5★ TAMBÉM recebe o convite para indicar. Antes o ramo do Google
+        # retornava antes e escondia esse botão de quem mais indicaria — e
+        # como nenhuma das 42 avaliações da loja é 4★, ele nunca apareceu.
+        self.assertIn(f'refer_friend_{self.order.id}', button_ids)
 
-    def test_review_done_gera_cupom_5_pct_uma_vez(self):
+    def test_review_done_entrega_o_codigo_fixo_uma_vez(self):
         from apps.stores.models import StoreCoupon
+        from apps.stores.services.cupons_fixos import CODIGO_DE_FEEDBACK
         self.store.metadata['google_review_url'] = 'https://g.page/r/ABC/review'
         self.store.save(update_fields=['metadata'])
         self._click(f'rating_5_{self.order.id}')
 
         result = self._click(f'review_done_{self.order.id}')
-        coupon = StoreCoupon.objects.get(store=self.store)
+        coupon = StoreCoupon.objects.get(store=self.store, code=CODIGO_DE_FEEDBACK)
         self.assertEqual(coupon.discount_type, 'percentage')
-        self.assertEqual(float(coupon.discount_value), 5.0)
-        self.assertEqual(coupon.usage_limit, 1)
-        self.assertIn(coupon.code, result.response_text or '')
+        self.assertEqual(float(coupon.discount_value), 10.0)
+        self.assertEqual(coupon.usage_limit, 1000)
+        # O limite por pessoa saiu do código único e virou regra do cupom
+        self.assertEqual(coupon.usage_limit_per_user, 1)
+        self.assertIn(CODIGO_DE_FEEDBACK, result.response_text or '')
 
         # Segundo clique NÃO cria outro cupom; reapresenta o mesmo código
         result2 = self._click(f'review_done_{self.order.id}')
-        self.assertEqual(StoreCoupon.objects.filter(store=self.store).count(), 1)
-        self.assertIn(coupon.code, result2.response_text or '')
+        self.assertEqual(
+            StoreCoupon.objects.filter(store=self.store, code=CODIGO_DE_FEEDBACK).count(), 1,
+        )
+        self.assertIn(CODIGO_DE_FEEDBACK, result2.response_text or '')
 
     def test_review_done_de_outro_telefone_nao_gera_cupom(self):
         from apps.stores.models import StoreCoupon
