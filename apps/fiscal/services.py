@@ -19,6 +19,8 @@ PROVIDERS: dict[str, type[FiscalProvider]] = {
 # Defaults food service: NCM genérico de preparações alimentícias e
 # CFOP de venda presencial no estado
 DEFAULT_NCM = '21069090'
+# Simples Nacional sem permissão de crédito — regime das lojas de hoje.
+DEFAULT_CSOSN = '102'
 DEFAULT_CFOP = '5102'
 
 
@@ -72,9 +74,9 @@ def _itens(order, config: dict, cfop: str) -> list[dict]:
             'valor_unitario_tributavel': float(item.unit_price),
             'unidade_comercial': 'un',
             'unidade_tributavel': 'un',
-            'codigo_ncm': ncm or config.get('ncm_padrao', DEFAULT_NCM),
+            'codigo_ncm': ncm or config.get('ncm_padrao') or DEFAULT_NCM,
             # Simples Nacional: CSOSN 102 (sem permissão de crédito)
-            'icms_situacao_tributaria': config.get('csosn', '102'),
+            'icms_situacao_tributaria': config.get('csosn') or DEFAULT_CSOSN,
             'icms_origem': 0,
             'valor_bruto': float(item.subtotal),
         })
@@ -117,10 +119,6 @@ def build_nfce_payload(order, config: dict) -> dict:
     }
     _aplicar_desconto_e_frete(payload, order)
 
-    # NFC-e aceita consumidor não identificado; com cliente vinculado vai o nome
-    if order.customer_name and order.customer_name != 'Cliente Balcão':
-        payload['nome_destinatario'] = order.customer_name
-
     # CPF/CNPJ na nota é opcional — mas se for errado a SEFAZ recusa tudo.
     # Documento que não fecha o dígito é descartado em silêncio aqui: melhor
     # nota sem CPF do que venda sem nota. Quem digita recebe o aviso antes,
@@ -128,6 +126,12 @@ def build_nfce_payload(order, config: dict) -> dict:
     tipo, numero = classificar(documento_do_consumidor(order))
     if tipo:
         payload[f'{tipo}_destinatario'] = numero
+        # O nome ANDA COM O DOCUMENTO. No schema da NF-e `xNome` só pode vir
+        # depois de CNPJ/CPF/idEstrangeiro; nome solto derruba a nota inteira
+        # ("xNome: This element is not expected"). Sem documento, a NFC-e sai
+        # como consumidor não identificado — válido e maioria dos pedidos.
+        if order.customer_name and order.customer_name != 'Cliente Balcão':
+            payload['nome_destinatario'] = order.customer_name
     elif numero:
         logger.warning(
             'NFC-e pedido %s: documento do consumidor inválido, emitindo sem identificação',
@@ -309,6 +313,20 @@ REF_POR_MODELO = {
 }
 
 
+
+def _alocar_ref(order, modelo: str) -> str:
+    """Ref da tentativa atual — nunca reaproveita ref de nota que não vingou.
+
+    Rejeição da SEFAZ tem motivo corrigível (CPF errado, certificado ausente,
+    dado do emitente). A tentativa seguinte precisa de ref inédito por dois
+    motivos: `ref` é unique aqui, e a Focus trata ref repetido como consulta ao
+    documento antigo — devolveria a rejeição de novo em vez de emitir.
+    """
+    base = f'{REF_POR_MODELO[modelo]}-{order.id}'
+    tentativas = FiscalDocument.objects.filter(order=order, modelo=modelo).count()
+    return base if tentativas == 0 else f'{base}-r{tentativas + 1}'
+
+
 def emit_nfce_for_order(order, modelo: str = FiscalDocument.Modelo.NFCE) -> FiscalDocument:
     """Emite (ou devolve a já emitida) a nota do pedido no modelo pedido.
 
@@ -349,7 +367,7 @@ def emit_nfce_for_order(order, modelo: str = FiscalDocument.Modelo.NFCE) -> Fisc
         order=order,
         provider=provider_key,
         modelo=modelo,
-        ref=f'{REF_POR_MODELO[modelo]}-{order.id}',
+        ref=_alocar_ref(order, modelo),
         serie=str(config.get('serie', '1')),
     )
 

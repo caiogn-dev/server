@@ -15,6 +15,44 @@ PROD_URL = 'https://api.focusnfe.com.br'
 HOMOLOG_URL = 'https://homologacao.focusnfe.com.br'
 
 
+
+# A Focus usa 422 para toda validação reprovada — certificado ausente, empresa
+# não habilitada, campo inválido. Só a referência repetida quer dizer "essa
+# nota já existe, vá consultar"; tratar os outros assim troca o motivo real
+# pelo 404 da consulta ("Nota fiscal não encontrada") e cega quem está
+# configurando.
+CODIGOS_REF_DUPLICADA = {
+    'nfe_referencia_duplicada',
+    'nfce_referencia_duplicada',
+    'referencia_duplicada',
+}
+
+
+def _e_ref_duplicada(data: dict) -> bool:
+    return str((data or {}).get('codigo') or '') in CODIGOS_REF_DUPLICADA
+
+
+
+def _com_detalhamento(mensagem: str, data: dict) -> str:
+    """Junta o detalhamento de campo à mensagem.
+
+    "verifique o detalhamento dos erros" é inútil sem o detalhamento: quem está
+    configurando a loja precisa do NOME DO CAMPO para saber o que corrigir.
+    """
+    erros = (data or {}).get('erros') or []
+    partes = []
+    for erro in erros:
+        if isinstance(erro, dict):
+            campo = erro.get('campo') or ''
+            texto = erro.get('mensagem') or ''
+            partes.append(f'{campo}: {texto}'.strip(': ').strip())
+        elif erro:
+            partes.append(str(erro))
+    if not partes:
+        return mensagem
+    return f'{mensagem} — ' + '; '.join(partes) if mensagem else '; '.join(partes)
+
+
 class FocusProvider(FiscalProvider):
     @property
     def base_url(self) -> str:
@@ -44,7 +82,9 @@ class FocusProvider(FiscalProvider):
             qrcode_url=data.get('qrcode_url') or data.get('url_consulta_nf') or '',
             danfe_url=data.get('caminho_danfe') or '',
             xml_url=data.get('caminho_xml_nota_fiscal') or '',
-            error_message=mensagem if status in ('rejected', 'error') else '',
+            error_message=(
+                _com_detalhamento(mensagem, data) if status in ('rejected', 'error') else ''
+            ),
             raw=data,
         )
 
@@ -56,12 +96,16 @@ class FocusProvider(FiscalProvider):
             auth=self._auth(),
             timeout=30,
         )
-        if resp.status_code == 422:
-            # ref já usada — consulta o que existe (idempotência)
-            return self._consult(recurso, ref)
         data = resp.json() if resp.content else {}
+        if resp.status_code == 422 and _e_ref_duplicada(data):
+            # só ESTE 422 significa "já emiti essa" — consulta o que existe
+            return self._consult(recurso, ref)
         if resp.status_code >= 400 and 'status' not in data:
-            return EmitResult(status='error', error_message=str(data or resp.status_code), raw=data)
+            # a mensagem da Focus é legível; o dict cru não é tela de usuário
+            motivo = (data or {}).get('mensagem') or str(data or resp.status_code)
+            return EmitResult(
+                status='error', error_message=_com_detalhamento(motivo, data), raw=data,
+            )
         return self._to_result(data)
 
     def _consult(self, recurso: str, ref: str) -> EmitResult:

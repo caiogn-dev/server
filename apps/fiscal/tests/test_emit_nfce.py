@@ -21,7 +21,9 @@ FISCAL_CFG = {
 }
 
 
-class EmitNfceTests(APITestCase):
+class FiscalOrderBase(APITestCase):
+    """Loja com config fiscal + pedido pago de R$ 40 — cenário comum."""
+
     def setUp(self):
         self.owner = User.objects.create_user(
             username='owner-fiscal', email='owner-fiscal@test.com', password='x',
@@ -48,6 +50,8 @@ class EmitNfceTests(APITestCase):
         self.client.force_authenticate(self.owner)
         self.url = f'/api/v1/stores/{self.store.slug}/orders/{self.order.id}/emit_nfce/'
 
+
+class EmitNfceTests(FiscalOrderBase):
     def test_payload_tem_itens_pagamento_e_cnpj_limpo(self):
         payload = build_nfce_payload(self.order, get_fiscal_config(self.store))
         self.assertEqual(payload['cnpj_emitente'], '12345678000190')
@@ -106,8 +110,83 @@ class EmitNfceTests(APITestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertFalse(FiscalDocument.objects.exists())
 
-    def test_cliente_vinculado_vai_como_destinatario(self):
+    def test_cliente_com_cpf_valido_vai_como_destinatario(self):
         self.order.customer_name = 'João da Silva'
-        self.order.save(update_fields=['customer_name'])
+        self.order.metadata = {'cpf_nota': '529.982.247-25'}
+        self.order.save(update_fields=['customer_name', 'metadata'])
         payload = build_nfce_payload(self.order, get_fiscal_config(self.store))
         self.assertEqual(payload['nome_destinatario'], 'João da Silva')
+        self.assertEqual(payload['cpf_destinatario'], '52998224725')
+
+    def test_nome_sem_documento_nao_vira_destinatario(self):
+        """No schema da NF-e, `xNome` só existe depois de CNPJ/CPF/idEstrangeiro.
+
+        Mandar o nome sozinho derruba a nota inteira ("xNome: This element is
+        not expected"). Sem documento, a NFC-e sai como consumidor não
+        identificado — que é válido e é o caso da maioria dos pedidos.
+        """
+        self.order.customer_name = 'Ana Gabrielly'
+        self.order.save(update_fields=['customer_name'])
+        payload = build_nfce_payload(self.order, get_fiscal_config(self.store))
+        self.assertNotIn('nome_destinatario', payload)
+        self.assertNotIn('cpf_destinatario', payload)
+
+    def test_cpf_invalido_derruba_o_nome_junto(self):
+        self.order.customer_name = 'Ana Gabrielly'
+        self.order.metadata = {'cpf_nota': '11111111111'}
+        self.order.save(update_fields=['customer_name', 'metadata'])
+        payload = build_nfce_payload(self.order, get_fiscal_config(self.store))
+        self.assertNotIn('nome_destinatario', payload)
+        self.assertNotIn('cpf_destinatario', payload)
+
+
+class ReemissaoAposRejeicaoTests(FiscalOrderBase):
+    """Nota rejeitada precisa poder ser reemitida.
+
+    A SEFAZ rejeita por motivo corrigível (CPF inválido, certificado ausente,
+    dado do emitente errado). Se a primeira tentativa travar a segunda, o
+    pedido fica sem nota para sempre — e o `ref` é unique no banco.
+    """
+
+    @patch('apps.fiscal.services.FocusProvider.emit_nfce')
+    def test_rejeitada_permite_reemitir_com_ref_novo(self, mock_emit):
+        mock_emit.return_value = EmitResult(
+            status='rejected', error_message='Certificado digital não cadastrado',
+            raw={'codigo': 'certificado_nao_cadastrado'},
+        )
+        resp = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data['status'], 'rejected')
+
+        primeira = FiscalDocument.objects.get(order=self.order)
+        self.assertEqual(primeira.ref, f'nfce-{self.order.id}')
+
+        # certificado chegou: a segunda tentativa tem que SAIR, não estourar
+        mock_emit.return_value = EmitResult(
+            status='authorized', chave_acesso='9' * 44, numero='7', serie='1',
+            raw={'status': 'autorizado'},
+        )
+        resp2 = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp2.status_code, 201, resp2.content)
+        self.assertEqual(resp2.data['status'], 'authorized')
+
+        # ref novo: a Focus não reaproveita ref de nota rejeitada
+        autorizada = FiscalDocument.objects.get(order=self.order, status='authorized')
+        self.assertNotEqual(autorizada.ref, primeira.ref)
+        self.assertTrue(autorizada.ref.startswith(f'nfce-{self.order.id}'))
+        self.assertEqual(FiscalDocument.objects.filter(order=self.order).count(), 2)
+
+    @patch('apps.fiscal.services.FocusProvider.emit_nfce')
+    def test_erro_de_comunicacao_tambem_permite_reemitir(self, mock_emit):
+        mock_emit.side_effect = ConnectionError('provedor fora do ar')
+        resp = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp.data['status'], 'error')
+
+        mock_emit.side_effect = None
+        mock_emit.return_value = EmitResult(
+            status='authorized', chave_acesso='8' * 44, numero='8', serie='1',
+            raw={'status': 'autorizado'},
+        )
+        resp2 = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp2.status_code, 201, resp2.content)
+        self.assertEqual(resp2.data['status'], 'authorized')
