@@ -888,3 +888,35 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-03
+
+**Baseline de testes:** 8 `SimpleTestCase` (estáticos, sem Docker/PostgreSQL). Gate anti-acúmulo:
+36 PRs abertos (#318–#353) verificados; PR #340 e #346 cobrem PII em logs mas NÃO em
+`fusao_de_conversas.py` nem `message_service.py`. HEAD de `development`: `137f8ef`.
+
+**Bug encontrado e corrigido:** PII (telefone) em logs — LGPD art. 46 [P1]
+
+- **Tipo:** P1 — Dados pessoais (números de telefone de clientes) em logs sem mascaramento
+- **Arquivos corrigidos (2):**
+  1. `apps/whatsapp/services/fusao_de_conversas.py` — 2 ocorrências:
+     - L101: `origem.phone_number` → `mask_phone(origem.phone_number)` em logger da `_migrar_relacionados`
+     - L149: `item['absorvidas'], canonica.phone_number` → `len(item['absorvidas']), mask_phone(canonica.phone_number)`
+  2. `apps/whatsapp/services/message_service.py` — 3 ocorrências:
+     - L820: f-string com `{phone_number}` → `mask_phone(phone_number)` em %-format
+     - L827: f-string com `{phone_number}` → `mask_phone(phone_number)` em %-format
+     - L836: f-string com `{phone_number}` → `mask_phone(phone_number)` em %-format
+- **Testes:** 8 `SimpleTestCase` em `apps/whatsapp/tests/test_pii_logs_fusao_message_service.py`
+  (8/8 RED→GREEN confirmado sem Docker/PostgreSQL via `importlib.util`)
+- **PR:** `bot/server-2026-09-03-pii-logs-fusao-message-service` → `development`
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Merge dos PRs acumulados #318–#353 (36 PRs; PRs #340 e #346 são séries PII em logs
+   que ainda aguardam merge).
+2. **P1** — Testes de contrato para checkout payload e pedido por token.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P2** — Varredura completa de PII em logs em `apps/conversations/`, `apps/automation/tasks/`
+   (além dos já cobertos por #340 e #346).
+

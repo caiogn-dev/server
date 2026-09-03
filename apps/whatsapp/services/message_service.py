@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db import transaction
 from apps.core.exceptions import ValidationError, NotFoundError
+from apps.core.pii import mask_phone
 from ..models import WhatsAppAccount, Message
 from ..repositories import MessageRepository, WhatsAppAccountRepository
 from .whatsapp_api_service import WhatsAppAPIService
@@ -817,14 +818,14 @@ class MessageService:
             )
             
             if created:
-                logger.info(f"Created new conversation with {phone_number}")
+                logger.info("Created new conversation with %s (account=%s)", mask_phone(phone_number), account.id)
             
             return conversation
             
         except IntegrityError:
             # Race condition: another request created the conversation first
             # This can happen with unique_together constraint on (account, phone_number)
-            logger.warning(f"IntegrityError on get_or_create for {phone_number}, retrying get...")
+            logger.warning("IntegrityError on get_or_create for %s, retrying get...", mask_phone(phone_number))
             try:
                 conversation = Conversation.objects.get(
                     account=account,
@@ -833,7 +834,7 @@ class MessageService:
                 return conversation
             except Conversation.DoesNotExist:
                 # This shouldn't happen but handle it gracefully
-                logger.error(f"Conversation not found after IntegrityError for {phone_number}")
+                logger.error("Conversation not found after IntegrityError for %s", mask_phone(phone_number))
                 raise
 
     def _update_message_sent(self, message: Message, response: Dict) -> None:
