@@ -971,7 +971,6 @@ class CheckoutService:
         # Validate and apply coupon using unified StoreCoupon model
         discount = Decimal('0')
         coupon = None
-        coupon_rejected = None   # {'code', 'reason'} quando o cupom não pegou
         if coupon_code:
             coupon_result = CheckoutService.validate_coupon(
                 store, coupon_code, subtotal,
@@ -993,28 +992,41 @@ class CheckoutService:
                     coupon = candidate
                     discount = Decimal(str(coupon_result['discount']))
                 else:
+                    # Mesmo princípio da recusa abaixo: a tela prometeu o
+                    # desconto, então o pedido não pode sair mais caro em
+                    # silêncio só porque o último cupom foi levado por outro
+                    # checkout entre a validação e agora.
                     logger.info(
-                        'Cupom %s esgotou na corrida (limite %s); pedido segue sem desconto',
+                        'Cupom %s esgotou na corrida (limite %s); checkout interrompido',
                         coupon_code, candidate.usage_limit,
                     )
-                    coupon_rejected = {
-                        'code': coupon_code,
-                        'reason': 'Limite de uso atingido',
-                    }
+                    raise ValueError(
+                        f'Cupom {coupon_code} não pôde ser aplicado: '
+                        'limite de uso atingido'
+                    )
             else:
                 # O cupom foi recusado AQUI, depois de a tela já ter mostrado o
-                # desconto (a validação do storefront acontece antes e pode ter
-                # sido aprovada). Registrar o motivo: sem isso, o pedido saía com
-                # o código gravado e desconto zero, e nem o cliente nem o
-                # atendente conseguiam explicar o "-" na coluna de desconto.
-                coupon_rejected = {
-                    'code': coupon_code,
-                    'reason': coupon_result.get('error') or 'Cupom inválido',
-                }
+                # desconto — a validação do storefront roda antes e, até 03/09,
+                # ia SEM o telefone, então pulava `first_order_only` e o limite
+                # por cliente e aprovava tudo.
+                #
+                # Antes o pedido saía assim mesmo, só com a nota em
+                # `metadata.coupon_rejected`. Ninguém lia. O que acontecia de
+                # verdade (Leani, CE-2609038526): pedido cobrado R$ 43,28 em vez
+                # dos R$ 38,95 que a tela prometeu; ela pagou 38,95 num segundo
+                # PIX; o backend leu pagamento PARCIAL e travou a venda em
+                # `processing` para sempre. Um cupom de R$ 4,33 parou um pedido.
+                #
+                # Cobrar mais do que a tela prometeu é o único desfecho
+                # inaceitável. O checkout PARA e diz o motivo — o cliente tira o
+                # cupom e confirma, ou a loja corrige a regra. Estamos dentro de
+                # `_create_order_atomic`: o raise desfaz o pedido inteiro.
+                motivo = coupon_result.get('error') or 'Cupom inválido'
                 logger.info(
-                    'Cupom %s recusado no checkout (%s); pedido segue sem desconto',
-                    coupon_code, coupon_rejected['reason'],
+                    'Cupom %s recusado no checkout (%s); checkout interrompido',
+                    coupon_code, motivo,
                 )
+                raise ValueError(f'Cupom {coupon_code} não pôde ser aplicado: {motivo}')
 
         loyalty_reward = {
             'applied': False,
@@ -1081,8 +1093,8 @@ class CheckoutService:
             discount=discount,
             # Só grava o código que REALMENTE valeu. Antes gravava a string crua:
             # cupom recusado virava pedido com código preenchido e desconto 0,00,
-            # o painel mostrava "-" e o cliente jurava ter aplicado. O código
-            # recusado fica em metadata['coupon_rejected'] para auditoria.
+            # o painel mostrava "-" e o cliente jurava ter aplicado. Hoje cupom
+            # recusado nem chega aqui — o checkout para antes e diz o motivo.
             coupon_code=(coupon.code if coupon else ''),
             tax=Decimal('0'),
             delivery_fee=delivery_fee,
@@ -1113,7 +1125,6 @@ class CheckoutService:
                     'cpf': customer_data.get('cpf', '') or '',
                     'auth_channel': 'whatsapp_otp',
                 },
-                **({'coupon_rejected': coupon_rejected} if coupon_rejected else {}),
                 **extra_metadata,
             }
         )

@@ -1112,6 +1112,13 @@ class StoreCheckoutView(APIView):
             self._apply_payment_result(response_data, payment_result, payment_method)
 
             return Response(response_data, status=status.HTTP_201_CREATED)
+        except ValueError as e:
+            # Regra de negócio com mensagem própria e acionável: cupom recusado,
+            # salada grátis indisponível, frete sem cotação. Trocar isso pelo
+            # genérico "Erro ao processar checkout." deixava o cliente sem saber
+            # o que fazer — e, no caso do cupom, o pedido ainda saía mais caro.
+            logger.info("Checkout recusado: %s", e)
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Checkout error: {e}")
             return Response(
