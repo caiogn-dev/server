@@ -179,3 +179,38 @@ class TestCadaRealGanhaBonusUmaVez:
         """Quem pagou com saldo já recebeu o bônus na compra do pacote."""
         pedido = _pedido(loja, subtotal=76, frete=10.72, discount=76)
         assert CashbackService.credit_purchase(pedido) is None
+
+
+@pytest.mark.django_db
+class TestPacoteOculto:
+    """Pacote de teste do dono não pode aparecer para os clientes.
+
+    Sem a ocultação, testar a compra de ponta a ponta com valor baixo obrigaria
+    a pendurar "R$ 1 vira R$ 2" na vitrine — e alguém compraria.
+    """
+
+    @pytest.fixture
+    def loja_com_oculto(self, loja):
+        md = dict(loja.metadata)
+        md['carteira_tiers'] = md['carteira_tiers'] + [
+            {'id': 'teste', 'nome': 'Teste', 'paga': '1.00',
+             'credito': '2.00', 'oculto': True},
+        ]
+        loja.metadata = md
+        loja.save(update_fields=['metadata'])
+        return loja
+
+    def test_nao_aparece_na_vitrine(self, loja_com_oculto):
+        ids = [t['id'] for t in CashbackService.tiers(loja_com_oculto)]
+        assert 'teste' not in ids
+        assert 'padrao' in ids
+
+    def test_mas_continua_comprável_por_quem_tem_o_id(self, loja_com_oculto):
+        pacote = CashbackService.tier(loja_com_oculto, 'teste')
+        assert pacote is not None and pacote['paga'] == Decimal('1.00')
+
+    def test_e_credita_normalmente(self, loja_com_oculto):
+        lote = CashbackService.credit_prepaid(
+            loja_com_oculto, TELEFONE, 'teste', 'carteira-teste-x-1',
+        )
+        assert lote.amount == Decimal('2.00')

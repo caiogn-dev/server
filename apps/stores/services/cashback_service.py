@@ -288,7 +288,7 @@ class CashbackService:
     # ── carteira pré-paga ───────────────────────────────────────────────
 
     @staticmethod
-    def tiers(store) -> list:
+    def tiers(store, incluir_ocultos: bool = False) -> list:
         """Pacotes que ESTA loja vende. Config, não código.
 
         Cada loja precifica o próprio bônus — o que sobra numa salada de
@@ -317,8 +317,15 @@ class CashbackService:
                 cupons = max(0, int(t.get('cupons_entrega') or 0))
             except (TypeError, ValueError):
                 cupons = 0
+            # Pacote OCULTO existe para o dono testar a compra de ponta a ponta
+            # com um valor baixo sem pendurar "R$ 1 vira R$ 2" na vitrine para
+            # todo mundo. Some da lista, mas continua resolvível pelo id — é o
+            # que permite comprar por link direto.
+            if t.get('oculto') and not incluir_ocultos:
+                continue
             pacotes.append({
                 'id': str(t.get('id') or ''),
+                'oculto': bool(t.get('oculto')),
                 'nome': str(t.get('nome') or ''),
                 'paga': paga,
                 'credito': credito,
@@ -329,7 +336,16 @@ class CashbackService:
 
     @staticmethod
     def tier(store, tier_id: str):
-        return next((t for t in CashbackService.tiers(store) if t['id'] == tier_id), None)
+        """Busca INCLUINDO ocultos: quem tem o id pode comprar.
+
+        Se a busca respeitasse a ocultação, o pacote de teste seria vendável
+        pela vitrine e não pelo link — exatamente o contrário do que se quer.
+        """
+        return next(
+            (t for t in CashbackService.tiers(store, incluir_ocultos=True)
+             if t['id'] == tier_id),
+            None,
+        )
 
     @staticmethod
     def credit_adjust(store, phone: str, valor, motivo: str, autor=None):
