@@ -137,3 +137,41 @@ class TestReferencia:
         assert decompor('subpix:uuid:2026-09') is None
         # `subpix` com hífen na competência tem 4 partes ao dividir por '-'…
         assert decompor('subpix-uuid-2026-09') is None
+
+
+@pytest.mark.django_db
+class TestFallbackDeLink:
+    """PIX recusado não pode custar o saldo do cliente.
+
+    Quando o Mercado Pago recusa a cobrança direta, `create_payment` refaz a
+    cobrança como link de pagamento. Esse caminho gerava `splink:<hex>` PRÓPRIO
+    e jogava fora a referência da carteira: o cliente pagaria o pacote, o
+    webhook não saberia de quem era o saldo, e a cobrança viraria um pedido
+    fantasma "Cobrança por link de pagamento" no painel.
+    """
+
+    def test_referencia_da_carteira_sobrevive_ao_fallback(self, loja, monkeypatch):
+        from apps.stores.services.carteira_service import CarteiraService, e_de_carteira
+
+        vistos = {}
+
+        def _fake_create_payment(order=None, payment_method='pix', payment_data=None,
+                                 amount=None, store=None, description=None):
+            vistos[payment_method] = (payment_data or {}).get('external_reference')
+            if payment_method == 'pix':
+                # Simula a recusa do PIX caindo no link, como o código real faz.
+                return _fake_create_payment(
+                    order, 'link', payment_data, amount, store, description,
+                )
+            return {'success': True, 'payment_method': 'link', 'pix_fallback': True,
+                    'payment_url': 'https://mp/x'}
+
+        monkeypatch.setattr(
+            CheckoutService, 'create_payment', staticmethod(_fake_create_payment),
+        )
+        CarteiraService.comprar(loja, phone=TELEFONE, tier_id='padrao', payer_name='Leani')
+
+        assert e_de_carteira(vistos['pix']), 'o PIX nasceu sem referência de carteira'
+        assert vistos['link'] == vistos['pix'], (
+            'o fallback trocou a referência e o saldo ficaria órfão'
+        )

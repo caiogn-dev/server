@@ -1923,7 +1923,17 @@ class CheckoutService:
                     "currency_id": "BRL",
                 }]
 
-            external_reference = f"splink:{uuid.uuid4().hex}"
+            # Referência própria vence o `splink:` genérico. Isto importa no
+            # FALLBACK: quando o PIX é recusado, a cobrança vem parar aqui
+            # carregando o payload original. Se o `splink:` sobrescrevesse a
+            # referência da carteira, o webhook não teria como saber de quem é
+            # o saldo — o cliente pagaria o pacote e não receberia nada, e a
+            # cobrança ainda viraria um pedido fantasma "Cobrança por link de
+            # pagamento" no painel.
+            external_reference = (
+                str(payment_payload.get('external_reference') or '').strip()
+                or f"splink:{uuid.uuid4().hex}"
+            )
             storefront_base_url = CheckoutService.get_storefront_base_url(target_store, payment_payload)
             # notification_url COM slug: o webhook resolve a loja (credenciais) pela
             # URL, já que a cobrança-link não casa por external_id antes do pagto.
