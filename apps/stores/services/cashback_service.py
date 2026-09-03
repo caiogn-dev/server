@@ -140,6 +140,22 @@ class CashbackService:
         return min(saldo, teto)
 
     @staticmethod
+    def tem_saldo_bloqueado(store, phone: str) -> bool:
+        """Existe saldo comprado que este visitante ainda não pode gastar?
+
+        Devolve SIM/NÃO e nunca o valor. É o suficiente para a tela dizer
+        "confirme seu número para usar seu saldo" — e é o mínimo que se pode
+        revelar: mandar o valor transformaria o endpoint num oráculo para
+        descobrir quem tem dinheiro na loja.
+
+        Sem isto a tela não tinha como saber que havia algo a destravar, e o
+        cliente que acabou de comprar via saldo zero sem explicação nenhuma.
+        """
+        return CashbackService._lotes_vivos(store, phone, verificado=True).filter(
+            origin='prepaid',
+        ).exists()
+
+    @staticmethod
     def expires_next(store, phone: str, verificado: bool = False):
         """Data do saldo que vence primeiro — é o que dá urgência à mensagem."""
         lote = CashbackService._lotes_vivos(store, phone, verificado).order_by('expires_at').first()

@@ -408,6 +408,13 @@ class CashbackSaldoView(APIView):
         vence = CashbackService.expires_next(store, phone, verificado) if phone else None
         return Response({
             'enabled': True,
+            # A tela precisa saber que há algo a destravar. Sem isto o cliente
+            # que acabou de comprar o pacote via "R$ 0,00" sem uma palavra de
+            # explicação — que foi exatamente o que aconteceu no primeiro teste.
+            'saldo_bloqueado': (
+                bool(phone) and not verificado
+                and CashbackService.tem_saldo_bloqueado(store, phone)
+            ),
             'percent': CashbackService.percent(store),
             'referral_percent': CashbackService.referral_percent(store),
             'expiry_days': CashbackService.expiry_days(store),
@@ -461,6 +468,10 @@ class CarteiraView(APIView):
             # A tela precisa saber se deve pedir a confirmação do número antes
             # de prometer o saldo comprado.
             'telefone_verificado': verificado,
+            'saldo_bloqueado': (
+                bool(phone) and not verificado
+                and CashbackService.tem_saldo_bloqueado(store, phone)
+            ),
             **estado,
         })
 

@@ -129,6 +129,18 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         source = self.request.query_params.get('source')
         if source:
             qs = qs.filter(source=source)
+        else:
+            # VENDA DE SALDO NÃO É PEDIDO DE COMIDA. Ela precisa existir como
+            # pedido, senão o dinheiro do pacote some do faturamento — mas não
+            # é trabalho para ninguém: não tem comida para preparar nem
+            # endereço para ir. Quem abre esta tela pergunta "o que eu tenho
+            # que fazer agora", e uma linha que não pede ação nenhuma só rouba
+            # atenção das que pedem.
+            #
+            # Sai da VISUALIZAÇÃO, nunca do dado: relatórios consultam
+            # StoreOrder direto e continuam contando. E `?source=carteira`
+            # traz de volta, que é como o dono confere o que vendeu.
+            qs = qs.exclude(source='carteira')
 
         payment_method = self.request.query_params.get('payment_method')
         if payment_method:
