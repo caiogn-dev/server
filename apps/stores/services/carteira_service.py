@@ -32,29 +32,47 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 PREFIXO = 'carteira'
+SEP = '-'
 
 
 def _ref(tier_id: str, telefone: str) -> str:
-    """`carteira:<pacote>:<telefone>:<nonce>`.
+    """`carteira-<pacote>-<telefone>-<nonce>`.
 
-    O nonce é obrigatório: sem ele, o mesmo cliente comprando o mesmo pacote
-    duas vezes no mês geraria a mesma referência, e a constraint de
-    idempotência recusaria a SEGUNDA COMPRA LEGÍTIMA — o cliente pagaria e não
-    receberia saldo.
+    HÍFEN, NÃO DOIS-PONTOS. A Orders API do Mercado Pago (a rota que gera o
+    QR do PIX desde 19/08) valida `external_reference` contra um padrão que
+    recusa `:` — devolve 400 `'$.external_reference' - does not match pattern`
+    e a cobrança cai no fallback de link de pagamento, sem QR nenhum. Os
+    vocabulários antigos (`splink:`, `subpix:`) nunca bateram nisso porque só
+    passam pelo Checkout Pro, que é mais permissivo.
+
+    O nonce é obrigatório pelo motivo OPOSTO à idempotência: sem ele, o mesmo
+    cliente comprando o mesmo pacote duas vezes no mês geraria a mesma
+    referência, e a constraint recusaria a SEGUNDA COMPRA LEGÍTIMA — o cliente
+    pagaria e não receberia saldo.
     """
-    return f'{PREFIXO}:{tier_id}:{telefone}:{uuid.uuid4().hex[:12]}'
+    return SEP.join([PREFIXO, str(tier_id), str(telefone), uuid.uuid4().hex[:12]])
 
 
 def decompor(external_reference: str):
-    """Devolve (tier_id, telefone) de uma referência de carteira, ou None."""
-    partes = str(external_reference or '').split(':')
+    """Devolve (tier_id, telefone) de uma referência de carteira, ou None.
+
+    Lê das PONTAS, não da esquerda: o id do pacote é livre no painel e um
+    `id: 'meu-pacote'` partiria o parse posicional. Prefixo e nonce são fixos
+    nas extremidades, o telefone é o penúltimo, e o que sobra no meio é o
+    pacote — inclusive com hífen dentro.
+    """
+    partes = str(external_reference or '').split(SEP)
     if len(partes) < 4 or partes[0] != PREFIXO:
         return None
-    return partes[1], partes[2]
+    tier_id = SEP.join(partes[1:-2])
+    telefone = partes[-2]
+    if not tier_id or not telefone:
+        return None
+    return tier_id, telefone
 
 
 def e_de_carteira(external_reference: str) -> bool:
-    return str(external_reference or '').startswith(f'{PREFIXO}:')
+    return str(external_reference or '').startswith(f'{PREFIXO}{SEP}')
 
 
 class CarteiraService:

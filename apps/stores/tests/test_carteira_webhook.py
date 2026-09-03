@@ -65,7 +65,7 @@ class TestCobrancaDePacotePaga:
         return CheckoutService._handle_storepayment_webhook(cobranca, 'approved')
 
     def test_o_saldo_entra_com_o_bonus(self, loja):
-        ref = f'carteira:padrao:{TELEFONE}:abc123'
+        ref = f'carteira-padrao-{TELEFONE}-abc123'
         self._aprovar(_cobranca_paga(loja, ref))
 
         assert CashbackService.balance(loja, TELEFONE) == Decimal('304.00'), (
@@ -77,7 +77,7 @@ class TestCobrancaDePacotePaga:
 
     def test_vira_venda_pelo_valor_recebido_nao_pelo_credito(self, loja):
         """Faturamento é dinheiro que entrou: R$ 270, nunca os R$ 304."""
-        self._aprovar(_cobranca_paga(loja, f'carteira:padrao:{TELEFONE}:x1'))
+        self._aprovar(_cobranca_paga(loja, f'carteira-padrao-{TELEFONE}-x1'))
 
         pedido = StoreOrder.objects.get(store=loja)
         assert pedido.total == Decimal('270.00')
@@ -86,7 +86,7 @@ class TestCobrancaDePacotePaga:
         assert pedido.metadata.get('credito_concedido') == '304.00'
 
     def test_nao_manda_comida_para_a_cozinha(self, loja):
-        self._aprovar(_cobranca_paga(loja, f'carteira:padrao:{TELEFONE}:x2'))
+        self._aprovar(_cobranca_paga(loja, f'carteira-padrao-{TELEFONE}-x2'))
 
         pedido = StoreOrder.objects.get(store=loja)
         assert pedido.delivery_method == StoreOrder.DeliveryMethod.DIGITAL
@@ -96,7 +96,7 @@ class TestCobrancaDePacotePaga:
 
     def test_webhook_reentregue_nao_dobra_saldo_nem_faturamento(self, loja):
         """O Mercado Pago reentrega. Duas entregas = um pacote de graça."""
-        cobranca = _cobranca_paga(loja, f'carteira:padrao:{TELEFONE}:x3')
+        cobranca = _cobranca_paga(loja, f'carteira-padrao-{TELEFONE}-x3')
         self._aprovar(cobranca)
         cobranca.refresh_from_db()
         self._aprovar(cobranca)
@@ -124,7 +124,16 @@ class TestReferencia:
         assert a != b
         assert decompor(a) == ('padrao', TELEFONE)
 
+    def test_pacote_com_hifen_no_id_ainda_e_lido(self, loja):
+        """O id do pacote é livre no painel; `meu-pacote` partiria um parse
+        posicional da esquerda."""
+        from apps.stores.services.carteira_service import _ref
+        ref = _ref('meu-pacote-top', TELEFONE)
+        assert decompor(ref) == ('meu-pacote-top', TELEFONE)
+
     def test_referencia_de_outro_vocabulario_nao_e_carteira(self, loja):
         assert decompor('splink:abc') is None
         assert decompor(f'avulso:{loja.id}') is None
         assert decompor('subpix:uuid:2026-09') is None
+        # `subpix` com hífen na competência tem 4 partes ao dividir por '-'…
+        assert decompor('subpix-uuid-2026-09') is None
