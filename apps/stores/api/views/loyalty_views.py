@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import timedelta
 
@@ -8,10 +9,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
-from .storefront_views import get_active_store, PublicWriteThrottle
+from rest_framework import status
+
+from .storefront_views import get_active_store, PublicWriteThrottle, CheckoutThrottle
 from ...models import StoreLoyaltyAccount, StoreOrder
 from ...services.checkout_service import CheckoutService
 from ...services.loyalty_service import LoyaltyService
+
+logger = logging.getLogger(__name__)
 
 
 def _user_phone(user) -> str:
@@ -361,3 +366,83 @@ class CashbackSaldoView(APIView):
             'saldo': saldo,
             'vence_em': vence.isoformat() if vence else None,
         })
+
+
+class CarteiraView(APIView):
+    """Vitrine da carteira: pacotes à venda + saldo de quem está olhando.
+
+    Uma chamada só de propósito. A tela precisa dos dois juntos para decidir o
+    que mostrar — quem já tem saldo vê "restam R$ 228", quem não tem vê a
+    escada de pacotes — e duas chamadas produziriam um piscar entre os dois
+    estados no meio do carregamento.
+
+    AllowAny com throttle, pelo mesmo motivo do saldo: o telefone vem na query
+    e não é segredo, mas responder sem limite viraria oráculo para descobrir
+    quem é cliente da loja.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [PublicWriteThrottle]
+
+    def get(self, request, store_slug):
+        from apps.stores.services.carteira_service import CarteiraService
+        from apps.stores.services.cashback_service import CashbackService
+
+        store = get_active_store(store_slug)
+        if not CashbackService.is_enabled(store):
+            return Response({'ativa': False, 'pacotes': [], 'saldo': '0.00'})
+
+        pacotes = CarteiraService.pacotes(store)
+        phone = (request.query_params.get('phone') or '').strip()
+        estado = CarteiraService.saldo(store, phone) if phone else {
+            'saldo': '0.00', 'expira_em': None,
+        }
+        return Response({
+            'ativa': bool(pacotes),
+            'pacotes': [
+                {
+                    'id': p['id'], 'nome': p['nome'],
+                    'paga': str(p['paga']), 'credito': str(p['credito']),
+                    'bonus': str(p['bonus']),
+                }
+                for p in pacotes
+            ],
+            'validade_dias': CashbackService.expiry_days(store),
+            'cashback_percent': str(CashbackService.percent(store)),
+            **estado,
+        })
+
+
+class CarteiraCompraView(APIView):
+    """Gera a cobrança PIX de um pacote.
+
+    O saldo NÃO entra aqui — entra no webhook, quando o PIX é pago. Creditar
+    na intenção de compra daria saldo a quem só abriu a tela.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [CheckoutThrottle]
+
+    def post(self, request, store_slug):
+        from apps.stores.services.carteira_service import CarteiraService
+
+        store = get_active_store(store_slug)
+        try:
+            resultado = CarteiraService.comprar(
+                store,
+                phone=(request.data.get('phone') or '').strip(),
+                tier_id=(request.data.get('tier_id') or '').strip(),
+                payer_name=(request.data.get('name') or '').strip(),
+                payer_email=(request.data.get('email') or '').strip(),
+            )
+        except ValueError as e:
+            # Mensagem de regra de negócio, em português e acionável — o
+            # genérico "erro ao processar" deixaria o cliente sem saber que
+            # faltou o celular.
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception('carteira: falha ao gerar cobrança em %s', store.slug)
+            return Response(
+                {'error': 'Não foi possível gerar o PIX agora. Tente de novo em instantes.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(resultado, status=status.HTTP_201_CREATED)
+

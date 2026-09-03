@@ -1061,7 +1061,11 @@ class CheckoutService:
         if use_cashback:
             from apps.stores.services.cashback_service import CashbackService
             telefone_cashback = (customer_data or {}).get('phone') or ''
-            base_para_cashback = subtotal + delivery_fee - discount
+            # COMIDA, sem frete. O frete é repasse ao entregador (a loja cobra
+            # R$ 10,72 e paga R$ 10,72): deixar o saldo pagá-lo transforma um
+            # pacote de 8 saladas em 6 saladas mais 5 fretes — a loja perde
+            # margem e o cliente vê o saldo sumir sem ter comido.
+            base_para_cashback = subtotal - discount
             cashback_aplicado = CashbackService.aplicavel(
                 store, telefone_cashback, base_para_cashback,
             )
@@ -1465,7 +1469,15 @@ class CheckoutService:
                 )
                 name = payment_payload.get('payer_name') or 'Cliente'
                 mp_description = description or f"Cobranca - {target_store.name}"
-                external_reference = f"avulso:{target_store.id}"
+                # `avulso:<loja>` é igual para TODAS as cobranças avulsas da
+                # loja — serve para o webhook achar a loja, não a cobrança.
+                # Quem precisa reconciliar uma cobrança específica (a carteira
+                # precisa saber QUAL pacote e de QUEM) manda a própria
+                # referência, única, no payload.
+                external_reference = (
+                    str(payment_payload.get('external_reference') or '').strip()
+                    or f"avulso:{target_store.id}"
+                )
             logger.info(f"Using email for payment: {payer_email}")
 
             # PIX pela Orders API (/v1/orders), o mesmo caminho do cartão desde
@@ -2205,6 +2217,15 @@ class CheckoutService:
             if (store_payment.external_reference or "").startswith("subpix:"):
                 from apps.stores.services import pix_billing_service
                 pix_billing_service.apply_invoice_paid(store_payment)
+
+            # Compra de saldo da carteira. Precisa vir ANTES da venda avulsa:
+            # aquela cria um pedido genérico "Cobrança por link de pagamento",
+            # e o cliente ficaria sem o saldo que acabou de pagar.
+            from apps.stores.services.carteira_service import (
+                CarteiraService, e_de_carteira,
+            )
+            if e_de_carteira(store_payment.external_reference):
+                return CarteiraService.aplicar_pagamento(store_payment)
 
             if order is None:
                 # Cobrança avulsa PAGA vira venda.

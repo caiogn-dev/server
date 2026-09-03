@@ -193,7 +193,11 @@ from .api.analytics_views import (
 from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
-from .api.views.loyalty_views import LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView, LoyaltyGuestStatusView, ConquistasView, CashbackResumoView, CashbackSaldoView
+from .api.views.loyalty_views import (
+    LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView,
+    LoyaltyGuestStatusView, ConquistasView, CashbackResumoView, CashbackSaldoView,
+    CarteiraView, CarteiraCompraView,
+)
 from .api.views.crm_views import (
     CustomerSearchView,
     CustomerAddressViewSet,
@@ -296,6 +300,8 @@ store_frontend_patterns = [
     path('loyalty/accounts/', LoyaltyAccountsView.as_view(), name='store-loyalty-accounts'),
     path('cashback/', CashbackResumoView.as_view(), name='store-cashback-resumo'),
     path('cashback/saldo/', CashbackSaldoView.as_view(), name='store-cashback-saldo'),
+    path('carteira/', CarteiraView.as_view(), name='store-carteira'),
+    path('carteira/comprar/', CarteiraCompraView.as_view(), name='store-carteira-comprar'),
     path('conquistas/', ConquistasView.as_view(), name='store-conquistas'),
     path('loyalty/guest-status/', LoyaltyGuestStatusView.as_view(), name='store-loyalty-guest-status'),
 

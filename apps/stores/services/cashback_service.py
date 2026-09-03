@@ -97,16 +97,21 @@ class CashbackService:
         return _para_centavos(total or Decimal('0'))
 
     @staticmethod
-    def aplicavel(store, phone: str, total) -> Decimal:
+    def aplicavel(store, phone: str, subtotal) -> Decimal:
         """Quanto do saldo pode virar desconto NESTE pedido.
 
-        Nunca mais que o próprio total: saldo maior que a compra viraria total
-        negativo ou troco, e cashback é crédito de loja, não dinheiro.
+        O teto é o SUBTOTAL — a comida — e nunca o total com frete. O frete é
+        repasse ao entregador: se o saldo o cobrisse, um pacote de 8 saladas
+        viraria 6 saladas mais 5 fretes, a loja perderia margem e o cliente
+        veria o saldo sumir sem ter comido.
+
+        E nunca mais que a própria comida: saldo maior que a compra viraria
+        troco, e crédito de loja não é dinheiro.
         """
         if not CashbackService.is_enabled(store):
             return Decimal('0.00')
         saldo = CashbackService.balance(store, phone)
-        teto = _para_centavos(Decimal(str(total or 0)))
+        teto = _para_centavos(Decimal(str(subtotal or 0)))
         if teto <= 0:
             return Decimal('0.00')
         return min(saldo, teto)
@@ -120,7 +125,8 @@ class CashbackService:
     # ── crédito ─────────────────────────────────────────────────────────
 
     @staticmethod
-    def _creditar(store, phone: str, valor: Decimal, origin: str, order=None, coupon_code: str = ''):
+    def _creditar(store, phone: str, valor: Decimal, origin: str, order=None,
+                  coupon_code: str = '', source_ref: str = '', validade_dias: int = None):
         from apps.core.utils import normalize_phone_number
         from apps.stores.models import StoreCashbackLot
 
@@ -130,6 +136,7 @@ class CashbackService:
         telefone = normalize_phone_number(phone or '')
         if not telefone:
             return None
+        dias = validade_dias if validade_dias is not None else CashbackService.expiry_days(store)
         try:
             # atomic() interno é obrigatório: sem ele o IntegrityError deixa a
             # transação de FORA quebrada, e a próxima query estoura com
@@ -137,12 +144,33 @@ class CashbackService:
             with transaction.atomic():
                 return StoreCashbackLot.objects.create(
                     store=store, phone=telefone, origin=origin, amount=valor, remaining=valor,
-                    order=order, coupon_code=coupon_code or '',
-                    expires_at=timezone.now() + timedelta(days=CashbackService.expiry_days(store)),
+                    order=order, coupon_code=coupon_code or '', source_ref=source_ref or '',
+                    expires_at=timezone.now() + timedelta(days=dias),
                 )
         except IntegrityError:
-            # Pedido já creditado nesta origem — constraint fez o trabalho.
+            # Já creditado — por pedido+origem, ou por cobrança (source_ref).
+            # A constraint fez o trabalho; repetir aqui em Python seria uma
+            # segunda verdade sujeita a corrida.
             return None
+
+    @staticmethod
+    def _base_de_bonus(order) -> Decimal:
+        """Sobre quanto se paga bônus: dinheiro NOVO que virou COMIDA.
+
+        `order.total` já é líquido do saldo gasto (o checkout soma o cashback
+        aplicado em `discount` antes de fechar o total), então tirar o frete
+        deixa exatamente `subtotal - descontos`. Duas regras num cálculo só:
+
+        - **O frete sai.** É repasse: a loja cobra R$ 10,72 e paga R$ 10,72 ao
+          entregador. Pagar 3% em cima disso é dinheiro saindo do caixa por uma
+          venda que não teve margem.
+        - **O que foi pago com saldo sai.** Esse real já ganhou 11% de bônus na
+          compra do pacote; um segundo bônus é pagar duas vezes pelo mesmo
+          dinheiro — e bônus que gera cashback que gera bônus é um laço que só
+          anda contra a loja.
+        """
+        base = Decimal(str(order.total or 0)) - Decimal(str(order.delivery_fee or 0))
+        return base if base > 0 else Decimal('0.00')
 
     @staticmethod
     def credit_purchase(order):
@@ -153,7 +181,7 @@ class CashbackService:
             return None
         if getattr(order, 'payment_status', None) != 'paid':
             return None
-        base = Decimal(str(order.total or 0))
+        base = CashbackService._base_de_bonus(order)
         valor = base * CashbackService.percent(store) / Decimal('100')
         return CashbackService._creditar(
             store, order.customer_phone, valor, StoreCashbackLot.Origin.PURCHASE, order=order,
@@ -180,7 +208,7 @@ class CashbackService:
         # Auto-indicação é desconto, não indicação.
         if normalize_phone_number(dono) == normalize_phone_number(order.customer_phone or ''):
             return None
-        base = Decimal(str(order.total or 0))
+        base = CashbackService._base_de_bonus(order)
         valor = base * CashbackService.referral_percent(store) / Decimal('100')
         return CashbackService._creditar(
             store, dono, valor, StoreCashbackLot.Origin.REFERRAL,
@@ -231,6 +259,68 @@ class CashbackService:
 
         StoreCashbackLot.objects.bulk_update(lotes, ['remaining'])
         return abatido
+
+    # ── carteira pré-paga ───────────────────────────────────────────────
+
+    @staticmethod
+    def tiers(store) -> list:
+        """Pacotes que ESTA loja vende. Config, não código.
+
+        Cada loja precifica o próprio bônus — o que sobra numa salada de
+        R$ 38 com R$ 20 de custo não é o que sobra numa pizza. Hardcodar a
+        escada aqui obrigaria deploy para mudar preço.
+        """
+        bruto = (getattr(store, 'metadata', None) or {}).get('carteira_tiers') or []
+        pacotes = []
+        for t in bruto:
+            try:
+                paga = _para_centavos(Decimal(str(t['paga'])))
+                credito = _para_centavos(Decimal(str(t['credito'])))
+            except (KeyError, TypeError, ArithmeticError, ValueError):
+                logger.warning('carteira: pacote inválido em %s: %r', store.slug, t)
+                continue
+            # Crédito menor que o preço é pacote que PUNE quem compra adiantado.
+            # Melhor sumir da vitrine do que vender isso por engano de cadastro.
+            if paga <= 0 or credito < paga:
+                logger.warning('carteira: pacote %r de %s não dá bônus', t.get('id'), store.slug)
+                continue
+            pacotes.append({
+                'id': str(t.get('id') or ''),
+                'nome': str(t.get('nome') or ''),
+                'paga': paga,
+                'credito': credito,
+                'bonus': credito - paga,
+            })
+        return pacotes
+
+    @staticmethod
+    def tier(store, tier_id: str):
+        return next((t for t in CashbackService.tiers(store) if t['id'] == tier_id), None)
+
+    @staticmethod
+    def credit_prepaid(store, phone: str, tier_id: str, source_ref: str):
+        """Credita o pacote comprado. Chamado quando a cobrança vira paga.
+
+        `source_ref` (a cobrança) é obrigatório e é o que torna isto seguro:
+        o webhook do Mercado Pago reenvia a mesma notificação, e sem a trava
+        de banco o cliente ganharia um pacote a cada reenvio.
+
+        O que entra é o CRÉDITO, não o que foi pago — o bônus é o produto.
+        """
+        from apps.stores.models import StoreCashbackLot
+        if not CashbackService.is_enabled(store):
+            return None
+        if not (source_ref or '').strip():
+            logger.warning('carteira: crédito sem referência de cobrança recusado')
+            return None
+        pacote = CashbackService.tier(store, tier_id)
+        if pacote is None:
+            logger.warning('carteira: pacote %r não existe em %s', tier_id, store.slug)
+            return None
+        return CashbackService._creditar(
+            store, phone, pacote['credito'], StoreCashbackLot.Origin.PREPAID,
+            source_ref=source_ref.strip(),
+        )
 
     # ── gancho único ────────────────────────────────────────────────────
 

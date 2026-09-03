@@ -26,6 +26,7 @@ class StoreCashbackLot(models.Model):
         PURCHASE = 'purchase', 'Compra própria'
         REFERRAL = 'referral', 'Indicação'
         ADJUST = 'adjust', 'Ajuste manual'
+        PREPAID = 'prepaid', 'Carteira pré-paga'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='cashback_lots')
@@ -40,6 +41,11 @@ class StoreCashbackLot(models.Model):
         related_name='cashback_lots',
     )
     coupon_code = models.CharField(max_length=50, blank=True, default='')
+    # Idempotência de crédito SEM pedido (compra de saldo da carteira). A trava
+    # de cima é por `order`, e a compra de pacote não gera pedido nenhum — sem
+    # este campo o webhook reenviado do Mercado Pago dá um pacote de graça.
+    # Guarda a referência da cobrança que originou o crédito, ex.: 'mp:12345'.
+    source_ref = models.CharField(max_length=100, blank=True, default='', db_index=True)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -56,6 +62,13 @@ class StoreCashbackLot(models.Model):
                 fields=['order', 'origin'],
                 name='cashback_unico_por_pedido_e_origem',
                 condition=models.Q(order__isnull=False),
+            ),
+            # Uma cobrança credita uma vez, por loja. Vazio fica de fora: a
+            # imensa maioria dos lotes vem de pedido e não tem referência.
+            models.UniqueConstraint(
+                fields=['store', 'source_ref'],
+                name='cashback_unico_por_cobranca',
+                condition=~models.Q(source_ref=''),
             ),
         ]
 
