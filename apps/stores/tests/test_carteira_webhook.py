@@ -68,7 +68,7 @@ class TestCobrancaDePacotePaga:
         ref = f'carteira-padrao-{TELEFONE}-abc123'
         self._aprovar(_cobranca_paga(loja, ref))
 
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('304.00'), (
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('304.00'), (
             'pagou 270 e não recebeu os 304 de crédito'
         )
         lote = StoreCashbackLot.objects.get(store=loja, phone=TELEFONE)
@@ -101,7 +101,7 @@ class TestCobrancaDePacotePaga:
         cobranca.refresh_from_db()
         self._aprovar(cobranca)
 
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('304.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('304.00')
         assert StoreOrder.objects.filter(store=loja).count() == 1
 
     def test_cobranca_avulsa_comum_segue_o_caminho_antigo(self, loja):
@@ -110,7 +110,7 @@ class TestCobrancaDePacotePaga:
 
         pedido = StoreOrder.objects.get(store=loja)
         assert pedido.source == 'payment_link'
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('0.00')
 
 
 @pytest.mark.django_db

@@ -803,6 +803,7 @@ class CheckoutService:
         notes: str = '',
         use_loyalty_reward: bool = False,
         use_cashback: bool = False,
+        telefone_verificado: bool = False,
         indicado_por: str = '',
         trusted_delivery_fee: "Decimal | None" = None,
         scheduled_date=None,
@@ -848,6 +849,7 @@ class CheckoutService:
             notes=notes,
             use_loyalty_reward=use_loyalty_reward,
             use_cashback=use_cashback,
+            telefone_verificado=telefone_verificado,
             indicado_por=indicado_por,
             trusted_delivery_fee=trusted_delivery_fee,
             scheduled_date=scheduled_date,
@@ -865,6 +867,7 @@ class CheckoutService:
         notes: str = '',
         use_loyalty_reward: bool = False,
         use_cashback: bool = False,
+        telefone_verificado: bool = False,
         indicado_por: str = '',
         trusted_delivery_fee: "Decimal | None" = None,
         scheduled_date=None,
@@ -953,6 +956,23 @@ class CheckoutService:
         # a promoção não pega — não dá para afirmar que o cliente está no raio.
         delivery_info = aplicar_frete_gratis(delivery_info, store, subtotal)
         delivery_fee = Decimal(str(delivery_info['fee']))
+
+        # Entrega grátis comprada com o pacote da carteira. Fica AQUI, depois da
+        # promoção de frete da loja: se o pedido já ganhou frete grátis por
+        # valor mínimo, não faz sentido gastar uma das entregas do cliente.
+        # O consumo em si acontece depois que o pedido existe (precisa do id
+        # para ser idempotente); aqui só se decide o valor.
+        frete_por_cupom = Decimal('0.00')
+        if delivery_fee > 0:
+            from apps.stores.services.carteira_service import CarteiraService
+            telefone_perk = (customer_data or {}).get('phone') or ''
+            if CarteiraService.cupons_de_entrega_disponiveis(store, telefone_perk) > 0:
+                frete_por_cupom = delivery_fee
+                delivery_fee = Decimal('0.00')
+                delivery_info = {
+                    **delivery_info, 'fee': 0.0,
+                    'gratis_por_pacote': True,
+                }
 
         customer_record = CustomerIdentityService.sync_checkout_customer(
             store=store,
@@ -1068,6 +1088,7 @@ class CheckoutService:
             base_para_cashback = subtotal - discount
             cashback_aplicado = CashbackService.aplicavel(
                 store, telefone_cashback, base_para_cashback,
+                verificado=telefone_verificado,
             )
             discount += cashback_aplicado
 
@@ -1161,10 +1182,19 @@ class CheckoutService:
 
         # Baixa do cashback: só DEPOIS do pedido existir, para o resgate
         # ficar amarrado a ele (unique por pedido = idempotente).
+        # Só agora o pedido tem id — e o consumo precisa dele para ser
+        # idempotente (retry de checkout não pode gastar duas entregas).
+        if frete_por_cupom > 0:
+            from apps.stores.services.carteira_service import CarteiraService
+            CarteiraService.consumir_cupom_de_entrega(
+                store, (customer_data or {}).get('phone') or '', order, frete_por_cupom,
+            )
+
         if cashback_aplicado > 0:
             from apps.stores.services.cashback_service import CashbackService
             CashbackService.redeem(
                 store, (customer_data or {}).get('phone') or '', order, cashback_aplicado,
+                verificado=telefone_verificado,
             )
 
         # Fidelidade persistida: registra o resgate na trilha auditável

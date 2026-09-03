@@ -71,6 +71,38 @@ def decompor(external_reference: str):
     return tier_id, telefone
 
 
+def telefone_comprovado(request, telefone_informado: str) -> bool:
+    """O visitante provou ser o dono deste número?
+
+    A prova é o login por código do WhatsApp, que já existe: ele autentica e
+    grava o telefone no cadastro. Se o usuário está autenticado e o número do
+    cadastro bate com o do checkout, está provado.
+
+    Compara por VARIANTES e não por igualdade: o wa_id do WhatsApp vem sem o
+    nono dígito e o site grava com ele — comparar string crua recusaria o
+    próprio dono metade das vezes.
+    """
+    import re
+
+    from apps.core.utils import phone_variants
+
+    user = getattr(request, 'user', None)
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return False
+
+    perfil = getattr(user, 'profile', None)
+    do_cadastro = (getattr(perfil, 'phone', '') or '').strip()
+    if not do_cadastro:
+        # Fluxo de OTP cria username `cliente_<digitos>` quando não há perfil.
+        achou = re.fullmatch(r'cliente_(\d{10,13})', getattr(user, 'username', '') or '')
+        do_cadastro = achou.group(1) if achou else ''
+    if not do_cadastro:
+        return False
+
+    informadas = set(phone_variants(telefone_informado or ''))
+    return bool(informadas & set(phone_variants(do_cadastro)))
+
+
 def e_de_carteira(external_reference: str) -> bool:
     return str(external_reference or '').startswith(f'{PREFIXO}{SEP}')
 
@@ -83,17 +115,18 @@ class CarteiraService:
         return CashbackService.tiers(store)
 
     @staticmethod
-    def saldo(store, phone: str) -> dict:
+    def saldo(store, phone: str, verificado: bool = False) -> dict:
         """O que a vitrine mostra: quanto tem e quando some.
 
         `expira_em` não é enfeite — saldo sem data visível é saldo que o
         cliente descobre ter perdido, e isso não gera recompra, gera briga.
         """
         from apps.stores.services.cashback_service import CashbackService
-        vence = CashbackService.expires_next(store, phone)
+        vence = CashbackService.expires_next(store, phone, verificado)
         return {
-            'saldo': str(CashbackService.balance(store, phone)),
+            'saldo': str(CashbackService.balance(store, phone, verificado)),
             'expira_em': vence.isoformat() if vence else None,
+            'cupons_entrega': CarteiraService.cupons_de_entrega_disponiveis(store, phone),
         }
 
     @staticmethod
@@ -139,6 +172,67 @@ class CarteiraService:
         }
         return resultado
 
+    # ── entregas grátis do pacote ───────────────────────────────────────
+
+    @staticmethod
+    def cupons_de_entrega_disponiveis(store, phone: str) -> int:
+        from apps.stores.models import StoreDeliveryCoupon
+        from apps.stores.services.cashback_service import CashbackService
+        from django.db.models import Sum
+        from django.utils import timezone as tz
+
+        variantes = CashbackService._telefones(phone)
+        if not variantes:
+            return 0
+        total = StoreDeliveryCoupon.objects.filter(
+            store=store, phone__in=variantes,
+            remaining__gt=0, expires_at__gt=tz.now(),
+        ).aggregate(t=Sum('remaining'))['t']
+        return int(total or 0)
+
+    @staticmethod
+    def consumir_cupom_de_entrega(store, phone: str, order, valor):
+        """Zera o frete deste pedido usando uma entrega do pacote.
+
+        Devolve o valor abatido. Consome o benefício que vence ANTES, pelo
+        mesmo motivo do saldo: o cliente não pode perder o que daria para usar.
+
+        Idempotente por pedido via constraint: um retry do checkout ou um
+        recálculo de totais gastaria duas entregas pelo mesmo pedido.
+        """
+        from decimal import Decimal
+        from django.db import IntegrityError, transaction
+        from django.utils import timezone as tz
+        from apps.stores.models import StoreDeliveryCoupon, StoreDeliveryCouponUse
+        from apps.stores.services.cashback_service import CashbackService
+
+        valor = Decimal(str(valor or 0))
+        if valor <= 0 or order is None:
+            return Decimal('0.00')
+        variantes = CashbackService._telefones(phone)
+        if not variantes:
+            return Decimal('0.00')
+
+        cupom = (
+            StoreDeliveryCoupon.objects
+            .select_for_update()
+            .filter(store=store, phone__in=variantes,
+                    remaining__gt=0, expires_at__gt=tz.now())
+            .order_by('expires_at', 'created_at')
+            .first()
+        )
+        if cupom is None:
+            return Decimal('0.00')
+        try:
+            with transaction.atomic():
+                StoreDeliveryCouponUse.objects.create(cupom=cupom, order=order, amount=valor)
+        except IntegrityError:
+            # Pedido já usou uma entrega — não gasta outra.
+            return Decimal('0.00')
+        cupom.remaining -= 1
+        cupom.save(update_fields=['remaining'])
+        return valor
+
     @staticmethod
     def aplicar_pagamento(store_payment):
         """Cobrança de pacote foi paga: credita o saldo e registra a venda.
@@ -169,7 +263,34 @@ class CarteiraService:
             logger.info('carteira: cobrança %s não gerou crédito novo', store_payment.id)
             return store_payment.order
 
+        CarteiraService._conceder_cupons_de_entrega(store, telefone, tier_id, lote)
         return CarteiraService._venda_do_pacote(store_payment, tier_id, lote)
+
+    @staticmethod
+    def _conceder_cupons_de_entrega(store, telefone, tier_id, lote):
+        """Entregas grátis do pacote, quando o pacote as vende.
+
+        Mesma validade do saldo de propósito: benefício que dura mais que o
+        crédito viraria frete grátis para sempre em quem comprou uma vez.
+        """
+        from apps.stores.models import StoreDeliveryCoupon
+        from apps.stores.services.cashback_service import CashbackService
+        from django.db import IntegrityError, transaction
+
+        pacote = CashbackService.tier(store, tier_id) or {}
+        quantas = int(pacote.get('cupons_entrega') or 0)
+        if quantas <= 0:
+            return None
+        try:
+            with transaction.atomic():
+                return StoreDeliveryCoupon.objects.create(
+                    store=store, phone=lote.phone,
+                    remaining=quantas, granted=quantas,
+                    expires_at=lote.expires_at,
+                    source_ref=lote.source_ref or '',
+                )
+        except IntegrityError:
+            return None
 
     @staticmethod
     def _venda_do_pacote(store_payment, tier_id: str, lote):

@@ -1,5 +1,6 @@
 import logging
 import re
+from decimal import Decimal
 from datetime import timedelta
 
 from django.utils import timezone
@@ -302,11 +303,40 @@ class CashbackResumoView(APIView):
             ).aggregate(t=Coalesce(Sum('amount'), zero))['t'],
         }
 
+        # DE ONDE VEIO O SALDO. Somar tudo num número só faz o dono achar que
+        # "deve" R$ 5.000 quando R$ 4.500 já entraram no caixa: cashback de
+        # compra e de indicação são custo de marketing; carteira pré-paga é
+        # dinheiro que o cliente JÁ PAGOU. São contas opostas com a mesma cara.
+        por_origem = {
+            chave: vivos.filter(origin=chave).aggregate(
+                t=Coalesce(Sum('remaining'), zero))['t']
+            for chave, _ in StoreCashbackLot.Origin.choices
+        }
+        resumo['por_origem'] = por_origem
+        resumo['saldo_pago_pelo_cliente'] = por_origem.get(
+            StoreCashbackLot.Origin.PREPAID, zero)
+        resumo['saldo_concedido_pela_loja'] = sum(
+            (v for k, v in por_origem.items() if k != StoreCashbackLot.Origin.PREPAID),
+            zero,
+        )
+
         # ORDEM: quem vence primeiro. A pergunta desta lista é "a quem eu mando
         # mensagem hoje", e quem está prestes a perder saldo é quem responde.
+        from django.db.models import Case, When, Q, DecimalField
+
         linhas = (
             vivos.values('phone')
-            .annotate(saldo=Sum('remaining'), vence_em=Min('expires_at'))
+            .annotate(
+                saldo=Sum('remaining'),
+                # A parte COMPRADA, separada: é o que o dono não pode tratar
+                # como custo, e é a única que exige telefone comprovado para
+                # ser gasta.
+                saldo_carteira=Coalesce(Sum(Case(
+                    When(origin=StoreCashbackLot.Origin.PREPAID, then='remaining'),
+                    default=Decimal('0.00'), output_field=DecimalField(max_digits=12, decimal_places=2),
+                )), zero),
+                vence_em=Min('expires_at'),
+            )
             .order_by('vence_em', '-saldo')
         )
         try:
@@ -314,6 +344,16 @@ class CashbackResumoView(APIView):
         except (TypeError, ValueError):
             page = 1
         start = (page - 1) * self.PAGE_SIZE
+
+        # Cupons de entrega numa consulta só, indexada por telefone: buscar por
+        # linha faria N+1 numa tela que lista 50 clientes.
+        from apps.stores.models import StoreDeliveryCoupon
+        cupons_por_telefone = dict(
+            StoreDeliveryCoupon.objects
+            .filter(store=store, remaining__gt=0, expires_at__gt=agora)
+            .values_list('phone')
+            .annotate(t=Sum('remaining'))
+        )
 
         return Response({
             'enabled': CashbackService.is_enabled(store),
@@ -326,6 +366,8 @@ class CashbackResumoView(APIView):
                 {
                     'phone': linha['phone'],
                     'saldo': linha['saldo'],
+                    'saldo_carteira': linha['saldo_carteira'],
+                    'cupons_entrega': cupons_por_telefone.get(linha['phone'], 0),
                     'vence_em': linha['vence_em'].isoformat(),
                     'dias_para_vencer': max(0, (linha['vence_em'] - agora).days),
                 }
@@ -356,8 +398,14 @@ class CashbackSaldoView(APIView):
         if not CashbackService.is_enabled(store):
             return Response({'enabled': False, 'saldo': '0.00'})
 
-        saldo = CashbackService.balance(store, phone) if phone else Decimal('0.00')
-        vence = CashbackService.expires_next(store, phone) if phone else None
+        # O saldo MOSTRADO é o saldo GASTÁVEL por quem está perguntando: sem o
+        # telefone comprovado o pré-pago não entra. Anunciar R$ 456 para quem
+        # não conseguiria usá-los produziria a pior tela possível — promessa na
+        # vitrine e recusa no checkout.
+        from apps.stores.services.carteira_service import telefone_comprovado
+        verificado = telefone_comprovado(request, phone)
+        saldo = CashbackService.balance(store, phone, verificado) if phone else Decimal('0.00')
+        vence = CashbackService.expires_next(store, phone, verificado) if phone else None
         return Response({
             'enabled': True,
             'percent': CashbackService.percent(store),
@@ -393,8 +441,10 @@ class CarteiraView(APIView):
 
         pacotes = CarteiraService.pacotes(store)
         phone = (request.query_params.get('phone') or '').strip()
-        estado = CarteiraService.saldo(store, phone) if phone else {
-            'saldo': '0.00', 'expira_em': None,
+        from apps.stores.services.carteira_service import telefone_comprovado
+        verificado = telefone_comprovado(request, phone)
+        estado = CarteiraService.saldo(store, phone, verificado) if phone else {
+            'saldo': '0.00', 'expira_em': None, 'cupons_entrega': 0,
         }
         return Response({
             'ativa': bool(pacotes),
@@ -408,6 +458,9 @@ class CarteiraView(APIView):
             ],
             'validade_dias': CashbackService.expiry_days(store),
             'cashback_percent': str(CashbackService.percent(store)),
+            # A tela precisa saber se deve pedir a confirmação do número antes
+            # de prometer o saldo comprado.
+            'telefone_verificado': verificado,
             **estado,
         })
 
@@ -445,4 +498,67 @@ class CarteiraCompraView(APIView):
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         return Response(resultado, status=status.HTTP_201_CREATED)
+
+
+class CashbackAjusteView(APIView):
+    """Crédito manual do lojista: cortesia, reparação, brinde.
+
+    Existe para tirar isto do shell de produção. Creditar cliente pelo console
+    é como se perde dinheiro sem rastro: ninguém sabe quem deu, quanto, nem
+    por quê — e no mês seguinte o saldo em circulação não fecha com nada.
+
+    `motivo` é OBRIGATÓRIO. Um crédito sem justificativa é exatamente o buraco
+    por onde some dinheiro em qualquer programa de fidelidade; o motivo fica no
+    lote e no log, com o usuário que fez.
+
+    Dono da loja apenas. Endpoint de dinheiro sem checagem de dono é IDOR, que
+    já apareceu neste repositório em junho.
+    """
+    permission_classes = [IsAuthenticated]
+
+    TETO = Decimal('5000.00')
+
+    def post(self, request, store_slug):
+        from decimal import InvalidOperation
+        from apps.stores.services.cashback_service import CashbackService
+
+        store = get_active_store(store_slug)
+        if not (request.user.is_superuser or store.owner_id == request.user.id):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+
+        phone = str(request.data.get('phone') or '').strip()
+        motivo = str(request.data.get('motivo') or '').strip()
+        if not phone:
+            return Response({'error': 'Informe o celular do cliente.'}, status=400)
+        if not motivo:
+            return Response({'error': 'Diga o motivo do crédito.'}, status=400)
+
+        try:
+            valor = Decimal(str(request.data.get('valor') or '0'))
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({'error': 'Valor inválido.'}, status=400)
+        if valor <= 0:
+            return Response({'error': 'O valor precisa ser maior que zero.'}, status=400)
+        if valor > self.TETO:
+            # Teto de sanidade: um zero a mais num crédito manual é o tipo de
+            # erro que só aparece no fechamento do mês.
+            return Response(
+                {'error': f'Valor acima do limite de R$ {self.TETO:.2f} por ajuste.'},
+                status=400,
+            )
+
+        lote = CashbackService.credit_adjust(
+            store, phone, valor, motivo, autor=request.user,
+        )
+        if lote is None:
+            return Response(
+                {'error': 'Não foi possível creditar. Confira o celular.'}, status=400,
+            )
+        return Response({
+            'phone': lote.phone,
+            'valor': str(lote.amount),
+            'motivo': motivo,
+            'vence_em': lote.expires_at.isoformat(),
+            'saldo_atual': str(CashbackService.balance(store, lote.phone, verificado=True)),
+        }, status=status.HTTP_201_CREATED)
 

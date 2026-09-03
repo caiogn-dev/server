@@ -102,3 +102,70 @@ class StoreCashbackRedemption(models.Model):
 
     def __str__(self):
         return f'{self.store_id}/{self.phone}: -{self.amount}'
+
+
+class StoreDeliveryCoupon(models.Model):
+    """Entregas grátis compradas junto com um pacote da carteira.
+
+    POR QUE CONTADO E NÃO ILIMITADO: o frete é repasse (a loja cobra R$ 10,72 e
+    paga R$ 10,72 ao entregador), então cada entrega grátis sai inteira da
+    margem. No pacote Família — R$ 395 por 12 saladas, R$ 155 de margem — doze
+    viagens de salada única custariam R$ 128,64 e deixariam R$ 26.
+
+    E ilimitado inverte o incentivo: se a entrega é sempre grátis, o cliente não
+    tem motivo para juntar duas saladas na mesma viagem, que é justamente onde a
+    loja ganha (2 saladas numa viagem rendem R$ 25,28 contra R$ 18,00 de uma
+    salada com frete pago). Com um número fixo, o teto de custo é conhecido e
+    consolidar continua valendo a pena para os dois lados.
+
+    Chaveado por TELEFONE pelo mesmo motivo do saldo: o checkout é guest-first.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='delivery_coupons')
+    # E.164 sem '+', normalizado por apps.core.utils.normalize_phone_number
+    phone = models.CharField(max_length=20, db_index=True)
+    remaining = models.PositiveIntegerField()
+    granted = models.PositiveIntegerField()
+    expires_at = models.DateTimeField()
+    # Cobrança que originou o benefício — mesma referência do lote de saldo.
+    source_ref = models.CharField(max_length=100, blank=True, default='', db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'store_delivery_coupons'
+        ordering = ['expires_at', 'created_at']
+        indexes = [models.Index(fields=['store', 'phone', 'expires_at'])]
+        constraints = [
+            # Uma cobrança concede o benefício uma vez. Mesma razão do saldo:
+            # o Mercado Pago reentrega webhook.
+            models.UniqueConstraint(
+                fields=['store', 'source_ref'],
+                name='cupom_entrega_unico_por_cobranca',
+                condition=~models.Q(source_ref=''),
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.store_id}/{self.phone}: {self.remaining} de {self.granted} entregas'
+
+
+class StoreDeliveryCouponUse(models.Model):
+    """Uma entrega grátis consumida por um pedido.
+
+    Existe para tornar o consumo IDEMPOTENTE por pedido: sem isto, um retry do
+    checkout ou um recálculo de totais gastaria duas entregas do cliente pelo
+    mesmo pedido.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    cupom = models.ForeignKey(StoreDeliveryCoupon, on_delete=models.CASCADE, related_name='uses')
+    order = models.ForeignKey('stores.StoreOrder', on_delete=models.CASCADE, related_name='delivery_coupon_uses')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'store_delivery_coupon_uses'
+        constraints = [
+            models.UniqueConstraint(fields=['order'], name='cupom_entrega_uso_unico_por_pedido'),
+        ]

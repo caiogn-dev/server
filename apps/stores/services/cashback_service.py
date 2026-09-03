@@ -81,23 +81,46 @@ class CashbackService:
     # ── saldo ───────────────────────────────────────────────────────────
 
     @staticmethod
-    def _lotes_vivos(store, phone: str):
+    def _lotes_vivos(store, phone: str, verificado: bool = False):
+        """Lotes que ESTE visitante pode usar agora.
+
+        A PROVA EXIGIDA ACOMPANHA O VALOR EM RISCO. O checkout é guest-first: o
+        telefone chega no corpo da requisição e nada garante que quem digitou é
+        o dono. Para o cashback de compra e de indicação isso é aceitável —
+        são centavos por pedido, e exigir login esvaziaria o programa, que foi
+        exatamente o erro da fidelidade antiga ao chavear por `user`.
+
+        Crédito PRÉ-PAGO é outra coisa: são R$ 456 comprados, e bastaria
+        conhecer o número de um cliente para gastar o saldo dele. Esse só sai
+        com o telefone comprovado — usuário autenticado cujo cadastro tem
+        aquele número, que é o que o login por código do WhatsApp já produz.
+        """
         from apps.stores.models import StoreCashbackLot
         variantes = CashbackService._telefones(phone)
         if not variantes:
             return StoreCashbackLot.objects.none()
-        return StoreCashbackLot.objects.filter(
+        qs = StoreCashbackLot.objects.filter(
             store=store, phone__in=variantes,
             remaining__gt=0, expires_at__gt=timezone.now(),
         )
+        if not verificado:
+            qs = qs.exclude(origin=StoreCashbackLot.Origin.PREPAID)
+        return qs
 
     @staticmethod
-    def balance(store, phone: str) -> Decimal:
-        total = CashbackService._lotes_vivos(store, phone).aggregate(t=Sum('remaining'))['t']
+    def balance(store, phone: str, verificado: bool = False) -> Decimal:
+        """Saldo utilizável por quem está perguntando.
+
+        Sem prova, o pré-pago não entra — a vitrine não pode anunciar dinheiro
+        que aquele visitante não conseguiria gastar, senão o cliente vê R$ 456
+        e leva um "saldo indisponível" na cara no checkout.
+        """
+        total = CashbackService._lotes_vivos(store, phone, verificado).aggregate(
+            t=Sum('remaining'))['t']
         return _para_centavos(total or Decimal('0'))
 
     @staticmethod
-    def aplicavel(store, phone: str, subtotal) -> Decimal:
+    def aplicavel(store, phone: str, subtotal, verificado: bool = False) -> Decimal:
         """Quanto do saldo pode virar desconto NESTE pedido.
 
         O teto é o SUBTOTAL — a comida — e nunca o total com frete. O frete é
@@ -110,16 +133,16 @@ class CashbackService:
         """
         if not CashbackService.is_enabled(store):
             return Decimal('0.00')
-        saldo = CashbackService.balance(store, phone)
+        saldo = CashbackService.balance(store, phone, verificado)
         teto = _para_centavos(Decimal(str(subtotal or 0)))
         if teto <= 0:
             return Decimal('0.00')
         return min(saldo, teto)
 
     @staticmethod
-    def expires_next(store, phone: str):
+    def expires_next(store, phone: str, verificado: bool = False):
         """Data do saldo que vence primeiro — é o que dá urgência à mensagem."""
-        lote = CashbackService._lotes_vivos(store, phone).order_by('expires_at').first()
+        lote = CashbackService._lotes_vivos(store, phone, verificado).order_by('expires_at').first()
         return lote.expires_at if lote else None
 
     # ── crédito ─────────────────────────────────────────────────────────
@@ -219,7 +242,7 @@ class CashbackService:
 
     @staticmethod
     @transaction.atomic
-    def redeem(store, phone: str, order, amount: Decimal) -> Decimal:
+    def redeem(store, phone: str, order, amount: Decimal, verificado: bool = False) -> Decimal:
         """Abate `amount` do saldo. Devolve quanto foi realmente abatido.
 
         Consome os lotes por ordem de VENCIMENTO: o que morre antes sai
@@ -232,8 +255,10 @@ class CashbackService:
         if pedido <= 0:
             return Decimal('0.00')
 
+        # Mesmo filtro do cálculo, de propósito: se `aplicavel` recusou o
+        # pré-pago por falta de prova, o resgate não pode consumi-lo por trás.
         lotes = list(
-            CashbackService._lotes_vivos(store, phone)
+            CashbackService._lotes_vivos(store, phone, verificado)
             .order_by('expires_at', 'created_at')
             .select_for_update()
         )
@@ -284,18 +309,53 @@ class CashbackService:
             if paga <= 0 or credito < paga:
                 logger.warning('carteira: pacote %r de %s não dá bônus', t.get('id'), store.slug)
                 continue
+            # Cupons de entrega são CONTADOS, nunca ilimitados: o frete é
+            # repasse, então cada um sai inteiro da margem, e entrega sempre
+            # grátis ainda tira do cliente o motivo de juntar duas saladas na
+            # mesma viagem — que é onde a loja ganha mais.
+            try:
+                cupons = max(0, int(t.get('cupons_entrega') or 0))
+            except (TypeError, ValueError):
+                cupons = 0
             pacotes.append({
                 'id': str(t.get('id') or ''),
                 'nome': str(t.get('nome') or ''),
                 'paga': paga,
                 'credito': credito,
                 'bonus': credito - paga,
+                'cupons_entrega': cupons,
             })
         return pacotes
 
     @staticmethod
     def tier(store, tier_id: str):
         return next((t for t in CashbackService.tiers(store) if t['id'] == tier_id), None)
+
+    @staticmethod
+    def credit_adjust(store, phone: str, valor, motivo: str, autor=None):
+        """Crédito manual do lojista: cortesia, reparação, brinde.
+
+        Existe para tirar isso do shell de produção — creditar cliente pelo
+        console é como se perde dinheiro sem rastro. `motivo` é obrigatório
+        no chamador; aqui ele é gravado junto do lote.
+
+        Nasce como ADJUST, não como PREPAID, e a diferença é de segurança: o
+        pré-pago exige telefone comprovado para ser gasto porque é dinheiro
+        comprado; um brinde da loja não faria sentido exigir do cliente que
+        provasse o número para receber.
+        """
+        from apps.stores.models import StoreCashbackLot
+        lote = CashbackService._creditar(
+            store, phone, valor, StoreCashbackLot.Origin.ADJUST,
+            coupon_code=(motivo or '')[:50],
+        )
+        if lote is not None:
+            logger.info(
+                'cashback: ajuste manual de %s para %s em %s por %s (%s)',
+                lote.amount, lote.phone, store.slug,
+                getattr(autor, 'username', '?'), motivo,
+            )
+        return lote
 
     @staticmethod
     def credit_prepaid(store, phone: str, tier_id: str, source_ref: str):

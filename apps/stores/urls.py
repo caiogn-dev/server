@@ -196,7 +196,7 @@ from .api.payment_views import (
 from .api.views.loyalty_views import (
     LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView,
     LoyaltyGuestStatusView, ConquistasView, CashbackResumoView, CashbackSaldoView,
-    CarteiraView, CarteiraCompraView,
+    CarteiraView, CarteiraCompraView, CashbackAjusteView,
 )
 from .api.views.crm_views import (
     CustomerSearchView,
@@ -300,6 +300,7 @@ store_frontend_patterns = [
     path('loyalty/accounts/', LoyaltyAccountsView.as_view(), name='store-loyalty-accounts'),
     path('cashback/', CashbackResumoView.as_view(), name='store-cashback-resumo'),
     path('cashback/saldo/', CashbackSaldoView.as_view(), name='store-cashback-saldo'),
+    path('cashback/ajustar/', CashbackAjusteView.as_view(), name='store-cashback-ajustar'),
     path('carteira/', CarteiraView.as_view(), name='store-carteira'),
     path('carteira/comprar/', CarteiraCompraView.as_view(), name='store-carteira-comprar'),
     path('conquistas/', ConquistasView.as_view(), name='store-conquistas'),

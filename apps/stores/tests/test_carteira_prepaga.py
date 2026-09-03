@@ -74,7 +74,7 @@ class TestCompraDeSaldo:
         assert lote is not None
         assert lote.amount == Decimal('304.00')
         assert lote.origin == StoreCashbackLot.Origin.PREPAID
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('304.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('304.00')
 
     def test_saldo_vence_em_30_dias(self, loja):
         lote = CashbackService.credit_prepaid(
@@ -93,19 +93,19 @@ class TestCompraDeSaldo:
         )
         assert primeiro is not None
         assert segundo is None, 'a mesma cobrança creditou de novo'
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('304.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('304.00')
 
     def test_tier_desconhecido_nao_credita_nada(self, loja):
         """Pacote que não está no catálogo da loja não vira saldo inventado."""
         assert CashbackService.credit_prepaid(
             loja, TELEFONE, tier_id='pacote-que-nao-existe', source_ref='mp:2',
         ) is None
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('0.00')
 
     def test_cobrancas_diferentes_somam(self, loja):
         CashbackService.credit_prepaid(loja, TELEFONE, tier_id='leve', source_ref='mp:a')
         CashbackService.credit_prepaid(loja, TELEFONE, tier_id='leve', source_ref='mp:b')
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('304.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('304.00')
 
 
 @pytest.mark.django_db
@@ -137,6 +137,7 @@ class TestSaldoPagaComidaNaoFrete:
             customer_data={'name': 'Cliente', 'email': '', 'phone': TELEFONE, 'cpf': ''},
             delivery_data={'method': 'delivery', 'address': {}},
             use_cashback=True,
+            telefone_verificado=True,  # saldo comprado exige o dono comprovado
             trusted_delivery_fee=Decimal('10.72'),
         )
 
@@ -146,12 +147,12 @@ class TestSaldoPagaComidaNaoFrete:
             f'o saldo abateu {pedido.discount} — deveria abater só a comida (76,00)'
         )
         assert pedido.total == Decimal('10.72'), 'o cliente ainda paga o frete'
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('228.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('228.00')
 
     def test_aplicavel_limita_ao_subtotal(self, loja):
         CashbackService.credit_prepaid(loja, TELEFONE, tier_id='leve', source_ref='mp:1')
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('300.00')) == Decimal('152.00')
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('40.00')) == Decimal('40.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('300.00'), verificado=True) == Decimal('152.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('40.00'), verificado=True) == Decimal('40.00')
 
     def test_sem_saldo_nao_abate(self, loja):
         assert CashbackService.aplicavel(loja, TELEFONE, Decimal('76.00')) == Decimal('0.00')

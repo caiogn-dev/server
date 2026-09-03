@@ -18,6 +18,10 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 
+# Sem imports de app no topo deste módulo: `carteira_service` só puxa
+# `checkout_service` dentro das funções, então não há ciclo.
+from apps.stores.services.carteira_service import telefone_comprovado
+
 
 class PublicReadThrottle(AnonRateThrottle):
     """300/min for read-only public catalog — storefront browsing is high-frequency."""
@@ -1076,6 +1080,15 @@ class StoreCheckoutView(APIView):
                 # calculado no servidor a partir do banco — aceitar um valor
                 # do payload seria o comprador escrevendo o próprio desconto.
                 use_cashback=bool(request.data.get('use_cashback')),
+                # E o TELEFONE não prova nada sozinho: ele chega no corpo da
+                # requisição, então digitar o número de um cliente conhecido
+                # bastaria para gastar o saldo dele. O crédito pré-pago — o
+                # dinheiro grande — só sai com o número comprovado pelo login
+                # por código do WhatsApp; o cashback de compra segue
+                # guest-first porque são centavos por pedido.
+                telefone_verificado=telefone_comprovado(
+                    request, customer_data.get('phone') or '',
+                ),
                 indicado_por=str(request.data.get('indicado_por') or '')[:20],
                 scheduled_date=scheduled_date,
                 scheduled_time=scheduled_time,
