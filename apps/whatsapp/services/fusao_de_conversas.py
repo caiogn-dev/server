@@ -19,6 +19,7 @@ com a Pastita são duas conversas legítimas — dos 7 "duplicados" encontrados 
 import logging
 
 from django.db import IntegrityError, transaction
+from apps.core.pii import mask_phone
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def _migrar_relacionados(origem, destino) -> dict:
                 # cliente). Duplicata sem dono não serve para nada.
                 logger.info(
                     '[fusao] %s duplicado descartado na fusão de %s',
-                    modelo._meta.label, origem.phone_number,
+                    modelo._meta.label, mask_phone(origem.phone_number),
                 )
                 linha.delete()
     return movidos
@@ -146,7 +147,7 @@ def fundir_duplicatas(account=None, aplicar: bool = True) -> list:
                     canonica.contact_name = duplicata.contact_name
                     canonica.save(update_fields=['contact_name'])
                 duplicata.delete()
-            logger.info('[fusao] %s absorvidas em %s', item['absorvidas'], canonica.phone_number)
+            logger.info('[fusao] %d absorvidas em %s', len(item['absorvidas']), mask_phone(canonica.phone_number))
 
         relatorio.append(item)
 
