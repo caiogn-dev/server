@@ -125,6 +125,43 @@ def send_whatsapp_auth_code(request):
         )
 
 
+def _token_utilizavel(user):
+    """Devolve um token que o middleware de expiração NÃO vai barrar.
+
+    `Token.objects.get_or_create` devolve o token EXISTENTE, e se ele já passou
+    de `AUTH_TOKEN_TTL_DAYS` o `TokenExpirationMiddleware` trata a requisição
+    como anônima — corretamente. O efeito era um login que responde
+    `valid: true`, entrega uma credencial morta e não autentica ninguém.
+
+    Visto em produção em 03/09: token de 36 dias, TTL de 30. O dono confirmou o
+    código do WhatsApp três vezes, em três telas, e todas seguiram mostrando
+    "entrar para sincronizar" — a interface estava certa, o login é que não
+    funcionava. Atinge TODO cliente que logou há mais de 30 dias, sem nenhuma
+    mensagem de erro.
+
+    Só troca quando está vencido: rotacionar à toa derrubaria a sessão do
+    outro aparelho da pessoa sem motivo nenhum.
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+    from django.utils import timezone as _tz
+
+    ttl_days = getattr(settings, 'AUTH_TOKEN_TTL_DAYS', 30)
+    token, criado = Token.objects.get_or_create(user=user)
+    if criado or not ttl_days:
+        return token
+
+    if token.created <= _tz.now() - timedelta(days=ttl_days):
+        logger.info(
+            '[AUTH] Token de %s vencido (%s dias) — emitindo novo no login',
+            user.username, (_tz.now() - token.created).days,
+        )
+        token.delete()
+        token = Token.objects.create(user=user)
+    return token
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 @throttle_classes([WhatsAppAuthThrottle])
@@ -181,7 +218,7 @@ def verify_whatsapp_auth_code(request):
                 full_name=whatsapp_user.get('name', '') if isinstance(whatsapp_user, dict) else '',
                 create=True,
             )
-            token, _ = Token.objects.get_or_create(user=user)
+            token = _token_utilizavel(user)
         except Exception as exc:
             logger.exception("[WHATSAPP AUTH API] Failed to create auth token: %s", exc)
             return Response(
