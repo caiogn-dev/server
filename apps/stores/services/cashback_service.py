@@ -17,7 +17,7 @@ TRÊS DECISÕES QUE MOLDAM ESTE ARQUIVO:
 """
 import logging
 from datetime import timedelta
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, InvalidOperation
 
 from django.db import IntegrityError, transaction
 from django.db.models import Sum
@@ -61,7 +61,32 @@ class CashbackService:
         return CashbackService._config(store, 'cashback_percent', PERCENTUAL_PADRAO)
 
     @staticmethod
-    def referral_percent(store) -> Decimal:
+    def referral_percent(store, coupon=None) -> Decimal:
+        """Quanto quem trouxe a venda leva.
+
+        O CUPOM MANDA quando tem taxa própria: parceria não se negocia com um
+        número único da loja — a academia com 400 alunos não leva o mesmo que
+        o vizinho que indicou o irmão. Sem taxa no cupom vale a da loja, que é
+        o caso da indicação pessoal por link.
+        """
+        do_cupom = ((getattr(coupon, 'metadata', None) or {}).get('owner_percent') or '')
+        if str(do_cupom).strip():
+            try:
+                taxa = Decimal(str(do_cupom).strip().replace(',', '.'))
+            except (InvalidOperation, TypeError, ValueError):
+                # Texto no campo de porcentagem não pode impedir a venda de
+                # fechar nem zerar a comissão do parceiro em silêncio.
+                logger.warning(
+                    'cashback: owner_percent inválido no cupom %s: %r',
+                    getattr(coupon, 'code', '?'), do_cupom,
+                )
+            else:
+                if Decimal('0') <= taxa <= Decimal('100'):
+                    return taxa
+                logger.warning(
+                    'cashback: owner_percent fora de 0-100 no cupom %s: %r',
+                    getattr(coupon, 'code', '?'), do_cupom,
+                )
         return CashbackService._config(store, 'cashback_referral_percent', PERCENTUAL_INDICACAO_PADRAO)
 
     @staticmethod
@@ -248,7 +273,7 @@ class CashbackService:
         if normalize_phone_number(dono) == normalize_phone_number(order.customer_phone or ''):
             return None
         base = CashbackService._base_de_bonus(order)
-        valor = base * CashbackService.referral_percent(store) / Decimal('100')
+        valor = base * CashbackService.referral_percent(store, coupon) / Decimal('100')
         return CashbackService._creditar(
             store, dono, valor, StoreCashbackLot.Origin.REFERRAL,
             order=order, coupon_code=getattr(coupon, 'code', '') or '',

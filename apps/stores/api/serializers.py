@@ -1789,7 +1789,108 @@ class StoreCatalogSerializer(serializers.Serializer):
 from apps.stores.models import StoreCoupon, StoreDeliveryZone, StoreOrderComboItem, StoreBioLink
 
 
-class StoreCouponSerializer(serializers.ModelSerializer):
+class ParceiroDoCupomMixin(serializers.Serializer):
+    """Os dois campos que transformam um cupom em parceria.
+
+    "Cupom ACADEMIAFIT, vincular o cliente X, ele ganha 3% de cada compra do
+    cupom" — o modelo de parceria de bairro: a academia divulga o código, o
+    aluno ganha desconto, e a academia acumula saldo proporcional ao que os
+    alunos gastaram.
+
+    POR QUE CAMPOS NOMEADOS E NÃO `metadata` CRU. Abrir o JSON inteiro para
+    escrita deixaria o painel gravar qualquer chave no cupom, inclusive as que
+    outras partes do sistema leem. Aqui entra exatamente o que faz sentido
+    pedir, com validação.
+
+    O TELEFONE É NORMALIZADO NA ENTRADA. O crédito casa por STRING lá na
+    frente: "(63) 99990-0011" digitado aqui e "5563999900011" gravado pelo
+    checkout são a mesma pessoa e não casariam. O parceiro divulgaria o cupom
+    o mês inteiro e não receberia nada — sem erro em lugar nenhum, que é o
+    modo de falha mais caro deste sistema.
+    """
+
+    parceiro_phone = serializers.CharField(
+        required=False, allow_blank=True, write_only=False,
+        help_text='Celular de quem divulga o cupom e recebe a comissão.',
+    )
+    parceiro_percent = serializers.CharField(
+        required=False, allow_blank=True, write_only=False,
+        help_text='% de cada venda do cupom para o parceiro. Vazio = taxa da loja.',
+    )
+
+    def validate_parceiro_phone(self, valor):
+        bruto = (valor or '').strip()
+        if not bruto:
+            return ''  # vazio DESVINCULA: parceria acaba
+        from apps.core.utils import normalize_phone_number
+        numero = normalize_phone_number(bruto)
+        # Telefone incompleto vira parceiro que nunca recebe. Recusar aqui é a
+        # única chance de alguém perceber.
+        if not numero or len(''.join(filter(str.isdigit, numero))) < 12:
+            raise serializers.ValidationError(
+                'Celular do parceiro incompleto. Use DDD + número.'
+            )
+        return numero
+
+    def validate_parceiro_percent(self, valor):
+        bruto = str(valor or '').strip().replace(',', '.')
+        if not bruto:
+            return ''
+        from decimal import Decimal, InvalidOperation
+        try:
+            taxa = Decimal(bruto)
+        except (InvalidOperation, TypeError, ValueError):
+            raise serializers.ValidationError('Use um número, ex.: 3')
+        if not (Decimal('0') <= taxa <= Decimal('100')):
+            raise serializers.ValidationError('A comissão precisa ficar entre 0 e 100%.')
+        return bruto
+
+    # `metadata` é compartilhado com outras chaves (origem de importação, por
+    # exemplo). Mesclar em vez de sobrescrever: trocar o dicionário inteiro
+    # apagaria o que este serializer nem sabe que existe.
+    def _guardar_parceiro(self, instancia, dados):
+        mudou = False
+        metadata = dict(instancia.metadata or {})
+        for campo, chave in (('parceiro_phone', 'owner_phone'),
+                             ('parceiro_percent', 'owner_percent')):
+            if campo not in dados:
+                continue
+            valor = dados.pop(campo)
+            mudou = True
+            if valor:
+                metadata[chave] = valor
+            else:
+                metadata.pop(chave, None)
+        if mudou:
+            instancia.metadata = metadata
+            instancia.save(update_fields=['metadata'])
+        return instancia
+
+    def create(self, validated_data):
+        parceiro = {
+            k: validated_data.pop(k)
+            for k in ('parceiro_phone', 'parceiro_percent')
+            if k in validated_data
+        }
+        return self._guardar_parceiro(super().create(validated_data), parceiro)
+
+    def update(self, instance, validated_data):
+        parceiro = {
+            k: validated_data.pop(k)
+            for k in ('parceiro_phone', 'parceiro_percent')
+            if k in validated_data
+        }
+        return self._guardar_parceiro(super().update(instance, validated_data), parceiro)
+
+    def to_representation(self, instance):
+        dados = super().to_representation(instance)
+        metadata = getattr(instance, 'metadata', None) or {}
+        dados['parceiro_phone'] = metadata.get('owner_phone', '')
+        dados['parceiro_percent'] = str(metadata.get('owner_percent', '') or '')
+        return dados
+
+
+class StoreCouponSerializer(ParceiroDoCupomMixin, serializers.ModelSerializer):
     """Serializer for store coupons."""
     
     discount_type_display = serializers.CharField(source='get_discount_type_display', read_only=True)
@@ -1805,6 +1906,7 @@ class StoreCouponSerializer(serializers.ModelSerializer):
             'is_active', 'valid_from', 'valid_until',
             'first_order_only', 'is_featured',
             'applicable_categories', 'applicable_products',
+            'parceiro_phone', 'parceiro_percent',
             'is_valid_now',
             'created_at', 'updated_at'
         ]
@@ -1852,7 +1954,7 @@ class StoreSlugOrIdField(serializers.Field):
         return store
 
 
-class StoreCouponCreateSerializer(serializers.ModelSerializer):
+class StoreCouponCreateSerializer(ParceiroDoCupomMixin, serializers.ModelSerializer):
     """Serializer for creating/updating coupons."""
     
     store = StoreSlugOrIdField(required=False, allow_null=True)
@@ -1866,7 +1968,8 @@ class StoreCouponCreateSerializer(serializers.ModelSerializer):
             'usage_limit', 'usage_limit_per_user',
             'is_active', 'valid_from', 'valid_until',
             'first_order_only', 'is_featured',
-            'applicable_categories', 'applicable_products'
+            'applicable_categories', 'applicable_products',
+            'parceiro_phone', 'parceiro_percent'
         ]
 
 
