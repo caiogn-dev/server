@@ -311,8 +311,8 @@ class InteractiveReplyHandler(IntentHandler):
         """
         from apps.core.utils import phone_variants
         from apps.stores.models import StoreOrder
-        from apps.stores.services.checkout_service import CheckoutService
         from apps.stores.services.cupons_fixos import CuponsFixos
+        from apps.stores.services.indicacao import link_de_indicacao
 
         order_id = reply_id[len('refer_friend_'):]
         order = StoreOrder.objects.filter(id=order_id).select_related('store').first()
@@ -324,11 +324,13 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text('Não encontrei esse pedido. 😕')
 
         cupom = CuponsFixos.de_indicacao(order.store)
-        base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
+        link = link_de_indicacao(order.store, order.customer_phone)
         return HandlerResult.text(
             'Show! É só encaminhar a mensagem abaixo para os amigos 🎁\n\n'
             f'—\n{int(cupom.discount_value)}% de desconto no primeiro pedido na '
-            f'{order.store.name}! Usa o cupom *{cupom.code}* em {base} 🥗\n—'
+            f'{order.store.name}! Usa o cupom *{cupom.code}*:\n{link} 🥗\n—\n\n'
+            'O link tem o seu número: é assim que a gente sabe que a indicação '
+            'foi sua e te credita o cashback quando seu amigo comprar. 💛'
         )
 
     def _handle_google_review_done(self, reply_id: str) -> HandlerResult:

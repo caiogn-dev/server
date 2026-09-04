@@ -477,7 +477,9 @@ NVIDIA_API_KEY = os.environ.get('NVIDIA_API_KEY', '')
 NVIDIA_API_BASE_URL = os.environ.get('NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1')
 NVIDIA_MODEL_NAME = os.environ.get('NVIDIA_MODEL_NAME', 'nvidia/llama-3.1-nemotron-70b-instruct')
 # Modelo dos insights do painel (resumo diário/análise de conversas)
-NVIDIA_INSIGHTS_MODEL = os.environ.get('NVIDIA_INSIGHTS_MODEL', 'nvidia/nemotron-3-nano-30b-a3b')
+# O default sai do catálogo medido (apps/agents/runtime/modelos.py) em vez de
+# um nome literal: nome literal aqui é a lápide da próxima aposentadoria.
+NVIDIA_INSIGHTS_MODEL = os.environ.get('NVIDIA_INSIGHTS_MODEL', 'nvidia/nemotron-3-super-120b-a12b')
 
 # Unified AI Configuration Helper
 def get_ai_config():
