@@ -465,6 +465,11 @@ class CarteiraView(APIView):
             ],
             'validade_dias': CashbackService.expiry_days(store),
             'cashback_percent': str(CashbackService.percent(store)),
+            # Quanto o cliente ganha por INDICAR. A tela precisa deste número
+            # para montar o convite: quem convida alguém a indicar tem que
+            # dizer quanto ele leva, e inventar o valor é mentir sobre
+            # dinheiro. Sem isto o link de indicação não tem o que prometer.
+            'referral_percent': str(CashbackService.referral_percent(store)),
             # A tela precisa saber se deve pedir a confirmação do número antes
             # de prometer o saldo comprado.
             'telefone_verificado': verificado,
@@ -573,3 +578,92 @@ class CashbackAjusteView(APIView):
             'saldo_atual': str(CashbackService.balance(store, lote.phone, verificado=True)),
         }, status=status.HTTP_201_CREATED)
 
+
+
+class IndicacoesView(APIView):
+    """Quem veio por quem.
+
+    Nasceu de uma pergunta do dono que não tinha resposta: "a Elisangela quis
+    indicar, mas como vou saber quem veio pela Elisangela?".
+
+    O rastreio já funcionava — o link `?indica=<telefone>` vira
+    `metadata.indicado_por` no pedido do amigo e credita quem indicou —, mas o
+    resultado morria num total somado na tela de cashback. Programa de
+    indicação que não diz QUEM indicou é só um desconto com nome bonito: a loja
+    não consegue agradecer quem trouxe cliente, não sabe quem são seus
+    divulgadores, e não enxerga o telefone que "indicou" trinta desconhecidos.
+
+    O dado sempre esteve gravado: o lote de indicação guarda o telefone de quem
+    indicou e aponta para o pedido do amigo. Aqui só se pergunta.
+
+    Dono da loja apenas: são telefones e histórico de compra de clientes.
+    """
+    permission_classes = [IsAuthenticated]
+
+    LIMITE = 200
+
+    def get(self, request, store_slug):
+        from apps.stores.models import StoreCashbackLot, StoreOrder
+        from apps.stores.services.cashback_service import CashbackService
+
+        store = get_active_store(store_slug)
+        if not (request.user.is_superuser or store.owner_id == request.user.id):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+
+        lotes = (
+            StoreCashbackLot.objects
+            .filter(store=store, origin=StoreCashbackLot.Origin.REFERRAL)
+            .select_related('order')
+            .order_by('-created_at')[:self.LIMITE]
+        )
+
+        # O telefone de quem indicou não diz nada ao dono; o nome diz. Ele vem
+        # dos pedidos do próprio indicador — quem indica quase sempre já é
+        # cliente, e é exatamente essa pessoa que a loja quer reconhecer.
+        indicadores = {(l.phone or '').strip() for l in lotes if (l.phone or '').strip()}
+        nomes = {}
+        if indicadores:
+            for phone, nome in (
+                StoreOrder.objects
+                .filter(store=store, customer_phone__in=indicadores)
+                .exclude(customer_name='')
+                .order_by('-created_at')
+                .values_list('customer_phone', 'customer_name')
+            ):
+                nomes.setdefault(phone, nome)
+
+        indicacoes = []
+        resumo = {}
+        for lote in lotes:
+            phone = (lote.phone or '').strip()
+            pedido = lote.order
+            indicacoes.append({
+                'id': str(lote.id),
+                'indicador_phone': phone,
+                'indicador_nome': nomes.get(phone, ''),
+                'amigo_nome': getattr(pedido, 'customer_name', '') or '',
+                'amigo_phone': getattr(pedido, 'customer_phone', '') or '',
+                'pedido': getattr(pedido, 'order_number', '') or '',
+                'pedido_total': str(getattr(pedido, 'total', '') or ''),
+                'valor': str(lote.amount),
+                'data': lote.created_at.isoformat(),
+            })
+            agregado = resumo.setdefault(phone, {
+                'phone': phone, 'nome': nomes.get(phone, ''),
+                'total_indicados': 0, 'total_creditado': Decimal('0.00'),
+            })
+            agregado['total_indicados'] += 1
+            agregado['total_creditado'] += lote.amount
+
+        por_indicador = sorted(
+            resumo.values(),
+            key=lambda r: (-r['total_indicados'], -r['total_creditado']),
+        )
+        for r in por_indicador:
+            r['total_creditado'] = str(r['total_creditado'])
+
+        return Response({
+            'indicacoes': indicacoes,
+            'por_indicador': por_indicador,
+            'referral_percent': str(CashbackService.referral_percent(store)),
+        })
