@@ -888,3 +888,32 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-04
+
+**Gate anti-acúmulo:** 37 PRs abertos (#318–#354), todos targeting `development`. Verificação
+confirmada: nenhum cobre N+1 em `apps/fiscal/services.py:_itens()`.
+
+**Bug encontrado e corrigido:** N+1 em `_itens()` — `item.product` lazy por item [P2]
+
+- **Tipo:** P2 — N+1 queries em emissão fiscal (1 SELECT por item de pedido)
+- **Arquivo corrigido (1):** `apps/fiscal/services.py:59` — `_itens()`
+- **Problema:** `order.items.all()` sem `select_related` causava 1 SELECT adicional para
+  `item.product` por item. Pedido com 10 itens = 11 queries (1 + 10); com 50 = 51 queries.
+  Identificado no backlog de 2026-07-27 mas nunca endereçado.
+- **Correção:** `order.items.all()` → `order.items.select_related('product').all()` (1 linha).
+  O JOIN é trivial — `product` já é FK em `StoreOrderItem`.
+- **Testes:** 3 testes em `apps/fiscal/tests/test_fiscal_items_n1.py`:
+  - `test_itens_usa_select_related_sem_n1`: assertNumQueries(1) com 5 itens
+  - `test_todos_itens_tem_ncm_correto`: atributos do produto preservados após select_related
+  - `test_item_sem_produto_nao_quebra`: item órfão (product=None) não levanta exceção
+- **PR:** #355 — `bot/server-2026-09-04-fiscal-items-n1`
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Merge dos PRs acumulados #318–#354 (37 PRs aguardando revisão).
+2. **P1** — Testes de contrato para checkout payload e pedido por token.
+3. **P2** — Namespace mobile/customer para detalhe/status/rastreio/reordenação.
+4. **P2** — N+1 em `emit_nfce_for_order` (order.store acessa store sem select_related no call site).
+
