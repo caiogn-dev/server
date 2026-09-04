@@ -28,9 +28,30 @@ def _get_store_profile(store):
 
 
 def _notifications_suppressed(order) -> bool:
-    """Pedido de balcão silenciado pelo painel (metadata.suppress_notifications)."""
+    """Este pedido deve ficar em silêncio?
+
+    DUAS DECISÕES DIFERENTES, e as duas calam:
+
+    1. A LOJA, sobre ESTE pedido (`metadata.suppress_notifications`): venda de
+       balcão, cliente que já está ali na frente.
+
+    2. O CLIENTE, sobre TODOS os dele (`preferences.notifications_whatsapp`).
+       O interruptor existia no perfil desde sempre e nunca foi lido por
+       ninguém: o cliente desligava e as mensagens continuavam chegando. Um
+       botão que não controla nada é pior que botão nenhum, porque a pessoa
+       acredita nele e para de reclamar.
+
+    Sem preferência gravada, AVISA. O checkout é guest-first e a maioria dos
+    pedidos não tem usuário: ninguém pediu silêncio, e deixar de avisar sobre
+    um pedido pago é pior que uma mensagem a mais.
+    """
     metadata = order.metadata if isinstance(order.metadata, dict) else {}
-    return bool(metadata.get('suppress_notifications'))
+    if metadata.get('suppress_notifications'):
+        return True
+
+    perfil = getattr(getattr(order, 'customer', None), 'profile', None)
+    preferencias = getattr(perfil, 'preferences', None) or {}
+    return preferencias.get('notifications_whatsapp') is False
 
 
 def _get_account_for_profile(profile):

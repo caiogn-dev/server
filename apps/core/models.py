@@ -119,6 +119,16 @@ class UserProfile(models.Model):
     city = models.CharField(max_length=100, blank=True)
     state = models.CharField(max_length=2, blank=True)
     zip_code = models.CharField(max_length=10, blank=True)
+    #: Escolhas do cliente sobre como a loja fala com ele.
+    #:
+    #: Era um formulário que não gravava nada: o PATCH ignorava a chave em
+    #: silêncio, respondia 200, e a tela — que relê o perfil depois de salvar —
+    #: voltava para o padrão exibindo "salvo com sucesso" (04/09).
+    #:
+    #: JSON e não colunas: são preferências de UI que nascem e morrem conforme
+    #: os canais mudam, e cada uma como coluna vira migração para trocar um
+    #: rótulo. O que o backend HONRA está documentado onde é lido.
+    preferences = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

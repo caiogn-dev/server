@@ -103,6 +103,10 @@ class UpdateProfileSerializer(serializers.Serializer):
     city = serializers.CharField(max_length=100, required=False, allow_blank=True)
     state = serializers.CharField(max_length=2, required=False, allow_blank=True)
     zip_code = serializers.CharField(max_length=10, required=False, allow_blank=True)
+    # Preferências do cliente sobre como a loja fala com ele. `DictField` e não
+    # JSONField solto: lista ou texto aqui corromperia a leitura de quem
+    # consome depois, e o erro apareceria longe da causa.
+    preferences = serializers.DictField(required=False)
 
 
 @method_decorator(csrf_exempt, name='dispatch')
@@ -438,6 +442,7 @@ class ProfileView(APIView):
             'city': profile.city,
             'state': profile.state,
             'zip_code': profile.zip_code,
+            'preferences': profile.preferences or {},
         })
 
     @extend_schema(
@@ -488,6 +493,11 @@ class ProfileView(APIView):
             profile.state = data['state']
         if 'zip_code' in data:
             profile.zip_code = data['zip_code']
+        if 'preferences' in data:
+            # MESCLA. A tela manda o formulário inteiro hoje, mas um PATCH que
+            # substitui o dicionário apaga a preferência que a tela nem sabia
+            # que existia — e a perda só aparece semanas depois.
+            profile.preferences = {**(profile.preferences or {}), **data['preferences']}
         profile.save()
 
         return Response({
@@ -505,6 +515,10 @@ class ProfileView(APIView):
             'city': profile.city,
             'state': profile.state,
             'zip_code': profile.zip_code,
+            # A tela usa a resposta do PATCH direto. Devolver o valor antigo
+            # aqui já reverteria o interruptor na cara do cliente, mesmo com o
+            # banco gravado certo.
+            'preferences': profile.preferences or {},
         })
 
 
