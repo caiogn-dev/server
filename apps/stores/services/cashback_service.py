@@ -27,6 +27,18 @@ logger = logging.getLogger(__name__)
 
 PERCENTUAL_PADRAO = Decimal('3')
 PERCENTUAL_INDICACAO_PADRAO = Decimal('5')
+
+#: Validade do saldo COMPRADO. Mais longa que a do cashback de propósito.
+#:
+#: Cashback é bônus da loja: vencer cria a urgência que traz a cliente de
+#: volta. Carteira é dinheiro que a cliente PAGOU: vencer não cria urgência,
+#: cria prejuízo para ela e pedido de reembolso para a loja — e tomar de volta
+#: valor pré-pago é frágil perante o CDC.
+#:
+#: Os 30 dias herdados do cashback obrigavam quem comprou o pacote Família a
+#: comer R$ 15,20 de salada por dia. Das dez melhores clientes da Cê, uma só
+#: conseguiria.
+DIAS_DA_CARTEIRA_PADRAO = 90
 DIAS_PARA_VENCER = 60
 CENTAVO = Decimal('0.01')
 
@@ -55,6 +67,13 @@ class CashbackService:
         except Exception:
             logger.warning('cashback: %s inválido em %s: %r', chave, store.slug, bruto)
             return padrao
+
+    @staticmethod
+    def carteira_expiry_days(store) -> int:
+        """Quantos dias dura o saldo que a cliente comprou."""
+        return int(CashbackService._config(
+            store, 'carteira_validade_dias', Decimal(DIAS_DA_CARTEIRA_PADRAO),
+        ))
 
     @staticmethod
     def percent(store) -> Decimal:
@@ -437,6 +456,7 @@ class CashbackService:
         return CashbackService._creditar(
             store, phone, pacote['credito'], StoreCashbackLot.Origin.PREPAID,
             source_ref=source_ref.strip(),
+            validade_dias=CashbackService.carteira_expiry_days(store),
         )
 
     # ── gancho único ────────────────────────────────────────────────────

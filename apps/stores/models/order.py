@@ -37,6 +37,23 @@ def build_loyalty_status_line(store, user):
     return ''
 
 
+def _telefone_do_pedido(bruto) -> str:
+    """O número como a casa guarda: só dígitos, com o DDI.
+
+    Nunca levanta e nunca inventa. Texto que não é telefone volta como veio —
+    recusar um pedido pago por causa do formato do campo seria trocar um
+    problema de relatório por uma venda perdida.
+    """
+    texto = (bruto or '').strip()
+    if not texto:
+        return ''
+    try:
+        from apps.core.utils import normalize_phone_number
+        return normalize_phone_number(texto) or texto
+    except Exception:
+        return texto
+
+
 class StoreOrder(BaseModel):
     """
     Order model for any store.
@@ -315,6 +332,26 @@ class StoreOrder(BaseModel):
     _SOURCE_MAP_PREFIXES = (('whatsapp', 'whatsapp'), ('dashboard', 'pdv'), ('pdv', 'pdv'))
 
     def save(self, *args, **kwargs):
+        # O telefone entra em UM formato só, sempre.
+        #
+        # Aqui e não no checkout porque são SETE caminhos que criam pedido —
+        # site, PDV, bot do WhatsApp, link de pagamento, painel, importação,
+        # agente — e consertar um deixa os outros seis livres para recriar o
+        # problema. Este `save` é o único ponto por onde todos passam.
+        #
+        # O estrago era invisível e caro: 121 dos 160 pedidos da Cê gravaram o
+        # número sem o DDI, e sete clientes viraram duas pessoas cada. Toda
+        # contagem por cliente passava a mentir — a melhor cliente da loja
+        # aparecia com metade do que gastou e não subia em ranking nenhum.
+        self.customer_phone = _telefone_do_pedido(self.customer_phone)
+        if 'update_fields' in kwargs and kwargs['update_fields'] is not None:
+            # `update_fields` não grava o que não está na lista: sem isto, um
+            # save parcial de outro campo descartaria a normalização acima em
+            # silêncio.
+            campos = set(kwargs['update_fields'])
+            if 'customer_phone' in campos:
+                kwargs['update_fields'] = campos
+
         if not self.order_number:
             self.order_number = self.generate_order_number()
         if not self.access_token:

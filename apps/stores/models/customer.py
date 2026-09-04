@@ -118,6 +118,24 @@ class StoreCustomer(BaseModel):
         verbose_name = 'Store Customer'
         verbose_name_plural = 'Store Customers'
         unique_together = ['store', 'user']
+        constraints = [
+            # A GARANTIA de que uma pessoa não vira dois cadastros.
+            #
+            # Normalizar o telefone é convenção: depende de cada um dos sete
+            # caminhos que criam cliente lembrar da regra, e já falhou quatro
+            # vezes aqui. Esta trava não depende de ninguém lembrar — código
+            # novo que esqueça recebe IntegrityError e falha ALTO, em vez de
+            # criar o segundo cadastro em silêncio.
+            #
+            # Por LOJA, porque a mesma pessoa pode ser cliente de duas. E só
+            # com telefone preenchido: cliente de balcão pode não ter, e vários
+            # vazios são legítimos.
+            models.UniqueConstraint(
+                fields=['store', 'phone'],
+                condition=~models.Q(phone=''),
+                name='cliente_unico_por_telefone_na_loja',
+            ),
+        ]
         ordering = ['-created_at']
         indexes = [
             # Phone lookup in checkout identity and signals
@@ -125,6 +143,20 @@ class StoreCustomer(BaseModel):
             # whatsapp é usado no OR de resolução de cliente no pipeline (sem índice).
             models.Index(fields=['whatsapp'], name='customer_whatsapp_idx'),
         ]
+
+    def save(self, *args, **kwargs):
+        # O telefone entra na forma canônica, sempre. Aqui e não no serviço:
+        # é o único ponto por onde os sete caminhos que criam cliente passam.
+        from apps.core.utils import normalize_phone_number
+        bruto = (self.phone or '').strip()
+        if bruto:
+            try:
+                self.phone = normalize_phone_number(bruto) or bruto
+            except Exception:
+                self.phone = bruto
+        else:
+            self.phone = ''
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.store.name} - {self.user.email}"

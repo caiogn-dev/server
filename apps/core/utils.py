@@ -112,6 +112,34 @@ def build_absolute_media_url(url: str) -> str:
     return f"{base}{url}"
 
 
+def _com_nono_digito(digitos: str) -> str:
+    """Celular BR legado (8 dígitos) ganha o nono. Fixo e estrangeiro, não.
+
+    O `wa_id` do WhatsApp entrega o formato anterior à migração do nono dígito
+    (`556391124171`), e o checkout do site grava o atual (`5563991124171`). As
+    duas formas já têm o 55, então passavam pelo normalizador intactas e a
+    mesma pessoa virava dois cadastros — foi assim que Zanya e Yeda
+    apareceram duas vezes na lista da Cê.
+
+    POR QUE A REGRA É SEGURA: depois de 55 + DDD, o formato de 8 dígitos é o
+    anterior a 2016, e nele celular começa com 6, 7, 8 ou 9 enquanto fixo
+    começa com 2, 3, 4 ou 5. O 9 só entra quando o primeiro dígito prova que é
+    celular; telefone fixo nunca é tocado.
+
+    Estrangeiro também não: só entra aqui o que começa com 55 e tem DDD
+    válido. Um celular espanhol tem 9 dígitos, e regra de tamanho aplicada sem
+    olhar o país já quebrou a conversa de uma cliente aqui (26/ago).
+    """
+    if len(digitos) != 12 or not digitos.startswith('55'):
+        return digitos
+    ddd, assinante = digitos[2:4], digitos[4:]
+    if not ('11' <= ddd <= '99'):
+        return digitos
+    if assinante[0] not in '6789':
+        return digitos  # fixo
+    return f'55{ddd}9{assinante}'
+
+
 def _parece_brasileiro_local(digitos: str) -> bool:
     """True quando o número é um telefone BR SEM o DDI (DDD + assinante).
 
@@ -134,7 +162,16 @@ def _parece_brasileiro_local(digitos: str) -> bool:
         return False
     if len(digitos) == 11:
         return digitos[2] == '9'
-    return digitos[2] in '2345'
+    # 10 dígitos: fixo (2-5) ou celular no formato anterior ao nono dígito
+    # (6-9). Os dois existem no banco — 12 telefones da Cê são celular legado
+    # sem DDI, e sem esta linha eles não ganham o 55 e viram um segundo
+    # cadastro da mesma pessoa.
+    #
+    # O risco é confundir um estrangeiro de 10 dígitos. É aceitável porque
+    # este ramo só roda quando o libphonenumber NÃO reconheceu o número e não
+    # havia '+': quem escreve o DDI explicitamente é sempre respeitado antes
+    # de chegar aqui — foi assim que a cliente da Espanha voltou a funcionar.
+    return digitos[2] in '23456789'
 
 
 def _parse_telefone(valor: str, digitos: str):
@@ -203,7 +240,9 @@ def normalize_phone_number(phone: str, default_region: str = 'BR') -> str:
 
     if not digitos.startswith('55') and _parece_brasileiro_local(digitos):
         digitos = '55' + digitos
-    return digitos
+    # O nono dígito por último: o número já está com DDI, que é o formato em
+    # que a regra sabe separar DDD de assinante.
+    return _com_nono_digito(digitos)
 
 
 def format_phone_for_display(phone: str) -> str:

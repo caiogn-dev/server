@@ -464,6 +464,10 @@ class CarteiraView(APIView):
                 for p in pacotes
             ],
             'validade_dias': CashbackService.expiry_days(store),
+            # Duas validades, dois dinheiros: o bônus vence rápido para criar
+            # urgência; o que a cliente pagou dura mais. Prometer 3 meses e a
+            # tela dizer 30 dias é pior que não prometer.
+            'carteira_validade_dias': CashbackService.carteira_expiry_days(store),
             'cashback_percent': str(CashbackService.percent(store)),
             # Quanto o cliente ganha por INDICAR. A tela precisa deste número
             # para montar o convite: quem convida alguém a indicar tem que
