@@ -597,7 +597,7 @@ class IntentHandler:
                 try:
                     p = StoreProduct.objects.get(id=it['product_id'], is_active=True)
                     qty = int(it.get('quantity', 1))
-                    price = float(p.price)
+                    price = float(p.preco_vigente())
                     item_total = qty * price
                     subtotal += item_total
                     price_fmt = moeda(item_total)

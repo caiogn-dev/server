@@ -40,7 +40,7 @@ def _build_price_list_text(store, intro: Optional[str] = None) -> str:
     for cat, products in by_cat.items():
         lines.append(f"*{cat}*")
         for p in products:
-            lines.append(f"  • {p.name} — R$ {p.price}")
+            lines.append(f"  • {p.name} — R$ {p.preco_vigente()}")
         lines.append("")
     lines.append("Para pedir, é só dizer o nome ou a quantidade. Ex: _2 rondelli de frango_ 😊")
     return "\n".join(lines)
@@ -71,7 +71,7 @@ class PriceCheckHandler(IntentHandler):
             if products:
                 if len(products) == 1:
                     p = products[0]
-                    response = f"💰 *{p.name}*\nPreço: *R$ {p.price}*\n\n"
+                    response = f"💰 *{p.name}*\nPreço: *R$ {p.preco_vigente()}*\n\n"
                     if p.description:
                         response += f"{p.description}\n\n"
                     return HandlerResult.buttons(
@@ -83,7 +83,7 @@ class PriceCheckHandler(IntentHandler):
                     )
                 response = "💰 Encontrei esses produtos:\n\n"
                 for p in products:
-                    response += f"• *{p.name}*: R$ {p.price}\n"
+                    response += f"• *{p.name}*: R$ {p.preco_vigente()}\n"
                 response += "\nQual você quer?"
                 return HandlerResult.text(response)
             intro = f"😕 Não encontrei *{product_name}* no cardápio.\n\nMas temos:"
@@ -135,10 +135,10 @@ class ProductMentionHandler(IntentHandler):
                     session = session_manager.get_or_create_session()
                     session.update_context('pending_product_id', str(p.id))
                     session.update_context('pending_product_name', p.name)
-                    session.update_context('pending_product_price', float(p.price))
+                    session.update_context('pending_product_price', float(p.preco_vigente()))
                 except Exception as exc:
                     logger.warning('[ProductMentionHandler] session context save failed: %s', exc)
-                body = f"🥗 *{p.name}*\n💰 R$ {p.price}"
+                body = f"🥗 *{p.name}*\n💰 R$ {p.preco_vigente()}"
                 if getattr(p, 'description', ''):
                     body += f"\n\n_{p.description[:120]}_"
                 return HandlerResult.buttons(
@@ -148,7 +148,7 @@ class ProductMentionHandler(IntentHandler):
                         {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
                     ],
                 )
-            product_list = "\n".join([f"{i+1}. {p.name} - R$ {p.price}" for i, p in enumerate(matched_products[:10])])
+            product_list = "\n".join([f"{i+1}. {p.name} - R$ {p.preco_vigente()}" for i, p in enumerate(matched_products[:10])])
             return HandlerResult.text(
                 f"🍝 *{search_term.title()}* - Temos esses:\n\n{product_list}\n\n"
                 f"Qual você quer? Digite o número ou o nome! 👇"
@@ -161,7 +161,7 @@ class ProductMentionHandler(IntentHandler):
                 if search_term == first_word or first_word in search_term:
                     keyword_products.append(product)
         if keyword_products:
-            product_list = "\n".join([f"{i+1}. {p.name} - R$ {p.price}" for i, p in enumerate(keyword_products[:10])])
+            product_list = "\n".join([f"{i+1}. {p.name} - R$ {p.preco_vigente()}" for i, p in enumerate(keyword_products[:10])])
             return HandlerResult.text(
                 f"🍝 *{search_term.title()}* - Temos esses:\n\n{product_list}\n\n"
                 f"Qual você quer? Digite o número ou o nome! 👇"
@@ -267,7 +267,7 @@ class MenuRequestHandler(IntentHandler):
                 break
             remaining_rows = max_rows - total_rows
             rows = [
-                {'id': f'product_{p.id}', 'title': p.name[:24], 'description': f'R$ {p.price}'}
+                {'id': f'product_{p.id}', 'title': p.name[:24], 'description': f'R$ {p.preco_vigente()}'}
                 for p in products[:remaining_rows]
             ]
             if total_rows + len(rows) > max_rows:
@@ -280,7 +280,7 @@ class MenuRequestHandler(IntentHandler):
             logger.warning("[MenuRequestHandler] Sem seções, usando fallback de texto")
             fallback = list(products_by_category.values())[0] if products_by_category else []
             if fallback:
-                product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in fallback[:10]])
+                product_list = "\n".join([f"• {p.name} - R$ {p.preco_vigente()}" for p in fallback[:10]])
                 body = f"📋 *Cardápio - {self.store.name}*\n\n{product_list}\n\nPara pedir, é só dizer o nome e a quantidade!"
                 if drink_footer:
                     body += f"\n\n{drink_footer}"
@@ -310,7 +310,7 @@ class ProductNotFoundHandler(IntentHandler):
                 "Digite *cardápio* para ver o que temos disponível! 📋"
             )
         products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente'])[:5]
-        product_list = "\n".join([f"• {p.name} - R$ {p.price}" for p in products])
+        product_list = "\n".join([f"• {p.name} - R$ {p.preco_vigente()}" for p in products])
         return HandlerResult.text(
             f"❌ Não encontrei esse produto.\n\n"
             f"Temos disponíveis:\n{product_list}\n\n"

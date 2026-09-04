@@ -220,8 +220,14 @@ class ComboSelectionValidator:
                         f"Você selecionou {count}."
                     )
 
-                # Check stock availability
-                if variant.product.track_stock and variant.stock_quantity < count:
+                # Check stock availability. `allow_backorder` do produto vale
+                # para os sabores dele — senão um molho zerado e esquecido
+                # reprova a salada montada inteira.
+                if (
+                    variant.product.track_stock
+                    and not variant.product.allow_backorder
+                    and variant.stock_quantity < count
+                ):
                     self.errors.append(
                         f"Variante '{variant.name}' não possui estoque suficiente. "
                         f"Disponível: {variant.stock_quantity}, solicitado: {count}."

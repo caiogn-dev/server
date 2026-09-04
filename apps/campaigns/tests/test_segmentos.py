@@ -128,3 +128,35 @@ class DescreverFiltrosTests(SimpleTestCase):
         texto = descrever_filtros({'ticket_min': Decimal('50')})
         self.assertIn('R$', texto)
         self.assertIn('50', texto)
+
+
+class DescricaoDeProdutoEBairroTests(SimpleTestCase):
+    """A frase da tela mentia quando o filtro era por produto.
+
+    O dono escolhia um produto, a lista caía de 292 para 2 — e o cabeçalho
+    continuava dizendo "Todos os contatos". `descrever_filtros` lê
+    `produtos_nomes`, e a view passava `produtos` (os UUIDs). Número certo com
+    frase errada é pior que os dois errados: parece bug e ninguém confia.
+    """
+
+    def test_produto_aparece_na_frase_pelo_nome(self):
+        texto = descrever_filtros({'produtos_nomes': ['Salada Caesar']})
+        self.assertIn('Salada Caesar', texto)
+        self.assertNotEqual(texto, 'Todos os contatos')
+
+    def test_uuid_cru_nunca_vaza_para_a_frase(self):
+        # Se um dia a view voltar a passar id, a frase não pode exibir UUID.
+        texto = descrever_filtros({
+            'produtos': ['4f1c2b8e-0000-0000-0000-000000000000'],
+            'produtos_nomes': ['Salada Caesar'],
+        })
+        self.assertNotIn('4f1c2b8e', texto)
+
+    def test_filtro_de_produto_sem_nome_ainda_admite_que_filtra(self):
+        # Melhor "1 produto escolhido" do que "Todos os contatos": o usuário
+        # precisa saber que a lista está filtrada, mesmo sem o nome à mão.
+        texto = descrever_filtros({'produtos': ['id-qualquer']})
+        self.assertNotEqual(texto, 'Todos os contatos')
+
+    def test_bairro_aparece_na_frase(self):
+        self.assertIn('Centro', descrever_filtros({'bairros': ['Centro']}))

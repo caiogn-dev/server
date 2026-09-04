@@ -922,7 +922,7 @@ class LangchainService:
                         for it in pending_items:
                             prod = products_by_id.get(str(it.get('product_id')))
                             if prod is not None:
-                                item_lines.append(f"  - {it['quantity']}x {prod.name} (R$ {prod.price})")
+                                item_lines.append(f"  - {it['quantity']}x {prod.name} (R$ {prod.preco_vigente()})")
                             else:
                                 item_lines.append(f"  - {it['quantity']}x produto #{it.get('product_id','?')}")
                         session_parts.append("Itens no carrinho atual:\n" + "\n".join(item_lines))
@@ -1092,7 +1092,7 @@ class LangchainService:
         from apps.stores.models import ComboProductGroup
 
         cat = produto.category.name if produto.category else 'Geral'
-        linhas = [f"{produto.name} — {self._brl(produto.price)}  [{cat}]"]
+        linhas = [f"{produto.name} — {self._brl(produto.preco_vigente())}  [{cat}]"]
 
         descricao = (getattr(produto, 'description', '') or '').strip()
         if descricao:
@@ -1229,7 +1229,7 @@ class LangchainService:
                 for p in matched:
                     cat = p.category.name if p.category else "Geral"
                     desc = f" — {p.description[:70]}..." if getattr(p, "description", "") else ""
-                    lines.append(f"[{cat}] {p.name} — R$ {p.price}{desc} (id: {p.id})")
+                    lines.append(f"[{cat}] {p.name} — R$ {p.preco_vigente()}{desc} (id: {p.id})")
                 return "\n".join(lines)
             except Exception as exc:
                 return f"Erro ao buscar produto: {exc}"
@@ -1494,7 +1494,7 @@ class LangchainService:
                         try:
                             p = _SP.objects.get(id=it['product_id'])
                             qty = int(it.get('quantity', 1))
-                            up = float(it.get('unit_price') or float(p.price))
+                            up = float(it.get('unit_price') or float(p.preco_vigente()))
                             items.append({
                                 'product_id': str(p.id),
                                 'product_name': p.name,

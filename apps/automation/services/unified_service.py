@@ -333,7 +333,7 @@ class UnifiedService:
 
             products = StoreProduct.disponiveis(self.store).exclude(tags__contains=['ingrediente'])[:5]
             if products:
-                product_lines = [f'- {product.name}: R$ {product.price:.2f}' for product in products]
+                product_lines = [f'- {product.name}: R$ {product.preco_vigente():.2f}' for product in products]
                 parts.append('Produtos ativos:')
                 parts.extend(product_lines)
 

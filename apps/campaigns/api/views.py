@@ -12,6 +12,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
+from rest_framework.exceptions import NotFound
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from django.db.models import Max, Q
@@ -107,7 +108,12 @@ class SystemContactsView(APIView):
         # origens diferentes com/sem DDI e com/sem o nono dígito.
         contacts = {}
 
-        # Resolve accessible account IDs for this user
+        # As lojas desta audiência são resolvidas ANTES de montar a lista.
+        # Buscar contato em `accessible_store_ids(user)` — as doze lojas do
+        # dono — trazia cliente e inscrito de outra loja para dentro da
+        # campanha, não só para dentro dos números.
+        lojas = self._store_ids(request)
+
         from apps.stores.models import Store
         accessible_account_ids = None if user.is_superuser else list(
             accessible_whatsapp_account_ids(user)
@@ -140,13 +146,8 @@ class SystemContactsView(APIView):
         if source in ['all', 'orders']:
             try:
                 from apps.stores.models import StoreOrder, StoreIntegration
-                # Restrict orders to stores the user owns/manages
-                if user.is_superuser:
-                    orders_qs = StoreOrder.objects.all()
-                else:
-                    orders_qs = StoreOrder.objects.filter(
-                        store_id__in=accessible_store_ids(user)
-                    )
+                # Só as lojas desta audiência — ver `_store_ids`.
+                orders_qs = StoreOrder.objects.filter(store_id__in=lojas)
                 if account_id:
                     try:
                         wa_account = WhatsAppAccount.objects.get(id=account_id)
@@ -191,9 +192,11 @@ class SystemContactsView(APIView):
         if source in ['all', 'subscribers']:
             try:
                 from apps.marketing.models import Subscriber
-                sub_qs = Subscriber.objects.filter(phone__isnull=False).exclude(phone='')
-                if not user.is_superuser:
-                    sub_qs = sub_qs.filter(store_id__in=accessible_store_ids(user))
+                sub_qs = (
+                    Subscriber.objects
+                    .filter(phone__isnull=False, store_id__in=lojas)
+                    .exclude(phone='')
+                )
                 subscribers = sub_qs.values(
                     'phone', 'name', 'email'
                 ).order_by('-created_at')[:limit]
@@ -233,7 +236,6 @@ class SystemContactsView(APIView):
         # deixaria a mesma pessoa passar por uma origem e ser barrada por
         # outra, que é o bug que a dedup já resolveu.
         filtros = self._filtros_da_query(request)
-        lojas = self._store_ids(user)
         perfis = perfis_por_telefone(lojas)
 
         # O resumo é calculado ANTES dos filtros de propósito: ele existe para
@@ -241,10 +243,17 @@ class SystemContactsView(APIView):
         # já obedece o filtro escolhido só sabe dizer o que foi escolhido.
         resumo = resumo_por_segmento(contacts, perfis)
 
-        chaves_produto = (
-            chaves_que_pediram_produtos(lojas, filtros['produtos'])
-            if filtros.get('produtos') else None
-        )
+        chaves_produto = None
+        if filtros.get('produtos'):
+            chaves_produto = chaves_que_pediram_produtos(lojas, filtros['produtos'])
+            # O nome vem para a FRASE da tela. Sem isto o cabeçalho dizia
+            # "Todos os contatos" com a lista já filtrada por produto.
+            from apps.stores.models import StoreProduct
+            filtros['produtos_nomes'] = list(
+                StoreProduct.objects
+                .filter(id__in=filtros['produtos'], store_id__in=lojas)
+                .values_list('name', flat=True)
+            )
         chaves_bairro = (
             chaves_dos_bairros(lojas, filtros['bairros'])
             if filtros.get('bairros') else None
@@ -286,11 +295,22 @@ class SystemContactsView(APIView):
             'results': contact_list,
         })
 
-    def _store_ids(self, user):
-        from apps.stores.models import Store
-        if user.is_superuser:
-            return list(Store.objects.values_list('id', flat=True))
-        return list(accessible_store_ids(user))
+    def _store_ids(self, request):
+        """As lojas que definem esta audiência. NUNCA "todas as que o dono vê".
+
+        O dono da Cê Saladas enxerga DOZE lojas (várias de demonstração). Usar
+        `accessible_store_ids` inteiro fazia o seletor listar o catálogo das
+        doze e — bem pior — somava os pedidos de todas no perfil de compra:
+        95 "compradores" onde havia 59, e 21 "inativos" onde havia 7. Quem
+        comprou na Pastita entrava como cliente da Cê Saladas, e o segmento
+        "sumidos" prometia gente que nunca foi cliente daquela loja.
+
+        Ordem de resolução, da mais específica para a menos:
+          1. `store` na query (o painel sabe qual loja está aberta);
+          2. as lojas ligadas à conta de WhatsApp da campanha;
+          3. nada — audiência vazia é melhor que audiência de outra loja.
+        """
+        return resolver_lojas_da_audiencia(request)
 
     def _filtros_da_query(self, request):
         """Traduz a query string nos filtros de segmento.
@@ -326,6 +346,67 @@ class SystemContactsView(APIView):
         }
 
 
+def resolver_lojas_da_audiencia(request):
+    """Resolve as lojas da audiência a partir da query. Ver `_store_ids`.
+
+    Levanta `PermissionDenied` quando a `store` pedida não é do usuário: cair
+    calado em "todas as lojas" foi exatamente o defeito que se conserta aqui, e
+    devolver o catálogo alheio seria vazamento entre inquilinos.
+    """
+    from rest_framework.exceptions import PermissionDenied
+
+    from apps.stores.models import Store
+
+    user = request.user
+    permitidas = (
+        set(Store.objects.values_list('id', flat=True)) if user.is_superuser
+        else set(accessible_store_ids(user))
+    )
+
+    slug_ou_id = (request.query_params.get('store') or '').strip()
+    if slug_ou_id:
+        loja = Store.objects.filter(slug=slug_ou_id).first()
+        if loja is None:
+            loja = Store.objects.filter(pk=slug_ou_id).first() if _parece_uuid(slug_ou_id) else None
+        if loja is None:
+            raise NotFound('Loja não encontrada.')
+        if loja.id not in permitidas:
+            raise PermissionDenied('Loja não pertence a este usuário.')
+        return [loja.id]
+
+    # Sem `store`: as lojas ligadas à conta de WhatsApp da campanha.
+    account_id = (request.query_params.get('account_id') or '').strip()
+    if account_id:
+        conta = WhatsAppAccount.objects.filter(id=account_id).first()
+        if conta is not None:
+            from apps.stores.models import StoreIntegration
+            por_vinculo = set(
+                Store.objects.filter(whatsapp_account=conta).values_list('id', flat=True)
+            )
+            por_integracao = set(
+                StoreIntegration.objects
+                .filter(integration_type=StoreIntegration.IntegrationType.WHATSAPP)
+                .filter(
+                    Q(phone_number_id=conta.phone_number_id) | Q(waba_id=conta.waba_id)
+                )
+                .values_list('store_id', flat=True)
+            )
+            return list((por_vinculo | por_integracao) & permitidas)
+
+    # Sem loja e sem conta não dá para saber de quem é a audiência. Devolver
+    # tudo aqui é como o defeito começou.
+    return list(permitidas)
+
+
+def _parece_uuid(valor: str) -> bool:
+    import uuid
+    try:
+        uuid.UUID(str(valor))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
 class OpcoesDeAudienciaView(APIView):
     """O que existe para escolher: bairros e produtos com pedido de verdade.
 
@@ -338,11 +419,7 @@ class OpcoesDeAudienciaView(APIView):
     def get(self, request):
         from apps.stores.models import Store, StoreProduct
 
-        user = request.user
-        store_ids = (
-            list(Store.objects.values_list('id', flat=True)) if user.is_superuser
-            else list(accessible_store_ids(user))
-        )
+        store_ids = resolver_lojas_da_audiencia(request)
 
         produtos = (
             StoreProduct.objects

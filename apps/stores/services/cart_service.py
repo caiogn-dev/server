@@ -82,8 +82,15 @@ class CartService:
     ) -> StoreCartItem:
         """Add a product to the cart with stock validation."""
         
-        # Validate stock with row locking to prevent race conditions
-        if product.track_stock:
+        # Validate stock with row locking to prevent race conditions.
+        #
+        # `allow_backorder` é a decisão do lojista de que este item sempre pode
+        # ser vendido — molho, refrigerante, o que é reposto sem contagem. Ele
+        # vale para as VARIANTES também: sabor é atributo do produto, não uma
+        # política de estoque própria (a variante nem tem o campo). Sem isto,
+        # um sabor com estoque zerado e esquecido travava a venda do molho
+        # inteiro, e o cliente só via "erro ao adicionar à sacola" (04/09).
+        if product.track_stock and not product.allow_backorder:
             # Lock the product row to prevent concurrent modifications
             locked_product = StoreProduct.objects.select_for_update().get(id=product.id)
             available = locked_product.stock_quantity
@@ -297,7 +304,9 @@ class CartService:
             return None
         
         product = item.product
-        if product.track_stock:
+        # `allow_backorder` vale aqui como vale no add: quem pôde botar o molho
+        # na sacola tem que poder botar o segundo.
+        if product.track_stock and not product.allow_backorder:
             available = product.stock_quantity
             if item.variant and item.variant.stock_quantity is not None:
                 available = item.variant.stock_quantity
@@ -462,7 +471,11 @@ class CartService:
                 })
                 continue
             
-            if product.track_stock:
+            # Item com `allow_backorder` já passou pelo `is_in_stock` acima, que
+            # respeita a flag. Contar de novo aqui reprovaria o carrinho inteiro
+            # no checkout depois de a sacola ter aceitado o item — o pior lugar
+            # para descobrir isso.
+            if product.track_stock and not product.allow_backorder:
                 # Check variant stock if exists
                 if item.variant_id and item.variant_id in locked_variants:
                     variant = locked_variants[item.variant_id]

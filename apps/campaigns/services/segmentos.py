@@ -373,9 +373,18 @@ def descrever_filtros(filtros: Dict[str, Any]) -> str:
         if rotulo:
             partes.append(rotulo)
 
-    produtos = filtros.get('produtos_nomes') or []
-    if produtos:
-        partes.append('já pediu ' + ', '.join(produtos))
+    # Os NOMES quando a view os resolveu; senão, ao menos admitir que há
+    # filtro. A view passava os UUIDs em `produtos` e a frase caía em "Todos
+    # os contatos" com a lista já filtrada — número certo, frase errada, que é
+    # pior do que os dois errados porque parece defeito.
+    nomes = filtros.get('produtos_nomes') or []
+    if nomes:
+        partes.append('já pediu ' + ', '.join(nomes))
+    elif filtros.get('produtos'):
+        quantos = len(filtros['produtos'])
+        partes.append(
+            f'já pediu {quantos} produto' + ('s escolhidos' if quantos > 1 else ' escolhido')
+        )
 
     bairros = filtros.get('bairros') or []
     if bairros:

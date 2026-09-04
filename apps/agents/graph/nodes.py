@@ -321,7 +321,7 @@ def _catalog_summary(store) -> str:
             for p in products:
                 cat = f"[{p.category.name}] " if p.category else ""
                 desc = f" — {_resumo_da_descricao(p.description)}" if getattr(p, "description", "") else ""
-                lines.append(f"  • {cat}{p.name} — R$ {p.price}{desc}")
+                lines.append(f"  • {cat}{p.name} — R$ {p.preco_vigente()}{desc}")
 
         # Combos eram invisíveis: o agente não sabia que "Sexta do Bacalhau"
         # existia, muito menos o que vinha dentro.

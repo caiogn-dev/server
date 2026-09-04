@@ -103,7 +103,7 @@ def test_menu_text_identical_to_uncached(agent, store_with_product):
 
     assert menu_text.startswith(f"\n📋 CARDÁPIO INTERNO - {store.name}")
     assert "【" in menu_text and "】" in menu_text
-    assert f"• {p.name} - R$ {p.price}" in menu_text
+    assert f"• {p.name} - R$ {p.preco_vigente()}" in menu_text
 
 
 def test_empty_store_caches_empty_string(agent, db):

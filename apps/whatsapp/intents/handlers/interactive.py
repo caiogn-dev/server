@@ -812,8 +812,8 @@ class InteractiveReplyHandler(IntentHandler):
             pr = products.get(str(it.get('product_id')))
             if not pr:
                 continue
-            total += qty * float(pr.price)
-            lines.append(f"• {qty}x {pr.name} — {moeda(qty * float(pr.price))}")
+            total += qty * float(pr.preco_vigente())
+            lines.append(f"• {qty}x {pr.name} — {moeda(qty * float(pr.preco_vigente()))}")
 
         return (
             "🛒 *Seu pedido até agora:*\n"
@@ -862,7 +862,7 @@ class InteractiveReplyHandler(IntentHandler):
             return HandlerResult.text("Produto não encontrado. 😕")
         rows = [
             {'id': f'setqty_{product.id}_{n}', 'title': f'{n} unidade' + ('s' if n > 1 else ''),
-             'description': moeda(n * float(product.price))}
+             'description': moeda(n * float(product.preco_vigente()))}
             for n in range(1, 10)
         ]
         return HandlerResult.list_message(
