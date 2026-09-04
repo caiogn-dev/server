@@ -77,14 +77,33 @@ class FiscalItemsN1Tests(TestCase):
             metadata={'fiscal': dict(FISCAL_CFG)},
         )
 
-    def test_itens_usa_select_related_sem_n1(self):
-        """build_nfce_payload com 5 itens deve emitir no máximo 2 queries (items + join product)."""
+    def test_sem_prefetch_usa_select_related_sem_n1(self):
+        """Caminho sem prefetch (Celery/emissão direta): 1 query JOIN em vez de 1+N."""
         order = _setup_order_with_items(self.store, n_items=5)
         config = get_fiscal_config(self.store)
 
         # Máximo aceitável: 1 query para buscar items com JOIN product.
         # Sem select_related seriam 6 queries (1 + 5).
         with self.assertNumQueries(1):
+            payload = build_nfce_payload(order, config)
+
+        self.assertEqual(len(payload['itens']), 5)
+
+    def test_com_prefetch_usa_cache_sem_query_adicional(self):
+        """Caminho com prefetch (viewset): 0 queries extras — usa _prefetched_objects_cache."""
+        from django.db.models import Prefetch
+        from apps.stores.models import StoreOrderItem
+
+        order = _setup_order_with_items(self.store, n_items=5)
+        # Simula o comportamento do viewset: prefetch_related('items__product')
+        order = (
+            StoreOrder.objects.prefetch_related('items__product')
+            .get(pk=order.pk)
+        )
+        config = get_fiscal_config(self.store)
+
+        # Com prefetch populado, _itens() não deve emitir nenhuma query.
+        with self.assertNumQueries(0):
             payload = build_nfce_payload(order, config)
 
         self.assertEqual(len(payload['itens']), 5)

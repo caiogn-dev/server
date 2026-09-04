@@ -56,7 +56,12 @@ def _cnpj_emitente(config: dict) -> str:
 
 def _itens(order, config: dict, cfop: str) -> list[dict]:
     itens = []
-    for idx, item in enumerate(order.items.select_related('product').all(), start=1):
+    # Usa cache de prefetch quando disponível (chamado do viewset que faz
+    # prefetch_related('items__product')). Para chamadas sem prefetch (Celery,
+    # emissão direta), select_related evita 1 query por item.
+    _cache = getattr(order, '_prefetched_objects_cache', {})
+    _items_qs = order.items.all() if 'items' in _cache else order.items.select_related('product').all()
+    for idx, item in enumerate(_items_qs, start=1):
         product = item.product
         ncm = ''
         if product is not None:
