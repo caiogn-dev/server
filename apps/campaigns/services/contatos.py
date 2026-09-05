@@ -53,8 +53,19 @@ def chave_do_telefone(telefone) -> str:
 
 
 def telefone_para_envio(telefone) -> str:
-    """Telefone em E.164 sem '+', preservando o nono dígito quando existe."""
-    return normalize_phone_number(_so_digitos(telefone))
+    """Telefone em E.164 sem '+', COMO A GENTE O CONHECE.
+
+    Usa `telefone_para_envio_e164` e não `normalize_phone_number` porque as
+    duas deixaram de ser a mesma coisa em 05/09: a de identidade acrescenta o
+    nono dígito para colapsar `556391124171` (wa_id) com `5563991124171`
+    (checkout) e parar a duplicação de cadastro.
+
+    Para ENVIAR, mexer no número é risco de outra natureza — identidade errada
+    é relatório torto, número de envio errado é a mensagem não chegando. Aqui
+    só o DDI é garantido.
+    """
+    from apps.core.utils import telefone_para_envio_e164
+    return telefone_para_envio_e164(_so_digitos(telefone))
 
 
 def mesclar_contato(contatos: Dict[str, dict], telefone, nome, origem) -> None:

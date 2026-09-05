@@ -245,6 +245,43 @@ def normalize_phone_number(phone: str, default_region: str = 'BR') -> str:
     return _com_nono_digito(digitos)
 
 
+def telefone_para_envio_e164(phone: str, default_region: str = 'BR') -> str:
+    """O número como a gente vai MANDAR a mensagem. Não é a identidade.
+
+    A diferença importa e custou uma regressão em 05/09. `normalize_phone_number`
+    passou a acrescentar o nono dígito para parar a duplicação de cadastro —
+    `556391124171` (wa_id) e `5563991124171` (checkout) são a mesma pessoa. Mas
+    isso mudou junto o número usado para enviar.
+
+    Os dois erros não têm o mesmo peso. Identidade errada é relatório torto, que
+    se conserta depois. Número de envio errado é a mensagem NÃO CHEGANDO — o
+    modo de falha mais caro deste sistema, e que já aconteceu: em agosto
+    nenhuma notificação de status saiu por causa de telefone sem o 55, e o log
+    dizia "sent".
+
+    Então aqui o número vai como a gente o conhece — o wa_id que o WhatsApp
+    entregou, ou o que a cliente digitou. Só o DDI é garantido, porque sem ele
+    a Meta recusa. Inventar dígito num número que já entrega hoje é apostar
+    contra o que funciona.
+    """
+    valor = str(phone or '')
+    digitos = ''.join(filter(str.isdigit, valor))
+    if not digitos:
+        return ''
+
+    import phonenumbers
+
+    numero = _parse_telefone(valor, digitos)
+    if numero is not None:
+        return phonenumbers.format_number(
+            numero, phonenumbers.PhoneNumberFormat.E164,
+        ).lstrip('+')
+
+    if not digitos.startswith('55') and _parece_brasileiro_local(digitos):
+        digitos = '55' + digitos
+    return digitos
+
+
 def format_phone_for_display(phone: str) -> str:
     """Format phone number for display.
 

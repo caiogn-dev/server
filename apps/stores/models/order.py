@@ -48,8 +48,20 @@ def _telefone_do_pedido(bruto) -> str:
     if not texto:
         return ''
     try:
-        from apps.core.utils import normalize_phone_number
-        return normalize_phone_number(texto) or texto
+        # ENDEREÇO, não identidade. O aviso de status do pedido sai por este
+        # número, e `normalize_phone_number` passou a acrescentar o nono dígito
+        # (05/09) para colapsar cadastro duplicado.
+        #
+        # Medido nas 7.640 mensagens da base antes de decidir: enviando SEM o
+        # nono dígito, 4.335 saíram e 65 falharam (1,5%); COM ele, 290 saíram e
+        # 117 falharam (29%). Vinte vezes mais falha. O que garante entrega é o
+        # DDI — esse sim entra, porque sem ele a Meta recusa e em agosto isso
+        # calou todas as notificações da loja.
+        #
+        # Quem colapsa a identidade é a leitura (`normalize_phone_number` nas
+        # comparações), sem tocar no endereço.
+        from apps.core.utils import telefone_para_envio_e164
+        return telefone_para_envio_e164(texto) or texto
     except Exception:
         return texto
 

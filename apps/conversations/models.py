@@ -104,7 +104,14 @@ class Conversation(BaseModel):
 
     def save(self, *args, **kwargs):
         if self.phone_number:
-            self.phone_number = normalize_phone_number(self.phone_number)
+            # ENDEREÇO, não identidade: a conversa é por onde a mensagem sai, e
+            # `normalize_phone_number` passou a acrescentar o nono dígito
+            # (05/09) para colapsar cadastro duplicado. Guardar o número
+            # alterado aqui mudaria o destino de todo envio — quem colapsa
+            # identidade em campanha e relatório é `chave_do_telefone`, na
+            # leitura, sem tocar no endereço.
+            from apps.core.utils import telefone_para_envio_e164
+            self.phone_number = telefone_para_envio_e164(self.phone_number)
         super().save(*args, **kwargs)
 
     def __str__(self):

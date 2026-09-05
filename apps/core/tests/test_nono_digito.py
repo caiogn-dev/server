@@ -77,3 +77,48 @@ class NonoDigitoTest(SimpleTestCase):
     def test_ddd_invalido_nao_e_tocado(self):
         """55 + '01' não é DDD nenhum: não inventar dígito em cima de lixo."""
         self.assertEqual(normalize_phone_number('550112345678'), '550112345678')
+
+
+class EnvioNaoEIdentidadeTest(SimpleTestCase):
+    """Identidade e ENVIO são coisas diferentes, e confundi-las cala o cliente.
+
+    O nono dígito entrou em `normalize_phone_number` (05/09) para parar a
+    duplicação: `556391124171` do wa_id e `5563991124171` do checkout são a
+    mesma pessoa, e sem colapsar isso ela vira dois cadastros.
+
+    Mas isso mudou também o número usado para ENVIAR. E aí o risco muda de
+    natureza: identidade errada é relatório torto; número de envio errado é a
+    mensagem não chegando — que é o modo de falha mais caro deste sistema, e
+    que já aconteceu (agosto: notificação nenhuma saiu por telefone sem o 55, e
+    o log dizia "sent").
+
+    A REGRA: para ENVIAR, o número vai como a gente o conhece — o wa_id que o
+    WhatsApp entregou, ou o que a cliente digitou. Só o DDI é garantido, porque
+    sem ele a Meta recusa. Inventar dígito num número que já funciona é apostar
+    contra algo que está entregando hoje.
+    """
+
+    def test_envio_preserva_o_formato_legado(self):
+        from apps.core.utils import telefone_para_envio_e164
+
+        self.assertEqual(telefone_para_envio_e164('556391124171'), '556391124171')
+
+    def test_envio_garante_o_ddi(self):
+        """Sem o 55 a Meta recusa — isso sim tem que ser consertado."""
+        from apps.core.utils import telefone_para_envio_e164
+
+        self.assertEqual(telefone_para_envio_e164('63991124171'), '5563991124171')
+
+    def test_envio_nao_toca_em_estrangeiro(self):
+        from apps.core.utils import telefone_para_envio_e164
+
+        self.assertEqual(telefone_para_envio_e164('+34 647 52 08 24'), '34647520824')
+
+    def test_a_identidade_continua_colapsando_os_dois_formatos(self):
+        """O conserto da duplicação não pode ser desfeito por este ajuste."""
+        from apps.core.utils import normalize_phone_number
+
+        self.assertEqual(
+            normalize_phone_number('556391124171'),
+            normalize_phone_number('5563991124171'),
+        )

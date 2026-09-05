@@ -125,6 +125,24 @@ class CampaignService:
         if campaign.status not in [Campaign.CampaignStatus.DRAFT, Campaign.CampaignStatus.SCHEDULED]:
             raise ValueError("Campaign cannot be started")
         
+        # A JANELA É MEDIDA AGORA, não quando a campanha foi montada.
+        #
+        # Campanha marcada como "só quem tem janela de 24h aberta" é a que sai
+        # de graça: dentro de 24h da última mensagem da cliente, a loja responde
+        # texto livre sem custo. Quem monta às 15h e agenda para 20h escolheu
+        # uma lista de 15h — e quem falou às 14h de ontem já saiu da janela às
+        # 20h de hoje. Sem este recorte o envio falharia com 131047 por
+        # destinatário, em silêncio, porque campanha registra erro e segue.
+        from .janela import recortar_para_a_janela
+        recorte = recortar_para_a_janela(campaign)
+        if recorte['pulados']:
+            campaign.total_recipients = recorte['dentro']
+            campaign.save(update_fields=['total_recipients'])
+            logger.info(
+                'Campanha %s: %s fora da janela de 24h foram pulados; %s seguem',
+                campaign_id, recorte['pulados'], recorte['dentro'],
+            )
+
         campaign.status = Campaign.CampaignStatus.RUNNING
         campaign.started_at = timezone.now()
         campaign.save(update_fields=['status', 'started_at', 'updated_at'])

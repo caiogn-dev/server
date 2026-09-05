@@ -74,6 +74,22 @@ class TelefoneDoPedidoNormalizadoTest(TestCase):
 
         self.assertEqual(gravados, {'5563992618115'})
 
+    def test_o_formato_legado_e_gravado_COMO_VEIO(self):
+        """O que grava aqui é ENDEREÇO de entrega da mensagem, não identidade.
+
+        `556391124171` é o formato que o wa_id do WhatsApp entrega — celular
+        brasileiro antes da migração do nono dígito. Ele é o endereço que
+        comprovadamente entrega: medido nas 7.640 mensagens da base, enviando
+        neste formato 4.335 saíram e 65 falharam (1,5%); acrescentando o nono
+        dígito, 290 saíram e 117 falharam (29%).
+
+        Quem colapsa `556391124171` com `5563991124171` para saber que é a
+        mesma pessoa é a LEITURA. O endereço fica como veio.
+        """
+        pedido = self._pedido_com_telefone('556391124171')
+
+        self.assertEqual(pedido.customer_phone, '556391124171')
+
     def test_numero_de_fora_do_brasil_nao_ganha_55(self):
         """A cliente da Espanha (+34) tem 11 dígitos igual a um celular BR.
 

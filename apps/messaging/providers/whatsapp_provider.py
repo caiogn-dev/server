@@ -226,7 +226,14 @@ class WhatsAppProvider(BaseProvider):
         viravam Brasil. Um celular espanhol completo tem exatamente 11 dígitos
         — `34647520824` virava `+5534647520824`, e todo envio para a Layane
         falhou com 131026 enquanto ela tentava fazer um pedido.
+
+        E desde 05/09 usa `telefone_para_envio_e164`, não
+        `normalize_phone_number`: a de identidade passou a acrescentar o nono
+        dígito para colapsar `556391124171` (wa_id) com `5563991124171`
+        (checkout) e parar a duplicação de cadastro. Isso é certo para saber
+        QUEM é a pessoa e errado para saber PARA ONDE mandar — o wa_id é o
+        endereço que a Meta entregou e que comprovadamente entrega.
         """
-        from apps.core.utils import normalize_phone_number
-        normalizado = normalize_phone_number(recipient or '')
+        from apps.core.utils import telefone_para_envio_e164
+        normalizado = telefone_para_envio_e164(recipient or '')
         return f'+{normalizado}' if normalizado else ''
