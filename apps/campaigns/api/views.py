@@ -807,3 +807,46 @@ class ContactListViewSet(viewsets.ModelViewSet):
                 {'error': 'Erro ao importar contatos do CSV.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+class JanelaDaAudienciaView(APIView):
+    """Quantos clientes podem receber a campanha GRÁTIS, no horário escolhido.
+
+    Sem este número o dono agenda no escuro: "manda às 20h" pode significar 10
+    pessoas ou 2, e ele só descobre depois que a campanha rodou.
+
+    `em` é o coração disto. A janela encolhe com o tempo — quem falou com a loja
+    há 20 horas está dentro agora e fora daqui a cinco. "Quantos estarão dentro
+    às 20h" é uma pergunta diferente de "quantos estão dentro agora", e é a que
+    decide o horário do disparo.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.utils.dateparse import parse_datetime
+
+        from apps.campaigns.services.janela import resumo_da_janela
+        from apps.stores.models import Store
+
+        # `get_whatsapp_account` e não uma consulta nova: a ligação
+        # loja↔conta tem TRÊS caminhos (FK direta, perfil de automação e
+        # integração legada), e a Cê Saladas usa um deles. Refazer a busca aqui
+        # acertaria uma loja e devolveria zero para as outras.
+        store_ids = resolver_lojas_da_audiencia(request)
+        contas = []
+        for loja in Store.objects.filter(id__in=store_ids):
+            conta = loja.get_whatsapp_account()
+            if conta:
+                contas.append(conta.id)
+
+        # Data meio digitada não pode virar erro vermelho na tela: cai em
+        # "agora", que é a resposta certa enquanto ninguém escolheu horário.
+        em = None
+        bruto = (request.query_params.get('em') or '').strip()
+        if bruto:
+            try:
+                em = parse_datetime(bruto)
+            except (TypeError, ValueError):
+                em = None
+
+        return Response(resumo_da_janela(contas, em=em))

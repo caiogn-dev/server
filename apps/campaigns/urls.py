@@ -7,7 +7,11 @@ Use /api/v1/automation/scheduled-messages/ for scheduled message operations.
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .api import CampaignViewSet, ContactListViewSet
-from .api.views import OpcoesDeAudienciaView, SystemContactsView
+from .api.views import (
+    JanelaDaAudienciaView,
+    OpcoesDeAudienciaView,
+    SystemContactsView,
+)
 
 router = DefaultRouter()
 router.register(r'campaigns', CampaignViewSet, basename='campaign')
@@ -16,5 +20,6 @@ router.register(r'contacts', ContactListViewSet, basename='contact-list')
 urlpatterns = [
     path('system-contacts/', SystemContactsView.as_view(), name='system-contacts'),
     path('audiencia/opcoes/', OpcoesDeAudienciaView.as_view(), name='audiencia-opcoes'),
+    path('audiencia/janela/', JanelaDaAudienciaView.as_view(), name='audiencia-janela'),
     path('', include(router.urls)),
 ]
