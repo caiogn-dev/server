@@ -68,8 +68,11 @@ from .cash import StoreCashSession, StoreCashMovement
 # Bio (Link na Bio)
 from .bio import BioClickStat, StoreBioLink
 
+from .ifood import StoreIfoodIntegration
+
 
 __all__ = [
+    'StoreIfoodIntegration',
     # Base
     'Store',
     'StoreIntegration',
