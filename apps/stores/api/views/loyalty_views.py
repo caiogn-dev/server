@@ -324,6 +324,16 @@ class CashbackResumoView(APIView):
         # mensagem hoje", e quem está prestes a perder saldo é quem responde.
         from django.db.models import Case, When, Q, DecimalField
 
+        # A ficha do cliente pergunta pelo saldo DELE. Filtro no endpoint que
+        # já existe, e não um endpoint novo: é a mesma pergunta com recorte.
+        # E aqui o saldo vem COMPLETO — o endpoint público esconde a parte
+        # comprada de quem não comprovou o número, que é certo para a cliente
+        # e errado para o dono, que precisa ver o que ela tem.
+        um_so = (request.query_params.get('phone') or '').strip()
+        if um_so:
+            from apps.core.utils import normalize_phone_number
+            vivos = vivos.filter(phone=normalize_phone_number(um_so) or um_so)
+
         linhas = (
             vivos.values('phone')
             .annotate(
@@ -355,6 +365,16 @@ class CashbackResumoView(APIView):
             .annotate(t=Sum('remaining'))
         )
 
+        # QUEM é a pessoa. A pergunta desta tela é "a quem eu falo hoje, antes
+        # do saldo vencer", e ela não se responde com telefone. O nome vem do
+        # pedido mais recente daquele número: é o que a cliente escreveu no
+        # checkout e é como o dono a reconhece.
+        #
+        # Uma consulta para a página inteira: 50 clientes não podem virar 50
+        # buscas de nome.
+        da_pagina = list(linhas[start:start + self.PAGE_SIZE])
+        nomes = self._nomes_por_telefone(store, [l['phone'] for l in da_pagina])
+
         return Response({
             'enabled': CashbackService.is_enabled(store),
             'percent': CashbackService.percent(store),
@@ -365,15 +385,48 @@ class CashbackResumoView(APIView):
             'results': [
                 {
                     'phone': linha['phone'],
+                    'nome': nomes.get(linha['phone'], ''),
                     'saldo': linha['saldo'],
                     'saldo_carteira': linha['saldo_carteira'],
                     'cupons_entrega': cupons_por_telefone.get(linha['phone'], 0),
                     'vence_em': linha['vence_em'].isoformat(),
                     'dias_para_vencer': max(0, (linha['vence_em'] - agora).days),
                 }
-                for linha in linhas[start:start + self.PAGE_SIZE]
+                for linha in da_pagina
             ],
         })
+
+    @staticmethod
+    def _nomes_por_telefone(store, telefones: list) -> dict:
+        """Nome do pedido mais recente de cada telefone. Uma consulta só.
+
+        Casa por telefone NORMALIZADO porque pedido antigo pode ter ficado num
+        formato diferente — foi o que partiu sete clientes em duas pessoas até
+        04/09. Placeholder interno (`cliente_5563...`) vira vazio: na tela ele
+        é pior que campo em branco, porque parece um nome de verdade.
+        """
+        from apps.core.utils import normalize_phone_number
+        from apps.stores.models import StoreOrder
+
+        alvo = {t for t in telefones if t}
+        if not alvo:
+            return {}
+
+        nomes = {}
+        for tel_bruto, nome in (
+            StoreOrder.objects
+            .filter(store=store)
+            .exclude(customer_name='')
+            .exclude(customer_phone='')
+            .order_by('-created_at')
+            .values_list('customer_phone', 'customer_name')
+        ):
+            chave = normalize_phone_number(tel_bruto) or tel_bruto
+            if chave in alvo and chave not in nomes:
+                limpo = (nome or '').strip()
+                if limpo and not limpo.lower().startswith('cliente_'):
+                    nomes[chave] = limpo
+        return nomes
 
 
 class CashbackSaldoView(APIView):
