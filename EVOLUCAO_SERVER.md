@@ -888,3 +888,57 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-05
+
+**Baseline de testes:** 7 novos testes `SimpleTestCase` (sem Docker/PostgreSQL) — 3/7 FAIL antes
+do fix (RED confirmado), 7/7 GREEN após. CI `check`/`complexity` com `runner_id=0` desde
+2026-07-18 — falha de infra pré-existente, não regressão desta sessão.
+
+**Gate anti-acúmulo:** 38 PRs abertos (#318–#355). Varredura confirmou que nenhum cobre
+`emit_nfce` nem `cancel_nfce` em `apps/stores/api/views/order_views.py`.
+- PR #321 já cobre: `EmailCampaignViewSet.send` str(e) em marketing/api/views.py (não duplicado).
+- PR #331 já cobre: `payment_error = str(exc)` em order_views.py:288 e embedded_signup whatsapp (não duplicado).
+- PR #344: N+1 em cancel_order — diferente do issue de str(exc).
+- HEAD de `development`: `137f8ef7` (varredura via botão do painel).
+
+**Bug encontrado e corrigido:** str(exc) em respostas HTTP de emit_nfce e cancel_nfce [P1]
+
+- **Tipo:** P1 — Info-disclosure: mensagens internas do subsistema fiscal retornadas em corpo HTTP
+
+### O que estava errado
+
+| Action | Linha | Handler | Leak |
+|---|---|---|---|
+| `emit_nfce` | 777–780 | `except FiscalNotConfigured as exc` | `return Response({'error': str(exc)}, 400)` expunha `'focus_token ausente na config fiscal da loja'`, `f'Provider fiscal desconhecido: {provider_key}'` |
+| `cancel_nfce` | 822–825 | `except (ValueError, FiscalNotConfigured) as exc` | `str(exc)` sem logger — `ValueError` completamente descontrolado + sem rastreio em produção |
+
+Embora o fix de 2026-07-27 (PR #317) tenha sanitizado as mensagens de `FiscalNotConfigured`
+em `apps/fiscal/services.py`, as views ainda retornavam `str(exc)` diretamente — mensagens
+como `'focus_token ausente'` (provider key interno) e `f'Provider fiscal desconhecido: {key}'`
+ainda constavam nos `raise` em `focus.py` e `services.py`. Além disso, `cancel_nfce` capturava
+`ValueError` sem nenhum `logger`, tornando falhas de cancelamento invisíveis em produção.
+
+### O que foi corrigido
+
+1. **`emit_nfce`** — `str(exc)` substituído por mensagem genérica:
+   `'Configuração fiscal incompleta ou inválida. Verifique as configurações da loja.'`
+   Logger `warning` mantido (rastreio interno preservado).
+
+2. **`cancel_nfce`** — Adicionado `logger.warning` antes da resposta; `str(exc)` substituído por:
+   `'Não foi possível cancelar a nota. Verifique a configuração fiscal ou a justificativa fornecida.'`
+
+- **Arquivo corrigido:** `apps/stores/api/views/order_views.py` (2 pontos)
+- **Testes:** 7 `SimpleTestCase` em `apps/stores/tests/test_fiscal_nfce_view_str_exc.py` (RED→GREEN confirmado)
+- **PR:** `bot/server-2026-09-05-fiscal-nfce-str-exc-views`
+
+**Próximo backlog priorizado (2026-09-05):**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs acumulados #318–#356 (39 PRs aguardando revisão) |
+| P1 | `apps/stores/api/views/product_views.py:487` — `is_staff` permite listar product-types inativos de qualquer loja (encontrado na varredura de hoje, ainda não em nenhum PR) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (item crítico do CLAUDE.md) |
+| P3 | `apps/stores/api/views/crm_views.py:207` — `places_search_view` usa `IsAdminUser` (is_staff) em vez de gate de tenant |
+

@@ -777,7 +777,10 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         except FiscalNotConfigured as exc:
             logger.warning('emit_nfce: config inválida pedido=%s loja=%s: %s',
                            order.id, order.store_id, exc)
-            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'error': 'Configuração fiscal incompleta ou inválida. Verifique as configurações da loja.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             _nfce_payload(doc),
@@ -822,7 +825,11 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         try:
             doc = cancel_service(doc, request.data.get('justificativa', ''))
         except (ValueError, FiscalNotConfigured) as exc:
-            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            logger.warning('cancel_nfce: erro de validação/config pedido=%s: %s', order.id, exc)
+            return Response(
+                {'error': 'Não foi possível cancelar a nota. Verifique a configuração fiscal ou a justificativa fornecida.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception:
             logger.exception('Falha ao cancelar NFC-e do pedido %s', order.id)
             return Response(
