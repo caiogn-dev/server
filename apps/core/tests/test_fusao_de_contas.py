@@ -43,7 +43,25 @@ User = get_user_model()
 
 
 class FusaoDeContasTest(TestCase):
+    """Testa o conserto de um estado que o banco HOJE não deixa mais existir.
+
+    A trava `uma_conta_por_telefone` (05/09) impede a duplicata de nascer — que
+    é o objetivo. Mas a fusão existe justamente para limpar o passado, e o
+    passado não pode mais ser construído com a trava de pé.
+
+    Por isso ela cai aqui dentro. A queda vive na transação do teste e some no
+    rollback: nenhum outro teste, e muito menos produção, fica sem a trava.
+
+    A alternativa seria testar a fusão com dados que não colidem — o que
+    testaria outra coisa e deixaria o conserto sem cobertura no dia em que
+    alguém restaurasse um dump antigo.
+    """
+
     def setUp(self):
+        from django.db import connection
+        with connection.cursor() as cursor:
+            cursor.execute('DROP INDEX IF EXISTS uma_conta_por_telefone')
+
         dono = User.objects.create_user(username='dona-fusao', password='x')
         self.store = Store.objects.create(
             billing_exempt=True, name='Cê Saladas', slug='ce-fusao', owner=dono,
@@ -273,3 +291,63 @@ class DominiosInternosTest(TestCase):
         for email in ['eliruppenthal@hotmail.com', 'yas-17@hotmail.com',
                       'zaniadosanjossilva@icloud.com']:
             self.assertTrue(_email_de_verdade(email), f'{email} foi tratado como inventado')
+
+
+class UmaContaPorTelefoneTest(TestCase):
+    """A trava que impede a duplicação de voltar.
+
+    Fundir 9 contas resolveu o passado. Sem trava, o futuro se repete: são
+    vários caminhos que criam usuário (OTP do WhatsApp, checkout do site,
+    painel, importação) e basta um esquecer de procurar antes de criar.
+
+    Foi exatamente assim nas quatro vezes anteriores em que "normalizamos o
+    telefone" e o problema voltou. O cadastro de cliente ganhou trava de banco
+    em 04/09; esta é a mesma ideia na camada da CONTA.
+
+    Falhar ALTO é o ponto. Um caminho que esqueça a regra recebe IntegrityError
+    e alguém conserta; sem a trava ele cria a segunda conta em silêncio e o
+    estrago só aparece semanas depois, num relatório que não fecha.
+    """
+
+    def test_o_banco_recusa_duas_contas_com_o_mesmo_telefone(self):
+        from django.db import IntegrityError, transaction
+
+        primeira = User.objects.create_user(username='primeira-conta', password='x')
+        UserProfile.objects.update_or_create(
+            user=primeira, defaults={'phone': '5563991124171'},
+        )
+        segunda = User.objects.create_user(username='segunda-conta', password='x')
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                UserProfile.objects.update_or_create(
+                    user=segunda, defaults={'phone': '5563991124171'},
+                )
+
+    def test_o_formato_do_whatsapp_colide_com_o_do_site(self):
+        """`556391124171` e `5563991124171` são a MESMA pessoa.
+
+        A trava só funciona porque o telefone é gravado na forma canônica: sem
+        isso o banco veria dois textos diferentes e deixaria passar.
+        """
+        from django.db import IntegrityError, transaction
+
+        do_site = User.objects.create_user(username='do-site', password='x')
+        UserProfile.objects.update_or_create(
+            user=do_site, defaults={'phone': '5563991124171'},
+        )
+        do_whatsapp = User.objects.create_user(username='do-whatsapp', password='x')
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                UserProfile.objects.update_or_create(
+                    user=do_whatsapp, defaults={'phone': '556391124171'},
+                )
+
+    def test_varias_contas_sem_telefone_continuam_valendo(self):
+        """Conta de painel e de teste não têm telefone. Vazio não colide."""
+        for i in range(3):
+            u = User.objects.create_user(username=f'sem-telefone-{i}', password='x')
+            UserProfile.objects.update_or_create(user=u, defaults={'phone': ''})
+
+        self.assertEqual(UserProfile.objects.filter(phone='').count(), 3)

@@ -132,10 +132,51 @@ class UserProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        """O telefone do perfil é IDENTIDADE, e vai na forma canônica.
+
+        Aqui o nono dígito ENTRA de propósito: é o que faz `556391124171`
+        (wa_id) e `5563991124171` (checkout) serem a mesma pessoa, e é o que a
+        trava de unicidade abaixo depende para funcionar. Sem canonizar, o
+        banco veria dois textos diferentes e deixaria a duplicata passar.
+
+        Isto é o oposto do que o PEDIDO e a CONVERSA fazem — lá o telefone é
+        ENDEREÇO de entrega da mensagem e vai como o WhatsApp entregou, porque
+        mexer nele faz a mensagem não chegar (medido: 1,5% de falha no formato
+        legado contra 29% com o dígito acrescentado).
+        """
+        bruto = (self.phone or '').strip()
+        if bruto:
+            try:
+                from apps.core.utils import normalize_phone_number
+                self.phone = normalize_phone_number(bruto) or bruto
+            except Exception:
+                self.phone = bruto
+        else:
+            self.phone = ''
+        super().save(*args, **kwargs)
+
     class Meta:
         db_table = 'user_profiles'
         verbose_name = 'User Profile'
         verbose_name_plural = 'User Profiles'
+        constraints = [
+            # A GARANTIA de que uma pessoa não vira duas contas.
+            #
+            # Fundir as 9 contas duplicadas resolveu o passado. Sem trava o
+            # futuro se repete: vários caminhos criam usuário (OTP do WhatsApp,
+            # checkout, painel, importação) e basta um esquecer de procurar
+            # antes de criar — foi assim nas quatro vezes anteriores em que
+            # "normalizamos o telefone" e o problema voltou.
+            #
+            # Telefone vazio é exceção: conta de painel e de teste não tem, e
+            # vários vazios são legítimos.
+            models.UniqueConstraint(
+                fields=['phone'],
+                condition=~models.Q(phone=''),
+                name='uma_conta_por_telefone',
+            ),
+        ]
 
     def __str__(self):
         return f"Profile of {self.user.email}"
