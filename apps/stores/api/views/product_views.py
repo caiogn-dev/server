@@ -484,7 +484,7 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
                 from apps.core.permissions import accessible_store_ids
                 queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 
-        if self.action == 'list' and not self.request.user.is_staff:
+        if self.action == 'list' and not self.request.user.is_superuser:
             queryset = queryset.filter(is_active=True)
 
         return queryset.select_related('store').order_by('sort_order', 'name')

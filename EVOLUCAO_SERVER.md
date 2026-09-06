@@ -888,3 +888,80 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-06
+
+**Baseline de testes:** 54 testes `SimpleTestCase` (sem Docker/PostgreSQL) — 54/54 OK antes e
+depois do fix. CI `check`/`complexity` com `runner_id=0` desde 2026-07-18 — falha de infra
+pré-existente, não regressão desta sessão.
+
+**Gate anti-acúmulo:** 39 PRs abertos (#318–#356). Varredura no backlog do PR #356 confirmou que
+nenhum PR cobre `StoreProductTypeViewSet.get_queryset()` na linha do filtro `is_staff`.
+
+**Bug encontrado e corrigido:** is_staff bypass em StoreProductTypeViewSet — product-types inativas
+visíveis cross-tenant [P1]
+
+### O que estava errado
+
+`StoreProductTypeViewSet.get_queryset()` (linha 487 de `apps/stores/api/views/product_views.py`):
+
+```python
+if self.action == 'list' and not self.request.user.is_staff:
+    queryset = queryset.filter(is_active=True)
+```
+
+Padrão do projeto: `is_staff` (flag de acesso ao Django `/admin`) **não** equivale a acesso
+cross-tenant. Somente `is_superuser` tem esse privilégio.
+
+Vetor concreto:
+- Um usuário com `is_staff=True` passava `?store=<slug-da-vitima>` (ou acessava via `store_slug`
+  no URL) e recebia product-types **inativas** de qualquer loja do banco.
+- O tenant gate na branch `else` (linhas 479–485) só é aplicado quando não há `store_slug` nem
+  `store_param` — quando há, a filtragem de loja é feita diretamente, sem verificar ownership.
+  O `is_staff` bypass agravava isso ao não aplicar o filtro `is_active=True` sobre esse resultado.
+
+`StoreProductTypeViewSet` usa `IsAuthenticatedOrReadOnly` e é a API pública do catálogo.
+`StoreProductTypeAdminViewSet` (com `IsStoreOwnerOrStaff` e `StoreQuerysetMixin`) é a API
+de gestão — lá os admins de tenant legitimamente veem inativos dentro do próprio tenant.
+
+### O que foi corrigido
+
+`apps/stores/api/views/product_views.py`, linha 487:
+
+```python
+# ANTES (bug):
+if self.action == 'list' and not self.request.user.is_staff:
+# DEPOIS (fix):
+if self.action == 'list' and not self.request.user.is_superuser:
+```
+
+Impacto:
+- `is_staff` (não superuser): agora vê apenas tipos ativas — mesmo que o público anônimo.
+- `is_superuser`: continua vendo inativas (comportamento esperado para superuser).
+- Regular/anônimo: sem mudança.
+- `StoreProductTypeAdminViewSet`: não alterado.
+
+### Testes
+
+8 `SimpleTestCase` em `apps/stores/tests/test_product_type_is_staff_bypass.py` (RED→GREEN):
+1. Usuário regular → vê apenas ativas
+2. Anônimo → vê apenas ativas
+3. `is_staff` (não superuser) → vê apenas ativas (**era RED**)
+4. `is_staff` + `?store=vitima` → vê apenas ativas (**era RED**)
+5. `is_staff` + `store_slug` da vítima → vê apenas ativas (**era RED**)
+6. Superuser → vê inativas também (comportamento preservado)
+7. Ação `retrieve` → filtro `is_active` não aplicado (sem mudança)
+8. Análise estática → source não contém `is_staff` na condição, contém `is_superuser` (**era RED**)
+
+**PR:** `bot/server-2026-09-06-product-type-is-staff-bypass`
+
+**Próximo backlog priorizado (2026-09-06):**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs acumulados #318–#357 (40 PRs aguardando revisão) |
+| P2 | `apps/stores/api/views/crm_views.py:207` — `places_search_view` usa `IsAdminUser` (is_staff) em vez de gate de tenant específico |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos (item crítico do CLAUDE.md) |
+| P3 | Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo |
+
