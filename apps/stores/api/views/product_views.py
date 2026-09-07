@@ -411,15 +411,15 @@ class StoreComboViewSet(viewsets.ModelViewSet):
                 from apps.core.permissions import accessible_store_ids
                 queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 
-        # Only hide inactive combos for unauthenticated / non-staff public requests
-        is_admin = self.request.user.is_authenticated and (
-            self.request.user.is_staff or self.request.user.is_superuser
-        )
-        if self.action == 'list' and not is_admin:
+        # Esconde combos inativos apenas para requisições anônimas (storefront público).
+        # Usuários autenticados recebem o queryset já escopado por tenant acima, então
+        # só veem os inativos das próprias lojas — sem bypass cross-tenant.
+        # is_staff (acesso ao /admin) NÃO deve ampliar visibilidade; só is_superuser
+        # já tem escopo global via a ramificação acima.
+        if self.action == 'list' and not self.request.user.is_authenticated:
             queryset = queryset.filter(is_active=True)
 
-        # Filtro explícito ?is_active=true|false (usado pelo painel). Só admins
-        # conseguem pedir os inativos; para os demais o filtro acima já restringe.
+        # Filtro explícito ?is_active=true|false (usado pelo painel).
         is_active_param = self.request.query_params.get('is_active')
         if is_active_param is not None:
             wants_active = is_active_param.lower() in ('1', 'true', 'yes')

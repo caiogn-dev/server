@@ -888,3 +888,31 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+## Sessão 2026-09-07
+
+**Gate anti-acúmulo:** 40 PRs abertos (#318–#357). PR #357 corrigiu `StoreProductTypeViewSet`
+(`is_staff` em `_assert_store_access` para escrita). `StoreComboViewSet` tinha o mesmo bug no
+filtro de LEITURA de inativos — não coberto por nenhum dos 40 PRs abertos.
+
+**Bug encontrado e corrigido:** `is_staff` bypassa filtro de inativos em `StoreComboViewSet` [P2]
+
+- **Tipo:** P2 — informação sensível (combos inativos do tenant) visível a usuários `is_staff`
+  sem vínculo real com a loja
+- **Arquivo:** `apps/stores/api/views/product_views.py` — `StoreComboViewSet.get_queryset()`
+- **Problema:** Linha 415 usava `is_staff or is_superuser` para decidir se mostrava combos inativos
+  na listagem. `is_staff` é o flag do Django admin (`/admin`), NÃO vínculo com loja; qualquer
+  usuário admin podia ver combos inativos de tenants alheios se o queryset os devolvesse.
+  Além disso, donos de loja autenticados (não `is_staff`, não `is_superuser`) não conseguiam
+  ver os próprios combos inativos no painel — efeito colateral indevido.
+- **Vetor:** `GET /api/v1/stores/combos/?store=<loja-alheia>` com usuário `is_staff` → lista combos
+  inativos do tenant vítima.
+- **Correção:** Substitui `is_admin = is_staff or is_superuser` por verificação direta de
+  autenticação: combos inativos são ocultados apenas em requisições anônimas (storefront público).
+  Usuários autenticados veem os inativos das próprias lojas (queryset já escopado por tenant);
+  `is_staff` sem vínculo tem queryset vazio pela ramificação de `accessible_store_ids` acima.
+- **Testes:** 4 casos em `test_combo_inactive_isstaff_bypass.py`:
+  is_staff-sem-acesso não vê inativos; owner vê os próprios; anônimo não vê; superuser vê.
+- **PR:** #358 — `bot/server-2026-09-07-combo-inactive-isstaff-bypass`
+
