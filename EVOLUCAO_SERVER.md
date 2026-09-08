@@ -108,6 +108,43 @@ salad-builder string ingredients, str(e) em handlers. Nenhum cobre o módulo `ap
 | P2 | Varredura de N+1 queries em `emit_nfce_for_order` (prefetch_related para order.items__product) |
 | P2 | Namespace mobile: rota `/api/v1/mobile/` já existe — verificar contratos de reordenação |
 
+### 2026-09-08
+
+**Gate anti-acúmulo:** 41 PRs abertos (#318–#358) mapeados. PR #330 aberto cobre
+`LoyaltyAccountsView` e `ConquistasView` (troca `owner_id == user.id` por `user_can_access_store`).
+Três views adicionadas após o corte do PR #330 não foram incluídas: `CashbackResumoView`,
+`CashbackAjusteView` e `IndicacoesView`.
+
+**Bug encontrado e corrigido:** Três views de cashback/indicações bloqueavam staff M2M [P2]
+
+- **Tipo:** P2 — membros da equipe (staff M2M) com acesso legítimo à loja eram barrados nas
+  telas de cashback e indicações do dashboard, recebendo 403. O PR #330 corrigiu o padrão em
+  `LoyaltyAccountsView` e `ConquistasView`, mas as três views abaixo foram adicionadas depois e
+  ficaram com o padrão antigo.
+- **Arquivo corrigido:** `apps/stores/api/views/loyalty_views.py`
+  1. `CashbackResumoView.get()` (linha 280) — `owner_id == request.user.id` → `user_can_access_store()`
+  2. `CashbackAjusteView.post()` (linha 601) — idem
+  3. `IndicacoesView.get()` (linha 669) — idem
+  - Resposta para não-membros: `403` → `raise Http404` (consistente com o padrão do PR #330)
+  - Adicionados imports: `from django.http import Http404` e `from apps.core.permissions import user_can_access_store`
+- **Testes:** 14 casos em `apps/stores/tests/test_cashback_views_staff_access.py` (RED→GREEN):
+  - Dono acessa `CashbackResumoView` → 200
+  - Staff M2M acessa `CashbackResumoView` → 200 (antes 403)
+  - Superuser acessa → 200
+  - Forasteiro recebe 404 (antes 403)
+  - Anônimo recebe 401
+  - Mesmos 5 casos para `CashbackAjusteView` e `IndicacoesView`
+- **PR:** `bot/server-2026-09-08-cashback-views-staff-access`
+
+**Próximo backlog priorizado (após merge):**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs P0 abertos (#330, #354, #355, etc.) — IDOR e PII |
+| P2 | `LoyaltyAccountsView` e `ConquistasView` ainda com padrão antigo (cobertos por PR #330) — aguardar merge |
+| P2 | Varredura N+1 em cashback_service (StoreCashbackLot aggregations sem índice em `expires_at`) |
+| P3 | Namespace mobile/customer limpo para detalhe/rastreio/reorder de pedido (pendência do CLAUDE.md) |
+
 ### 2026-06-28
 
 **Baseline de testes:** Ambiente de checkout limpo sem Docker (sem PostgreSQL/Redis).

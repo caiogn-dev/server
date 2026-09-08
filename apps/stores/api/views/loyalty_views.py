@@ -3,6 +3,7 @@ import re
 from decimal import Decimal
 from datetime import timedelta
 
+from django.http import Http404
 from django.utils import timezone
 from django.db.models import Count, ExpressionWrapper, F, IntegerField, Sum, Value
 from django.db.models.functions import Coalesce, Greatest
@@ -12,6 +13,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 
 from rest_framework import status
 
+from apps.core.permissions import user_can_access_store
 from .storefront_views import get_active_store, PublicWriteThrottle, CheckoutThrottle
 from ...models import StoreLoyaltyAccount, StoreOrder
 from ...services.checkout_service import CheckoutService
@@ -275,8 +277,8 @@ class CashbackResumoView(APIView):
         from apps.stores.services.cashback_service import CashbackService
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
-            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+        if not user_can_access_store(request.user, store):
+            raise Http404
 
         agora = timezone.now()
         vivos = StoreCashbackLot.objects.filter(
@@ -596,8 +598,8 @@ class CashbackAjusteView(APIView):
         from apps.stores.services.cashback_service import CashbackService
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
-            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+        if not user_can_access_store(request.user, store):
+            raise Http404
 
         phone = str(request.data.get('phone') or '').strip()
         motivo = str(request.data.get('motivo') or '').strip()
@@ -664,8 +666,8 @@ class IndicacoesView(APIView):
         from apps.stores.services.cashback_service import CashbackService
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
-            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+        if not user_can_access_store(request.user, store):
+            raise Http404
 
         lotes = (
             StoreCashbackLot.objects
