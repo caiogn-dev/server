@@ -664,6 +664,29 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     amount_due = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     is_fully_paid = serializers.BooleanField(read_only=True)
+    pedidos_do_cliente = serializers.SerializerMethodField()
+
+    def get_pedidos_do_cliente(self, obj):
+        """Quantos pedidos essa pessoa já fez NESTA loja — inclusive este.
+
+        Só no DETALHE: numa listagem de 50 linhas seriam 50 COUNT extras na
+        tela mais quente do painel, e ninguém lê esse número numa lista.
+        `self.parent` só existe quando o serializer está dentro de um
+        ListSerializer (many=True), então é ele quem distingue os dois casos.
+
+        Conta por VARIANTES do telefone: o wa_id do WhatsApp vem sem o nono
+        dígito e o site grava com ele — sem isso o cliente fiel apareceria
+        como novato de novo a cada canal.
+        """
+        if self.parent is not None:
+            return None
+        from apps.core.utils import phone_variants
+        variantes = phone_variants(obj.customer_phone or '')
+        if not variantes:
+            return 0
+        return StoreOrder.objects.filter(
+            store_id=obj.store_id, customer_phone__in=variantes,
+        ).count()
 
     class Meta:
         model = StoreOrder
@@ -672,7 +695,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
-            'amount_paid', 'amount_due', 'is_fully_paid',
+            'amount_paid', 'amount_due', 'is_fully_paid', 'pedidos_do_cliente',
             'surcharge_value', 'surcharge_reason',
             'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
             'payment_method', 'payment_id', 'payment_preference_id',

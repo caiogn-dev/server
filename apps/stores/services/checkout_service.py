@@ -1113,7 +1113,15 @@ class CheckoutService:
             customer_email=customer_data.get('email') or '',
             customer_phone=customer_data.get('phone') or '',
             status=StoreOrder.OrderStatus.PENDING,
-            payment_status=StoreOrder.PaymentStatus.PENDING,
+            # Total zero é pedido PAGO: o saldo (cashback/carteira) cobriu a
+            # compra inteira e não há o que cobrar. Nascendo `pending`, nada
+            # depois o corrigia — não existe cobrança para o webhook confirmar
+            # —, e o pedido ficava "pagamento pendente" para sempre no painel,
+            # dentro da fila do que ainda há para receber (09/set).
+            payment_status=(
+                StoreOrder.PaymentStatus.PAID if total <= Decimal('0.00')
+                else StoreOrder.PaymentStatus.PENDING
+            ),
             subtotal=subtotal,
             discount=discount,
             # Só grava o código que REALMENTE valeu. Antes gravava a string crua:

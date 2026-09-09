@@ -303,6 +303,62 @@ class LoyaltyService:
 
     @staticmethod
     @transaction.atomic
+    def resgatar_manual(store, user, quantidade: int, motivo: str = '', autor=None):
+        """Baixa (ou devolve) brinde entregue FORA do checkout.
+
+        O único caminho que gravava resgate era um pedido fechado com o brinde
+        aplicado. Quem entrega a salada grátis pelo WhatsApp ou no balcão não
+        passa por ali: em 09/09/2026 a produção tinha 161 transações `earn` e
+        ZERO `redeem`, com o storefront e o bot continuando a oferecer brindes
+        já entregues.
+
+        `quantidade` negativa desfaz um resgate registrado por engano — sem
+        volta, o dono não usa o botão.
+
+        Levanta ValueError quando não há saldo (ou não há resgate a desfazer):
+        a trilha nunca fica inconsistente com a conta.
+        """
+        quantidade = int(quantidade)
+        if quantidade == 0:
+            raise ValueError('Informe quantos brindes resgatar.')
+        threshold, _ = LoyaltyService._config(store)
+        account = LoyaltyService._get_account(store, user)
+        account = StoreLoyaltyAccount.objects.select_for_update().get(id=account.id)
+        disponivel = account.qualified_count // threshold - account.redeemed_count
+
+        if quantidade > 0:
+            if quantidade > disponivel:
+                raise ValueError(
+                    f'Saldo de fidelidade insuficiente: disponível {max(0, disponivel)}, '
+                    f'pedido {quantidade}.'
+                )
+            kind = StoreLoyaltyTransaction.Kind.REDEEM
+            padrao = 'resgate registrado no painel'
+        else:
+            if -quantidade > account.redeemed_count:
+                raise ValueError(
+                    f'Não há resgate para desfazer: registrados {account.redeemed_count}, '
+                    f'pedido {-quantidade}.'
+                )
+            # `quantity` é PositiveIntegerField: o sinal vive no `kind`.
+            kind = StoreLoyaltyTransaction.Kind.ADJUST
+            padrao = 'estorno de resgate feito no painel'
+
+        nota = (motivo or '').strip() or padrao
+        if autor is not None:
+            nota = f'{nota} · por {getattr(autor, "username", autor)}'
+        tx = StoreLoyaltyTransaction.objects.create(
+            account=account, order=None, kind=kind,
+            quantity=abs(quantidade), note=nota[:255],
+        )
+        StoreLoyaltyAccount.objects.filter(id=account.id).update(
+            redeemed_count=F('redeemed_count') + quantidade,
+        )
+        account.refresh_from_db()
+        return account, tx
+
+    @staticmethod
+    @transaction.atomic
     def backfill_redeemed(store, user, rewards: int):
         """Migração do histórico legado: registra resgates antigos sem checagem de saldo."""
         if not rewards:

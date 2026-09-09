@@ -116,7 +116,7 @@ class LoyaltyAccountsView(APIView):
         # Desempate por `-qualified_count`: entre dois clientes a 1 item, o que
         # já comprou mais no total é o mais valioso.
         qs = (StoreLoyaltyAccount.objects.filter(store=store)
-              .select_related('user')
+              .select_related('user', 'user__profile')
               .annotate(_falta=_falta_para_o_brinde(threshold))
               .order_by('_falta', '-qualified_count', '-updated_at'))
         try:
@@ -131,6 +131,10 @@ class LoyaltyAccountsView(APIView):
                 'user_id': str(acc.user_id),
                 'display_name': acc.user.get_full_name() or acc.user.username,
                 'email': acc.user.email,
+                # Sem telefone a lista não vira ação: o e-mail de quem entra
+                # por WhatsApp é fabricado (`<fone>@local.invalid`) e "falta 1
+                # para a Nair" não dá como falar com a Nair.
+                'phone': _user_phone(acc.user),
                 'qualified_count': acc.qualified_count,
                 'redeemed_count': acc.redeemed_count,
                 'progress': acc.qualified_count % threshold,
@@ -189,6 +193,52 @@ class LoyaltyAccountsView(APIView):
             falta=1,
         ).count()
         return agg
+
+
+class LoyaltyResgateManualView(APIView):
+    """POST — o dono baixa (ou devolve) um brinde entregue fora do checkout.
+
+    A listagem de contas era só leitura: mostrava "3 grátis disponíveis" e não
+    oferecia nenhuma forma de dizer que dois já tinham sido entregues pelo
+    WhatsApp. O número seguia crescendo e o storefront continuava prometendo.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, store_slug, user_id):
+        store = get_active_store(store_slug)
+        if not (request.user.is_superuser or store.owner_id == request.user.id):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+
+        # A conta é procurada DENTRO da loja: o user_id vem da URL e sem este
+        # recorte o dono de uma loja baixaria o brinde do cliente de outra.
+        conta = StoreLoyaltyAccount.objects.filter(
+            store=store, user_id=user_id,
+        ).select_related('user').first()
+        if not conta:
+            return Response({'error': 'Cliente sem cartão de fidelidade nesta loja.'}, status=404)
+
+        try:
+            quantidade = int(request.data.get('quantidade', 1))
+        except (TypeError, ValueError):
+            return Response({'error': 'Quantidade inválida.'}, status=400)
+
+        try:
+            conta, _tx = LoyaltyService.resgatar_manual(
+                store, conta.user, quantidade,
+                motivo=str(request.data.get('motivo') or ''), autor=request.user,
+            )
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+
+        threshold, _enabled = LoyaltyService._config(store)
+        earned = conta.qualified_count // threshold
+        return Response({
+            'user_id': str(conta.user_id),
+            'qualified_count': conta.qualified_count,
+            'redeemed_count': conta.redeemed_count,
+            'progress': conta.qualified_count % threshold,
+            'available_rewards': max(0, earned - conta.redeemed_count),
+        })
 
 
 class LoyaltyGuestStatusView(APIView):

@@ -190,6 +190,38 @@ class TestResgateNoCheckout:
         assert pedido.total == Decimal('0.00')
         assert CashbackService.balance(loja, TELEFONE) == Decimal('428.00')
 
+    def test_pedido_pago_inteiro_pelo_saldo_nao_fica_pendente(self, loja):
+        """Total zero é pedido PAGO — não há o que cobrar.
+
+        O saldo cobria a compra inteira, o total fechava em R$ 0,00 e o pedido
+        nascia `payment_status=pending` mesmo assim. Nada depois o corrigia:
+        não existe cobrança para o webhook confirmar, então ele ficava
+        "pagamento pendente" para sempre no painel e entrava na fila de
+        cobranças a receber. Relatado pelo dono em 09/set.
+        """
+        from apps.stores.services.checkout_service import CheckoutService
+        from apps.stores.models import StoreOrder
+        _saldo(loja, '500.00')
+        pedido = CheckoutService.create_order(
+            cart=self._carrinho(loja), customer_data=self._dados(),
+            delivery_data={'method': 'pickup'}, use_cashback=True,
+        )
+        assert pedido.total == Decimal('0.00')
+        assert pedido.payment_status == StoreOrder.PaymentStatus.PAID
+        assert pedido.amount_due == Decimal('0.00')
+
+    def test_pedido_com_valor_a_pagar_continua_pendente(self, loja):
+        """A guarda é só para total zero — quem deve, deve."""
+        from apps.stores.services.checkout_service import CheckoutService
+        from apps.stores.models import StoreOrder
+        _saldo(loja, '10.00')
+        pedido = CheckoutService.create_order(
+            cart=self._carrinho(loja), customer_data=self._dados(),
+            delivery_data={'method': 'pickup'}, use_cashback=True,
+        )
+        assert pedido.total == Decimal('62.00')
+        assert pedido.payment_status == StoreOrder.PaymentStatus.PENDING
+
     def test_sem_saldo_o_pedido_sai_normal(self, loja):
         from apps.stores.services.checkout_service import CheckoutService
         pedido = CheckoutService.create_order(
