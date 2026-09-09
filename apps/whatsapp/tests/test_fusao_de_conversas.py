@@ -164,3 +164,40 @@ class FusaoDasConversasAntigasTest(TestCase):
         self._fundir()
 
         self.assertEqual(Conversation.objects.filter(account=outra).count(), 1)
+
+
+class EntradaDoWebhookUsaAConversaCanonicaTests(TestCase):
+    """A mensagem RECEBIDA também não pode abrir thread nova.
+
+    `MessageService` (envio) adotou `conversa_canonica` em 10/ago, mas a
+    entrada do webhook ficou só com `normalize_phone_number`: o wa_id sem o
+    nono dígito virava `55DDD9...` e, quando a thread da pessoa era a forma
+    SEM o 9, a mensagem dela abria uma segunda aba. Foi o que aconteceu com a
+    Gabriela Ribeiro — uma aba com as mensagens dela e outra com as
+    notificações de status (09/set).
+    """
+
+    def setUp(self):
+        self.account = WhatsAppAccount.objects.create(
+            name='Cê Saladas', phone_number_id='PH_ENTRADA', waba_id='WABA_ENTRADA',
+        )
+        from apps.whatsapp.services.webhook_service import WebhookService
+        self.service = WebhookService()
+
+    def test_inbound_cai_na_conversa_que_ja_existe_sem_o_nono_digito(self):
+        existente = _conversa(self.account, '556392270175')
+        _msg(existente, 'inbound', 'oi, quero pedir')
+
+        conversa = self.service._get_or_create_conversation(
+            self.account, '556392270175', 'Gabriela Ribeiro',
+        )
+
+        self.assertEqual(conversa.id, existente.id)
+        self.assertEqual(Conversation.objects.filter(account=self.account).count(), 1)
+
+    def test_sem_conversa_previa_continua_criando_uma(self):
+        conversa = self.service._get_or_create_conversation(
+            self.account, '556392270175', 'Gabriela Ribeiro',
+        )
+        self.assertIsNotNone(conversa)
+        self.assertEqual(Conversation.objects.filter(account=self.account).count(), 1)

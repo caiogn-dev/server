@@ -2221,6 +2221,21 @@ class WebhookService:
         """
         from apps.conversations.models import Conversation
         from django.db import IntegrityError
+        from apps.whatsapp.services.fusao_de_conversas import conversa_canonica
+
+        # A thread da pessoa nesta conta, em QUALQUER forma do telefone. O
+        # envio (MessageService) adotou isto em 10/ago; a entrada continuou só
+        # com `normalize_phone_number`, que ACRESCENTA o nono dígito. Quando a
+        # conversa existente era a forma sem o 9, a mensagem recebida abria uma
+        # segunda aba: a Gabriela Ribeiro ficou com uma aba de mensagens dela e
+        # outra só de notificações de status (09/set).
+        existente = conversa_canonica(account, phone_number)
+        if existente is not None:
+            if contact_name and not existente.contact_name:
+                existente.contact_name = contact_name
+                existente.save(update_fields=['contact_name', 'updated_at'])
+            return existente
+
         phone_number = normalize_phone_number(phone_number)
         logger.info("[_get_or_create_conversation] START - account=%s, phone=%s",
                     account.id, mask_phone(phone_number))

@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from apps.automation.models import CompanyProfile, CustomerSession
 from apps.core.pii import mask_phone
+from apps.core.utils import phone_variants
 from apps.stores.models import Store
 from apps.whatsapp.models import WhatsAppAccount
 
@@ -113,8 +114,16 @@ class SessionManager:
     
     def __init__(self, account: "WhatsAppAccount | CompanyProfile | Store | None" = None, phone_number: str = '', *, store: "Store | None" = None):
         self.phone_number = phone_number
+        # `phone_variants` é a fonte única (26/ago) e cobre o NONO DÍGITO: a
+        # Meta entrega o wa_id sem ele (`556391232486`) e a conversa é gravada
+        # com ele (`5563991232486`). Aqui só havia variação de FORMATO (cru,
+        # dígitos, +dígitos), então o carrinho salvo pelo pedido de catálogo
+        # (que usa o número da mensagem) ficava invisível para o clique em
+        # "Entrega" (que usa o número da conversa): duas sessões para a mesma
+        # pessoa e "❌ Não encontrei itens no seu pedido" logo depois de
+        # listar o item (09/set, Cê Saladas).
         digits_only = re.sub(r'\D', '', phone_number or '')
-        phone_candidates = [phone_number]
+        phone_candidates = [phone_number, *phone_variants(phone_number)]
         if digits_only:
             phone_candidates.extend([digits_only, f'+{digits_only}'])
         self.phone_number_variants = [value for value in dict.fromkeys(phone_candidates) if value]
