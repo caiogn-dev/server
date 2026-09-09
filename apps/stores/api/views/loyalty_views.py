@@ -381,8 +381,17 @@ class CashbackResumoView(APIView):
         # e errado para o dono, que precisa ver o que ela tem.
         um_so = (request.query_params.get('phone') or '').strip()
         if um_so:
-            from apps.core.utils import normalize_phone_number
-            vivos = vivos.filter(phone=normalize_phone_number(um_so) or um_so)
+            # TODAS as grafias do número, não só a normalizada.
+            #
+            # `normalize_phone_number` ACRESCENTA o nono dígito; o lote pode ter
+            # sido gravado sem ele. Medido em 09/09/2026: a cliente
+            # 5563984573670 tinha lote sob '556384573670' e a ficha mostrava
+            # saldo zero — 1 dos 7 clientes com saldo da Cê Saladas era
+            # invisível para o dono. `CashbackService._telefones` já usava
+            # `phone_variants`; a peneira faltava só aqui.
+            from apps.core.utils import phone_variants
+            variantes = [p for p in phone_variants(um_so) if p] or [um_so]
+            vivos = vivos.filter(phone__in=variantes)
 
         linhas = (
             vivos.values('phone')
@@ -423,6 +432,20 @@ class CashbackResumoView(APIView):
         # Uma consulta para a página inteira: 50 clientes não podem virar 50
         # buscas de nome.
         da_pagina = list(linhas[start:start + self.PAGE_SIZE])
+
+        # Sob recorte, as grafias encontradas são do MESMO cliente: duas linhas
+        # mostrariam metade do saldo em cada. A fusão é feita aqui, e não com
+        # um GROUP BY por constante — esse agrupamento devolve UMA linha de
+        # nulos quando não há lote nenhum, e a lista de "quem não tem saldo"
+        # deixaria de ser vazia.
+        if um_so and da_pagina:
+            da_pagina = [{
+                'phone': um_so,
+                'saldo': sum(l['saldo'] for l in da_pagina),
+                'saldo_carteira': sum(l['saldo_carteira'] for l in da_pagina),
+                'vence_em': min(l['vence_em'] for l in da_pagina),
+            }]
+
         nomes = self._nomes_por_telefone(store, [l['phone'] for l in da_pagina])
 
         return Response({
@@ -431,14 +454,21 @@ class CashbackResumoView(APIView):
             'referral_percent': CashbackService.referral_percent(store),
             'expiry_days': CashbackService.expiry_days(store),
             'resumo': resumo,
-            'count': linhas.count(),
+            # Sob recorte a resposta é UMA pessoa (ou nenhuma): `linhas.count()`
+            # contaria as grafias e diria "2 clientes" para a mesma cliente.
+            'count': len(da_pagina) if um_so else linhas.count(),
             'results': [
                 {
                     'phone': linha['phone'],
                     'nome': nomes.get(linha['phone'], ''),
                     'saldo': linha['saldo'],
                     'saldo_carteira': linha['saldo_carteira'],
-                    'cupons_entrega': cupons_por_telefone.get(linha['phone'], 0),
+                    # Os cupons seguem a mesma regra do saldo: sob recorte, as
+                    # grafias do número são da mesma pessoa.
+                    'cupons_entrega': sum(
+                        cupons_por_telefone.get(p, 0)
+                        for p in (variantes if um_so else [linha['phone']])
+                    ),
                     'vence_em': linha['vence_em'].isoformat(),
                     'dias_para_vencer': max(0, (linha['vence_em'] - agora).days),
                 }
@@ -660,15 +690,34 @@ class CashbackAjusteView(APIView):
             valor = Decimal(str(request.data.get('valor') or '0'))
         except (InvalidOperation, TypeError, ValueError):
             return Response({'error': 'Valor inválido.'}, status=400)
-        if valor <= 0:
-            return Response({'error': 'O valor precisa ser maior que zero.'}, status=400)
-        if valor > self.TETO:
-            # Teto de sanidade: um zero a mais num crédito manual é o tipo de
-            # erro que só aparece no fechamento do mês.
+        if valor == 0:
+            return Response({'error': 'O valor precisa ser diferente de zero.'}, status=400)
+        if abs(valor) > self.TETO:
+            # Teto de sanidade: um zero a mais num ajuste manual é o tipo de
+            # erro que só aparece no fechamento do mês. Vale para os dois
+            # sentidos — baixar R$ 9.000 por engano some com o saldo inteiro.
             return Response(
                 {'error': f'Valor acima do limite de R$ {self.TETO:.2f} por ajuste.'},
                 status=400,
             )
+
+        # VALOR NEGATIVO DÁ BAIXA.
+        #
+        # O ajuste só sabia creditar. Quando o cliente gasta o saldo por fora —
+        # desconto no WhatsApp, no balcão, pedido lançado à mão — o painel
+        # seguia mostrando o crédito e a loja pagava o mesmo desconto de novo.
+        # `redeem` já consome os lotes por ordem de vencimento e nunca deixa
+        # saldo negativo: abate o que houver e devolve quanto abateu.
+        if valor < 0:
+            abatido = CashbackService.redeem(
+                store, phone, None, -valor, verificado=True,
+            )
+            return Response({
+                'phone': phone,
+                'valor': str(-abatido),
+                'motivo': motivo,
+                'saldo_atual': str(CashbackService.balance(store, phone, verificado=True)),
+            })
 
         lote = CashbackService.credit_adjust(
             store, phone, valor, motivo, autor=request.user,

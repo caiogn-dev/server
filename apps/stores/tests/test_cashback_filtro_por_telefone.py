@@ -42,18 +42,24 @@ class CashbackFiltroPorTelefoneTest(APITestCase):
         assert resp.status_code == 200, resp.content
         return resp.json()['results']
 
+    @staticmethod
+    def _saldo(linha):
+        """O saldo chega como número no JSON — comparar como Decimal evita
+        depender da grafia ('5.0' vs '5.00')."""
+        return Decimal(str(linha['saldo']))
+
     def test_acha_o_lote_gravado_sem_o_nono_digito(self):
         self._lote('556384573670')
-        assert self._saldos('556384573670')[0]['saldo'] == '5.00'
+        assert self._saldo(self._saldos('556384573670')[0]) == Decimal('5.00')
 
     def test_acha_pelo_numero_com_nove_o_lote_gravado_sem_nove(self):
         """O caso real: o cadastro tem o 9, o lote não."""
         self._lote('556384573670')
-        assert self._saldos('5563984573670')[0]['saldo'] == '5.00'
+        assert self._saldo(self._saldos('5563984573670')[0]) == Decimal('5.00')
 
     def test_acha_pelo_numero_sem_nove_o_lote_gravado_com_nove(self):
         self._lote('5563984573670')
-        assert self._saldos('556384573670')[0]['saldo'] == '5.00'
+        assert self._saldo(self._saldos('556384573670')[0]) == Decimal('5.00')
 
     def test_soma_as_duas_grafias_do_mesmo_cliente(self):
         """Dois lotes, duas grafias, uma pessoa — a ficha não pode mostrar metade."""
@@ -61,7 +67,7 @@ class CashbackFiltroPorTelefoneTest(APITestCase):
         self._lote('5563984573670', '4.00')
         linhas = self._saldos('5563984573670')
         assert len(linhas) == 1, linhas
-        assert linhas[0]['saldo'] == '7.00'
+        assert self._saldo(linhas[0]) == Decimal('7.00')
 
     def test_nao_confunde_clientes_diferentes(self):
         self._lote('5563984573670', '5.00')
