@@ -403,7 +403,29 @@ class StoreOrder(BaseModel):
 
     @property
     def amount_due(self):
-        """Quanto ainda falta receber = max(0, total - amount_paid)."""
+        """Quanto ainda falta receber.
+
+        O RÓTULO MANDA. `payment_status='paid'` é a fonte da verdade do
+        dinheiro em todo o sistema — é o que a receita usa
+        (`metrics/definicoes.py`) e o que o caixa usa (`models/cash.py`).
+        Nenhum dos dois lê `StorePayment`.
+
+        Sem isto, o pedido pago em DINHEIRO ficava devendo para sempre: a
+        grana veio na mão, não passou por cobrança nenhuma, e `amount_paid`
+        continuava zero. O modal anunciava "Falta receber R$ 41,32" num
+        pedido entregue e já faturado — 91 pedidos em 5 lojas, R$ 9.243,79
+        (medido em 09/09/2026).
+
+        Fora o rótulo `paid`, o saldo sai das cobranças como sempre: é assim
+        que o PIX parcial sabe pedir o resto.
+        """
+        # ...mas SÓ quando não houve cobrança nenhuma. `_sync_with_order`
+        # marca `paid` já na primeira cobrança quitada, mesmo parcial: se o
+        # rótulo zerasse o saldo aí, um PIX de R$ 30 num pedido de R$ 100
+        # apagaria os R$ 70 e o dono perderia o "cobrar a diferença".
+        # Havendo cobrança, ela é a verdade mais fina.
+        if self.payment_status == self.PaymentStatus.PAID and self.amount_paid <= Decimal('0.00'):
+            return Decimal('0.00')
         due = (self.total or Decimal('0.00')) - self.amount_paid
         if due < Decimal('0.00'):
             due = Decimal('0.00')
@@ -411,7 +433,16 @@ class StoreOrder(BaseModel):
 
     @property
     def is_fully_paid(self):
-        """True quando o recebido cobre o total do pedido."""
+        """True quando o pedido está quitado — pelo rótulo ou pelas cobranças.
+
+        `amount_paid` NÃO é ajustado junto: ele continua sendo o dinheiro que
+        de fato passou por cobrança. Quem responde "está pago?" é o rótulo;
+        quem responde "quanto entrou pelo gateway?" é o `amount_paid`. São
+        perguntas diferentes e mentir num para fechar o outro esconderia,
+        por exemplo, o PIX que nunca caiu.
+        """
+        if self.payment_status == self.PaymentStatus.PAID and self.amount_paid <= Decimal('0.00'):
+            return True
         return self.amount_paid >= (self.total or Decimal('0.00'))
 
     def recalculate_totals(self, save=True):

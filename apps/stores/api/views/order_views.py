@@ -20,7 +20,6 @@ from apps.stores.models import Store, StoreOrder, StoreOrderItem, StoreCustomer,
 from apps.stores.services.realtime_service import broadcast_order_event
 from apps.stores.services.order_service import OrderService
 from apps.stores.services.print_service import enqueue_order_print_job
-from apps.stores.services.recebimento_manual import registrar_recebimento
 from apps.core.permissions import StoreQuerysetMixin, user_can_access_store
 from ..serializers import (
     StoreOrderSerializer, StoreOrderCreateSerializer, StoreOrderUpdateSerializer,
@@ -341,11 +340,6 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             instance.paid_at = timezone.now()
             instance.metadata = metadata
             instance.save(update_fields=['paid_at', 'metadata', 'updated_at'])
-            # REGISTRA O DINHEIRO, não só o rótulo: o saldo do pedido é
-            # derivado das cobranças, então marcar pago sem criar a cobrança
-            # deixava "Falta receber" para sempre (51 dos 52 pedidos
-            # concluídos da Cê Saladas estavam assim).
-            registrar_recebimento(instance, autor=request.user)
             instance.refresh_from_db()
 
         if previous_payment_status != instance.payment_status and instance.payment_status == StoreOrder.PaymentStatus.PAID:
@@ -674,11 +668,6 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 order.paid_at = timezone.now()
                 update_fields.append('paid_at')
             order.save(update_fields=update_fields)
-            # Marcar pago sem registrar a cobrança deixa o saldo do pedido
-            # em aberto para sempre — `amount_paid` é derivado dos
-            # `StorePayment`, não do rótulo.
-            if new_status == paid:
-                registrar_recebimento(order, autor=request.user)
 
         # Fidelidade: pagamento confirmado pelo painel também credita (mesma
         # regra do webhook/status; idempotente por pedido).
@@ -712,7 +701,6 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 order.paid_at = timezone.now()
                 update_fields.append('paid_at')
             order.save(update_fields=update_fields)
-            registrar_recebimento(order, autor=request.user)
 
         logger.info(f"Order {order.order_number} marked as paid")
 

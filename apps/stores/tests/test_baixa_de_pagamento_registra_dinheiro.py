@@ -1,15 +1,22 @@
-"""Dar baixa no pagamento tem que registrar o DINHEIRO, não só o rótulo.
+"""Pedido marcado como pago não pode dizer "Falta receber".
 
-O painel marca "Pagamento lançado" com `PATCH {payment_status: 'paid'}`. Isso
-gravava só o rótulo no pedido — mas o saldo (`amount_paid`/`amount_due`/
-`is_fully_paid`) é DERIVADO das cobranças (`StorePayment` com status
-`completed`). Sem criar a cobrança, o rótulo dizia "pago" e o dinheiro dizia
-que não entrou.
+O painel marca "Pagamento lançado" e o pedido ganha `payment_status='paid'`.
+Esse rótulo É a fonte da verdade do dinheiro em todo o sistema:
 
-Resultado medido na Cê Saladas em 09/09/2026: de 52 pedidos já concluídos com
-`amount_due > 0`, **51 tinham `payment_status = 'paid'`**. O modal mostrava
-"Falta receber R$ 41,32" num pedido entregue, pago em dinheiro e com a baixa
-lançada — e o relatório de receita contava menos do que a loja faturou.
+    apps/stores/metrics/definicoes.py  →  receita = payment_status='paid'
+    apps/stores/models/cash.py         →  gaveta  = payment_method='cash' pago
+
+Nenhum dos dois lê `StorePayment`. Ou seja: o pedido pago em dinheiro JÁ conta
+no faturamento, nos relatórios e no caixa.
+
+Só que `amount_due` era derivado exclusivamente das cobranças — e dinheiro na
+mão não gera cobrança. Resultado: o modal anunciava "Falta receber R$ 41,32"
+num pedido entregue, pago e já faturado. Medido em 09/09/2026: 91 pedidos em 5
+lojas, R$ 9.243,79, todos com o rótulo `paid`.
+
+O sintoma era só de EXIBIÇÃO. Por isso a correção é o saldo respeitar o rótulo
+— e não criar cobranças que nunca existiram, que seria montar um segundo
+livro-caixa ao lado do que o sistema já usa.
 """
 from decimal import Decimal
 
@@ -21,7 +28,7 @@ from apps.stores.models import Store, StoreOrder, StorePayment
 User = get_user_model()
 
 
-class BaixaDePagamentoTest(APITestCase):
+class SaldoRespeitaORotuloTest(APITestCase):
     def setUp(self):
         self.owner = User.objects.create_user(username='dono-bx', password='x')
         self.store = Store.objects.create(
@@ -37,90 +44,85 @@ class BaixaDePagamentoTest(APITestCase):
     def _recarrega(self):
         return StoreOrder.objects.get(pk=self.order.pk)
 
-    def _dar_baixa(self):
-        return self.client.patch(self.url, {'payment_status': 'paid'}, format='json')
-
     # ── o caso do dono ────────────────────────────────────────────────────
 
-    def test_baixa_zera_o_que_falta_receber(self):
-        resp = self._dar_baixa()
-        assert resp.status_code == 200, resp.content
+    def test_pago_em_dinheiro_nao_fica_devendo(self):
+        """Dinheiro na mão não gera cobrança — e nem por isso o pedido deve."""
+        self.order.payment_status = 'paid'
+        self.order.save(update_fields=['payment_status'])
         pedido = self._recarrega()
-        assert pedido.amount_paid == Decimal('41.32')
         assert pedido.amount_due == Decimal('0.00')
         assert pedido.is_fully_paid is True
 
-    def test_baixa_cria_a_cobranca_que_prova_o_recebimento(self):
-        self._dar_baixa()
-        cobranca = StorePayment.objects.get(order=self.order)
-        assert cobranca.status == 'completed'
-        assert cobranca.amount == Decimal('41.32')
-        # A forma de pagamento é a do PEDIDO: quem recebeu em dinheiro não
-        # pode virar "pix" no relatório.
-        assert cobranca.payment_method == 'cash'
-
     def test_a_resposta_do_patch_ja_vem_quitada(self):
-        """A tela usa a resposta do PATCH — se ela vier velha, o modal segue
+        """A tela usa a resposta do PATCH — se vier velha, o modal segue
         dizendo 'Falta receber' até alguém recarregar."""
-        resp = self._dar_baixa()
+        resp = self.client.patch(self.url, {'payment_status': 'paid'}, format='json')
+        assert resp.status_code == 200, resp.content
         assert Decimal(str(resp.json()['amount_due'])) == Decimal('0.00')
         assert resp.json()['is_fully_paid'] is True
 
-    # ── não pode cobrar duas vezes ────────────────────────────────────────
+    def test_nao_inventa_cobranca(self):
+        """O faturamento já conta este pedido pelo rótulo. Criar um
+        `StorePayment` aqui seria um segundo livro-caixa."""
+        self.client.patch(self.url, {'payment_status': 'paid'}, format='json')
+        assert StorePayment.objects.filter(order=self.order).count() == 0
 
-    def test_dar_baixa_duas_vezes_nao_duplica_o_dinheiro(self):
-        self._dar_baixa()
-        self._dar_baixa()
-        assert StorePayment.objects.filter(order=self.order).count() == 1
-        assert self._recarrega().amount_paid == Decimal('41.32')
+    def test_amount_paid_continua_dizendo_a_verdade(self):
+        """`amount_paid` é o dinheiro que passou por cobrança. Ele não mente
+        para fechar a conta — quem responde "está pago?" é o rótulo."""
+        self.order.payment_status = 'paid'
+        self.order.save(update_fields=['payment_status'])
+        assert self._recarrega().amount_paid == Decimal('0.00')
 
-    def test_com_pagamento_parcial_registra_so_a_diferenca(self):
-        """Regra do SERVIÇO, não do endpoint.
+    # ── o que NÃO pode virar quitado ──────────────────────────────────────
 
-        Pelo `PATCH` este caso não se alcança: a primeira cobrança
-        `completed` já marca o pedido como pago sozinho (`_sync_with_order`),
-        então não sobra transição para a view detectar — e o painel nem
-        mostra o botão de lançar pagamento num pedido já rotulado como pago.
-        """
-        from apps.stores.services.recebimento_manual import registrar_recebimento
-
-        StorePayment.objects.create(
-            order=self.order, payment_method='pix', status='completed',
-            amount=Decimal('20.00'))
-        registrar_recebimento(self._recarrega(), autor=self.owner)
+    def test_pendente_continua_devendo_o_total(self):
         pedido = self._recarrega()
-        assert pedido.amount_paid == Decimal('41.32')
-        assert pedido.amount_due == Decimal('0.00')
-        nova = StorePayment.objects.filter(order=self.order).exclude(payment_method='pix').get()
-        assert nova.amount == Decimal('21.32')
+        assert pedido.amount_due == Decimal('41.32')
+        assert pedido.is_fully_paid is False
 
-    def test_pedido_ja_quitado_nao_ganha_cobranca_fantasma(self):
+    def test_cancelado_nao_vira_quitado(self):
+        self.order.payment_status = 'cancelled'
+        self.order.save(update_fields=['payment_status'])
+        assert self._recarrega().amount_due == Decimal('41.32')
+
+    def test_estornado_nao_vira_quitado(self):
+        self.order.payment_status = 'refunded'
+        self.order.save(update_fields=['payment_status'])
+        assert self._recarrega().amount_due == Decimal('41.32')
+
+    # ── o caminho das cobranças de verdade segue valendo ──────────────────
+
+    def test_cobranca_pendente_ainda_mostra_a_diferenca(self):
+        """Enquanto o rótulo não é `paid`, o saldo continua saindo das
+        cobranças — é assim que o PIX parcial pede o resto."""
+        StorePayment.objects.create(
+            order=self.order, payment_method='pix', status='pending',
+            amount=Decimal('20.00'))
+        assert self._recarrega().amount_due == Decimal('41.32')
+
+    def test_cobranca_quitada_zera_pelo_caminho_de_sempre(self):
+        """`_sync_with_order` marca o pedido como pago na 1ª cobrança
+        `completed`, então o saldo zera pelos dois caminhos — mesmo fim."""
         StorePayment.objects.create(
             order=self.order, payment_method='pix', status='completed',
             amount=Decimal('41.32'))
-        self._dar_baixa()
-        assert StorePayment.objects.filter(order=self.order).count() == 1
+        assert self._recarrega().amount_due == Decimal('0.00')
 
-    # ── só o que é baixa vira dinheiro ────────────────────────────────────
+    def test_rotulo_nao_apaga_diferenca_de_cobranca_parcial(self):
+        """`_sync_with_order` marca `paid` já na PRIMEIRA cobrança quitada,
+        mesmo parcial. Se o rótulo zerasse o saldo aqui, o dono perderia o
+        "cobrar a diferença" — que é justamente o caso do PIX pela metade.
 
-    def test_editar_outro_campo_nao_registra_pagamento(self):
-        resp = self.client.patch(self.url, {'customer_name': 'Dyana C.'}, format='json')
-        assert resp.status_code == 200, resp.content
-        assert StorePayment.objects.filter(order=self.order).count() == 0
-
-    def test_marcar_como_pendente_nao_registra_pagamento(self):
-        self.client.patch(self.url, {'payment_status': 'pending'}, format='json')
-        assert StorePayment.objects.filter(order=self.order).count() == 0
-
-    # ── o outro caminho do painel ─────────────────────────────────────────
-
-    def test_o_endpoint_dedicado_tambem_registra(self):
-        """`update_payment_status/` é o segundo caminho que marca pago. Se só
-        um dos dois registrar o dinheiro, o defeito volta pelo outro."""
-        resp = self.client.post(
-            f'{self.url}update_payment_status/', {'payment_status': 'paid'}, format='json')
-        assert resp.status_code == 200, resp.content
+        Por isso o rótulo só quita quando NÃO houve cobrança nenhuma: aí o
+        dinheiro veio por fora e não há nada mais fino para consultar.
+        """
+        StorePayment.objects.create(
+            order=self.order, payment_method='pix', status='completed',
+            amount=Decimal('20.00'))
         pedido = self._recarrega()
-        assert pedido.amount_due == Decimal('0.00')
-        assert StorePayment.objects.filter(order=self.order).count() == 1
-
+        assert pedido.payment_status == 'paid'      # o sync rotulou
+        assert pedido.amount_paid == Decimal('20.00')
+        assert pedido.amount_due == Decimal('21.32')   # e ainda falta
+        assert pedido.is_fully_paid is False
