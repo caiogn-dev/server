@@ -162,11 +162,19 @@ class SessionManager:
         ]
 
         # Busca sessão ativa existente no perfil resolvido.
+        #
+        # A ordenação é obrigatória: `.first()` sem ORDER BY não promete ordem
+        # nenhuma no Postgres, e quem já tem DUAS sessões (o nono dígito rachou
+        # antes do fix) pode ser atendido pela linha errada. Na cliente de
+        # 09/set a busca devolvia justamente a sessão VAZIA e ignorava a que
+        # tinha o item — o carrinho sumia mesmo com as variantes certas.
+        # A viva é a de atividade mais recente: no fluxo real é ela que acabou
+        # de receber o pedido do catálogo, segundos antes do clique.
         session = CustomerSession.objects.filter(
             company=self.company,
             phone_number__in=self.phone_number_variants,
             status__in=active_statuses,
-        ).first()
+        ).order_by('-last_activity_at', '-created_at').first()
 
         # Compatibilidade: se houver mais de um CompanyProfile para a mesma Store
         # (ex.: perfil criado pelo signal da conta e perfil raiz da loja), a

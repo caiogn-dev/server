@@ -47,3 +47,39 @@ class TestSessaoUnicaPorPessoa:
 
         assert len(itens) == 1, 'o carrinho foi parar numa sessão que ninguém lê'
         assert CustomerSession.objects.count() == 1, 'a mesma pessoa virou duas sessões'
+
+
+@pytest.mark.django_db
+class TestEscolhaEntreSessoesLegadas:
+    """Onde já existem DUAS sessões da mesma pessoa, vale a que está viva.
+
+    O fix das variantes impede sessões novas de rachar, mas quem já rachou
+    tem duas linhas no banco — e a busca usava `.first()` SEM ordenação, que
+    no Postgres não promete ordem nenhuma. Na cliente de 09/set ela devolveu
+    justamente a sessão VAZIA e ignorou a que tinha o item: o carrinho
+    continuava sumindo mesmo com as variantes certas.
+
+    É a mesma lição do `fusao_de_conversas`: a escolha entre duas linhas da
+    mesma pessoa tem que ser determinística.
+    """
+
+    def test_le_a_sessao_com_atividade_mais_recente(self, loja):
+        from apps.automation.models import CustomerSession
+        from django.utils import timezone
+        from datetime import timedelta
+
+        gerente = SessionManager(loja, '556391232486')
+        antiga = CustomerSession.objects.create(
+            company=gerente.company, phone_number='5563991232486',
+            session_id='velha', status=CustomerSession.SessionStatus.ACTIVE,
+        )
+        CustomerSession.objects.filter(pk=antiga.pk).update(
+            last_activity_at=timezone.now() - timedelta(hours=3),
+        )
+
+        gerente.save_pending_order_items([{'product_id': 'p1', 'quantity': 1}])
+        viva = gerente.get_or_create_session()
+
+        lido = SessionManager(loja, '5563991232486')
+        assert lido.get_or_create_session().id == viva.id
+        assert len(lido.get_pending_order_items()) == 1
