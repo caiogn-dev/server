@@ -213,7 +213,11 @@ def _order_address(order):
     if zip_code:
         address['zip_code'] = re.sub(r'\D', '', str(zip_code))
     if street:
-        address['street_name'] = str(street)[:256]
+        # 100 é o teto da Orders API: acima disso ela recusa o payload INTEIRO
+        # com 400 `property_value` e o PIX cai no fallback de link (o pedido
+        # CE-2609098839 tinha 147 caracteres). O corte antigo, em 256, passava
+        # pela nossa peneira e só quebrava lá no MP.
+        address['street_name'] = str(street)[:100]
     if number:
         address['street_number'] = numero_do_endereco(number)
     if city:

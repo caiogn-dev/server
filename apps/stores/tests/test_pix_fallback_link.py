@@ -134,3 +134,56 @@ class PixFallbackParaLinkTests(TestCase):
         self.assertFalse(res['success'])
         self.order.refresh_from_db()
         self.assertEqual(self.order.payment_status, StoreOrder.PaymentStatus.FAILED)
+
+
+@override_settings(MERCADO_PAGO_ACCESS_TOKEN='APP_USR-teste', BASE_URL='https://backend.teste')
+class LinkNaoDuplicaCobrancaTests(TestCase):
+    """Clicar duas vezes em "Gerar cobrança" não pode criar duas cobranças.
+
+    O PIX já reusava a cobrança pendente de mesmo valor; o link não. No pedido
+    CE-2609098839 (09/set) três cliques viraram três links vivos de R$ 57,73 —
+    o cliente podia pagar dois, e o painel exibia três "Aguardando" idênticos
+    sem dizer qual mandar.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        owner = User.objects.create_user(username='dono_dup', email='dono@dup.com', password='x')
+        self.store = Store.objects.create(name='Loja Dup', slug='loja-dup', owner=owner)
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='Cliente Teste',
+            customer_email='cliente@teste.com', customer_phone='63999990000',
+            subtotal=Decimal('57.73'), total=Decimal('57.73'),
+        )
+
+    def _credenciais(self):
+        return mock.patch.object(
+            CheckoutService, 'get_payment_credentials',
+            return_value={'provider': 'mercadopago', 'access_token': 'APP_USR-teste', 'sandbox': False},
+        )
+
+    def _gerar(self, sdk):
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders_mod, 'create_order', return_value=RECUSA_ORDERS):
+            return CheckoutService.create_payment(self.order, payment_method='pix')
+
+    def test_segundo_clique_reusa_o_mesmo_link(self):
+        sdk = _sdk(BLOQUEIO_MP, PREFERENCE_OK)
+        primeiro = self._gerar(sdk)
+        segundo = self._gerar(sdk)
+
+        self.assertEqual(StorePayment.objects.filter(order=self.order).count(), 1,
+                         'cada clique estava criando uma cobrança nova')
+        self.assertEqual(segundo['payment_url'], primeiro['payment_url'])
+        self.assertEqual(sdk.preference.return_value.create.call_count, 1,
+                         'nao pode criar uma preference nova no MP a cada clique')
+
+    def test_valor_diferente_gera_cobranca_nova(self):
+        """Reuso é por valor: cobrar outro valor é outra cobrança."""
+        sdk = _sdk(BLOQUEIO_MP, PREFERENCE_OK)
+        self._gerar(sdk)
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders_mod, 'create_order', return_value=RECUSA_ORDERS):
+            CheckoutService.create_payment(self.order, payment_method='pix', amount=Decimal('10.00'))
+
+        self.assertEqual(StorePayment.objects.filter(order=self.order).count(), 2)

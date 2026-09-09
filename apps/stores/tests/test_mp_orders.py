@@ -163,3 +163,50 @@ class MpOrdersTestCase(TestCase):
         _, kwargs = mpost.call_args
         self.assertEqual(kwargs['headers']['X-meli-session-id'], 'dev123')
         self.assertIn('X-Idempotency-Key', kwargs['headers'])
+
+
+class LimiteDoLogradouroTestCase(TestCase):
+    """Rua longa demais derrubava o PIX inteiro (CE-2609098839, 09/set).
+
+    A Orders API recusa `payer.address.street_name` acima de 100 caracteres —
+    o corte antigo era em 256, então o payload passava pela nossa peneira e o
+    MP devolvia 400 `property_value`. Endereço de Palmas ("Quadra 501 Sul
+    Avenida NS 1, 9, Recepção da ortolife...") chega a 147 caracteres com
+    facilidade: o pedido caía no fallback de link e o painel não mostrava
+    cobrança nenhuma.
+    """
+
+    def setUp(self):
+        self.owner = User.objects.create_user('o2', 'o2@x.com', 'x')
+        self.store = Store.objects.create(name='Cê Saladas!', slug='ce2', owner=self.owner,
+                                          status=Store.StoreStatus.ACTIVE)
+        self.order = StoreOrder.objects.create(
+            store=self.store, customer_name='Maria Silva',
+            customer_email='maria@x.com', customer_phone='+55 (63) 99988-7766',
+            subtotal=Decimal('57.73'), total=Decimal('57.73'),
+        )
+
+    def test_logradouro_longo_e_cortado_em_100(self):
+        rua = (
+            'Quadra 501 Sul Avenida NS 1, 9, Recepção da ortolife , espaço life '
+            '- Centro, Palmas, TO, 9, Recepção da ortolife , espaço life - Centro, Palmas, TO'
+        )
+        self.assertGreater(len(rua), 100, 'o caso real tem 147 caracteres')
+        self.order.delivery_address = {
+            'zip_code': '77016-006', 'street': rua, 'number': '9',
+            'city': 'Palmas', 'state': 'TO',
+        }
+        self.order.save(update_fields=['delivery_address'])
+
+        endereco = mp_orders.build_payer(self.order, 'maria@x.com', None)['address']
+
+        self.assertLessEqual(len(endereco['street_name']), 100,
+                             'acima de 100 o MP recusa o payload inteiro')
+        self.assertTrue(endereco['street_name'].startswith('Quadra 501 Sul'))
+
+    def test_logradouro_curto_continua_intacto(self):
+        self.order.delivery_address = {'street_name': 'Rua A', 'number': '10',
+                                       'city': 'Palmas', 'state': 'TO'}
+        self.order.save(update_fields=['delivery_address'])
+        endereco = mp_orders.build_payer(self.order, 'maria@x.com', None)['address']
+        self.assertEqual(endereco['street_name'], 'Rua A')

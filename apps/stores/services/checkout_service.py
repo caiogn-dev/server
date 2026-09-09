@@ -1905,6 +1905,34 @@ class CheckoutService:
             if amount <= Decimal('0.00'):
                 raise ValueError("Valor da cobranca deve ser maior que zero")
 
+            # Idempotência (espelha a do PIX): clique repetido reusa a cobrança
+            # pendente de mesmo valor em vez de criar outra preference. Sem
+            # isto, três cliques viravam três links vivos do MESMO valor — o
+            # cliente podia pagar dois e o painel listava três "Aguardando"
+            # idênticos, sem dizer qual mandar (pedido CE-2609098839, 09/set).
+            existing_link = StorePayment.objects.filter(
+                order=order,
+                store=target_store,
+                payment_method=StorePayment.PaymentMethod.OTHER,
+                status=StorePayment.PaymentStatus.PENDING,
+                amount=amount,
+            ).exclude(payment_url='').filter(
+                Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
+            ).order_by('-created_at').first()
+            if existing_link:
+                return {
+                    'success': True,
+                    'payment_method': 'link',
+                    'status': 'pending',
+                    'payment_url': existing_link.payment_url,
+                    'init_point': existing_link.payment_url,
+                    'preference_id': existing_link.external_id,
+                    'payment_db_id': str(existing_link.id),
+                    'amount': str(existing_link.amount),
+                    'requires_redirect': True,
+                    'reused': True,
+                }
+
             from apps.stores.services import mp_orders
 
             # Antifraude: preference rica (payer real, itens, statement_descriptor)
