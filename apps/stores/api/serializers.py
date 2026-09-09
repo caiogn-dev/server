@@ -940,6 +940,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
     @transaction.atomic
     def create(self, validated_data):
         store = self._resolve_store(validated_data)
+        # A loja aceita esse jeito de receber? Esconder a opção no cardápio não
+        # fecha a porta — o bot, o PDV e o POST direto passavam por aqui.
+        from apps.stores.services.modo_de_recebimento import exigir_modo_permitido
+        exigir_modo_permitido(store, validated_data.get('delivery_method') or '')
         request = self.context.get('request')
         items_data = validated_data.pop('items', [])
         validated_data.pop('store', None)

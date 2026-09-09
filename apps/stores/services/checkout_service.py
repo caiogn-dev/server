@@ -820,6 +820,12 @@ class CheckoutService:
         store = cart.store
         delivery_payload = dict(delivery_data or {})
 
+        # A segunda porta. O cardápio já esconde a opção desligada, mas o bot
+        # do WhatsApp e o app montam o payload por conta própria — sem esta
+        # linha, "só retirada" valia apenas para quem usa a tela.
+        from apps.stores.services.modo_de_recebimento import exigir_modo_permitido
+        exigir_modo_permitido(store, delivery_payload.get('method') or '')
+
         precomputed_delivery_info = None
         needs_fee_calc = (
             trusted_delivery_fee is None
