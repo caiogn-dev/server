@@ -15,6 +15,7 @@ from django.conf import settings
 from django.core.validators import validate_email
 from django.core.exceptions import ValidationError
 
+from apps.core.pii import mask_email
 from apps.core.services.customer_identity import CustomerIdentityService
 
 _PLACEHOLDER_EMAIL_DOMAINS = ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')
@@ -513,7 +514,12 @@ class CheckoutService:
                 # confirmação do pedido.
                 lat = lng = None
 
-        logger.info(f"calculate_delivery_fee_for_payload: lat={lat}, lng={lng}, address_text={address_text}")
+        logger.info(
+            "calculate_delivery_fee_for_payload: lat=%s, lng=%s, address_provided=%s",
+            lat,
+            lng,
+            bool(address_text),
+        )
         result = UnifiedDeliveryService.calculate_delivery_fee(
             store=store,
             delivery_method=payload.get('method', 'delivery'),
@@ -1508,7 +1514,7 @@ class CheckoutService:
                     str(payment_payload.get('external_reference') or '').strip()
                     or f"avulso:{target_store.id}"
                 )
-            logger.info(f"Using email for payment: {payer_email}")
+            logger.info("email para pagamento: %s", mask_email(payer_email or ""))
 
             # PIX pela Orders API (/v1/orders), o mesmo caminho do cartão desde
             # 17/06. A rota antiga (/v1/payments) responde 403 PolicyAgent para

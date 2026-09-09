@@ -888,3 +888,70 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-09
+
+**Baseline de testes:** 5 novos testes `SimpleTestCase` (sem Docker/PostgreSQL) — 5/5 GREEN após o fix (5/5 FAIL antes).
+Django 5.x + cryptography + redis + celery instalados localmente. Falhas pré-existentes de infra CI
+(`check`/`complexity`, `runner_id=0`) afetam todos os PRs desde 2026-07-18 — não são regressão.
+
+**Gate anti-acúmulo:** 42 PRs abertos (#318–#359). Varredura confirmou que nenhum cobre
+`apps/stores/services/checkout_service.py`. Itens cobertos pelos PRs abertos:
+- #323: `order.py` + `referral_service.py` + `message_service.py` + `whatsapp_api_service.py` (PII logs)
+- #340: `whatsapp/intents/handlers/order.py`, `email_automation_service.py`, `lgpd_views.py`, `auth_views.py` (PII logs)
+- #357/#358: `is_staff` bypass em `StoreProductTypeViewSet`/`StoreComboViewSet` — inactive filter
+- #359: cashback views — is_staff M2M access
+
+**Bug encontrado e corrigido:** PII (e-mail e endereço) em logs de checkout [P0 LGPD art. 46]
+
+- **Tipo:** P0 — Violação de LGPD: dado pessoal (e-mail do cliente e endereço de entrega) em
+  claro em logs de produção, no caminho crítico de criação de pagamento e cálculo de frete.
+  Padrão idêntico ao sweep P0 dos PRs #323 e #340, mas em linhas de `checkout_service.py`
+  não cobertas por nenhum PR anterior.
+
+- **Arquivos corrigidos (1):** `apps/stores/services/checkout_service.py`
+
+  1. **L1511 (email):** `logger.info(f"Using email for payment: {payer_email}")`
+     — `payer_email` é o e-mail real do cliente enviado ao Mercado Pago.
+     Correção: `logger.info("email para pagamento: %s", mask_email(payer_email or ""))`
+     Importação adicionada: `from apps.core.pii import mask_email`.
+
+  2. **L516 (endereço):** `logger.info(f"calculate_delivery_fee_for_payload: ..., address_text={address_text}")`
+     — `address_text` é o endereço residencial digitado pelo cliente (ex: "Rua das Flores, 123, SP").
+     Correção: substituído por `address_provided=bool(address_text)` — mantém rastreabilidade
+     (sabe-se se há endereço ou não) sem expor o dado pessoal. `lat`/`lng` mantidos
+     (coordenadas internas de geocodificação, menos sensíveis que o endereço textual).
+
+- **Testes:** 5 novos `SimpleTestCase` em `apps/stores/tests/test_pii_checkout_logs.py`
+  (RED→GREEN confirmado — 5/5 FAIL antes, 5/5 PASS depois):
+  - `test_payer_email_not_interpolated_raw_in_any_logger_line`: sem `{payer_email}` sem `mask_email`
+  - `test_email_string_not_logged_raw_as_format_arg`: sem payer_email como argumento de format sem máscara
+  - `test_mask_email_imported_in_checkout_service`: `mask_email` presente no módulo
+  - `test_address_text_not_interpolated_raw_in_any_logger_line`: sem `{address_text}` em logger
+  - `test_address_text_not_as_format_arg`: sem `address_text` como argumento de logger sem substituição
+
+- **PR:** `bot/server-2026-09-09-pii-checkout-logs` (abrindo agora)
+
+**Varredura de segurança desta sessão — itens verificados:**
+
+| Arquivo | Status |
+|---|---|
+| `universal_conversation_service.py` — `_is_staff()` | ✅ Já usa `is_superuser` (fix do PR #298) |
+| `product_views.py:487` — `StoreProductTypeViewSet` is_staff | ✅ Coberto pelo PR #357 (aberto) |
+| `product_views.py:416` — `StoreComboViewSet` is_staff | ✅ Coberto pelo PR #358 (aberto) |
+| `payment_views.py:126` — `OAuthNaoConfigurado str(e)` | ✅ Mensagem de config, sem dados internos |
+| `checkout_service.py:1511` — email em log | 🔴 **Corrigido nesta sessão** |
+| `checkout_service.py:516` — address_text em log | 🔴 **Corrigido nesta sessão** |
+| iFood OAuth service | ✅ Sem views HTTP expostas ainda (backend-only) |
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente dos 42 PRs abertos (#318–#360) — muitos aguardando há semanas |
+| P1 | Varredura de PII em logs de `carteira_service.py` e serviços recentes de fidelidade |
+| P1 | Testes de contrato para checkout payload e pedido por token (OTP já coberto) |
+| P2 | Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido |
+| P2 | Revisar views do iFood quando endpoints forem expostos (ainda sem API pública) |
+
