@@ -826,6 +826,13 @@ class CheckoutService:
         from apps.stores.services.modo_de_recebimento import exigir_modo_permitido
         exigir_modo_permitido(store, delivery_payload.get('method') or '')
 
+        # Cada campo recebe o que é dele ANTES de gravar. Alguns caminhos
+        # mandam o endereço formatado inteiro dentro de `street`, e limpar
+        # depois só conserta a tela — etiqueta, roteirização e relatório por
+        # bairro continuam lendo a sopa.
+        from apps.stores.services.endereco_estruturado import estruturar_no_payload
+        delivery_payload = estruturar_no_payload(delivery_payload)
+
         precomputed_delivery_info = None
         needs_fee_calc = (
             trusted_delivery_fee is None

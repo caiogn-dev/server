@@ -944,6 +944,10 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         # fecha a porta — o bot, o PDV e o POST direto passavam por aqui.
         from apps.stores.services.modo_de_recebimento import exigir_modo_permitido
         exigir_modo_permitido(store, validated_data.get('delivery_method') or '')
+        endereco = validated_data.get('delivery_address')
+        if isinstance(endereco, dict) and endereco:
+            from apps.stores.services.endereco_estruturado import estruturar_endereco
+            validated_data['delivery_address'] = estruturar_endereco(endereco)
         request = self.context.get('request')
         items_data = validated_data.pop('items', [])
         validated_data.pop('store', None)
