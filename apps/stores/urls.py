@@ -197,7 +197,7 @@ from .api.views.loyalty_views import (
     LoyaltyResgateManualView,
     LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView,
     LoyaltyGuestStatusView, ConquistasView, CashbackResumoView, CashbackSaldoView,
-    CarteiraView, CarteiraCompraView, CashbackAjusteView, IndicacoesView,
+    CarteiraView, CarteiraCompraView, CashbackAjusteView, CashbackExtratoView, IndicacoesView,
 )
 from .api.views.crm_views import (
     CustomerSearchView,
@@ -303,6 +303,7 @@ store_frontend_patterns = [
          name='store-loyalty-resgate-manual'),
     path('cashback/', CashbackResumoView.as_view(), name='store-cashback-resumo'),
     path('cashback/saldo/', CashbackSaldoView.as_view(), name='store-cashback-saldo'),
+    path('cashback/extrato/', CashbackExtratoView.as_view(), name='store-cashback-extrato'),
     path('cashback/ajustar/', CashbackAjusteView.as_view(), name='store-cashback-ajustar'),
     path('carteira/', CarteiraView.as_view(), name='store-carteira'),
     path('indicacoes/', IndicacoesView.as_view(), name='store-indicacoes'),

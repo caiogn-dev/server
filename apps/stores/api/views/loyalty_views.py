@@ -653,6 +653,31 @@ class CarteiraCompraView(APIView):
         return Response(resultado, status=status.HTTP_201_CREATED)
 
 
+class CashbackExtratoView(APIView):
+    """GET — de onde veio cada real de cashback do cliente, e para onde foi.
+
+    O dono não conseguia responder se os R$ 3,13 da MADU vieram da compra dela
+    ou do cupom que as amigas usaram. O banco sabia — o lote é `referral` e
+    aponta para o pedido da Juliane — e nada disso aparecia.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, store_slug):
+        from apps.stores.services.extrato_de_cashback import extrato_de_cashback
+
+        store = get_active_store(store_slug)
+        if not (request.user.is_superuser or store.owner_id == request.user.id):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+
+        telefone = (request.query_params.get('phone') or '').strip()
+        if not telefone:
+            # Sem recorte isto listaria o cashback da loja inteira numa tela
+            # que é a ficha de UMA pessoa.
+            return Response({'error': 'Informe o celular do cliente.'}, status=400)
+
+        return Response({'lancamentos': extrato_de_cashback(store, telefone)})
+
+
 class CashbackAjusteView(APIView):
     """Crédito manual do lojista: cortesia, reparação, brinde.
 
