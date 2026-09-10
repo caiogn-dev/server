@@ -10,6 +10,48 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-09-10
+
+**Baseline de testes:** 43 PRs abertos (#318–#360) aguardando merge em `development`. Nenhum mergeado desde 2026-07-26. Ambiente sem PostgreSQL/Docker; suíte de integração indisponível; SimpleTestCase (inspeção de source) executável localmente.
+
+**Gate anti-acúmulo:** Verificados todos os PRs abertos e os arquivos de maior risco (sse_views.py, users/views.py, instagram/serializers.py, stores/product_views.py). Nenhum PR aberto cobria `WhatsAppSSEView.get_event_stream`.
+
+**Bug encontrado e corrigido:** P0 IDOR em `WhatsAppSSEView.get_event_stream` — qualquer usuário autenticado recebia mensagens WhatsApp de todos os tenants em tempo real
+
+- **Tipo:** P0 — IDOR crítico em endpoint SSE de produção
+- **Arquivo corrigido:** `apps/core/sse_views.py` — `WhatsAppSSEView.get_event_stream()`
+- **Problema:** O stream de WhatsApp `/api/sse/whatsapp/` não aplicava qualquer escopo de tenant:
+  1. Sem `account_id` → `Message.objects.filter(created_at__gt=...)` retornava mensagens de **todos os tenants** (`from_number`, `to_number`, `text_body`, `conversation_id`).
+  2. Com `account_id` alheio → filtrava mensagens de conta de outro tenant sem verificar posse.
+  3. Com `conversation_id` alheio → `Conversation.objects.get(id=conversation_id)` sem filtro de tenant (IDOR na leitura inicial).
+  4. `status_updates` (mensagens atualizadas) tinha o mesmo problema — nenhum escopo de tenant.
+- **Correção:**
+  - Adicionado gate no início de `get_event_stream`: obtém `accessible_whatsapp_account_ids(user)` (retorna `None` para superusuário — sem restrição).
+  - `account_id` fornecido é validado contra a lista de IDs acessíveis antes do loop; rejeita com `SSEEvent(event_type='error', data={'message': 'Acesso negado'})`.
+  - `Conversation.objects.get(id=conversation_id)` substituído por queryset filtrado com `account_id__in=accessible_ids`.
+  - Query base de `Message` e `status_updates` ambos filtrados por `account_id__in=accessible_ids` quando `accessible_ids is not None`.
+  - Padrão consistente com `OrderSSEView._accessible_orders_queryset()` na mesma classe.
+- **Testes:** 7 `SimpleTestCase` em `apps/core/tests/test_whatsapp_sse_idor.py` (RED→GREEN confirmado):
+  - `accessible_whatsapp_account_ids` presente no source
+  - Rejeição de `account_id` fora do escopo (`'Acesso negado'` presente)
+  - `Conversation.objects.get(id=conversation_id)` direto removido (escopo via queryset)
+  - `accessible_ids` presente em query base de mensagens
+  - `is_superuser` presente (sem restrição para superuser)
+  - `accessible_ids` presente em `status_updates` (pelo menos 2 ocorrências)
+  - Gate aplicado **antes** do `while True`
+- **PR:** `bot/server-2026-09-10-whatsapp-sse-idor` (abrindo agora)
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P0 | Merge urgente dos PRs abertos (#318–#360) — 43 PRs sem merge há 6+ semanas |
+| P1 | `apps/automation/api/views/company_profile_views.py:92-98` — `account_id` não validado antes de uso |
+| P2 | Rate limiting ausente em `/api/v1/mobile/orders/by-token/` (abuso de polling) |
+| P2 | N+1 queries em `emit_nfce_for_order` (prefetch_related para order.items__product) |
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
