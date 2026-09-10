@@ -266,19 +266,60 @@ class CustomerIdentityService:
 
         return resolved_user, profile, user_created
 
+    # Cauda de rótulo: ", Palmas-TO", ", Palmas, TO", ", Palmas" — com ou sem os
+    # separadores vazios que o PDV antigo deixava para trás (",  — ,").
+    @staticmethod
+    def _tirar_cauda_de_rotulo(street: str, city: str, state: str) -> str:
+        """Remove do fim da rua o rótulo cidade/UF que já foi colado ali antes.
+
+        O `formatted` deste serviço é `rua, ..., cidade, UF`. Quando esse texto
+        volta como `street` — foi o que o PDV fazia a cada pedido — a rua ganha
+        um ", cidade-UF" por pedido e nunca mais para de crescer. Tirar a cauda
+        torna a montagem idempotente: `f(f(x)) == f(x)`.
+
+        Só corta o que está no FIM e precedido de vírgula, então "Avenida Palmas
+        Brasil, 120" (rua que apenas contém o nome da cidade) fica intacta.
+        """
+        if not street or not city:
+            return street
+
+        caudas = [f"{city}-{state}", f"{city}, {state}", city] if state else [city]
+        limpo = street.strip()
+
+        # Enquanto houver cauda, tira: dois pedidos = duas gerações de rótulo.
+        for _ in range(10):
+            antes = limpo
+            for cauda in caudas:
+                if limpo.lower().endswith(cauda.lower()):
+                    candidato = limpo[: -len(cauda)].rstrip()
+                    # Só é cauda se veio depois de vírgula. "Palmas" sozinho como
+                    # nome de rua inteiro não é rótulo — não sobra nada.
+                    if candidato.endswith(","):
+                        limpo = candidato.rstrip(", ").rstrip()
+                        break
+            else:
+                break
+            # Restos do template antigo: ",  — ," vira " — " e depois nada.
+            limpo = limpo.rstrip().rstrip("—").rstrip(", ").rstrip()
+            if limpo == antes:
+                break
+
+        return limpo or street.strip()
+
     @classmethod
     def _build_address_record(cls, delivery_address: Optional[dict], store: Optional["Store"] = None) -> Optional[dict]:
         address = dict(delivery_address or {})
+        cidade = str(address.get("city") or getattr(store, "city", "") or "").strip()
+        uf = cls.normalize_state(address.get("state") or "", fallback=getattr(store, "state", ""))
         normalized = {
-            "street": (address.get("street") or address.get("address") or "").strip(),
+            "street": cls._tirar_cauda_de_rotulo(
+                (address.get("street") or address.get("address") or "").strip(), cidade, uf
+            ),
             "number": str(address.get("number") or "").strip(),
             "complement": str(address.get("complement") or "").strip(),
             "neighborhood": str(address.get("neighborhood") or "").strip(),
-            "city": str(address.get("city") or getattr(store, "city", "") or "").strip(),
-            "state": cls.normalize_state(
-                address.get("state") or "",
-                fallback=getattr(store, "state", ""),
-            ),
+            "city": cidade,
+            "state": uf,
             "zip_code": cls.digits_only(address.get("zip_code") or ""),
             "reference": str(address.get("reference") or address.get("landmark") or "").strip(),
         }

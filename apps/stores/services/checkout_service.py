@@ -830,7 +830,13 @@ class CheckoutService:
         # mandam o endereço formatado inteiro dentro de `street`, e limpar
         # depois só conserta a tela — etiqueta, roteirização e relatório por
         # bairro continuam lendo a sopa.
+        # Link do Maps / par de coordenadas vira nome de lugar ANTES de
+        # estruturar — link não é endereço para quem lê a comanda.
+        from apps.stores.services.nome_do_lugar import nomear_se_for_so_um_ponto
         from apps.stores.services.endereco_estruturado import estruturar_no_payload
+        if isinstance(delivery_payload.get('address'), dict):
+            delivery_payload = dict(delivery_payload)
+            delivery_payload['address'] = nomear_se_for_so_um_ponto(delivery_payload['address'])
         delivery_payload = estruturar_no_payload(delivery_payload)
 
         precomputed_delivery_info = None

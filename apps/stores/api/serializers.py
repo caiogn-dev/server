@@ -946,8 +946,13 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         exigir_modo_permitido(store, validated_data.get('delivery_method') or '')
         endereco = validated_data.get('delivery_address')
         if isinstance(endereco, dict) and endereco:
+            # Link do Maps / par de coordenadas vira nome de lugar ANTES de
+            # estruturar: sem isto o `street` do pedido é a URL colada no PDV.
+            from apps.stores.services.nome_do_lugar import nomear_se_for_so_um_ponto
             from apps.stores.services.endereco_estruturado import estruturar_endereco
-            validated_data['delivery_address'] = estruturar_endereco(endereco)
+            validated_data['delivery_address'] = estruturar_endereco(
+                nomear_se_for_so_um_ponto(endereco)
+            )
         request = self.context.get('request')
         items_data = validated_data.pop('items', [])
         validated_data.pop('store', None)
