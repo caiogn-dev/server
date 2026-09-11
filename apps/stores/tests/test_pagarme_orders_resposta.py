@@ -63,6 +63,25 @@ def test_motivo_COM_ACENTO_chega_na_mensagem_especifica():
     assert 'bloqueado' in msg.lower()
 
 
-def test_toda_chave_do_dicionario_e_alcancavel():
-    for chave in po.MENSAGENS_DE_RECUSA:
-        assert po.mensagem_de_recusa(chave) is not po.RECUSA_GENERICA
+#: Forma natural (acentuada) com que o adquirente manda cada motivo.
+#: A chave do dicionario e a versao ja normalizada; se o teste usasse a
+#: chave, ele nao passaria pela transliteracao e nao provaria nada.
+MOTIVOS_COMO_O_ADQUIRENTE_MANDA = {
+    'saldo insuficiente': 'Saldo insuficiente',
+    'cartao expirado': 'Cartão expirado',
+    'cartao invalido': 'Cartão inválido',
+    'senha invalida': 'Senha inválida',
+    'transacao nao permitida': 'Transação não permitida',
+    'estabelecimento invalido': 'Estabelecimento inválido',
+    'cartao bloqueado': 'Cartão bloqueado',
+}
+
+
+def test_toda_chave_do_dicionario_e_alcancavel_a_partir_do_texto_acentuado():
+    """Se alguem remover a transliteracao, TODA entrada acentuada cai no
+    generico e este teste quebra na hora — que e o ponto dele."""
+    assert set(MOTIVOS_COMO_O_ADQUIRENTE_MANDA) == set(po.MENSAGENS_DE_RECUSA), (
+        'Entrada nova em MENSAGENS_DE_RECUSA sem forma acentuada correspondente.'
+    )
+    for chave, acentuado in MOTIVOS_COMO_O_ADQUIRENTE_MANDA.items():
+        assert po.mensagem_de_recusa(acentuado) == po.MENSAGENS_DE_RECUSA[chave]
