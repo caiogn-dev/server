@@ -55,3 +55,14 @@ def test_motivo_desconhecido_nao_vaza_texto_tecnico():
     msg = po.mensagem_de_recusa('ERR_ACQ_5591_XYZ')
     assert 'ERR_ACQ' not in msg
     assert msg == po.RECUSA_GENERICA
+
+
+def test_motivo_COM_ACENTO_chega_na_mensagem_especifica():
+    msg = po.mensagem_de_recusa('Cartão bloqueado')
+    assert msg != po.RECUSA_GENERICA
+    assert 'bloqueado' in msg.lower()
+
+
+def test_toda_chave_do_dicionario_e_alcancavel():
+    for chave in po.MENSAGENS_DE_RECUSA:
+        assert po.mensagem_de_recusa(chave) is not po.RECUSA_GENERICA

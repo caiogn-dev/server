@@ -3,14 +3,12 @@
 Funções puras, sem Django e sem rede — no molde de `mp_orders.py`. Quem fala
 com o mundo é `create_order`; o resto é montagem e leitura de dicionário.
 """
-import logging
 import re
+import unicodedata
 import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
 import requests
-
-logger = logging.getLogger(__name__)
 
 #: A lista NAO mora aqui — mora no catalogo, que e o que o cardapio e o painel
 #: recebem por API. Repetir os valores neste arquivo criaria a segunda copia.
@@ -196,7 +194,13 @@ RECUSA_GENERICA = 'O pagamento com vale não foi autorizado. Use outro cartão o
 
 
 def mensagem_de_recusa(motivo) -> str:
-    """Motivo em português, pronto para a tela — sem vazar código técnico."""
-    chave = re.sub(r'[^a-z ]', '', (motivo or '').strip().lower())
-    chave = re.sub(r'\s+', ' ', chave).strip()
+    """Motivo em português, pronto para a tela — sem vazar código técnico.
+
+    Transliterar antes de filtrar: sem isso, "Cartão" vira "carto" e nunca
+    bate com a chave do dicionário — 6 das 7 mensagens específicas caindo
+    caladas na genérica. Mesmo padrão de `mp_orders.statement_descriptor`.
+    """
+    texto = unicodedata.normalize('NFKD', str(motivo or ''))
+    texto = texto.encode('ascii', 'ignore').decode('ascii').strip().lower()
+    chave = re.sub(r'\s+', ' ', re.sub(r'[^a-z ]', '', texto)).strip()
     return MENSAGENS_DE_RECUSA.get(chave, RECUSA_GENERICA)
