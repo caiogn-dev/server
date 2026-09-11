@@ -1570,7 +1570,7 @@ class CheckoutSerializer(serializers.Serializer):
     distance_km = serializers.DecimalField(max_digits=7, decimal_places=2, required=False, allow_null=True)
     
     # Payment
-    payment_method = serializers.ChoiceField(choices=['pix', 'card', 'cash'], default='pix')
+    payment_method = serializers.ChoiceField(choices=['pix', 'card', 'cash', 'voucher'], default='pix')
     
     # Coupon
     coupon_code = serializers.CharField(required=False, allow_blank=True, default='')
