@@ -122,6 +122,30 @@ class VoucherNoCheckoutTests(APITestCase):
         self.assertNotEqual(order.payment_status, StoreOrder.PaymentStatus.PAID)
         self.assertNotEqual(order.payment_status, StoreOrder.PaymentStatus.FAILED)
 
+    def test_pendente_nao_move_o_payment_status_do_pedido(self):
+        """Nao basta 'nao e PAID nem FAILED': o valor tem que ser o MESMO de
+        antes. `_sync_with_order` grava incondicionalmente, e hoje isso e um
+        no-op so porque o Django cacheia o objeto do pedido na FK. Se essa
+        gravacao um dia mudar de valor, e ESTE teste que avisa."""
+        order = self._order()
+        antes = order.payment_status
+
+        with patch(COBRAR, return_value=pendente()):
+            CheckoutService.create_payment(order, 'voucher', DADOS)
+
+        order.refresh_from_db()
+        self.assertEqual(order.payment_status, antes)
+
+    def test_valor_parcial_e_recusado_no_vale(self):
+        order = self._order('25.00')
+        with patch(COBRAR) as cobrar:
+            r = CheckoutService.create_payment(
+                order, 'voucher', DADOS, amount=Decimal('10.00'),
+            )
+        self.assertFalse(r['success'])
+        self.assertEqual(cobrar.call_count, 0)
+        self.assertFalse(StorePayment.objects.filter(order=order).exists())
+
     def test_pendente_nao_fala_em_recusa_para_o_cliente(self):
         """Nada de "use outro cartao ou pague no PIX" sobre cobranca em voo."""
         order = self._order()

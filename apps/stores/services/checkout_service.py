@@ -1449,6 +1449,14 @@ class CheckoutService:
             return {'success': False, 'error': 'Os dados do cartão expiraram. Digite de novo, por favor.'}
 
         valor = Decimal(str(amount if amount is not None else order.total))
+        # "Tudo ou nada" e decisao de produto, nao gentileza do chamador. O painel
+        # encaminha `amount` cru do request; sem esta trava, uma chamada de staff
+        # cobraria vale parcial e o pedido ficaria pago pela metade.
+        if valor != Decimal(str(order.total)):
+            return {
+                'success': False,
+                'error': 'Pagamento com vale é do valor total do pedido.',
+            }
 
         pagamento = StorePayment.objects.create(
             order=order,
@@ -1479,6 +1487,13 @@ class CheckoutService:
             pagamento.status = StorePayment.PaymentStatus.COMPLETED
             pagamento.paid_at = timezone.now()
             pagamento.save()
+            # Redundante de proposito: `pagamento.save()` acima ja disparou
+            # `_sync_with_order`, que escreve `order.payment_status`. Mantemos o write
+            # explicito para que a transicao "pedido pago" esteja VISIVEL no caminho do
+            # dinheiro, em vez de escondida num efeito colateral do save do pagamento.
+            # Preco: um enqueue extra de `update_customer_stats_on_payment`, que e
+            # idempotente (update_stats recalcula, nao incrementa). Nao "otimize" isto
+            # sem ler `StorePayment._sync_with_order` inteiro primeiro.
             order.payment_status = StoreOrder.PaymentStatus.PAID
             order.payment_method = 'voucher'
             order.save(update_fields=['payment_status', 'payment_method', 'updated_at'])
