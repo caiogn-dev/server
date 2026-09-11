@@ -20,9 +20,41 @@ Só um endereço que é SÓ ponto no mapa aciona a geocodificação reversa.
 import logging
 import re
 from typing import Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
+
+# Whitelist de hosts do Google Maps. Comparamos por hostname exato para evitar
+# bypass por substring ("evil.com/maps" não é Maps; "evil.com/?goo.gl" idem).
+_MAPS_HOSTS = frozenset({
+    'maps.app.goo.gl',
+    'goo.gl',
+    'maps.google.com',
+    'www.google.com',
+    'maps.google.com.br',
+    'www.google.com.br',
+})
+
+
+def _eh_url_google_maps(url: str) -> bool:
+    """O host é um domínio legítimo do Google Maps?
+
+    Checagem por HOSTNAME, nunca por substring: um domínio malicioso pode
+    conter 'goo.gl' no path ou nos params e deve ser recusado.
+    """
+    if not url:
+        return False
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return False
+    host = (p.hostname or '').lower()
+    if host not in _MAPS_HOSTS:
+        return False
+    # www.google.com/maps é Maps; www.google.com sem /maps é o buscador.
+    if host in ('www.google.com', 'www.google.com.br'):
+        return (p.path or '').startswith('/maps')
+    return True
 
 _NUM = r'-?\d{1,3}\.\d{3,}'
 _PAR_DE_COORDENADAS = re.compile(rf'({_NUM})\s*[,;]\s*({_NUM})')
@@ -59,11 +91,17 @@ def coordenadas_do_texto(texto: str) -> Optional[Tuple[float, float]]:
 
 
 def _coords_do_link_curto(url: str) -> Optional[Tuple[float, float]]:
-    """Segue o redirecionamento de um link curto (maps.app.goo.gl) até as coordenadas.
+    """Segue o redirecionamento de um link curto do Google Maps até as coordenadas.
 
     Só o servidor consegue fazer isto: o navegador esbarra no CORS, e é por isso
     que o link curto chegava cru até o banco.
+
+    Whitelist obrigatória: apenas hosts do Google Maps são seguidos. Qualquer
+    outra URL retorna None sem tocar na rede — proteção contra SSRF via campo
+    `street` do endereço (dado externo de PDV/bot/checkout).
     """
+    if not _eh_url_google_maps(url):
+        return None
     try:
         import requests
         resposta = requests.head(url, allow_redirects=True, timeout=6)
