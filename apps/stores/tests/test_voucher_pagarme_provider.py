@@ -53,6 +53,19 @@ def test_cobranca_recusada_devolve_portugues():
     assert 'saldo' in r.mensagem.lower()
 
 
+def test_cobranca_pendente_nao_e_relatada_como_recusa():
+    """`processing` passa por `interpret` de verdade e vira status='pending',
+    ok=True — não pode cair em `mensagem_de_recusa` (RECUSA_GENERICA)."""
+    corpo = {'id': 'or_9', 'status': 'processing', 'charges': [
+        {'status': 'processing', 'last_transaction': {}}
+    ]}
+    with patch('apps.stores.services.pagarme_orders.create_order', return_value=(200, corpo)):
+        r = PagarmeVoucherProvider(gateway_falso()).cobrar(pedido_falso(), DADOS)
+    assert r.status == 'pending'
+    assert r.aprovado is False
+    assert r.mensagem == ''
+
+
 def test_bandeira_fora_da_lista_da_loja_e_recusada_sem_rede():
     dados = DadosDoVoucher('tok', 'ticket', 'ANA', '39053344705')  # loja só tem vr/sodexo
     with patch('apps.stores.services.pagarme_orders.create_order') as chamada:

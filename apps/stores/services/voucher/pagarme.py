@@ -15,13 +15,7 @@ FALHA_DE_REDE = (
 
 
 class PagarmeVoucherProvider(VoucherProvider):
-    def __init__(self, gateway):
-        self.gateway = gateway
-
-    def bandeiras(self):
-        config = getattr(self.gateway, 'configuration', None) or {}
-        marcas = config.get('voucher_brands') or []
-        return [str(m).strip().lower() for m in marcas if str(m).strip()]
+    """`__init__` e `bandeiras()` vêm de `VoucherProvider` (base.py)."""
 
     def cobrar(self, order, dados: DadosDoVoucher, total=None) -> ResultadoDaCobranca:
         bandeira = (dados.brand or '').strip().lower()
@@ -50,7 +44,7 @@ class PagarmeVoucherProvider(VoucherProvider):
 
         try:
             status_code, body = pagarme_orders.create_order(self.gateway.api_key, payload)
-        except (requests.Timeout, requests.ConnectionError, requests.RequestException) as erro:
+        except requests.RequestException as erro:
             # Nunca deixar exceção de rede subir para o checkout: o cliente
             # veria erro 500 numa tela de pagamento.
             logger.error('Pagar.me inacessível no voucher: %s', erro)
@@ -60,7 +54,11 @@ class PagarmeVoucherProvider(VoucherProvider):
             )
 
         ok, status, external_id, motivo = pagarme_orders.interpret(status_code, body)
-        mensagem = '' if ok and status == 'approved' else pagarme_orders.mensagem_de_recusa(motivo)
+        # 🚨 `pending` NAO e recusa. O Pagar.me devolve analyzing/processing para
+        # cobranca ainda em voo; traduzir isso com `mensagem_de_recusa` daria ao
+        # cliente "nao foi autorizado, pague no PIX" sobre um pagamento que ainda
+        # pode ser aprovado — e ele pagaria duas vezes. Só `failed` fala.
+        mensagem = pagarme_orders.mensagem_de_recusa(motivo) if status == 'failed' else ''
         return ResultadoDaCobranca(
             aprovado=bool(ok and status == 'approved'),
             status=status, external_id=external_id,

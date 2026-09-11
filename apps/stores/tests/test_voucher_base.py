@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from apps.stores.services.voucher.base import (
@@ -21,9 +23,26 @@ def test_um_provider_concreto_so_precisa_de_cobrar():
                 mensagem='', bruto={},
             )
 
-    resultado = ProviderFalso().cobrar(None, DadosDoVoucher('t', 'vr', 'ANA', '390'))
+    gateway = SimpleNamespace(configuration={})
+    resultado = ProviderFalso(gateway).cobrar(None, DadosDoVoucher('t', 'vr', 'ANA', '390'))
     assert resultado.aprovado is True
     assert resultado.status == 'approved'
+
+
+def test_bandeiras_e_concreto_e_todo_provider_ganha_de_graca():
+    """`bandeiras()` não é específico de provedor — vive na base para que a
+    Volus (ou qualquer provedor futuro) não precise reimplementá-lo nem
+    lembrar de declará-lo. Este teste é o que continua verdadeiro quando ela
+    chegar."""
+    class ProviderFalso(VoucherProvider):
+        def cobrar(self, order, dados, total=None):
+            return ResultadoDaCobranca(
+                aprovado=True, status='approved', external_id='x',
+                mensagem='', bruto={},
+            )
+
+    gateway = SimpleNamespace(configuration={'voucher_brands': ['vr']})
+    assert ProviderFalso(gateway).bandeiras() == ['vr']
 
 
 def test_dados_do_voucher_nao_carrega_pan_nem_cvv():

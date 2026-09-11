@@ -31,7 +31,23 @@ class ResultadoDaCobranca:
 
 
 class VoucherProvider(ABC):
-    """Contrato de um trilho de vale-refeição/alimentação."""
+    """Contrato de um trilho de vale-refeição/alimentação.
+
+    `bandeiras()` é concreto de propósito: ler as marcas habilitadas de
+    `gateway.configuration` não tem nada de específico de provedor, e deixar
+    cada implementação repetir isso seria a segunda cópia. Concreto aqui,
+    todo provedor ganha de graça — e o registry pode chamá-lo sem torcer
+    para que a implementação tenha lembrado de escrevê-lo.
+    """
+
+    def __init__(self, gateway):
+        self.gateway = gateway
+
+    def bandeiras(self):
+        """Marcas que ESTA loja habilitou, em minúsculas."""
+        config = getattr(self.gateway, 'configuration', None) or {}
+        marcas = config.get('voucher_brands') or []
+        return [str(m).strip().lower() for m in marcas if str(m).strip()]
 
     @abstractmethod
     def cobrar(self, order, dados: DadosDoVoucher, total=None) -> ResultadoDaCobranca:
