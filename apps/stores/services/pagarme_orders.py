@@ -3,8 +3,14 @@
 Funções puras, sem Django e sem rede — no molde de `mp_orders.py`. Quem fala
 com o mundo é `create_order`; o resto é montagem e leitura de dicionário.
 """
+import logging
 import re
+import uuid
 from decimal import Decimal, ROUND_HALF_UP
+
+import requests
+
+logger = logging.getLogger(__name__)
 
 #: A lista NAO mora aqui — mora no catalogo, que e o que o cardapio e o painel
 #: recebem por API. Repetir os valores neste arquivo criaria a segunda copia.
@@ -110,3 +116,87 @@ def build_voucher_payload(order, *, card_token, brand, holder_name,
         }],
         'metadata': {'pedido': str(order.order_number)},
     }
+
+
+def _auth(secret_key):
+    """Basic auth do Pagar.me: usuário = secret key, senha vazia."""
+    return (secret_key, '')
+
+
+def create_order(secret_key, payload, timeout=25):
+    """POST /orders. Devolve (status_code, body) — nunca levanta por HTTP."""
+    headers = {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': str(uuid.uuid4()),
+    }
+    r = requests.post(
+        ORDERS_URL, json=payload, headers=headers,
+        auth=_auth(secret_key), timeout=timeout,
+    )
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, {}
+
+
+def consultar_order(secret_key, order_id, timeout=15):
+    """GET /orders/{id} — a fonte da verdade quando o webhook chega."""
+    r = requests.get(
+        f'{ORDERS_URL}/{order_id}', auth=_auth(secret_key), timeout=timeout
+    )
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, {}
+
+
+def interpret(status_code, body):
+    """Normaliza a resposta -> (ok, status, external_id, motivo).
+
+    O motivo da recusa mora em `charges[0].last_transaction.acquirer_message`.
+    O `message` do corpo de fora é genérico e não serve para a tela.
+    """
+    body = body or {}
+    charges = body.get('charges') or []
+    primeira = charges[0] if charges else {}
+    transacao = primeira.get('last_transaction') or {}
+
+    external_id = str(body.get('id')) if body.get('id') else None
+    motivo = (
+        transacao.get('acquirer_message')
+        or primeira.get('status')
+        or body.get('message')
+        or ''
+    )
+
+    if status_code not in (200, 201):
+        return False, 'failed', external_id, (motivo or 'erro')
+
+    status_charge = (primeira.get('status') or body.get('status') or '').lower()
+    if status_charge in ('paid', 'captured'):
+        return True, 'approved', external_id, motivo
+    if status_charge in ('pending', 'processing', 'waiting_payment', 'analyzing'):
+        return True, 'pending', external_id, motivo
+    return False, 'failed', external_id, motivo
+
+
+#: Motivo do adquirente -> o que o cliente precisa fazer. O texto cru vem do
+#: adquirente e não diz ao cliente qual é a saída dele.
+MENSAGENS_DE_RECUSA = {
+    'saldo insuficiente': 'O seu vale não tem saldo para este valor. Use outro cartão ou pague no PIX.',
+    'cartao expirado': 'Este vale está vencido. Use outro cartão ou pague no PIX.',
+    'cartao invalido': 'Confira os dados do cartão do vale e tente de novo.',
+    'senha invalida': 'Confira os dados do cartão do vale e tente de novo.',
+    'transacao nao permitida': 'Este vale não aceita compra pela internet. Use outro cartão ou pague no PIX.',
+    'estabelecimento invalido': 'Esta loja ainda não aceita esta bandeira de vale. Use outro cartão ou pague no PIX.',
+    'cartao bloqueado': 'Este vale está bloqueado. Fale com a operadora do seu benefício ou pague no PIX.',
+}
+
+RECUSA_GENERICA = 'O pagamento com vale não foi autorizado. Use outro cartão ou pague no PIX.'
+
+
+def mensagem_de_recusa(motivo) -> str:
+    """Motivo em português, pronto para a tela — sem vazar código técnico."""
+    chave = re.sub(r'[^a-z ]', '', (motivo or '').strip().lower())
+    chave = re.sub(r'\s+', ' ', chave).strip()
+    return MENSAGENS_DE_RECUSA.get(chave, RECUSA_GENERICA)

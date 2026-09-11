@@ -135,3 +135,30 @@ def _sem_chamada_real_ao_mercadopago(monkeypatch):
     except Exception:  # pragma: no cover - app pode não estar carregado
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _sem_chamada_real_ao_pagarme(monkeypatch):
+    """Nenhum teste fala com o Pagar.me de verdade.
+
+    Mesma lição das 6 cobranças PIX reais de 08/ago, agora com um agravante: a
+    integração de voucher roda com uma secret key de verdade no ambiente. Um
+    teste que escape do mock não gera erro de rede — gera cobrança.
+
+    Teste que precisa exercitar o fluxo continua livre para mockar
+    `apps.stores.services.pagarme_orders.create_order`; o patch dele tem
+    precedência sobre este.
+    """
+    def _proibido(*args, **kwargs):
+        raise AssertionError(
+            'Teste tentou chamar o Pagar.me DE VERDADE.\n'
+            'Mocke `apps.stores.services.pagarme_orders.create_order` '
+            '(ou `consultar_order`) no seu teste.'
+        )
+
+    monkeypatch.setattr(
+        'apps.stores.services.pagarme_orders.create_order', _proibido, raising=False,
+    )
+    monkeypatch.setattr(
+        'apps.stores.services.pagarme_orders.consultar_order', _proibido, raising=False,
+    )
