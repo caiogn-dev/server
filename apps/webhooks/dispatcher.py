@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # rejeitada com 403. Configure um WebhookEndpoint com secret no admin OU as
 # envs WHATSAPP_APP_SECRET / INSTAGRAM_APP_SECRET / META_WEBHOOK_APP_SECRET.
 _PROVIDERS_REQUIRE_SIGNATURE: frozenset = frozenset({
-    'whatsapp', 'instagram', 'messenger', 'mercadopago', 'toca-delivery',
+    'whatsapp', 'instagram', 'messenger', 'mercadopago', 'toca-delivery', 'pagarme',
 })
 
 # Providers da Meta que compartilham o formato de assinatura X-Hub-Signature-256.
@@ -421,12 +421,14 @@ def register_default_handlers():
     from .handlers.instagram_handler import InstagramHandler
     from .handlers.messenger_handler import MessengerHandler
     from .handlers.toca_delivery_handler import TocaDeliveryHandler
+    from .handlers.pagarme_handler import PagarmeHandler
 
     WebhookDispatcherView.register_handler('whatsapp', WhatsAppHandler)
     WebhookDispatcherView.register_handler('mercadopago', MercadoPagoHandler)
     WebhookDispatcherView.register_handler('instagram', InstagramHandler)
     WebhookDispatcherView.register_handler('messenger', MessengerHandler)
     WebhookDispatcherView.register_handler('toca-delivery', TocaDeliveryHandler)
+    WebhookDispatcherView.register_handler('pagarme', PagarmeHandler)
 
 
 # Auto-register on module load
