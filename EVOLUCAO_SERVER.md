@@ -888,3 +888,53 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+### 2026-09-11
+
+**Baseline de testes:** Ambiente sem Docker/PostgreSQL/daphne. 12 SimpleTestCase (sem DB/Redis)
+rodados isoladamente — 12/12 GREEN. HEAD de `development`: `e78c922` (feat cashback extrato).
+
+**Gate anti-acúmulo:** 44 PRs abertos (#318–#361), todos aguardando merge para `development`.
+Varredura realizada nos commits recentes não cobertos por PRs:
+- `e78c922` — extrato de cashback: `CashbackExtratoView` escopado corretamente (owner/superuser + store)
+- `583cf2f` — novo módulo `apps/stores/services/nome_do_lugar.py`: **SSRF confirmado** (P0)
+- `1db4766` — `endereco_estruturado.py`: sem superfície de ataque nova
+- iFood (`ifood_oauth.py`, `ifood.py`): sem views HTTP expostas ainda
+- `JanelaDaAudienciaView`: escopado por `resolver_lojas_da_audiencia` (OK)
+- `CustomerSearchView` (#319): já tem PR aberto — não replicado
+
+**Vulnerabilidade encontrada e corrigida:** SSRF em `_coords_do_link_curto` [P0]
+
+- **Tipo:** P0 — SSRF via campo de endereço externo (PDV/bot/checkout)
+- **Arquivo:** `apps/stores/services/nome_do_lugar.py` — função `_coords_do_link_curto`
+- **Introduzido em:** commit `583cf2f` (10/set/2026), não coberto por nenhum PR aberto
+  (PR #338 cobre SSRF diferente em `storefront_views._coords_from_maps_url`)
+- **Problema:** `requests.head(url, allow_redirects=True, timeout=6)` sem whitelist de domínio.
+  O campo `street` é dado externo — operador de PDV pode passar URL arbitrária
+  (`http://169.254.169.254/meta-data/`, Redis interno, etc.) e o servidor faz o request.
+  Dois callers de produção: `checkout_service.py:835` e `serializers.py:951`.
+- **Correção:** Nova função `_eh_url_google_maps(url)` valida o hostname exato contra
+  frozenset de domínios do Google Maps. Comparação por host (nunca substring): `evil.com/maps`
+  e `evil.com/?goo.gl` são bloqueados. `_coords_do_link_curto` retorna `None` imediatamente
+  sem tocar na rede se o host não está na whitelist.
+- **Testes:** 12 SimpleTestCase em `test_nome_do_lugar_ssrf.py` (12/12 GREEN):
+  - AWS metadata, IP privado, localhost, domínio arbitrário → `requests.head` não chamado
+  - Bypass substring (`evil.com/maps`, `evil.com/?goo.gl`) → bloqueados
+  - Link curto válido (`maps.app.goo.gl`) → request realizado, coordenadas extraídas
+  - `nomear_se_for_so_um_ponto` com URL interna → sem request
+  - `_eh_url_google_maps(None)` e `('')` → `False`
+- **PR:** #362 — `bot/server-2026-09-11-nome-do-lugar-ssrf`
+
+**PRs acumulados aguardando merge:** #318–#362 (45 PRs). Recomendação urgente: merge
+em lote dos PRs P0/P1 (#331, #334, #338, #351, #353, #361, #362) para reduzir
+a superfície de ataque ativa em produção.
+
+**Próximo backlog priorizado:**
+
+1. **P0** — Merge urgente dos PRs de SSRF e IDOR crítico: #362 (este), #338 (Maps SSRF
+   em storefront_views), #334 (barcode IDOR), #331 (message viewset IDOR P0), #361 (WhatsApp SSE IDOR)
+2. **P1** — `_coords_from_maps_url` em `storefront_views.py:1150` ainda usa verificação fraca
+   por substring (`'maps' not in url`). PR #338 aguarda merge; mas o fix do PR #338 deve ser
+   comparado com o whitelist de hostname implementado nesta sessão (mais seguro).
+3. **P1** — Namespace mobile/customer: `GET /api/v1/mobile/orders/by-token/{token}/` (CLAUDE.md)
+4. **P2** — Testes de regressão para OTP WhatsApp, zonas de entrega, checkout (CLAUDE.md)
+
