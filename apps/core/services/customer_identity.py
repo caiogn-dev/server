@@ -18,6 +18,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+#: Largura real de cada coluna de `store_customer_addresses`. Mantida aqui
+#: porque e o ultimo ponto antes do INSERT — e porque o banco recusar por
+#: estouro custa a venda inteira, nao o campo.
+CAMPOS_DO_ENDERECO = {
+    "street": 255,
+    "number": 20,
+    "complement": 100,
+    "neighborhood": 100,
+    "city": 100,
+    "state": 2,
+    "zip_code": 10,
+    "reference": 255,
+}
+LARGURA_DO_FORMATTED = 500
+
+
 class CustomerIdentityService:
     """Resolve and persist customer identity across checkout and auth flows."""
 
@@ -311,18 +327,45 @@ class CustomerIdentityService:
         address = dict(delivery_address or {})
         cidade = str(address.get("city") or getattr(store, "city", "") or "").strip()
         uf = cls.normalize_state(address.get("state") or "", fallback=getattr(store, "state", ""))
+        numero = str(address.get("number") or "").strip()
+        complemento = str(address.get("complement") or "").strip()
+
+        # 🚨 O que nao cabe em `number` E complemento, nao lixo.
+        #
+        # 11/09/2026: a cliente SARAH ALBUQUERQUE perdeu o pedido tres vezes
+        # seguidas na Ce Saladas. Endereco de Palmas — "508 Norte, Alameda 11,
+        # HM 02" —, onde o numero da casa e o "HM 02" e ja tinha ido no campo
+        # Rua. No campo Numero ela escreveu o que faltava: "Apto 402 bloco c
+        # res trianon", 28 caracteres numa coluna varchar(20). O Postgres
+        # recusou o INSERT, o `except Exception` do checkout devolveu
+        # "Erro ao processar checkout." e ela tentou identico mais duas vezes
+        # antes de desistir.
+        #
+        # Truncar em 20 trocaria a venda perdida por um endereco errado: o
+        # entregador sairia sem saber o apartamento. Texto que nao cabe num
+        # numero nao E um numero — vai para o complemento, que e o campo dele.
+        if len(numero) > CAMPOS_DO_ENDERECO["number"]:
+            complemento = f"{numero} - {complemento}" if complemento else numero
+            numero = ""
+
         normalized = {
             "street": cls._tirar_cauda_de_rotulo(
                 (address.get("street") or address.get("address") or "").strip(), cidade, uf
             ),
-            "number": str(address.get("number") or "").strip(),
-            "complement": str(address.get("complement") or "").strip(),
+            "number": numero,
+            "complement": complemento,
             "neighborhood": str(address.get("neighborhood") or "").strip(),
             "city": cidade,
             "state": uf,
             "zip_code": cls.digits_only(address.get("zip_code") or ""),
             "reference": str(address.get("reference") or address.get("landmark") or "").strip(),
         }
+
+        # Trava a CLASSE, nao so o `number`: qualquer campo que estoure derruba
+        # a venda do mesmo jeito, com a mesma mensagem inutil. Endereco digitado
+        # por gente e texto livre, e texto livre sempre acha a borda.
+        for campo, largura in CAMPOS_DO_ENDERECO.items():
+            normalized[campo] = normalized[campo][:largura]
 
         if not any(normalized.values()):
             return None
@@ -335,7 +378,7 @@ class CustomerIdentityService:
         line_2 = " - ".join([value for value in extras if value])
         normalized["formatted"] = ", ".join(
             [part for part in [line_1, line_2, normalized["city"], normalized["state"]] if part]
-        )
+        )[:LARGURA_DO_FORMATTED]
         return normalized
 
     @classmethod
