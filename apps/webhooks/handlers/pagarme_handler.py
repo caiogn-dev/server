@@ -8,6 +8,7 @@ processar de 31/ago e o backfill que duplicou receita.
 import logging
 
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.stores.models import StoreOrder, StorePayment
 from apps.stores.services import pagarme_orders
@@ -20,6 +21,29 @@ EVENTOS_TRATADOS = {
     'order.paid', 'order.payment_failed', 'charge.paid',
     'charge.payment_failed', 'charge.refunded',
 }
+
+
+def _momento_do_pagamento(corpo: dict):
+    """Hora em que o dinheiro entrou, segundo o Pagar.me — não a hora em que
+    o NOSSO servidor processou o webhook. Sem isso, `paid_at` reflete quando a
+    entrega/reentrega chegou aqui, e o caixa mentiria sobre quando pagou.
+
+    Cai para `timezone.now()` quando o corpo não traz nada utilizável — nunca
+    inventa um parse que não sabemos que existe de verdade na API.
+    """
+    charges = (corpo or {}).get('charges') or []
+    primeira = charges[0] if charges else {}
+    bruto = (
+        primeira.get('paid_at')
+        or (primeira.get('last_transaction') or {}).get('created_at')
+    )
+    if bruto:
+        parsed = parse_datetime(str(bruto))
+        if parsed is not None:
+            if timezone.is_naive(parsed):
+                parsed = timezone.make_aware(parsed, timezone.utc)
+            return parsed
+    return timezone.now()
 
 
 class PagarmeHandler(BaseHandler):
@@ -61,7 +85,7 @@ class PagarmeHandler(BaseHandler):
         if ok and status == 'approved':
             if pagamento.status != StorePayment.PaymentStatus.COMPLETED:
                 pagamento.status = StorePayment.PaymentStatus.COMPLETED
-                pagamento.paid_at = timezone.now()
+                pagamento.paid_at = _momento_do_pagamento(corpo)
                 pagamento.gateway_response = corpo or {}
                 pagamento.save()
             pedido = pagamento.order
@@ -69,6 +93,16 @@ class PagarmeHandler(BaseHandler):
                 pedido.payment_status = StoreOrder.PaymentStatus.PAID
                 pedido.save(update_fields=['payment_status', 'updated_at'])
             return {'ok': True, 'status': 'approved'}
+
+        if status == 'refunded':
+            # Dinheiro que ENTROU e foi devolvido não é o mesmo que nunca ter
+            # sido autorizado — não mexe em `paid_at`: quando o dinheiro
+            # chegou continua sendo verdade depois do estorno.
+            if pagamento.status != StorePayment.PaymentStatus.REFUNDED:
+                pagamento.status = StorePayment.PaymentStatus.REFUNDED
+                pagamento.gateway_response = corpo or {}
+                pagamento.save()
+            return {'ok': True, 'status': 'refunded'}
 
         if pagamento.status != StorePayment.PaymentStatus.FAILED:
             pagamento.status = StorePayment.PaymentStatus.FAILED

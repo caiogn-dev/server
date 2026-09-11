@@ -175,6 +175,11 @@ def interpret(status_code, body):
         return True, 'approved', external_id, motivo
     if status_charge in ('pending', 'processing', 'waiting_payment', 'analyzing'):
         return True, 'pending', external_id, motivo
+    if status_charge in ('refunded', 'chargedback'):
+        # Dinheiro que ENTROU e voltou — não é o mesmo caso de nunca ter sido
+        # autorizado. Cair no 'failed' de baixo faria o handler gravar uma
+        # cobrança que teve sucesso como se tivesse falhado.
+        return False, 'refunded', external_id, motivo
     return False, 'failed', external_id, motivo
 
 

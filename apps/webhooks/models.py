@@ -98,6 +98,7 @@ class WebhookEndpoint(BaseModel):
         WHATSAPP = 'whatsapp', 'WhatsApp'
         INSTAGRAM = 'instagram', 'Instagram'
         MERCADOPAGO = 'mercadopago', 'Mercado Pago'
+        PAGARME = 'pagarme', 'Pagar.me'
         TOCA_DELIVERY = 'toca-delivery', 'Toca Delivery'
         CUSTOM = 'custom', 'Custom'
     

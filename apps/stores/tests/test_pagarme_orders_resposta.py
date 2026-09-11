@@ -26,6 +26,20 @@ def test_recusado_vira_falha():
     assert (ok, status) == (False, 'failed')
 
 
+def test_estornado_nao_vira_falha():
+    """Dinheiro que ENTROU e voltou não é o mesmo caso de nunca ter sido
+    autorizado. Cair no 'failed' fez o handler gravar como se a cobrança
+    nunca tivesse tido sucesso."""
+    ok, status, eid, _ = po.interpret(200, corpo('refunded', order_status='paid'))
+    assert (ok, status) == (False, 'refunded')
+
+
+def test_chargeback_tambem_vira_estornado():
+    """Chargeback é dinheiro reversado, não um pagamento que falhou ao autorizar."""
+    ok, status, eid, _ = po.interpret(200, corpo('chargedback', order_status='paid'))
+    assert (ok, status) == (False, 'refunded')
+
+
 def test_motivo_vem_do_campo_aninhado_e_nao_do_message_de_fora():
     """O motivo real mora em charges[0].last_transaction.acquirer_message.
     Ler o `message` de fora foi o que fez o cliente ver texto genérico no MP."""

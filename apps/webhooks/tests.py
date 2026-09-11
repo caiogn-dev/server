@@ -5,6 +5,7 @@ Cobre o comportamento fail-closed: provedores em _PROVIDERS_REQUIRE_SIGNATURE
 (Meta + MercadoPago) DEVEM ter secret configurado (WebhookEndpoint ou settings),
 caso contrário a requisição é rejeitada com 403.
 """
+import base64
 import hashlib
 import hmac
 import json
@@ -12,11 +13,15 @@ import json
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
-from .models import WebhookEndpoint, WebhookEvent
+from apps.webhooks.models import WebhookEndpoint, WebhookEvent
 
 
 def _meta_signature(secret: str, body: bytes) -> str:
     return 'sha256=' + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def _basic(usuario_senha: str) -> str:
+    return 'Basic ' + base64.b64encode(usuario_senha.encode()).decode()
 
 
 class WebhookDispatcherSignatureTests(TestCase):
@@ -139,3 +144,63 @@ class WebhookDispatcherSignatureTests(TestCase):
         self.assertEqual(
             WebhookEvent.objects.filter(event_id='wa_msg_MSG-1').count(), 1,
         )
+
+
+class PagarmeSignatureTests(TestCase):
+    """CRITICAL 1 da revisão da Task 8: `'pagarme'` foi adicionado a
+    `_PROVIDERS_REQUIRE_SIGNATURE` (fail-closed), mas `_verify_signature` não
+    tinha branch para o provider — a cadeia if/elif caía no `return None`
+    final, e isso é lido como "sem secret configurado" → rejeita SEMPRE,
+    mesmo com endpoint configurado corretamente. Os testes do handler não
+    pegam isso porque chamam `PagarmeHandler().handle(...)` direto, sem
+    passar pelo dispatcher — por isso este teste bate na URL de verdade.
+
+    O Pagar.me não publica esquema de assinatura HMAC para webhook: a
+    autenticidade é Basic Auth configurada no endpoint deles. O secret salvo
+    em `WebhookEndpoint.secret` é o par "usuario:senha".
+    """
+
+    USUARIO_SENHA = 'user_hook:senha_hook'
+    # type fora de EVENTOS_TRATADOS: o handler ignora sem reconsultar a API
+    # do Pagar.me, então o teste de assinatura não depende do guard de rede.
+    PAYLOAD = {'type': 'ping', 'data': {'id': 'evt_1'}}
+
+    def _post(self, auth_header=None):
+        raw = json.dumps(self.PAYLOAD).encode()
+        headers = {'content_type': 'application/json'}
+        if auth_header is not None:
+            headers['HTTP_AUTHORIZATION'] = auth_header
+        return self.client.post('/webhooks/v1/pagarme/', data=raw, **headers)
+
+    def test_sem_secret_configurado_rejeita_403(self):
+        """Fail-closed: nenhum WebhookEndpoint 'pagarme' ativo -> 403 sempre,
+        mesmo com um Authorization presente."""
+        resp = self._post(_basic(self.USUARIO_SENHA))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_secret_configurado_sem_header_rejeita_403(self):
+        WebhookEndpoint.objects.create(
+            name='Pagar.me', provider='pagarme', path='pagarme',
+            secret=self.USUARIO_SENHA, signature_header='Authorization',
+            handler_class='apps.webhooks.handlers.pagarme_handler.PagarmeHandler',
+        )
+        resp = self._post(auth_header=None)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_secret_configurado_com_header_errado_rejeita_403(self):
+        WebhookEndpoint.objects.create(
+            name='Pagar.me', provider='pagarme', path='pagarme',
+            secret=self.USUARIO_SENHA, signature_header='Authorization',
+            handler_class='apps.webhooks.handlers.pagarme_handler.PagarmeHandler',
+        )
+        resp = self._post(_basic('outro_usuario:outra_senha'))
+        self.assertEqual(resp.status_code, 403)
+
+    def test_secret_configurado_com_basic_correto_e_aceito(self):
+        WebhookEndpoint.objects.create(
+            name='Pagar.me', provider='pagarme', path='pagarme',
+            secret=self.USUARIO_SENHA, signature_header='Authorization',
+            handler_class='apps.webhooks.handlers.pagarme_handler.PagarmeHandler',
+        )
+        resp = self._post(_basic(self.USUARIO_SENHA))
+        self.assertEqual(resp.status_code, 200)

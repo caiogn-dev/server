@@ -101,6 +101,24 @@ class PagarmeWebhookTests(APITestCase):
         self.assertEqual(consulta.call_count, 0)
         self.assertTrue(r.get('ignored'))
 
+    def test_estorno_marca_refunded_sem_virar_falha_e_sem_mexer_no_paid_at(self):
+        """CRITICAL 2: charge.refunded caindo em interpret()->failed fazia o
+        handler gravar FAILED para um pagamento que teve sucesso e depois foi
+        estornado. O caixa passaria a mentir sobre o que aconteceu."""
+        with patch(CONSULTA, return_value=(200, api('paid'))):
+            PagarmeHandler().handle(None, corpo(), {})
+        self.payment.refresh_from_db()
+        pago_em = self.payment.paid_at
+        self.assertIsNotNone(pago_em)
+
+        with patch(CONSULTA, return_value=(200, api('refunded'))):
+            PagarmeHandler().handle(None, corpo(tipo='charge.refunded'), {})
+
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, StorePayment.PaymentStatus.REFUNDED)
+        self.assertNotEqual(self.payment.status, StorePayment.PaymentStatus.FAILED)
+        self.assertEqual(self.payment.paid_at, pago_em)
+
     def test_pagarme_exige_assinatura_no_dispatcher(self):
         from apps.webhooks import dispatcher
         self.assertIn('pagarme', dispatcher._PROVIDERS_REQUIRE_SIGNATURE)
