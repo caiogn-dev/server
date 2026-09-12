@@ -93,6 +93,27 @@ def _formas_pagamento(order) -> list[dict]:
     }]
 
 
+def _agora_para_a_sefaz() -> str:
+    """A hora de AGORA, com fuso, que é o que vai em `dhEmi`.
+
+    🚨 NÃO é a data do pedido. `dhEmi` é a hora em que a NOTA é emitida, e a
+    SEFAZ só aceita uma janela de poucos minutos entre ela e a transmissão.
+    Mandávamos `order.created_at` — a hora em que o cliente fez o pedido —, e
+    como a loja emite depois de preparar e entregar, TODA nota nascia atrasada:
+
+        Rejeicao: NFC-e ou NF-e com DANFE Simplificado Tipo 2 com
+        Data-Hora de emissão atrasada
+
+    A data da venda não se perde: ela continua no pedido, e o `ref` da nota
+    aponta para ele.
+
+    O fuso é obrigatório: sem offset a SEFAZ lê como horário local do
+    autorizador e a nota nasce 3h no futuro — a rejeição espelhada.
+    """
+    from django.utils import timezone
+    return timezone.localtime(timezone.now()).isoformat()
+
+
 def _aplicar_desconto_e_frete(payload: dict, order) -> None:
     """Sem isto a soma dos itens não bate com `formas_pagamento` e a SEFAZ
     rejeita a nota (531/610). Vale para os dois modelos."""
@@ -108,7 +129,7 @@ def build_nfce_payload(order, config: dict) -> dict:
     campos SEFAZ, então o provider sefaz reaproveita o mesmo payload)."""
     payload = {
         'cnpj_emitente': _cnpj_emitente(config),
-        'data_emissao': order.created_at.isoformat(),
+        'data_emissao': _agora_para_a_sefaz(),
         'indicador_inscricao_estadual_destinatario': '9',
         'modalidade_frete': 9,
         'local_destino': 1,
@@ -188,7 +209,7 @@ def build_nfe_payload(order, config: dict) -> dict:
 
     payload = {
         'cnpj_emitente': cnpj,
-        'data_emissao': order.created_at.isoformat(),
+        'data_emissao': _agora_para_a_sefaz(),
         'natureza_operacao': 'VENDA DE MERCADORIA',
         'tipo_documento': 1,          # saída
         'finalidade_emissao': 1,      # normal
