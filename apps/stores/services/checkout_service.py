@@ -1421,7 +1421,7 @@ class CheckoutService:
 
     @staticmethod
     def _vale_por_link(order, payment_data: dict) -> dict:
-        """Vale de bandeira SEM integração: o pedido nasce, a cobrança vai por link.
+        """Vale de bandeira SEM integração: o pedido nasce, a cobrança vai por QR.
 
         A Volus não tem API — `api.volus.com.br` não existe nem em DNS, e nenhum
         gateway brasileiro a lista. Mas o cliente que tem o cartão existe e quer
@@ -1455,8 +1455,8 @@ class CheckoutService:
             'payment_method': 'voucher_link',
             'brand': bandeira,
             'message': (
-                f'Pedido registrado. Chame a loja no WhatsApp para receber o link '
-                f'de pagamento do seu vale {bandeiras.rotulo(bandeira)}.'
+                f'Pedido registrado. A loja envia o QR Code do {bandeiras.rotulo(bandeira)} '
+                f'pelo WhatsApp — é só ler pelo app do seu vale.'
             ),
         }
 

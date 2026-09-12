@@ -45,8 +45,11 @@ class ValePorLinkTests(APITestCase):
         self.assertEqual(order.metadata.get('vale_por_link'), 'volus')
 
     def test_a_mensagem_diz_o_que_fazer_e_qual_vale(self):
+        """Ele precisa saber TRÊS coisas: que chega um QR, por onde chega, e
+        de qual vale. Sem isso fica esperando sem saber o quê."""
         order = self._order()
         r = CheckoutService.create_payment(order, 'voucher_link', {'brand': 'volus'})
+        self.assertIn('QR Code', r['message'])
         self.assertIn('WhatsApp', r['message'])
         self.assertIn('Vólus', r['message'])
 

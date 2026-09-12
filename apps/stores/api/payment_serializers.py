@@ -21,8 +21,14 @@ class StorePaymentGatewaySerializer(serializers.ModelSerializer):
     token_expirado = serializers.BooleanField(source='token_vencido', read_only=True)
 
     def get_tem_credencial(self, obj) -> bool:
-        """A tela precisa distinguir "sem gateway" de "gateway sem token"."""
-        return bool(obj.access_token)
+        """A tela precisa distinguir "sem gateway" de "gateway sem credencial".
+
+        🚨 Olhava SÓ `access_token`, que é onde o Mercado Pago guarda. O
+        Pagar.me guarda em `api_key` — então toda loja de vale configurada
+        aparecia como "sem credencial", e o lojista via a tela em branco depois
+        de ter cadastrado tudo.
+        """
+        return bool(obj.access_token or obj.api_key or obj.api_secret)
 
     class Meta:
         model = StorePaymentGateway
@@ -49,7 +55,12 @@ class StorePaymentGatewaySerializer(serializers.ModelSerializer):
             'api_secret': {'write_only': True, 'required': False, 'allow_blank': True},
             'access_token': {'write_only': True, 'required': False, 'allow_blank': True},
             'webhook_secret': {'write_only': True, 'required': False, 'allow_blank': True},
-            'public_key': {'write_only': True, 'required': False, 'allow_blank': True},
+            # `public_key` NÃO é write_only: ela é pública por definição — o
+            # cardápio a entrega a todo cliente que abre o checkout. Escondê-la
+            # do dono da loja não protegia nada e tirava dele a única forma de
+            # conferir se cadastrou a conta certa. (Token colado à mão na conta
+            # errada já quebrou o cartão em produção em 01/set.)
+            'public_key': {'required': False, 'allow_blank': True},
         }
 
     def update(self, instance, validated_data):
@@ -69,7 +80,8 @@ class StorePaymentGatewayListSerializer(serializers.ModelSerializer):
     token_expirado = serializers.BooleanField(source='token_vencido', read_only=True)
 
     def get_tem_credencial(self, obj) -> bool:
-        return bool(obj.access_token)
+        """Mesma regra do serializer de detalhe: qualquer segredo conta."""
+        return bool(obj.access_token or obj.api_key or obj.api_secret)
 
     class Meta:
         model = StorePaymentGateway
@@ -80,6 +92,14 @@ class StorePaymentGatewayListSerializer(serializers.ModelSerializer):
             # `external_account_id` é o id da conta no MP, não credencial: a tela
             # precisa dele para o lojista confirmar que autorizou a conta certa.
             'connection_type', 'tem_credencial', 'token_expirado', 'external_account_id',
+            # 🚨 `configuration` guarda QUAIS BANDEIRAS a loja marcou, e é esta
+            # lista que o painel lê ao abrir a tela. Sem ela aqui, a tela abria
+            # com tudo desmarcado — e um Salvar em seguida APAGAVA a
+            # configuração real. Não guarda segredo nenhum: a única chave que
+            # existe nela hoje é `voucher_brands`.
+            'configuration',
+            # Pública é pública — o cardápio já a entrega a todo cliente.
+            'public_key',
             'created_at', 'updated_at', 'is_active',
         ]
 

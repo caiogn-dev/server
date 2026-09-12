@@ -10,13 +10,24 @@ DEBUG = False
 # Add WhiteNoise middleware for serving static files
 MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
 
-# WhiteNoise configuration - override staticfiles storage
-STORAGES["staticfiles"] = {
-  "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
-}
-       
+# 🚨 O static de produção PRECISA ser a classe com MANIFESTO.
+#
+# Este arquivo trocava a classe do `base.py` (`CompressedManifestStaticFilesStorage`)
+# pela versão SEM manifesto — e com isso a URL saía sem hash:
+# `/static/voucher/vr.svg`. O nginx serve static com `max-age=31536000`, então
+# nome fixo + um ano de cache = trocar um arquivo estático não chega a ninguém
+# por UM ANO. Medido em 12/set: a logo nova estava no disco do container
+# (2035 bytes) e a Cloudflare continuava servindo a antiga (329 bytes),
+# `cf-cache-status: HIT`.
+#
+# Com manifesto a URL vira `/static/voucher/volus.1a2b3c4d.svg`: arquivo novo é
+# nome novo, o cache de um ano passa a estar CERTO, e nenhum purge é necessário.
+#
+# `WHITENOISE_KEEP_ONLY_HASHED_FILES` fica FALSE de propósito: True apagaria as
+# cópias sem hash, e todo endereço antigo já espalhado por aí (navegador de
+# cliente, mensagem de WhatsApp, aba aberta) passaria a dar 404.
 WHITENOISE_MANIFEST_STRICT = False
-WHITENOISE_KEEP_ONLY_HASHED_FILES = True
+WHITENOISE_KEEP_ONLY_HASHED_FILES = False
 
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
