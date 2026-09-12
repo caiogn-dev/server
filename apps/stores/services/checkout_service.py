@@ -1418,7 +1418,110 @@ class CheckoutService:
                 store.slug,
             )
         return None
-    
+
+    @staticmethod
+    def _cobrar_voucher(order, payment_data: dict, amount=None) -> dict:
+        """Cobrança de vale-refeição/alimentação. Tudo ou nada.
+
+        A linha de StorePayment nasce ANTES da chamada à operadora: em 31/ago o
+        único caminho de cobrança sem StorePayment foi o que perdeu dinheiro,
+        porque o webhook chegava e não tinha em quem aplicar.
+        """
+        from decimal import Decimal
+
+        from apps.stores.models import StoreOrder, StorePayment
+        from apps.stores.services.voucher import registry
+        from apps.stores.services.voucher.base import DadosDoVoucher
+
+        if order is None:
+            return {'success': False, 'error': 'Pagamento com vale exige um pedido.'}
+
+        gateway = registry.gateway_de_voucher(order.store)
+        if gateway is None:
+            return {'success': False, 'error': 'Esta loja não aceita pagamento com vale.'}
+
+        documento = ''.join(ch for ch in str(payment_data.get('holder_document') or '') if ch.isdigit())
+        if len(documento) not in (11, 14):
+            return {'success': False, 'error': 'Informe o CPF do titular do vale.'}
+
+        token = str(payment_data.get('card_token') or '').strip()
+        if not token:
+            return {'success': False, 'error': 'Os dados do cartão expiraram. Digite de novo, por favor.'}
+
+        valor = Decimal(str(amount if amount is not None else order.total))
+        # "Tudo ou nada" e decisao de produto, nao gentileza do chamador. O painel
+        # encaminha `amount` cru do request; sem esta trava, uma chamada de staff
+        # cobraria vale parcial e o pedido ficaria pago pela metade.
+        if valor != Decimal(str(order.total)):
+            return {
+                'success': False,
+                'error': 'Pagamento com vale é do valor total do pedido.',
+            }
+
+        pagamento = StorePayment.objects.create(
+            order=order,
+            store=order.store,
+            gateway=gateway,
+            payment_method=StorePayment.PaymentMethod.VOUCHER,
+            status=StorePayment.PaymentStatus.PENDING,
+            amount=valor,
+            external_reference=str(order.id),
+            payer_name=str(payment_data.get('holder_name') or '')[:255],
+        )
+
+        dados = DadosDoVoucher(
+            card_token=token,
+            brand=str(payment_data.get('brand') or '').strip().lower(),
+            holder_name=str(payment_data.get('holder_name') or ''),
+            holder_document=documento,
+        )
+
+        resultado = registry.provider_para(gateway).cobrar(order, dados, total=valor)
+
+        pagamento.external_id = resultado.external_id or ''
+        pagamento.gateway_response = resultado.bruto or {}
+        pagamento.error_message = resultado.mensagem if not resultado.aprovado else ''
+
+        if resultado.aprovado:
+            from django.utils import timezone
+            pagamento.status = StorePayment.PaymentStatus.COMPLETED
+            pagamento.paid_at = timezone.now()
+            pagamento.save()
+            # Redundante de proposito: `pagamento.save()` acima ja disparou
+            # `_sync_with_order`, que escreve `order.payment_status`. Mantemos o write
+            # explicito para que a transicao "pedido pago" esteja VISIVEL no caminho do
+            # dinheiro, em vez de escondida num efeito colateral do save do pagamento.
+            # Preco: um enqueue extra de `update_customer_stats_on_payment`, que e
+            # idempotente (update_stats recalcula, nao incrementa). Nao "otimize" isto
+            # sem ler `StorePayment._sync_with_order` inteiro primeiro.
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.payment_method = 'voucher'
+            order.save(update_fields=['payment_status', 'payment_method', 'updated_at'])
+            return {'success': True, 'payment_id': pagamento.payment_id}
+
+        # 🚨 `pending` NAO e falha. A cobranca segue viva e quem decide e o
+        # webhook. Marcar FAILED aqui faria o webhook chegar depois confirmando
+        # um pagamento que o sistema ja deu como perdido — que e exatamente o
+        # desencontro de 31/ago. A linha fica PENDING e o pedido nao e tocado.
+        if resultado.status == 'pending':
+            pagamento.save()
+            order.payment_method = 'voucher'
+            order.save(update_fields=['payment_method', 'updated_at'])
+            return {
+                'success': True,
+                'payment_id': pagamento.payment_id,
+                'pending': True,
+                'message': 'Estamos confirmando o pagamento com a operadora do vale.',
+            }
+
+        pagamento.status = StorePayment.PaymentStatus.FAILED
+        pagamento.save()
+        # `status` do pedido NÃO é tocado: mexer nele foi o que sumia com a
+        # venda da tela de quem está trabalhando (susto de 11/ago).
+        order.payment_status = StoreOrder.PaymentStatus.FAILED
+        order.save(update_fields=['payment_status', 'updated_at'])
+        return {'success': False, 'error': resultado.mensagem}
+
     @staticmethod
     def create_payment(
         order: StoreOrder,
@@ -1460,6 +1563,9 @@ class CheckoutService:
                 'payment_method': 'cash',
                 'message': 'Pagamento em dinheiro na entrega/retirada'
             }
+
+        if payment_method == 'voucher':
+            return CheckoutService._cobrar_voucher(order, payment_data or {}, amount)
 
         credentials = CheckoutService.get_payment_credentials(target_store)
         if not credentials:

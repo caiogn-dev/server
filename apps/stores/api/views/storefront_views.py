@@ -183,6 +183,22 @@ def build_store_payment_config(store):
     if (store.metadata or {}).get('cash_enabled', True):
         enabled_methods.append('cash')
 
+    # Voucher (VR/VA). Só entra quando existe gateway habilitado COM chave
+    # pública e COM ao menos uma bandeira — anunciar sem os três seria oferecer
+    # um caminho que morre no clique.
+    from apps.stores.services.voucher import registry as voucher_registry
+
+    from apps.stores.services import pagarme_orders
+    from apps.stores.services.voucher import bandeiras as catalogo
+
+    voucher_gateway = voucher_registry.gateway_de_voucher(store)
+    valores = voucher_registry.bandeiras_da_loja(store)
+    # Rotulo vem do catalogo, aqui. O cardapio recebe pronto e nao repete nada.
+    marcas = [{'value': v, 'label': catalogo.rotulo(v)} for v in valores]
+    voucher_public_key = (voucher_gateway.public_key if voucher_gateway else '') or ''
+    if voucher_public_key and marcas:
+        enabled_methods.append('voucher')
+
     return {
         'enabled_methods': enabled_methods,
         'mercado_pago': {
@@ -192,6 +208,14 @@ def build_store_payment_config(store):
                 or (credentials or {}).get('sandbox', False)
             ),
             'native_card_supported': bool(public_key),
+        },
+        'pagarme': {
+            'public_key': voucher_public_key,
+            'is_sandbox': bool(voucher_gateway.is_sandbox) if voucher_gateway else True,
+            'brands': marcas,
+            # URL da API do Pagar.me servida pelo backend: o navegador nao deve
+            # carregar endereco de gateway fixo no bundle.
+            'tokens_url': pagarme_orders.TOKENS_URL,
         },
     }
 

@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # rejeitada com 403. Configure um WebhookEndpoint com secret no admin OU as
 # envs WHATSAPP_APP_SECRET / INSTAGRAM_APP_SECRET / META_WEBHOOK_APP_SECRET.
 _PROVIDERS_REQUIRE_SIGNATURE: frozenset = frozenset({
-    'whatsapp', 'instagram', 'messenger', 'mercadopago', 'toca-delivery',
+    'whatsapp', 'instagram', 'messenger', 'mercadopago', 'toca-delivery', 'pagarme',
 })
 
 # Providers da Meta que compartilham o formato de assinatura X-Hub-Signature-256.
@@ -248,6 +248,9 @@ class WebhookDispatcherView(View):
         elif provider == 'mercadopago':
             return payload.get('type', 'unknown')
 
+        elif provider == 'pagarme':
+            return payload.get('type', 'unknown')
+
         return 'unknown'
     
     def _extract_event_id(self, provider: str, payload: dict, headers: dict) -> Optional[str]:
@@ -292,6 +295,13 @@ class WebhookDispatcherView(View):
                 event_id = payload.get('event_id') or payload.get('id')
                 if event_id:
                     return f"toca_{event_id}"
+
+            elif provider == 'pagarme':
+                # Pagar.me manda o id do envio ('hook_...') na raiz do corpo.
+                hook_id = payload.get('id')
+                tipo = payload.get('type', '')
+                if hook_id:
+                    return f"pagarme_{tipo}_{hook_id}"
 
         except (KeyError, IndexError, TypeError):
             pass
@@ -404,8 +414,23 @@ class WebhookDispatcherView(View):
                 ).hexdigest()
                 return hmac.compare_digest(expected, signature_header)
 
+            elif provider == 'pagarme':
+                # O Pagar.me nao publica esquema de assinatura HMAC para webhook: a
+                # autenticidade e configurada como Basic Auth no endpoint, pelo
+                # dashboard. O secret guardado aqui e o par "usuario:senha".
+                #
+                # Isto NAO e a unica defesa, e de proposito: o handler nunca confia no
+                # corpo recebido — ele reconsulta a API do Pagar.me com a chave da loja
+                # e decide pela resposta. Um webhook forjado consegue, no maximo,
+                # provocar uma leitura extra. A assinatura e defesa em profundidade.
+                import base64
+                esperado = 'Basic ' + base64.b64encode(
+                    endpoint.secret.encode()
+                ).decode()
+                return hmac.compare_digest(esperado, signature_header)
+
             return None
-            
+
         except WebhookEndpoint.DoesNotExist:
             return None
         except Exception as e:
@@ -421,12 +446,14 @@ def register_default_handlers():
     from .handlers.instagram_handler import InstagramHandler
     from .handlers.messenger_handler import MessengerHandler
     from .handlers.toca_delivery_handler import TocaDeliveryHandler
+    from .handlers.pagarme_handler import PagarmeHandler
 
     WebhookDispatcherView.register_handler('whatsapp', WhatsAppHandler)
     WebhookDispatcherView.register_handler('mercadopago', MercadoPagoHandler)
     WebhookDispatcherView.register_handler('instagram', InstagramHandler)
     WebhookDispatcherView.register_handler('messenger', MessengerHandler)
     WebhookDispatcherView.register_handler('toca-delivery', TocaDeliveryHandler)
+    WebhookDispatcherView.register_handler('pagarme', PagarmeHandler)
 
 
 # Auto-register on module load

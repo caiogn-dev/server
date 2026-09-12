@@ -82,6 +82,17 @@ class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         gateway.save()
         return Response(StorePaymentGatewaySerializer(gateway).data)
 
+    @extend_schema(summary="Catálogo de bandeiras de vale")
+    @action(detail=False, methods=['get'], url_path='bandeiras-de-vale')
+    def bandeiras_de_vale(self, request):
+        """Catálogo de bandeiras de vale que a plataforma sabe processar.
+
+        O painel monta os toggles a partir daqui. Sem este endpoint, a lista
+        viraria um array no `.tsx` — a terceira cópia da mesma verdade.
+        """
+        from apps.stores.services.voucher import bandeiras
+        return Response({'brands': list(bandeiras.CATALOGO)})
+
     # ── OAuth do Mercado Pago ────────────────────────────────────────────────
     #
     # As duas rotas moram no ViewSet de propósito. O router do gateway está

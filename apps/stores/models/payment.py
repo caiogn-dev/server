@@ -29,6 +29,7 @@ class StorePaymentGateway(BaseModel):
         MERCADOPAGO = 'mercadopago', 'Mercado Pago'
         PAGSEGURO = 'pagseguro', 'PagSeguro'
         PIX = 'pix', 'PIX'
+        PAGARME = 'pagarme', 'Pagar.me (Stone)'
         CUSTOM = 'custom', 'Custom'
 
     # Relationship
@@ -173,6 +174,7 @@ class StorePayment(BaseModel):
         CASH = 'cash', 'Dinheiro'
         BANK_TRANSFER = 'bank_transfer', 'Transferência bancária'
         WALLET = 'wallet', 'Carteira digital'
+        VOUCHER = 'voucher', 'Vale-refeição / Vale-alimentação'
         OTHER = 'other', 'Outro'
 
     # Relationships
