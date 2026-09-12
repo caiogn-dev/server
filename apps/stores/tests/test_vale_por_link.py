@@ -48,7 +48,7 @@ class ValePorLinkTests(APITestCase):
         order = self._order()
         r = CheckoutService.create_payment(order, 'voucher_link', {'brand': 'volus'})
         self.assertIn('WhatsApp', r['message'])
-        self.assertIn('Volus', r['message'])
+        self.assertIn('Vólus', r['message'])
 
     def test_o_pedido_NAO_e_marcado_como_pago(self):
         """Ninguem pagou ainda. Marcar pago aqui inventaria receita."""
@@ -83,7 +83,7 @@ class ValePorLinkTests(APITestCase):
         self.assertIn('voucher_link', cfg['enabled_methods'])
         bloco = cfg['vale_por_link']
         self.assertEqual([b['value'] for b in bloco['brands']], ['volus'])
-        self.assertEqual(bloco['brands'][0]['label'], 'Volus')
+        self.assertEqual(bloco['brands'][0]['label'], 'Vólus')
         self.assertEqual(bloco['whatsapp'], '5563999998888')
 
     def test_bandeira_inventada_na_config_da_loja_e_ignorada(self):

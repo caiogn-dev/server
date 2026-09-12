@@ -25,11 +25,11 @@ class CatalogoManualTests(TestCase):
         self.assertNotIn('volus', bandeiras.valores())
 
     def test_manual_tem_rotulo_proprio(self):
-        self.assertEqual(bandeiras.rotulo('volus'), 'Volus')
+        self.assertEqual(bandeiras.rotulo('volus'), 'Vólus')
 
     def test_rotulo_funciona_para_os_dois_catalogos(self):
         self.assertEqual(bandeiras.rotulo('vr'), 'VR Benefícios')
-        self.assertEqual(bandeiras.rotulo('volus'), 'Volus')
+        self.assertEqual(bandeiras.rotulo('volus'), 'Vólus')
 
     def test_valor_desconhecido_continua_voltando_como_veio(self):
         self.assertEqual(bandeiras.rotulo('xpto'), 'xpto')
@@ -38,3 +38,22 @@ class CatalogoManualTests(TestCase):
         automaticas = set(bandeiras.valores())
         manuais = set(bandeiras.valores_manuais())
         self.assertEqual(automaticas & manuais, set())
+
+
+class LogoDaBandeiraManualTests(TestCase):
+    """🚨 `logo()` varria só o CATALOGO integrado. Bandeira manual devolvia ''
+    e a tela caía no nome — exatamente o que o dono não quer ver."""
+
+    def test_a_volus_tem_logo(self):
+        self.assertEqual(bandeiras.logo('volus'), 'voucher/volus.svg')
+
+    def test_toda_bandeira_declarada_tem_logo(self):
+        for b in bandeiras.CATALOGO + bandeiras.CATALOGO_MANUAL:
+            self.assertTrue(bandeiras.logo(b['value']), b['value'])
+
+    def test_bandeira_desconhecida_continua_sem_logo(self):
+        self.assertEqual(bandeiras.logo('xpto'), '')
+
+    def test_o_rotulo_da_volus_leva_o_acento(self):
+        """A marca é Vólus. O cliente tem o cartão na mão."""
+        self.assertEqual(bandeiras.rotulo('volus'), 'Vólus')

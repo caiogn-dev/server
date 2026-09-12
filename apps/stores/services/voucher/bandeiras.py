@@ -35,7 +35,7 @@ CATALOGO = (
 #: formulario de cartao para uma bandeira que nao tem como ser cobrada, e a
 #: falha apareceria so no clique — com o cliente ja tendo digitado o cartao.
 CATALOGO_MANUAL = (
-    {'value': 'volus', 'label': 'Volus'},
+    {'value': 'volus', 'label': 'Vólus', 'logo': 'voucher/volus.svg'},
 )
 
 
@@ -58,9 +58,17 @@ def rotulo(valor):
 
 
 def logo(valor):
-    """Caminho estático da logo. Vazio para bandeira desconhecida — a tela
-    desenha só o nome, em vez de uma imagem quebrada."""
-    for b in CATALOGO:
+    """Caminho estático da logo, dos DOIS catálogos.
+
+    Vazio para bandeira desconhecida — a tela desenha só o nome, em vez de uma
+    imagem quebrada.
+
+    🚨 Varria só o `CATALOGO` integrado, então toda bandeira manual voltava sem
+    logo e o cardápio caía no texto. `rotulo()` já lia os dois; esta não. Duas
+    funções irmãs com fontes diferentes é o tipo de divergência que só aparece
+    na tela do cliente.
+    """
+    for b in CATALOGO + CATALOGO_MANUAL:
         if b['value'] == valor:
-            return b['logo']
+            return b.get('logo', '')
     return ''
