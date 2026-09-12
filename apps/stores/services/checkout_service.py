@@ -774,23 +774,36 @@ class CheckoutService:
     def calculate_totals(
         cart: StoreCart,
         delivery_fee: Decimal = Decimal('0'),
-        discount: Decimal = Decimal('0')
+        discount: Decimal = Decimal('0'),
+        payment_method: str = '',
     ) -> dict:
         """Calculate order totals.
 
         cart.subtotal already aggregates both regular items and combo items,
         so there is no need to iterate over combo_items separately.
+
+        `payment_method` entra porque pagar com vale tem acréscimo: a operadora
+        fica com uma fatia que não existe no PIX, e quem escolhe pagar assim
+        paga esse custo. Ver `apps.stores.services.acrescimo_do_vale` — lá está
+        a regra, aqui só a soma.
         """
+        from apps.stores.services.acrescimo_do_vale import acrescimo_do_vale
+
         subtotal = Decimal(str(cart.subtotal))
 
-        # Total = subtotal + delivery - discount (no tax)
-        total = subtotal + delivery_fee - discount
+        # A base do acréscimo é o que o cliente pagaria SEM ele: incidir sobre
+        # o subtotal puro cobraria a mais de quem usou cupom.
+        base = max(subtotal + delivery_fee - discount, Decimal('0'))
+        voucher_fee = acrescimo_do_vale(cart.store, base, payment_method)
+
+        total = base + voucher_fee
 
         return {
             'subtotal': float(subtotal),
             'delivery_fee': float(delivery_fee),
             'tax': 0,
             'discount': float(discount),
+            'voucher_fee': float(voucher_fee),
             'total': float(max(total, Decimal('0'))),
         }
     
@@ -808,6 +821,9 @@ class CheckoutService:
         trusted_delivery_fee: "Decimal | None" = None,
         scheduled_date=None,
         scheduled_time='',
+        # Precisa entrar AQUI, não só na hora de cobrar: pagar com vale tem
+        # acréscimo, então o meio de pagamento muda o TOTAL do pedido.
+        payment_method: str = '',
     ) -> StoreOrder:
         """Create an order from a cart.
 
@@ -874,6 +890,7 @@ class CheckoutService:
             scheduled_date=scheduled_date,
             scheduled_time=scheduled_time,
             precomputed_delivery_info=precomputed_delivery_info,
+            payment_method=payment_method,
         )
 
     @staticmethod
@@ -892,6 +909,7 @@ class CheckoutService:
         scheduled_date=None,
         scheduled_time='',
         precomputed_delivery_info: dict = None,
+        payment_method: str = '',
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -1122,6 +1140,14 @@ class CheckoutService:
         if total < Decimal('0'):
             total = Decimal('0.00')
 
+        # Acréscimo por pagar com vale — a operadora fica com uma fatia que não
+        # existe no PIX, e quem escolhe pagar assim paga esse custo. Incide
+        # sobre o total JÁ com frete e desconto: sobre o subtotal puro cobraria
+        # a mais de quem usou cupom. Regra em `acrescimo_do_vale`; aqui só soma.
+        from apps.stores.services.acrescimo_do_vale import acrescimo_do_vale
+        voucher_fee = acrescimo_do_vale(store, total, payment_method)
+        total = (total + voucher_fee).quantize(_CENTS, rounding=ROUND_HALF_UP)
+
         extra_metadata = dict(delivery_payload.get('metadata') or {})
 
         # Create order
@@ -1150,6 +1176,7 @@ class CheckoutService:
             coupon_code=(coupon.code if coupon else ''),
             tax=Decimal('0'),
             delivery_fee=delivery_fee,
+            voucher_fee=voucher_fee,
             total=total,
             delivery_method=(
                 StoreOrder.DeliveryMethod.DELIVERY 

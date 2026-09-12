@@ -32,6 +32,10 @@ class StoreSerializer(serializers.ModelSerializer):
     orders_count = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
+    # Carrossel do cardápio: até 3 imagens, na ordem que a loja escolheu. É
+    # leitura — a escrita tem rota própria (upload de arquivo não cabe no JSON
+    # da loja).
+    banners = serializers.SerializerMethodField()
     # Bandeiras de vale cobradas por LINK (sem integracao). Moram em
     # `metadata`, mas nao entram por ele: `metadata` inteiro vindo do painel
     # apagaria o que esta tela nem sabe que existe — foi assim que editar o
@@ -39,6 +43,11 @@ class StoreSerializer(serializers.ModelSerializer):
     # save, e a chave some quando a lista fica vazia.
     vale_por_link_brands = serializers.ListField(
         child=serializers.CharField(), required=False,
+    )
+    # Acréscimo cobrado do cliente por pagar com vale, em %. Mesma regra do
+    # campo acima: entra por campo próprio e mescla no metadata.
+    voucher_fee_percent = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True,
     )
 
     class Meta:
@@ -56,7 +65,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'min_order_value', 'free_delivery_threshold', 'default_delivery_fee',
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
-            'owner', 'metadata', 'vale_por_link_brands',
+            'owner', 'metadata', 'vale_por_link_brands', 'voucher_fee_percent', 'banners',
             'meta_pixel_id', 'meta_pixel_enabled',
             'clarity_id', 'clarity_enabled',
             'plan', 'trial_ends_at', 'onboarding_completed',
@@ -71,6 +80,15 @@ class StoreSerializer(serializers.ModelSerializer):
                             'plan', 'trial_ends_at']
 
     CHAVE_VALE_POR_LINK = 'voucher_manual_brands'
+    CHAVE_ACRESCIMO_DO_VALE = 'voucher_fee_percent'
+
+    def validate_voucher_fee_percent(self, valor):
+        """Entre 0 e 100. Negativo viraria DESCONTO por pagar com vale."""
+        if valor is None:
+            return None
+        if valor < 0 or valor > 100:
+            raise serializers.ValidationError('O acréscimo precisa ficar entre 0 e 100%.')
+        return valor
 
     def validate_vale_por_link_brands(self, valores):
         """Bandeira fora do catálogo vira opção na tela do cliente. Morre aqui."""
@@ -89,6 +107,8 @@ class StoreSerializer(serializers.ModelSerializer):
         dados = super().to_representation(instance)
         metadata = instance.metadata if isinstance(instance.metadata, dict) else {}
         dados['vale_por_link_brands'] = metadata.get(self.CHAVE_VALE_POR_LINK) or []
+        from apps.stores.services.acrescimo_do_vale import percentual_do_vale
+        dados['voucher_fee_percent'] = float(percentual_do_vale(instance))
         return dados
 
     def _guardar_vale_por_link(self, instancia, valores):
@@ -103,16 +123,37 @@ class StoreSerializer(serializers.ModelSerializer):
         instancia.save(update_fields=['metadata'])
         return instancia
 
+    def _guardar_acrescimo_do_vale(self, instancia, percentual):
+        """Mescla no `metadata`. Zero ou vazio REMOVE a chave — acréscimo de
+        0% é o mesmo que não cobrar, e chave com 0 parece configuração."""
+        metadata = dict(instancia.metadata or {})
+        if percentual:
+            metadata[self.CHAVE_ACRESCIMO_DO_VALE] = str(percentual)
+        else:
+            metadata.pop(self.CHAVE_ACRESCIMO_DO_VALE, None)
+        instancia.metadata = metadata
+        instancia.save(update_fields=['metadata'])
+        return instancia
+
+    def _guardar_campos_de_metadata(self, loja, vale, acrescimo):
+        if vale is not None:
+            loja = self._guardar_vale_por_link(loja, vale)
+        if acrescimo is not None:
+            loja = self._guardar_acrescimo_do_vale(loja, acrescimo)
+        return loja
+
     def create(self, validated_data):
         # `pop` com sentinela: ausente é "não mexe", presente é "é isto".
         vale = validated_data.pop('vale_por_link_brands', None)
+        acrescimo = validated_data.pop('voucher_fee_percent', None)
         loja = super().create(validated_data)
-        return loja if vale is None else self._guardar_vale_por_link(loja, vale)
+        return self._guardar_campos_de_metadata(loja, vale, acrescimo)
 
     def update(self, instance, validated_data):
         vale = validated_data.pop('vale_por_link_brands', None)
+        acrescimo = validated_data.pop('voucher_fee_percent', None)
         loja = super().update(instance, validated_data)
-        return loja if vale is None else self._guardar_vale_por_link(loja, vale)
+        return self._guardar_campos_de_metadata(loja, vale, acrescimo)
 
     # Estes 5 contadores são anotados na queryset do StoreViewSet (anno_*) via
     # Subquery — 1 query em vez de 5 por loja. Se a anotação não estiver
@@ -129,6 +170,13 @@ class StoreSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'anno_reviews_count'):
             return obj.anno_reviews_count
         return obj.reviews.filter(is_public=True).count()
+
+    def get_banners(self, obj):
+        from apps.core.utils import build_absolute_media_url
+        return [
+            {'id': str(b.id), 'url': build_absolute_media_url(b.image.url), 'position': b.position}
+            for b in obj.banners.all() if b.image
+        ]
 
     def get_logo_url(self, obj):
         return obj.get_logo_url()
@@ -745,7 +793,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'id', 'store', 'store_name', 'store_slug', 'order_number', 'access_token',
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
-            'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
+            'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'voucher_fee', 'total',
             'amount_paid', 'amount_due', 'is_fully_paid', 'pedidos_do_cliente',
             'surcharge_value', 'surcharge_reason',
             'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
@@ -2218,7 +2266,7 @@ class StoreOrderFullSerializer(serializers.ModelSerializer):
             'id', 'store', 'store_name', 'store_slug', 'order_number', 'access_token',
             'customer', 'customer_name', 'customer_email', 'customer_phone',
             'status', 'status_display', 'payment_status', 'payment_status_display',
-            'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'total',
+            'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'voucher_fee', 'total',
             'payment_method', 'payment_id', 'payment_preference_id',
             'pix_code', 'pix_qr_code', 'pix_ticket_url',
             'delivery_method', 'delivery_method_display',

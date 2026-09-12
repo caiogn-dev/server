@@ -594,6 +594,7 @@ class OrderByTokenView(APIView):
                 'payment_method': order.payment_method,
                 'subtotal': float(order.subtotal),
                 'delivery_fee': float(order.delivery_fee),
+                'voucher_fee': float(getattr(order, 'voucher_fee', 0) or 0),
                 'discount': float(order.discount),
                 'tax': float(order.tax) if order.tax else 0,
                 'total': float(order.total),

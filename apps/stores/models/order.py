@@ -161,6 +161,10 @@ class StoreOrder(BaseModel):
     coupon_code = models.CharField(max_length=50, blank=True)
     tax = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Acréscimo cobrado do cliente por pagar com vale. Coluna própria, não
+    # `metadata`: é dinheiro, e dinheiro que o relatório precisa somar não pode
+    # viver num JSON. Zero em todo pedido que não é vale.
+    voucher_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     total = models.DecimalField(max_digits=10, decimal_places=2)
 
     # Payment
@@ -448,7 +452,13 @@ class StoreOrder(BaseModel):
     def recalculate_totals(self, save=True):
         """Fonte da verdade do total. Soma os itens em subtotal e aplica a
         fórmula canônica: total = subtotal - discount + tax + delivery_fee
-        + surcharge_value, com piso em 0. Não aceita total do cliente."""
+        + surcharge_value + voucher_fee, com piso em 0. Não aceita total do
+        cliente.
+
+        🚨 `voucher_fee` PRECISA estar aqui: sem ele, qualquer edição do pedido
+        no painel (trocar item, ajustar frete) recalculava o total e APAGAVA o
+        acréscimo do vale em silêncio — o pedido passava a valer menos do que
+        a cobrança que já tinha saído."""
         from decimal import Decimal
         subtotal = sum((item.subtotal for item in self.items.all()), Decimal('0.00'))
         self.subtotal = subtotal
@@ -458,6 +468,7 @@ class StoreOrder(BaseModel):
             + (self.tax or Decimal('0.00'))
             + (self.delivery_fee or Decimal('0.00'))
             + (self.surcharge_value or Decimal('0.00'))
+            + (self.voucher_fee or Decimal('0.00'))
         )
         if total < Decimal('0.00'):
             total = Decimal('0.00')

@@ -122,6 +122,12 @@ def _aplicar_desconto_e_frete(payload: dict, order) -> None:
     if order.delivery_fee and Decimal(order.delivery_fee) > 0:
         payload['frete'] = float(order.delivery_fee)
         payload['modalidade_frete'] = 0  # por conta do emitente
+    # Acréscimo do vale e acréscimo manual do painel são "outras despesas"
+    # (vOutro) para a SEFAZ. Fora daqui, o cliente pagou R$ 55 e a nota somava
+    # R$ 50 de itens: a soma não bate com o pagamento e a nota é rejeitada.
+    outras = (Decimal(order.voucher_fee or 0) + Decimal(order.surcharge_value or 0))
+    if outras > 0:
+        payload['valor_outras_despesas'] = float(outras)
 
 
 def build_nfce_payload(order, config: dict) -> dict:

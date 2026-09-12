@@ -206,6 +206,8 @@ def build_store_payment_config(store):
     # dinheiro nao passa por API nenhuma — o pedido nasce pendente e a loja
     # manda o link pelo WhatsApp. Basta a loja ter marcado a bandeira e ter um
     # WhatsApp para o cliente falar.
+    from apps.stores.services.acrescimo_do_vale import percentual_do_vale
+
     manuais = voucher_registry.bandeiras_manuais_da_loja(store)
     whatsapp_da_loja = (getattr(store, 'whatsapp_number', '') or '').strip()
     marcas_manuais = catalogo_logos.marcas_manuais_da_loja(manuais)
@@ -234,6 +236,12 @@ def build_store_payment_config(store):
             'brands': marcas_manuais,
             'whatsapp': whatsapp_da_loja,
         },
+        # Acréscimo por pagar com vale, em %. Sai na config pública porque a
+        # tela precisa mostrar a linha no instante em que o cliente marca o
+        # vale — acréscimo que aparece só no total é surpresa em tela de
+        # pagamento, e a lei que permite preço por meio de pagamento
+        # (13.455/2017) exige justamente que ele seja informado antes.
+        'voucher_fee_percent': float(percentual_do_vale(store)),
     }
 
 
@@ -1133,6 +1141,10 @@ class StoreCheckoutView(APIView):
                 indicado_por=str(request.data.get('indicado_por') or '')[:20],
                 scheduled_date=scheduled_date,
                 scheduled_time=scheduled_time,
+                # O meio de pagamento entra na CRIAÇÃO porque muda o total:
+                # pagar com vale tem acréscimo. Vir só na hora de cobrar faria
+                # o pedido nascer com um valor e a cobrança sair com outro.
+                payment_method=payment_method,
             )
 
             # Ligação carrinho→pedido: é o que permite o retry reencontrar

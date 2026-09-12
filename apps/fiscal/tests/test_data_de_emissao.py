@@ -99,3 +99,23 @@ class DataDeEmissaoTests(APITestCase):
         continua no pedido, que é quem a nota referencia pelo `ref`."""
         ontem = timezone.now() - timedelta(days=1)
         self.assertLess(abs((self.order.created_at - ontem).total_seconds()), 120)
+
+
+class AcrescimoNaNotaTests(DataDeEmissaoTests):
+    """Cliente pagou com acréscimo do vale: a nota tem que somar o que ele pagou."""
+
+    def test_acrescimo_do_vale_entra_como_outras_despesas_e_a_soma_fecha(self):
+        StoreOrder.objects.filter(pk=self.order.pk).update(
+            voucher_fee=Decimal('2.00'), total=Decimal('22.00'))
+        self.order.refresh_from_db()
+        payload = build_nfce_payload(self.order, get_fiscal_config(self.store))
+        self.assertEqual(payload['valor_outras_despesas'], 2.0)
+        itens = sum(i['valor_bruto'] for i in payload['itens'])
+        pago = sum(f['valor_pagamento'] for f in payload['formas_pagamento'])
+        soma = (itens + payload.get('frete', 0) + payload['valor_outras_despesas']
+                - payload.get('valor_desconto', 0))
+        self.assertAlmostEqual(soma, pago, places=2)
+
+    def test_pedido_sem_acrescimo_nao_manda_o_campo(self):
+        payload = build_nfce_payload(self.order, get_fiscal_config(self.store))
+        self.assertNotIn('valor_outras_despesas', payload)

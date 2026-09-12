@@ -501,6 +501,9 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'subtotal': _money(order.subtotal),
             'discount': _money(order.discount),
             'delivery_fee': _money(order.delivery_fee),
+            # O cliente pagou isto a mais por usar vale; sem a linha, a comanda
+            # somava itens + frete e não batia com o total impresso embaixo.
+            'voucher_fee': _money(getattr(order, 'voucher_fee', 0) or 0),
             'total': _money(order.total),
         },
     }
