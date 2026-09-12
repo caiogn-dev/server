@@ -692,7 +692,7 @@ def _serialize_customer_orders(request, orders):
 
 
 class GuestOrdersView(APIView):
-    """POST — histórico de pedidos para guest (sem login) identificado por telefone.
+    """POST — histórico de pedidos por telefone, SÓ para o número comprovado.
 
     Mesma decisão de produto da fidelidade guest-status: o storefront não tem
     login obrigatório; a identidade é o telefone salvo no aparelho (90d).
@@ -700,7 +700,10 @@ class GuestOrdersView(APIView):
     mesma shape do endpoint autenticado, limitado à loja da URL.
     """
     permission_classes = []
-    authentication_classes = []
+    # SEM `authentication_classes = []`: o histórico agora exige o número
+    # comprovado, e a prova é o usuário autenticado pelo código do WhatsApp.
+    # O padrão do projeto é `TokenOuVisitante`, que trata token vencido como
+    # visitante em vez de 401 — a tela de pedidos não quebra por token velho.
 
     def get_throttles(self):
         from apps.stores.api.views.storefront_views import PublicWriteThrottle
@@ -710,11 +713,21 @@ class GuestOrdersView(APIView):
         from apps.stores.api.views.storefront_views import get_active_store
         from apps.stores.api.views.loyalty_views import LoyaltyGuestStatusView
 
+        from apps.stores.services.carteira_service import telefone_comprovado
+
         store = get_active_store(store_slug)
         phone = request.data.get('phone') or ''
         variants = LoyaltyGuestStatusView._build_phone_variants(phone)
         if not variants:
             return Response({'results': []})
+
+        # 🚨 Só com o número comprovado. Em 12/set, com um telefone e nada
+        # mais, esta rota devolveu 9 pedidos com o `access_token` de cada um
+        # — e o token abre o pedido com o endereço de casa. Sem prova, a tela
+        # recebe só o convite para confirmar; os pedidos feitos NESTE aparelho
+        # continuam aparecendo pelo token guardado localmente.
+        if not telefone_comprovado(request, phone):
+            return Response({'results': [], 'precisa_confirmar': True})
 
         orders = (
             StoreOrder.objects

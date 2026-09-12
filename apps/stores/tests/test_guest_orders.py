@@ -1,8 +1,10 @@
-"""Endpoint /customer/guest-orders/ — histórico por telefone SEM login.
+"""Endpoint /customer/guest-orders/ — histórico por telefone COMPROVADO.
 
-Decisão de produto: o storefront não tem login obrigatório (identidade guest
-por telefone, useGuestInfo 90d — mesmo elo da fidelidade guest-status).
-"Meus pedidos" e "Pedir novamente" precisam funcionar só com o número.
+Até 12/set bastava o número: com um telefone e nada mais esta rota devolvia os
+pedidos com o `access_token` de cada um, e o token abre o endereço de casa.
+Decisão do dono: histórico só com o número confirmado pelo código do WhatsApp.
+Os testes abaixo autenticam o cliente como o login por código deixa: usuário
+com o telefone no perfil.
 
 Também regressão do reorder: os itens devem vir COMPLETOS (sem corte em 3)
 e com o id da variante (`variant`), senão o resolveReorderItems do web pula
@@ -25,6 +27,12 @@ class GuestOrdersTests(APITestCase):
             name='Loja GO', slug='loja-go', owner=owner, status='active',
         )
         self.client = APIClient()
+        from apps.core.models import UserProfile
+        cliente = User.objects.create_user(username=f'cliente_55{PHONE}', password='x')
+        perfil, _ = UserProfile.objects.get_or_create(user=cliente)
+        perfil.phone = f'55{PHONE}'
+        perfil.save()
+        self.client.force_authenticate(user=cliente)
 
     def _url(self, slug=None):
         return f'/api/v1/stores/{slug or self.store.slug}/customer/guest-orders/'
@@ -83,3 +91,11 @@ class GuestOrdersTests(APITestCase):
         self.assertEqual(len(result['items']), 5)  # sem corte em 3
         self.assertIn('variant', result['items'][0])
         self.assertIn('product', result['items'][0])
+
+    def test_anonimo_so_recebe_o_convite_para_confirmar(self):
+        self._order()
+        anonimo = APIClient()
+        resp = anonimo.post(self._url(), {'phone': PHONE}, format='json')
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()['results'], [])
+        self.assertTrue(resp.json()['precisa_confirmar'])

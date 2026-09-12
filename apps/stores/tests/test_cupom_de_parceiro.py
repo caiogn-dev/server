@@ -67,7 +67,7 @@ class CupomDeParceiroTest(TestCase):
         )
 
     def _saldo(self):
-        return CashbackService.balance(self.store, self.academia)
+        return CashbackService.balance(self.store, self.academia, verificado=True)
 
     # ── o que o dono pediu ──────────────────────────────────────────────
 

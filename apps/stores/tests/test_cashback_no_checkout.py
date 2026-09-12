@@ -58,26 +58,26 @@ class TestQuantoPodeAbater:
 
     def test_abate_o_saldo_inteiro_quando_cabe_no_pedido(self, loja):
         _saldo(loja, '10.00')
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00')) == Decimal('10.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00'), verificado=True) == Decimal('10.00')
 
     def test_nunca_abate_mais_que_o_pedido(self, loja):
         """Saldo maior que a compra não pode gerar total negativo nem troco."""
         _saldo(loja, '100.00')
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('30.00')) == Decimal('30.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('30.00'), verificado=True) == Decimal('30.00')
 
     def test_sem_saldo_e_zero(self, loja):
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00')) == Decimal('0.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00'), verificado=True) == Decimal('0.00')
 
     def test_saldo_vencido_nao_conta(self, loja):
         _saldo(loja, '10.00', dias=-1)
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00')) == Decimal('0.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00'), verificado=True) == Decimal('0.00')
 
     def test_loja_com_cashback_desligado_nao_oferece(self, db, dono):
         loja = Store.objects.create(
             owner=dono, name='Off', slug='off-cbck', store_type='food', status='active',
         )
         _saldo(loja, '10.00')
-        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00')) == Decimal('0.00')
+        assert CashbackService.aplicavel(loja, TELEFONE, Decimal('72.00'), verificado=True) == Decimal('0.00')
 
 
 @pytest.mark.django_db
@@ -91,17 +91,17 @@ class TestAtribuicaoDaIndicacao:
     def test_credita_quem_indicou_pelo_telefone_no_pedido(self, loja):
         pedido = _pedido(loja, '100.00', metadata={'indicado_por': INDICADOR})
         CashbackService.credit_order(pedido)
-        assert CashbackService.balance(loja, INDICADOR) == Decimal('5.00')
+        assert CashbackService.balance(loja, INDICADOR, verificado=True) == Decimal('5.00')
 
     def test_quem_comprou_ganha_o_dele_tambem(self, loja):
         pedido = _pedido(loja, '100.00', metadata={'indicado_por': INDICADOR})
         CashbackService.credit_order(pedido)
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('3.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('3.00')
 
     def test_auto_indicacao_nao_premia(self, loja):
         pedido = _pedido(loja, '100.00', metadata={'indicado_por': TELEFONE})
         CashbackService.credit_order(pedido)
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('3.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('3.00')
         assert StoreCashbackLot.objects.filter(origin='referral').count() == 0
 
     def test_indicador_com_nono_digito_diferente_e_a_mesma_pessoa(self, loja):
@@ -109,7 +109,7 @@ class TestAtribuicaoDaIndicacao:
         _saldo(loja, '0.01', phone=INDICADOR)
         pedido = _pedido(loja, '100.00', metadata={'indicado_por': '556388887777'})
         CashbackService.credit_order(pedido)
-        assert CashbackService.balance(loja, INDICADOR) == Decimal('5.01')
+        assert CashbackService.balance(loja, INDICADOR, verificado=True) == Decimal('5.01')
 
     def test_link_e_cupom_de_parceiro_nao_pagam_duas_vezes(self, loja):
         """Se o pedido tem link E cupom com dono, sai UM crédito de indicação."""
@@ -155,7 +155,7 @@ class TestResgateNoCheckout:
         _saldo(loja, '10.00')
         pedido = CheckoutService.create_order(
             cart=self._carrinho(loja), customer_data=self._dados(),
-            delivery_data={'method': 'pickup'}, use_cashback=True,
+            delivery_data={'method': 'pickup'}, use_cashback=True, telefone_verificado=True,
         )
         assert pedido.total == Decimal('62.00')
         assert pedido.metadata['cashback_aplicado'] == 10.0
@@ -169,26 +169,26 @@ class TestResgateNoCheckout:
             delivery_data={'method': 'pickup'},
         )
         assert pedido.total == Decimal('72.00')
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('10.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('10.00')
 
     def test_saldo_e_debitado_de_verdade(self, loja):
         from apps.stores.services.checkout_service import CheckoutService
         _saldo(loja, '10.00')
         CheckoutService.create_order(
             cart=self._carrinho(loja), customer_data=self._dados(),
-            delivery_data={'method': 'pickup'}, use_cashback=True,
+            delivery_data={'method': 'pickup'}, use_cashback=True, telefone_verificado=True,
         )
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('0.00')
 
     def test_saldo_maior_que_o_pedido_nao_gera_total_negativo(self, loja):
         from apps.stores.services.checkout_service import CheckoutService
         _saldo(loja, '500.00')
         pedido = CheckoutService.create_order(
             cart=self._carrinho(loja), customer_data=self._dados(),
-            delivery_data={'method': 'pickup'}, use_cashback=True,
+            delivery_data={'method': 'pickup'}, use_cashback=True, telefone_verificado=True,
         )
         assert pedido.total == Decimal('0.00')
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('428.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('428.00')
 
     def test_pedido_pago_inteiro_pelo_saldo_nao_fica_pendente(self, loja):
         """Total zero é pedido PAGO — não há o que cobrar.
@@ -204,7 +204,7 @@ class TestResgateNoCheckout:
         _saldo(loja, '500.00')
         pedido = CheckoutService.create_order(
             cart=self._carrinho(loja), customer_data=self._dados(),
-            delivery_data={'method': 'pickup'}, use_cashback=True,
+            delivery_data={'method': 'pickup'}, use_cashback=True, telefone_verificado=True,
         )
         assert pedido.total == Decimal('0.00')
         assert pedido.payment_status == StoreOrder.PaymentStatus.PAID
@@ -217,16 +217,28 @@ class TestResgateNoCheckout:
         _saldo(loja, '10.00')
         pedido = CheckoutService.create_order(
             cart=self._carrinho(loja), customer_data=self._dados(),
-            delivery_data={'method': 'pickup'}, use_cashback=True,
+            delivery_data={'method': 'pickup'}, use_cashback=True, telefone_verificado=True,
         )
         assert pedido.total == Decimal('62.00')
         assert pedido.payment_status == StoreOrder.PaymentStatus.PENDING
+
+    def test_sem_comprovar_o_numero_o_saldo_nao_vira_desconto(self, loja):
+        """Pedir o saldo não basta: o telefone chega no corpo da requisição.
+        Sem o código do WhatsApp, digitar o número de alguém não abate nada."""
+        from apps.stores.services.checkout_service import CheckoutService
+        _saldo(loja, '10.00')
+        pedido = CheckoutService.create_order(
+            cart=self._carrinho(loja), customer_data=self._dados(),
+            delivery_data={'method': 'pickup'}, use_cashback=True,
+        )
+        assert pedido.total == Decimal('72.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('10.00')
 
     def test_sem_saldo_o_pedido_sai_normal(self, loja):
         from apps.stores.services.checkout_service import CheckoutService
         pedido = CheckoutService.create_order(
             cart=self._carrinho(loja), customer_data=self._dados(),
-            delivery_data={'method': 'pickup'}, use_cashback=True,
+            delivery_data={'method': 'pickup'}, use_cashback=True, telefone_verificado=True,
         )
         assert pedido.total == Decimal('72.00')
 

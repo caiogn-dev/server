@@ -130,7 +130,7 @@ class TestCreditoManual:
         r = self._ajustar(cliente, loja, phone=TELEFONE, valor='50.00',
                           motivo='Pedido atrasado, cortesia')
         assert r.status_code == 201, r.content
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('50.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('50.00')
 
         lote = StoreCashbackLot.objects.get(store=loja, origin=StoreCashbackLot.Origin.ADJUST)
         assert lote.coupon_code == 'Pedido atrasado, cortesia'[:50]
@@ -139,7 +139,7 @@ class TestCreditoManual:
         """Crédito sem motivo é dinheiro saindo sem rastro."""
         r = self._ajustar(cliente, loja, phone=TELEFONE, valor='50.00')
         assert r.status_code == 400
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('0.00')
 
     def test_valor_invalido_e_recusado(self, loja, cliente):
         """Zero, texto e vazio são recusados. NEGATIVO não: dá baixa."""
@@ -157,13 +157,13 @@ class TestCreditoManual:
         r = self._ajustar(cliente, loja, phone=TELEFONE, valor='-20.00',
                           motivo='usou no balcão')
         assert r.status_code in (200, 201), r.content
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('30.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('30.00')
 
     def test_baixa_maior_que_o_saldo_nunca_deixa_negativo(self, loja, cliente):
         self._ajustar(cliente, loja, phone=TELEFONE, valor='10.00', motivo='cortesia')
 
         self._ajustar(cliente, loja, phone=TELEFONE, valor='-999.00', motivo='engano')
-        assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('0.00')
 
     def test_ajuste_acima_do_teto_e_recusado_nos_dois_sentidos(self, loja, cliente):
         """Um zero a mais num ajuste manual só aparece no fechamento do mês."""
@@ -171,16 +171,14 @@ class TestCreditoManual:
             r = self._ajustar(cliente, loja, phone=TELEFONE, valor=valor, motivo='x')
             assert r.status_code == 400, f'aceitou {valor!r}'
 
-    def test_o_credito_manual_e_gastavel_sem_login(self, loja, cliente):
-        """Ajuste é cortesia da loja, não carteira comprada: não faz sentido
-        exigir do cliente que ele comprove o número para receber um brinde."""
+    def test_o_credito_manual_so_aparece_para_o_numero_comprovado(self, loja, cliente):
+        """Até 12/set a cortesia da loja saía sem prova. Desde então todo saldo
+        — cashback, indicação, carteira e crédito manual — exige o número
+        confirmado pelo código do WhatsApp: senão bastava digitar o telefone
+        de quem ganhou o brinde para gastá-lo."""
         self._ajustar(cliente, loja, phone=TELEFONE, valor='50.00', motivo='brinde')
-        assert CashbackService.balance(loja, TELEFONE, verificado=False) == Decimal('50.00')
-
-
-@pytest.mark.django_db
-class TestSoODonoMexe:
-
+        assert CashbackService.balance(loja, TELEFONE, verificado=False) == Decimal('0.00')
+        assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('50.00')
     def test_estranho_nao_le_a_carteira_da_loja(self, loja, db):
         outro = User.objects.create_user(username='estranho', email='e@t.local', password='x')
         c = APIClient(); c.force_authenticate(user=outro)

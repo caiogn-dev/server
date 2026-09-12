@@ -126,18 +126,21 @@ class CashbackService:
 
     @staticmethod
     def _lotes_vivos(store, phone: str, verificado: bool = False):
-        """Lotes que ESTE visitante pode usar agora.
+        """Lotes que ESTE visitante pode ver e usar agora.
 
-        A PROVA EXIGIDA ACOMPANHA O VALOR EM RISCO. O checkout é guest-first: o
-        telefone chega no corpo da requisição e nada garante que quem digitou é
-        o dono. Para o cashback de compra e de indicação isso é aceitável —
-        são centavos por pedido, e exigir login esvaziaria o programa, que foi
-        exatamente o erro da fidelidade antiga ao chavear por `user`.
+        🚨 SEM O NÚMERO COMPROVADO, NENHUM LOTE. Até 12/set só o pré-pago
+        exigia prova, e o cashback de compra aparecia para quem digitasse o
+        número: com um telefone e nada mais dava para ler o saldo e a data de
+        vencimento de qualquer cliente. Decisão do dono: todo saldo exige o
+        código do WhatsApp.
 
-        Crédito PRÉ-PAGO é outra coisa: são R$ 456 comprados, e bastaria
-        conhecer o número de um cliente para gastar o saldo dele. Esse só sai
-        com o telefone comprovado — usuário autenticado cujo cadastro tem
-        aquele número, que é o que o login por código do WhatsApp já produz.
+        Mora AQUI e não nas views porque ver e gastar são a mesma porta:
+        `balance`, `expires_next`, `aplicavel` e `redeem` passam todos por
+        esta função. Um bloqueio só na tela deixaria o checkout abater o saldo
+        de quem digitou o número de outra pessoa.
+
+        O painel do dono lê com `verificado=True` — o dono não passa por
+        código para ver o saldo dos próprios clientes.
         """
         from apps.stores.models import StoreCashbackLot
         variantes = CashbackService._telefones(phone)
@@ -148,7 +151,7 @@ class CashbackService:
             remaining__gt=0, expires_at__gt=timezone.now(),
         )
         if not verificado:
-            qs = qs.exclude(origin=StoreCashbackLot.Origin.PREPAID)
+            return StoreCashbackLot.objects.none()
         return qs
 
     @staticmethod

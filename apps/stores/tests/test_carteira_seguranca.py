@@ -101,9 +101,11 @@ class TestSaldoComprado:
 
 
 @pytest.mark.django_db
-class TestCashbackDeCompraSegueGuestFirst:
-    """Centavos por pedido: exigir login aqui esvaziaria o programa — é o erro
-    que a fidelidade antiga cometeu ao chavear por `user`."""
+class TestTodoSaldoExigeONumeroComprovado:
+    """Até 12/set o cashback de compra saía sem prova ("são centavos"). Com um
+    telefone e nada mais dava para ver e GASTAR o saldo de outra pessoa.
+    Decisão do dono: todo saldo — cashback, indicação e carteira — só com o
+    número confirmado pelo código do WhatsApp."""
 
     def _dar_cashback(self, loja):
         pedido = StoreOrder.objects.create(
@@ -113,23 +115,21 @@ class TestCashbackDeCompraSegueGuestFirst:
         )
         return CashbackService.credit_purchase(pedido)
 
-    def test_cashback_de_compra_vale_sem_login(self, loja, produto):
+    def test_cashback_de_compra_NAO_sai_sem_comprovar(self, loja, produto):
         lote = self._dar_cashback(loja)
         assert lote.amount == Decimal('3.00')
 
         pedido = _pedir(loja, produto, 's1', DONO_DO_SALDO, verificado=False)
-        assert pedido.discount == Decimal('3.00'), 'o cashback comum exigiu login'
-        assert pedido.total == Decimal('35.00')
+        assert pedido.discount == Decimal('0.00'), 'saldo gasto por quem só digitou o número'
+        assert CashbackService.balance(loja, DONO_DO_SALDO, verificado=True) == Decimal('3.00')
 
-    def test_saldo_misto_mostra_e_gasta_so_a_parte_permitida(self, loja, produto):
-        """Carteira + cashback na mesma conta: sem prova, só os R$ 3 saem."""
+    def test_comprovado_gasta_cashback_e_carteira(self, loja, produto):
         self._dar_cashback(loja)
         CashbackService.credit_prepaid(
             loja, DONO_DO_SALDO, 'familia', f'carteira-familia-{DONO_DO_SALDO}-s2',
         )
-        assert CashbackService.balance(loja, DONO_DO_SALDO, verificado=False) == Decimal('3.00')
+        assert CashbackService.balance(loja, DONO_DO_SALDO, verificado=False) == Decimal('0.00')
         assert CashbackService.balance(loja, DONO_DO_SALDO, verificado=True) == Decimal('459.00')
 
-        pedido = _pedir(loja, produto, 's1', DONO_DO_SALDO, verificado=False)
-        assert pedido.discount == Decimal('3.00')
-        assert CashbackService.balance(loja, DONO_DO_SALDO, verificado=True) == Decimal('456.00')
+        pedido = _pedir(loja, produto, 's1', DONO_DO_SALDO, verificado=True)
+        assert pedido.discount > Decimal('0.00')
