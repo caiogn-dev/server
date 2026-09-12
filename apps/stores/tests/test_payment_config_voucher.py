@@ -38,10 +38,13 @@ class PaymentConfigVoucherTests(APITestCase):
         self.assertTrue(config['pagarme']['is_sandbox'])
         # O cardapio recebe rotulo pronto: ele nao tem o direito de saber que
         # 'vr' se escreve 'VR Beneficios'.
-        self.assertEqual(config['pagarme']['brands'], [
-            {'value': 'vr', 'label': 'VR Benefícios'},
-            {'value': 'sodexo', 'label': 'Sodexo'},
-        ])
+        marcas = config['pagarme']['brands']
+        self.assertEqual([m['value'] for m in marcas], ['vr', 'sodexo'])
+        # A Sodexo virou Pluxee em 2024 — o cartao do cliente diz Pluxee.
+        self.assertEqual([m['label'] for m in marcas], ['VR Benefícios', 'Pluxee'])
+        # E a logo viaja junto, para o cardapio nao ter arquivo proprio.
+        for m in marcas:
+            self.assertIn('logo', m)
         # E recebe a URL de tokenizacao, em vez de carrega-la fixa no JS.
         self.assertTrue(config['pagarme']['tokens_url'].endswith('/tokens'))
 
@@ -55,6 +58,7 @@ class PaymentConfigVoucherTests(APITestCase):
             [b['value'] for b in r.data['brands']], ['vr', 'sodexo', 'ticket'],
         )
         self.assertTrue(all(b['label'] for b in r.data['brands']))
+        self.assertTrue(all('logo' in b for b in r.data['brands']))
 
     def test_gateway_desabilitado_nao_liga_voucher(self):
         self._liga_pagarme(is_enabled=False)

@@ -91,7 +91,8 @@ class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         viraria um array no `.tsx` — a terceira cópia da mesma verdade.
         """
         from apps.stores.services.voucher import bandeiras
-        return Response({'brands': list(bandeiras.CATALOGO)})
+        from apps.stores.services.voucher import logos as catalogo_logos
+        return Response({'brands': catalogo_logos.catalogo_com_logo()})
 
     # ── OAuth do Mercado Pago ────────────────────────────────────────────────
     #

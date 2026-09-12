@@ -194,7 +194,10 @@ def build_store_payment_config(store):
     voucher_gateway = voucher_registry.gateway_de_voucher(store)
     valores = voucher_registry.bandeiras_da_loja(store)
     # Rotulo vem do catalogo, aqui. O cardapio recebe pronto e nao repete nada.
-    marcas = [{'value': v, 'label': catalogo.rotulo(v)} for v in valores]
+    # Rotulo E logo vem do catalogo, aqui. O cardapio recebe pronto e nao
+    # repete nada — nem o nome da bandeira, nem o endereco da imagem.
+    from apps.stores.services.voucher import logos as catalogo_logos
+    marcas = catalogo_logos.marcas_da_loja(valores)
     voucher_public_key = (voucher_gateway.public_key if voucher_gateway else '') or ''
     if voucher_public_key and marcas:
         enabled_methods.append('voucher')
