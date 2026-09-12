@@ -888,3 +888,49 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-12
+
+**Baseline de testes:** 45 PRs abertos (#318–#362). Docker indisponível no container; suíte de
+integração não executável (migrações `AddIndexConcurrently` requerem PostgreSQL). Pré-existente.
+
+**Gate anti-acúmulo:** PRs #318–#362 varrem cashback, carteira, indicação, CORS, modo de
+recebimento, loyalty manual resgates, NFCe, handover, review IDOR, export IDOR, PII logs, fiscal,
+store variants. Nenhum cobre `AuditLogViewSet`.
+
+**Bug encontrado e corrigido:** `AuditLogViewSet` usa `IsAdminUser` (is_staff) — IDOR cross-tenant [P0]
+
+- **Tipo:** P0 — IDOR; qualquer usuário `is_staff` (acesso ao `/admin` do Django) pode listar e
+  filtrar logs de auditoria de todos os tenants da plataforma via `GET /api/v1/audit/logs/` e
+  `GET /api/v1/audit/logs/object_history/?type=...&id=...`.
+- **Arquivo corrigido (1):** `apps/audit/api/views.py`
+- **Problema:** `permission_classes = [IsAuthenticated, IsAdminUser]` usa `IsAdminUser` do DRF,
+  que checa `is_staff` — não `is_superuser`. A convenção do projeto é explícita: acesso cross-tenant
+  exige `is_superuser`, nunca `is_staff` (ver `apps/core/permissions.py:276-297`).
+  `get_queryset()` retorna `AuditLog.objects.all()` sem nenhum escopo de tenant.
+  Resultado: qualquer usuário `is_staff` obtém logs de auditoria de todos os tenants — incluindo
+  `old_values`/`new_values` com dados de configuração sensível (credenciais Mercado Pago, tokens
+  WhatsApp, etc., conforme `AuditService._model_to_dict()` que serializa todos os campos do modelo).
+- **Correção (2 arquivos):**
+  1. `apps/core/permissions.py` — adicionada classe `IsSuperUser` (acesso exclusivo a superusers)
+     à lista de permissões do projeto e ao `__all__`.
+  2. `apps/audit/api/views.py` — `IsAdminUser` substituído por `IsSuperUser` importado de
+     `apps.core.permissions`. `my_activity` (que já restringia ao próprio usuário com
+     `permission_classes=[IsAuthenticated]`) permanece inalterado.
+- **Testes:** 5 casos em `apps/audit/tests/test_audit_log_view.py`:
+  - Anônimo → 401/403
+  - `is_staff` sem `is_superuser` → 403 na lista
+  - `is_staff` sem `is_superuser` → 403 no `object_history`
+  - Superuser → 200 na lista
+  - `my_activity` aceita qualquer autenticado → 200
+- **PR:** `bot/server-2026-09-12-audit-log-is-staff-idor`
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P1** — Merge dos PRs acumulados #318–#362 (45 PRs aguardando revisão).
+2. **P1** — Testes de contrato para checkout payload e pedido por token.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P2** — `AuditService._model_to_dict()` serializa TODOS os campos do modelo incluindo tokens e
+   credenciais. Adicionar lista de campos sensíveis a mascarar antes de gravar em `old_values`/`new_values`.
+
