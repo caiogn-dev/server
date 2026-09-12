@@ -99,7 +99,15 @@ class FusaoDeContas:
 
     @staticmethod
     def _pagos(user) -> int:
+        """Quantos pedidos pagos esta conta tem — critério de desempate.
+
+        Entre duas contas da mesma pessoa, fica a que comprou mais. Não é
+        faturamento: é CONTAGEM, e serve só para escolher o sobrevivente.
+        """
         from apps.stores.models import StoreOrder
+        # metrics-ok: contagem de pedidos para desempatar duplicata, nao
+        # calculo de receita — cancelado e estornado tambem contam como
+        # "essa conta foi usada de verdade", que e o que importa aqui.
         return StoreOrder.objects.filter(customer=user, payment_status='paid').count()
 
     @classmethod

@@ -25,10 +25,18 @@ class CustomerInsightsReportTest(APITestCase):
         self.store = Store.objects.create(name='Loja', slug='loja', owner=self.owner, status='active')
         now = timezone.now()
 
+        # 🚨 O telefone é normalizado antes de gravar: letras somem. `6399900a`
+        # e `6399900b` viravam o MESMO `6399900` e batiam na constraint
+        # `cliente_unico_por_telefone_na_loja`. Número de verdade, um por
+        # cliente — e a normalização passa a fazer parte do que o teste cobre.
+        TELEFONES = {'a': '63991110001', 'b': '63991110002', 'c': '63991110003',
+                     'd': '63991110004', 'e': '63991110005', 'f': '63991110006',
+                     'g': '63991110007', 'h': '63991110008', 'i': '63991110009'}
+
         def cust(tag, orders, spent, last_days_ago):
             u = User.objects.create_user(username=f'u_{tag}', email=f'{tag}@x.com', password='x')
             return StoreCustomer.objects.create(
-                store=self.store, user=u, phone=f'6399900{tag}',
+                store=self.store, user=u, phone=TELEFONES[tag],
                 total_orders=orders, total_spent=Decimal(spent),
                 last_order_at=(now - timedelta(days=last_days_ago)) if last_days_ago is not None else None,
             )

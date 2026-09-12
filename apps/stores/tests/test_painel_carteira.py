@@ -142,10 +142,34 @@ class TestCreditoManual:
         assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
 
     def test_valor_invalido_e_recusado(self, loja, cliente):
-        for valor in ['0', '-10', 'abc', '']:
+        """Zero, texto e vazio são recusados. NEGATIVO não: dá baixa."""
+        for valor in ['0', 'abc', '']:
             r = self._ajustar(cliente, loja, phone=TELEFONE, valor=valor, motivo='x')
             assert r.status_code == 400, f'aceitou valor {valor!r}'
         assert not StoreCashbackLot.objects.filter(store=loja).exists()
+
+    def test_valor_negativo_da_baixa_em_vez_de_ser_recusado(self, loja, cliente):
+        """O ajuste só sabia creditar. Quando o cliente gastava o saldo por fora
+        — desconto no WhatsApp, no balcão — o painel seguia mostrando o crédito
+        e a loja pagava o mesmo desconto duas vezes."""
+        self._ajustar(cliente, loja, phone=TELEFONE, valor='50.00', motivo='cortesia')
+
+        r = self._ajustar(cliente, loja, phone=TELEFONE, valor='-20.00',
+                          motivo='usou no balcão')
+        assert r.status_code in (200, 201), r.content
+        assert CashbackService.balance(loja, TELEFONE) == Decimal('30.00')
+
+    def test_baixa_maior_que_o_saldo_nunca_deixa_negativo(self, loja, cliente):
+        self._ajustar(cliente, loja, phone=TELEFONE, valor='10.00', motivo='cortesia')
+
+        self._ajustar(cliente, loja, phone=TELEFONE, valor='-999.00', motivo='engano')
+        assert CashbackService.balance(loja, TELEFONE) == Decimal('0.00')
+
+    def test_ajuste_acima_do_teto_e_recusado_nos_dois_sentidos(self, loja, cliente):
+        """Um zero a mais num ajuste manual só aparece no fechamento do mês."""
+        for valor in ['9000.00', '-9000.00']:
+            r = self._ajustar(cliente, loja, phone=TELEFONE, valor=valor, motivo='x')
+            assert r.status_code == 400, f'aceitou {valor!r}'
 
     def test_o_credito_manual_e_gastavel_sem_login(self, loja, cliente):
         """Ajuste é cortesia da loja, não carteira comprada: não faz sentido

@@ -50,7 +50,9 @@ class OrderUpdateSchedulingTestCase(APITestCase):
         self.assertEqual(resp.status_code, 200, resp.content)
         self.order.refresh_from_db()
         self.assertEqual(self.order.customer_name, 'Novo Nome')
-        self.assertEqual(self.order.customer_phone, '63988887777')
+        # O `save` do StoreOrder normaliza com o DDI — é ele que impede o mesmo
+        # cliente de virar duas pessoas nas contagens.
+        self.assertEqual(self.order.customer_phone, '5563988887777')
         self.assertEqual(self.order.customer_notes, 'Sem cebola')
 
     def test_patch_cannot_change_total(self):

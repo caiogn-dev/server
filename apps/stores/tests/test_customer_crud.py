@@ -38,7 +38,10 @@ class CustomerCrudTestCase(APITestCase):
         self.assertEqual(cust.store_id, self.store.id)
         self.assertEqual(cust.user.first_name, 'Maria')
         self.assertEqual(cust.user.last_name, 'Souza Lima')
-        self.assertEqual(cust.phone, '63999991111')
+        # Gravado COM o DDI de propósito: sem isso o mesmo cliente virava duas
+        # pessoas (121 dos 160 pedidos da Cê estavam sem o 55) e toda contagem
+        # por cliente mentia. A normalização é a regra, não um detalhe.
+        self.assertEqual(cust.phone, '5563999991111')
 
     def test_update_customer_name_updates_user(self):
         resp = self.client.post(self.list_url, {
