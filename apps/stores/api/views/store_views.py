@@ -101,6 +101,60 @@ class StoreViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
     
+    @action(detail=True, methods=['get', 'post'], url_path='banners')
+    def banners(self, request, pk=None):
+        """GET lista; POST sobe UMA imagem (multipart `image`). Máximo 3.
+
+        O teto é do servidor, não da tela: um painel antigo ou uma chamada
+        direta não pode transformar o topo do cardápio numa parede de anúncio.
+        """
+        from apps.core.utils import build_absolute_media_url
+        from apps.stores.models import MAXIMO_DE_BANNERS, StoreBanner
+
+        store = self.get_object()
+        if request.method == 'POST':
+            imagem = request.FILES.get('image')
+            if not imagem:
+                return Response({'error': 'Envie a imagem no campo "image".'},
+                                status=status.HTTP_400_BAD_REQUEST)
+            if store.banners.count() >= MAXIMO_DE_BANNERS:
+                return Response(
+                    {'error': f'O cardápio aceita até {MAXIMO_DE_BANNERS} banners. '
+                              'Apague um para subir outro.'},
+                    status=status.HTTP_400_BAD_REQUEST)
+            banner = StoreBanner(store=store, image=imagem,
+                                 position=store.banners.count())
+            try:
+                banner.full_clean()
+            except Exception as erro:
+                mensagens = getattr(erro, 'message_dict', {}).get('image') or ['Imagem inválida.']
+                return Response({'error': mensagens[0]}, status=status.HTTP_400_BAD_REQUEST)
+            banner.save()
+            return Response({'id': str(banner.id),
+                             'url': build_absolute_media_url(banner.image.url),
+                             'position': banner.position},
+                            status=status.HTTP_201_CREATED)
+
+        return Response([
+            {'id': str(b.id), 'url': build_absolute_media_url(b.image.url), 'position': b.position}
+            for b in store.banners.all()
+        ])
+
+    @action(detail=True, methods=['delete'], url_path=r'banners/(?P<banner_id>[^/.]+)')
+    def apagar_banner(self, request, pk=None, banner_id=None):
+        """Apaga um banner e reenumera as posições, sem buraco na ordem."""
+        store = self.get_object()
+        banner = store.banners.filter(id=banner_id).first()
+        if banner is None:
+            return Response({'error': 'Banner não encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+        banner.image.delete(save=False)
+        banner.delete()
+        for posicao, restante in enumerate(store.banners.order_by('position', 'created_at')):
+            if restante.position != posicao:
+                restante.position = posicao
+                restante.save(update_fields=['position'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):
         """Get store statistics."""

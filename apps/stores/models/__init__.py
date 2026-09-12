@@ -32,6 +32,7 @@ from .cart import StoreCart, StoreCartItem, StoreCartComboItem
 from .combo import StoreCombo
 from .combo_group import ComboProductGroup, ComboProductGroupVariantLimit, ComboProductGroupProductOption
 from .subscription import StoreSubscription
+from .banner import StoreBanner, MAXIMO_DE_BANNERS
 
 # Coupon
 from .coupon import StoreCoupon, StoreCouponRedemption
@@ -72,6 +73,7 @@ from .ifood import StoreIfoodIntegration
 
 
 __all__ = [
+    'StoreBanner', 'MAXIMO_DE_BANNERS',
     'StoreIfoodIntegration',
     # Base
     'Store',
