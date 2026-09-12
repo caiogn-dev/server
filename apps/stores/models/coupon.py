@@ -56,13 +56,28 @@ class StoreCoupon(models.Model):
         return f"{self.store.name} - {self.code}"
 
     def _identity_filter(self, user=None, customer_phone=None):
-        """Filtro de pedidos do mesmo cliente (logado OU guest por telefone)."""
+        """Filtro de pedidos do mesmo cliente (logado OU guest por telefone).
+
+        🚨 O telefone entra por VARIANTES, nunca por igualdade. O pedido grava
+        `5563991112222` (o `save` do StoreOrder normaliza com o DDI) e o
+        checkout valida o cupom com o que o cliente digitou — `63991112222`.
+        Comparando direto, as duas formas nunca casavam: `first_order_only` e
+        `usage_limit_per_user` deixavam de bloquear qualquer guest, e o cupom
+        de primeira compra virava reutilizável para sempre.
+
+        É a mesma armadilha que sumiu com o cashback de um lote em 09/set.
+        `phone_variants` é a fonte única disso — o docstring dela manda usar
+        em QUALQUER lookup por telefone.
+        """
         from django.db.models import Q
+        from apps.core.utils import phone_variants
         q = Q()
         if user is not None and getattr(user, 'is_authenticated', False):
             q |= Q(customer=user)
         if customer_phone:
-            q |= Q(customer_phone=customer_phone)
+            variantes = phone_variants(customer_phone)
+            if variantes:
+                q |= Q(customer_phone__in=variantes)
         return q
 
     def is_valid(self, subtotal=None, user=None, customer_phone=None):

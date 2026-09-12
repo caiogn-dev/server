@@ -228,3 +228,49 @@ class CustomerOrderComboSelectionsTests(APITestCase):
         self.assertEqual(combo[0]['group_name'], 'Salada')
         self.assertEqual(combo[0]['items'][0]['name'], 'Caesar')
         self.assertEqual(combo[1]['items'][0]['quantity'], 2)
+
+
+class CouponIdentidadePorTelefoneTests(APITestCase):
+    """O pedido grava o telefone COM o DDI 55; o checkout valida o cupom com o
+    telefone como o cliente digitou. Comparando por igualdade, as duas formas
+    nunca casam — e o cupom de primeira compra vira reutilizável para sempre.
+
+    `phone_variants` existe exatamente para isto e o docstring dela manda usar
+    em QUALQUER lookup por telefone. Aqui não estava sendo usada.
+    """
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username='o-id', email='oid@t.com', password='x')
+        self.store = _mk_store(self.owner, 'loja-cupom-identidade')
+
+    def test_primeira_compra_bloqueia_mesmo_o_pedido_tendo_o_DDI(self):
+        coupon = _mk_coupon(self.store, first_order_only=True)
+        pedido = _mk_order(self.store, phone='63911112222')
+        pedido.refresh_from_db()
+        self.assertTrue(pedido.customer_phone.startswith('55'), pedido.customer_phone)
+
+        valid, _ = coupon.is_valid(subtotal=Decimal('50'), customer_phone='63911112222')
+        self.assertFalse(valid, 'cliente com pedido anterior recebeu cupom de primeira compra')
+
+    def test_limite_por_usuario_conta_o_pedido_gravado_com_DDI(self):
+        coupon = _mk_coupon(self.store, usage_limit_per_user=1)
+        _mk_order(self.store, phone='63911112222', coupon_code='PROMO10')
+
+        valid, _ = coupon.is_valid(subtotal=Decimal('50'), customer_phone='5563911112222')
+        self.assertFalse(valid)
+
+    def test_sem_o_nono_digito_ainda_e_a_mesma_pessoa(self):
+        """O WhatsApp entrega o wa_id sem o nono dígito. Mesma pessoa."""
+        coupon = _mk_coupon(self.store, first_order_only=True)
+        _mk_order(self.store, phone='5563991112222')
+
+        valid, _ = coupon.is_valid(subtotal=Decimal('50'), customer_phone='556391112222')
+        self.assertFalse(valid)
+
+    def test_outro_telefone_continua_liberado(self):
+        """A correção não pode virar bloqueio de quem nunca comprou."""
+        coupon = _mk_coupon(self.store, first_order_only=True)
+        _mk_order(self.store, phone='63911112222')
+
+        valid, _ = coupon.is_valid(subtotal=Decimal('50'), customer_phone='63933334444')
+        self.assertTrue(valid)
