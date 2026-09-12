@@ -32,6 +32,14 @@ class StoreSerializer(serializers.ModelSerializer):
     orders_count = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
     reviews_count = serializers.SerializerMethodField()
+    # Bandeiras de vale cobradas por LINK (sem integracao). Moram em
+    # `metadata`, mas nao entram por ele: `metadata` inteiro vindo do painel
+    # apagaria o que esta tela nem sabe que existe — foi assim que editar o
+    # nome de um cliente deletou os enderecos dele. Campo proprio, merge no
+    # save, e a chave some quando a lista fica vazia.
+    vale_por_link_brands = serializers.ListField(
+        child=serializers.CharField(), required=False,
+    )
 
     class Meta:
         model = Store
@@ -48,7 +56,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'min_order_value', 'free_delivery_threshold', 'default_delivery_fee',
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
-            'owner', 'metadata',
+            'owner', 'metadata', 'vale_por_link_brands',
             'meta_pixel_id', 'meta_pixel_enabled',
             'clarity_id', 'clarity_enabled',
             'plan', 'trial_ends_at', 'onboarding_completed',
@@ -62,6 +70,49 @@ class StoreSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at',
                             'plan', 'trial_ends_at']
 
+    CHAVE_VALE_POR_LINK = 'voucher_manual_brands'
+
+    def validate_vale_por_link_brands(self, valores):
+        """Bandeira fora do catálogo vira opção na tela do cliente. Morre aqui."""
+        from apps.stores.services.voucher import bandeiras
+        conhecidas = set(bandeiras.valores_manuais())
+        limpas = [str(v).strip().lower() for v in valores if str(v).strip()]
+        desconhecidas = [v for v in limpas if v not in conhecidas]
+        if desconhecidas:
+            raise serializers.ValidationError(
+                f"Bandeira sem suporte: {', '.join(sorted(set(desconhecidas)))}."
+            )
+        # Ordem do catálogo, não a ordem de clique do lojista.
+        return [v for v in bandeiras.valores_manuais() if v in limpas]
+
+    def to_representation(self, instance):
+        dados = super().to_representation(instance)
+        metadata = instance.metadata if isinstance(instance.metadata, dict) else {}
+        dados['vale_por_link_brands'] = metadata.get(self.CHAVE_VALE_POR_LINK) or []
+        return dados
+
+    def _guardar_vale_por_link(self, instancia, valores):
+        """Mescla em `metadata`. Lista vazia REMOVE a chave em vez de guardar
+        `[]` — chave vazia parece configuração e confunde a leitura."""
+        metadata = dict(instancia.metadata or {})
+        if valores:
+            metadata[self.CHAVE_VALE_POR_LINK] = valores
+        else:
+            metadata.pop(self.CHAVE_VALE_POR_LINK, None)
+        instancia.metadata = metadata
+        instancia.save(update_fields=['metadata'])
+        return instancia
+
+    def create(self, validated_data):
+        # `pop` com sentinela: ausente é "não mexe", presente é "é isto".
+        vale = validated_data.pop('vale_por_link_brands', None)
+        loja = super().create(validated_data)
+        return loja if vale is None else self._guardar_vale_por_link(loja, vale)
+
+    def update(self, instance, validated_data):
+        vale = validated_data.pop('vale_por_link_brands', None)
+        loja = super().update(instance, validated_data)
+        return loja if vale is None else self._guardar_vale_por_link(loja, vale)
 
     # Estes 5 contadores são anotados na queryset do StoreViewSet (anno_*) via
     # Subquery — 1 query em vez de 5 por loja. Se a anotação não estiver
@@ -1570,7 +1621,8 @@ class CheckoutSerializer(serializers.Serializer):
     distance_km = serializers.DecimalField(max_digits=7, decimal_places=2, required=False, allow_null=True)
     
     # Payment
-    payment_method = serializers.ChoiceField(choices=['pix', 'card', 'cash', 'voucher'], default='pix')
+    payment_method = serializers.ChoiceField(
+        choices=['pix', 'card', 'cash', 'voucher', 'voucher_link'], default='pix')
     
     # Coupon
     coupon_code = serializers.CharField(required=False, allow_blank=True, default='')

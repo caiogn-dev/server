@@ -1420,6 +1420,47 @@ class CheckoutService:
         return None
 
     @staticmethod
+    def _vale_por_link(order, payment_data: dict) -> dict:
+        """Vale de bandeira SEM integração: o pedido nasce, a cobrança vai por link.
+
+        A Volus não tem API — `api.volus.com.br` não existe nem em DNS, e nenhum
+        gateway brasileiro a lista. Mas o cliente que tem o cartão existe e quer
+        comprar, então o caminho é o mesmo do dinheiro na entrega: o pedido é
+        registrado como pendente e a loja cobra por fora.
+
+        O pedido PRECISA nascer. Sem ele a loja não teria o que cobrar, e o
+        cliente repetiria o pedido inteiro na conversa do WhatsApp — que é
+        exatamente onde se perde a venda.
+        """
+        from apps.stores.models import StoreOrder
+        from apps.stores.services.voucher import bandeiras
+        from apps.stores.services.voucher import registry as voucher_registry
+
+        if order is None:
+            return {'success': False, 'error': 'Pagamento com vale exige um pedido.'}
+
+        bandeira = str(payment_data.get('brand') or '').strip().lower()
+        if bandeira not in voucher_registry.bandeiras_manuais_da_loja(order.store):
+            return {'success': False, 'error': 'Esta loja não aceita essa bandeira de vale.'}
+
+        order.payment_method = 'voucher_link'
+        order.payment_status = StoreOrder.PaymentStatus.PENDING
+        order.metadata = {**(order.metadata or {}), 'vale_por_link': bandeira}
+        order.save(update_fields=['payment_method', 'payment_status', 'metadata', 'updated_at'])
+
+        return {
+            'success': True,
+            'payment_id': None,
+            'status': 'pending',
+            'payment_method': 'voucher_link',
+            'brand': bandeira,
+            'message': (
+                f'Pedido registrado. Chame a loja no WhatsApp para receber o link '
+                f'de pagamento do seu vale {bandeiras.rotulo(bandeira)}.'
+            ),
+        }
+
+    @staticmethod
     def _cobrar_voucher(order, payment_data: dict, amount=None) -> dict:
         """Cobrança de vale-refeição/alimentação. Tudo ou nada.
 
@@ -1563,6 +1604,9 @@ class CheckoutService:
                 'payment_method': 'cash',
                 'message': 'Pagamento em dinheiro na entrega/retirada'
             }
+
+        if payment_method == 'voucher_link':
+            return CheckoutService._vale_por_link(order, payment_data or {})
 
         if payment_method == 'voucher':
             return CheckoutService._cobrar_voucher(order, payment_data or {}, amount)

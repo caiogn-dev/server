@@ -202,6 +202,16 @@ def build_store_payment_config(store):
     if voucher_public_key and marcas:
         enabled_methods.append('voucher')
 
+    # Bandeiras SEM integracao: nao dependem de gateway nem de chave, porque o
+    # dinheiro nao passa por API nenhuma — o pedido nasce pendente e a loja
+    # manda o link pelo WhatsApp. Basta a loja ter marcado a bandeira e ter um
+    # WhatsApp para o cliente falar.
+    manuais = voucher_registry.bandeiras_manuais_da_loja(store)
+    whatsapp_da_loja = (getattr(store, 'whatsapp_number', '') or '').strip()
+    marcas_manuais = catalogo_logos.marcas_manuais_da_loja(manuais)
+    if marcas_manuais and whatsapp_da_loja:
+        enabled_methods.append('voucher_link')
+
     return {
         'enabled_methods': enabled_methods,
         'mercado_pago': {
@@ -219,6 +229,10 @@ def build_store_payment_config(store):
             # URL da API do Pagar.me servida pelo backend: o navegador nao deve
             # carregar endereco de gateway fixo no bundle.
             'tokens_url': pagarme_orders.TOKENS_URL,
+        },
+        'vale_por_link': {
+            'brands': marcas_manuais,
+            'whatsapp': whatsapp_da_loja,
         },
     }
 

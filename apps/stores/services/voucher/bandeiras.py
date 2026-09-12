@@ -26,14 +26,32 @@ CATALOGO = (
 )
 
 
+#: Bandeiras que EXISTEM mas que ninguem consegue cobrar automaticamente.
+#: A Volus nao tem API publica — `api.volus.com.br` nao existe nem em DNS — e
+#: nenhum gateway brasileiro a lista. O cliente que tem o cartao existe assim
+#: mesmo, entao o caminho e: pedido criado, cobranca por link no WhatsApp.
+#:
+#: Fica SEPARADO do CATALOGO de proposito. Misturar faria o checkout abrir o
+#: formulario de cartao para uma bandeira que nao tem como ser cobrada, e a
+#: falha apareceria so no clique — com o cliente ja tendo digitado o cartao.
+CATALOGO_MANUAL = (
+    {'value': 'volus', 'label': 'Volus'},
+)
+
+
+def valores_manuais():
+    """Só os códigos das bandeiras cobradas por link."""
+    return tuple(b['value'] for b in CATALOGO_MANUAL)
+
+
 def valores():
     """Só os códigos, na ordem do catálogo."""
     return tuple(b['value'] for b in CATALOGO)
 
 
 def rotulo(valor):
-    """Nome de exibição. Valor desconhecido volta como veio, sem explodir."""
-    for b in CATALOGO:
+    """Nome de exibição, dos dois catálogos. Desconhecido volta como veio."""
+    for b in CATALOGO + CATALOGO_MANUAL:
         if b['value'] == valor:
             return b['label']
     return valor

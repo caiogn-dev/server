@@ -90,9 +90,15 @@ class StorePaymentGatewayViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         O painel monta os toggles a partir daqui. Sem este endpoint, a lista
         viraria um array no `.tsx` — a terceira cópia da mesma verdade.
         """
-        from apps.stores.services.voucher import bandeiras
         from apps.stores.services.voucher import logos as catalogo_logos
-        return Response({'brands': catalogo_logos.catalogo_com_logo()})
+        return Response({
+            'brands': catalogo_logos.catalogo_com_logo(),
+            # Bandeiras sem integracao (hoje a Volus) vem NA MESMA resposta, em
+            # chave separada. Uma rota so porque sao a mesma pergunta — "o que
+            # esta loja pode marcar?" — e duas rotas seriam duas verdades. Mas
+            # separadas, porque o checkout trata cada grupo de um jeito.
+            'manual_brands': catalogo_logos.catalogo_manual_com_logo(),
+        })
 
     # ── OAuth do Mercado Pago ────────────────────────────────────────────────
     #

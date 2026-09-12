@@ -35,6 +35,21 @@ def gateway_de_voucher(store):
     )
 
 
+def bandeiras_manuais_da_loja(store):
+    """Bandeiras SEM integração que a loja aceita, cobradas por link.
+
+    Não exige gateway: o dinheiro não passa por API nenhuma. A loja marca a
+    bandeira, o cliente escolhe, o pedido nasce pendente e a cobrança vai por
+    WhatsApp. Por isso a config mora no Store, não no gateway.
+    """
+    from apps.stores.services.voucher import bandeiras
+    config = (store.metadata or {}) if isinstance(store.metadata, dict) else {}
+    marcadas = config.get('voucher_manual_brands') or []
+    validas = set(bandeiras.valores_manuais())
+    return [str(m).strip().lower() for m in marcadas
+            if str(m).strip().lower() in validas]
+
+
 def bandeiras_da_loja(store):
     """Bandeiras que a loja aceita. Lista vazia quando não aceita voucher."""
     gateway = gateway_de_voucher(store)

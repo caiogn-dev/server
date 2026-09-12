@@ -46,17 +46,37 @@ def url_da_logo(valor):
     return f'{base}{estatico}' if base else estatico
 
 
+def _com_logo(valor, rotulo=None):
+    """Uma bandeira do jeito que a tela recebe: código, nome e logo."""
+    return {
+        'value': valor,
+        'label': rotulo if rotulo is not None else bandeiras.rotulo(valor),
+        'logo': url_da_logo(valor),
+    }
+
+
 def catalogo_com_logo():
-    """O catálogo inteiro, com a logo já resolvida — o que o painel recebe."""
-    return [
-        {'value': b['value'], 'label': b['label'], 'logo': url_da_logo(b['value'])}
-        for b in bandeiras.CATALOGO
-    ]
+    """O catálogo integrado inteiro — o que o painel recebe."""
+    return [_com_logo(b['value'], b['label']) for b in bandeiras.CATALOGO]
+
+
+def catalogo_manual_com_logo():
+    """As bandeiras cobradas por link — mesmo formato, outra fonte.
+
+    Logo é opcional aqui de propósito: a bandeira entra no catálogo assim que a
+    loja se credencia, e a imagem chega depois. Sem logo, a tela desenha o nome.
+    """
+    return [_com_logo(b['value'], b['label']) for b in bandeiras.CATALOGO_MANUAL]
 
 
 def marcas_da_loja(valores):
-    """As bandeiras que ESTA loja aceita, com rótulo e logo — o que o cardápio recebe."""
-    return [
-        {'value': v, 'label': bandeiras.rotulo(v), 'logo': url_da_logo(v)}
-        for v in valores
-    ]
+    """As bandeiras que ESTA loja aceita — integradas ou por link.
+
+    Serve os dois casos de propósito: a linha que a tela consome é a mesma, e
+    duas funções idênticas seriam duas verdades para manter.
+    """
+    return [_com_logo(v) for v in valores]
+
+
+#: Mesmo conteúdo, nome que diz de onde vem. Ver `marcas_da_loja`.
+marcas_manuais_da_loja = marcas_da_loja
