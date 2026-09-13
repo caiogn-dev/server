@@ -130,6 +130,76 @@ def _aplicar_desconto_e_frete(payload: dict, order) -> None:
         payload['valor_outras_despesas'] = float(outras)
 
 
+def _e_entrega(order) -> bool:
+    return getattr(order, 'delivery_method', '') == 'delivery'
+
+
+def _endereco_do_destinatario(endereco: dict) -> dict:
+    """Endereço do pedido no dialeto do Focus — o mesmo da NF-e (modelo 55).
+
+    Número vazio vira "S/N": a SEFAZ exige `nro` preenchido, e uma rua sem
+    número derrubaria a nota inteira por um campo que o entregador resolve na
+    porta.
+    """
+    campos = {
+        'logradouro_destinatario': str(endereco.get('street') or '').strip(),
+        'numero_destinatario': str(endereco.get('number') or '').strip() or 'S/N',
+        'bairro_destinatario': str(endereco.get('neighborhood') or '').strip(),
+        'municipio_destinatario': str(endereco.get('city') or '').strip(),
+        'uf_destinatario': str(endereco.get('state') or '').strip().upper(),
+    }
+    cep = _digits(str(endereco.get('zip_code') or ''))
+    if cep:
+        campos['cep_destinatario'] = cep
+    complemento = str(endereco.get('complement') or '').strip()
+    if complemento:
+        campos['complemento_destinatario'] = complemento
+    return {k: v for k, v in campos.items() if v}
+
+
+def _aplicar_entrega(payload: dict, order, config: dict, identificado: bool) -> None:
+    """NFC-e de entrega: endereço do cliente, transportador e frete do emitente.
+
+    Manual da SEFAZ-TO, "Entrega em domicílio": o DANFE acompanha a mercadoria e
+    leva obrigatoriamente os dados do consumidor (CPF e endereço) e do
+    transportador. Quando quem entrega é a própria loja — motoboy, ciclista —,
+    os dados da EMPRESA vão como transportador. Nenhum pedido registra
+    entregador terceiro (`carrier` vazio em todos), então a loja é o
+    transportador.
+
+    O endereço só entra com o documento: no schema o grupo do destinatário
+    começa pelo CPF/CNPJ, e endereço solto derruba a nota. Entrega sem CPF sai
+    com o transportador e sem destinatário, e fica registrada no log — melhor
+    nota incompleta que venda sem nota.
+    """
+    payload['modalidade_frete'] = 0  # por conta do emitente, com ou sem taxa
+
+    if identificado:
+        payload.update(_endereco_do_destinatario(order.delivery_address or {}))
+        if order.customer_phone:
+            payload['telefone_destinatario'] = _digits(order.customer_phone)
+    else:
+        logger.warning(
+            'NFC-e pedido %s: entrega sem CPF do cliente — endereço fora da nota',
+            order.id,
+        )
+
+    loja = order.store
+    payload['cnpj_transportador'] = _cnpj_emitente(config)
+    payload['nome_transportador'] = (loja.name or '')[:60]
+    inscricao = _digits(str(config.get('inscricao_estadual') or ''))
+    if inscricao:
+        payload['inscricao_estadual_transportador'] = inscricao
+    endereco_loja = ', '.join(p for p in [str(loja.address or '').strip()] if p)
+    if endereco_loja:
+        payload['endereco_transportador'] = endereco_loja[:60]
+    if loja.city:
+        payload['municipio_transportador'] = loja.city
+    uf = str(loja.state or config.get('uf') or '').strip().upper()
+    if uf:
+        payload['uf_transportador'] = uf
+
+
 def build_nfce_payload(order, config: dict) -> dict:
     """Monta o JSON de NFC-e (modelo 65) no formato Focus NFe (que espelha os
     campos SEFAZ, então o provider sefaz reaproveita o mesmo payload)."""
@@ -139,7 +209,7 @@ def build_nfce_payload(order, config: dict) -> dict:
         'indicador_inscricao_estadual_destinatario': '9',
         'modalidade_frete': 9,
         'local_destino': 1,
-        'presenca_comprador': 1,
+        'presenca_comprador': 4 if _e_entrega(order) else 1,
         'natureza_operacao': 'VENDA AO CONSUMIDOR',
         'itens': _itens(order, config, config.get('cfop_padrao') or DEFAULT_CFOP),
         'formas_pagamento': _formas_pagamento(order),
@@ -164,6 +234,9 @@ def build_nfce_payload(order, config: dict) -> dict:
             'NFC-e pedido %s: documento do consumidor inválido, emitindo sem identificação',
             order.id,
         )
+
+    if _e_entrega(order):
+        _aplicar_entrega(payload, order, config, identificado=bool(tipo))
 
     return payload
 
