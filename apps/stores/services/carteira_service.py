@@ -74,9 +74,11 @@ def decompor(external_reference: str):
 def telefone_comprovado(request, telefone_informado: str) -> bool:
     """O visitante provou ser o dono deste número?
 
-    A prova é o login por código do WhatsApp, que já existe: ele autentica e
-    grava o telefone no cadastro. Se o usuário está autenticado e o número do
-    cadastro bate com o do checkout, está provado.
+    A ÚNICA fonte confiável é o username `cliente_<dígitos>` gravado pelo
+    fluxo de OTP do WhatsApp. `UserProfile.phone` NÃO é usada: o endpoint
+    PATCH /auth/profile/ aceita qualquer número sem verificação, o que
+    permitiria a qualquer usuário autenticado alegar ser dono de número alheio
+    e acessar saldo ou histórico de terceiros (IDOR financeiro).
 
     Compara por VARIANTES e não por igualdade: o wa_id do WhatsApp vem sem o
     nono dígito e o site grava com ele — comparar string crua recusaria o
@@ -90,12 +92,9 @@ def telefone_comprovado(request, telefone_informado: str) -> bool:
     if user is None or not getattr(user, 'is_authenticated', False):
         return False
 
-    perfil = getattr(user, 'profile', None)
-    do_cadastro = (getattr(perfil, 'phone', '') or '').strip()
-    if not do_cadastro:
-        # Fluxo de OTP cria username `cliente_<digitos>` quando não há perfil.
-        achou = re.fullmatch(r'cliente_(\d{10,13})', getattr(user, 'username', '') or '')
-        do_cadastro = achou.group(1) if achou else ''
+    # A única fonte confiável de posse do número é o username gravado pelo OTP.
+    achou = re.fullmatch(r'cliente_(\d{10,13})', getattr(user, 'username', '') or '')
+    do_cadastro = achou.group(1) if achou else ''
     if not do_cadastro:
         return False
 

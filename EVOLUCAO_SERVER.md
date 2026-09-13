@@ -888,3 +888,43 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+
+### 2026-09-13
+
+**Baseline de testes:** 46+ PRs abertos em agosto–setembro (#318–#363) aguardando merge.
+HEAD de `development`: `ecc08e3` (saldo e histórico só com código WhatsApp). Gate anti-acúmulo
+confirmou que nenhum PR cobre o bypass de `profile.phone` em `telefone_comprovado()`.
+
+**Bug encontrado e corrigido:** IDOR financeiro via bypass de `profile.phone` em `telefone_comprovado()` [P0]
+
+- **Tipo:** P0 — IDOR financeiro: acesso ao saldo de cashback/carteira de terceiros sem OTP
+- **Arquivo:** `apps/stores/services/carteira_service.py` — função `telefone_comprovado()` (linha 74)
+- **Problema:** `telefone_comprovado()` confiava em `UserProfile.phone` como prova de posse do número.
+  O endpoint `PATCH /api/v1/auth/profile/` aceita qualquer número sem verificação WhatsApp, permitindo:
+  1. Criar conta normal (email/senha)
+  2. `PATCH /api/v1/auth/profile/ {"phone": "número_da_vítima"}`
+  3. `GET /api/v1/stores/{slug}/cashback/saldo/?phone=número_da_vítima`
+  → retornava saldo real da vítima, contornando completamente a guarda introduzida em `ecc08e3`.
+  O mesmo vector permitia gastar saldo alheio no checkout (fraude financeira).
+- **Correção:** removida a leitura de `profile.phone` de `telefone_comprovado()`. A ÚNICA fonte
+  confiável de posse do número passa a ser o `username = 'cliente_<dígitos>'` gravado pelo fluxo
+  de OTP do WhatsApp — imutável pelo usuário via API pública.
+- **Testes (TDD):** 6 casos em `apps/stores/tests/test_profile_phone_bypass_comprovado.py`
+  (RED→GREEN confirmado sem Docker/PostgreSQL):
+  - Atacante com `profile.phone` da vítima → `False` (bloqueado)
+  - Username `cliente_abc` (inválido) + `profile.phone` da vítima → `False`
+  - OTP legítimo sem `profile.phone` → `True`
+  - OTP legítimo com `profile.phone` de outro número → `True` (username prevalece)
+  - OTP número A não acessa número B → `False`
+  - Anônimo → `False`
+- **Compatibilidade:** fixture `comprovado` em `test_saldo_e_historico_exigem_codigo.py` usa
+  `username=f'cliente_{TELEFONE}'` → continua passando. `UserProfile.phone` ainda pode ser gravado
+  em outras partes do sistema (checkout, painel) sem quebrar o guard.
+- **PR:** `bot/server-2026-09-13-telefone-comprovado-profile-bypass`
+
+**Próximo backlog (prioridade atualizada):**
+
+1. **P0** — Merge dos PRs acumulados (#318–#363 + novo PR desta sessão) — muitos aguardando revisão.
+2. **P1** — Testes de contrato para checkout payload e pedido por token (OTP já coberto).
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P2** — Suporte a itens customizados de salada (Flutter builder) no checkout/pedido/recibo.
