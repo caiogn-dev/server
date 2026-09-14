@@ -3,7 +3,7 @@
 O BURACO (confirmado lendo o código em 14/set): o perfil é gravável pelo
 próprio cliente, sem código nenhum —
 
-    PATCH /api/v1/auth/profile/ {"phone": "<número da vítima>"}   (auth_views.ProfileView)
+    PATCH /api/v1/users/profile/ {"phone": "<número da vítima>"}   (auth_views.ProfileView)
     POST  /api/v1/auth/register/ {"phone": "<número da vítima>"}  (auth_views.RegisterView)
 
 e o checkout logado também grava `profile.phone` com o que veio no corpo
@@ -68,7 +68,7 @@ def test_cadastro_por_email_nao_forja_username_de_otp():
     cliente = APIClient()
     resp = cliente.post('/api/v1/auth/register/', {
         'email': 'cliente_556391386719@evil.com', 'password': 'SenhaForte!123',
-        'first_name': 'X',
+        'name': 'Fulano Atacante', 'phone': '5563988887777',
     }, format='json')
     assert resp.status_code in (200, 201), resp.content
     user = User.objects.get(email='cliente_556391386719@evil.com')
@@ -80,7 +80,7 @@ def test_patch_do_perfil_nao_comprova():
     atacante = User.objects.create_user(username='atacante2', email='a2@x.com', password='x')
     c = APIClient()
     c.force_authenticate(user=atacante)
-    resp = c.patch('/api/v1/auth/profile/', {'phone': VITIMA}, format='json')
+    resp = c.patch('/api/v1/users/profile/', {'phone': VITIMA}, format='json')
     assert resp.status_code == 200, resp.content
     atacante.refresh_from_db()
     assert telefone_comprovado(_request(atacante), VITIMA) is False
@@ -101,6 +101,8 @@ def test_telefone_verificado_comprova_por_variante():
     perfil = _com_perfil(dono, VITIMA)
     perfil.telefone_verificado = VITIMA
     perfil.save()
+    # Recarrega como a requisição real faz: o post_save deixa um perfil antigo em cache.
+    dono = User.objects.get(pk=dono.pk)
     # wa_id sem o nono dígito é o mesmo número
     assert telefone_comprovado(_request(dono), '556391386719') is True
     assert telefone_comprovado(_request(dono), '5563999990000') is False
