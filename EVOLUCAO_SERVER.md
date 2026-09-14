@@ -914,5 +914,29 @@ filtro de LEITURA de inativos — não coberto por nenhum dos 40 PRs abertos.
   `is_staff` sem vínculo tem queryset vazio pela ramificação de `accessible_store_ids` acima.
 - **Testes:** 4 casos em `test_combo_inactive_isstaff_bypass.py`:
   is_staff-sem-acesso não vê inativos; owner vê os próprios; anônimo não vê; superuser vê.
-- **PR:** #358 — `bot/server-2026-09-07-combo-inactive-isstaff-bypass`
+- **PR:** #358 — `bot/server-2026-09-07-combo-inactive-isstaff-bypass` (fechado sem merge)
+
+---
+
+## Sessão 2026-09-14
+
+**Gate anti-acúmulo:** 28 PRs abertos (#319–#364). PR #358 foi fechado sem merge.
+Nenhum dos 28 PRs cobre `WebhookDebugView._celery_status()` info-disclosure.
+
+**Bug encontrado e corrigido:** `_celery_status()` vaza str(e) na resposta HTTP [P2]
+
+- **Tipo:** P2 — info-disclosure de detalhes internos (URL do broker/Redis com credenciais)
+  para qualquer usuário autenticado
+- **Arquivo:** `apps/whatsapp/webhooks/views.py` — `WebhookDebugView._celery_status()`
+- **Problema:** Linha 159 retornava `f'error: {str(e)}'` quando a inspeção do Celery falhava.
+  Esse valor chegava intacto na resposta JSON em `celery_status`. Erros de conexão ao
+  broker incluem a URL completa: `redis://:senha@redis.interno:6379/0`, expondo credenciais
+  a qualquer usuário com `IsAuthenticated`.
+- **Vetor:** `GET /api/v1/whatsapp/webhook/debug/` com token válido → `celery_status` contém
+  URL do broker e senha quando Redis/RabbitMQ está inacessível.
+- **Correção:** Captura a exceção com `logger.warning(...)` (log interno) e retorna `'error'`
+  genérico — sem detalhes para o chamador.
+- **Testes:** 4 casos em `test_celery_status_disclosure.py` (SimpleTestCase, sem DB):
+  falha retorna 'error'; credenciais não aparecem; running/not-running corretos.
+- **PR:** #359 — `bot/server-2026-09-14-celery-status-disclosure`
 
