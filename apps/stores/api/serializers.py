@@ -64,6 +64,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'currency', 'timezone', 'tax_rate',
             'delivery_enabled', 'pickup_enabled',
             'min_order_value', 'free_delivery_threshold', 'default_delivery_fee',
+            'default_prep_minutes',
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
             'owner', 'metadata', 'vale_por_link_brands', 'voucher_fee_percent', 'banners',
@@ -89,6 +90,13 @@ class StoreSerializer(serializers.ModelSerializer):
             return None
         if valor < 0 or valor > 100:
             raise serializers.ValidationError('O acréscimo precisa ficar entre 0 e 100%.')
+        return valor
+
+    def validate_default_prep_minutes(self, valor):
+        """Até 10 horas. Mais que isso é digitação errada, e viraria um
+        quadro com todo pedido eternamente "no prazo"."""
+        if valor is not None and valor > 600:
+            raise serializers.ValidationError('Use até 600 minutos (10 horas).')
         return valor
 
     def validate_vale_por_link_brands(self, valores):
@@ -824,6 +832,24 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     amount_due = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     is_fully_paid = serializers.BooleanField(read_only=True)
     pedidos_do_cliente = serializers.SerializerMethodField()
+    # Quanto o entregador leva de troco (change_for - total). `None` quando
+    # ninguém informou; 0 quando o cliente disse que não precisa.
+    change_due = serializers.SerializerMethodField()
+    # Previsão de pronto = preparing_at + prep_minutes. `None` sem os dois.
+    prep_due_at = serializers.SerializerMethodField()
+
+    def get_change_due(self, obj):
+        from apps.stores.services.troco import troco_a_levar
+        valor = troco_a_levar(obj.change_for, obj.total)
+        return None if valor is None else str(valor)
+
+    def get_prep_due_at(self, obj):
+        if not obj.preparing_at or not obj.prep_minutes:
+            return None
+        from datetime import timedelta
+        return serializers.DateTimeField().to_representation(
+            obj.preparing_at + timedelta(minutes=obj.prep_minutes)
+        )
 
     def get_pedidos_do_cliente(self, obj):
         """Quantos pedidos essa pessoa já fez NESTA loja — inclusive este.
@@ -855,6 +881,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'voucher_fee', 'total',
             'amount_paid', 'amount_due', 'is_fully_paid', 'pedidos_do_cliente',
+            'change_for', 'change_due', 'prep_minutes', 'prep_due_at',
             'surcharge_value', 'surcharge_reason',
             'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
             'payment_method', 'payment_id', 'payment_preference_id',
@@ -882,6 +909,9 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'order_number', 'access_token', 'created_at', 'updated_at',
             'source',
+            # Troco entra pelo checkout (com a régua de `services/troco.py`) e
+            # a previsão nasce da loja; o PATCH do painel não escreve nenhum.
+            'change_for', 'prep_minutes',
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
