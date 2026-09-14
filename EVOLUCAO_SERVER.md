@@ -888,3 +888,30 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-03 / 2026-09-14 — Triagem e lição aprendida
+
+**PR #354 (`bot/server-2026-09-03-pii-logs-fusao-message-service`) — fechado sem merge em 14/set.**
+
+Correção tentada: mascarar `phone_number` em logs de `fusao_de_conversas.py` e `message_service.py`
+via `mask_phone()` — 5 ocorrências, 8 testes SimpleTestCase (GREEN).
+
+**Triagem do autor (caiogn-dev, 14/set):** logs ficam no próprio servidor; Sentry configurado com
+`send_default_pii=False` (`config/settings/production.py:145`) apontando para GlitchTip self-hosted
+na `pastita_network` (`docker-compose.yml:22`). Mascarar telefone/e-mail em log é higiene, não
+vazamento — risco baixo demais para a fila de segurança.
+
+**⚠️ REGRA PARA LOOPS FUTUROS:** PII em logs internos (phone_number, email) = **P3 cleanup**, NÃO P1.
+A infra é self-hosted e isolada. Não abrir PRs de mascaramento de logs sem outro driver (ex.: audit
+externo, mudança de infra para SaaS de logging). Focar em IDOR/cross-tenant, bugs de produção e
+fluxos quebrados antes de higiene de logs.
+
+**Próximo backlog priorizado (14/set):**
+
+1. **P1** — Testes de contrato para checkout payload e pedido por token (OTP já coberto) — pendente há meses.
+2. **P1** — `InstagramMediaSerializer.account` e `InstagramConversationSerializer.account` graváveis
+   — mesmo padrão dos fixes de IDOR em serializers; adicionar a `read_only_fields`.
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
+4. **P3** — Higiene de logs (phone/email sem mask_phone) — só abordar quando não houver P0/P1/P2 abertos.
+
