@@ -797,6 +797,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get conversation history with a phone number."""
         serializer = ConversationHistorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        self._check_account_access(serializer.validated_data['account_id'])
         
         service = MessageService()
         messages = service.get_conversation_history(
@@ -817,6 +818,7 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """Get message statistics."""
         serializer = MessageStatsSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        self._check_account_access(serializer.validated_data['account_id'])
         
         service = MessageService()
         stats = service.get_message_stats(

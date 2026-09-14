@@ -74,13 +74,21 @@ def decompor(external_reference: str):
 def telefone_comprovado(request, telefone_informado: str) -> bool:
     """O visitante provou ser o dono deste número?
 
-    A prova é o login por código do WhatsApp, que já existe: ele autentica e
-    grava o telefone no cadastro. Se o usuário está autenticado e o número do
-    cadastro bate com o do checkout, está provado.
+    A prova é o login por código do WhatsApp — e SÓ ele. Até 14/set valia
+    "logado + `profile.phone` batendo", mas o perfil é gravável pelo próprio
+    cliente (PATCH /auth/profile/, cadastro, checkout logado): bastava pôr o
+    número da vítima no perfil para ler o saldo, o histórico com
+    `access_token` (→ endereço de casa) e gastar a carteira dela.
+
+    Duas provas aceitas:
+    - `profile.telefone_verificado`, gravado por verify_whatsapp_auth_code;
+    - legado: username `cliente_<dígitos>` SEM senha utilizável — conta que o
+      próprio OTP criou e que não tem outra porta para receber token. A senha
+      importa: o cadastro por e-mail deriva o username da parte local do
+      e-mail, e `cliente_5563...@x.com` produziria o mesmo username com senha.
 
     Compara por VARIANTES e não por igualdade: o wa_id do WhatsApp vem sem o
-    nono dígito e o site grava com ele — comparar string crua recusaria o
-    próprio dono metade das vezes.
+    nono dígito e o site grava com ele.
     """
     import re
 
@@ -90,17 +98,20 @@ def telefone_comprovado(request, telefone_informado: str) -> bool:
     if user is None or not getattr(user, 'is_authenticated', False):
         return False
 
+    provas = []
     perfil = getattr(user, 'profile', None)
-    do_cadastro = (getattr(perfil, 'phone', '') or '').strip()
-    if not do_cadastro:
-        # Fluxo de OTP cria username `cliente_<digitos>` quando não há perfil.
+    verificado = (getattr(perfil, 'telefone_verificado', '') or '').strip()
+    if verificado:
+        provas.append(verificado)
+    if not user.has_usable_password():
         achou = re.fullmatch(r'cliente_(\d{10,13})', getattr(user, 'username', '') or '')
-        do_cadastro = achou.group(1) if achou else ''
-    if not do_cadastro:
+        if achou:
+            provas.append(achou.group(1))
+    if not provas or not telefone_informado:
         return False
 
-    informadas = set(phone_variants(telefone_informado or ''))
-    return bool(informadas & set(phone_variants(do_cadastro)))
+    informadas = set(phone_variants(telefone_informado))
+    return any(informadas & set(phone_variants(p)) for p in provas)
 
 
 def e_de_carteira(external_reference: str) -> bool:

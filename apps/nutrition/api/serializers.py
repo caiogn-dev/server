@@ -110,6 +110,14 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at", "approved_by", "approved_at")
 
+    def validate_product(self, product):
+        """Só grava perfil nutricional de produto de loja acessível (IDOR de escrita)."""
+        from apps.core.permissions import user_can_access_store
+        user = self.context["request"].user
+        if not user_can_access_store(user, product.store):
+            raise serializers.ValidationError("Produto não encontrado.")
+        return product
+
     def get_calculation(self, obj):
         return calculate_recipe(obj.recipe) if obj.recipe_id else None
 

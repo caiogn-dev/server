@@ -1,4 +1,6 @@
-"""\nViews para UnifiedUser API.\n"""
+"""
+Views para UnifiedUser API.
+"""
 from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -117,8 +119,15 @@ class UnifiedUserViewSet(viewsets.ModelViewSet):
     def get_or_create(self, request):
         """
         Busca ou cria usuário por telefone.
-        Uso interno pelo bot/automação — sem restrição de tenant na criação.
+        Uso interno pelo bot/automação — restrito a superuser porque opera
+        sem escopo de tenant. is_staff (acesso ao /admin) NÃO é suficiente.
         """
+        if not request.user.is_superuser:
+            return Response(
+                {'error': 'Não autorizado.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         phone = request.data.get('phone_number')
         name = request.data.get('name') or ''
 
@@ -152,8 +161,12 @@ class UnifiedUserActivityViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
-        """Filtra por usuário se especificado."""
-        queryset = super().get_queryset()
+        """Filtra atividades pelos usuários acessíveis ao tenant logado."""
+        accessible_user_ids = (
+            _accessible_unified_users(self.request.user)
+            .values_list('id', flat=True)
+        )
+        queryset = UnifiedUserActivity.objects.filter(user_id__in=accessible_user_ids)
 
         user_id = self.request.query_params.get('user_id')
         if user_id:
