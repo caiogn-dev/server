@@ -20,9 +20,70 @@ Só um endereço que é SÓ ponto no mapa aciona a geocodificação reversa.
 import logging
 import re
 from typing import Optional, Tuple
-from urllib.parse import unquote
+from urllib.parse import urljoin, unquote, urlparse
 
 logger = logging.getLogger(__name__)
+
+# Hosts do Google Maps que o servidor aceita seguir. Por HOSTNAME exato, nunca
+# por substring: `http://169.254.169.254/maps` e `https://evil.com/?goo.gl`
+# passavam no filtro antigo ('maps' in url) e o servidor fazia a requisição
+# para a rede interna — SSRF a partir do campo de endereço, que é texto livre
+# de cliente (checkout, bot, PDV) e da cotação de frete pública.
+_MAPS_HOSTS = frozenset({
+    'maps.app.goo.gl',
+    'goo.gl',
+    'maps.google.com',
+    'maps.google.com.br',
+    'www.google.com',
+    'www.google.com.br',
+    'google.com',
+    'maps.googleapis.com',
+})
+_MAX_SALTOS = 5
+
+
+def _eh_url_google_maps(url) -> bool:
+    """True só para http(s) cujo hostname está na lista do Google Maps."""
+    if not url:
+        return False
+    try:
+        partes = urlparse(str(url).strip())
+    except Exception:
+        return False
+    if partes.scheme not in ('http', 'https'):
+        return False
+    return (partes.hostname or '').lower() in _MAPS_HOSTS
+
+
+def seguir_link_do_maps(url, metodo='head', timeout=6):
+    """Segue os redirecionamentos de um link do Maps validando CADA salto.
+
+    Com `allow_redirects=True` a whitelist só olharia o primeiro endereço: um
+    link do Google que redireciona para 169.254.169.254 seria seguido. Aqui o
+    redirecionamento é manual e cada `Location` passa pela mesma lista.
+
+    Devolve `(url_final, resposta)` ou `None` quando algum salto sai da lista.
+    """
+    import requests
+
+    if not _eh_url_google_maps(url):
+        return None
+    atual = str(url).strip()
+    enviar = requests.head if metodo == 'head' else requests.get
+    for _ in range(_MAX_SALTOS + 1):
+        resposta = enviar(
+            atual, allow_redirects=False, timeout=timeout,
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        if getattr(resposta, 'is_redirect', False) is True:
+            destino = urljoin(atual, (resposta.headers or {}).get('Location', ''))
+            if not _eh_url_google_maps(destino):
+                logger.warning('link do Maps redirecionou para fora da lista: %s', destino)
+                return None
+            atual = destino
+            continue
+        return (getattr(resposta, 'url', None) or atual), resposta
+    return None
 
 _NUM = r'-?\d{1,3}\.\d{3,}'
 _PAR_DE_COORDENADAS = re.compile(rf'({_NUM})\s*[,;]\s*({_NUM})')
@@ -65,9 +126,10 @@ def _coords_do_link_curto(url: str) -> Optional[Tuple[float, float]]:
     que o link curto chegava cru até o banco.
     """
     try:
-        import requests
-        resposta = requests.head(url, allow_redirects=True, timeout=6)
-        return coordenadas_do_texto(resposta.url)
+        seguido = seguir_link_do_maps(url, metodo='head', timeout=6)
+        if seguido is None:
+            return None
+        return coordenadas_do_texto(seguido[0])
     except Exception as exc:  # rede é opcional: sem ela o endereço fica como está
         logger.info('nome_do_lugar: link curto não resolvido (%s): %s', url, exc)
         return None

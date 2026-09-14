@@ -1193,6 +1193,12 @@ class StoreCheckoutView(APIView):
             )
 
 
+def _is_safe_maps_url(url) -> bool:
+    """Só domínios do Google Maps (SSRF guard). Fonte única: nome_do_lugar."""
+    from apps.stores.services.nome_do_lugar import _eh_url_google_maps
+    return _eh_url_google_maps(url)
+
+
 def _coords_from_maps_url(url):
     """Extrai lat/lng de um link do Google Maps — inclusive shortlink.
 
@@ -1201,6 +1207,10 @@ def _coords_from_maps_url(url):
     coords da URL final. Nunca levanta — retorna None quando não dá.
     """
     if not url or 'http' not in url or ('maps' not in url and 'goo.gl' not in url):
+        return None
+    # O filtro acima é por substring e aceitava http://169.254.169.254/maps:
+    # esta rota é AllowAny (cotação de frete), então era SSRF sem login.
+    if not _is_safe_maps_url(url.strip()):
         return None
     import re as _re
 
@@ -1224,12 +1234,12 @@ def _coords_from_maps_url(url):
     if hit:
         return hit
     try:
-        import requests
-        resp = requests.get(
-            url, allow_redirects=True, timeout=5,
-            headers={'User-Agent': 'Mozilla/5.0'},
-        )
-        return _extract(resp.url) or _extract(resp.text[:8000])
+        from apps.stores.services.nome_do_lugar import seguir_link_do_maps
+        seguido = seguir_link_do_maps(url.strip(), metodo='get', timeout=5)
+        if seguido is None:
+            return None
+        url_final, resp = seguido
+        return _extract(url_final) or _extract((resp.text or '')[:8000])
     except Exception as exc:  # rede caída não pode matar o cálculo de frete
         logger.warning('[delivery-fee] falha ao resolver link do Maps: %s', exc)
         return None
