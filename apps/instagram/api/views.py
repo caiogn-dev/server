@@ -13,6 +13,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -296,6 +297,24 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             return queryset
         return queryset.filter(account__user=self.request.user)
 
+    def _resolve_own_account(self, account_id):
+        """Devolve a InstagramAccount se pertencer ao usuário; levanta 403 caso contrário."""
+        if not account_id:
+            raise PermissionDenied('account_id é obrigatório.')
+        user = self.request.user
+        if user.is_superuser:
+            account = InstagramAccount.objects.filter(id=account_id).first()
+        else:
+            account = InstagramAccount.objects.filter(id=account_id, user=user).first()
+        if account is None:
+            raise PermissionDenied('Sem acesso a esta conta Instagram.')
+        return account
+
+    def perform_create(self, serializer):
+        account_id = self.request.data.get('account')
+        account = self._resolve_own_account(account_id)
+        serializer.save(account=account)
+
     @action(detail=False, methods=["get"])
     def feed(self, request):
         queryset = self.get_queryset().filter(
@@ -493,6 +512,23 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         if account_id:
             queryset = queryset.filter(account_id=account_id)
         return queryset
+
+    def _resolve_own_account(self, account_id):
+        if not account_id:
+            raise PermissionDenied('account_id é obrigatório.')
+        user = self.request.user
+        if user.is_superuser:
+            account = InstagramAccount.objects.filter(id=account_id).first()
+        else:
+            account = InstagramAccount.objects.filter(id=account_id, user=user).first()
+        if account is None:
+            raise PermissionDenied('Sem acesso a esta conta Instagram.')
+        return account
+
+    def perform_create(self, serializer):
+        account_id = self.request.data.get('account')
+        account = self._resolve_own_account(account_id)
+        serializer.save(account=account)
 
     @action(detail=True, methods=["get"])
     def messages(self, request, pk=None):
