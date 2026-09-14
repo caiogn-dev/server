@@ -156,7 +156,8 @@ class WebhookDebugView(APIView):
             stats = current_app.control.inspect().stats()
             return 'running' if stats else 'not running'
         except Exception as e:
-            return f'error: {str(e)}'
+            logger.warning('Celery inspect falhou: %s', e)
+            return 'error'
 
     def get(self, request):
         from datetime import timedelta
