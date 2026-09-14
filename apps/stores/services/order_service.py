@@ -341,10 +341,13 @@ class OrderService:
             'refunded': refund_result.get('success') if refund_result else False,
         })
         
-        # Aviso ao cliente respeita o silêncio por pedido (ex.: venda de balcão)
-        metadata = order.metadata if isinstance(order.metadata, dict) else {}
-        if notify_customer and not metadata.get('suppress_notifications'):
-            self._send_status_notification(order, old_status='', new_status='cancelled')
+        # Aviso ao cliente: NÃO mandar daqui. O `order.save()` acima já dispara o
+        # post_save → `notify_order_status_change`, que tem trava por
+        # pedido+status e respeita `suppress_notifications`. Mandar também por
+        # `_send_status_notification` fazia "Pedido Cancelado" chegar duas vezes
+        # no mesmo segundo (9 casos em 14 dias, medido em 14/set). Mesma lição
+        # do `update_status` acima. `notify_customer` fica na assinatura por
+        # compatibilidade com quem chama.
 
         logger.info(f"Order {order.order_number} cancelled. Reason: {reason}")
 
