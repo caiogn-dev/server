@@ -153,9 +153,3 @@ class StatsIDORTest(SimpleTestCase):
                 viewset.stats(mock_request)
 
             mock_gate.assert_called_once_with(mock_user)
-
-
-@override_settings(
-    DATABASES={'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}},
-    CACHES={'default': {'BACKEND': 'django.core.cache.backends.dummy.DummyCache'}},
-)
