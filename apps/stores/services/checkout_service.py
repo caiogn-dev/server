@@ -2451,6 +2451,24 @@ class CheckoutService:
         return order
 
     @staticmethod
+    def _avisar_pagamento_a_menor(order):
+        """Avisa a loja, ao vivo, que entrou dinheiro mas não o total."""
+        from django.db import transaction as _tx
+
+        from apps.stores.services import realtime_service
+
+        pago = order.amount_paid
+        falta = order.amount_due
+        logger.warning(
+            '[checkout] pagamento a menor no pedido %s: pago %s de %s, falta %s',
+            order.order_number, pago, order.total, falta,
+        )
+        _tx.on_commit(lambda: realtime_service.broadcast_order_event(
+            order, event_type='order.payment_partial',
+            extra={'amount_paid': str(pago), 'amount_due': str(falta)},
+        ))
+
+    @staticmethod
     def _handle_storepayment_webhook(store_payment, status: str):
         """Atualiza UMA cobrança (StorePayment) e reconcilia o pedido.
 
@@ -2521,6 +2539,9 @@ class CheckoutService:
             order.payment_status = StoreOrder.PaymentStatus.PROCESSING
             order.paid_at = None
             order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+            # A trava está certa; o defeito era ser MUDA. Leani (CE-2609038526)
+            # pagou R$ 38,95 de R$ 43,28 e o pedido só parou — ninguém soube.
+            CheckoutService._avisar_pagamento_a_menor(order)
             return order
 
         # Demais status: atualiza a cobrança.

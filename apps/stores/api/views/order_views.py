@@ -711,6 +711,60 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         return Response(StoreOrderSerializer(order).data)
 
+    @action(detail=True, methods=['post'], url_path='registrar-pagamento')
+    def registrar_pagamento(self, request, pk=None, **kwargs):
+        """Registra dinheiro recebido fora do sistema (espécie, maquininha, PIX direto).
+
+        Body: `payment_method` (cash|debit_card|credit_card|pix|voucher|other),
+        `amount` (opcional — padrão é o que falta), `idempotency_key` e
+        `observacao` opcionais. 201 quando registra; 200 quando a mesma chave já
+        tinha sido registrada (duplo clique). Ver `registro_de_pagamento`.
+        """
+        from apps.stores.services.registro_de_pagamento import (
+            RegistroRecusado, registrar_pagamento,
+        )
+
+        order = self.get_object()  # escopo de loja/permissão
+        try:
+            resultado = registrar_pagamento(
+                order.pk, request.user,
+                metodo=(request.data.get('payment_method') or '').strip(),
+                valor=request.data.get('amount'),
+                chave_idempotencia=request.data.get('idempotency_key') or '',
+                observacao=request.data.get('observacao') or '',
+            )
+        except RegistroRecusado as exc:
+            return Response({'error': exc.mensagem, 'code': exc.code},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pedido = resultado.pedido
+        if resultado.criado:
+            logger.info(
+                'Pagamento manual de %s (%s) registrado no pedido %s por %s',
+                resultado.cobranca.amount, resultado.cobranca.payment_method,
+                pedido.order_number, request.user.pk,
+            )
+            if pedido.payment_status == StoreOrder.PaymentStatus.PAID:
+                self._credit_loyalty(pedido)
+            self._notify_order_update(
+                pedido, 'order.paid' if resultado.quitou else 'order.updated')
+
+        cobranca = resultado.cobranca
+        return Response(
+            {
+                'order': StoreOrderSerializer(pedido).data,
+                'payment': {
+                    'id': str(cobranca.id),
+                    'amount': str(cobranca.amount),
+                    'payment_method': cobranca.payment_method,
+                    'status': cobranca.status,
+                    'paid_at': cobranca.paid_at.isoformat() if cobranca.paid_at else None,
+                    'registro_manual': cobranca.metadata.get('registro_manual', {}),
+                },
+            },
+            status=status.HTTP_201_CREATED if resultado.criado else status.HTTP_200_OK,
+        )
+
     @action(detail=True, methods=['post'], url_path='recalcular-fidelidade')
     def recalcular_fidelidade(self, request, pk=None, **kwargs):
         """Recalcula os selos deste pedido pelas regras atuais da loja.

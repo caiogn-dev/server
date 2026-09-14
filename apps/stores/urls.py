@@ -87,6 +87,16 @@ def store_order_cancel(request, store_slug, pk):
     view = StoreOrderViewSet.as_view({'post': 'cancel'})
     return view(request, store_pk=store_slug, pk=pk)
 
+def store_order_registrar_pagamento(request, store_slug, pk):
+    """Wrapper para POST /orders/{pk}/registrar-pagamento/ — injeta store_slug."""
+    if request.resolver_match:
+        request.resolver_match.kwargs['store_pk'] = store_slug
+        request.resolver_match.kwargs['pk'] = pk
+
+    view = StoreOrderViewSet.as_view({'post': 'registrar_pagamento'})
+    return view(request, store_pk=store_slug, pk=pk)
+
+
 def store_order_mark_paid(request, store_slug, pk):
     """Wrapper para POST /orders/{pk}/mark_paid/ — injeta store_slug como store_pk."""
     if request.resolver_match:
@@ -326,6 +336,8 @@ store_frontend_patterns = [
     path('orders/<uuid:pk>/adjust/', store_order_adjust, name='store-order-adjust'),
     path('orders/<uuid:pk>/cancel/', store_order_cancel, name='store-order-cancel'),
     path('orders/<uuid:pk>/mark_paid/', store_order_mark_paid, name='store-order-mark-paid'),
+    path('orders/<uuid:pk>/registrar-pagamento/', store_order_registrar_pagamento,
+         name='store-order-registrar-pagamento'),
     path('orders/<uuid:pk>/generate_payment/', store_order_generate_payment, name='store-order-generate-payment'),
     path('orders/<uuid:pk>/emit_nfce/', store_order_emit_nfce, name='store-order-emit-nfce'),
     path('orders/<uuid:pk>/nfce/', store_order_nfce, name='store-order-nfce'),
