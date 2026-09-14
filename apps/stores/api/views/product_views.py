@@ -8,13 +8,14 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.db import transaction
 from django.db.models import Q
+from django.http import Http404
 
 from apps.stores.models import (
     Store,
     StoreCategory, StoreProduct, StoreProductVariant,
     StoreCombo, StoreProductType
 )
-from apps.core.permissions import StoreQuerysetMixin
+from apps.core.permissions import StoreQuerysetMixin, user_can_access_store
 from apps.stores.services.codigo_interno import gerar_codigo_interno
 from ..serializers import (
     StoreCategorySerializer,
@@ -113,6 +114,12 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 loja = Store.objects.filter(slug=identificador).first()
         if not loja:
             return Response({"detail": "Informe a loja."}, status=400)
+
+        # Gate de tenant: IsStoreOwnerOrStaff só verifica quando store_pk está
+        # nos kwargs da URL (rota aninhada). Via rota plana o body traz a loja
+        # e nenhuma permissão verificou acesso — faz aqui (info-hiding: 404).
+        if not request.user.is_superuser and not user_can_access_store(request.user, loja):
+            raise Http404
 
         numero_da_loja = list(
             Store.objects.order_by("created_at").values_list("id", flat=True)
