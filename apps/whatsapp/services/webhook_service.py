@@ -1278,6 +1278,23 @@ class WebhookService:
 
         return orchestrator_response, orchestrator_error, orchestrator_ms, timed_out
 
+    @staticmethod
+    def _conversa_ja_respondida_depois(message) -> bool:
+        """Já saiu alguma mensagem para esta conversa depois desta entrada?
+
+        Falha aberta: se a consulta quebrar, a entrega segue — melhor uma
+        resposta atrasada a mais do que um cliente sem resposta.
+        """
+        try:
+            return Message.objects.filter(
+                conversation_id=message.conversation_id,
+                direction=Message.MessageDirection.OUTBOUND,
+                created_at__gt=message.created_at,
+            ).exists()
+        except Exception:
+            logger.warning('[pipeline] Não deu para checar resposta mais nova', exc_info=True)
+            return False
+
     def _enviar_resposta_atrasada(self, event, message, orchestrator_response) -> None:
         """Entrega a resposta que ficou pronta DEPOIS do timeout do join.
 
@@ -1299,6 +1316,26 @@ class WebhookService:
             # O fallback já respondeu — mandar de novo seria mensagem duplicada.
             logger.info(
                 '[pipeline] Resposta atrasada descartada: fallback já respondeu',
+                extra={'message_id': str(message.id)},
+            )
+            return
+
+        # O aviso de erro do LLM não é resposta. Numa rajada de 3 mensagens com o
+        # modelo fora do ar, cada thread chegava aqui com o mesmo aviso e o
+        # cliente recebia "Desculpa, tive um probleminha" 3 vezes em 1s (14/set).
+        from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+        if conteudo == MENSAGEM_DE_ERRO_DO_LLM:
+            logger.info(
+                '[pipeline] Resposta atrasada descartada: era o aviso de erro do LLM',
+                extra={'message_id': str(message.id)},
+            )
+            return
+
+        # Resposta a um momento da conversa que já passou: outra resposta (de
+        # outra mensagem da rajada, do fallback ou do atendente) já saiu depois.
+        if self._conversa_ja_respondida_depois(message):
+            logger.info(
+                '[pipeline] Resposta atrasada descartada: a conversa já recebeu resposta mais nova',
                 extra={'message_id': str(message.id)},
             )
             return
