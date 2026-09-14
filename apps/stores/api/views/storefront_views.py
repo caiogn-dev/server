@@ -1147,11 +1147,29 @@ class StoreCheckoutView(APIView):
                 payment_method=payment_method,
             )
 
+            # Troco do dinheiro: entra DEPOIS do pedido porque a régua compara
+            # com o total, que só existe agora. Troco ruim é descartado em
+            # silêncio — a venda nunca cai por causa dele.
+            campos = []
+            try:
+                from apps.stores.services.troco import troco_informado
+                troco = troco_informado(
+                    request.data.get('change_for'), order.total, payment_method,
+                )
+            except Exception:  # noqa: BLE001 — troco nunca derruba a venda
+                logger.exception('troco: falha ao ler change_for')
+                troco = None
+            if troco is not None:
+                order.change_for = troco
+                campos.append('change_for')
+
             # Ligação carrinho→pedido: é o que permite o retry reencontrar
             # esta venda em vez de responder "carrinho vazio".
             if session_id:
                 order.metadata = {**(order.metadata or {}), 'cart_key': session_id}
-                order.save(update_fields=['metadata', 'updated_at'])
+                campos.append('metadata')
+            if campos:
+                order.save(update_fields=[*campos, 'updated_at'])
 
             self._persist_customer_session(request, order)
 
