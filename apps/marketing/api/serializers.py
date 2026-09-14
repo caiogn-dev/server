@@ -10,7 +10,7 @@ from apps.marketing.models import (
 
 class EmailTemplateSerializer(serializers.ModelSerializer):
     """Serializer for email templates."""
-    
+
     class Meta:
         model = EmailTemplate
         fields = [
@@ -20,6 +20,14 @@ class EmailTemplateSerializer(serializers.ModelSerializer):
             'updated_at', 'is_active'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+
+    def validate_store(self, value):
+        request = self.context.get('request')
+        if request and not request.user.is_superuser:
+            from apps.core.permissions import user_can_access_store
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada.')
+        return value
 
 
 class EmailTemplateListSerializer(serializers.ModelSerializer):
@@ -63,16 +71,24 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
             'emails_clicked', 'emails_bounced', 'emails_unsubscribed'
         ]
     
+    def validate_store(self, value):
+        request = self.context.get('request')
+        if request and not request.user.is_superuser:
+            from apps.core.permissions import user_can_access_store
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada.')
+        return value
+
     def validate(self, data):
         """Validate that either template or html_content is provided."""
         template = data.get('template')
         html_content = data.get('html_content')
-        
+
         if not template and not html_content:
             raise serializers.ValidationError({
                 'html_content': 'Este campo é obrigatório quando não há template selecionado.'
             })
-        
+
         return data
 
 
@@ -164,7 +180,7 @@ class SendCampaignSerializer(serializers.Serializer):
 
 class EmailAutomationSerializer(serializers.ModelSerializer):
     """Serializer for email automations."""
-    
+
     trigger_type_display = serializers.CharField(
         source='get_trigger_type_display',
         read_only=True
@@ -174,7 +190,7 @@ class EmailAutomationSerializer(serializers.ModelSerializer):
         read_only=True,
         allow_null=True
     )
-    
+
     class Meta:
         model = EmailAutomation
         fields = [
@@ -188,6 +204,14 @@ class EmailAutomationSerializer(serializers.ModelSerializer):
             'id', 'total_sent', 'total_opened', 'total_clicked',
             'created_at', 'updated_at', 'created_by'
         ]
+
+    def validate_store(self, value):
+        request = self.context.get('request')
+        if request and not request.user.is_superuser:
+            from apps.core.permissions import user_can_access_store
+            if not user_can_access_store(request.user, value):
+                raise serializers.ValidationError('Loja não encontrada.')
+        return value
 
 
 class EmailAutomationListSerializer(serializers.ModelSerializer):
