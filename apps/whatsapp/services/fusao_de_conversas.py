@@ -73,6 +73,36 @@ def conversa_canonica(account, phone_number):
     return sorted(candidatas, key=_prioridade)[0]
 
 
+def obter_ou_criar_conversa(account, phone_number, defaults=None):
+    """A conversa desta pessoa nesta conta; cria só se não houver nenhuma.
+
+    Devolve `(conversa, criada)`. É o ÚNICO jeito de achar/criar conversa a
+    partir de um telefone vindo da Meta ou de um pedido. Eram três cópias
+    (entrada, envio e eco do app Business) e o eco ficou de fora da regra do
+    nono dígito: em set/2026 criou 12 conversas fantasmas em 10 dias, cada uma
+    só com o que a loja digitou no celular.
+    """
+    from apps.conversations.models import Conversation
+    from apps.core.utils import normalize_phone_number
+
+    existente = conversa_canonica(account, phone_number)
+    if existente is not None:
+        return existente, False
+
+    telefone = normalize_phone_number(phone_number)
+    try:
+        with transaction.atomic():
+            return Conversation.objects.get_or_create(
+                account=account,
+                phone_number=telefone,
+                defaults=defaults or {},
+            )
+    except IntegrityError:
+        # Corrida: outro webhook criou a mesma conversa entre o get e o create.
+        logger.warning('[conversa] IntegrityError ao criar conversa; relendo a existente')
+        return Conversation.objects.get(account=account, phone_number=telefone), False
+
+
 def _migrar_relacionados(origem, destino) -> dict:
     """Move tudo que aponta para `origem` e passa a apontar para `destino`.
 

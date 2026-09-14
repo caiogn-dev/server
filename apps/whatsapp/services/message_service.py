@@ -786,8 +786,6 @@ class MessageService:
         requests try to create a conversation for the same phone number simultaneously.
         """
         from apps.conversations.models import Conversation
-        from apps.core.utils import normalize_phone_number, phone_variants
-        from django.db import IntegrityError
 
         # Mesma conversa em qualquer forma do telefone (com/sem nono dígito,
         # com/sem DDI). Sem isto o envio de notificação criava uma thread
@@ -798,43 +796,21 @@ class MessageService:
         # mensagem em cada thread com 3 minutos de diferença. Agora a regra é
         # determinística e mora junto do comando de fusão, para as duas não
         # divergirem como já aconteceu com o bypass do modo humano.
-        from .fusao_de_conversas import conversa_canonica
+        from .fusao_de_conversas import obter_ou_criar_conversa
 
-        existente = conversa_canonica(account, phone_number)
-        if existente is not None:
-            return existente
-
-        phone_number = normalize_phone_number(phone_number)
-        try:
-            # First try: standard get_or_create
-            conversation, created = Conversation.objects.get_or_create(
-                account=account,
-                phone_number=phone_number,
-                defaults={
-                    'status': Conversation.ConversationStatus.OPEN,
-                    'mode': Conversation.ConversationMode.AUTO
-                }
-            )
-            
-            if created:
-                logger.info(f"Created new conversation with {phone_number}")
-            
-            return conversation
-            
-        except IntegrityError:
-            # Race condition: another request created the conversation first
-            # This can happen with unique_together constraint on (account, phone_number)
-            logger.warning(f"IntegrityError on get_or_create for {phone_number}, retrying get...")
-            try:
-                conversation = Conversation.objects.get(
-                    account=account,
-                    phone_number=phone_number
-                )
-                return conversation
-            except Conversation.DoesNotExist:
-                # This shouldn't happen but handle it gracefully
-                logger.error(f"Conversation not found after IntegrityError for {phone_number}")
-                raise
+        # A corrida (dois webhooks criando a mesma conversa) é tratada dentro
+        # do helper, que relê a conversa depois do IntegrityError.
+        conversation, created = obter_ou_criar_conversa(
+            account,
+            phone_number,
+            defaults={
+                'status': Conversation.ConversationStatus.OPEN,
+                'mode': Conversation.ConversationMode.AUTO
+            }
+        )
+        if created:
+            logger.info("Created new conversation %s", conversation.id)
+        return conversation
 
     def _update_message_sent(self, message: Message, response: Dict) -> None:
         """Update message after successful send and broadcast to WebSocket."""

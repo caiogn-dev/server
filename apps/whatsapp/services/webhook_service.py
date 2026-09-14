@@ -310,10 +310,12 @@ class WebhookService:
             if Message.objects.filter(whatsapp_message_id=wamid).exists():
                 return
 
-            conversation, _ = Conversation.objects.get_or_create(
-                account=account,
-                phone_number=to_number,
-            )
+            # O `to` do eco vem no formato do WhatsApp, SEM o nono dígito. O
+            # get_or_create cru abria uma segunda conversa ao lado da real do
+            # cliente (12 clientes em 10 dias, 14/set). Mesma regra da entrada
+            # e do envio.
+            from .fusao_de_conversas import obter_ou_criar_conversa
+            conversation, _ = obter_ou_criar_conversa(account, to_number)
             text_body = (echo.get('text') or {}).get('body', '') if isinstance(echo.get('text'), dict) else ''
             message = Message.objects.create(
                 account=account,
@@ -2220,8 +2222,7 @@ class WebhookService:
         webhook events try to create a conversation for the same phone number simultaneously.
         """
         from apps.conversations.models import Conversation
-        from django.db import IntegrityError
-        from apps.whatsapp.services.fusao_de_conversas import conversa_canonica
+        from apps.whatsapp.services.fusao_de_conversas import obter_ou_criar_conversa
 
         # A thread da pessoa nesta conta, em QUALQUER forma do telefone. O
         # envio (MessageService) adotou isto em 10/ago; a entrada continuou só
@@ -2229,29 +2230,20 @@ class WebhookService:
         # conversa existente era a forma sem o 9, a mensagem recebida abria uma
         # segunda aba: a Gabriela Ribeiro ficou com uma aba de mensagens dela e
         # outra só de notificações de status (09/set).
-        existente = conversa_canonica(account, phone_number)
-        if existente is not None:
-            if contact_name and not existente.contact_name:
-                existente.contact_name = contact_name
-                existente.save(update_fields=['contact_name', 'updated_at'])
-            return existente
-
-        phone_number = normalize_phone_number(phone_number)
         logger.info("[_get_or_create_conversation] START - account=%s, phone=%s",
                     account.id, mask_phone(phone_number))
-        
+
         try:
-            logger.info(f"[_get_or_create_conversation] Calling get_or_create...")
-            conversation, created = Conversation.objects.get_or_create(
-                account=account,
-                phone_number=phone_number,
+            conversation, created = obter_ou_criar_conversa(
+                account,
+                phone_number,
                 defaults={
                     'contact_name': contact_name,
                     'status': Conversation.ConversationStatus.OPEN,
                     'mode': Conversation.ConversationMode.AUTO
                 }
             )
-            
+
             if created:
                 logger.info(f"[_get_or_create_conversation] NEW conversation created: {conversation.id}")
                 # Broadcast new conversation
@@ -2259,7 +2251,7 @@ class WebhookService:
                     account_id=str(account.id),
                     conversation={
                         'id': str(conversation.id),
-                        'phone_number': phone_number,
+                        'phone_number': conversation.phone_number,
                         'contact_name': contact_name,
                         'wa_id': '',
                         'profile_picture': '',
@@ -2281,23 +2273,8 @@ class WebhookService:
             logger.info(f"[_get_or_create_conversation] SUCCESS - returning conversation: {conversation.id}")
             return conversation
             
-        except IntegrityError as ie:
-            # Race condition: another request created the conversation first
-            # This can happen with unique_together constraint on (account, phone_number)
-            logger.warning("[_get_or_create_conversation] IntegrityError on get_or_create for %s: %s, retrying get...",
-                           mask_phone(phone_number), ie)
-            try:
-                conversation = Conversation.objects.get(
-                    account=account,
-                    phone_number=phone_number
-                )
-                logger.info(f"[_get_or_create_conversation] Retrieved after IntegrityError: {conversation.id}")
-                return conversation
-            except Conversation.DoesNotExist:
-                # This shouldn't happen but handle it gracefully
-                logger.error("[_get_or_create_conversation] Conversation not found after IntegrityError for %s",
-                             mask_phone(phone_number))
-                raise
+        # A corrida (dois webhooks criando a mesma conversa) é tratada dentro de
+        # `obter_ou_criar_conversa`, que relê a conversa depois do IntegrityError.
         except Exception as e:
             logger.error(f"[_get_or_create_conversation] Unexpected error: {e}", exc_info=True)
             raise
