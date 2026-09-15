@@ -2672,19 +2672,35 @@ class CheckoutService:
     
     @staticmethod
     def _restore_stock(order: StoreOrder):
-        """Restore stock for cancelled/refunded orders."""
-        for item in order.items.all():
+        """Devolve o estoque que a venda baixou — a ÚNICA devolução.
+
+        Espelho exato da baixa em `_create_order_atomic`: variante, ou produto
+        com `sold_count`, e combo. Webhook, botão de cancelar e dropdown de
+        status chamam esta; antes `cancel_order` tinha a própria cópia, que
+        ignorava variante e `sold_count`, e esta ignorava combo.
+        Quem chama garante que é a primeira transição para cancelado.
+        """
+        from django.db.models.functions import Greatest
+        from apps.stores.models import StoreCombo, StoreProductVariant
+        for item in order.items.select_related('product', 'variant'):
             if item.product and item.product.track_stock:
                 if item.variant:
-                    from apps.stores.models import StoreProductVariant
                     StoreProductVariant.objects.filter(id=item.variant.id).update(
                         stock_quantity=F('stock_quantity') + item.quantity
                     )
                 else:
+                    # Piso zero: `sold_count` é PositiveIntegerField e produto
+                    # com contador zerado (cadastro antigo) estourava a check
+                    # constraint — erro 500 ao cancelar.
                     StoreProduct.objects.filter(id=item.product.id).update(
                         stock_quantity=F('stock_quantity') + item.quantity,
-                        sold_count=F('sold_count') - item.quantity
+                        sold_count=Greatest(F('sold_count') - item.quantity, 0)
                     )
+        for combo_item in order.combo_items.select_related('combo'):
+            if combo_item.combo_id and combo_item.combo.track_stock:
+                StoreCombo.objects.filter(id=combo_item.combo_id).update(
+                    stock_quantity=F('stock_quantity') + combo_item.quantity
+                )
 
     @staticmethod
     def _release_coupon(order: StoreOrder):

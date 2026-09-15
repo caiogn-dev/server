@@ -156,6 +156,12 @@ class OrderService:
         # O painel cancela pelo dropdown de status, não só pelo botão de cancelar
         # — os dois caminhos precisam liquidar o pagamento.
         if new_status == 'cancelled':
+            # O botão "Cancelar" da tela de detalhe do painel vem por aqui, não
+            # pelo `/cancel/`. Estoque só na primeira transição: repetir o status
+            # ou estornar depois não devolve de novo.
+            if old_status not in ('cancelled', 'refunded'):
+                from .checkout_service import CheckoutService
+                CheckoutService._restore_stock(order)
             self._encerrar_cancelado(order)
 
         # Trigger webhook
@@ -308,20 +314,11 @@ class OrderService:
         
         order.save()
         
-        # Restore stock if requested — use F() to avoid read-modify-write race conditions
+        # Mesma devolução do webhook (`CheckoutService._restore_stock`). A trava
+        # de "só uma vez" é o retorno antecipado de pedido já cancelado, acima.
         if restore_stock:
-            from apps.stores.models import StoreProduct, StoreCombo
-            for item in order.items.all():
-                if item.product_id and item.product.track_stock:
-                    StoreProduct.objects.filter(id=item.product_id).update(
-                        stock_quantity=F('stock_quantity') + item.quantity
-                    )
-
-            for combo_item in order.combo_items.all():
-                if combo_item.combo_id and combo_item.combo.track_stock:
-                    StoreCombo.objects.filter(id=combo_item.combo_id).update(
-                        stock_quantity=F('stock_quantity') + combo_item.quantity
-                    )
+            from .checkout_service import CheckoutService
+            CheckoutService._restore_stock(order)
         
         # Handle refund if requested
         refund_result = None
