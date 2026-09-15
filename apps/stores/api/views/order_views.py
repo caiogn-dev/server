@@ -249,6 +249,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             'cancelados': resumo['cancelados'],
             'pedidos_faturados': resumo['pedidos_faturados'],
             'faturamento': f"{resumo['receita']:.2f}",
+            'frete': f"{resumo['frete']:.2f}",
             'ticket_medio': f'{ticket:.2f}' if ticket is not None else None,
             'por_pagamento': [
                 {**linha, 'total': f"{linha['total']:.2f}"}
@@ -261,8 +262,10 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             # A régua junto do número: sem isto ninguém sabe por que o
             # faturamento é menor que a soma visível das linhas.
             'definicoes': {
-                'faturamento': 'soma dos pedidos pagos, sem cancelados e sem pedidos de teste',
-                'ticket_medio': 'faturamento ÷ pedidos que faturaram',
+                'faturamento': 'soma dos pedidos pagos, sem frete, sem cancelados e sem pedidos de teste',
+                'ticket_medio': 'faturamento (sem frete) ÷ pedidos que faturaram',
+                'frete': 'repasse ao entregador dos pedidos que faturaram — não é venda da loja',
+                'por_pagamento': 'dinheiro recebido por forma de pagamento, com frete — confere com caixa e extrato',
                 'periodo': 'pela data de entrada do pedido, no fuso da loja',
             },
         })
@@ -996,7 +999,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 inicio=janela.inicio if janela else None,
                 fim=janela.fim if janela else None,
             )
-            return qs.aggregate(t=Sum('total'))['t'] or 0
+            # Sem frete: frete é repasse ao entregador, não venda.
+            return qs.aggregate(t=metrics.soma_de_venda())['t'] or 0
 
         def _comparar(janela, rotulo):
             """Variação contra o período anterior.
@@ -1032,6 +1036,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             # diferente do resto do painel. Ver `_receita()` acima.
             # metrics-ok: valor PENDENTE — explicitamente o que ainda nao e
             # receita. O card do painel mostra isso como "a receber".
+            # Fica com `total` (frete incluso): é o que o cliente ainda vai pagar.
             revenue_pending=Sum('total', filter=Q(payment_status='pending')),
 
             # Counts por payment_status (o painel de pagamentos precisa do
@@ -1111,7 +1116,7 @@ def _anotar_crm(qs):
     mesmo pedido várias vezes. Continua sendo UMA query para a lista inteira.
     """
     from django.db.models import OuterRef, Subquery
-    from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
+    from apps.stores.metrics import eixo_de_receita, pedidos_de_receita, soma_de_venda
 
     # `customer` é a FK do pedido para auth.User; `StoreCustomer.user` é o
     # mesmo User visto do lado do perfil da loja.
@@ -1121,7 +1126,8 @@ def _anotar_crm(qs):
 
     return qs.annotate(
         _gasto_real=Subquery(
-            do_cliente.values('customer').annotate(t=Sum('total')).values('t')[:1]
+            # Gasto sem frete: o frete foi para o entregador, não para a loja.
+            do_cliente.values('customer').annotate(t=soma_de_venda()).values('t')[:1]
         ),
         _pedidos_reais=Subquery(
             do_cliente.values('customer').annotate(n=Count('id')).values('n')[:1]

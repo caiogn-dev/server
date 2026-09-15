@@ -258,7 +258,8 @@ class DashboardOverviewView(APIView):
             qs = metrics.pedidos_de_receita(
                 queryset=orders_qs, inicio=janela.inicio, fim=janela.fim,
             )
-            return qs.aggregate(t=Sum('total'))['t'] or 0
+            # Sem frete: frete é repasse ao entregador, não venda.
+            return qs.aggregate(t=metrics.soma_de_venda())['t'] or 0
 
         orders_today = _ord['today']
         revenue_today = _receita(metrics.hoje())
@@ -437,9 +438,10 @@ class DashboardProjectHealthView(APIView):
             queryset=orders_qs,
             inicio=metrics.hoje().inicio, fim=metrics.hoje().fim,
         )
-        revenue_today = _hoje_qs.aggregate(t=Sum('total'))['t'] or 0
-        revenue_month = _mes.aggregate(t=Sum('total'))['t'] or 0
-        avg_ticket = _mes.aggregate(avg=Avg('total'))['avg'] or 0
+        # Faturamento e ticket sem frete (repasse ao entregador).
+        revenue_today = _hoje_qs.aggregate(t=metrics.soma_de_venda())['t'] or 0
+        revenue_month = _mes.aggregate(t=metrics.soma_de_venda())['t'] or 0
+        avg_ticket = _mes.aggregate(avg=metrics.media_de_venda())['avg'] or 0
 
         action_statuses = [
             StoreOrder.OrderStatus.PENDING,
@@ -858,7 +860,7 @@ class DashboardChartsView(APIView):
         # Eram 5 pedidos (R$ 420,84) inflando o gráfico da home em 21%.
         # Import local: o topo do módulo não importa o SSOT e sem isto o
         # endpoint do gráfico da home responde 500 (NameError).
-        from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
+        from apps.stores.metrics import eixo_de_receita, pedidos_de_receita, soma_de_venda
 
         revenue_rows = (
             pedidos_de_receita(queryset=orders_qs).filter(paid_at__gte=window_start)
@@ -866,7 +868,7 @@ class DashboardChartsView(APIView):
             # venda depois das 21h para o dia seguinte — o pico do delivery.
             .annotate(day=TruncDate(eixo_de_receita()))
             .values('day')
-            .annotate(total=Sum('total'))
+            .annotate(total=soma_de_venda())
         )
         revenue_by_day = {
             r['day'].strftime('%Y-%m-%d'): float(r['total'] or 0) for r in revenue_rows

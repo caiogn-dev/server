@@ -141,12 +141,13 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         # `total_spent` é quanto o cliente REALMENTE gastou: somar tudo
         # incluía pedido cancelado e não pago, e o painel mostrava um valor
         # que o cliente nunca desembolsou.
-        from apps.stores.metrics import apenas_receita
+        from apps.stores.metrics import apenas_receita, soma_de_venda
 
         _pedidos = StoreOrder.objects.filter(customer_phone__in=phone_candidates)
         stats = _pedidos.aggregate(total_orders=Count('id'))
+        # Sem frete: o frete foi para o entregador, não para a loja.
         stats['total_spent'] = apenas_receita(_pedidos).aggregate(
-            t=Sum('total'),
+            t=soma_de_venda(),
         )['t']
 
         last_order = StoreOrder.objects.filter(

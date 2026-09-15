@@ -407,14 +407,15 @@ class OrderService:
             created_at__gte=period_start
         )
         
-        from apps.stores.metrics import apenas_receita
+        from apps.stores.metrics import apenas_receita, media_de_venda, soma_de_venda
 
         total_orders = orders.count()
         # `payment_status='paid'` sozinho contava venda cancelada depois do
         # pagamento e pedido de teste do dono como faturamento.
         de_receita = apenas_receita(orders)
-        total_revenue = de_receita.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        avg_order_value = de_receita.aggregate(avg=Avg('total'))['avg'] or Decimal('0.00')
+        # Sem frete: frete é repasse ao entregador, não venda.
+        total_revenue = de_receita.aggregate(total=soma_de_venda())['total'] or Decimal('0.00')
+        avg_order_value = de_receita.aggregate(avg=media_de_venda())['avg'] or Decimal('0.00')
         
         # Orders by status
         by_status = orders.values('status').annotate(count=Count('id'))
@@ -427,7 +428,7 @@ class OrderService:
             date=TruncDate('created_at')
         ).values('date').annotate(
             count=Count('id'),
-            revenue=Sum('total', filter=Q(id__in=de_receita.values('id'))),
+            revenue=soma_de_venda(filter=Q(id__in=de_receita.values('id'))),
         ).order_by('date')
         
         return {

@@ -14,7 +14,7 @@ from decimal import Decimal
 from django.db.models import Avg, Count, DecimalField, F, Sum
 from django.db.models.functions import Coalesce, TruncDate
 
-from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
+from apps.stores.metrics import eixo_de_receita, media_de_venda, pedidos_de_receita, soma_de_venda
 
 _DEC = DecimalField(max_digits=12, decimal_places=2)
 
@@ -51,7 +51,8 @@ def _rotulo(codigo, mapa):
 
 def _zero():
     # Helper aplicado SEMPRE sobre pedidos_de_receita() — ver chamadores.
-    return Coalesce(Sum('total'), Decimal('0'), output_field=_DEC)
+    # Faturamento sem frete: frete é repasse ao entregador.
+    return soma_de_venda()
 
 
 def vendas_por_item(store, inicio, fim, incluir_teste=False):
@@ -114,7 +115,7 @@ def faturamento_por_dia(store, inicio, fim, incluir_teste=False):
         .annotate(
             pedidos=Count('id'),
             receita=_zero(),
-            ticket_medio=Coalesce(Avg('total'), Decimal('0'), output_field=_DEC),
+            ticket_medio=media_de_venda(),
             entrega=Coalesce(Sum('delivery_fee'), Decimal('0'), output_field=_DEC),
             desconto=Coalesce(Sum('discount'), Decimal('0'), output_field=_DEC),
         )
@@ -182,7 +183,7 @@ def resumo_faturamento(store, inicio, fim, incluir_teste=False):
     agregado = pedidos.aggregate(
         pedidos=Count('id'),
         receita=_zero(),
-        ticket_medio=Coalesce(Avg('total'), Decimal('0'), output_field=_DEC),
+        ticket_medio=media_de_venda(),
         entrega=Coalesce(Sum('delivery_fee'), Decimal('0'), output_field=_DEC),
         desconto=Coalesce(Sum('discount'), Decimal('0'), output_field=_DEC),
     )

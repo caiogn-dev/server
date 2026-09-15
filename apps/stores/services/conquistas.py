@@ -28,6 +28,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from ..metrics import (
+    soma_de_venda,
     de_datas,
     eixo_de_receita,
     hoje_local,
@@ -138,7 +139,7 @@ def _ritmo_diario(loja) -> Decimal:
 
 def proxima_conquista(loja) -> Optional[dict]:
     """O próximo marco, quanto falta e em quanto tempo — se der para estimar."""
-    acumulado = pedidos_de_receita(loja).aggregate(t=Sum('total'))['t'] or ZERO
+    acumulado = pedidos_de_receita(loja).aggregate(t=soma_de_venda())['t'] or ZERO
 
     if acumulado <= 0:
         # "Sua primeira venda" é objetivo melhor que "R$ 1.000" para quem ainda

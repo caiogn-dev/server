@@ -380,7 +380,7 @@ class CustomersViewSet(viewsets.ViewSet):
         # 2. Get customers from Store Orders
         # `total_spent` orienta segmentação de campanha — somar pedido
         # cancelado e não pago punha o cliente na faixa errada.
-        from apps.stores.metrics import apenas_receita
+        from apps.stores.metrics import apenas_receita, soma_de_venda
 
         order_customers = apenas_receita(
             StoreOrder.objects.filter(store_id=store_id, customer_email__isnull=False)
@@ -388,7 +388,7 @@ class CustomersViewSet(viewsets.ViewSet):
             customer_email=''
         ).values('customer_email', 'customer_name', 'customer_phone').annotate(
             total_orders=Count('id'),
-            total_spent=Sum('total'),
+            total_spent=soma_de_venda(),  # sem frete
             last_order=Max('created_at')
         )
 

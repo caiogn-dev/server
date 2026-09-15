@@ -68,7 +68,8 @@ class StoreCashSession(models.Model):
         )
         # Só venda que virou dinheiro na gaveta: cancelada não entra (senão a
         # "quebra" do fechamento acusa falta que não existe) e pedido de teste
-        # do dono também não.
+        # do dono também não. Soma `total` (com frete), não o valor de venda:
+        # o frete em dinheiro entra na gaveta e sai dela para o entregador.
         from apps.stores.metrics import apenas_receita
 
         cash_sales = apenas_receita(

@@ -119,7 +119,7 @@ def compute_daily_stats(store, day=None) -> dict:
     day = day or (tz_now - timedelta(days=1)).date()
     prev_day = day - timedelta(days=1)
 
-    from apps.stores.metrics import pedidos_de_receita, itens_de_receita
+    from apps.stores.metrics import itens_de_receita, pedidos_de_receita, soma_de_venda
 
     def day_qs(d):
         return StoreOrder.objects.filter(store=store, created_at__date=d)
@@ -128,7 +128,7 @@ def compute_daily_stats(store, day=None) -> dict:
         # SSOT de receita. Antes excluía cancelado mas NÃO checava pagamento,
         # então pedido entregue com PIX pendente entrava como faturamento.
         qs = pedidos_de_receita(queryset=day_qs(d))
-        agg = qs.aggregate(count=Count('id'), revenue=Sum('total'))
+        agg = qs.aggregate(count=Count('id'), revenue=soma_de_venda())
         return agg['count'] or 0, float(agg['revenue'] or 0)
 
     count, revenue = day_numbers(day)
@@ -201,7 +201,7 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
     minutos_de_lote = {m for m, n in contagem.items() if n >= lote_minimo}
 
     por_dia = {}
-    for o in pedidos_de_receita(loja=store).only('created_at', 'paid_at', 'total'):
+    for o in pedidos_de_receita(loja=store).only('created_at', 'paid_at', 'total', 'delivery_fee'):
         quando = o.paid_at or o.created_at
         if o.paid_at and o.paid_at.replace(second=0, microsecond=0) in minutos_de_lote:
             quando = o.created_at
@@ -209,7 +209,8 @@ def compute_forecast(store, days: int = 28, day=None) -> dict:
         if not (inicio <= d <= day):
             continue
         n, v = por_dia.get(d, (0, 0.0))
-        por_dia[d] = (n + 1, v + float(o.total or 0))
+        # Venda sem frete — mesma régua de metrics.valor_de_venda.
+        por_dia[d] = (n + 1, v + float((o.total or 0) - (o.delivery_fee or 0)))
 
     # Dias sem venda contam como zero — senão a média mente para cima.
     diario = []
