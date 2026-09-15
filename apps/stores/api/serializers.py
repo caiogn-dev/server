@@ -1391,13 +1391,40 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
             )
         return value
 
+    def validate_payment_status(self, value):
+        """Pagamento não muda por PATCH — só pelos endpoints dedicados.
+
+        O PATCH gravava o campo cru: sem trava de PIX vencido, sem
+        select_for_update contra clique duplo, sem crédito de fidelidade.
+        """
+        if self.instance is not None and value != self.instance.payment_status:
+            raise serializers.ValidationError(
+                'Use POST /mark_paid/ ou /update_payment_status/ para mudar o pagamento.'
+            )
+        return value
+
     def update(self, instance, validated_data):
         suppress = validated_data.pop('suppress_notifications', None)
         if suppress is not None:
             metadata = instance.metadata if isinstance(instance.metadata, dict) else {}
             metadata['suppress_notifications'] = suppress
             instance.metadata = metadata
-        return super().update(instance, validated_data)
+        # Status por PATCH passa pela mesma porta do dropdown: valida a
+        # transição e, ao cancelar, devolve estoque/cupom e liquida o pagamento.
+        # Gravar o campo cru pulava tudo isso.
+        # Tudo ou nada: transição recusada não deixa os outros campos gravados.
+        from django.db import transaction
+        novo_status = validated_data.pop('status', None)
+        validated_data.pop('payment_status', None)
+        with transaction.atomic():
+            instance = super().update(instance, validated_data)
+            if novo_status is not None and novo_status != instance.status:
+                from apps.stores.services.order_service import OrderService
+                resultado = OrderService().update_status(instance, novo_status, notify_customer=True)
+                if not resultado.get('success'):
+                    raise serializers.ValidationError({'status': resultado.get('error')})
+                instance.refresh_from_db()
+        return instance
 
 
 class StoreOrderItemOpSerializer(serializers.Serializer):

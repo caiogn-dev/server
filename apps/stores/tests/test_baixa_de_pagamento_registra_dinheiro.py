@@ -54,10 +54,14 @@ class SaldoRespeitaORotuloTest(APITestCase):
         assert pedido.amount_due == Decimal('0.00')
         assert pedido.is_fully_paid is True
 
-    def test_a_resposta_do_patch_ja_vem_quitada(self):
-        """A tela usa a resposta do PATCH — se vier velha, o modal segue
-        dizendo 'Falta receber' até alguém recarregar."""
-        resp = self.client.patch(self.url, {'payment_status': 'paid'}, format='json')
+    def test_a_resposta_do_marcar_pago_ja_vem_quitada(self):
+        """A tela usa a resposta de "marcar como pago" — se vier velha, o modal
+        segue dizendo 'Falta receber' até alguém recarregar.
+
+        Era um PATCH `{payment_status: 'paid'}`; desde 15/set pagamento só muda
+        pelo endpoint dedicado (o PATCH pulava trava de PIX vencido e fidelidade).
+        """
+        resp = self.client.post(f'{self.url}mark_paid/', {}, format='json')
         assert resp.status_code == 200, resp.content
         assert Decimal(str(resp.json()['amount_due'])) == Decimal('0.00')
         assert resp.json()['is_fully_paid'] is True
@@ -65,7 +69,8 @@ class SaldoRespeitaORotuloTest(APITestCase):
     def test_nao_inventa_cobranca(self):
         """O faturamento já conta este pedido pelo rótulo. Criar um
         `StorePayment` aqui seria um segundo livro-caixa."""
-        self.client.patch(self.url, {'payment_status': 'paid'}, format='json')
+        resp = self.client.post(f'{self.url}mark_paid/', {}, format='json')
+        assert resp.status_code == 200, resp.content
         assert StorePayment.objects.filter(order=self.order).count() == 0
 
     def test_amount_paid_continua_dizendo_a_verdade(self):
