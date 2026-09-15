@@ -484,3 +484,21 @@ def primeiro_nome(nome, padrao: str = '') -> str:
     """
     partes = str(nome or '').split()
     return partes[0] if partes else padrao
+
+
+def mesmo_telefone(a, b) -> bool:
+    """Os dois números são a MESMA pessoa? (nono dígito, `+`, DDI grudado)
+
+    `phone_variants` cobre o nono dígito e o `+`. Faltava o "55" grudado num
+    número estrangeiro: o link de indicação da Layane (Espanha, 34647520824)
+    chegou como 5534647520824, e a trava de auto-indicação creditou R$ 3,76
+    para um número brasileiro que não existe (15/set).
+    """
+    da = ''.join(ch for ch in str(a or '') if ch.isdigit())
+    db = ''.join(ch for ch in str(b or '') if ch.isdigit())
+    if len(da) < 8 or len(db) < 8:
+        return False
+    if set(phone_variants(da)) & set(phone_variants(db)):
+        return True
+    curto, longo = sorted((da, db), key=len)
+    return longo == '55' + curto
