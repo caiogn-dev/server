@@ -11,7 +11,7 @@ módulo.
 """
 from decimal import Decimal
 
-from django.db.models import Avg, Count, DecimalField, F, Sum
+from django.db.models import Count, DecimalField, Sum
 from django.db.models.functions import Coalesce, TruncDate
 
 from apps.stores.metrics import eixo_de_receita, media_de_venda, pedidos_de_receita, soma_de_venda
