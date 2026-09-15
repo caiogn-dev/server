@@ -81,3 +81,17 @@ def test_aplicar_limpa_o_caderno_do_pdv_e_o_perfil(tmp_path):
     assert caderno[0].is_default
     perfil.refresh_from_db()
     assert perfil.address.count('ortolife') == 1
+
+
+@pytest.mark.django_db
+def test_nao_inventa_padrao_onde_nunca_houve(tmp_path):
+    dono = User.objects.create_user(username='dono_sem_padrao', password='x')
+    loja = Store.objects.create(owner=dono, name='Loja Sem Padrão', slug='loja-sem-padrao')
+    pessoa = User.objects.create_user(username='cliente_sem_padrao', password='x')
+    c = StoreCustomer.objects.create(store=loja, user=pessoa)
+    StoreCustomerAddress.objects.create(customer=c, street='Rua A', number='1')
+    StoreCustomerAddress.objects.create(customer=c, street='Rua B', number='2')
+
+    call_command('limpar_enderecos', '--aplicar', '--backup', str(tmp_path / 'b.json'), stdout=StringIO())
+
+    assert StoreCustomerAddress.objects.filter(customer=c, is_default=True).count() == 0

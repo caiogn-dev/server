@@ -28,6 +28,25 @@ def _foto(a):
             **{c: getattr(a, c) for c in CAMPOS}}
 
 
+def _acertar_padrao(todos, ficam):
+    """Um padrão só — sem inventar padrão onde nunca houve.
+
+    Mexe apenas quando sobra mais de um padrão, ou quando o padrão existia e
+    foi apagado (vazio/repetido) e nenhum dos que ficam é padrão. Cliente que
+    nunca teve endereço padrão continua sem: a simulação de 15/set queria
+    marcar 143 no caderno do PDV, trocando a sugestão de endereço de gente que
+    ninguém pediu para mudar.
+    """
+    if not ficam:
+        return {}
+    atuais = [a for a in ficam if a.is_default]
+    tinha_padrao = any(a.is_default for a in todos)
+    if len(atuais) == 1 or (not atuais and not tinha_padrao):
+        return {}
+    escolhido = max(atuais or ficam, key=lambda x: x.created_at)
+    return {a.id: (a, a is escolhido) for a in ficam if a.is_default != (a is escolhido)}
+
+
 def _foto_caderno(a):
     return {'id': str(a.id), 'unified_user': str(a.unified_user_id), 'tenant': str(a.tenant_id),
             'is_default': a.is_default, **{c: getattr(a, c) for c in
@@ -91,12 +110,7 @@ class Command(BaseCommand):
                 for s_ in grupo[1:]:
                     apagar[s_.id] = (s_, grupo[0])
                 ficam.append(grupo[0])
-            if ficam:
-                atuais = [a for a in ficam if a.is_default]
-                escolhido = max(atuais or ficam, key=lambda x: x.created_at)
-                for a in ficam:
-                    if a.is_default != (a is escolhido):
-                        padrao[a.id] = (a, a is escolhido)
+            padrao.update(_acertar_padrao(enderecos, ficam))
         return {'limpar': limpar, 'apagar': apagar, 'padrao': padrao}
 
     def _planejar_perfis(self):
@@ -140,12 +154,7 @@ class Command(BaseCommand):
                     apagar[s.id] = (s, dono)
                 ficam.append(dono)
 
-            if ficam:
-                atuais = [a for a in ficam if a.is_default]
-                escolhido = max(atuais or ficam, key=lambda x: x.created_at)
-                for a in ficam:
-                    if a.is_default != (a is escolhido):
-                        padrao[a.id] = (a, a is escolhido)
+            padrao.update(_acertar_padrao(enderecos, ficam))
 
         caderno = self._planejar_caderno(loja)
         perfis = self._planejar_perfis()
