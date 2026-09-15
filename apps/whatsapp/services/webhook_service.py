@@ -2065,7 +2065,7 @@ class WebhookService:
             from apps.stores.models import Store
             from apps.stores.services.geo.google_provider import GoogleMapsProvider
 
-            unified_user = UnifiedUser.objects.filter(phone_number=phone).first()
+            unified_user = UnifiedUser.objects.filter(phone_number__in=UnifiedUser._phone_candidates(phone)).first()
             if not unified_user:
                 logger.debug("_save_whatsapp_location_as_address: UnifiedUser not found for %s", phone)
                 return

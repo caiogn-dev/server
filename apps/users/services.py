@@ -48,13 +48,14 @@ class UnifiedUserService:
                 cache.delete(cache_key)
         
         # Busca do banco
-        try:
-            user = UnifiedUser.objects.get(phone_number=phone_number)
-            # Salva no cache (5 minutos)
-            cache.set(cache_key, str(user.id), 300)
-            return user
-        except UnifiedUser.DoesNotExist:
+        user = UnifiedUser.objects.filter(
+            phone_number__in=UnifiedUser._phone_candidates(phone_number)
+        ).first()
+        if user is None:
             return None
+        # Salva no cache (5 minutos)
+        cache.set(cache_key, str(user.id), 300)
+        return user
     
     @staticmethod
     def get_context_for_agent(phone_number: str) -> str:
