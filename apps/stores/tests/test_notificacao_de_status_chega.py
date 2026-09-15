@@ -35,6 +35,14 @@ from apps.stores.models import Store, StoreOrder
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def _loja_com_mensagens_automaticas(settings):
+    # O aviso de status só sai com a mensagem automática que o post_save da loja
+    # semeia. A suíte desliga o seed por padrão (settings/test.py); aqui ele é
+    # parte do que se testa.
+    settings.AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA = True
+
+
 @pytest.fixture
 def pedido(db):
     dono = User.objects.create_user(

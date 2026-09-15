@@ -137,3 +137,18 @@ MP_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
 
 # Hash rápido: a suíte cria muitos usuários e o PBKDF2 domina o tempo.
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+
+
+# ── Suíte rápida (Fase 0 do refactor, 15/set/2026) ────────────────────────
+#
+# Criar loja em teste custava ~40-55 queries: o post_save de Store cria o
+# CompanyProfile e semeia 17 mensagens automáticas. 229 arquivos criam loja no
+# setUp, ou seja, antes de CADA teste. Os testes de mensagem automática criam
+# as suas próprias (update_or_create) ou religam isto com override_settings.
+AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA = False
+
+# Log sem saída. Os níveis ficam iguais — `assertLogs` e `caplog` continuam
+# recebendo os registros —, mas nada é formatado em JSON nem gravado em
+# logs/dev.log durante a suíte (eram 10 MB por rodada).
+LOGGING['handlers']['console'] = {'class': 'logging.NullHandler'}  # noqa: F405
+LOGGING['handlers']['file'] = {'class': 'logging.NullHandler'}  # noqa: F405

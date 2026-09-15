@@ -16,17 +16,29 @@ logger = logging.getLogger(__name__)
 _ORDER_PREV_STATUS = {}
 
 
+_TABELA_DE_PERFIL_EXISTE = False
+
+
 def _company_profile_table_ready() -> bool:
     """
     Guard post_save hooks during deploys where code is ahead of the database.
 
     Store creation must not fail just because the automation schema has not been
     migrated yet.
+
+    Depois de ver a tabela uma vez, não pergunta de novo: `table_names()` lista o
+    catálogo inteiro do Postgres (137+ tabelas) e rodava a CADA save de Store e de
+    WhatsAppAccount. Tabela não desaparece com o processo de pé; o "ainda não"
+    continua sendo reconsultado até a migração chegar.
     """
+    global _TABELA_DE_PERFIL_EXISTE
+    if _TABELA_DE_PERFIL_EXISTE:
+        return True
     try:
-        return 'company_profiles' in connection.introspection.table_names()
+        _TABELA_DE_PERFIL_EXISTE = 'company_profiles' in connection.introspection.table_names()
     except Exception:
         return False
+    return _TABELA_DE_PERFIL_EXISTE
 
 
 @receiver(post_save, sender='stores.Store')
@@ -126,7 +138,13 @@ def create_or_link_company_profile_for_store(sender, instance, created, **kwargs
             except Exception as sync_error:
                 logger.error(f"Error syncing automation fields to Store {instance.slug}: {sync_error}")
 
-            # Create default auto messages for the new profile
+            # Create default auto messages for the new profile.
+            # Desligável só pela suíte (config/settings/test.py): são 17
+            # get_or_create por loja criada, e 229 arquivos de teste criam loja
+            # antes de cada teste. Produção sempre semeia.
+            from django.conf import settings as _settings
+            if not getattr(_settings, 'AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA', True):
+                return
             try:
                 from .services import AutomationService
                 service = AutomationService()
