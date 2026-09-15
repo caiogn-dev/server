@@ -378,7 +378,8 @@ class StoreOrder(BaseModel):
 
         self._fotografar_tempo_de_preparo(kwargs)
 
-        if not self.order_number:
+        numero_sorteado = not self.order_number
+        if numero_sorteado:
             self.order_number = self.generate_order_number()
         if not self.access_token:
             self.access_token = self.generate_access_token()
@@ -397,7 +398,23 @@ class StoreOrder(BaseModel):
                 if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
                     self.delivery_lat = lat
                     self.delivery_lng = lng
-        super().save(*args, **kwargs)
+        if not (numero_sorteado and self._state.adding):
+            super().save(*args, **kwargs)
+            return
+        # O sufixo tem 10 mil valores por loja/dia e `order_number` é único no
+        # banco inteiro: uma colisão virava erro 500 no checkout. Sorteia de
+        # novo dentro de um savepoint (o checkout já está numa transação).
+        # Só para número sorteado aqui — quem informou o número recebe o erro.
+        from django.db import IntegrityError, transaction
+        for tentativa in range(5):
+            try:
+                with transaction.atomic():
+                    super().save(*args, **kwargs)
+                return
+            except IntegrityError as erro:
+                if 'order_number' not in str(erro) or tentativa == 4:
+                    raise
+                self.order_number = self.generate_order_number()
 
     def _fotografar_tempo_de_preparo(self, kwargs):
         """Entrou em preparo sem previsão: copia o tempo padrão da loja.

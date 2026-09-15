@@ -156,7 +156,7 @@ class OrderService:
         # O painel cancela pelo dropdown de status, não só pelo botão de cancelar
         # — os dois caminhos precisam liquidar o pagamento.
         if new_status == 'cancelled':
-            self._liquidar_pagamento_do_cancelado(order)
+            self._encerrar_cancelado(order)
 
         # Trigger webhook
         from .webhook_service import webhook_service
@@ -330,7 +330,7 @@ class OrderService:
 
         # Depois do estorno: se ele deu certo o pagamento já é 'refunded' e fica
         # como está; senão o pedido cancelado não pode continuar 'paid'.
-        self._liquidar_pagamento_do_cancelado(order)
+        self._encerrar_cancelado(order)
 
         # Trigger webhook
         from .webhook_service import webhook_service
@@ -363,6 +363,18 @@ class OrderService:
     # cancelar: quem estornou de verdade precisa continuar aparecendo como
     # estorno na conciliação com o gateway.
     _PAGAMENTO_FINAL = ('refunded', 'partially_refunded', 'cancelled')
+
+    def _encerrar_cancelado(self, order) -> None:
+        """O que todo cancelamento precisa fazer, venha do botão ou do dropdown.
+
+        Pagamento liquidado e vaga do cupom devolvida. Antes só o webhook do MP
+        devolvia o cupom: 4 vendas em dinheiro canceladas pelo painel ficaram
+        com a vaga presa (medido em 15/set). `_release_coupon` é idempotente
+        por `metadata['coupon_released']`.
+        """
+        from .checkout_service import CheckoutService
+        self._liquidar_pagamento_do_cancelado(order)
+        CheckoutService._release_coupon(order)
 
     def _liquidar_pagamento_do_cancelado(self, order) -> None:
         """Ao cancelar, o pagamento deixa de estar 'paid' ou 'pending'.

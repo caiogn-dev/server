@@ -225,12 +225,15 @@ def check_pending_payments():
         ).exclude(metadata__has_key='payment_expired_notified')
         .values_list('id', flat=True)
     )
+    from apps.stores.services.order_service import OrderService
     for oid in expired:
         send_payment_reminder.delay(str(oid), 'final')
-        Order.objects.filter(id=oid).update(
-            status='cancelled',
-            payment_status='failed',
-        )
+        # Pelo serviço, não por `.update()` cru: cancelar devolve estoque e cupom,
+        # liquida o pagamento e dispara o aviso de cancelado (com trava). O
+        # `.update()` pulava tudo isso e não gravava `cancelled_at`.
+        pedido = Order.objects.select_related('store').filter(id=oid).first()
+        if pedido is not None:
+            OrderService().cancel_order(pedido, reason='PIX não pago em 24h')
     if expired:
         logger.info("Cancelled %d PIX-expired orders", len(expired))
 
