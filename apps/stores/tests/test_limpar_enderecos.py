@@ -53,3 +53,31 @@ def test_aplicar_deixa_um_por_lugar_e_um_padrao(cliente, tmp_path):
     assert ortolife.is_default
     assert ortolife.zip_code == '77016006'  # completado pelo que saiu
     assert len(json.loads(copia.read_text())) >= 3
+
+
+@pytest.mark.django_db
+def test_aplicar_limpa_o_caderno_do_pdv_e_o_perfil(tmp_path):
+    from apps.stores.tests.factories import make_store
+    from apps.core.models import UserProfile
+    from apps.users.models import UnifiedUser, UserAddress
+
+    loja = make_store(name='Cê Faxina', city='Palmas', state='TO')
+    pessoa = UnifiedUser.objects.create(phone_number='+5563991112222', name='Flavia')
+    comum = dict(unified_user=pessoa, tenant=loja, number='9', city='Palmas', state='TO',
+                 complement='Recepção da ortolife , espaço life ', neighborhood='Centro')
+    UserAddress.objects.create(street=BASE, **comum)
+    UserAddress.objects.create(street=BASE + CAUDA, **comum)
+    UserAddress.objects.create(street=BASE + CAUDA * 2, is_default=True, **comum)
+
+    usuario = User.objects.create_user(username='flavia_perfil', password='x')
+    perfil, _ = UserProfile.objects.get_or_create(user=usuario)
+    perfil.address = (BASE + CAUDA * 2)[:255]
+    perfil.save(update_fields=['address'])
+
+    call_command('limpar_enderecos', '--aplicar', '--backup', str(tmp_path / 'b.json'), stdout=StringIO())
+
+    caderno = list(UserAddress.objects.filter(unified_user=pessoa))
+    assert [a.street for a in caderno] == [BASE]
+    assert caderno[0].is_default
+    perfil.refresh_from_db()
+    assert perfil.address.count('ortolife') == 1

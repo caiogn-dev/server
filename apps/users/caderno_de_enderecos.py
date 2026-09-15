@@ -99,6 +99,14 @@ def normalizar(bruto, *, loja=None) -> dict:
     cidade = _texto(bruto.get('city')) or _texto(getattr(loja, 'city', ''))
     estado = _uf(bruto.get('state')) or _uf(getattr(loja, 'state', ''))
 
+    # Rua empilhada (cópia do `formatted` colada nela a cada pedido) volta a
+    # ser rua — mesma regra do cadastro da loja.
+    from apps.core.services.customer_identity import CustomerIdentityService
+    rua = CustomerIdentityService.rua_sem_cauda(
+        rua, numero=_texto(bruto.get('number')), complemento=_texto(bruto.get('complement')),
+        bairro=_texto(bruto.get('neighborhood')), cidade=cidade, uf=estado,
+    )
+
     return {
         'street': rua[:255],
         'number': _texto(bruto.get('number'))[:20],
@@ -165,9 +173,24 @@ def _guardar(order):
         # Pedido de balcão de quem nunca se cadastrou. Normal.
         return None
 
-    existente = UserAddress.objects.filter(
-        unified_user=cliente, tenant=order.store, **_mesma_porta(dados),
-    ).first()
+    # Mesmo LUGAR (sem maiúscula/acento, rua desempilhada), não mesmo texto:
+    # o `iexact` deixava cada geração da rua empilhada virar endereço novo.
+    from apps.core.services.customer_identity import CustomerIdentityService as CIS
+    chave = CIS.chave_do_lugar(dados['street'], dados['number'], dados['complement'])
+    existente = next(
+        (
+            a for a in UserAddress.objects.filter(unified_user=cliente, tenant=order.store)
+            if CIS.chave_do_lugar(
+                CIS.rua_sem_cauda(a.street, numero=a.number, complemento=a.complement,
+                                  bairro=a.neighborhood, cidade=a.city, uf=a.state),
+                a.number, a.complement,
+            ) == chave
+        ),
+        None,
+    )
+    if existente is not None and existente.street != dados['street']:
+        existente.street = dados['street']
+        existente.save(update_fields=['street'])
     if existente is not None:
         # Coordenada pode ter chegado depois (o primeiro pedido às vezes vem
         # sem pin). Completar o que falta vale; sobrescrever o que já existe não.
