@@ -56,6 +56,12 @@ class StoreCategoryViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                     pass
         return super().initialize_request(request, *args, **kwargs)
 
+    @action(detail=True, methods=['get'])
+    def uso(self, request, pk=None, **kwargs):
+        """Quantos produtos ficam sem categoria se ela for excluída."""
+        categoria = self.get_object()
+        return Response({'produtos': categoria.products.count()})
+
     def get_queryset(self):
         from django.db.models import Count, Q, Prefetch
         qs = super().get_queryset()  # StoreQuerysetMixin handles owner/staff scoping
@@ -226,6 +232,24 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             return StoreProductCreateSerializer
         return StoreProductSerializer
     
+    @action(detail=True, methods=['get'])
+    def uso(self, request, pk=None):
+        """Onde o produto aparece — o painel mostra ANTES de excluir.
+
+        Excluir não quebra o histórico (o item do pedido guarda o nome e o
+        vínculo vira nulo), mas tira o produto de todo combo em silêncio: os
+        grupos e opções de combo são CASCADE.
+        """
+        from apps.stores.models import StoreOrderItem
+        from apps.stores.models.combo_group import ComboProductGroup, ComboProductGroupProductOption
+        produto = self.get_object()
+        combos = set(ComboProductGroup.objects.filter(product=produto).values_list('combo_id', flat=True))
+        combos |= set(ComboProductGroupProductOption.objects.filter(product=produto).values_list('group__combo_id', flat=True))
+        return Response({
+            'combos': len(combos),
+            'pedidos': StoreOrderItem.objects.filter(product=produto).values('order_id').distinct().count(),
+        })
+
     @action(detail=True, methods=['post'])
     def toggle_status(self, request, pk=None):
         """Toggle product active/inactive status."""
