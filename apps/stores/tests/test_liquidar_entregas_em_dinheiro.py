@@ -132,3 +132,31 @@ class TestOQueNaoPodeSerTocado:
 
         p.refresh_from_db()
         assert p.payment_status == 'pending'
+
+
+@pytest.mark.django_db
+def test_relatorio_diz_quantos_pedidos_liquidou(capsys):
+    """A contagem impressa bate com o que foi gravado.
+
+    Veio de um rascunho de investigação (`test_count_bug_scratch.py`) que ficou
+    versionado com print de depuração; a verificação em si valia a pena manter.
+    """
+    from decimal import Decimal
+
+    from django.core.management import call_command
+    from django.utils import timezone
+
+    from apps.stores.models import StoreOrder
+    from apps.stores.tests.factories import make_store
+
+    loja = make_store(name='Loja Contagem Liquidação')
+    pedido = StoreOrder.objects.create(
+        store=loja, total=Decimal('95.00'), subtotal=Decimal('95.00'),
+        status='delivered', payment_status='pending', payment_method='cash',
+        customer_phone='+5563984143551',
+    )
+    StoreOrder.objects.filter(id=pedido.id).update(delivered_at=timezone.now() - timezone.timedelta(days=14))
+
+    call_command('liquidar_entregas_em_dinheiro')
+
+    assert '1 pedidos liquidados' in capsys.readouterr().out
