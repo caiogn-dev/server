@@ -16,7 +16,9 @@ Qualquer tela, relatório ou export que fale de DINHEIRO usa este módulo.
 Contagem operacional (fila da cozinha, KDS, histórico do cliente) NÃO usa —
 lá o pedido cancelado e o de teste precisam aparecer. Ver `series.contagem_operacional`.
 """
-from django.db.models import Q
+from decimal import Decimal
+
+from django.db.models import Avg, DecimalField, ExpressionWrapper, F, Q, Sum
 from django.db.models.functions import Coalesce
 
 # Status em que o pedido deixa de ser receita, independente do pagamento.
@@ -24,6 +26,40 @@ STATUS_SEM_RECEITA = frozenset({'cancelled', 'refunded', 'failed'})
 
 # Chave em StoreOrder.metadata que marca pedido de teste do próprio dono.
 FLAG_PEDIDO_TESTE = 'is_test'
+
+
+_DINHEIRO = DecimalField(max_digits=12, decimal_places=2)
+
+
+def valor_de_venda():
+    """Quanto do pedido é VENDA da loja: `total − delivery_fee`.
+
+    O frete não é venda — é repasse ao entregador. Somar `total` (que inclui
+    frete, ver `StoreOrder.recalculate_totals`) inflava faturamento, ticket
+    médio, gasto do cliente e segmentação. O dono pediu a correção em
+    15/set/2026; na Cê Saladas, em set/2026, o ticket aparecia R$ 64,88 com
+    frete contra R$ 57,44 de venda real — frete ≈ 12% do "faturamento".
+
+    Desconto, taxa, acréscimo e vale continuam dentro: são do preço da venda.
+
+    O que CONTINUA com `total` (dinheiro que de fato entra, frete incluso):
+    gaveta de caixa, "a receber", cobrança/pagamento (`amount_due`,
+    `amount_paid`, StorePayment) e a quebra "como entrou o dinheiro".
+
+    Uso: `qs.aggregate(receita=soma_de_venda())` ou
+    `qs.annotate(venda=valor_de_venda())`.
+    """
+    return ExpressionWrapper(F('total') - F('delivery_fee'), output_field=_DINHEIRO)
+
+
+def soma_de_venda(**extra):
+    """Sum do valor de venda, 0 quando não há pedido. `extra` vai para o Sum (ex.: filter=)."""
+    return Coalesce(Sum(valor_de_venda(), **extra), Decimal('0'), output_field=_DINHEIRO)
+
+
+def media_de_venda(**extra):
+    """Avg do valor de venda (ticket médio), 0 quando não há pedido."""
+    return Coalesce(Avg(valor_de_venda(), **extra), Decimal('0'), output_field=_DINHEIRO)
 
 
 def eixo_de_receita():
