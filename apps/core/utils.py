@@ -473,3 +473,14 @@ def phone_variants(phone: str) -> list:
         completo.add(f'+{valor}')
 
     return [v for v in completo if v]
+
+
+def primeiro_nome(nome, padrao: str = '') -> str:
+    """Primeiro nome para saudação, sem estourar com nome vazio ou só espaços.
+
+    `(nome or '').split()[0]` dava `IndexError` quando não havia nome — e 93 de
+    105 sessões do bot em 30 dias não têm (medido em 15/set): o lembrete de
+    carrinho não saía para ninguém sem nome.
+    """
+    partes = str(nome or '').split()
+    return partes[0] if partes else padrao
