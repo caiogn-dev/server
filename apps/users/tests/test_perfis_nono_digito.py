@@ -55,7 +55,7 @@ def wanny(db):
 @pytest.mark.django_db
 def test_simulacao_nao_grava(wanny):
     saida = StringIO()
-    call_command('fundir_perfis_duplicados', stdout=saida)
+    call_command('deduplicate_unified_users', stdout=saida)
 
     assert 'simulação' in saida.getvalue()
     assert UnifiedUser.objects.count() == 3
@@ -65,7 +65,7 @@ def test_simulacao_nao_grava(wanny):
 def test_fusao_fica_o_perfil_com_login_e_leva_tudo(wanny):
     loja, site, whats, vazio = wanny
 
-    call_command('fundir_perfis_duplicados', '--aplicar', stdout=StringIO())
+    call_command('deduplicate_unified_users', '--aplicar', stdout=StringIO())
 
     assert list(UnifiedUser.objects.values_list('id', flat=True)) == [site.id]
     site.refresh_from_db()
