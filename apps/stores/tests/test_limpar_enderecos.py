@@ -95,3 +95,24 @@ def test_nao_inventa_padrao_onde_nunca_houve(tmp_path):
     call_command('limpar_enderecos', '--aplicar', '--backup', str(tmp_path / 'b.json'), stdout=StringIO())
 
     assert StoreCustomerAddress.objects.filter(customer=c, is_default=True).count() == 0
+
+
+@pytest.mark.django_db
+def test_apaga_endereco_que_e_o_da_propria_loja(tmp_path):
+    from apps.stores.tests.factories import make_store
+    from apps.users.models import UnifiedUser, UserAddress
+
+    loja = make_store(name='Cê Retirada', city='Palmas', state='TO')
+    loja.address = 'Q. 112 Sul, Rua Sr 01, 2 - Palmas, Tocantins'
+    loja.save(update_fields=['address'])
+    pessoa = UnifiedUser.objects.create(phone_number='+5563993334444', name='Flavia')
+    UserAddress.objects.create(unified_user=pessoa, tenant=loja, street=loja.address, city='Palmas', state='TO', is_default=True)
+    UserAddress.objects.create(unified_user=pessoa, tenant=loja, street='Quadra 501 Sul Avenida NS 1', number='9', city='Palmas', state='TO')
+    usuario = User.objects.create_user(username='cliente_retirada', password='x')
+    c = StoreCustomer.objects.create(store=loja, user=usuario)
+    StoreCustomerAddress.objects.create(customer=c, street=loja.address)
+
+    call_command('limpar_enderecos', '--aplicar', '--backup', str(tmp_path / 'b.json'), stdout=StringIO())
+
+    assert [a.street for a in UserAddress.objects.filter(unified_user=pessoa)] == ['Quadra 501 Sul Avenida NS 1']
+    assert not StoreCustomerAddress.objects.filter(customer=c).exists()

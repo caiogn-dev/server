@@ -134,6 +134,17 @@ def _mesma_porta(dados: dict) -> dict:
     }
 
 
+def e_endereco_da_loja(dados: dict, loja) -> bool:
+    """O endereço é o da própria loja? (rua comparada sem maiúscula/acento)."""
+    endereco_da_loja = (getattr(loja, 'address', '') or '').strip()
+    if not endereco_da_loja:
+        return False
+    from apps.core.services.customer_identity import CustomerIdentityService as CIS
+    rua = CIS.chave_de_texto(dados.get('street', ''))
+    loja_chave = CIS.chave_de_texto(endereco_da_loja)
+    return bool(rua) and (rua == loja_chave or loja_chave.startswith(rua) and len(rua) >= 12)
+
+
 def guardar_endereco_do_pedido(order):
     """Salva o endereço do pedido no caderno do cliente. Idempotente.
 
@@ -158,8 +169,16 @@ def _guardar(order):
     if not telefone:
         return None
 
+    # Retirada leva o endereço DA LOJA no pedido — não é endereço do cliente.
+    # Guardar isso fazia o PDV sugerir a própria loja como entrega (26 casos
+    # no caderno em 15/set).
+    if (getattr(order, 'delivery_method', '') or '').lower() == 'pickup':
+        return None
+
     dados = normalizar(getattr(order, 'delivery_address', None), loja=order.store)
     if not dados:
+        return None
+    if e_endereco_da_loja(dados, order.store):
         return None
 
     # Mesma resolução de telefone que o signal de estatísticas já usa — o

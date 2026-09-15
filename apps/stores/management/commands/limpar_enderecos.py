@@ -18,6 +18,7 @@ from django.db import transaction
 
 from apps.core.services.customer_identity import CustomerIdentityService as CIS
 from apps.stores.models import StoreCustomerAddress
+from apps.users.caderno_de_enderecos import e_endereco_da_loja
 
 CAMPOS = ('label', 'street', 'number', 'complement', 'neighborhood', 'city', 'state',
           'zip_code', 'reference', 'formatted')
@@ -83,7 +84,7 @@ class Command(BaseCommand):
     def _planejar_caderno(self, loja):
         """Mesma faxina no caderno do PDV/bot (`UserAddress`), por cliente+loja."""
         from apps.users.models import UserAddress
-        qs = UserAddress.objects.order_by('created_at')
+        qs = UserAddress.objects.select_related('tenant').order_by('created_at')
         if loja:
             qs = qs.filter(tenant__slug=loja)
         grupos_por_dono = defaultdict(list)
@@ -98,6 +99,9 @@ class Command(BaseCommand):
                 if rua != a.street:
                     limpar[a.id] = (a, rua)
                 if not any(CIS.chave_de_texto(v) for v in (rua, a.number, a.complement)):
+                    apagar[a.id] = (a, None)
+                    continue
+                if e_endereco_da_loja({'street': rua}, a.tenant):
                     apagar[a.id] = (a, None)
                     continue
                 vivos.append((a, rua))
@@ -139,6 +143,9 @@ class Command(BaseCommand):
                 if rua != a.street:
                     limpar[a.id] = (a, rua)
                 if not any(CIS.chave_de_texto(v) for v in (rua, a.number, a.complement)):
+                    apagar[a.id] = (a, None)
+                    continue
+                if e_endereco_da_loja({'street': rua}, a.customer.store):
                     apagar[a.id] = (a, None)
                     continue
                 vivos.append((a, rua))
