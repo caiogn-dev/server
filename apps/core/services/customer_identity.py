@@ -323,6 +323,68 @@ class CustomerIdentityService:
         return limpo or street.strip()
 
     @classmethod
+    def rua_sem_cauda(cls, street: str, *, numero: str = "", complemento: str = "",
+                      bairro: str = "", cidade: str = "", uf: str = "") -> str:
+        """Tira da rua a cópia do endereço formatado que foi colada nela.
+
+        O `formatted` é `rua, número, complemento - bairro, cidade, UF`. Quando
+        ele volta como `street` a rua ganha uma cópia inteira por pedido — a
+        Flávia (Cê Saladas) chegou a três: "Quadra 501 Sul Avenida NS 1, 9,
+        Recepção da ortolife , espaço life - Centro, Palmas, TO, 9, …".
+        `_tirar_cauda_de_rotulo` só conhecia ", cidade, UF".
+
+        Corta a partir da primeira ", <número>, " (ou ", <número>" no fim)
+        SÓ quando o que vem depois é feito das peças do próprio endereço.
+        "Alameda 9, Quadra 501 Sul" fica intacta: o número está no meio e o
+        resto não é complemento/bairro/cidade.
+        """
+        limpo = cls._tirar_cauda_de_rotulo(street or "", cidade, uf)
+        numero = (numero or "").strip()
+        if not limpo or not numero:
+            return limpo
+
+        # As peças quebradas pelos MESMOS separadores da cauda: complemento
+        # também tem vírgula ("Recepção da ortolife , espaço life").
+        separador = r"\s*(?:,| - | · | — )\s*"
+        pecas = {
+            cls.chave_de_texto(fatia)
+            for p in (numero, complemento, bairro, cidade, uf) if p and p.strip()
+            for fatia in re.split(separador, p) if fatia.strip()
+        }
+        marcador = f", {numero}"
+        inicio = 0
+        while True:
+            i = limpo.find(marcador, inicio)
+            if i <= 0:
+                return limpo
+            resto = limpo[i + 2:]
+            fatias = [f for f in re.split(separador, resto) if f.strip()]
+            if fatias and all(cls.chave_de_texto(f) in pecas for f in fatias):
+                return limpo[:i].rstrip(" ,") or limpo
+            inicio = i + 1
+
+    @staticmethod
+    def chave_de_texto(texto: str) -> str:
+        """Minúsculo, sem acento e com espaço único — para comparar, nunca para exibir."""
+        import unicodedata
+        sem_acento = "".join(
+            c for c in unicodedata.normalize("NFD", str(texto or "").lower())
+            if unicodedata.category(c) != "Mn"
+        )
+        return " ".join(sem_acento.split())
+
+    @classmethod
+    def chave_do_lugar(cls, street: str, number: str = "", complement: str = "") -> tuple:
+        """O que faz dois endereços serem o MESMO lugar: rua, número e complemento.
+
+        Sem maiúscula, acento e espaço sobrando — "SECRETARIA DA CIDADANIA E
+        JUSTICA" e "Secretaria da Cidadania e Justiça" são a mesma porta.
+        Bairro/cidade/CEP não entram: vêm vazios em metade dos pedidos e fariam
+        o mesmo lugar parecer outro.
+        """
+        return (cls.chave_de_texto(street), cls.chave_de_texto(number), cls.chave_de_texto(complement))
+
+    @classmethod
     def _build_address_record(cls, delivery_address: Optional[dict], store: Optional["Store"] = None) -> Optional[dict]:
         address = dict(delivery_address or {})
         cidade = str(address.get("city") or getattr(store, "city", "") or "").strip()
@@ -349,8 +411,11 @@ class CustomerIdentityService:
             numero = ""
 
         normalized = {
-            "street": cls._tirar_cauda_de_rotulo(
-                (address.get("street") or address.get("address") or "").strip(), cidade, uf
+            "street": cls.rua_sem_cauda(
+                (address.get("street") or address.get("address") or "").strip(),
+                numero=numero, complemento=complemento,
+                bairro=str(address.get("neighborhood") or "").strip(),
+                cidade=cidade, uf=uf,
             ),
             "number": numero,
             "complement": complemento,
@@ -475,11 +540,30 @@ class CustomerIdentityService:
 
         if normalized_address:
             from apps.stores.models import StoreCustomerAddress
-            existing = (
-                StoreCustomerAddress.objects
-                .filter(customer=store_customer, formatted=normalized_address["formatted"])
-                .first()
-            ) if normalized_address.get("formatted") else None
+            # Mesmo LUGAR, não mesmo texto: `formatted` idêntico deixava passar
+            # "SECRETARIA…" × "Secretaria…" e cada geração da rua empilhada.
+            chave = cls.chave_do_lugar(
+                normalized_address.get("street", ""),
+                normalized_address.get("number", ""),
+                normalized_address.get("complement", ""),
+            )
+            existing = next(
+                (
+                    a for a in StoreCustomerAddress.objects.filter(customer=store_customer)
+                    if cls.chave_do_lugar(
+                        cls.rua_sem_cauda(a.street, numero=a.number, complemento=a.complement,
+                                          bairro=a.neighborhood, cidade=a.city, uf=a.state),
+                        a.number, a.complement,
+                    ) == chave
+                ),
+                None,
+            ) if any(chave) else None
+            if existing and (existing.street != normalized_address.get("street", "")
+                             or existing.formatted != normalized_address.get("formatted", "")):
+                # A rua guardada pode ser uma geração empilhada: fica a limpa.
+                existing.street = normalized_address.get("street", "")
+                existing.formatted = normalized_address.get("formatted", "")
+                existing.save(update_fields=["street", "formatted"])
 
             if not existing:
                 StoreCustomerAddress.objects.filter(

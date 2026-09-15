@@ -101,8 +101,19 @@ def _extract_address_lines(order: StoreOrder) -> list[str]:
     if not isinstance(address, dict):
         return [str(address)]
 
+    # Pedido antigo pode ter a rua empilhada ("…NS 1, 9, Recepção…, Palmas,
+    # TO, 9, Recepção…"): a comanda imprimia o endereço três vezes.
+    from apps.core.services.customer_identity import CustomerIdentityService
+    rua = CustomerIdentityService.rua_sem_cauda(
+        str(address.get('rua') or address.get('street') or ''),
+        numero=str(address.get('numero') or address.get('number') or ''),
+        complemento=str(address.get('complemento') or address.get('complement') or ''),
+        bairro=str(address.get('bairro') or address.get('neighborhood') or ''),
+        cidade=str(address.get('cidade') or address.get('city') or ''),
+        uf=str(address.get('estado') or address.get('state') or ''),
+    )
     line1 = ', '.join(filter(None, [
-        address.get('rua') or address.get('street'),
+        rua,
         f"nº {address.get('numero') or address.get('number')}" if address.get('numero') or address.get('number') else '',
     ]))
     line2 = ' - '.join(filter(None, [
