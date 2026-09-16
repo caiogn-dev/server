@@ -1,6 +1,7 @@
 """
 Base store models - Store, StoreIntegration, StoreWebhook.
 """
+import re
 import uuid
 import logging
 from decimal import Decimal
@@ -65,6 +66,28 @@ def _validate_image_upload(file):
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+RE_DOMINIO = re.compile(
+    r'^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$'
+)
+
+
+def validar_dominio_proprio(valor):
+    """`custom_domain` é um hostname, não um campo de texto livre.
+
+    O primeiro cliente pago digitou o NOME da loja aqui ("solo & zelo") e o
+    campo aceitou. O estrago não aparece no painel: o comando de cardápio do
+    WhatsApp monta `https://{custom_domain}`, então o cliente final recebe um
+    link quebrado. Exigir pelo menos um ponto também recusa "cesaladas" solto,
+    que não resolve em lugar nenhum.
+    """
+    if valor in (None, ''):
+        return
+    if not RE_DOMINIO.match(str(valor).strip().lower()):
+        raise ValidationError(
+            'Informe só o domínio, sem http:// e sem barra — ex.: minhaloja.com.br'
+        )
 
 
 class Store(BaseModel):
@@ -192,6 +215,7 @@ class Store(BaseModel):
         blank=True,
         null=True,
         unique=True,
+        validators=[validar_dominio_proprio],
         help_text="Domínio próprio da loja (ex: cesaladas.com.br)",
     )
 
