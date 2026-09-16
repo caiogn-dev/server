@@ -151,6 +151,11 @@ class UnifiedUser(models.Model):
         if norm.startswith("55") and len(norm) > 11:
             local = norm[2:]
             candidates += [local, f"+{local}"]
+        # Com e sem o NONO DÍGITO: o WhatsApp entrega 556392338269 e o site
+        # grava 5563992338269. Sem isto cada porta criava um perfil — 69
+        # pessoas duplicadas em 15/set.
+        from apps.core.utils import phone_variants
+        candidates += list(phone_variants(digits))
         return list(dict.fromkeys(c for c in candidates if c))
 
     @classmethod
@@ -189,7 +194,11 @@ class UnifiedUser(models.Model):
         norm_phone = cls._normalize_phone(phone)
         if norm_phone:
             candidates = cls._phone_candidates(phone)
-            existing = cls.objects.filter(phone_number__in=candidates).first()
+            # Entre variantes, o perfil com login primeiro: é o que tem pedidos.
+            existing = next(iter(sorted(
+                cls.objects.filter(phone_number__in=candidates),
+                key=lambda u: u.django_user_id is None,
+            )), None)
             if existing:
                 cls._maybe_update(existing, email=norm_email, name=name, django_user=django_user)
                 return existing, False

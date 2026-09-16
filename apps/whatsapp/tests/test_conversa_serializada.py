@@ -68,8 +68,10 @@ def test_processa_mesmo_sem_conseguir_a_trava():
     msg = MagicMock()
     msg.conversation.id = 'conv-123'
 
+    # espera_s=0: o que se prova aqui é "sem trava, processa". Com o orçamento
+    # padrão o teste dormia os 45s inteiros — era o 2º mais lento da suíte.
     with patch('apps.whatsapp.services.webhook_service.acquire_lock', return_value=False):
-        with svc._conversa_serializada(msg) as obteve:
+        with svc._conversa_serializada(msg, espera_s=0) as obteve:
             assert obteve is False
 
 

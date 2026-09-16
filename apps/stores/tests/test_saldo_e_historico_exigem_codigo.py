@@ -64,7 +64,8 @@ def anonimo():
 def comprovado(db):
     """Quem fez o login por código: usuário autenticado com o número no perfil."""
     from apps.core.models import UserProfile
-    u = User.objects.create_user(username=f'cliente_{TELEFONE}', password='x')
+    # Como o OTP cria a conta: sem senha utilizável (ver telefone_comprovado).
+    u = User.objects.create_user(username=f'cliente_{TELEFONE}', password=None)
     perfil, _ = UserProfile.objects.get_or_create(user=u)
     perfil.phone = TELEFONE
     perfil.save()

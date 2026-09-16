@@ -406,7 +406,8 @@ def agent_node(state: AgentState, *, agent, langchain_service) -> dict:
         response: AIMessage = llm_bound.invoke(messages)
     except Exception:
         logger.exception("[AGENT] Erro ao invocar LLM")
-        response = AIMessage(content="Desculpa, tive um probleminha aqui. Pode repetir?")
+        from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+        response = AIMessage(content=MENSAGEM_DE_ERRO_DO_LLM)
 
     return {"messages": [response]}
 

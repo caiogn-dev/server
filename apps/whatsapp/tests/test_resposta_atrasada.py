@@ -98,3 +98,63 @@ def test_sinaliza_desistencia_so_depois_de_medir_se_a_thread_vive():
     pos_set = fonte.index('_desistiu.set()')
 
     assert pos_is_alive < pos_set, 'is_alive() tem que ser medido antes de sinalizar'
+
+
+def test_nao_entrega_o_aviso_de_erro_do_llm_que_chegou_tarde(servico):
+    """14/set: o NIM estourou o tempo, cada mensagem de uma rajada caiu no mesmo
+    erro, e o cliente recebeu "Desculpa, tive um probleminha" 2-3 vezes em 1s.
+
+    O aviso de erro não é resposta. Chegando depois do timeout, o fallback já
+    cuidou (ou vai cuidar) da conversa — mandar o aviso só acrescenta ruído.
+    """
+    from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+
+    msg = _mensagem(processed=False)
+    resposta = UnifiedResponse(content=MENSAGEM_DE_ERRO_DO_LLM, source=ResponseSource.LLM)
+
+    with patch('apps.whatsapp.tasks.send_agent_response') as envio, \
+         patch.object(WebhookService, '_conversa_ja_respondida_depois', return_value=False):
+        servico._enviar_resposta_atrasada(_evento(), msg, resposta)
+
+    envio.delay.assert_not_called()
+
+
+def test_nao_entrega_resposta_velha_se_a_conversa_ja_andou(servico):
+    """Rajada de 3 mensagens = 3 threads. Quando a 1ª resposta atrasada sai, as
+    outras duas são respostas a um momento da conversa que já passou."""
+    msg = _mensagem(processed=False)
+    resposta = UnifiedResponse(content='Oi! O molho vai à parte.', source=ResponseSource.LLM)
+
+    with patch('apps.whatsapp.tasks.send_agent_response') as envio, \
+         patch.object(WebhookService, '_conversa_ja_respondida_depois', return_value=True):
+        servico._enviar_resposta_atrasada(_evento(), msg, resposta)
+
+    envio.delay.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_conversa_ja_respondida_depois_olha_saida_mais_nova_na_mesma_conversa():
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from apps.conversations.models import Conversation
+    from apps.whatsapp.models import Message, WhatsAppAccount
+
+    conta = WhatsAppAccount.objects.create(name='Conta Rajada', phone_number_id='PH_RAJADA', waba_id='WABA_RAJADA')
+    conversa = Conversation.objects.create(account=conta, phone_number='5563999990001')
+    agora = timezone.now()
+    entrada = Message.objects.create(
+        account=conta, conversation=conversa, direction='inbound', message_type='text',
+        whatsapp_message_id='wamid.RAJ1', from_number='5563999990001', to_number='x', text_body='oi',
+    )
+    Message.objects.filter(pk=entrada.pk).update(created_at=agora - timedelta(seconds=60))
+    entrada.refresh_from_db()
+
+    assert WebhookService._conversa_ja_respondida_depois(entrada) is False
+
+    Message.objects.create(
+        account=conta, conversation=conversa, direction='outbound', message_type='text',
+        whatsapp_message_id='wamid.RAJ2', from_number='x', to_number='5563999990001', text_body='resposta',
+    )
+    assert WebhookService._conversa_ja_respondida_depois(entrada) is True

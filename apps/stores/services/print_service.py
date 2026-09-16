@@ -101,8 +101,19 @@ def _extract_address_lines(order: StoreOrder) -> list[str]:
     if not isinstance(address, dict):
         return [str(address)]
 
+    # Pedido antigo pode ter a rua empilhada ("…NS 1, 9, Recepção…, Palmas,
+    # TO, 9, Recepção…"): a comanda imprimia o endereço três vezes.
+    from apps.core.services.customer_identity import CustomerIdentityService
+    rua = CustomerIdentityService.rua_sem_cauda(
+        str(address.get('rua') or address.get('street') or ''),
+        numero=str(address.get('numero') or address.get('number') or ''),
+        complemento=str(address.get('complemento') or address.get('complement') or ''),
+        bairro=str(address.get('bairro') or address.get('neighborhood') or ''),
+        cidade=str(address.get('cidade') or address.get('city') or ''),
+        uf=str(address.get('estado') or address.get('state') or ''),
+    )
     line1 = ', '.join(filter(None, [
-        address.get('rua') or address.get('street'),
+        rua,
         f"nº {address.get('numero') or address.get('number')}" if address.get('numero') or address.get('number') else '',
     ]))
     line2 = ' - '.join(filter(None, [
@@ -382,6 +393,17 @@ def _preparo_do_item(item) -> list[str]:
     )
 
 
+def _troco_da_comanda(order: StoreOrder) -> dict:
+    from apps.stores.services.troco import troco_a_levar
+    change_for = getattr(order, 'change_for', None)
+    if change_for is None:
+        return {'change_for': None, 'change_due': None}
+    return {
+        'change_for': _money(change_for),
+        'change_due': _money(troco_a_levar(change_for, order.total)),
+    }
+
+
 def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:
     # Combos ligados a uma linha de item são pulados no loop de combos abaixo
     # (evita duplicar a linha), então os sabores escolhidos precisam entrar
@@ -485,6 +507,9 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'customer_notes': order.customer_notes or '',
             'internal_notes': order.internal_notes or '',
             'delivery_notes': order.delivery_notes or '',
+            # Troco do dinheiro. `None` = ninguém perguntou; '0.00' = cliente
+            # disse que não precisa; senão "troco para" e quanto levar.
+            **_troco_da_comanda(order),
         },
         'customer': {
             'name': order.customer_name,

@@ -30,8 +30,7 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = NutritionIngredient.objects.filter(is_active=True)
-        if not self.request.user.is_superuser:
-            qs = qs.filter(Q(store__isnull=True) | stores_for(self.request.user)).distinct()
+        qs = qs.filter(Q(store__isnull=True) | stores_for(self.request.user)).distinct()
         store = self.request.query_params.get("store")
         category = self.request.query_params.get("category")
         # `escopo` separa o que é da loja do catálogo oficial. Sem isso os ~70
@@ -89,8 +88,7 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
         loja_id = request.data.get("store")
         if not loja_id:
             return Response({"detail": "Informe a loja que vai adotar o ingrediente."}, status=400)
-        if not Store.objects.filter(Q(pk=loja_id) & (Q(owner=request.user) | Q(staff=request.user))).exists() \
-                and not request.user.is_superuser:
+        if not Store.objects.filter(Q(pk=loja_id) & (Q(owner=request.user) | Q(staff=request.user))).exists():
             raise PermissionDenied("Loja não pertence a você.")
 
         copia = NutritionIngredient.objects.filter(
@@ -144,8 +142,7 @@ class ProductRecipeViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAuthenticated,)
     def get_queryset(self):
         qs = ProductRecipe.objects.select_related("product", "product__store").prefetch_related("items__ingredient")
-        if not self.request.user.is_superuser:
-            qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
+        qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
 
@@ -172,8 +169,7 @@ class ProductNutritionProfileViewSet(viewsets.ModelViewSet):
     permission_classes = (IsAuthenticated,)
     def get_queryset(self):
         qs = ProductNutritionProfile.objects.select_related("product", "recipe")
-        if not self.request.user.is_superuser:
-            qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
+        qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
 

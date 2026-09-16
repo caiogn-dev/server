@@ -180,6 +180,16 @@ def dispatch_order_to_toca_delivery(self, order_id: str):
     if not isinstance(provider, TocaDeliveryProvider):
         return
 
+    # Uma corrida por pedido. `acks_late` + retry + duas confirmações seguidas
+    # podem rodar esta tarefa em paralelo, e a checagem de
+    # `external_delivery_id` acima não enxerga a corrida que outra execução
+    # ainda está criando — o entregador era chamado (e cobrado) duas vezes.
+    from django.core.cache import cache
+    trava = f'toca_dispatch:{order_id}'
+    if not cache.add(trava, 1, timeout=600):
+        logger.info('dispatch_order_to_toca_delivery: order %s already being dispatched, skipping', order_id)
+        return
+
     try:
         result = provider.create(store, order)
         StoreOrder.objects.filter(id=order_id).update(
@@ -195,6 +205,8 @@ def dispatch_order_to_toca_delivery(self, order_id: str):
         )
     except DeliveryProviderError as exc:
         logger.error('dispatch_order_to_toca_delivery: failed for order %s: %s', order_id, exc)
+        # A corrida não foi criada: libera para o retry tentar de novo.
+        cache.delete(trava)
         raise self.retry(exc=exc)
 
 

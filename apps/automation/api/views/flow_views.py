@@ -127,11 +127,10 @@ class FlowSessionViewSet(viewsets.ReadOnlyModelViewSet):
         user = self.request.user
         
         # Security filter
-        if not user.is_superuser:
-            queryset = queryset.filter(
-                Q(flow__store__owner=user) | 
-                Q(flow__store__staff=user)
-            ).distinct()
+        queryset = queryset.filter(
+            Q(flow__store__owner=user) | 
+            Q(flow__store__staff=user)
+        ).distinct()
         
         # Filter by flow
         flow_id = self.request.query_params.get('flow_id')
@@ -154,11 +153,10 @@ class FlowExecutionLogViewSet(viewsets.ReadOnlyModelViewSet):
         user = self.request.user
         
         # Security filter
-        if not user.is_superuser:
-            queryset = queryset.filter(
-                Q(flow__store__owner=user) | 
-                Q(flow__store__staff=user)
-            ).distinct()
+        queryset = queryset.filter(
+            Q(flow__store__owner=user) | 
+            Q(flow__store__staff=user)
+        ).distinct()
         
         # Filter by flow
         flow_id = self.request.query_params.get('flow_id')

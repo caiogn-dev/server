@@ -81,13 +81,12 @@ class UnifiedProcessView(APIView):
         
         try:
             account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
-            if not request.user.is_superuser:
-                from django.db.models import Q as _Q
-                account_qs = account_qs.filter(
-                    _Q(owner=request.user) |
-                    _Q(stores__owner=request.user) |
-                    _Q(stores__staff=request.user)
-                )
+            from django.db.models import Q as _Q
+            account_qs = account_qs.filter(
+                _Q(owner=request.user) |
+                _Q(stores__owner=request.user) |
+                _Q(stores__staff=request.user)
+            )
             account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:
             return Response(
@@ -158,13 +157,12 @@ class UnifiedStatsView(APIView):
         
         try:
             account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
-            if not request.user.is_superuser:
-                from django.db.models import Q as _Q
-                account_qs = account_qs.filter(
-                    _Q(owner=request.user) |
-                    _Q(stores__owner=request.user) |
-                    _Q(stores__staff=request.user)
-                )
+            from django.db.models import Q as _Q
+            account_qs = account_qs.filter(
+                _Q(owner=request.user) |
+                _Q(stores__owner=request.user) |
+                _Q(stores__staff=request.user)
+            )
             account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:
             return Response(

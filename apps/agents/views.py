@@ -131,10 +131,10 @@ class AgentViewSet(viewsets.ModelViewSet):
         if slug:
             from apps.stores.models import Store
 
-            qs = Store.objects.all()
-            # Escopo do dono: informar um slug não pode abrir o catálogo alheio.
-            if not request.user.is_superuser:
-                qs = qs.filter(owner=request.user)
+            from apps.core.permissions import accessible_store_ids
+
+            # Escopo de vínculo: informar um slug não pode abrir o catálogo alheio.
+            qs = Store.objects.filter(id__in=accessible_store_ids(request.user))
             loja = qs.filter(slug=slug).first() or qs.filter(id=slug).first() if _uuid_ok(slug) else qs.filter(slug=slug).first()
             if not loja:
                 return Response(

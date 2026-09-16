@@ -188,6 +188,7 @@ class StoreCustomer(BaseModel):
         from apps.core.models import UserProfile
         from apps.core.services.customer_identity import CustomerIdentityService
         from .order import StoreOrder
+        from apps.stores.metrics import soma_de_venda
 
         phones = set()
         for value in [self.phone, self.whatsapp]:
@@ -221,7 +222,8 @@ class StoreCustomer(BaseModel):
 
         stats = paid_orders.aggregate(
             total_orders=Count('id'),
-            total_spent=Sum('total')
+            # Gasto sem frete — ver apps.stores.metrics.valor_de_venda.
+            total_spent=soma_de_venda()
         )
 
         self.total_orders = stats['total_orders'] or 0

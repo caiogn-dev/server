@@ -249,6 +249,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             'cancelados': resumo['cancelados'],
             'pedidos_faturados': resumo['pedidos_faturados'],
             'faturamento': f"{resumo['receita']:.2f}",
+            'frete': f"{resumo['frete']:.2f}",
             'ticket_medio': f'{ticket:.2f}' if ticket is not None else None,
             'por_pagamento': [
                 {**linha, 'total': f"{linha['total']:.2f}"}
@@ -261,8 +262,10 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             # A régua junto do número: sem isto ninguém sabe por que o
             # faturamento é menor que a soma visível das linhas.
             'definicoes': {
-                'faturamento': 'soma dos pedidos pagos, sem cancelados e sem pedidos de teste',
-                'ticket_medio': 'faturamento ÷ pedidos que faturaram',
+                'faturamento': 'soma dos pedidos pagos, sem frete, sem cancelados e sem pedidos de teste',
+                'ticket_medio': 'faturamento (sem frete) ÷ pedidos que faturaram',
+                'frete': 'repasse ao entregador dos pedidos que faturaram — não é venda da loja',
+                'por_pagamento': 'dinheiro recebido por forma de pagamento, com frete — confere com caixa e extrato',
                 'periodo': 'pela data de entrada do pedido, no fuso da loja',
             },
         })
@@ -711,6 +714,60 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
 
         return Response(StoreOrderSerializer(order).data)
 
+    @action(detail=True, methods=['post'], url_path='registrar-pagamento')
+    def registrar_pagamento(self, request, pk=None, **kwargs):
+        """Registra dinheiro recebido fora do sistema (espécie, maquininha, PIX direto).
+
+        Body: `payment_method` (cash|debit_card|credit_card|pix|voucher|other),
+        `amount` (opcional — padrão é o que falta), `idempotency_key` e
+        `observacao` opcionais. 201 quando registra; 200 quando a mesma chave já
+        tinha sido registrada (duplo clique). Ver `registro_de_pagamento`.
+        """
+        from apps.stores.services.registro_de_pagamento import (
+            RegistroRecusado, registrar_pagamento,
+        )
+
+        order = self.get_object()  # escopo de loja/permissão
+        try:
+            resultado = registrar_pagamento(
+                order.pk, request.user,
+                metodo=(request.data.get('payment_method') or '').strip(),
+                valor=request.data.get('amount'),
+                chave_idempotencia=request.data.get('idempotency_key') or '',
+                observacao=request.data.get('observacao') or '',
+            )
+        except RegistroRecusado as exc:
+            return Response({'error': exc.mensagem, 'code': exc.code},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        pedido = resultado.pedido
+        if resultado.criado:
+            logger.info(
+                'Pagamento manual de %s (%s) registrado no pedido %s por %s',
+                resultado.cobranca.amount, resultado.cobranca.payment_method,
+                pedido.order_number, request.user.pk,
+            )
+            if pedido.payment_status == StoreOrder.PaymentStatus.PAID:
+                self._credit_loyalty(pedido)
+            self._notify_order_update(
+                pedido, 'order.paid' if resultado.quitou else 'order.updated')
+
+        cobranca = resultado.cobranca
+        return Response(
+            {
+                'order': StoreOrderSerializer(pedido).data,
+                'payment': {
+                    'id': str(cobranca.id),
+                    'amount': str(cobranca.amount),
+                    'payment_method': cobranca.payment_method,
+                    'status': cobranca.status,
+                    'paid_at': cobranca.paid_at.isoformat() if cobranca.paid_at else None,
+                    'registro_manual': cobranca.metadata.get('registro_manual', {}),
+                },
+            },
+            status=status.HTTP_201_CREATED if resultado.criado else status.HTTP_200_OK,
+        )
+
     @action(detail=True, methods=['post'], url_path='recalcular-fidelidade')
     def recalcular_fidelidade(self, request, pk=None, **kwargs):
         """Recalcula os selos deste pedido pelas regras atuais da loja.
@@ -942,7 +999,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 inicio=janela.inicio if janela else None,
                 fim=janela.fim if janela else None,
             )
-            return qs.aggregate(t=Sum('total'))['t'] or 0
+            # Sem frete: frete é repasse ao entregador, não venda.
+            return qs.aggregate(t=metrics.soma_de_venda())['t'] or 0
 
         def _comparar(janela, rotulo):
             """Variação contra o período anterior.
@@ -978,6 +1036,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             # diferente do resto do painel. Ver `_receita()` acima.
             # metrics-ok: valor PENDENTE — explicitamente o que ainda nao e
             # receita. O card do painel mostra isso como "a receber".
+            # Fica com `total` (frete incluso): é o que o cliente ainda vai pagar.
             revenue_pending=Sum('total', filter=Q(payment_status='pending')),
 
             # Counts por payment_status (o painel de pagamentos precisa do
@@ -1057,7 +1116,7 @@ def _anotar_crm(qs):
     mesmo pedido várias vezes. Continua sendo UMA query para a lista inteira.
     """
     from django.db.models import OuterRef, Subquery
-    from apps.stores.metrics import eixo_de_receita, pedidos_de_receita
+    from apps.stores.metrics import eixo_de_receita, pedidos_de_receita, soma_de_venda
 
     # `customer` é a FK do pedido para auth.User; `StoreCustomer.user` é o
     # mesmo User visto do lado do perfil da loja.
@@ -1067,7 +1126,8 @@ def _anotar_crm(qs):
 
     return qs.annotate(
         _gasto_real=Subquery(
-            do_cliente.values('customer').annotate(t=Sum('total')).values('t')[:1]
+            # Gasto sem frete: o frete foi para o entregador, não para a loja.
+            do_cliente.values('customer').annotate(t=soma_de_venda()).values('t')[:1]
         ),
         _pedidos_reais=Subquery(
             do_cliente.values('customer').annotate(n=Count('id')).values('n')[:1]

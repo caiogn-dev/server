@@ -172,12 +172,13 @@ class StoreService:
         from apps.stores import metrics
 
         paid_orders = metrics.pedidos_de_receita(queryset=orders)
-        total_revenue = paid_orders.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
+        # Sem frete (repasse ao entregador) — ver metrics.valor_de_venda.
+        total_revenue = paid_orders.aggregate(total=metrics.soma_de_venda())['total'] or Decimal('0.00')
         revenue_today = metrics.totais(store, metrics.hoje())['receita']
         revenue_this_week = metrics.totais(store, metrics.ultimos_dias(8))['receita']
         revenue_this_month = metrics.totais(store, metrics.ultimos_dias(31))['receita']
 
-        avg_order_value = paid_orders.aggregate(avg=Avg('total'))['avg'] or Decimal('0.00')
+        avg_order_value = paid_orders.aggregate(avg=metrics.media_de_venda())['avg'] or Decimal('0.00')
         
         # Product stats
         products = StoreProduct.objects.filter(store=store)

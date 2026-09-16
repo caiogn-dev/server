@@ -130,12 +130,24 @@ class IsOwnerOrReadOnly(permissions.BasePermission):
         return False
 
 
+class IsSuperUser(permissions.BasePermission):
+    """Somente superusers têm acesso.
+
+    Usar em rotas cross-tenant onde is_staff NÃO é suficiente — convenção do
+    projeto: acesso a dados de todos os tenants exige is_superuser, nunca
+    is_staff (que apenas libera o /admin do Django).
+    """
+
+    def has_permission(self, request: Request, view: View) -> bool:
+        return bool(request.user and request.user.is_superuser)
+
+
 class IsSuperUserOrReadOnly(permissions.BasePermission):
     """
     Permission that allows read-only access to anyone,
     but only superusers can modify.
     """
-    
+
     def has_permission(self, request: Request, view: View) -> bool:
         if request.method in permissions.SAFE_METHODS:
             return True
@@ -300,19 +312,21 @@ def accessible_whatsapp_account_ids(user):
     """
     Return a QuerySet of WhatsApp account IDs the user can access.
 
-    Acesso vem de vínculo (conta própria ou conta de uma loja onde o usuário
-    entra como owner/staff). Nenhuma flag de conta abre cross-tenant: conversa
-    de WhatsApp carrega telefone e texto do cliente final de outra loja.
+    Acesso vem de vínculo: conta própria ou conta de uma loja acessível (owner,
+    staff M2M ou StoreTeamMember). Nenhuma flag de conta abre cross-tenant:
+    conversa de WhatsApp carrega telefone e texto do cliente final de outra loja.
     """
     from django.db.models import Q
     from apps.whatsapp.models import WhatsAppAccount
     qs = WhatsAppAccount.objects.filter(is_active=True)
+    # Mesma régua de accessible_store_ids (inclui StoreTeamMember). Sem isso o
+    # gerente cadastrado só pelo sistema de papéis perdia o inbox/SSE/export da
+    # loja assim que esses caminhos passaram a ser escopados por conta.
+    store_ids = accessible_store_ids(user)
     return qs.filter(
         Q(owner=user) |
-        Q(stores__owner=user) |
-        Q(stores__staff=user) |
-        Q(company_profile__store__owner=user) |
-        Q(company_profile__store__staff=user)
+        Q(stores__id__in=store_ids) |
+        Q(company_profile__store__id__in=store_ids)
     ).distinct().values_list('id', flat=True)
 
 
@@ -321,6 +335,7 @@ __all__ = [
     'IsStoreStaff',
     'HasStoreAccess',
     'IsOwnerOrReadOnly',
+    'IsSuperUser',
     'IsSuperUserOrReadOnly',
     'ReadOnly',
     'IsWhatsAppAccountOwner',

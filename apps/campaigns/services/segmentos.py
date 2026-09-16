@@ -32,7 +32,6 @@ from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional
 
 from django.db import models
-from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .contatos import chave_do_telefone
@@ -64,7 +63,7 @@ PEDIDOS_OCASIONAL = 2
 #: A função vem do núcleo com o nome dele: quem lê aqui deve reconhecer de
 #: onde a regra veio, e um apelido local só criaria um segundo vocabulário
 #: para a mesma coisa.
-from apps.stores.metrics.definicoes import pedidos_de_receita  # noqa: E402
+from apps.stores.metrics.definicoes import pedidos_de_receita, soma_de_venda  # noqa: E402
 
 
 class Recencia:
@@ -149,7 +148,7 @@ def perfis_por_telefone(store_ids: Iterable[Any]) -> Dict[str, dict]:
         .values('customer_phone')
         .annotate(
             pedidos=models.Count('id'),
-            gasto=Coalesce(models.Sum('total'), Decimal('0')),
+            gasto=soma_de_venda(),  # sem frete: frete é repasse ao entregador
             ultima=models.Max('created_at'),
         )
     )

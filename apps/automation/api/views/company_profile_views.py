@@ -38,16 +38,15 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
 
-        if not user.is_superuser:
-            from django.db.models import Q
-            from apps.stores.models import Store
-            account_ids = accessible_whatsapp_account_ids(user)
-            owned_store_ids = Store.objects.filter(
-                Q(owner=user) | Q(staff=user)
-            ).values_list('id', flat=True)
-            queryset = queryset.filter(
-                Q(account_id__in=account_ids) | Q(store_id__in=owned_store_ids)
-            ).distinct()
+        from django.db.models import Q
+        from apps.stores.models import Store
+        account_ids = accessible_whatsapp_account_ids(user)
+        owned_store_ids = Store.objects.filter(
+            Q(owner=user) | Q(staff=user)
+        ).values_list('id', flat=True)
+        queryset = queryset.filter(
+            Q(account_id__in=account_ids) | Q(store_id__in=owned_store_ids)
+        ).distinct()
 
         # Filter by account if provided
         account_id = self.request.query_params.get('account_id')
@@ -100,10 +99,9 @@ class CompanyProfileViewSet(viewsets.ModelViewSet):
 
                 # Tenant gate: a conta WhatsApp deve pertencer ao tenant do usuário.
                 # Sem isso, qualquer autenticado buscava dados de contas alheias.
-                if not request.user.is_superuser:
-                    accessible_ids = accessible_whatsapp_account_ids(request.user)
-                    if account.id not in accessible_ids:
-                        return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
+                accessible_ids = accessible_whatsapp_account_ids(request.user)
+                if account.id not in accessible_ids:
+                    return Response({'error': 'Store not found'}, status=status.HTTP_404_NOT_FOUND)
 
                 # Look for store with matching whatsapp_number
                 store = Store.objects.filter(

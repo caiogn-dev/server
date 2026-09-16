@@ -99,6 +99,14 @@ def normalizar(bruto, *, loja=None) -> dict:
     cidade = _texto(bruto.get('city')) or _texto(getattr(loja, 'city', ''))
     estado = _uf(bruto.get('state')) or _uf(getattr(loja, 'state', ''))
 
+    # Rua empilhada (cópia do `formatted` colada nela a cada pedido) volta a
+    # ser rua — mesma regra do cadastro da loja.
+    from apps.core.services.customer_identity import CustomerIdentityService
+    rua = CustomerIdentityService.rua_sem_cauda(
+        rua, numero=_texto(bruto.get('number')), complemento=_texto(bruto.get('complement')),
+        bairro=_texto(bruto.get('neighborhood')), cidade=cidade, uf=estado,
+    )
+
     return {
         'street': rua[:255],
         'number': _texto(bruto.get('number'))[:20],
@@ -126,6 +134,17 @@ def _mesma_porta(dados: dict) -> dict:
     }
 
 
+def e_endereco_da_loja(dados: dict, loja) -> bool:
+    """O endereço é o da própria loja? (rua comparada sem maiúscula/acento)."""
+    endereco_da_loja = (getattr(loja, 'address', '') or '').strip()
+    if not endereco_da_loja:
+        return False
+    from apps.core.services.customer_identity import CustomerIdentityService as CIS
+    rua = CIS.chave_de_texto(dados.get('street', ''))
+    loja_chave = CIS.chave_de_texto(endereco_da_loja)
+    return bool(rua) and (rua == loja_chave or loja_chave.startswith(rua) and len(rua) >= 12)
+
+
 def guardar_endereco_do_pedido(order):
     """Salva o endereço do pedido no caderno do cliente. Idempotente.
 
@@ -150,8 +169,16 @@ def _guardar(order):
     if not telefone:
         return None
 
+    # Retirada leva o endereço DA LOJA no pedido — não é endereço do cliente.
+    # Guardar isso fazia o PDV sugerir a própria loja como entrega (26 casos
+    # no caderno em 15/set).
+    if (getattr(order, 'delivery_method', '') or '').lower() == 'pickup':
+        return None
+
     dados = normalizar(getattr(order, 'delivery_address', None), loja=order.store)
     if not dados:
+        return None
+    if e_endereco_da_loja(dados, order.store):
         return None
 
     # Mesma resolução de telefone que o signal de estatísticas já usa — o
@@ -165,9 +192,24 @@ def _guardar(order):
         # Pedido de balcão de quem nunca se cadastrou. Normal.
         return None
 
-    existente = UserAddress.objects.filter(
-        unified_user=cliente, tenant=order.store, **_mesma_porta(dados),
-    ).first()
+    # Mesmo LUGAR (sem maiúscula/acento, rua desempilhada), não mesmo texto:
+    # o `iexact` deixava cada geração da rua empilhada virar endereço novo.
+    from apps.core.services.customer_identity import CustomerIdentityService as CIS
+    chave = CIS.chave_do_lugar(dados['street'], dados['number'], dados['complement'])
+    existente = next(
+        (
+            a for a in UserAddress.objects.filter(unified_user=cliente, tenant=order.store)
+            if CIS.chave_do_lugar(
+                CIS.rua_sem_cauda(a.street, numero=a.number, complemento=a.complement,
+                                  bairro=a.neighborhood, cidade=a.city, uf=a.state),
+                a.number, a.complement,
+            ) == chave
+        ),
+        None,
+    )
+    if existente is not None and existente.street != dados['street']:
+        existente.street = dados['street']
+        existente.save(update_fields=['street'])
     if existente is not None:
         # Coordenada pode ter chegado depois (o primeiro pedido às vezes vem
         # sem pin). Completar o que falta vale; sobrescrever o que já existe não.

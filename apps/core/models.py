@@ -129,6 +129,13 @@ class UserProfile(models.Model):
     #: os canais mudam, e cada uma como coluna vira migração para trocar um
     #: rótulo. O que o backend HONRA está documentado onde é lido.
     preferences = models.JSONField(default=dict, blank=True)
+    #: Número COMPROVADO pelo código do WhatsApp — a única prova de posse.
+    #:
+    #: `phone` não serve: o próprio cliente grava o que quiser nele
+    #: (PATCH /auth/profile/, cadastro, checkout logado). Este campo só é
+    #: escrito por verify_whatsapp_auth_code e é o que `telefone_comprovado`
+    #: lê para liberar saldo, carteira e histórico com endereço.
+    telefone_verificado = models.CharField(max_length=20, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

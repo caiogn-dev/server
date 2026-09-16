@@ -67,3 +67,46 @@ class MessageEchoTest(TestCase):
         self.service.process_webhook(echo_payload(), headers={})
         depois = WebhookEvent.objects.filter(event_type=WebhookEvent.EventType.MESSAGE).count()
         self.assertEqual(depois, antes, 'eco do WhatsApp não pode virar WebhookEvent de mensagem')
+
+
+class EcoNaConversaCanonicaTest(TestCase):
+    """O eco não pode abrir uma segunda conversa por causa do nono dígito.
+
+    Produção (set/2026): 12 clientes com duas conversas na mesma conta em 10
+    dias. Ex.: `5563984409679` (a real, com mensagens do cliente) e
+    `556384409679`, criada minutos depois só com outbound text/reaction/
+    revoke/edit/video — o eco do que a loja digitou no app Business. A Meta
+    manda o `to` sem o 9 e o eco fazia `get_or_create` com o número cru.
+    """
+
+    def setUp(self):
+        self.account = WhatsAppAccount.objects.create(
+            name='Conta Echo 9', phone_number_id='PHECHO', waba_id='WABA1',
+        )
+        self.service = WebhookService()
+
+    def _eco(self, para, wamid='wamid.ECO9'):
+        payload = echo_payload(msg_id=wamid)
+        payload['entry'][0]['changes'][0]['value']['message_echoes'][0]['to'] = para
+        return payload
+
+    def test_eco_sem_o_nove_cai_na_conversa_que_tem_o_nove(self):
+        real = Conversation.objects.create(account=self.account, phone_number='5563984409679')
+        Message.objects.create(
+            account=self.account, conversation=real, whatsapp_message_id='wamid.IN1',
+            direction='inbound', message_type='text', from_number='5563984409679',
+            to_number='556399990000', text_body='oi',
+        )
+
+        self.service.process_webhook(self._eco('556384409679'), headers={})
+
+        msg = Message.objects.get(whatsapp_message_id='wamid.ECO9')
+        self.assertEqual(msg.conversation_id, real.id)
+        self.assertEqual(Conversation.objects.filter(account=self.account).count(), 1)
+
+    def test_sem_conversa_cria_com_o_telefone_normalizado(self):
+        self.service.process_webhook(self._eco('556384409679'), headers={})
+
+        conversas = list(Conversation.objects.filter(account=self.account))
+        self.assertEqual(len(conversas), 1)
+        self.assertEqual(conversas[0].phone_number, '5563984409679')

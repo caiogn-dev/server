@@ -28,7 +28,7 @@ def limpar_dominios_invalidos(apps_registry, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('stores', '0081_banners_do_cardapio'),
+        ('stores', '0082_troco_e_preparo'),
     ]
 
     operations = [

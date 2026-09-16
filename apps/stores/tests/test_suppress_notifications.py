@@ -16,7 +16,7 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.stores.models import Store, StoreOrder, StoreProduct
 
@@ -45,6 +45,9 @@ def _make_order(store, **extra):
     )
 
 
+# O envio por template usa a mensagem automática que o post_save da loja
+# semeia; a suíte desliga o seed por padrão (settings/test.py).
+@override_settings(AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA=True)
 class SuppressNotificationTaskTest(TestCase):
     """A task de notificação respeita metadata.suppress_notifications."""
 

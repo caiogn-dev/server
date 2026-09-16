@@ -10,13 +10,14 @@ import uuid as uuid_module
 
 from django.core.exceptions import PermissionDenied
 from django.db.models import Prefetch, Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.stores.models import Store, StoreTeamMember
+from apps.stores.models import Store, StoreTeamMember, StoreOrder, StoreCustomer
 from apps.stores.permissions import has_store_permission, get_member_role
 from apps.users.models import UnifiedUser, UserAddress
 from ..crm_serializers import (
@@ -71,6 +72,12 @@ class CustomerSearchView(APIView):
         users = (
             UnifiedUser.objects
             .filter(Q(name__icontains=q) | Q(phone_number__icontains=q))
+            .filter(
+                Q(store_customers__store=store)
+                | Q(addresses__tenant=store)
+                | Q(django_user__store_orders__store=store)
+            )
+            .distinct()
             .prefetch_related(
                 Prefetch(
                     'addresses',
@@ -111,6 +118,9 @@ class CustomerAddressViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         store = self._get_store()
+        from apps.core.permissions import user_can_access_store
+        if not user_can_access_store(self.request.user, store):
+            raise Http404
         user = self._get_unified_user()
         return UserAddress.objects.filter(unified_user=user, tenant=store)
 
@@ -166,6 +176,9 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         store = self._get_store()
+        from apps.core.permissions import user_can_access_store
+        if not user_can_access_store(self.request.user, store):
+            raise Http404
         return StoreTeamMember.objects.filter(
             tenant=store,
             is_active=True,

@@ -16,6 +16,7 @@ from rest_framework.response import Response
 from itertools import combinations
 
 from apps.automation.models import CustomerSession
+from apps.stores.metrics import media_de_venda, soma_de_venda, valor_de_venda
 from ..models import (
     StoreCashMovement,
     StoreCashSession,
@@ -104,7 +105,7 @@ class HeatmapReportView(BaseAnalyticsView):
                 hr=ExtractHour('created_at', tzinfo=tz),
             )
             .values('wd', 'hr')
-            .annotate(orders=Count('id'), revenue=Sum('total'))
+            .annotate(orders=Count('id'), revenue=soma_de_venda())
             .order_by('wd', 'hr')
         )
         cells = [
@@ -183,7 +184,9 @@ class ChannelsReportView(BaseAnalyticsView):
 
         # Coluna `source` (BI Fase 2) — indexada; '' só em legado sem backfill
         by_channel = defaultdict(lambda: {'orders': 0, 'revenue': Decimal('0')})
-        for source, metadata_source, total in qs.values_list('source', 'metadata__source', 'total'):
+        # Venda sem frete (repasse ao entregador) — metrics.valor_de_venda.
+        vendas = qs.annotate(_venda=valor_de_venda())
+        for source, metadata_source, total in vendas.values_list('source', 'metadata__source', '_venda'):
             channel = source or _map_channel(metadata_source)
             if channel == 'whatsapp':
                 channel = 'bot'  # nome do canal na API/painel
@@ -206,7 +209,7 @@ class ChannelsReportView(BaseAnalyticsView):
             # `qs` e paid_orders() — ja passou pelo nucleo la em cima.
             rows = (
                 qs.values(field)
-                .annotate(orders=Count('id'), revenue=Sum('total'), avg_ticket=Avg('total'))
+                .annotate(orders=Count('id'), revenue=soma_de_venda(), avg_ticket=media_de_venda())
                 .order_by('-revenue')
             )
             return [
@@ -388,6 +391,8 @@ class FinanceReportView(BaseAnalyticsView):
             gross=Sum('amount'), fees=Sum('fee'), net=Sum('net_amount'), refunded=Sum('refunded_amount'),
         )
         # Sem gateway não há taxa: entra igual no bruto e no líquido.
+        # Relatório FINANCEIRO (dinheiro que entrou): soma `total`, com frete,
+        # para bater com o bruto do gateway, que também cobra o frete.
         summary['gross'] = (summary['gross'] or 0) + sem_gateway['total']
         summary['net'] = (summary['net'] or 0) + sem_gateway['total']
 
@@ -483,6 +488,7 @@ class FinanceReportView(BaseAnalyticsView):
         qs = metrics.pedidos_de_receita(
             loja=store, inicio=start, fim=end,
         ).filter(payments__isnull=True)
+        # Com frete (dinheiro recebido), igual ao bruto do gateway — não é venda.
         agg = qs.aggregate(total=_Sum('total'), pedidos=Count('id'))
         return {
             'total': agg['total'] or 0,
@@ -675,7 +681,8 @@ class OverviewReportView(BaseAnalyticsView):
         # `payment_status='paid'` sozinho conta venda cancelada depois do
         # pagamento e pedido de teste do dono — a nota da loja saía inflada.
         paid = self.paid_orders(store, start, end)
-        agg = paid.aggregate(orders=Count('id'), revenue=Sum('total'), avg_ticket=Avg('total'))
+        # Sem frete: frete é repasse ao entregador, não venda.
+        agg = paid.aggregate(orders=Count('id'), revenue=soma_de_venda(), avg_ticket=media_de_venda())
         total = all_orders.count()
         cancelled = all_orders.filter(status__in=('cancelled', 'failed', 'refunded')).count()
 
@@ -831,7 +838,8 @@ class CouponsReportView(BaseAnalyticsView):
         qs = self.paid_orders(store, start, end)
         total_orders = qs.count()
         coupons = defaultdict(lambda: {'orders': 0, 'discount': Decimal('0'), 'revenue': Decimal('0')})
-        for code, discount, total in qs.exclude(coupon_code='').values_list('coupon_code', 'discount', 'total'):
+        vendas = qs.exclude(coupon_code='').annotate(_venda=valor_de_venda())
+        for code, discount, total in vendas.values_list('coupon_code', 'discount', '_venda'):
             key = (code or '').strip().upper()
             if not key:
                 continue
@@ -897,27 +905,24 @@ class CancellationsReportView(BaseAnalyticsView):
         qs = StoreOrder.objects.filter(store=store, created_at__date__range=(start, end))
         total_orders = qs.count()
         cancelled = qs.filter(status__in=('cancelled', 'failed', 'refunded'))
-        # metrics-ok: `lost` e receita PERDIDA — o oposto de faturamento.
-        # Passar pelo nucleo aqui zeraria o numero, que e justamente o dado.
-        agg = cancelled.aggregate(count=Count('id'), lost=Sum('total'))
+        # `lost` e venda PERDIDA — o oposto de faturamento, sem frete (o frete
+        # não era da loja). Passar pelo nucleo zeraria o numero, que e o dado.
+        agg = cancelled.aggregate(count=Count('id'), lost=soma_de_venda())
         timeline = [
             {'date': r['day'], 'cancelled': r['count'], 'lost_value': _round2(r['lost'])}
             for r in cancelled.annotate(day=TruncDate('created_at'))
             .values('day')
-            # metrics-ok: receita perdida de cancelados, nao faturamento.
-            .annotate(count=Count('id'), lost=Sum('total'))
+            .annotate(count=Count('id'), lost=soma_de_venda())
             .order_by('day')
         ]
         by_status = [
             {'status': r['status'], 'count': r['count'], 'lost_value': _round2(r['lost'])}
-            # metrics-ok: receita perdida por status de cancelamento.
-            for r in cancelled.values('status').annotate(count=Count('id'), lost=Sum('total')).order_by('-count')
+            for r in cancelled.values('status').annotate(count=Count('id'), lost=soma_de_venda()).order_by('-count')
         ]
         by_reason = [
             {'reason': r['cancel_reason'], 'count': r['count'], 'lost_value': _round2(r['lost'])}
             for r in cancelled.exclude(cancel_reason='')
-            # metrics-ok: receita perdida por motivo de cancelamento.
-            .values('cancel_reason').annotate(count=Count('id'), lost=Sum('total')).order_by('-count')[:10]
+            .values('cancel_reason').annotate(count=Count('id'), lost=soma_de_venda()).order_by('-count')[:10]
         ]
         count = agg['count'] or 0
         return Response({
@@ -945,7 +950,7 @@ class SchedulingReportView(BaseAnalyticsView):
         qs = self.paid_orders(store, start, end).filter(scheduled_date__isnull=False)
         by_date = [
             {'date': r['scheduled_date'], 'orders': r['orders'], 'revenue': _round2(r['revenue'])}
-            for r in qs.values('scheduled_date').annotate(orders=Count('id'), revenue=Sum('total')).order_by('scheduled_date')
+            for r in qs.values('scheduled_date').annotate(orders=Count('id'), revenue=soma_de_venda()).order_by('scheduled_date')
         ]
         by_slot = [
             {'slot': r['scheduled_time'] or 'sem_horario', 'orders': r['orders']}
@@ -1011,8 +1016,8 @@ class StaffReportView(BaseAnalyticsView):
             .values('created_by_staff__username', 'created_by_staff__first_name')
             .annotate(
                 orders=Count('id'),
-                revenue=Sum('total'),
-                avg_ticket=Avg('total'),
+                revenue=soma_de_venda(),
+                avg_ticket=media_de_venda(),
                 manual_discounts=Sum('manual_discount_value'),
             )
             .order_by('-revenue')

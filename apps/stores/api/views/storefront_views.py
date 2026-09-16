@@ -1147,11 +1147,29 @@ class StoreCheckoutView(APIView):
                 payment_method=payment_method,
             )
 
+            # Troco do dinheiro: entra DEPOIS do pedido porque a régua compara
+            # com o total, que só existe agora. Troco ruim é descartado em
+            # silêncio — a venda nunca cai por causa dele.
+            campos = []
+            try:
+                from apps.stores.services.troco import troco_informado
+                troco = troco_informado(
+                    request.data.get('change_for'), order.total, payment_method,
+                )
+            except Exception:  # noqa: BLE001 — troco nunca derruba a venda
+                logger.exception('troco: falha ao ler change_for')
+                troco = None
+            if troco is not None:
+                order.change_for = troco
+                campos.append('change_for')
+
             # Ligação carrinho→pedido: é o que permite o retry reencontrar
             # esta venda em vez de responder "carrinho vazio".
             if session_id:
                 order.metadata = {**(order.metadata or {}), 'cart_key': session_id}
-                order.save(update_fields=['metadata', 'updated_at'])
+                campos.append('metadata')
+            if campos:
+                order.save(update_fields=[*campos, 'updated_at'])
 
             self._persist_customer_session(request, order)
 
@@ -1193,6 +1211,12 @@ class StoreCheckoutView(APIView):
             )
 
 
+def _is_safe_maps_url(url) -> bool:
+    """Só domínios do Google Maps (SSRF guard). Fonte única: nome_do_lugar."""
+    from apps.stores.services.nome_do_lugar import _eh_url_google_maps
+    return _eh_url_google_maps(url)
+
+
 def _coords_from_maps_url(url):
     """Extrai lat/lng de um link do Google Maps — inclusive shortlink.
 
@@ -1201,6 +1225,10 @@ def _coords_from_maps_url(url):
     coords da URL final. Nunca levanta — retorna None quando não dá.
     """
     if not url or 'http' not in url or ('maps' not in url and 'goo.gl' not in url):
+        return None
+    # O filtro acima é por substring e aceitava http://169.254.169.254/maps:
+    # esta rota é AllowAny (cotação de frete), então era SSRF sem login.
+    if not _is_safe_maps_url(url.strip()):
         return None
     import re as _re
 
@@ -1224,12 +1252,12 @@ def _coords_from_maps_url(url):
     if hit:
         return hit
     try:
-        import requests
-        resp = requests.get(
-            url, allow_redirects=True, timeout=5,
-            headers={'User-Agent': 'Mozilla/5.0'},
-        )
-        return _extract(resp.url) or _extract(resp.text[:8000])
+        from apps.stores.services.nome_do_lugar import seguir_link_do_maps
+        seguido = seguir_link_do_maps(url.strip(), metodo='get', timeout=5)
+        if seguido is None:
+            return None
+        url_final, resp = seguido
+        return _extract(url_final) or _extract((resp.text or '')[:8000])
     except Exception as exc:  # rede caída não pode matar o cálculo de frete
         logger.warning('[delivery-fee] falha ao resolver link do Maps: %s', exc)
         return None
