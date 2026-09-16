@@ -154,7 +154,7 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
 
     @database_sync_to_async
     def mark_message_read(self, message_id):
-        from apps.whatsapp.models import Message, WhatsAppAccount
+        from apps.whatsapp.models import Message
         try:
             message = Message.objects.select_related('conversation__account').get(id=message_id)
             # Verifica que a mensagem pertence a uma conta acessível ao usuário.

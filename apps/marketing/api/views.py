@@ -519,6 +519,11 @@ class CustomersViewSet(viewsets.ViewSet):
         if not store_id:
             return Response({'error': 'store parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # IsAdminUser é is_staff, que não é vínculo: sem este gate qualquer
+        # conta com acesso ao /admin lia a contagem de clientes de outra loja.
+        if not _user_can_use_store(request.user, store_id):
+            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+
         # All scoped to this store only
         store_customer_users = User.objects.filter(
             store_profiles__store_id=store_id,

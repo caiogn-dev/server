@@ -317,10 +317,10 @@ class StoreIntegrationCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
         from apps.core.permissions import user_can_access_store
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value
@@ -386,10 +386,10 @@ class StoreWebhookSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(exc.messages[0] if exc.messages else str(exc))
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
         from apps.core.permissions import user_can_access_store
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value
@@ -881,10 +881,10 @@ class StorePrintAgentCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'api_key', 'created_at', 'updated_at']
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
         from apps.core.permissions import user_can_access_store
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value
@@ -1026,7 +1026,7 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         if not store:
             raise serializers.ValidationError({'store': 'Store not found'})
 
-        if request and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user.is_authenticated:
             has_access = (
                 store.owner_id == request.user.id
                 or store.staff.filter(id=request.user.id).exists()
@@ -2081,9 +2081,9 @@ class StoreSlugOrIdField(serializers.Field):
             raise serializers.ValidationError(f"Loja não encontrada: {data}")
 
         # Tenant gate: bloqueia acesso cross-tenant para usuários comuns.
-        # is_staff não bypassa — apenas is_superuser tem acesso irrestrito.
+        # Nenhuma flag de conta bypassa — nem is_staff nem is_superuser.
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, store):
                 raise serializers.ValidationError('Loja não encontrada')
 
@@ -2184,10 +2184,10 @@ class StoreDeliveryZoneCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
         from apps.core.permissions import user_can_access_store
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value

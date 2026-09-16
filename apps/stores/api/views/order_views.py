@@ -1130,7 +1130,7 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             raise DRFValidationError({'store': 'Loja não encontrada.'})
 
         # I-1: verificar acesso ao store resolvido (cobre a rota flat sem store_pk)
-        if not self.request.user.is_superuser and not user_can_access_store(self.request.user, store):
+        if not user_can_access_store(self.request.user, store):
             raise PermissionDenied('Você não tem permissão para criar clientes nesta loja.')
 
         serializer.save(store=store)

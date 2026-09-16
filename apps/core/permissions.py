@@ -77,13 +77,10 @@ class IsStoreStaff(permissions.BasePermission):
 class HasStoreAccess(permissions.BasePermission):
     """
     Permission that checks if user has any access to the store
-    (owner, staff, or superuser).
+    (owner, staff M2M ou StoreTeamMember ativo — nunca por flag de conta).
     """
-    
-    def has_permission(self, request: Request, view: View) -> bool:
-        if request.user.is_superuser:
-            return True
 
+    def has_permission(self, request: Request, view: View) -> bool:
         from apps.stores.models import Store
         from rest_framework.exceptions import PermissionDenied
 
@@ -103,12 +100,13 @@ class HasStoreAccess(permissions.BasePermission):
         return user_can_access_store(request.user, store)
 
     def has_object_permission(self, request: Request, view: View, obj) -> bool:
-        if request.user.is_superuser:
-            return True
+        from apps.stores.models import Store
 
-        if hasattr(obj, 'store'):
+        if isinstance(obj, Store):
+            return user_can_access_store(request.user, obj)
+        if getattr(obj, 'store', None) is not None:
             return user_can_access_store(request.user, obj.store)
-        elif hasattr(obj, 'owner'):
+        if hasattr(obj, 'owner'):
             return obj.owner == request.user
 
         return False
@@ -225,24 +223,21 @@ class StoreQuerysetMixin:
             queryset = MyModel.objects.all()  # base queryset
             store_field = 'store'             # FK field name pointing to Store (default: 'store')
 
-    The mixin calls get_queryset() filtering by the user's accessible stores.
-    Superusers see all data.
+    O filtro é o mesmo para todo usuário autenticado: as lojas do vínculo.
+    Não existe escopo irrestrito — quem herda daqui inclui o ViewSet de
+    gateways de pagamento, que carrega as credenciais com que a loja recebe.
     """
 
     store_field: str = 'store'
 
     def _get_user_store_ids(self):
-        user = self.request.user
-        if user.is_superuser:
-            return None  # unrestricted
-        return accessible_store_ids(user)
+        return accessible_store_ids(self.request.user)
 
     def get_queryset(self):
         qs = super().get_queryset()
-        store_ids = self._get_user_store_ids()
-        if store_ids is None:
-            return qs
-        return qs.filter(**{f'{self.store_field}__id__in': store_ids})
+        return qs.filter(
+            **{f'{self.store_field}__id__in': self._get_user_store_ids()}
+        )
 
 
 class StorePermissionMixin(StoreQuerysetMixin):
@@ -262,7 +257,7 @@ class StorePermissionMixin(StoreQuerysetMixin):
     The store_field can use double-underscore traversal for indirect FKs:
         store_field = 'company__store'  # for CompanyProfile → Store
 
-    Superusers and staff bypass all restrictions (see all data).
+    Nenhuma flag de conta — is_staff ou is_superuser — bypassa o escopo.
     """
 
     permission_classes = [permissions.IsAuthenticated, HasStoreAccess]

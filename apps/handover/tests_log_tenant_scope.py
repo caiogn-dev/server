@@ -47,11 +47,12 @@ class HandoverLogViewSetGetQuerysetFieldPathTest(TestCase):
         self.assertIn("accessible_whatsapp_account_ids", src,
                       "get_queryset deve usar accessible_whatsapp_account_ids para isolar por tenant")
 
-    def test_superuser_bypass_present(self):
-        """Superuser continua vendo todos os logs (comportamento correto mantido)."""
+    def test_source_has_no_superuser_bypass(self):
+        """16/set: o bypass de superuser saiu — era ele que vazava a loja do
+        cliente para a conta do dono da plataforma. Escopo é por vínculo."""
         src = self._get_source()
-        self.assertIn("is_superuser", src,
-                      "get_queryset deve manter bypass de superuser")
+        self.assertNotIn("is_superuser", src,
+                         "get_queryset não pode ter bypass de superuser")
 
 
 class HandoverLogViewSetGetQuerysetLogicTest(TestCase):
@@ -72,15 +73,22 @@ class HandoverLogViewSetGetQuerysetLogicTest(TestCase):
         user.id = pk
         return user
 
-    def test_superuser_gets_all_logs(self):
-        """Superuser → HandoverLog.objects.all() sem filtro."""
+    def test_superuser_tambem_e_escopado_por_conta(self):
+        """Superuser segue o mesmo caminho de todo mundo: filtro por conta."""
         user = self._mock_user(is_superuser=True)
         viewset = self._make_viewset(user)
 
-        with patch("apps.handover.views.HandoverLog") as mock_model:
-            mock_model.objects.all.return_value = MagicMock()
-            result = viewset.get_queryset()
-            mock_model.objects.all.assert_called_once()
+        fake_ids = [1, 2, 3]
+
+        with patch("apps.handover.views.HandoverLog") as mock_model, \
+             patch("apps.core.permissions.accessible_whatsapp_account_ids",
+                   return_value=fake_ids):
+            mock_model.objects.filter.return_value = MagicMock()
+            viewset.get_queryset()
+            mock_model.objects.filter.assert_called_once_with(
+                conversation__account_id__in=fake_ids
+            )
+            mock_model.objects.all.assert_not_called()
 
     def test_non_superuser_scopes_by_account(self):
         """Não-superuser → filtra por conversation__account_id__in."""
