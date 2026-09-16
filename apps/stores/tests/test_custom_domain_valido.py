@@ -54,7 +54,7 @@ class CustomDomainValidoTest(TestCase):
 
 
 class LimpezaDeDominiosGravadosTest(TestCase):
-    """A migration 0082 limpa o que JÁ está gravado errado.
+    """A migration 0083 limpa o que JÁ está gravado errado.
 
     Sem isso o validador novo tranca o lojista fora da própria loja: o valor
     inválido viaja em todo PATCH do painel, e ele passa a levar erro ao salvar
@@ -78,7 +78,7 @@ class LimpezaDeDominiosGravadosTest(TestCase):
         from django.apps import apps as django_apps
 
         mod = importlib.import_module(
-            'apps.stores.migrations.0082_dominio_proprio_validado'
+            'apps.stores.migrations.0083_dominio_proprio_validado'
         )
         mod.limpar_dominios_invalidos(django_apps, None)
 

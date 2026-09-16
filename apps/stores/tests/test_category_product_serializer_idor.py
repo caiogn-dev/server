@@ -42,17 +42,18 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
             ser._mock_ucan = _mock
         return ser, _mock
 
-    def test_superuser_bypassa_gate(self):
-        """Superuser pode atribuir categoria a qualquer loja."""
+    def test_superuser_tambem_passa_pelo_gate(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.stores.api.serializers import StoreCategorySerializer
         user = _make_user(is_superuser=True)
         request = _make_request(user)
         ser = StoreCategorySerializer(context={'request': request})
         store = _make_store()
         with patch('apps.stores.api.serializers.user_can_access_store') as mock_ucan:
+            mock_ucan.return_value = True
             result = ser.validate_store(store)
         self.assertEqual(result, store)
-        mock_ucan.assert_not_called()
+        mock_ucan.assert_called_once()
 
     def test_usuario_com_acesso_passa(self):
         """Usuário com acesso à loja pode atribuir normalmente."""
@@ -99,17 +100,18 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
 class TestStoreProductCreateSerializerValidateStore(SimpleTestCase):
     """validate_store em StoreProductCreateSerializer bloqueia produto cross-tenant."""
 
-    def test_superuser_bypassa_gate(self):
-        """Superuser pode criar produto em qualquer loja."""
+    def test_superuser_tambem_passa_pelo_gate(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.stores.api.serializers import StoreProductCreateSerializer
         user = _make_user(is_superuser=True)
         request = _make_request(user)
         ser = StoreProductCreateSerializer(context={'request': request})
         store = _make_store()
         with patch('apps.stores.api.serializers.user_can_access_store') as mock_ucan:
+            mock_ucan.return_value = True
             result = ser.validate_store(store)
         self.assertEqual(result, store)
-        mock_ucan.assert_not_called()
+        mock_ucan.assert_called_once()
 
     def test_usuario_com_acesso_passa(self):
         """Usuário com acesso à loja pode criar produto normalmente."""

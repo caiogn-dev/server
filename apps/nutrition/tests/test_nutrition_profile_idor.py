@@ -48,10 +48,12 @@ def test_membro_da_equipe_passa(cenario):
     assert _validar(gerente, produto) == produto
 
 
-def test_superuser_passa(cenario):
+def test_superuser_sem_vinculo_e_barrado(cenario):
+    """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
     _, _, produto = cenario
     admin = User.objects.create_superuser(username='su-nut', email='su@t.local', password='x')
-    assert _validar(admin, produto) == produto
+    with pytest.raises(serializers.ValidationError):
+        _validar(admin, produto)
 
 
 def test_usuario_de_outra_loja_e_barrado_sem_revelar_o_produto(cenario):

@@ -150,9 +150,11 @@ class TestDashboardConsumerSubscribeIDOR(SimpleTestCase):
         consumer = _make_consumer(user)
         conv_id = 'conv-alien'
 
-        with patch('apps.whatsapp.models.WhatsAppAccount') as MockAcc, \
+        # O consumer escopa pela fonte única (accessible_whatsapp_account_ids),
+        # não mais por WhatsAppAccount.filter(owner=...) direto.
+        with patch('apps.core.permissions.accessible_whatsapp_account_ids',
+                   return_value=['own-account-id']), \
              patch('apps.conversations.models.Conversation') as MockConv:
-            MockAcc.objects.filter.return_value.values_list.return_value = ['own-account-id']
             MockConv.objects.filter.return_value.exists.return_value = False
 
             result = asyncio.run(consumer.verify_conversation_access(conv_id))
@@ -165,9 +167,11 @@ class TestDashboardConsumerSubscribeIDOR(SimpleTestCase):
         consumer = _make_consumer(user)
         conv_id = 'conv-own'
 
-        with patch('apps.whatsapp.models.WhatsAppAccount') as MockAcc, \
+        # O consumer escopa pela fonte única (accessible_whatsapp_account_ids),
+        # não mais por WhatsAppAccount.filter(owner=...) direto.
+        with patch('apps.core.permissions.accessible_whatsapp_account_ids',
+                   return_value=['own-account-id']), \
              patch('apps.conversations.models.Conversation') as MockConv:
-            MockAcc.objects.filter.return_value.values_list.return_value = ['own-account-id']
             MockConv.objects.filter.return_value.exists.return_value = True
 
             result = asyncio.run(consumer.verify_conversation_access(conv_id))

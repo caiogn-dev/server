@@ -142,8 +142,8 @@ class TestBarcodeEndpointTenantGate(SimpleTestCase):
 
         self.assertEqual(response.data['total'], 0)
 
-    def test_superuser_nao_precisa_de_gate(self):
-        """Superuser bypass: não chama user_can_access_store."""
+    def test_superuser_tambem_passa_pelo_gate(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.stores.api.views.product_views import StoreProductViewSet
 
         loja = MagicMock()
@@ -170,9 +170,10 @@ class TestBarcodeEndpointTenantGate(SimpleTestCase):
             MockTx.atomic.return_value.__enter__ = lambda s: None
             MockTx.atomic.return_value.__exit__ = MagicMock(return_value=False)
 
+            mock_gate.return_value = True
             view.gerar_codigos_internos(request, store_pk=None)
 
-        mock_gate.assert_not_called()
+        mock_gate.assert_called_once()
 
     def test_loja_nao_encontrada_retorna_400(self):
         """Identificador inválido/inexistente → 400 com mensagem informativa."""

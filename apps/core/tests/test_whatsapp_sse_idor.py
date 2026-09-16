@@ -55,10 +55,14 @@ class WhatsAppSSEIDORFixTest(SimpleTestCase):
         src = self._source()
         self.assertIn('accessible_ids', src)
 
-    def test_superuser_nao_restringido(self):
-        """Superusuário deve ter accessible_ids=None (sem restrição de tenant)."""
+    def test_superuser_tambem_e_restringido(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        O stream não tem mais `accessible_ids = None` para ninguém.
+        """
         src = self._source()
-        self.assertIn('is_superuser', src)
+        self.assertNotIn('is_superuser', src)
+        self.assertNotIn('accessible_ids = None', src)
 
     def test_status_updates_escopado(self):
         """status_updates também deve ser filtrado por tenant (accessible_ids)."""
