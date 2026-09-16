@@ -888,3 +888,60 @@ Ambos os PRs aguardam merge para `development`.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
 
+---
+
+### 2026-09-16
+
+**Baseline de testes:** 13 testes SimpleTestCase (sem Docker/PostgreSQL). 5 testes pré-existentes
+(`test_account_field_idor`) passando antes do fix. `test_idor_is_staff.py` requer `pytest` não
+instalado no container mínimo — pré-existente, não regressão desta sessão.
+Base do trunk: `f85c8b8f` (2026-09-15).
+
+**Situação encontrada:** 85 commits no trunk desde a última sessão documentada (2026-07-27). Os PRs
+`#307–#316` e outros foram mergeados; módulos Instagram e Messenger cresceram significativamente.
+Varredura de `str(exc)` em `except Exception` confirmou que esses novos módulos **nunca foram
+cobertos** pelo sweep de info-disclosure de julho/2026.
+
+**Bug encontrado e corrigido:** `str(exc)` em 10 handlers `except Exception` nos módulos Instagram e Messenger [P1]
+
+- **Tipo:** P1 — info-disclosure para usuários autenticados: exceções genéticas de rede e da Graph
+  API do Instagram/Facebook podem incluir URLs com `access_token` em query params, tokens de
+  autorização Bearer em mensagens de HTTPError, ou detalhes de configuração interna.
+- **Arquivos corrigidos (2):**
+  1. `apps/instagram/api/views.py` — 8 handlers corrigidos:
+     - `InstagramAccountViewSet.connect` (linha ~159): `raw.text` e `str(exc)` removidos; mensagem genérica.
+     - `InstagramAccountViewSet.sync` (linha ~247): `{"message": str(exc)}` → genérico + `logger.exception`.
+     - `InstagramAccountViewSet.refresh_page_token` (linha ~266): `str(exc)` → genérico + `logger.exception`.
+     - `InstagramAccountViewSet.insights` (linha ~286): mesmo padrão.
+     - `InstagramMediaViewSet.publish` (linha ~362): mesmo padrão.
+     - `InstagramMediaViewSet.insights` (linha ~394): mesmo padrão.
+     - `InstagramMediaViewSet.comments` (linha ~406): mesmo padrão.
+     - `InstagramShoppingViewSet.tag_product` (linha ~464): mesmo padrão.
+     - `InstagramLiveViewSet.start` (linha ~501): mesmo padrão.
+     - `InstagramConversationViewSet.send_message` (linha ~600): `str(exc)` removido; `logger.exception`.
+  2. `apps/messaging/api/views.py` — 2 handlers corrigidos:
+     - `MessengerAccountViewSet.sync` (linha ~67): `str(exc)` → genérico + `logger.exception`.
+     - `MessengerConversationViewSet.send_message` (linha ~230): mesmo padrão.
+- **Padrão do fix:** `except Exception as exc:` → `except Exception:` + `logger.exception(...)` +
+  mensagem genérica em pt-BR. Erros reais ficam no log interno; clientes veem apenas que houve falha.
+- **Testes:** 8 novos casos em `apps/instagram/tests/test_str_exc_disclosure.py` (RED→GREEN):
+  - `InstagramViewsStrExcDisclosureTest`: nenhuma Response() contém `str(exc)`, `str(e)`, `raw.text`
+    ou `{"message": str(exc)}`
+  - `MessagingViewsStrExcDisclosureTest`: nenhuma Response() contém `str(exc)` ou `str(e)`
+- **PR:** `bot/server-2026-09-16-str-exc-instagram-messenger`
+
+**Status do sweep de `str(exc)` em views HTTP:** COMPLETO (incluindo módulos Instagram/Messenger
+que surgiram após o sweep anterior de julho/2026). Apenas services/tasks internos restam — risco
+baixo, não prioritário.
+
+**Próximo backlog priorizado:**
+
+1. **P1** — Testes de contrato (regressão) para OTP WhatsApp, checkout payload e pedido por token
+   (pendência crítica do CLAUDE.md há várias sessões).
+2. **P1** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido
+   (item crítico do CLAUDE.md).
+3. **P2** — Verificar se novos módulos (loyalty/cashback, fiscal/NFC-e, voucher) têm IDOR
+   pendente: busca de isolamento de tenant em views recentemente adicionadas.
+4. **P2** — Varredura de `is_staff` como bypass cross-tenant nos novos módulos adicionados desde
+   setembro/2026 (loyalty, payments, pdv, fiscal).
+
