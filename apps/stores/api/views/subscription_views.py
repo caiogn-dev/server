@@ -19,15 +19,16 @@ logger = logging.getLogger(__name__)
 
 from apps.stores.models import Store, StorePayment, StoreSubscription
 from apps.stores.services import subscription_service
+from apps.core.permissions import user_can_access_store
 
 
 def _can_manage(store, user):
-    """Retorna True se o usuário pode gerenciar a assinatura da loja."""
-    return (
-        store.owner_id == user.id
-        or store.staff.filter(id=user.id).exists()
-        or user.is_superuser
-    )
+    """Retorna True se o usuário pode gerenciar a assinatura da loja.
+
+    is_superuser NÃO entra: a conta do dono da plataforma não assina, cancela
+    nem troca o plano da loja de um cliente.
+    """
+    return user_can_access_store(user, store)
 
 
 class StoreSubscribeView(APIView):

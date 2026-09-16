@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from ..models import Store
+from apps.core.permissions import accessible_store_ids
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,9 @@ class BaseAIInsightsView(APIView):
         param = request.query_params.get('store') or ''
         if not param:
             return None
-        qs = Store.objects.all() if request.user.is_superuser else Store.objects.filter(owner=request.user)
+        # Escopo pela fonte única: sem atalho de superuser, e incluindo staff
+        # e StoreTeamMember — antes só o owner enxergava os próprios insights.
+        qs = Store.objects.filter(id__in=accessible_store_ids(request.user))
         try:
             import uuid
             uuid.UUID(param)

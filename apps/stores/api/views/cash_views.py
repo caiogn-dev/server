@@ -48,14 +48,12 @@ def _gate(request, store):
     IsStoreOwnerOrStaff.has_permission() só verifica quando 'store_pk' está nos
     kwargs do roteador nested. Como as rotas de caixa usam 'store_slug' direto, o
     check de ownership precisa ser feito explicitamente aqui.
-    Superuser passa sem verificação; demais precisam de acesso confirmado via
-    user_can_access_store (owner, staff M2M ou StoreTeamMember ativo).
+    Acesso confirmado via user_can_access_store (owner, staff M2M ou
+    StoreTeamMember ativo) — is_superuser NÃO abre o caixa de outra loja.
     Retorna False quando store é None (loja inexistente) — o chamador emite 404.
     """
     if not store:
         return False
-    if request.user.is_superuser:
-        return True
     return user_can_access_store(request.user, store)
 
 

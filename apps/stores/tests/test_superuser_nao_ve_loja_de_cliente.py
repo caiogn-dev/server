@@ -25,13 +25,13 @@ class SuperuserNaoVeLojaDeClienteTest(TestCase):
             username='dono_plataforma', email='dono@plataforma.com', password='x'
         )
         self.loja_propria = Store.objects.create(
-            name='Loja Propria', slug='loja-propria', owner=self.plataforma
+            name='Loja Propria', slug='loja-propria', owner=self.plataforma, status='active'
         )
         self.cliente = User.objects.create_user(
             username='cliente_pagante', email='cliente@loja.com', password='x'
         )
         self.loja_cliente = Store.objects.create(
-            name='Loja do Cliente', slug='loja-do-cliente', owner=self.cliente
+            name='Loja do Cliente', slug='loja-do-cliente', owner=self.cliente, status='active'
         )
         self.api = APIClient()
         self.api.force_authenticate(user=self.plataforma)

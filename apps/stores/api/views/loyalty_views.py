@@ -16,6 +16,7 @@ from .storefront_views import get_active_store, PublicWriteThrottle, CheckoutThr
 from ...models import StoreLoyaltyAccount, StoreOrder
 from ...services.checkout_service import CheckoutService
 from ...services.loyalty_service import LoyaltyService
+from apps.core.permissions import user_can_access_store
 
 logger = logging.getLogger(__name__)
 
@@ -96,14 +97,14 @@ def _falta_para_o_brinde(threshold: int):
 
 
 class LoyaltyAccountsView(APIView):
-    """Listagem de contas de fidelidade da loja (dash). Dono ou superuser."""
+    """Listagem de contas de fidelidade da loja (dash). Só quem tem vínculo."""
     permission_classes = [IsAuthenticated]
 
     PAGE_SIZE = 50
 
     def get(self, request, store_slug):
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
         threshold, _enabled = LoyaltyService._config(store)
         # ORDEM: quem está mais perto de fechar o cartão primeiro.
@@ -206,7 +207,7 @@ class LoyaltyResgateManualView(APIView):
 
     def post(self, request, store_slug, user_id):
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
 
         # A conta é procurada DENTRO da loja: o user_id vem da URL e sem este
@@ -298,7 +299,7 @@ class ConquistasView(APIView):
 
     def get(self, request, store_slug):
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
 
         from ...services.conquistas import painel_de_conquistas
@@ -325,7 +326,7 @@ class CashbackResumoView(APIView):
         from apps.stores.services.cashback_service import CashbackService
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
 
         agora = timezone.now()
@@ -660,7 +661,7 @@ class CashbackExtratoView(APIView):
         from apps.stores.services.extrato_de_cashback import extrato_de_cashback
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
 
         telefone = (request.query_params.get('phone') or '').strip()
@@ -695,7 +696,7 @@ class CashbackAjusteView(APIView):
         from apps.stores.services.cashback_service import CashbackService
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
 
         phone = str(request.data.get('phone') or '').strip()
@@ -782,7 +783,7 @@ class IndicacoesView(APIView):
         from apps.stores.services.cashback_service import CashbackService
 
         store = get_active_store(store_slug)
-        if not (request.user.is_superuser or store.owner_id == request.user.id):
+        if not user_can_access_store(request.user, store):
             return Response({'error': 'Sem permissão para esta loja.'}, status=403)
 
         lotes = (
