@@ -320,11 +320,9 @@ class StoreProductVariantViewSet(viewsets.ModelViewSet):
         if not product_id:
             return StoreProductVariant.objects.none()
         qs = StoreProductVariant.objects.filter(product_id=product_id)
-        user = self.request.user
-        # is_staff (acesso ao /admin) NÃO dá acesso cross-tenant; só superuser.
-        if not user.is_superuser:
-            from apps.core.permissions import accessible_store_ids
-            qs = qs.filter(product__store__id__in=accessible_store_ids(user))
+        # Nem is_staff nem is_superuser dão acesso cross-tenant.
+        from apps.core.permissions import accessible_store_ids
+        qs = qs.filter(product__store__id__in=accessible_store_ids(self.request.user))
         return qs
 
 
@@ -354,9 +352,7 @@ class StoreComboViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             raise PermissionDenied("Autenticação necessária.")
-        # is_staff (acesso ao /admin) NÃO dá acesso cross-tenant; só superuser.
-        if user.is_superuser:
-            return
+        # Nem is_staff nem is_superuser dão acesso cross-tenant.
         perm = IsStoreOwnerOrStaff()
         if not perm._user_can_access_store(user, store):
             raise PermissionDenied("Você não tem acesso a esta loja.")
@@ -403,11 +399,11 @@ class StoreComboViewSet(viewsets.ModelViewSet):
         else:
             # Sem escopo de loja explícito na URL ou nos query params:
             # restringir por tenant para evitar IDOR cross-tenant.
-            # Superuser mantém visão global; anônimo recebe queryset vazio.
+            # Anônimo recebe queryset vazio; logado vê só as lojas do vínculo.
             user = self.request.user
             if not user.is_authenticated:
                 queryset = queryset.none()
-            elif not user.is_superuser:
+            else:
                 from apps.core.permissions import accessible_store_ids
                 queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 
@@ -439,9 +435,7 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not user.is_authenticated:
             raise PermissionDenied("Autenticação necessária.")
-        # is_staff (acesso ao /admin) NÃO dá acesso cross-tenant; só superuser.
-        if user.is_superuser:
-            return
+        # Nem is_staff nem is_superuser dão acesso cross-tenant.
         perm = IsStoreOwnerOrStaff()
         if not perm._user_can_access_store(user, store):
             raise PermissionDenied("Você não tem acesso a esta loja.")
@@ -480,7 +474,7 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
             user = self.request.user
             if not user.is_authenticated:
                 queryset = queryset.none()
-            elif not user.is_superuser:
+            else:
                 from apps.core.permissions import accessible_store_ids
                 queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 

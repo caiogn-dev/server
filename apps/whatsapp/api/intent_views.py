@@ -46,11 +46,8 @@ def _parse_date_range(request, default_days: int = 7) -> Tuple[datetime, datetim
 
 def _accessible_companies(user):
     """Return company profiles accessible by current user."""
-    # is_staff (acesso ao /admin) NÃO concede acesso cross-tenant — os intent
-    # logs carregam PII (phone_number, message_text). Só superuser vê tudo.
-    if user.is_superuser:
-        return CompanyProfile.objects.all()
-
+    # Os intent logs carregam PII (phone_number, message_text): nem is_staff
+    # nem is_superuser abrem cross-tenant, só o vínculo com a conta.
     account_ids = accessible_whatsapp_account_ids(user)
     return CompanyProfile.objects.filter(account_id__in=account_ids).distinct()
 

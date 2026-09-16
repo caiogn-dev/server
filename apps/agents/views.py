@@ -45,10 +45,7 @@ from .serializers import (
 def _accessible_agents(user):
     queryset = Agent.objects.filter(is_active=True)
 
-    # is_staff (acesso ao /admin) NÃO concede acesso cross-tenant — só superuser.
-    if user.is_superuser:
-        return queryset
-
+    # Nenhuma flag de conta concede cross-tenant — nem is_staff nem is_superuser.
     account_ids = list(accessible_whatsapp_account_ids(user))
 
     # Escopo continua fechado por tenant — o fallback antigo (todos os ativos)
@@ -84,10 +81,7 @@ class AgentViewSet(viewsets.ModelViewSet):
 
     def _enforce_account_scope(self, serializer):
         """Non-admin users can only attach agents to accessible WhatsApp accounts."""
-        # is_staff NÃO bypassa escopo de conta — só superuser tem acesso cross-tenant.
-        if self.request.user.is_superuser:
-            return
-
+        # Nenhuma flag de conta bypassa o escopo de conta.
         accounts = serializer.validated_data.get('accounts')
         if accounts is None:
             return

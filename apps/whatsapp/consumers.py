@@ -152,19 +152,15 @@ class WhatsAppConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
 
     @database_sync_to_async
     def verify_account_access(self, account_id: str) -> bool:
-        from .models import WhatsAppAccount
-        try:
-            account = WhatsAppAccount.objects.get(id=account_id)
-            return account.owner_id == self.user.id or self.user.is_superuser
-        except WhatsAppAccount.DoesNotExist:
-            return False
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        return str(account_id) in {
+            str(i) for i in accessible_whatsapp_account_ids(self.user)
+        }
 
     @database_sync_to_async
     def verify_conversation_access(self, conversation_id: str) -> bool:
         """A conversa deve pertencer à conta conectada (já autorizada)."""
         from apps.conversations.models import Conversation
-        if self.user and self.user.is_superuser:
-            return Conversation.objects.filter(id=conversation_id).exists()
         return Conversation.objects.filter(
             id=conversation_id, account_id=self.account_id
         ).exists()
@@ -298,20 +294,14 @@ class WhatsAppDashboardConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsume
     def verify_conversation_access(self, conversation_id: str) -> bool:
         """Verifica se a conversa pertence a alguma conta acessível ao usuário."""
         from apps.conversations.models import Conversation
-        from .models import WhatsAppAccount
-        if self.user and self.user.is_superuser:
-            return Conversation.objects.filter(id=conversation_id).exists()
-        accessible_ids = set(
-            WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
-        )
+        from apps.core.permissions import accessible_whatsapp_account_ids
         return Conversation.objects.filter(
-            id=conversation_id, account_id__in=accessible_ids
+            id=conversation_id,
+            account_id__in=accessible_whatsapp_account_ids(self.user),
         ).exists()
 
     @database_sync_to_async
     def get_user_account_ids(self) -> list:
-        from .models import WhatsAppAccount
-        # is_staff NÃO concede acesso cross-tenant — só superuser vê todas as contas.
-        if self.user.is_superuser:
-            return [str(pk) for pk in WhatsAppAccount.objects.values_list('id', flat=True)]
-        return [str(pk) for pk in WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)]
+        from apps.core.permissions import accessible_whatsapp_account_ids
+        # Nenhuma flag de conta abre cross-tenant; o vínculo é a fonte única.
+        return [str(pk) for pk in accessible_whatsapp_account_ids(self.user)]

@@ -45,8 +45,6 @@ def _user_can_use_account(user, account_id):
     """
     if not account_id:
         return False
-    if user.is_superuser:
-        return True
     return str(account_id) in {str(i) for i in accessible_whatsapp_account_ids(user)}
 
 
@@ -115,9 +113,7 @@ class SystemContactsView(APIView):
         lojas = self._store_ids(request)
 
         from apps.stores.models import Store
-        accessible_account_ids = None if user.is_superuser else list(
-            accessible_whatsapp_account_ids(user)
-        )
+        accessible_account_ids = list(accessible_whatsapp_account_ids(user))
 
         # Get contacts from conversations
         if source in ['all', 'conversations']:

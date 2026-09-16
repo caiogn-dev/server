@@ -18,8 +18,6 @@ def _user_can_use_store(user, store_id):
     """
     if not store_id:
         return False
-    if user.is_superuser:
-        return True
     try:
         return str(store_id) in {str(i) for i in accessible_store_ids(user)}
     except (ValueError, TypeError):

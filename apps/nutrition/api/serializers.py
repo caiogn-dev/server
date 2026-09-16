@@ -17,7 +17,8 @@ class NutritionIngredientSerializer(serializers.ModelSerializer):
         user = self.context["request"].user
         if store is None and not user.is_superuser:
             raise serializers.ValidationError("Somente administradores podem criar ingredientes globais.")
-        if store and not (user.is_superuser or store.owner_id == user.id or store.staff.filter(id=user.id).exists()):
+        from apps.core.permissions import user_can_access_store
+        if store and not user_can_access_store(user, store):
             raise serializers.ValidationError("Loja não autorizada.")
         return store
 
@@ -52,7 +53,8 @@ class ProductRecipeSerializer(serializers.ModelSerializer):
     def validate_product(self, product):
         user = self.context["request"].user
         store = product.store
-        if not (user.is_superuser or store.owner_id == user.id or store.staff.filter(id=user.id).exists()):
+        from apps.core.permissions import user_can_access_store
+        if not user_can_access_store(user, store):
             raise serializers.ValidationError("Produto não autorizado.")
         return product
 
