@@ -124,7 +124,7 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         # Gate de tenant: IsStoreOwnerOrStaff só verifica quando store_pk está
         # nos kwargs da URL (rota aninhada). Via rota plana o body traz a loja
         # e nenhuma permissão verificou acesso — faz aqui (info-hiding: 404).
-        if not request.user.is_superuser and not user_can_access_store(request.user, loja):
+        if not user_can_access_store(request.user, loja):
             raise Http404
 
         numero_da_loja = list(

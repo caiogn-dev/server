@@ -298,10 +298,7 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
         if not account_id:
             raise PermissionDenied('account_id é obrigatório.')
         user = self.request.user
-        if user.is_superuser:
-            account = InstagramAccount.objects.filter(id=account_id).first()
-        else:
-            account = InstagramAccount.objects.filter(id=account_id, user=user).first()
+        account = InstagramAccount.objects.filter(id=account_id, user=user).first()
         if account is None:
             raise PermissionDenied('Sem acesso a esta conta Instagram.')
         return account
@@ -507,10 +504,7 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
         if not account_id:
             raise PermissionDenied('account_id é obrigatório.')
         user = self.request.user
-        if user.is_superuser:
-            account = InstagramAccount.objects.filter(id=account_id).first()
-        else:
-            account = InstagramAccount.objects.filter(id=account_id, user=user).first()
+        account = InstagramAccount.objects.filter(id=account_id, user=user).first()
         if account is None:
             raise PermissionDenied('Sem acesso a esta conta Instagram.')
         return account

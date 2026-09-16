@@ -23,7 +23,7 @@ class EmailTemplateSerializer(serializers.ModelSerializer):
 
     def validate_store(self, value):
         request = self.context.get('request')
-        if request and not request.user.is_superuser:
+        if request:
             from apps.core.permissions import user_can_access_store
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada.')
@@ -73,7 +73,7 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
     
     def validate_store(self, value):
         request = self.context.get('request')
-        if request and not request.user.is_superuser:
+        if request:
             from apps.core.permissions import user_can_access_store
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada.')
@@ -207,7 +207,7 @@ class EmailAutomationSerializer(serializers.ModelSerializer):
 
     def validate_store(self, value):
         request = self.context.get('request')
-        if request and not request.user.is_superuser:
+        if request:
             from apps.core.permissions import user_can_access_store
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada.')

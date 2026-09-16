@@ -453,12 +453,9 @@ class WhatsAppSSEView(BaseSSEView):
         account_id = request.GET.get('account_id')
         conversation_id = request.GET.get('conversation_id')
 
-        # Escopo de tenant: superusuário vê tudo; demais usuários são restritos
-        # às contas WhatsApp que lhes pertencem.
-        if getattr(user, 'is_superuser', False):
-            accessible_ids = None  # sem restrição
-        else:
-            accessible_ids = list(accessible_whatsapp_account_ids(user))
+        # Escopo de tenant: todo usuário — inclusive superuser — fica restrito
+        # às contas WhatsApp do próprio vínculo.
+        accessible_ids = list(accessible_whatsapp_account_ids(user))
 
         # Rejeita account_id fora do escopo antes de qualquer acesso ao BD.
         if account_id and accessible_ids is not None:

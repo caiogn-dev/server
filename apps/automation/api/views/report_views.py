@@ -31,8 +31,6 @@ def _user_can_use_report_targets(user, account_id, company_id):
     relatório sobre os dados de OUTRO tenant (account_id/company_id arbitrário)
     e mandar por email para destinatários que ele controla — exfiltração.
     """
-    if user.is_superuser:
-        return True
     if account_id:
         if str(account_id) not in {str(i) for i in accessible_whatsapp_account_ids(user)}:
             return False
@@ -63,11 +61,10 @@ class ReportScheduleViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        if not user.is_superuser:
-            account_ids = accessible_whatsapp_account_ids(user)
-            queryset = queryset.filter(
-                Q(account_id__in=account_ids) | Q(created_by=user)
-            ).distinct()
+        account_ids = accessible_whatsapp_account_ids(user)
+        queryset = queryset.filter(
+            Q(account_id__in=account_ids) | Q(created_by=user)
+        ).distinct()
         
         # Filter by status
         schedule_status = self.request.query_params.get('status')
@@ -208,11 +205,10 @@ class GeneratedReportViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        if not user.is_superuser:
-            account_ids = accessible_whatsapp_account_ids(user)
-            queryset = queryset.filter(
-                Q(schedule__account_id__in=account_ids) | Q(created_by=user)
-            ).distinct()
+        account_ids = accessible_whatsapp_account_ids(user)
+        queryset = queryset.filter(
+            Q(schedule__account_id__in=account_ids) | Q(created_by=user)
+        ).distinct()
         
         # Filter by schedule
         schedule_id = self.request.query_params.get('schedule_id')

@@ -462,7 +462,7 @@ class StoreCategorySerializer(serializers.ModelSerializer):
     def validate_store(self, value):
         """Bloqueia IDOR de escrita: impede mover categoria para loja alheia."""
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value
@@ -472,7 +472,7 @@ class StoreCategorySerializer(serializers.ModelSerializer):
         if value is None:
             return value
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             parent_store = getattr(value, 'store', None)
             if parent_store and not user_can_access_store(request.user, parent_store):
                 raise serializers.ValidationError('Categoria não encontrada')
@@ -635,7 +635,7 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
     def validate_store(self, value):
         """Bloqueia IDOR de escrita: impede criar/mover produto para loja alheia."""
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value
@@ -645,7 +645,7 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
         if value is None:
             return value
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             category_store = getattr(value, 'store', None)
             if category_store and not user_can_access_store(request.user, category_store):
                 raise serializers.ValidationError('Categoria não encontrada')

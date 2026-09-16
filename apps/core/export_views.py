@@ -132,11 +132,8 @@ def export_messages(request):
     
     # Build queryset — escopo por tenant
     user = request.user
-    if user.is_superuser:
-        queryset = Message.objects.select_related('account').all()
-    else:
-        allowed_ids = accessible_whatsapp_account_ids(user)
-        queryset = Message.objects.select_related('account').filter(account_id__in=allowed_ids)
+    allowed_ids = accessible_whatsapp_account_ids(user)
+    queryset = Message.objects.select_related('account').filter(account_id__in=allowed_ids)
 
     if account_id:
         queryset = queryset.filter(account_id=account_id)
@@ -220,11 +217,8 @@ def export_orders(request):
     
     # Build queryset — escopo por tenant
     user = request.user
-    if user.is_superuser:
-        queryset = StoreOrder.objects.select_related('store').all()
-    else:
-        allowed_ids = accessible_store_ids(user)
-        queryset = StoreOrder.objects.select_related('store').filter(store_id__in=allowed_ids)
+    allowed_ids = accessible_store_ids(user)
+    queryset = StoreOrder.objects.select_related('store').filter(store_id__in=allowed_ids)
 
     if store_param:
         try:
@@ -317,14 +311,11 @@ def export_sessions(request):
     # CompanyProfile pode estar ligado a uma conta WA (account) OU a uma Store,
     # nunca os dois ao mesmo tempo. O filtro usa OR para cobrir ambos os casos.
     user = request.user
-    if user.is_superuser:
-        queryset = CustomerSession.objects.select_related('company').all()
-    else:
-        wa_ids = accessible_whatsapp_account_ids(user)
-        store_ids = accessible_store_ids(user)
-        queryset = CustomerSession.objects.select_related('company').filter(
-            Q(company__account_id__in=wa_ids) | Q(company__store_id__in=store_ids)
-        )
+    wa_ids = accessible_whatsapp_account_ids(user)
+    store_ids = accessible_store_ids(user)
+    queryset = CustomerSession.objects.select_related('company').filter(
+        Q(company__account_id__in=wa_ids) | Q(company__store_id__in=store_ids)
+    )
 
     if company_id:
         queryset = queryset.filter(company_id=company_id)
@@ -402,14 +393,11 @@ def export_automation_logs(request):
     # Build queryset — escopo por tenant
     # CompanyProfile pode estar ligado a uma conta WA (account) OU a uma Store.
     user = request.user
-    if user.is_superuser:
-        queryset = AutomationLog.objects.select_related('company').all()
-    else:
-        wa_ids = accessible_whatsapp_account_ids(user)
-        store_ids = accessible_store_ids(user)
-        queryset = AutomationLog.objects.select_related('company').filter(
-            Q(company__account_id__in=wa_ids) | Q(company__store_id__in=store_ids)
-        )
+    wa_ids = accessible_whatsapp_account_ids(user)
+    store_ids = accessible_store_ids(user)
+    queryset = AutomationLog.objects.select_related('company').filter(
+        Q(company__account_id__in=wa_ids) | Q(company__store_id__in=store_ids)
+    )
 
     if company_id:
         queryset = queryset.filter(company_id=company_id)
@@ -486,11 +474,8 @@ def export_conversations(request):
     
     # Build queryset — escopo por tenant
     user = request.user
-    if user.is_superuser:
-        queryset = Conversation.objects.select_related('account').all()
-    else:
-        allowed_ids = accessible_whatsapp_account_ids(user)
-        queryset = Conversation.objects.select_related('account').filter(account_id__in=allowed_ids)
+    allowed_ids = accessible_whatsapp_account_ids(user)
+    queryset = Conversation.objects.select_related('account').filter(account_id__in=allowed_ids)
 
     if account_id:
         queryset = queryset.filter(account_id=account_id)

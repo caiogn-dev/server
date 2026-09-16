@@ -119,7 +119,7 @@ class CustomerAddressViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         store = self._get_store()
         from apps.core.permissions import user_can_access_store
-        if not self.request.user.is_superuser and not user_can_access_store(self.request.user, store):
+        if not user_can_access_store(self.request.user, store):
             raise Http404
         user = self._get_unified_user()
         return UserAddress.objects.filter(unified_user=user, tenant=store)
@@ -177,7 +177,7 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         store = self._get_store()
         from apps.core.permissions import user_can_access_store
-        if not self.request.user.is_superuser and not user_can_access_store(self.request.user, store):
+        if not user_can_access_store(self.request.user, store):
             raise Http404
         return StoreTeamMember.objects.filter(
             tenant=store,
