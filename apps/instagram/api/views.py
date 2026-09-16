@@ -56,10 +56,8 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
     serializer_class = InstagramAccountSerializer
 
     def get_queryset(self):
-        queryset = self.queryset
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(user=self.request.user)
+        # Nenhuma flag de conta abre cross-tenant — nem is_staff nem is_superuser.
+        return self.queryset.filter(user=self.request.user)
 
     @action(detail=False, methods=["get"], url_path="connect-url", permission_classes=[IsAuthenticated])
     def connect_url(self, request):
@@ -291,10 +289,8 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
     serializer_class = InstagramMediaSerializer
 
     def get_queryset(self):
-        queryset = self.queryset
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(account__user=self.request.user)
+        # Nenhuma flag de conta abre cross-tenant.
+        return self.queryset.filter(account__user=self.request.user)
 
     @action(detail=False, methods=["get"])
     def feed(self, request):
@@ -384,9 +380,7 @@ class InstagramShoppingViewSet(viewsets.ViewSet):
 
     def get_account(self):
         account_id = self.request.query_params.get("account_id")
-        queryset = InstagramAccount.objects.all()
-        if not self.request.user.is_superuser:
-            queryset = queryset.filter(user=self.request.user)
+        queryset = InstagramAccount.objects.filter(user=self.request.user)
         return get_object_or_404(queryset, id=account_id)
 
     @action(detail=False, methods=["get"])
@@ -407,9 +401,7 @@ class InstagramShoppingViewSet(viewsets.ViewSet):
     @action(detail=False, methods=["post"])
     def tag_product(self, request):
         account_id = request.data.get("account_id") or request.query_params.get("account_id")
-        queryset = InstagramAccount.objects.all()
-        if not request.user.is_superuser:
-            queryset = queryset.filter(user=request.user)
+        queryset = InstagramAccount.objects.filter(user=request.user)
         account = get_object_or_404(queryset, id=account_id)
 
         media_id = request.data.get("media_id")
@@ -442,10 +434,8 @@ class InstagramLiveViewSet(viewsets.ModelViewSet):
     serializer_class = InstagramLiveSerializer
 
     def get_queryset(self):
-        queryset = self.queryset
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(account__user=self.request.user)
+        # Nenhuma flag de conta abre cross-tenant.
+        return self.queryset.filter(account__user=self.request.user)
 
     @action(detail=True, methods=["post"])
     def start(self, request, pk=None):
@@ -486,9 +476,9 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
     serializer_class = InstagramConversationSerializer
 
     def get_queryset(self):
-        queryset = self.queryset.filter(is_active=True)
-        if not self.request.user.is_superuser:
-            queryset = queryset.filter(account__user=self.request.user)
+        queryset = self.queryset.filter(
+            is_active=True, account__user=self.request.user
+        )
         account_id = self.request.query_params.get("account")
         if account_id:
             queryset = queryset.filter(account_id=account_id)

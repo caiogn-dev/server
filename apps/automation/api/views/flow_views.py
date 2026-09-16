@@ -34,9 +34,8 @@ class AgentFlowViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        if not user.is_superuser:
-            store_ids = accessible_store_ids(user)
-            queryset = queryset.filter(store_id__in=store_ids).distinct()
+        # Escopo de tenant: nenhuma flag de conta abre cross-tenant.
+        queryset = queryset.filter(store_id__in=accessible_store_ids(user)).distinct()
         
         # Filter by store
         store_id = self.request.query_params.get('store_id')

@@ -16,7 +16,7 @@ def _store(**kw):
 class BuildChecklistTest(TestCase):
     def test_loja_vazia_so_account(self):
         c = build_checklist(_store(slug='vazia'))
-        self.assertEqual(c['total'], 6)
+        self.assertEqual(c['total'], 7)
         self.assertEqual(c['completed'], 1)  # só 'account'
         self.assertFalse(c['all_done'])
         done = {s['key']: s['done'] for s in c['steps']}
@@ -26,11 +26,15 @@ class BuildChecklistTest(TestCase):
         self.assertFalse(done['delivery'])
         self.assertFalse(done['hours'])
         self.assertFalse(done['whatsapp'])
+        # 16/set: passo de pagamento. Sem ele dava para bater 100% e não
+        # receber um centavo — foi o que aconteceu com o 1º cliente pago.
+        self.assertFalse(done['payment'])
 
     def test_ordem_e_labels_presentes(self):
         c = build_checklist(_store(slug='ord'))
         self.assertEqual([s['key'] for s in c['steps']],
-                         ['account', 'logo', 'product', 'delivery', 'hours', 'whatsapp'])
+                         ['account', 'logo', 'product', 'delivery', 'hours',
+                          'whatsapp', 'payment'])
         self.assertTrue(all(s['label'] for s in c['steps']))
 
     def test_logo_url_externa_conta(self):
@@ -64,6 +68,8 @@ class BuildChecklistTest(TestCase):
         # cria 1 produto mínimo; slug é SlugField sem default, então setamos explicitamente
         StoreProduct.objects.create(store=s, name='X', slug='x', price=10)
         StoreDeliveryZone.objects.create(store=s, name='Centro', delivery_fee=5)
+        s.usa_gateway_da_plataforma = True
+        s.save(update_fields=['usa_gateway_da_plataforma'])
         c = build_checklist(s)
         self.assertTrue(c['all_done'])
-        self.assertEqual(c['completed'], 6)
+        self.assertEqual(c['completed'], 7)

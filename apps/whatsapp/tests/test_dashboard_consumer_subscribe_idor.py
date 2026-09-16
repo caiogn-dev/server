@@ -174,13 +174,20 @@ class TestDashboardConsumerSubscribeIDOR(SimpleTestCase):
 
         self.assertTrue(result)
 
-    def test_verify_conversation_access_superuser_any(self):
-        """Superuser → verify_conversation_access retorna True sem checar owner."""
+    def test_verify_conversation_access_escopa_superuser(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        O superuser segue o mesmo caminho: o filtro por conta acessível roda,
+        e é ele que decide.
+        """
         superuser = _make_user(is_superuser=True)
         consumer = _make_consumer(superuser)
 
-        with patch('apps.conversations.models.Conversation') as MockConv:
-            MockConv.objects.filter.return_value.exists.return_value = True
+        with patch('apps.conversations.models.Conversation') as MockConv, \
+             patch('apps.core.permissions.accessible_whatsapp_account_ids',
+                   return_value=[]) as mock_ids:
+            MockConv.objects.filter.return_value.exists.return_value = False
             result = asyncio.run(consumer.verify_conversation_access('any-uuid'))
 
-        self.assertTrue(result)
+        mock_ids.assert_called_once()
+        self.assertFalse(result)

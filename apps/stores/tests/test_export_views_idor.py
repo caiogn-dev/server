@@ -71,8 +71,12 @@ class GetStoreTenantGateTest(SimpleTestCase):
 
         self.assertIs(result, store)
 
-    def test_superuser_nao_passa_pelo_gate(self):
-        """Superuser recebe a loja sem passar pela verificação de tenant."""
+    def test_superuser_tambem_passa_pelo_gate(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        Antes o superuser pulava `user_can_access_store` inteiro — era por aí
+        que a exportação de faturamento de loja alheia saía.
+        """
         view = _make_view()
         request, user = _make_request('qualquer-loja', is_superuser=True)
         store = _make_store('qualquer-loja')
@@ -82,11 +86,12 @@ class GetStoreTenantGateTest(SimpleTestCase):
             mock_qs = MagicMock()
             mock_qs.first.return_value = store
             mock_mgr.filter.return_value = mock_qs
+            mock_gate.return_value = True
 
             result = view.get_store(request)
 
         self.assertIs(result, store)
-        mock_gate.assert_not_called()
+        mock_gate.assert_called_once()
 
     def test_loja_inexistente_retorna_none(self):
         """Loja não encontrada retorna None — views respondem com 400 (comportamento original)."""

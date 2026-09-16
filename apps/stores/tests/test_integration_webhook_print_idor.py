@@ -79,13 +79,14 @@ class StoreIntegrationCreateSerializerIDORTest(SimpleTestCase):
             result = ser.validate_store(store)
         self.assertEqual(result, store)
 
-    def test_superuser_bypassa_check(self):
-        """Superuser pode usar qualquer store sem verificação de tenant."""
+    def test_superuser_tambem_passa_pelo_check(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         ser = self._make_serializer(_user(is_superuser=True))
         store = _store()
         with patch(_VALIDATE_STORE_PATH) as mock_check:
+            mock_check.return_value = True
             result = ser.validate_store(store)
-        mock_check.assert_not_called()
+        mock_check.assert_called_once()
         self.assertEqual(result, store)
 
     def test_sem_request_no_contexto_nao_explode(self):
@@ -125,12 +126,14 @@ class StoreWebhookSerializerIDORTest(SimpleTestCase):
             result = ser.validate_store(store)
         self.assertEqual(result, store)
 
-    def test_superuser_bypassa_check(self):
+    def test_superuser_tambem_passa_pelo_check(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         ser = self._make_serializer(_user(is_superuser=True))
         store = _store()
         with patch(_VALIDATE_STORE_PATH) as mock_check:
+            mock_check.return_value = True
             result = ser.validate_store(store)
-        mock_check.assert_not_called()
+        mock_check.assert_called_once()
         self.assertEqual(result, store)
 
     def test_sem_request_no_contexto_nao_explode(self):
@@ -169,12 +172,14 @@ class StorePrintAgentCreateSerializerIDORTest(SimpleTestCase):
             result = ser.validate_store(store)
         self.assertEqual(result, store)
 
-    def test_superuser_bypassa_check(self):
+    def test_superuser_tambem_passa_pelo_check(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         ser = self._make_serializer(_user(is_superuser=True))
         store = _store()
         with patch(_VALIDATE_STORE_PATH) as mock_check:
+            mock_check.return_value = True
             result = ser.validate_store(store)
-        mock_check.assert_not_called()
+        mock_check.assert_called_once()
         self.assertEqual(result, store)
 
     def test_sem_request_no_contexto_nao_explode(self):
@@ -207,17 +212,23 @@ class NoIsStaffInValidateStoreTest(SimpleTestCase):
         self.assertIsNotNone(fn, f'{serializer_class_name} deve ter validate_store')
         return inspect.getsource(fn)
 
-    def test_integration_validate_store_usa_is_superuser(self):
+    def test_integration_validate_store_sem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         src = self._get_validate_store_blocks('StoreIntegrationCreateSerializer')
-        self.assertIn('is_superuser', src)
+        self.assertIn('user_can_access_store', src)
+        self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)
 
-    def test_webhook_validate_store_usa_is_superuser(self):
+    def test_webhook_validate_store_sem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         src = self._get_validate_store_blocks('StoreWebhookSerializer')
-        self.assertIn('is_superuser', src)
+        self.assertIn('user_can_access_store', src)
+        self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)
 
-    def test_print_agent_validate_store_usa_is_superuser(self):
+    def test_print_agent_validate_store_sem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         src = self._get_validate_store_blocks('StorePrintAgentCreateSerializer')
-        self.assertIn('is_superuser', src)
+        self.assertIn('user_can_access_store', src)
+        self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)

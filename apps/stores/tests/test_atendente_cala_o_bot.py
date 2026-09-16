@@ -33,12 +33,16 @@ User = get_user_model()
 
 class RespostaManualAssumeAConversaTests(TestCase):
     def setUp(self):
-        self.user = User.objects.create_superuser(
+        # O atendente é dono da conta. Até 16/set bastava ser superuser — a
+        # flag passava pelo gate de conta sem vínculo nenhum. O assunto deste
+        # teste é o bot calar quando o humano responde, não permissão, então o
+        # vínculo aqui é o real.
+        self.user = User.objects.create_user(
             username='operador', password='x', email='operador@real.com',
         )
         self.account = WhatsAppAccount.objects.create(
             name='Conta Operador', phone_number_id='4001', waba_id='4002',
-            access_token='t', phone_number='5563000000040',
+            access_token='t', phone_number='5563000000040', owner=self.user,
         )
         self.conversa = Conversation.objects.create(
             account=self.account, phone_number='556781081742',

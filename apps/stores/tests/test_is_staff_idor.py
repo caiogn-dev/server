@@ -89,8 +89,10 @@ class StaffVariantReadIDORTest(APITestCase):
             'Dono deve ver variantes da própria loja',
         )
 
-    def test_superuser_can_read_any_variants(self):
-        """Superuser ainda pode ver variantes de qualquer loja (acesso intencional)."""
+    def test_superuser_sem_vinculo_nao_le_variantes_alheias(self):
+        """16/set: superuser deixou de ser chave-mestra — a loja do 1º cliente
+        pago nascia visível no painel do dono da plataforma. Acesso vem de
+        vínculo (owner, staff M2M ou StoreTeamMember ativo)."""
         su = User.objects.create_user(
             username='su-variant-idor', password='pw',
             is_staff=True, is_superuser=True,
@@ -101,7 +103,7 @@ class StaffVariantReadIDORTest(APITestCase):
         data = response.json()
         results = data.get('results', []) if isinstance(data, dict) else data
         ids = [r['id'] for r in results]
-        self.assertIn(str(self.variant_b.id), ids)
+        self.assertNotIn(str(self.variant_b.id), ids)
 
 
 class StaffComboWriteIDORTest(APITestCase):
@@ -185,8 +187,10 @@ class StaffComboWriteIDORTest(APITestCase):
         self.assertIn(response.status_code, [200, 201],
                       f'Dono deve conseguir criar combo, recebeu {response.status_code}')
 
-    def test_superuser_can_create_combo_anywhere(self):
-        """Superuser ainda pode criar combo em qualquer loja (acesso intencional)."""
+    def test_superuser_sem_vinculo_nao_cria_combo_em_loja_alheia(self):
+        """16/set: superuser deixou de ser chave-mestra — a loja do 1º cliente
+        pago nascia visível no painel do dono da plataforma. Acesso vem de
+        vínculo (owner, staff M2M ou StoreTeamMember ativo)."""
         su = User.objects.create_user(
             username='su-combo-idor', password='pw',
             is_staff=True, is_superuser=True,
@@ -199,5 +203,5 @@ class StaffComboWriteIDORTest(APITestCase):
             'price': '50.00',
         }
         response = self.client.post(self._list_url(), payload, format='json')
-        self.assertIn(response.status_code, [200, 201],
-                      f'Superuser deve conseguir criar combo, recebeu {response.status_code}')
+        self.assertIn(response.status_code, [400, 403, 404],
+                      f'Escrita cross-tenant tem que ser recusada, recebeu {response.status_code}')

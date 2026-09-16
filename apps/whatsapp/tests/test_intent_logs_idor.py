@@ -65,9 +65,13 @@ class IntentLogsStaffIDORTest(APITestCase):
         self.assertNotIn(SECRET_PHONE, resp.content.decode())
         self.assertNotIn('Rua Secreta', resp.content.decode())
 
-    def test_superuser_continua_vendo(self):
+    def test_superuser_sem_vinculo_nao_ve_log_alheio(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        Intent log carrega phone_number e message_text do cliente final.
+        """
         self.client.force_authenticate(self.superuser)
         resp = self.client.get(LOGS_URL)
         self.assertEqual(resp.status_code, 200, resp.content)
         ids = [item['id'] for item in _items(resp)]
-        self.assertIn(str(self.log.id), ids)
+        self.assertNotIn(str(self.log.id), ids)

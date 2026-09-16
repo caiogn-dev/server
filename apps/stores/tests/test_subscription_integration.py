@@ -78,12 +78,17 @@ class SubscribeEndpointTestCase(TestCase):
         self.assertEqual(resp.status_code, 403)
         self.assertFalse(StoreSubscription.objects.filter(store=self.store).exists())
 
-    def test_superuser_pode_assinar(self):
+    def test_superuser_sem_vinculo_nao_assina_pela_loja(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        Assinar é ato do dono: a conta da plataforma não escolhe o plano
+        (nem a fatura) da loja de um cliente.
+        """
         su = User.objects.create_superuser('su', 'su@x.com', 'x')
         self.client.force_authenticate(user=su)
         with patch.object(subscription_service, '_sdk', return_value=_fake_create_sdk()):
             resp = self.client.post(self.url, {'plan': 'starter'}, format='json')
-        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.status_code, 403)
 
     def test_plano_invalido_400(self):
         self.client.force_authenticate(user=self.owner)

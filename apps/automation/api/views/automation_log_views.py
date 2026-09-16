@@ -30,13 +30,13 @@ class AutomationLogViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's stores or accounts
-        if not user.is_superuser:
-            queryset = queryset.filter(
-                Q(company__store__owner=user) | 
-                Q(company__store__staff=user) | 
-                Q(company__account__owner=user)
-            ).distinct()
+        # Escopo de tenant: nenhuma flag de conta abre cross-tenant — nem
+        # is_staff nem is_superuser.
+        queryset = queryset.filter(
+            Q(company__store__owner=user) |
+            Q(company__store__staff=user) |
+            Q(company__account__owner=user)
+        ).distinct()
         
         # Filter by company
         company_id = self.request.query_params.get('company_id')

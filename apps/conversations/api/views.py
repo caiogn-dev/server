@@ -83,10 +83,9 @@ def _accessible_conversations(user, store=None):
         anno_unified_user_id=Subquery(_unified[:1]),
         anno_unified_name=Subquery(_unified_name[:1]),
     )
-    # is_staff NÃO vê conversas (mensagens de clientes) cross-tenant — só superuser.
-    if not user.is_superuser:
-        account_ids = accessible_whatsapp_account_ids(user)
-        queryset = queryset.filter(is_active=True, account_id__in=account_ids)
+    # Conversa é mensagem de cliente: nenhuma flag de conta vê cross-tenant.
+    account_ids = accessible_whatsapp_account_ids(user)
+    queryset = queryset.filter(is_active=True, account_id__in=account_ids)
 
     # ORDENAÇÃO EXPLÍCITA — não confie no `ordering` do Meta aqui.
     # O `annotate()` acima é agregação (Count), e o Django DESCARTA o ordering
@@ -377,15 +376,14 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # is_staff NÃO concede acesso cross-tenant; só superuser pode ser
-        # atribuído a conversas de qualquer conta sem verificação.
-        if not agent.is_superuser:
-            agent_account_ids = set(accessible_whatsapp_account_ids(agent))
-            if conversation.account_id not in agent_account_ids:
-                return Response(
-                    {'error': 'Agent does not have access to this conversation'},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        # Atribuir alguém a uma conversa exige que essa pessoa tenha acesso à
+        # conta — flag de conta não substitui vínculo.
+        agent_account_ids = set(accessible_whatsapp_account_ids(agent))
+        if conversation.account_id not in agent_account_ids:
+            return Response(
+                {'error': 'Agent does not have access to this conversation'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         service = ConversationService()
         conversation = service.assign_agent(str(conversation.id), agent)
@@ -583,13 +581,12 @@ class ConversationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        if not request.user.is_superuser:
-            allowed_ids = accessible_whatsapp_account_ids(request.user)
-            if not WhatsAppAccount.objects.filter(id=account_id, id__in=allowed_ids).exists():
-                return Response(
-                    {'error': 'forbidden'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
+        allowed_ids = accessible_whatsapp_account_ids(request.user)
+        if not WhatsAppAccount.objects.filter(id=account_id, id__in=allowed_ids).exists():
+            return Response(
+                {'error': 'forbidden'},
+                status=status.HTTP_403_FORBIDDEN
+            )
 
         service = ConversationService()
         stats = service.get_conversation_stats(account_id)

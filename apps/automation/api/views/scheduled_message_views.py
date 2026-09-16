@@ -33,9 +33,8 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's accounts
-        if not user.is_superuser:
-            queryset = queryset.filter(account__owner=user)
+        # Escopo de tenant: nenhuma flag de conta abre cross-tenant.
+        queryset = queryset.filter(account__owner=user)
         
         # Filter by account
         account_id = self.request.query_params.get('account_id')
@@ -73,13 +72,13 @@ class ScheduledMessageViewSet(viewsets.ModelViewSet):
         from apps.whatsapp.models import WhatsAppAccount
         from django.db.models import Q
         try:
-            account_qs = WhatsAppAccount.objects.filter(id=account_id, is_active=True)
-            if not request.user.is_superuser:
-                account_qs = account_qs.filter(
-                    Q(owner=request.user) |
-                    Q(stores__owner=request.user) |
-                    Q(stores__staff=request.user)
-                )
+            account_qs = WhatsAppAccount.objects.filter(
+                id=account_id, is_active=True
+            ).filter(
+                Q(owner=request.user) |
+                Q(stores__owner=request.user) |
+                Q(stores__staff=request.user)
+            )
             account = account_qs.distinct().get()
         except WhatsAppAccount.DoesNotExist:
             return Response(

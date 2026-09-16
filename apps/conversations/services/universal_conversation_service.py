@@ -160,8 +160,7 @@ class UniversalConversationService:
         return message_type.replace("_", " ").title()
 
     def _is_staff(self, user) -> bool:
-        # is_staff (acesso ao /admin) NÃO concede visibilidade cross-tenant.
-        # Conversas de outros tenants são PII — só superuser acessa tudo.
-        if isinstance(user, AnonymousUser):
-            return False
-        return bool(getattr(user, "is_superuser", False))
+        # Conversa de outro tenant é PII do cliente final: nenhuma flag de
+        # conta concede visibilidade cross-tenant, nem is_staff nem
+        # is_superuser. Mantido como gancho para papéis futuros.
+        return False
