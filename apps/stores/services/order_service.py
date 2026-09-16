@@ -156,7 +156,13 @@ class OrderService:
         # O painel cancela pelo dropdown de status, não só pelo botão de cancelar
         # — os dois caminhos precisam liquidar o pagamento.
         if new_status == 'cancelled':
-            self._liquidar_pagamento_do_cancelado(order)
+            # O botão "Cancelar" da tela de detalhe do painel vem por aqui, não
+            # pelo `/cancel/`. Estoque só na primeira transição: repetir o status
+            # ou estornar depois não devolve de novo.
+            if old_status not in ('cancelled', 'refunded'):
+                from .checkout_service import CheckoutService
+                CheckoutService._restore_stock(order)
+            self._encerrar_cancelado(order)
 
         # Trigger webhook
         from .webhook_service import webhook_service
@@ -308,20 +314,11 @@ class OrderService:
         
         order.save()
         
-        # Restore stock if requested — use F() to avoid read-modify-write race conditions
+        # Mesma devolução do webhook (`CheckoutService._restore_stock`). A trava
+        # de "só uma vez" é o retorno antecipado de pedido já cancelado, acima.
         if restore_stock:
-            from apps.stores.models import StoreProduct, StoreCombo
-            for item in order.items.all():
-                if item.product_id and item.product.track_stock:
-                    StoreProduct.objects.filter(id=item.product_id).update(
-                        stock_quantity=F('stock_quantity') + item.quantity
-                    )
-
-            for combo_item in order.combo_items.all():
-                if combo_item.combo_id and combo_item.combo.track_stock:
-                    StoreCombo.objects.filter(id=combo_item.combo_id).update(
-                        stock_quantity=F('stock_quantity') + combo_item.quantity
-                    )
+            from .checkout_service import CheckoutService
+            CheckoutService._restore_stock(order)
         
         # Handle refund if requested
         refund_result = None
@@ -330,7 +327,7 @@ class OrderService:
 
         # Depois do estorno: se ele deu certo o pagamento já é 'refunded' e fica
         # como está; senão o pedido cancelado não pode continuar 'paid'.
-        self._liquidar_pagamento_do_cancelado(order)
+        self._encerrar_cancelado(order)
 
         # Trigger webhook
         from .webhook_service import webhook_service
@@ -341,10 +338,13 @@ class OrderService:
             'refunded': refund_result.get('success') if refund_result else False,
         })
         
-        # Aviso ao cliente respeita o silêncio por pedido (ex.: venda de balcão)
-        metadata = order.metadata if isinstance(order.metadata, dict) else {}
-        if notify_customer and not metadata.get('suppress_notifications'):
-            self._send_status_notification(order, old_status='', new_status='cancelled')
+        # Aviso ao cliente: NÃO mandar daqui. O `order.save()` acima já dispara o
+        # post_save → `notify_order_status_change`, que tem trava por
+        # pedido+status e respeita `suppress_notifications`. Mandar também por
+        # `_send_status_notification` fazia "Pedido Cancelado" chegar duas vezes
+        # no mesmo segundo (9 casos em 14 dias, medido em 14/set). Mesma lição
+        # do `update_status` acima. `notify_customer` fica na assinatura por
+        # compatibilidade com quem chama.
 
         logger.info(f"Order {order.order_number} cancelled. Reason: {reason}")
 
@@ -360,6 +360,18 @@ class OrderService:
     # cancelar: quem estornou de verdade precisa continuar aparecendo como
     # estorno na conciliação com o gateway.
     _PAGAMENTO_FINAL = ('refunded', 'partially_refunded', 'cancelled')
+
+    def _encerrar_cancelado(self, order) -> None:
+        """O que todo cancelamento precisa fazer, venha do botão ou do dropdown.
+
+        Pagamento liquidado e vaga do cupom devolvida. Antes só o webhook do MP
+        devolvia o cupom: 4 vendas em dinheiro canceladas pelo painel ficaram
+        com a vaga presa (medido em 15/set). `_release_coupon` é idempotente
+        por `metadata['coupon_released']`.
+        """
+        from .checkout_service import CheckoutService
+        self._liquidar_pagamento_do_cancelado(order)
+        CheckoutService._release_coupon(order)
 
     def _liquidar_pagamento_do_cancelado(self, order) -> None:
         """Ao cancelar, o pagamento deixa de estar 'paid' ou 'pending'.
@@ -404,14 +416,15 @@ class OrderService:
             created_at__gte=period_start
         )
         
-        from apps.stores.metrics import apenas_receita
+        from apps.stores.metrics import apenas_receita, media_de_venda, soma_de_venda
 
         total_orders = orders.count()
         # `payment_status='paid'` sozinho contava venda cancelada depois do
         # pagamento e pedido de teste do dono como faturamento.
         de_receita = apenas_receita(orders)
-        total_revenue = de_receita.aggregate(total=Sum('total'))['total'] or Decimal('0.00')
-        avg_order_value = de_receita.aggregate(avg=Avg('total'))['avg'] or Decimal('0.00')
+        # Sem frete: frete é repasse ao entregador, não venda.
+        total_revenue = de_receita.aggregate(total=soma_de_venda())['total'] or Decimal('0.00')
+        avg_order_value = de_receita.aggregate(avg=media_de_venda())['avg'] or Decimal('0.00')
         
         # Orders by status
         by_status = orders.values('status').annotate(count=Count('id'))
@@ -424,7 +437,7 @@ class OrderService:
             date=TruncDate('created_at')
         ).values('date').annotate(
             count=Count('id'),
-            revenue=Sum('total', filter=Q(id__in=de_receita.values('id'))),
+            revenue=soma_de_venda(filter=Q(id__in=de_receita.values('id'))),
         ).order_by('date')
         
         return {

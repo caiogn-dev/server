@@ -25,6 +25,9 @@ SUPPORTED_ORDER_EVENTS = {
     'order.updated',
     'order.paid',
     'order.cancelled',
+    # Cobrança aprovada que NÃO cobre o total: o pedido fica `processing`
+    # (trava certa) e a loja precisa saber quanto falta — antes era mudo.
+    'order.payment_partial',
 }
 
 ORDER_EVENT_ALIASES = {
@@ -59,8 +62,13 @@ def normalize_order_event_type(event_type: str | None) -> str:
     return ORDER_EVENT_ALIASES.get(event_type, 'order.updated')
 
 
-def broadcast_order_event(order, event_type: str | None = None, reason: str | None = None) -> bool:
-    """Send an order event to the store WebSocket group."""
+def broadcast_order_event(order, event_type: str | None = None, reason: str | None = None,
+                          extra: dict | None = None) -> bool:
+    """Send an order event to the store WebSocket group.
+
+    `extra` acrescenta campos ao payload (ex.: `amount_paid`/`amount_due` do
+    aviso de pagamento a menor) sem sobrescrever os campos do contrato.
+    """
     normalized_event_type = (
         resolve_default_order_event_type(order)
         if event_type is None
@@ -91,6 +99,8 @@ def broadcast_order_event(order, event_type: str | None = None, reason: str | No
         }
         if reason:
             payload['reason'] = reason
+        for chave, valor in (extra or {}).items():
+            payload.setdefault(chave, valor)
 
         async_to_sync(channel_layer.group_send)(
             store_orders_group(order.store.slug),

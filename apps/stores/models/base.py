@@ -244,6 +244,9 @@ class Store(BaseModel):
     min_order_value = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     free_delivery_threshold = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     default_delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('10.00'))
+    # Tempo padrão de preparo, em minutos. 0 = a loja não usa previsão. Vira
+    # `StoreOrder.prep_minutes` quando o pedido entra em preparo.
+    default_prep_minutes = models.PositiveSmallIntegerField(default=0)
 
     # Operating Hours (JSON: {"monday": {"open": "09:00", "close": "18:00"}, ...})
     operating_hours = models.JSONField(default=dict, blank=True)

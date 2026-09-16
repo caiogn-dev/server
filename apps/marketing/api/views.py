@@ -378,7 +378,7 @@ class CustomersViewSet(viewsets.ViewSet):
         # 2. Get customers from Store Orders
         # `total_spent` orienta segmentação de campanha — somar pedido
         # cancelado e não pago punha o cliente na faixa errada.
-        from apps.stores.metrics import apenas_receita
+        from apps.stores.metrics import apenas_receita, soma_de_venda
 
         order_customers = apenas_receita(
             StoreOrder.objects.filter(store_id=store_id, customer_email__isnull=False)
@@ -386,7 +386,7 @@ class CustomersViewSet(viewsets.ViewSet):
             customer_email=''
         ).values('customer_email', 'customer_name', 'customer_phone').annotate(
             total_orders=Count('id'),
-            total_spent=Sum('total'),
+            total_spent=soma_de_venda(),  # sem frete
             last_order=Max('created_at')
         )
 
@@ -507,9 +507,9 @@ class CustomersViewSet(viewsets.ViewSet):
 
         return Response({'count': max(user_count, subscriber_count, order_emails)})
     
-    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, IsAdminUser])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def debug(self, request):
-        """Debug endpoint to check data sources for a store. Admin only."""
+        """Debug das fontes de clientes de uma loja: superuser ou quem acessa a loja."""
         from django.contrib.auth import get_user_model
         from apps.stores.models import Store, StoreOrder, StoreCustomer
 
@@ -519,10 +519,11 @@ class CustomersViewSet(viewsets.ViewSet):
         if not store_id:
             return Response({'error': 'store parameter is required'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # IsAdminUser é is_staff, que não é vínculo: sem este gate qualquer
-        # conta com acesso ao /admin lia a contagem de clientes de outra loja.
+        # IsAdminUser é is_staff, que não é vínculo, e superuser também não é:
+        # sem este gate a conta do /admin lia a contagem de clientes de
+        # qualquer loja. 404 em vez de 403 para não confirmar que a loja existe.
         if not _user_can_use_store(request.user, store_id):
-            return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
+            return Response(status=status.HTTP_404_NOT_FOUND)
 
         # All scoped to this store only
         store_customer_users = User.objects.filter(

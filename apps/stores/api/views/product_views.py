@@ -8,13 +8,14 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from django.db import transaction
 from django.db.models import Q
+from django.http import Http404
 
 from apps.stores.models import (
     Store,
     StoreCategory, StoreProduct, StoreProductVariant,
     StoreCombo, StoreProductType
 )
-from apps.core.permissions import StoreQuerysetMixin
+from apps.core.permissions import StoreQuerysetMixin, user_can_access_store
 from apps.stores.services.codigo_interno import gerar_codigo_interno
 from ..serializers import (
     StoreCategorySerializer,
@@ -54,6 +55,12 @@ class StoreCategoryViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 except Store.DoesNotExist:
                     pass
         return super().initialize_request(request, *args, **kwargs)
+
+    @action(detail=True, methods=['get'])
+    def uso(self, request, pk=None, **kwargs):
+        """Quantos produtos ficam sem categoria se ela for excluída."""
+        categoria = self.get_object()
+        return Response({'produtos': categoria.products.count()})
 
     def get_queryset(self):
         from django.db.models import Count, Q, Prefetch
@@ -113,6 +120,12 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 loja = Store.objects.filter(slug=identificador).first()
         if not loja:
             return Response({"detail": "Informe a loja."}, status=400)
+
+        # Gate de tenant: IsStoreOwnerOrStaff só verifica quando store_pk está
+        # nos kwargs da URL (rota aninhada). Via rota plana o body traz a loja
+        # e nenhuma permissão verificou acesso — faz aqui (info-hiding: 404).
+        if not request.user.is_superuser and not user_can_access_store(request.user, loja):
+            raise Http404
 
         numero_da_loja = list(
             Store.objects.order_by("created_at").values_list("id", flat=True)
@@ -219,6 +232,24 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             return StoreProductCreateSerializer
         return StoreProductSerializer
     
+    @action(detail=True, methods=['get'])
+    def uso(self, request, pk=None):
+        """Onde o produto aparece — o painel mostra ANTES de excluir.
+
+        Excluir não quebra o histórico (o item do pedido guarda o nome e o
+        vínculo vira nulo), mas tira o produto de todo combo em silêncio: os
+        grupos e opções de combo são CASCADE.
+        """
+        from apps.stores.models import StoreOrderItem
+        from apps.stores.models.combo_group import ComboProductGroup, ComboProductGroupProductOption
+        produto = self.get_object()
+        combos = set(ComboProductGroup.objects.filter(product=produto).values_list('combo_id', flat=True))
+        combos |= set(ComboProductGroupProductOption.objects.filter(product=produto).values_list('group__combo_id', flat=True))
+        return Response({
+            'combos': len(combos),
+            'pedidos': StoreOrderItem.objects.filter(product=produto).values('order_id').distinct().count(),
+        })
+
     @action(detail=True, methods=['post'])
     def toggle_status(self, request, pk=None):
         """Toggle product active/inactive status."""

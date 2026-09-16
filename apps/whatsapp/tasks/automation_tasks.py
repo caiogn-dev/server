@@ -117,6 +117,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         logger.info("Duplicate pix_reminder task for order %s type %s — skipped", order_id, reminder_type)
         return
 
+    enviado = False
     try:
         order = Order.objects.select_related('store').get(id=order_id)
 
@@ -152,6 +153,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         if account:
             service = WhatsAppAPIService(account)
             service.send_text_message(to=order.customer_phone, text=message)
+            enviado = True
             logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
 
             if not order.metadata:
@@ -163,6 +165,10 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         logger.error(f"Order {order_id} not found")
     except Exception as e:
         logger.error(f"Error sending payment reminder: {str(e)}")
+        if not enviado:
+            # Nada saiu: libera a trava para a nova tentativa passar. Se a
+            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
+            cache.delete(idempotency_key)
         raise self.retry(exc=e)
 
 
@@ -225,12 +231,15 @@ def check_pending_payments():
         ).exclude(metadata__has_key='payment_expired_notified')
         .values_list('id', flat=True)
     )
+    from apps.stores.services.order_service import OrderService
     for oid in expired:
         send_payment_reminder.delay(str(oid), 'final')
-        Order.objects.filter(id=oid).update(
-            status='cancelled',
-            payment_status='failed',
-        )
+        # Pelo serviço, não por `.update()` cru: cancelar devolve estoque e cupom,
+        # liquida o pagamento e dispara o aviso de cancelado (com trava). O
+        # `.update()` pulava tudo isso e não gravava `cancelled_at`.
+        pedido = Order.objects.select_related('store').filter(id=oid).first()
+        if pedido is not None:
+            OrderService().cancel_order(pedido, reason='PIX não pago em 24h')
     if expired:
         logger.info("Cancelled %d PIX-expired orders", len(expired))
 
@@ -254,6 +263,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         logger.info("Duplicate cart_reminder task for cart %s type %s — skipped", cart_id, reminder_type)
         return
 
+    enviado = False
     try:
         cart = Cart.objects.select_related('store').get(id=cart_id)
         cart_metadata = cart.metadata or {}
@@ -325,12 +335,17 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
                     {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
                 ]
             )
+            enviado = True
             logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
 
     except Cart.DoesNotExist:
         logger.error(f"Cart {cart_id} not found")
     except Exception as e:
         logger.error(f"Error sending cart reminder: {str(e)}")
+        if not enviado:
+            # Nada saiu: libera a trava para a nova tentativa passar. Se a
+            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
+            cache.delete(idempotency_key)
         raise self.retry(exc=e)
 
 
@@ -418,6 +433,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
         logger.info("Skipping duplicate notification for order %s status %s", order_id, new_status)
         return
 
+    enviado = False
     try:
         order = Order.objects.select_related('store').get(id=order_id)
 
@@ -523,6 +539,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                         'status': new_status,
                     },
                 )
+                enviado = True
                 # O log só afirma o que aconteceu. Antes ele vinha solto depois
                 # da chamada e dizia "sent" mesmo quando nada saía — mandou
                 # procurar o problema no lugar errado por semanas.
@@ -544,11 +561,16 @@ def notify_order_status_change(self, order_id: str, new_status: str):
             # This preserves backward compatibility for stores that haven't set up templates.
             logger.debug(f"No active template for event '{event_type}' on store {order.store_id}, using direct fallback")
             order._trigger_status_whatsapp_notification(new_status)
+            enviado = True
 
     except Order.DoesNotExist:
         logger.error(f"Order {order_id} not found")
     except Exception as e:
         logger.error(f"Error notifying status change: {str(e)}")
+        if not enviado:
+            # Nada saiu: libera a trava para a nova tentativa passar. Se a
+            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
+            cache.delete(idempotency_key)
         raise self.retry(exc=e)
 
 
@@ -675,6 +697,7 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
         logger.info("Duplicate session_reminder for session %s type %s — skipped", session_id, reminder_type)
         return
 
+    enviado = False
     try:
         session = CustomerSession.objects.select_related('company').get(id=session_id)
 
@@ -695,7 +718,8 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
             logger.warning("No WhatsApp account for company %s", session.company_id)
             return
 
-        first_name = (session.customer_name or '').split()[0] or 'você'
+        from apps.core.utils import primeiro_nome
+        first_name = primeiro_nome(session.customer_name, 'você')
 
         if reminder_type == '5min':
             body = (
@@ -722,6 +746,7 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
                 {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
             ],
         )
+        enviado = True
         session.add_notification(notification_key)
         logger.info("Session cart reminder (%s) sent to %s", reminder_type, mask_phone(phone_number))
 
@@ -729,6 +754,10 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
         logger.error("CustomerSession %s not found", session_id)
     except Exception as exc:
         logger.error("Error sending session cart reminder: %s", exc)
+        if not enviado:
+            # Nada saiu: libera a trava para a nova tentativa passar. Se a
+            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
+            cache.delete(idempotency_key)
         raise self.retry(exc=exc)
 
 
@@ -851,6 +880,7 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
     if not cache.add(idempotency_key, 1, timeout=86400):  # 24h
         return
 
+    enviado = False
     try:
         store = Store.objects.get(id=store_id)
         profile = _get_store_profile(store)
@@ -866,12 +896,17 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
             body_text=body_text,
             buttons=buttons,
         )
+        enviado = True
         logger.info("Re-engagement sent to %s for store %s", mask_phone(phone_number), store_id)
 
     except Store.DoesNotExist:
         logger.error("Store %s not found for re-engagement", store_id)
     except Exception as exc:
         logger.error("Error sending re-engagement: %s", exc)
+        if not enviado:
+            # Nada saiu: libera a trava para a nova tentativa passar. Se a
+            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
+            cache.delete(idempotency_key)
         raise self.retry(exc=exc)
 
 

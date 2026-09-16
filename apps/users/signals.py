@@ -19,13 +19,9 @@ def _phone_candidates(phone: str) -> list[str]:
     if not digits:
         return []
 
-    normalized = normalize_phone_number(digits)
-    candidates = [phone, digits, normalized, f'+{digits}', f'+{normalized}']
-    if normalized.startswith('55') and len(normalized) > 11:
-        local = normalized[2:]
-        candidates.extend([local, f'+{local}'])
-
-    return [value for value in dict.fromkeys(c for c in candidates if c)]
+    # Uma fonte só: as mesmas variantes do model, que incluem o nono dígito.
+    from apps.users.models import UnifiedUser
+    return UnifiedUser._phone_candidates(phone)
 
 
 @receiver(post_save, sender='conversations.Conversation')
@@ -80,7 +76,7 @@ def sync_whatsapp_message_to_activity(sender, instance, created, **kwargs):
 
     try:
         phone = instance.conversation.phone_number
-        user = UnifiedUser.objects.filter(phone_number=phone).first()
+        user = UnifiedUser.objects.filter(phone_number__in=_phone_candidates(phone)).first()
 
         if user:
             UnifiedUserActivity.objects.create(
@@ -141,12 +137,13 @@ def sync_store_order_to_unified_user(sender, instance, created, **kwargs):
         # `total_spent` é quanto o cliente REALMENTE gastou: somar tudo
         # incluía pedido cancelado e não pago, e o painel mostrava um valor
         # que o cliente nunca desembolsou.
-        from apps.stores.metrics import apenas_receita
+        from apps.stores.metrics import apenas_receita, soma_de_venda
 
         _pedidos = StoreOrder.objects.filter(customer_phone__in=phone_candidates)
         stats = _pedidos.aggregate(total_orders=Count('id'))
+        # Sem frete: o frete foi para o entregador, não para a loja.
         stats['total_spent'] = apenas_receita(_pedidos).aggregate(
-            t=Sum('total'),
+            t=soma_de_venda(),
         )['t']
 
         last_order = StoreOrder.objects.filter(

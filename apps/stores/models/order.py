@@ -175,6 +175,10 @@ class StoreOrder(BaseModel):
     pix_qr_code = models.TextField(blank=True)
     pix_expires_at = models.DateTimeField(null=True, blank=True)
     pix_ticket_url = models.URLField(max_length=500, blank=True)
+    # Troco do pagamento em dinheiro. `None` = ninguém perguntou; `0` = o
+    # cliente disse que não precisa; `> 0` = "troco para" este valor (nunca
+    # abaixo do total). Regra de entrada em `services/troco.py`.
+    change_for = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 
     # Delivery
     delivery_method = models.CharField(
@@ -216,6 +220,10 @@ class StoreOrder(BaseModel):
     cancelled_at = models.DateTimeField(null=True, blank=True)
     refunded_at = models.DateTimeField(null=True, blank=True)
     cancel_reason = models.CharField(max_length=140, blank=True, default='')
+    # Minutos de preparo previstos, FOTOGRAFADOS do `Store.default_prep_minutes`
+    # quando o pedido entra em preparo. Mudar o padrão da loja depois não mexe
+    # na previsão de quem já está no fogo. Previsão = preparing_at + isto.
+    prep_minutes = models.PositiveSmallIntegerField(null=True, blank=True)
 
     # ── BI Fase 2: colunas denormalizadas (fonte: metadata/delivery_address) ──
     # Canal do pedido: web / whatsapp / pdv / app / instagram. Derivado no
@@ -368,7 +376,10 @@ class StoreOrder(BaseModel):
             if 'customer_phone' in campos:
                 kwargs['update_fields'] = campos
 
-        if not self.order_number:
+        self._fotografar_tempo_de_preparo(kwargs)
+
+        numero_sorteado = not self.order_number
+        if numero_sorteado:
             self.order_number = self.generate_order_number()
         if not self.access_token:
             self.access_token = self.generate_access_token()
@@ -387,7 +398,44 @@ class StoreOrder(BaseModel):
                 if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
                     self.delivery_lat = lat
                     self.delivery_lng = lng
-        super().save(*args, **kwargs)
+        if not (numero_sorteado and self._state.adding):
+            super().save(*args, **kwargs)
+            return
+        # O sufixo tem 10 mil valores por loja/dia e `order_number` é único no
+        # banco inteiro: uma colisão virava erro 500 no checkout. Sorteia de
+        # novo dentro de um savepoint (o checkout já está numa transação).
+        # Só para número sorteado aqui — quem informou o número recebe o erro.
+        from django.db import IntegrityError, transaction
+        for tentativa in range(5):
+            try:
+                with transaction.atomic():
+                    super().save(*args, **kwargs)
+                return
+            except IntegrityError as erro:
+                if 'order_number' not in str(erro) or tentativa == 4:
+                    raise
+                self.order_number = self.generate_order_number()
+
+    def _fotografar_tempo_de_preparo(self, kwargs):
+        """Entrou em preparo sem previsão: copia o tempo padrão da loja.
+
+        No `save` e não no `update_status` porque há mais de um caminho que
+        muda status (painel, KDS, bot). Só uma vez: com `prep_minutes`
+        preenchido (inclusive 0 = loja sem tempo padrão), não relê a loja.
+        """
+        if (
+            self.prep_minutes is not None
+            or self.status != self.OrderStatus.PREPARING
+            or not self.preparing_at
+            or not self.store_id
+        ):
+            return
+        try:
+            self.prep_minutes = int(getattr(self.store, 'default_prep_minutes', 0) or 0)
+        except (TypeError, ValueError):
+            self.prep_minutes = 0
+        if kwargs.get('update_fields') is not None:
+            kwargs['update_fields'] = set(kwargs['update_fields']) | {'prep_minutes'}
 
     @property
     def amount_paid(self):

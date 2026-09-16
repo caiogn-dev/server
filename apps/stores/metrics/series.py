@@ -2,8 +2,10 @@
 
 Separação que o código não fazia e que causava o pior tipo de bug silencioso:
 
-- **receita** responde "quanto entrou". Exclui cancelado, estornado, não pago e
-  pedido de teste. É o que vai para o card, o relatório e o export.
+- **receita** responde "quanto a loja vendeu". Exclui cancelado, estornado, não
+  pago e pedido de teste, e soma o VALOR DE VENDA (sem frete — frete é repasse
+  ao entregador, ver `definicoes.valor_de_venda`). É o que vai para o card, o
+  relatório e o export.
 - **contagem operacional** responde "quanto passou pela cozinha". Inclui tudo,
   porque o pedido cancelado existiu, ocupou fogão e precisa aparecer na fila.
 
@@ -13,10 +15,16 @@ não dá para confundir por acidente.
 """
 from decimal import Decimal
 
-from django.db.models import Avg, Count, Sum
+from django.db.models import Count, Sum
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 
-from .definicoes import apenas_receita, eixo_de_receita, pedidos_de_receita
+from .definicoes import (
+    apenas_receita,
+    eixo_de_receita,
+    media_de_venda,
+    pedidos_de_receita,
+    soma_de_venda,
+)
 from .janelas import Janela
 
 GRANULARIDADES = {
@@ -33,14 +41,18 @@ def _decimal(valor) -> Decimal:
 
 
 def totais(loja, janela: Janela, incluir_teste=False) -> dict:
-    """Agregado de RECEITA no período. Fala de dinheiro."""
+    """Agregado de RECEITA no período. Fala de dinheiro.
+
+    `receita` e `ticket_medio` são sem frete; `frete` vem à parte para quem
+    quiser mostrar o repasse ao entregador.
+    """
     qs = pedidos_de_receita(
         loja=loja, inicio=janela.inicio, fim=janela.fim, incluir_teste=incluir_teste,
     )
     agg = qs.aggregate(
-        receita=Sum('total'),
+        receita=soma_de_venda(),
         pedidos=Count('id'),
-        ticket_medio=Avg('total'),
+        ticket_medio=media_de_venda(),
         frete=Sum('delivery_fee'),
         desconto=Sum('discount'),
     )
@@ -66,12 +78,15 @@ def resumo_de_lista(queryset, incluir_teste=False) -> dict:
     entre dois números na mesma tela destrói a confiança nos dois.
 
     Devolve volume (inclui cancelado e não pago, porque a lista os mostra) E
-    dinheiro (só o que faturou), separados e rotulados.
+    dinheiro (só o que faturou, sem frete), separados e rotulados. `frete` é o
+    repasse ao entregador dos pedidos que faturaram.
     """
     from apps.stores.models import StoreOrder
 
     faturando = apenas_receita(queryset, incluir_teste=incluir_teste)
-    agg = faturando.aggregate(receita=Sum('total'), pedidos=Count('id'))
+    agg = faturando.aggregate(
+        receita=soma_de_venda(), pedidos=Count('id'), frete=Sum('delivery_fee'),
+    )
 
     receita = _decimal(agg['receita'])
     pagos = agg['pedidos'] or 0
@@ -81,6 +96,7 @@ def resumo_de_lista(queryset, incluir_teste=False) -> dict:
         'cancelados': queryset.filter(status=StoreOrder.OrderStatus.CANCELLED).count(),
         'pedidos_faturados': pagos,
         'receita': receita,
+        'frete': _decimal(agg['frete']),
         # Divide pelos pedidos que FATURARAM. Dividir pelo total (com cancelado
         # e não pago dentro) derruba o número e mente sobre a venda média.
         #
@@ -90,10 +106,13 @@ def resumo_de_lista(queryset, incluir_teste=False) -> dict:
 
 
 def quebra_de_lista(queryset, campo: str, incluir_teste=False) -> list:
-    """Receita do recorte agrupada por um campo (pagamento, canal).
+    """Dinheiro RECEBIDO do recorte agrupado por um campo (pagamento, canal).
 
-    Mesmo queryset filtrado do `resumo_de_lista`, então as partes somam o todo
-    — e é isso que permite usar a quebra para fechar o caixa.
+    Diferente de `resumo_de_lista`, aqui a soma é `total` — COM frete. O painel
+    mostra esta quebra como "Como entrou o dinheiro" (HistoricoPedidosPage) e ela
+    serve para conferir a gaveta e o extrato do gateway, que recebem o frete
+    junto (a gaveta de `StoreCashSession.expected_cash` também soma `total`).
+    Por isso as partes somam `faturamento + frete`, não o faturamento.
     """
     faturando = apenas_receita(queryset, incluir_teste=incluir_teste)
     return [
@@ -103,6 +122,7 @@ def quebra_de_lista(queryset, campo: str, incluir_teste=False) -> list:
             'total': _decimal(linha['soma']),
         }
         for linha in faturando.values(campo).annotate(
+            # metrics-ok: dinheiro recebido (frete incluso), para conferir caixa.
             n=Count('id'), soma=Sum('total')
         ).order_by('-soma')
     ]
@@ -152,9 +172,9 @@ def serie_temporal(loja, janela: Janela, granularidade='dia', incluir_teste=Fals
         qs.annotate(periodo=trunc(eixo_de_receita()))
         .values('periodo')
         .annotate(
-            receita=Sum('total'),
+            receita=soma_de_venda(),
             pedidos=Count('id'),
-            ticket_medio=Avg('total'),
+            ticket_medio=media_de_venda(),
             frete=Sum('delivery_fee'),
             desconto=Sum('discount'),
         )

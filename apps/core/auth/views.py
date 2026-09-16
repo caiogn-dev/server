@@ -218,6 +218,14 @@ def verify_whatsapp_auth_code(request):
                 full_name=whatsapp_user.get('name', '') if isinstance(whatsapp_user, dict) else '',
                 create=True,
             )
+            # A prova de posse do número. `profile.phone` não serve (o cliente
+            # grava o que quiser nele); este campo só nasce aqui.
+            verificado = CustomerIdentityService.digits_only(
+                result.get('phone_number') or phone
+            )
+            if verificado and profile.telefone_verificado != verificado:
+                profile.telefone_verificado = verificado
+                profile.save(update_fields=['telefone_verificado'])
             token = _token_utilizavel(user)
         except Exception as exc:
             logger.exception("[WHATSAPP AUTH API] Failed to create auth token: %s", exc)

@@ -12,7 +12,7 @@ se precisar de um número novo, o número nasce aqui.
 
 Três responsabilidades, três módulos:
 
-- `definicoes`  o que conta como receita, e por qual data
+- `definicoes`  o que conta como receita, quanto dela é venda (sem frete) e por qual data
 - `janelas`     que intervalo é esse, sempre no fuso da loja
 - `series`      como isso se distribui no tempo e entre produtos
 
@@ -29,7 +29,10 @@ from .definicoes import (
     eixo_de_receita,
     itens_de_receita,
     marcar_como_teste,
+    media_de_venda,
     pedidos_de_receita,
+    soma_de_venda,
+    valor_de_venda,
 )
 from .janelas import (
     Janela,
@@ -64,6 +67,9 @@ __all__ = [
     'itens_de_receita',
     'marcar_como_teste',
     'pedidos_de_receita',
+    'valor_de_venda',
+    'soma_de_venda',
+    'media_de_venda',
     # janelas
     'Janela',
     'agora_local',

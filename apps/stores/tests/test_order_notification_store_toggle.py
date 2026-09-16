@@ -10,13 +10,16 @@ notify_order_status_change nunca checava a flag. Contrato:
 from unittest import mock
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from apps.stores.models import Store, StoreOrder
 
 User = get_user_model()
 
 
+# O aviso de status só sai com a mensagem automática que o post_save da loja
+# semeia; a suíte desliga o seed por padrão (settings/test.py).
+@override_settings(AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA=True)
 class OrderNotificationStoreToggleTest(TestCase):
     def setUp(self):
         self.owner = User.objects.create_user(

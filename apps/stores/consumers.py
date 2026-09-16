@@ -203,6 +203,27 @@ class OrderConsumer(AsyncWebsocketConsumer):
             'timestamp': datetime.now().isoformat(),
         }))
 
+    # O Channels despacha `type` do group_send para o método de mesmo nome
+    # (ponto vira sublinhado). O broadcaster emite `order.paid` e
+    # `order.cancelled` desde sempre e aqui não havia handler: a mensagem caía
+    # em "No handler for message type" e o painel nunca via PIX confirmado ou
+    # cancelamento ao vivo. `test_pagamento_a_menor_avisa` é a catraca.
+    async def _repassar(self, event):
+        await self.send(text_data=json.dumps({
+            **{k: v for k, v in event.items()},
+            'timestamp': datetime.now().isoformat(),
+        }, default=str))
+
+    async def order_paid(self, event):
+        await self._repassar(event)
+
+    async def order_cancelled(self, event):
+        await self._repassar(event)
+
+    async def order_payment_partial(self, event):
+        """Pago a menor: leva `amount_paid`/`amount_due` para o aviso."""
+        await self._repassar(event)
+
     async def ping(self, event):
         """Handle ping message (heartbeat)."""
         await self.send(text_data=json.dumps({

@@ -168,3 +168,60 @@ class TestOQueNaoPodeAcontecer:
             p = _pedido(loja, {})
             p.delivery_address = lixo
             guardar_endereco_do_pedido(p)
+
+
+# ── 15/set: rua empilhada e mesmo lugar (caso da Flávia) ─────────────────────
+BASE_FLAVIA = 'Quadra 501 Sul Avenida NS 1'
+CAUDA_FLAVIA = ', 9, Recepção da ortolife , espaço life - Centro, Palmas, TO'
+
+
+def _flavia(rua):
+    return {'street': rua, 'number': '9', 'complement': 'Recepção da ortolife , espaço life ',
+            'neighborhood': 'Centro', 'city': 'Palmas', 'state': 'TO'}
+
+
+@pytest.mark.django_db
+class TestCadernoNaoEmpilha:
+    """O caderno do PDV/bot ficou com 3 cópias crescentes do endereço dela."""
+
+    def test_rua_empilhada_e_guardada_limpa(self, loja, cliente):
+        guardar_endereco_do_pedido(_pedido(loja, _flavia(BASE_FLAVIA + CAUDA_FLAVIA * 2)))
+
+        assert UserAddress.objects.get(unified_user=cliente).street == BASE_FLAVIA
+
+    def test_geracoes_do_mesmo_lugar_viram_um(self, loja, cliente):
+        for rua in (BASE_FLAVIA, BASE_FLAVIA + CAUDA_FLAVIA, BASE_FLAVIA + CAUDA_FLAVIA * 2):
+            guardar_endereco_do_pedido(_pedido(loja, _flavia(rua)))
+
+        assert UserAddress.objects.filter(unified_user=cliente).count() == 1
+
+    def test_maiuscula_nao_faz_outro(self, loja, cliente):
+        guardar_endereco_do_pedido(_pedido(loja, {'address': 'secretaria da cidadania e justiça'}))
+        guardar_endereco_do_pedido(_pedido(loja, {'address': 'SECRETARIA DA CIDADANIA E JUSTICA'}))
+
+        assert UserAddress.objects.filter(unified_user=cliente).count() == 1
+
+
+@pytest.mark.django_db
+class TestRetiradaNaoViraEndereco:
+    """Pedido de retirada leva o endereço DA LOJA. Virava endereço salvo do
+    cliente: 26 no caderno do PDV/bot em 15/set (a Flávia tinha "Q. 112 Sul,
+    Rua Sr 01", que é a Cê Saladas)."""
+
+    def test_pedido_de_retirada_nao_guarda(self, loja, cliente):
+        pedido = _pedido(loja, {'street': 'Q. 112 Sul, Rua Sr 01, 2 - Palmas, Tocantins', 'city': 'Palmas'})
+        pedido.delivery_method = 'pickup'
+        pedido.save(update_fields=['delivery_method'])
+        UserAddress.objects.filter(unified_user=cliente).delete()
+
+        guardar_endereco_do_pedido(pedido)
+
+        assert not UserAddress.objects.filter(unified_user=cliente).exists()
+
+    def test_endereco_igual_ao_da_loja_nao_guarda(self, loja, cliente):
+        loja.address = 'Q. 112 Sul, Rua Sr 01, 2 - Palmas, Tocantins'
+        loja.save(update_fields=['address'])
+
+        guardar_endereco_do_pedido(_pedido(loja, {'street': 'Q. 112 SUL, RUA SR 01, 2 - Palmas, Tocantins'}))
+
+        assert not UserAddress.objects.filter(unified_user=cliente).exists()

@@ -28,7 +28,8 @@ class GuestOrdersTests(APITestCase):
         )
         self.client = APIClient()
         from apps.core.models import UserProfile
-        cliente = User.objects.create_user(username=f'cliente_55{PHONE}', password='x')
+        # Conta como o OTP cria: sem senha utilizável (ver telefone_comprovado).
+        cliente = User.objects.create_user(username=f'cliente_55{PHONE}', password=None)
         perfil, _ = UserProfile.objects.get_or_create(user=cliente)
         perfil.phone = f'55{PHONE}'
         perfil.save()

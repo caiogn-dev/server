@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import user_can_access_store
 from ..models import Store, StoreOrder, StoreProduct, StoreCustomer
-from ..metrics import apenas_receita, hoje_local, itens_de_receita
+from ..metrics import apenas_receita, hoje_local, itens_de_receita, media_de_venda, soma_de_venda
 from .views import IsStoreOwnerOrStaff
 
 
@@ -394,10 +394,10 @@ class CustomersReportView(BaseExportView):
         ).values(
             'customer_email', 'customer_name', 'customer_phone'
         ).annotate(
-            # Sobre revenue_queryset() — ja e o queryset do nucleo.
-            total_spent=Sum('total'),
+            # Sobre revenue_queryset() — ja e o queryset do nucleo. Sem frete.
+            total_spent=soma_de_venda(),
             order_count=Count('id'),
-            avg_order_value=Avg('total')
+            avg_order_value=media_de_venda()
         ).order_by('-total_spent')[:50]
         
         # New vs returning customers
@@ -657,13 +657,14 @@ class SaladasReportView(BaseExportView):
             created_at__date__lte=prev_end,
         )
 
+        # Faturamento e ticket sem frete (repasse ao entregador).
         curr = paid_orders.aggregate(
-            revenue=Sum('total'),
+            revenue=soma_de_venda(),
             orders=Count('id'),
-            avg_ticket=Avg('total'),
+            avg_ticket=media_de_venda(),
         )
         prev = prev_paid_orders.aggregate(
-            revenue=Sum('total'),
+            revenue=soma_de_venda(),
             orders=Count('id'),
         )
 
@@ -682,7 +683,7 @@ class SaladasReportView(BaseExportView):
             paid_orders
             .annotate(day=TruncDate('created_at'))
             .values('day')
-            .annotate(value=Sum('total'))
+            .annotate(value=soma_de_venda())
             .order_by('day')
         )
         revenue_chart = [
@@ -739,7 +740,7 @@ class SaladasReportView(BaseExportView):
         top_customers_qs = (
             paid_orders
             .values('customer_name', 'customer_phone')
-            .annotate(total_spent=Sum('total'), order_count=Count('id'), avg_ticket=Avg('total'))
+            .annotate(total_spent=soma_de_venda(), order_count=Count('id'), avg_ticket=media_de_venda())
             .order_by('-total_spent')[:10]
         )
         top_customers = [

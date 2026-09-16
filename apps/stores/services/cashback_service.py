@@ -291,8 +291,11 @@ class CashbackService:
         ).strip()
         if not dono:
             return None
-        # Auto-indicação é desconto, não indicação.
-        if normalize_phone_number(dono) == normalize_phone_number(order.customer_phone or ''):
+        # Auto-indicação é desconto, não indicação. `mesmo_telefone`, e não
+        # igualdade: o próprio link podia voltar com o nono dígito, `+` ou um
+        # "55" grudado em número estrangeiro (a Layane indicou a si mesma).
+        from apps.core.utils import mesmo_telefone
+        if mesmo_telefone(dono, order.customer_phone or ''):
             return None
         base = CashbackService._base_de_bonus(order)
         valor = base * CashbackService.referral_percent(store, coupon) / Decimal('100')

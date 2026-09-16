@@ -446,19 +446,39 @@ class WhatsAppSSEView(BaseSSEView):
         """Stream WhatsApp updates."""
         from apps.whatsapp.models import Message
         from apps.conversations.models import Conversation
+        from apps.core.permissions import accessible_whatsapp_account_ids
         from django.utils import timezone
         from datetime import timedelta
-        
+
         account_id = request.GET.get('account_id')
         conversation_id = request.GET.get('conversation_id')
-        
+
+        # Escopo de tenant: superusuário vê tudo; demais usuários são restritos
+        # às contas WhatsApp que lhes pertencem.
+        if getattr(user, 'is_superuser', False):
+            accessible_ids = None  # sem restrição
+        else:
+            accessible_ids = list(accessible_whatsapp_account_ids(user))
+
+        # Rejeita account_id fora do escopo antes de qualquer acesso ao BD.
+        if account_id and accessible_ids is not None:
+            if str(account_id) not in {str(i) for i in accessible_ids}:
+                yield SSEEvent(
+                    event_type='error',
+                    data={'message': 'Acesso negado'}
+                )
+                return
+
         last_check = timezone.now()
         last_message_id = None
-        
+
         # Get initial state
         if conversation_id:
             try:
-                conversation = Conversation.objects.get(id=conversation_id)
+                conv_qs = Conversation.objects.all()
+                if accessible_ids is not None:
+                    conv_qs = conv_qs.filter(account_id__in=accessible_ids)
+                conversation = conv_qs.get(id=conversation_id)
                 last_message = conversation.messages.order_by('-created_at').first()
                 if last_message:
                     last_message_id = str(last_message.id)
@@ -468,20 +488,22 @@ class WhatsAppSSEView(BaseSSEView):
                     data={'message': 'Conversation not found'}
                 )
                 return
-        
+
         while True:
             current_time = timezone.now()
-            
-            # Query for new messages
+
+            # Query for new messages — escopada por tenant
             query = Message.objects.filter(created_at__gt=last_check)
-            
+            if accessible_ids is not None:
+                query = query.filter(account_id__in=accessible_ids)
+
             if account_id:
                 query = query.filter(account_id=account_id)
             if conversation_id:
                 query = query.filter(conversation_id=conversation_id)
-            
+
             new_messages = query.order_by('created_at')[:50]
-            
+
             for message in new_messages:
                 yield SSEEvent(
                     event_type='message',
@@ -498,18 +520,22 @@ class WhatsAppSSEView(BaseSSEView):
                     id=f"msg_{message.id}_{int(time.time())}"
                 )
                 last_message_id = str(message.id)
-            
-            # Query for status updates
+
+            # Query for status updates — escopada por tenant
             status_updates = Message.objects.filter(
                 updated_at__gt=last_check,
                 created_at__lt=last_check  # Only existing messages
-            ).exclude(status='pending')[:50]
-            
+            ).exclude(status='pending')
+            if accessible_ids is not None:
+                status_updates = status_updates.filter(account_id__in=accessible_ids)
+
             if account_id:
                 status_updates = status_updates.filter(account_id=account_id)
             if conversation_id:
                 status_updates = status_updates.filter(conversation_id=conversation_id)
-            
+
+            status_updates = status_updates[:50]
+
             for message in status_updates:
                 yield SSEEvent(
                     event_type='status_update',
@@ -520,7 +546,7 @@ class WhatsAppSSEView(BaseSSEView):
                     },
                     id=f"status_{message.id}_{int(time.time())}"
                 )
-            
+
             last_check = current_time
             yield None
 

@@ -21,7 +21,7 @@ from django.views.decorators.csrf import csrf_protect
 from apps.stores.models import Store, StoreOrder, StoreProduct, StoreCustomer
 from apps.conversations.models import Conversation
 from .decorators import panel_login_required, store_required
-from apps.stores.metrics import apenas_receita, hoje_local
+from apps.stores.metrics import apenas_receita, hoje_local, soma_de_venda
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +148,8 @@ def dashboard(request):
     do_dia = StoreOrder.objects.filter(store=store, created_at__date=today)
     orders_today = {
         'count': do_dia.count(),
-        'revenue': apenas_receita(do_dia).aggregate(revenue=Sum('total'))['revenue'],
+        # Sem frete: frete é repasse ao entregador, não venda.
+        'revenue': apenas_receita(do_dia).aggregate(revenue=soma_de_venda())['revenue'],
     }
 
     # Order status breakdown

@@ -2451,6 +2451,24 @@ class CheckoutService:
         return order
 
     @staticmethod
+    def _avisar_pagamento_a_menor(order):
+        """Avisa a loja, ao vivo, que entrou dinheiro mas não o total."""
+        from django.db import transaction as _tx
+
+        from apps.stores.services import realtime_service
+
+        pago = order.amount_paid
+        falta = order.amount_due
+        logger.warning(
+            '[checkout] pagamento a menor no pedido %s: pago %s de %s, falta %s',
+            order.order_number, pago, order.total, falta,
+        )
+        _tx.on_commit(lambda: realtime_service.broadcast_order_event(
+            order, event_type='order.payment_partial',
+            extra={'amount_paid': str(pago), 'amount_due': str(falta)},
+        ))
+
+    @staticmethod
     def _handle_storepayment_webhook(store_payment, status: str):
         """Atualiza UMA cobrança (StorePayment) e reconcilia o pedido.
 
@@ -2521,6 +2539,9 @@ class CheckoutService:
             order.payment_status = StoreOrder.PaymentStatus.PROCESSING
             order.paid_at = None
             order.save(update_fields=['payment_status', 'paid_at', 'updated_at'])
+            # A trava está certa; o defeito era ser MUDA. Leani (CE-2609038526)
+            # pagou R$ 38,95 de R$ 43,28 e o pedido só parou — ninguém soube.
+            CheckoutService._avisar_pagamento_a_menor(order)
             return order
 
         # Demais status: atualiza a cobrança.
@@ -2651,19 +2672,35 @@ class CheckoutService:
     
     @staticmethod
     def _restore_stock(order: StoreOrder):
-        """Restore stock for cancelled/refunded orders."""
-        for item in order.items.all():
+        """Devolve o estoque que a venda baixou — a ÚNICA devolução.
+
+        Espelho exato da baixa em `_create_order_atomic`: variante, ou produto
+        com `sold_count`, e combo. Webhook, botão de cancelar e dropdown de
+        status chamam esta; antes `cancel_order` tinha a própria cópia, que
+        ignorava variante e `sold_count`, e esta ignorava combo.
+        Quem chama garante que é a primeira transição para cancelado.
+        """
+        from django.db.models.functions import Greatest
+        from apps.stores.models import StoreCombo, StoreProductVariant
+        for item in order.items.select_related('product', 'variant'):
             if item.product and item.product.track_stock:
                 if item.variant:
-                    from apps.stores.models import StoreProductVariant
                     StoreProductVariant.objects.filter(id=item.variant.id).update(
                         stock_quantity=F('stock_quantity') + item.quantity
                     )
                 else:
+                    # Piso zero: `sold_count` é PositiveIntegerField e produto
+                    # com contador zerado (cadastro antigo) estourava a check
+                    # constraint — erro 500 ao cancelar.
                     StoreProduct.objects.filter(id=item.product.id).update(
                         stock_quantity=F('stock_quantity') + item.quantity,
-                        sold_count=F('sold_count') - item.quantity
+                        sold_count=Greatest(F('sold_count') - item.quantity, 0)
                     )
+        for combo_item in order.combo_items.select_related('combo'):
+            if combo_item.combo_id and combo_item.combo.track_stock:
+                StoreCombo.objects.filter(id=combo_item.combo_id).update(
+                    stock_quantity=F('stock_quantity') + combo_item.quantity
+                )
 
     @staticmethod
     def _release_coupon(order: StoreOrder):
