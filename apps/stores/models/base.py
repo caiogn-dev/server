@@ -1,6 +1,7 @@
 """
 Base store models - Store, StoreIntegration, StoreWebhook.
 """
+import re
 import uuid
 import logging
 from decimal import Decimal
@@ -65,6 +66,28 @@ def _validate_image_upload(file):
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
+
+
+RE_DOMINIO = re.compile(
+    r'^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))+$'
+)
+
+
+def validar_dominio_proprio(valor):
+    """`custom_domain` é um hostname, não um campo de texto livre.
+
+    O primeiro cliente pago digitou o NOME da loja aqui ("solo & zelo") e o
+    campo aceitou. O estrago não aparece no painel: o comando de cardápio do
+    WhatsApp monta `https://{custom_domain}`, então o cliente final recebe um
+    link quebrado. Exigir pelo menos um ponto também recusa "cesaladas" solto,
+    que não resolve em lugar nenhum.
+    """
+    if valor in (None, ''):
+        return
+    if not RE_DOMINIO.match(str(valor).strip().lower()):
+        raise ValidationError(
+            'Informe só o domínio, sem http:// e sem barra — ex.: minhaloja.com.br'
+        )
 
 
 class Store(BaseModel):
@@ -192,6 +215,7 @@ class Store(BaseModel):
         blank=True,
         null=True,
         unique=True,
+        validators=[validar_dominio_proprio],
         help_text="Domínio próprio da loja (ex: cesaladas.com.br)",
     )
 
@@ -332,16 +356,12 @@ class Store(BaseModel):
         day_name = self._WEEKDAY_NAMES[now.weekday()]
         hours = self.operating_hours.get(day_name)
 
-        if not hours:
-            return False
+        # A vontade de quem administra vem ANTES do relógio: dia desligado não
+        # abre, mesmo com `open`/`close` gravados embaixo do desligamento.
+        # Regra em fonte única — o bot errava por ter a própria cópia dela.
+        from apps.stores.services.horario_de_funcionamento import dia_esta_aberto
 
-        # O painel grava `is_open: false` no dia que o lojista desligou. Isto
-        # era ignorado: só `open`/`close` eram lidos, então sábado marcado como
-        # fechado continuava abrindo das 08:00 às 12:00 — o horário que ficou
-        # gravado embaixo do desligamento. A vontade de quem administra vem
-        # ANTES do relógio.
-        # Ausência do campo NÃO fecha: cadastro antigo não tem a chave.
-        if 'is_open' in hours and not self._verdadeiro(hours['is_open']):
+        if not dia_esta_aberto(hours):
             return False
 
         try:
@@ -359,10 +379,9 @@ class Store(BaseModel):
 
     @staticmethod
     def _verdadeiro(valor):
-        """JSON de painel chega como bool, "false" ou 0 conforme o formulário."""
-        if isinstance(valor, str):
-            return valor.strip().lower() not in ('false', '0', 'no', '')
-        return bool(valor)
+        """Mantido por compatibilidade; a regra mora em services/horario_de_funcionamento."""
+        from apps.stores.services.horario_de_funcionamento import verdadeiro
+        return verdadeiro(valor)
     
     def get_whatsapp_account(self):
         """

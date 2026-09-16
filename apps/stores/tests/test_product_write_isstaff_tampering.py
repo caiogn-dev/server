@@ -130,10 +130,14 @@ class ProductWriteIsStaffTamperingTest(APITestCase):
         self.combo.refresh_from_db()
         self.assertEqual(self.combo.name, 'Novo Nome')
 
-    def test_superuser_continua_editando_qualquer_combo(self):
+    def test_superuser_sem_vinculo_nao_edita_combo_alheio(self):
+        """16/set: superuser deixou de ser chave-mestra — a loja do 1º cliente
+        pago nascia visível no painel do dono da plataforma. Acesso vem de
+        vínculo (owner, staff M2M ou StoreTeamMember ativo)."""
+        nome_antes = self.combo.name
         self.client.force_authenticate(self.superuser)
         resp = self.client.patch(
             f'{COMBOS_URL}{self.combo.id}/', {'name': 'Via Super'}, format='json')
-        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertIn(resp.status_code, [403, 404], resp.content)
         self.combo.refresh_from_db()
-        self.assertEqual(self.combo.name, 'Via Super')
+        self.assertEqual(self.combo.name, nome_antes)

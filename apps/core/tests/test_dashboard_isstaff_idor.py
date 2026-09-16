@@ -3,12 +3,15 @@
 `_accessible_accounts` e `_accessible_stores` retornavam TODAS as contas/lojas
 quando `user.is_staff` — então qualquer conta com acesso ao /admin via as
 métricas (pedidos, RECEITA, contas) de TODOS os tenants em
-/core/dashboard/overview/. Mesma família do fix de intent_views: só
-is_superuser tem acesso cross-tenant.
+/core/dashboard/overview/.
+
+Em 16/set o contrato apertou: nem is_staff NEM is_superuser abrem cross-tenant.
+A conta do dono da plataforma é superuser, e era ela que somava a receita de
+todos os tenants — inclusive a do primeiro cliente pago, no dia em que assinou.
 
 Cenários:
   1. Atacante is_staff NÃO vê contas nem receita de outro tenant.
-  2. superuser continua vendo tudo (guarda de não-regressão).
+  2. superuser TAMBÉM não vê — só as lojas do próprio vínculo.
 """
 from decimal import Decimal
 
@@ -60,8 +63,18 @@ class DashboardIsStaffIDORTest(APITestCase):
         leak_check_data = {k: v for k, v in resp.data.items() if k != 'timestamp'}
         self.assertNotIn('500', str(leak_check_data))
 
-    def test_superuser_ve_tudo(self):
+    def test_superuser_tampouco_ve_tenant_alheio(self):
+        """Sem vínculo com a loja vítima, o superuser vê zero."""
         self.client.force_authenticate(self.superuser)
+        resp = self.client.get(URL)
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.data['accounts']['total'], 0)
+        self.assertEqual(float(resp.data['orders']['revenue_today']), 0.0)
+
+    def test_dono_da_loja_continua_vendo_a_propria_receita(self):
+        """Âncora: se o dashboard zerasse para todo mundo, os asserts de zero
+        acima passariam sem provar isolamento nenhum."""
+        self.client.force_authenticate(self.victim)
         resp = self.client.get(URL)
         self.assertEqual(resp.status_code, 200, resp.content)
         self.assertEqual(resp.data['accounts']['total'], 1)

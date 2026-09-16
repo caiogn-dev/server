@@ -27,9 +27,13 @@ class InboxOrdenacaoTests(TestCase):
         self.admin = User.objects.create_superuser(
             username='admin-inbox', password='x', email='admin-inbox@real.com',
         )
+        # A conta é do usuário do teste. Até 16/set bastava ser superuser: a
+        # flag passava pelo escopo de conta sem vínculo nenhum. O assunto
+        # deste arquivo não é permissão, então aqui vai o vínculo real.
         self.account = WhatsAppAccount.objects.create(
             name='Conta Inbox', phone_number_id='999', waba_id='888',
             access_token='t', phone_number='5563000000001',
+            owner=self.admin,
         )
         agora = timezone.now()
         # Criadas fora de ordem de propósito.

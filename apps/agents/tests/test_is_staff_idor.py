@@ -26,6 +26,21 @@ def _read_views_source():
         return f.read()
 
 
+def _sem_comentarios(fonte: str) -> str:
+    """Código sem comentários.
+
+    Um assert de "não contém is_superuser" na fonte crua quebra quando o
+    comentário EXPLICA que não há bypass de superuser — que é justamente o que
+    se quer documentar. O alvo é o código, não o texto sobre ele.
+    """
+    linhas = []
+    for linha in fonte.splitlines():
+        sem = linha.split('#', 1)[0]
+        if sem.strip():
+            linhas.append(sem)
+    return '\n'.join(linhas)
+
+
 def _extract_function(source, name):
     """Extrai o bloco de uma função/método por indentação."""
     lines = source.splitlines()
@@ -61,22 +76,19 @@ class AccessibleAgentsSourceTest(SimpleTestCase):
             "_accessible_agents usa 'or user.is_staff' como bypass cross-tenant — "
             "is_staff NÃO deve dar acesso irrestrito (só is_superuser)")
 
-    def test_usa_is_superuser(self):
-        source = self._func_source()
-        self.assertIn('is_superuser', source,
-            "_accessible_agents deve verificar is_superuser")
+    def test_nao_tem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
 
-    def test_linha_de_bypass_usa_apenas_superuser(self):
-        """A condição de retorno antecipado usa apenas is_superuser."""
-        source = self._func_source()
-        # Encontra a linha de retorno antecipado (if user.is_superuser...: return)
-        match = re.search(r'if\s+user\.is_superuser\b[^:]*:', source)
-        self.assertIsNotNone(match,
-            "Não encontrou padrão 'if user.is_superuser...:' em _accessible_agents")
-        # A condição não deve incluir is_staff
-        condition = match.group(0)
-        self.assertNotIn('is_staff', condition,
-            f"Condição de bypass inclui is_staff: {condition!r}")
+        Nem is_staff nem is_superuser: `_accessible_agents` escopa todo mundo
+        pelas contas do vínculo.
+        """
+        source = _sem_comentarios(self._func_source())
+        self.assertNotIn('is_superuser', source)
+        self.assertNotIn('is_staff', source)
+
+    def test_escopa_por_conta_acessivel(self):
+        """Âncora: sem isto, "não tem bypass" passaria num arquivo vazio."""
+        self.assertIn('accessible_whatsapp_account_ids', self._func_source())
 
 
 class EnforceAccountScopeSourceTest(SimpleTestCase):
@@ -92,21 +104,15 @@ class EnforceAccountScopeSourceTest(SimpleTestCase):
             "_enforce_account_scope usa 'or self.request.user.is_staff' como bypass — "
             "is_staff NÃO deve bypassar verificação de conta (só is_superuser)")
 
-    def test_usa_is_superuser(self):
-        source = self._func_source()
-        self.assertIn('is_superuser', source,
-            "_enforce_account_scope deve verificar is_superuser")
+    def test_nao_tem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
+        source = _sem_comentarios(self._func_source())
+        self.assertNotIn('is_superuser', source)
+        self.assertNotIn('is_staff', source)
 
-    def test_linha_de_bypass_usa_apenas_superuser(self):
-        """O early return usa apenas is_superuser."""
-        source = self._func_source()
-        match = re.search(r'if\s+self\.request\.user\.is_superuser\b[^:]*:', source)
-        self.assertIsNotNone(match,
-            "Não encontrou padrão 'if self.request.user.is_superuser...:' "
-            "em _enforce_account_scope")
-        condition = match.group(0)
-        self.assertNotIn('is_staff', condition,
-            f"Condição de bypass inclui is_staff: {condition!r}")
+    def test_escopa_por_conta_acessivel(self):
+        """Âncora: sem isto, "não tem bypass" passaria num arquivo vazio."""
+        self.assertIn('accessible_whatsapp_account_ids', self._func_source())
 
 
 class AccessibleAgentsFallbackTest(SimpleTestCase):
@@ -118,13 +124,14 @@ class AccessibleAgentsFallbackTest(SimpleTestCase):
     testes deste arquivo: langchain_core indisponível no container de CI.
     """
 
-    def test_nao_existe_retorno_irrestrito_fora_do_superuser(self):
-        """Todo caminho que não é superuser tem que passar por .filter().
+    def test_nao_existe_retorno_irrestrito(self):
+        """Todo caminho tem que passar por .filter().
 
         Antes isto era verificado exigindo `queryset.none()` literal no código.
         Passou a haver um caminho legítimo a mais (lojista dono da loja sem
         conta WhatsApp vinculada), então a garantia migrou para a propriedade:
-        nenhum `return queryset` cru depois do early return de superuser.
+        nenhum `return queryset` cru — e desde 16/set não há mais early
+        return de superuser nenhum.
         O isolamento real é provado em
         test_agent_write_response_contract.py::test_usuario_de_outro_tenant_nao_ve_o_agente.
         """

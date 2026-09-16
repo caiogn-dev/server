@@ -13,7 +13,28 @@ _STEPS = [
     ('delivery', 'Configurar entrega', lambda s: s.delivery_zones.exists()),
     ('hours', 'Definir horário de funcionamento', lambda s: bool(s.operating_hours)),
     ('whatsapp', 'Informar WhatsApp', lambda s: bool(s.whatsapp_number)),
+    ('payment', 'Conectar meio de recebimento', lambda s: _recebe_pagamento(s)),
 ]
+
+
+def _recebe_pagamento(store):
+    """A loja consegue receber o dinheiro de um pedido?
+
+    Este passo entrou depois do 1º cliente pago: ele fechou logo, banner, cor e
+    tagline, o checklist dizia 3/6, e nenhum dos 6 passos falava de pagamento.
+    A loja dele acumulou 4 carrinhos e 3 checkouts barrados com "sem gateway
+    próprio e sem usa_gateway_da_plataforma" — dava para bater 6/6 e não
+    receber um centavo.
+
+    Espelha `CheckoutService.get_payment_credentials`: gateway próprio LIGADO
+    e com token, ou opt-in explícito pelo gateway da plataforma. Gateway
+    desligado não recebe, então não conta como pronto.
+    """
+    if getattr(store, 'usa_gateway_da_plataforma', False):
+        return True
+    return store.payment_gateways.filter(
+        is_enabled=True,
+    ).exclude(access_token='').exists()
 
 
 def build_checklist(store):

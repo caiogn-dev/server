@@ -26,6 +26,7 @@ from ..serializers import (
     StorePrintJobSerializer,
 )
 from .base import IsStoreOwnerOrStaff, filter_by_store
+from apps.core.permissions import accessible_store_ids
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +60,7 @@ class StorePrintAgentViewSet(viewsets.ModelViewSet):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
             queryset, _ = filter_by_store(queryset, store_param)
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(Q(store__owner=self.request.user) | Q(store__staff=self.request.user)).distinct()
+        return queryset.filter(store_id__in=accessible_store_ids(self.request.user))
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -91,9 +90,7 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
             queryset, _ = filter_by_store(queryset, store_param)
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(Q(store__owner=self.request.user) | Q(store__staff=self.request.user)).distinct()
+        return queryset.filter(store_id__in=accessible_store_ids(self.request.user))
 
     @action(detail=True, methods=['post'], url_path='requeue')
     def requeue(self, request, pk=None):

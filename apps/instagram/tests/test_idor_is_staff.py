@@ -66,14 +66,14 @@ class InstagramStaffIDORTest(TestCase):
         self.assertIn(str(self.account_b.id), ids)
         self.assertNotIn(str(self.account_a.id), ids)
 
-    def test_superuser_ve_todas_as_contas(self):
-        """superuser deve ver todas as contas."""
+    def test_superuser_nao_ve_conta_alheia(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         self.client.force_authenticate(self.superuser)
         r = self.client.get("/api/v1/instagram/accounts/")
         self.assertEqual(r.status_code, 200)
         ids = [item["id"] for item in _items(r)]
-        self.assertIn(str(self.account_a.id), ids)
-        self.assertIn(str(self.account_b.id), ids)
+        self.assertNotIn(str(self.account_a.id), ids)
+        self.assertNotIn(str(self.account_b.id), ids)
 
     def test_staff_nao_acessa_detalhe_de_conta_alheia(self):
         """staff NÃO deve acessar detalhe de conta de outro usuário."""
@@ -155,13 +155,13 @@ class InstagramStaffIDORTest(TestCase):
         ids = [item["id"] for item in _items(r)]
         self.assertNotIn(str(conv_a.id), ids)
 
-    def test_superuser_ve_todas_as_conversas(self):
-        """superuser deve poder ver conversas de qualquer conta."""
+    def test_superuser_nao_ve_conversa_alheia(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo. Conversa de Instagram é PII do cliente final."""
         conv_a = _make_conversation(self.account_a, participant="ext_1")
         conv_b = _make_conversation(self.account_b, participant="ext_2")
         self.client.force_authenticate(self.superuser)
         r = self.client.get("/api/v1/instagram/conversations/")
         self.assertEqual(r.status_code, 200)
         ids = [item["id"] for item in _items(r)]
-        self.assertIn(str(conv_a.id), ids)
-        self.assertIn(str(conv_b.id), ids)
+        self.assertNotIn(str(conv_a.id), ids)
+        self.assertNotIn(str(conv_b.id), ids)

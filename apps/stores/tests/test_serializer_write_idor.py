@@ -96,8 +96,8 @@ class StoreSlugOrIdFieldIDORTest(SimpleTestCase):
 
         self.assertEqual(result, store)
 
-    def test_superuser_bypassa_check(self):
-        """Superuser deve acessar qualquer loja sem verificação."""
+    def test_superuser_tambem_passa_pelo_check(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         user = _mock_user(is_superuser=True)
         field = self._get_field_with_context(user)
         store_b = _mock_store()
@@ -106,9 +106,10 @@ class StoreSlugOrIdFieldIDORTest(SimpleTestCase):
         with patch('apps.stores.models.Store.objects') as mock_mgr, \
              patch('apps.core.permissions.user_can_access_store') as mock_access:
             mock_mgr.filter.return_value.first.return_value = store_b
+            mock_access.return_value = True
             result = field.to_internal_value(store_uuid)
 
-        mock_access.assert_not_called()
+        mock_access.assert_called_once()
         self.assertEqual(result, store_b)
 
     def test_unauthenticated_sem_contexto_nao_bypassa(self):
@@ -163,16 +164,17 @@ class DeliveryZoneCreateSerializerIDORTest(SimpleTestCase):
 
         self.assertEqual(result, store_a)
 
-    def test_validate_store_superuser_bypassa(self):
-        """Superuser pode usar qualquer loja sem verificação."""
+    def test_validate_store_checa_tambem_o_superuser(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         user = _mock_user(is_superuser=True)
         serializer = self._get_serializer_with_context(user)
         store_b = _mock_store()
 
         with patch('apps.core.permissions.user_can_access_store') as mock_access:
+            mock_access.return_value = True
             result = serializer.validate_store(store_b)
 
-        mock_access.assert_not_called()
+        mock_access.assert_called_once()
         self.assertEqual(result, store_b)
 
     def test_validate_store_existe_no_serializer(self):
@@ -240,24 +242,26 @@ class OrderCreateResolveStoreIsStaffIDORTest(SimpleTestCase):
         result = self._call_resolve_store(user, store)
         self.assertEqual(result, store)
 
-    def test_is_superuser_bypassa_check(self):
-        """is_superuser (não is_staff) é o único que pode bypassar o check de tenant."""
+    def test_superuser_sem_vinculo_e_recusado(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        Sem vínculo com a loja, `_resolve_store` recusa — inclusive superuser.
+        """
         user_id = uuid.uuid4()
         user = _mock_user(is_staff=False, is_superuser=True, user_id=user_id)
         other_owner_id = uuid.uuid4()
         store = _mock_store(owner_id=other_owner_id)
         store.staff.filter.return_value.exists.return_value = False
 
-        # Não deve levantar
-        result = self._call_resolve_store(user, store)
-        self.assertEqual(result, store)
+        with self.assertRaises(Exception):
+            self._call_resolve_store(user, store)
 
-    def test_is_staff_check_usa_is_superuser_nao_is_staff(self):
-        """_resolve_store não pode ter `not user.is_staff` no guard de tenant."""
+    def test_guard_nao_usa_flag_de_conta(self):
+        """_resolve_store não pode ter flag de conta no guard de tenant."""
         import inspect
         from apps.stores.api.serializers import StoreOrderCreateSerializer
         src = inspect.getsource(StoreOrderCreateSerializer._resolve_store)
-        self.assertNotIn('not request.user.is_staff', src,
-                         '_resolve_store usa is_staff para bypass — deve usar is_superuser')
-        self.assertNotIn('not user.is_staff', src,
-                         '_resolve_store usa is_staff para bypass — deve usar is_superuser')
+        self.assertNotIn('is_staff', src,
+                         '_resolve_store usa flag de conta como bypass')
+        self.assertNotIn('is_superuser', src,
+                         '_resolve_store usa flag de conta como bypass')

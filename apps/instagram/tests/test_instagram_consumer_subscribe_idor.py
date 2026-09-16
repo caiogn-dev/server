@@ -73,9 +73,9 @@ class TestInstagramConsumerVerifyConversationAccess(SimpleTestCase):
             "InstagramConsumer não tem verify_instagram_conversation_access",
         )
 
-    def test_superuser_bypassa_filtro(self):
-        """Superuser não é filtrado por account_id."""
-        self.assertIn('is_superuser', self._source())
+    def test_sem_bypass_de_superuser(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
+        self.assertNotIn('is_superuser', self._source())
 
     def test_filtra_por_account_id_da_conta_conectada(self):
         """Usuário comum é filtrado pela conta já autenticada."""

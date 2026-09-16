@@ -574,10 +574,10 @@ class CreateAgentFlowSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: apenas superuser pode usar qualquer loja."""
+        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
         from apps.core.permissions import user_can_access_store
         request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated and not request.user.is_superuser:
+        if request and request.user and request.user.is_authenticated:
             if not user_can_access_store(request.user, value):
                 raise serializers.ValidationError('Loja não encontrada')
         return value

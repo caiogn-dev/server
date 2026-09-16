@@ -85,14 +85,20 @@ class ComboCrossTenantIDORTest(APITestCase):
     # ------------------------------------------------------------------
     # Caso 2: superuser pode ver todos (acesso cross-tenant intencional)
     # ------------------------------------------------------------------
-    def test_superuser_sees_all_combos(self):
+    def test_superuser_sem_vinculo_nao_ve_combo_nenhum(self):
+        """16/set: superuser deixou de ser chave-mestra. Sem vínculo, vê zero.
+
+        A âncora está em test_store_filter_still_works: lá o dono vê o próprio
+        combo pela rota filtrada, então este zero aqui é isolamento e não uma
+        rota quebrada.
+        """
         superuser = _make_user('superuser', is_superuser=True)
         self.client.force_authenticate(user=superuser)
         response = self.client.get('/api/v1/stores/combos/')
         self.assertEqual(response.status_code, 200)
         ids = [r['id'] for r in response.json()['results']]
-        self.assertIn(str(self.combo_a.id), ids)
-        self.assertIn(str(self.combo_b.id), ids)
+        self.assertNotIn(str(self.combo_a.id), ids)
+        self.assertNotIn(str(self.combo_b.id), ids)
 
     # ------------------------------------------------------------------
     # Caso 3: anônimo não vê nada (sem autenticação)
@@ -159,14 +165,15 @@ class ProductTypeCrossTenantIDORTest(APITestCase):
     # ------------------------------------------------------------------
     # Caso 2: superuser vê tudo
     # ------------------------------------------------------------------
-    def test_superuser_sees_all_product_types(self):
+    def test_superuser_sem_vinculo_nao_ve_tipo_nenhum(self):
+        """16/set: superuser deixou de ser chave-mestra. Sem vínculo, vê zero."""
         superuser = _make_user('pt-superuser', is_superuser=True)
         self.client.force_authenticate(user=superuser)
         response = self.client.get('/api/v1/stores/product-types/')
         self.assertEqual(response.status_code, 200)
         ids = [r['id'] for r in response.json()['results']]
-        self.assertIn(str(self.ptype_a.id), ids)
-        self.assertIn(str(self.ptype_b.id), ids)
+        self.assertNotIn(str(self.ptype_a.id), ids)
+        self.assertNotIn(str(self.ptype_b.id), ids)
 
     # ------------------------------------------------------------------
     # Caso 3: filtro ?store= segue funcionando

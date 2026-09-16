@@ -32,12 +32,11 @@ logger = logging.getLogger(__name__)
 
 def _get_accessible_stores(user: User):
     """Return all stores the user can manage."""
-    # is_staff (acesso ao /admin) NÃO concede acesso cross-tenant — só superuser.
-    if user.is_superuser:
-        return Store.objects.filter(is_active=True).order_by('name')
+    # Nenhuma flag de conta concede cross-tenant — nem is_staff nem is_superuser.
+    from apps.core.permissions import accessible_store_ids
     return Store.objects.filter(
-        Q(owner=user) | Q(staff=user), is_active=True
-    ).distinct().order_by('name')
+        id__in=accessible_store_ids(user)
+    ).order_by('name')
 
 
 def _get_selected_store(request) -> Store | None:

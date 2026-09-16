@@ -18,15 +18,10 @@ def _accessible_unified_users(user):
     """
     Retorna queryset de UnifiedUser acessíveis ao usuário logado.
 
-    - Superusuário: acesso irrestrito.
-    - Usuários regulares (donos/equipe de lojas): apenas clientes das suas
-      lojas (via StoreCustomer) ou cujo telefone aparece em conversas das
-      suas contas WhatsApp. is_staff (acesso ao /admin) NÃO vaza PII de
-      clientes de todos os tenants.
+    Todo usuário — inclusive superuser — vê apenas clientes das suas lojas
+    (via StoreCustomer) ou cujo telefone aparece em conversas das suas contas
+    WhatsApp. Nenhuma flag de conta vaza PII de clientes de outros tenants.
     """
-    if user.is_superuser:
-        return UnifiedUser.objects.all()
-
     from apps.core.permissions import accessible_store_ids, accessible_whatsapp_account_ids
     from apps.conversations.models import Conversation
 

@@ -17,8 +17,8 @@ class OnboardingChecklistAPITest(TestCase):
         r = self.client.get('/api/v1/stores/loja/onboarding/checklist/')
         self.assertEqual(r.status_code, 200)
         body = r.json()
-        self.assertEqual(body['total'], 6)
-        self.assertEqual(len(body['steps']), 6)
+        self.assertEqual(body['total'], 7)
+        self.assertEqual(len(body['steps']), 7)
         self.assertIn('all_done', body)
 
     def test_nao_owner_recebe_403(self):

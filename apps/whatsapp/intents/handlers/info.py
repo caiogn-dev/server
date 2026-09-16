@@ -1,9 +1,41 @@
 import logging
 from typing import Any, Dict
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from django.conf import settings
+from django.utils import timezone as dj_timezone
+
+from apps.stores.services.horario_de_funcionamento import (
+    dia_esta_aberto as _dia_esta_aberto,
+    faixa_do_dia as _faixa_do_dia,
+)
 
 from .base import HandlerResult, IntentHandler
 
 logger = logging.getLogger(__name__)
+
+DIAS_DA_SEMANA = {
+    'monday': 'Segunda', 'tuesday': 'Terça', 'wednesday': 'Quarta',
+    'thursday': 'Quinta', 'friday': 'Sexta', 'saturday': 'Sábado',
+    'sunday': 'Domingo',
+}
+
+
+def _agora_da_loja(store):
+    """Agora no fuso da LOJA, nunca o do servidor.
+
+    O container roda em UTC. `datetime.now()` naive devolvia 02:00 de quinta
+    quando em Brasília ainda eram 23:00 de quarta — então das 21h à meia-noite
+    o bot anunciava o horário do dia seguinte. Cada loja tem seu `timezone`,
+    então isto vale para qualquer uma sem lista por slug.
+    """
+    nome = (getattr(store, 'timezone', None) or settings.TIME_ZONE or 'UTC')
+    try:
+        fuso = ZoneInfo(nome)
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("[BusinessHours] fuso inválido na loja: %r", nome)
+        fuso = ZoneInfo(settings.TIME_ZONE)
+    return dj_timezone.now().astimezone(fuso)
 
 
 class BusinessHoursHandler(IntentHandler):
@@ -14,44 +46,41 @@ class BusinessHoursHandler(IntentHandler):
         return self._legacy_handle(intent_data)
 
     def _legacy_handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        if not self.store:
+        if not self.store or not (self.store.operating_hours or {}):
+            # Sem horário configurado não se chuta: a resposta antiga
+            # ("Segunda a Sábado 10h às 20h") era uma loja inventada falando
+            # pelo cliente, e valia igual para todas as lojas.
             return HandlerResult.text(
-                "🕐 Nosso horário de atendimento:\n"
-                "Segunda a Sábado: 10h às 20h\n"
-                "Domingo: 11h às 18h"
+                "🕐 Ainda não tenho o horário de atendimento por aqui. "
+                "Me chama que eu confirmo pra você!"
             )
-        from datetime import datetime
-        today = datetime.now().strftime('%A').lower()
-        day_names = {
-            'monday': 'Segunda', 'tuesday': 'Terça', 'wednesday': 'Quarta',
-            'thursday': 'Quinta', 'friday': 'Sexta', 'saturday': 'Sábado', 'sunday': 'Domingo',
-        }
+
         try:
-            hours = self.store.operating_hours or {}
-            today_hours = hours.get(today, {})
-            if today_hours:
-                open_time = today_hours.get('open', '10:00')
-                close_time = today_hours.get('close', '20:00')
-                response = (
-                    f"🕐 *Horário de hoje ({day_names.get(today, 'Hoje')}):*\n"
-                    f"{open_time} às {close_time}\n\n"
-                )
+            horarios = self.store.operating_hours or {}
+            hoje = _agora_da_loja(self.store).strftime('%A').lower()
+
+            horario_de_hoje = horarios.get(hoje, {})
+            nome_de_hoje = DIAS_DA_SEMANA.get(hoje, 'Hoje')
+            if not _dia_esta_aberto(horario_de_hoje):
+                estado_de_hoje = 'Fechado'
             else:
-                response = "🕐 *Horário de hoje:* Fechado\n\n"
-            response += "*Horário da semana:*\n"
-            for day_code, day_name in day_names.items():
-                day_hours = hours.get(day_code, {})
-                if day_hours:
-                    response += f"{day_name}: {day_hours.get('open', '--:--')} às {day_hours.get('close', '--:--')}\n"
+                estado_de_hoje = _faixa_do_dia(horario_de_hoje) or 'Aberto'
+            resposta = f"🕐 *Horário de hoje ({nome_de_hoje}):*\n{estado_de_hoje}\n\n"
+
+            resposta += "*Horário da semana:*\n"
+            for codigo, nome in DIAS_DA_SEMANA.items():
+                horario_do_dia = horarios.get(codigo, {})
+                if _dia_esta_aberto(horario_do_dia):
+                    faixa = _faixa_do_dia(horario_do_dia) or 'Aberto'
+                    resposta += f"{nome}: {faixa}\n"
                 else:
-                    response += f"{day_name}: Fechado\n"
-            return HandlerResult.text(response)
+                    resposta += f"{nome}: Fechado\n"
+            return HandlerResult.text(resposta)
         except Exception as e:
-            logger.error(f"Error getting business hours: {e}")
+            logger.error("Error getting business hours: %s", e, exc_info=True)
             return HandlerResult.text(
-                "🕐 Nosso horário de atendimento:\n"
-                "Segunda a Sábado: 10h às 20h\n"
-                "Domingo: 11h às 18h"
+                "🕐 Tive um problema para consultar o horário agora. "
+                "Me chama que eu confirmo pra você!"
             )
 
 

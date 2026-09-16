@@ -229,8 +229,6 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
     def verify_instagram_conversation_access(self, conversation_id: str) -> bool:
         """A conversa deve pertencer à conta conectada (já autorizada em _post_auth_connect)."""
         from .models import InstagramConversation
-        if self.user and self.user.is_superuser:
-            return InstagramConversation.objects.filter(id=conversation_id).exists()
         return InstagramConversation.objects.filter(
             id=conversation_id, account_id=self.account_id
         ).exists()
@@ -244,9 +242,9 @@ class InstagramConsumer(FirstMessageAuthMixin, ThrottledWebSocketConsumer):
             return False
         
         try:
-            # Check if user owns the account or is superuser
+            # Posse da conta é o único critério — flag não vale vínculo.
             account = IGAccount.objects.get(id=account_id)
-            return account.owner == self.user or self.user.is_superuser
+            return account.owner == self.user
         except IGAccount.DoesNotExist:
             return False
 

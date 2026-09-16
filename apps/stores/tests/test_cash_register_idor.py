@@ -107,8 +107,12 @@ class CashOpenIDORTest(SimpleTestCase):
         self.assertNotEqual(resp.status_code, 404,
                             f"Dono legítimo não deve receber 404 (got {resp.status_code})")
 
-    def test_superuser_nao_precisa_de_acesso_explicito(self):
-        """Superuser passa pelo gate sem chamar user_can_access_store."""
+    def test_superuser_sem_acesso_explicito_e_bloqueado(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        O gate do caixa passou a ser só `user_can_access_store` — abrir o caixa
+        de uma loja alheia mexe no dinheiro dela.
+        """
         fake_session = MagicMock()
         fake_session.expected_cash.return_value = 0
         fake_session.movements.all.return_value = []
@@ -117,8 +121,19 @@ class CashOpenIDORTest(SimpleTestCase):
              patch('apps.stores.api.views.cash_views.CashSessionSerializer') as mock_ser:
             mock_ser.return_value.data = {'status': 'open'}
             resp = self._call(_superuser(), store=_fake_store(), can_access=False)
-        self.assertNotEqual(resp.status_code, 404,
-                            "Superuser não deve ser bloqueado mesmo sem acesso explícito")
+        self.assertEqual(resp.status_code, 404)
+
+    def test_superuser_com_acesso_abre_o_caixa(self):
+        """Âncora: com vínculo tem que passar, senão o assert acima é vazio."""
+        fake_session = MagicMock()
+        fake_session.expected_cash.return_value = 0
+        fake_session.movements.all.return_value = []
+        with patch('apps.stores.api.views.cash_views.StoreCashSession.objects.create',
+                   return_value=fake_session), \
+             patch('apps.stores.api.views.cash_views.CashSessionSerializer') as mock_ser:
+            mock_ser.return_value.data = {'status': 'open'}
+            resp = self._call(_superuser(), store=_fake_store(), can_access=True)
+        self.assertNotEqual(resp.status_code, 404)
 
     def test_loja_inexistente_retorna_404(self):
         resp = self._call(_attacker(), store=None, can_access=False)

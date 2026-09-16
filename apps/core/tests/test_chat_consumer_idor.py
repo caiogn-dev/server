@@ -62,16 +62,15 @@ class TestChatConsumerVerifyConversationAccess(SimpleTestCase):
             "ChatConsumer não tem verify_conversation_access",
         )
 
-    def test_superuser_bypassa_filtro(self):
-        """Superuser não é filtrado por account_id__in."""
-        src = self._source()
-        self.assertIn('is_superuser', src)
+    def test_sem_bypass_de_superuser(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
+        self.assertNotIn('is_superuser', self._source())
 
     def test_filtra_por_account_id(self):
-        """Usuário comum tem acesso filtrado via account_id."""
+        """TODO usuário — inclusive superuser — passa pelo filtro de conta."""
         src = self._source()
         self.assertIn('account_id__in', src)
-        self.assertIn('owner=self.user', src)
+        self.assertIn('accessible_whatsapp_account_ids', src)
 
 
 class TestChatConsumerMarkMessageReadIDOR(SimpleTestCase):
@@ -81,9 +80,9 @@ class TestChatConsumerMarkMessageReadIDOR(SimpleTestCase):
         from apps.core.consumers import ChatConsumer
         return inspect.getsource(ChatConsumer.mark_message_read)
 
-    def test_verifica_is_superuser(self):
-        """mark_message_read deve ter gate de superuser."""
-        self.assertIn('is_superuser', self._source())
+    def test_sem_gate_de_superuser(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
+        self.assertNotIn('is_superuser', self._source())
 
     def test_verifica_owned_ids(self):
         """mark_message_read deve construir conjunto de IDs acessíveis."""

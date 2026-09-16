@@ -532,6 +532,7 @@ class InteractiveReplyHandler(IntentHandler):
         """Próximos horários de abertura pelo operating_hours da loja."""
         from datetime import datetime as _dt, timedelta
         from django.utils import timezone as _tz
+        from apps.stores.services.horario_de_funcionamento import dia_esta_aberto
         if not self.store or not getattr(self.store, 'operating_hours', None):
             return []
         now = _tz.localtime()
@@ -541,7 +542,11 @@ class InteractiveReplyHandler(IntentHandler):
         for offset in range(7):
             day = (now + timedelta(days=offset)).date()
             hours = self.store.operating_hours.get(weekday_names[day.weekday()])
-            if not hours:
+            # `if not hours` só pulava o dia SEM configuração. Dia configurado e
+            # DESLIGADO passava direto, e o cliente recebia "Sáb 19/09 08:00"
+            # para uma loja que não abre no sábado — o horário fica gravado
+            # embaixo do desligamento. Mesma regra do bot e do Store.is_open.
+            if not dia_esta_aberto(hours):
                 continue
             try:
                 open_t = _dt.strptime(hours.get('open') or hours.get('start') or '00:00', '%H:%M').time()

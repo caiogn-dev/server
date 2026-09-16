@@ -125,8 +125,6 @@ class HandoverConsumer(AsyncWebsocketConsumer):
         """True se a conversa pertence a uma conta acessível ao usuário."""
         from apps.conversations.models import Conversation
         from apps.core.permissions import accessible_whatsapp_account_ids
-        if self.user and self.user.is_superuser:
-            return Conversation.objects.filter(id=conversation_id).exists()
         account_ids = accessible_whatsapp_account_ids(self.user)
         return Conversation.objects.filter(
             id=conversation_id, account_id__in=account_ids

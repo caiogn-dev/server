@@ -39,9 +39,6 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
         if not (request.user and request.user.is_authenticated):
             return False
 
-        if request.user.is_superuser:
-            return True
-
         # When accessing via nested router (stores/{store_pk}/...), verify ownership
         store_pk = view.kwargs.get('store_pk')
 
@@ -76,9 +73,7 @@ class IsStoreOwnerOrStaff(permissions.BasePermission):
 def get_user_stores_queryset(user, queryset_class):
     """Get queryset filtered by user's accessible stores.
 
-    Só superuser vê todas; is_staff NÃO vaza cross-tenant.
+    Acesso vem de vínculo; nem is_staff nem is_superuser vazam cross-tenant.
     """
-    if user.is_superuser:
-        return queryset_class.objects.all()
     store_ids = accessible_store_ids(user)
     return queryset_class.objects.filter(id__in=store_ids)

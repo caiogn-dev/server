@@ -146,32 +146,26 @@ class ChatConsumer(FirstMessageAuthMixin, AsyncJsonWebsocketConsumer):
     def verify_conversation_access(self, conversation_id: str) -> bool:
         """Verifica se a conversa pertence a uma conta WhatsApp acessível ao usuário."""
         from apps.conversations.models import Conversation
-        from apps.whatsapp.models import WhatsAppAccount
-        if self.user and self.user.is_superuser:
-            return Conversation.objects.filter(id=conversation_id).exists()
-        accessible_ids = set(
-            WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
-        )
+        from apps.core.permissions import accessible_whatsapp_account_ids
         return Conversation.objects.filter(
-            id=conversation_id, account_id__in=accessible_ids
+            id=conversation_id,
+            account_id__in=accessible_whatsapp_account_ids(self.user),
         ).exists()
 
     @database_sync_to_async
     def mark_message_read(self, message_id):
-        from apps.whatsapp.models import Message, WhatsAppAccount
+        from apps.whatsapp.models import Message
         try:
             message = Message.objects.select_related('conversation__account').get(id=message_id)
             # Verifica que a mensagem pertence a uma conta acessível ao usuário.
-            if not self.user.is_superuser:
-                owned_ids = set(
-                    WhatsAppAccount.objects.filter(owner=self.user).values_list('id', flat=True)
+            from apps.core.permissions import accessible_whatsapp_account_ids
+            owned_ids = set(accessible_whatsapp_account_ids(self.user))
+            if message.conversation.account_id not in owned_ids:
+                logger.warning(
+                    "ChatConsumer.mark_message_read: User %s tentou atualizar mensagem %s de outro tenant",
+                    self.user.id, message_id,
                 )
-                if message.conversation.account_id not in owned_ids:
-                    logger.warning(
-                        "ChatConsumer.mark_message_read: User %s tentou atualizar mensagem %s de outro tenant",
-                        self.user.id, message_id,
-                    )
-                    return
+                return
             if message.status != 'read':
                 message.status = 'read'
                 message.save(update_fields=['status'])

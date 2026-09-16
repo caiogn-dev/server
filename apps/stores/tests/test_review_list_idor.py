@@ -112,7 +112,14 @@ class StoreReviewListIDORTest(SimpleTestCase):
                             f"Dono legítimo não deve receber 404 (got {resp.status_code})")
         self.assertEqual(resp.status_code, 200)
 
-    def test_superuser_ve_qualquer_loja(self):
-        """Superuser não deve ser bloqueado."""
+    def test_superuser_sem_vinculo_e_bloqueado(self):
+        """16/set: superuser deixou de ser chave-mestra — a loja do 1º cliente
+        pago nascia visível no painel do dono da plataforma. Acesso vem de
+        vínculo (owner, staff M2M ou StoreTeamMember ativo)."""
+        resp = self._call(_superuser(), store=_fake_store(), can_access=False)
+        self.assertIn(resp.status_code, [403, 404])
+
+    def test_com_vinculo_o_superuser_passa(self):
+        """Âncora: a rota não pode estar bloqueando todo mundo."""
         resp = self._call(_superuser(), store=_fake_store(), can_access=True)
         self.assertEqual(resp.status_code, 200)

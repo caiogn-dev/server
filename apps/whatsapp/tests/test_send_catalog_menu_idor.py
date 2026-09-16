@@ -62,8 +62,11 @@ class SendCatalogMenuStaffIDORTest(APITestCase):
         self.assertIn('não encontrada', str(resp.data))
         MS.return_value.send_catalog_message.assert_not_called()
 
-    def test_superuser_pode_selecionar_qualquer_loja(self):
-        """Regressão: superuser continua podendo enviar catálogo de qualquer loja."""
+    def test_superuser_nao_seleciona_loja_alheia(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        Selecionar loja alheia vazaria catálogo e preços dela.
+        """
         # superuser precisa de conta própria p/ passar _check_account_access
         su_acc = WhatsAppAccount.objects.create(
             name='su', phone_number_id='pn-su', waba_id='wa-su',
@@ -78,5 +81,5 @@ class SendCatalogMenuStaffIDORTest(APITestCase):
             MS.return_value.send_catalog_message.return_value = object()
             MSer.return_value.data = {'ok': True}
             resp = self.client.post(URL, payload, format='json')
-        self.assertEqual(resp.status_code, 201, resp.content)
-        MS.return_value.send_catalog_message.assert_called_once()
+        self.assertEqual(resp.status_code, 400, resp.content)
+        MS.return_value.send_catalog_message.assert_not_called()

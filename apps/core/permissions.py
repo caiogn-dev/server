@@ -77,13 +77,10 @@ class IsStoreStaff(permissions.BasePermission):
 class HasStoreAccess(permissions.BasePermission):
     """
     Permission that checks if user has any access to the store
-    (owner, staff, or superuser).
+    (owner, staff M2M ou StoreTeamMember ativo — nunca por flag de conta).
     """
-    
-    def has_permission(self, request: Request, view: View) -> bool:
-        if request.user.is_superuser:
-            return True
 
+    def has_permission(self, request: Request, view: View) -> bool:
         from apps.stores.models import Store
         from rest_framework.exceptions import PermissionDenied
 
@@ -103,12 +100,13 @@ class HasStoreAccess(permissions.BasePermission):
         return user_can_access_store(request.user, store)
 
     def has_object_permission(self, request: Request, view: View, obj) -> bool:
-        if request.user.is_superuser:
-            return True
+        from apps.stores.models import Store
 
-        if hasattr(obj, 'store'):
+        if isinstance(obj, Store):
+            return user_can_access_store(request.user, obj)
+        if getattr(obj, 'store', None) is not None:
             return user_can_access_store(request.user, obj.store)
-        elif hasattr(obj, 'owner'):
+        if hasattr(obj, 'owner'):
             return obj.owner == request.user
 
         return False
@@ -225,24 +223,21 @@ class StoreQuerysetMixin:
             queryset = MyModel.objects.all()  # base queryset
             store_field = 'store'             # FK field name pointing to Store (default: 'store')
 
-    The mixin calls get_queryset() filtering by the user's accessible stores.
-    Superusers see all data.
+    O filtro é o mesmo para todo usuário autenticado: as lojas do vínculo.
+    Não existe escopo irrestrito — quem herda daqui inclui o ViewSet de
+    gateways de pagamento, que carrega as credenciais com que a loja recebe.
     """
 
     store_field: str = 'store'
 
     def _get_user_store_ids(self):
-        user = self.request.user
-        if user.is_superuser:
-            return None  # unrestricted
-        return accessible_store_ids(user)
+        return accessible_store_ids(self.request.user)
 
     def get_queryset(self):
         qs = super().get_queryset()
-        store_ids = self._get_user_store_ids()
-        if store_ids is None:
-            return qs
-        return qs.filter(**{f'{self.store_field}__id__in': store_ids})
+        return qs.filter(
+            **{f'{self.store_field}__id__in': self._get_user_store_ids()}
+        )
 
 
 class StorePermissionMixin(StoreQuerysetMixin):
@@ -262,7 +257,7 @@ class StorePermissionMixin(StoreQuerysetMixin):
     The store_field can use double-underscore traversal for indirect FKs:
         store_field = 'company__store'  # for CompanyProfile → Store
 
-    Superusers and staff bypass all restrictions (see all data).
+    Nenhuma flag de conta — is_staff ou is_superuser — bypassa o escopo.
     """
 
     permission_classes = [permissions.IsAuthenticated, HasStoreAccess]
@@ -273,15 +268,15 @@ def accessible_store_ids(user):
     """
     Return a QuerySet of store IDs the user can access.
 
-    SÓ superuser vê todas as lojas. is_staff (acesso ao /admin) NÃO concede
-    acesso cross-tenant. Usuário comum acessa lojas onde é owner, está no
-    staff M2M (legado) OU tem StoreTeamMember ativo (sistema de roles).
+    Acesso vem de VÍNCULO, nunca de flag de conta: owner, staff M2M (legado)
+    ou StoreTeamMember ativo. Nem is_staff nem is_superuser concedem acesso
+    cross-tenant — a conta do dono da plataforma não é chave-mestra do painel,
+    senão a loja de um cliente pagante nasce visível para outra conta.
+    Suporte se faz pelo /admin do Django ou entrando no staff da loja.
     """
     from django.db.models import Q
     from apps.stores.models import Store
     qs = Store.objects.filter(is_active=True)
-    if user.is_superuser:
-        return qs.values_list('id', flat=True)
     return qs.filter(
         Q(owner=user)
         | Q(staff=user)
@@ -290,12 +285,11 @@ def accessible_store_ids(user):
 
 
 def user_can_access_store(user, store) -> bool:
-    """True se o usuário pode acessar a loja (owner, staff M2M, StoreTeamMember ou superuser).
+    """True se o usuário pode acessar a loja (owner, staff M2M ou StoreTeamMember).
 
-    is_staff NÃO concede acesso — senão qualquer conta do /admin vaza todas as lojas.
+    Nem is_staff nem is_superuser concedem acesso — senão qualquer conta do
+    /admin, e a conta do dono da plataforma, vazam todas as lojas.
     """
-    if user.is_superuser:
-        return True
     if store.owner_id == user.id or store.staff.filter(id=user.id).exists():
         return True
     from apps.stores.permissions import get_member_role
@@ -305,14 +299,14 @@ def user_can_access_store(user, store) -> bool:
 def accessible_whatsapp_account_ids(user):
     """
     Return a QuerySet of WhatsApp account IDs the user can access.
-    Staff/superusers get all active accounts.
-    Regular users get accounts they own directly or via their stores.
+
+    Acesso vem de vínculo (conta própria ou conta de uma loja onde o usuário
+    entra como owner/staff). Nenhuma flag de conta abre cross-tenant: conversa
+    de WhatsApp carrega telefone e texto do cliente final de outra loja.
     """
     from django.db.models import Q
     from apps.whatsapp.models import WhatsAppAccount
     qs = WhatsAppAccount.objects.filter(is_active=True)
-    if user.is_superuser:
-        return qs.values_list('id', flat=True)
     return qs.filter(
         Q(owner=user) |
         Q(stores__owner=user) |

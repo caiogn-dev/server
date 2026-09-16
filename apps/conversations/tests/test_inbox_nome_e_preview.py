@@ -31,9 +31,13 @@ class NomeDeFallbackTests(TestCase):
         self.admin = User.objects.create_superuser(
             username='admin-nome', password='x', email='admin-nome@real.com',
         )
+        # A conta é do usuário do teste. Até 16/set bastava ser superuser: a
+        # flag passava pelo escopo de conta sem vínculo nenhum. O assunto
+        # deste arquivo não é permissão, então aqui vai o vínculo real.
         self.account = WhatsAppAccount.objects.create(
             name='Conta Nome', phone_number_id='321', waba_id='123',
             access_token='t', phone_number='5563000000009',
+            owner=self.admin,
         )
         self.conversa = Conversation.objects.create(
             account=self.account, phone_number=TELEFONE,
@@ -90,6 +94,7 @@ class PreviewDeMidiaTests(TestCase):
         self.account = WhatsAppAccount.objects.create(
             name='Conta Prev', phone_number_id='654', waba_id='456',
             access_token='t', phone_number='5563000000010',
+            owner=self.admin,
         )
         self.conversa = Conversation.objects.create(
             account=self.account, phone_number='556392777002',

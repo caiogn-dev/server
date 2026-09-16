@@ -31,13 +31,13 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # Security: Filter by user's stores or accounts
-        if not user.is_superuser:
-            queryset = queryset.filter(
-                Q(company__store__owner=user) | 
-                Q(company__store__staff=user) | 
-                Q(company__account__owner=user)
-            ).distinct()
+        # Escopo de tenant: nenhuma flag de conta abre cross-tenant — nem
+        # is_staff nem is_superuser.
+        queryset = queryset.filter(
+            Q(company__store__owner=user) |
+            Q(company__store__staff=user) |
+            Q(company__account__owner=user)
+        ).distinct()
         
         # Filter by company
         company_id = self.request.query_params.get('company_id')
@@ -64,13 +64,13 @@ class AutoMessageViewSet(viewsets.ModelViewSet):
         data = serializer.validated_data
         company_id = data.pop('company_id')
 
-        company_qs = CompanyProfile.objects.filter(id=company_id, is_active=True)
-        if not request.user.is_superuser:
-            company_qs = company_qs.filter(
-                Q(store__owner=request.user) |
-                Q(store__staff=request.user) |
-                Q(account__owner=request.user)
-            )
+        company_qs = CompanyProfile.objects.filter(
+            id=company_id, is_active=True
+        ).filter(
+            Q(store__owner=request.user) |
+            Q(store__staff=request.user) |
+            Q(account__owner=request.user)
+        )
         try:
             company = company_qs.get()
         except CompanyProfile.DoesNotExist:

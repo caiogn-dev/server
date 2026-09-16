@@ -45,8 +45,6 @@ def _user_can_use_account(user, account_id):
     """
     if not account_id:
         return False
-    if user.is_superuser:
-        return True
     return str(account_id) in {str(i) for i in accessible_whatsapp_account_ids(user)}
 
 
@@ -115,9 +113,7 @@ class SystemContactsView(APIView):
         lojas = self._store_ids(request)
 
         from apps.stores.models import Store
-        accessible_account_ids = None if user.is_superuser else list(
-            accessible_whatsapp_account_ids(user)
-        )
+        accessible_account_ids = list(accessible_whatsapp_account_ids(user))
 
         # Get contacts from conversations
         if source in ['all', 'conversations']:
@@ -212,10 +208,9 @@ class SystemContactsView(APIView):
         if source in ['all', 'sessions']:
             try:
                 from apps.automation.models import CustomerSession
-                sessions_qs = CustomerSession.objects.all()
-                if not user.is_superuser:
-                    account_ids = accessible_whatsapp_account_ids(user)
-                    sessions_qs = sessions_qs.filter(company__account_id__in=account_ids)
+                sessions_qs = CustomerSession.objects.filter(
+                    company__account_id__in=accessible_whatsapp_account_ids(user)
+                )
                 if account_id:
                     sessions_qs = sessions_qs.filter(company__account_id=account_id)
                 
@@ -358,10 +353,7 @@ def resolver_lojas_da_audiencia(request):
     from apps.stores.models import Store
 
     user = request.user
-    permitidas = (
-        set(Store.objects.values_list('id', flat=True)) if user.is_superuser
-        else set(accessible_store_ids(user))
-    )
+    permitidas = set(accessible_store_ids(user))
 
     slug_ou_id = (request.query_params.get('store') or '').strip()
     if slug_ou_id:
@@ -454,9 +446,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Campaign.objects.filter(is_active=True)
-        # is_staff NÃO vê campanhas/contatos (PII) cross-tenant — só superuser.
-        if user.is_superuser:
-            return qs
+        # Campanha e contato são PII: nenhuma flag de conta vê cross-tenant.
         account_ids = accessible_whatsapp_account_ids(user)
         return qs.filter(account_id__in=account_ids).distinct()
     
@@ -745,9 +735,7 @@ class ContactListViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = ContactList.objects.filter(is_active=True)
-        # is_staff NÃO vê campanhas/contatos (PII) cross-tenant — só superuser.
-        if user.is_superuser:
-            return qs
+        # Campanha e contato são PII: nenhuma flag de conta vê cross-tenant.
         account_ids = accessible_whatsapp_account_ids(user)
         return qs.filter(account_id__in=account_ids).distinct()
     

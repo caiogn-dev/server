@@ -61,15 +61,12 @@ class HandoverViewSet(viewsets.ViewSet):
         autenticado podia ler/transferir o handover de QUALQUER conversa só
         sabendo o UUID. Conversa pertence a uma WhatsAppAccount; o usuário só
         pode acessá-la se a conta estiver entre as suas (owner/staff/membro)
-        ou se for superuser.
+        — flag de conta não vale.
         """
         from apps.core.permissions import accessible_whatsapp_account_ids
 
-        queryset = Conversation.objects.all()
-        user = self.request.user
-        if not user.is_superuser:
-            account_ids = accessible_whatsapp_account_ids(user)
-            queryset = queryset.filter(account_id__in=account_ids)
+        account_ids = accessible_whatsapp_account_ids(self.request.user)
+        queryset = Conversation.objects.filter(account_id__in=account_ids)
         return get_object_or_404(queryset, pk=pk)
     
     def get_or_create_handover(self, conversation):
@@ -244,10 +241,6 @@ class HandoverRequestViewSet(viewsets.ModelViewSet):
         """Retorna solicitações visíveis para o usuário."""
         user = self.request.user
         
-        # Se é superusuário, vê tudo
-        if user.is_superuser:
-            return HandoverRequest.objects.all()
-        
         # Operador vê solicitações pendentes das SUAS contas (não cross-tenant)
         # e solicitações que ele criou/que lhe foram atribuídas.
         from apps.core.permissions import accessible_whatsapp_account_ids
@@ -332,9 +325,6 @@ class HandoverLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Retorna logs visíveis para o usuário."""
         user = self.request.user
-
-        if user.is_superuser:
-            return HandoverLog.objects.all()
 
         # Conversation tem FK `account` (não `store`). Filtra pelos IDs de conta acessíveis.
         from apps.core.permissions import accessible_whatsapp_account_ids

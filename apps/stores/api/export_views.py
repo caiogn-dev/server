@@ -49,7 +49,7 @@ class BaseExportView(APIView):
         if store is None:
             return None
 
-        if not request.user.is_superuser and not user_can_access_store(request.user, store):
+        if not user_can_access_store(request.user, store):
             raise Http404
 
         return store

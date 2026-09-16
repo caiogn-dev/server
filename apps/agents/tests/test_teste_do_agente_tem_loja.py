@@ -23,11 +23,13 @@ def cenario(db):
     from apps.agents.models import Agent
     from apps.stores.models import Store, StoreProduct, StoreCategory
 
-    # `is_superuser`: o acesso ao agente é escopado por conta de WhatsApp
-    # (`_accessible_agents`), e o assunto aqui é a LOJA chegar às ferramentas,
-    # não o escopo de conta — que tem teste próprio em test_is_staff_idor.
+    # O acesso ao agente é escopado por VÍNCULO (`_accessible_agents`), e o
+    # assunto aqui é a LOJA chegar às ferramentas — não o escopo, que tem teste
+    # próprio em test_is_staff_idor. Até 16/set isto se resolvia com
+    # `is_superuser`; desde que a flag deixou de ser chave-mestra, o vínculo
+    # tem que ser real: o agente é o `default_agent` da loja do dono.
     dono = User.objects.create_user(
-        username='dono-ag', email='ag@x.com', password='x', is_superuser=True, is_staff=True,
+        username='dono-ag', email='ag@x.com', password='x',
     )
     loja = Store.objects.create(name='Loja Ag', slug='loja-ag', owner=dono, status='active')
     cat = StoreCategory.objects.create(store=loja, name='Massas')
@@ -39,6 +41,9 @@ def cenario(db):
         name='Assistente', provider='nvidia', model_name='x', status='active',
         system_prompt='teste',
     )
+    perfil = loja.automation_profile
+    perfil.default_agent = agente
+    perfil.save(update_fields=['default_agent'])
     return dono, loja, agente
 
 

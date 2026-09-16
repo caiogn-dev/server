@@ -341,7 +341,8 @@ class WhatsAppAccountViewSet(viewsets.ModelViewSet):
             store = Store.objects.filter(id=store_id).first()
             if not store:
                 return Response({'error': 'Loja não encontrada'}, status=status.HTTP_404_NOT_FOUND)
-            if not (request.user.is_superuser or store.owner_id == request.user.id):
+            from apps.core.permissions import user_can_access_store
+            if not user_can_access_store(request.user, store):
                 return Response({'error': 'Sem permissão nesta loja'}, status=status.HTTP_403_FORBIDDEN)
 
         try:
@@ -400,8 +401,6 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         """
         from rest_framework.exceptions import PermissionDenied
         user = self.request.user
-        if user.is_superuser:
-            return
         if str(account_id) not in {str(i) for i in accessible_whatsapp_account_ids(user)}:
             raise PermissionDenied('Sem permissão nesta conta WhatsApp')
 
@@ -530,11 +529,9 @@ class MessageViewSet(viewsets.ReadOnlyModelViewSet):
         # Resolve store: explicit store_id or first store on account
         if store_id:
             from apps.core.permissions import accessible_store_ids
-            store_qs = Store.objects.all()
-            # is_staff NÃO concede seleção de loja cross-tenant (vazaria o
-            # catálogo/preços de qualquer loja); só superuser é irrestrito.
-            if not request.user.is_superuser:
-                store_qs = store_qs.filter(id__in=accessible_store_ids(request.user))
+            # Seleção de loja é cross-tenant se não filtrar: vazaria catálogo
+            # e preços de qualquer loja. Nenhuma flag de conta é irrestrita.
+            store_qs = Store.objects.filter(id__in=accessible_store_ids(request.user))
             try:
                 store = store_qs.get(id=store_id)
             except Store.DoesNotExist:

@@ -254,8 +254,6 @@ class OrderConsumer(AsyncWebsocketConsumer):
             return False
         self.store_slug = store.slug
 
-        if getattr(self.user, 'is_superuser', False):
-            return True
         return user_can_access_store(self.user, store)
 
 

@@ -71,10 +71,9 @@ class StoreViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if user.is_superuser:
-            qs = Store.objects.all()
-        else:
-            qs = Store.objects.filter(id__in=accessible_store_ids(user))
+        # Sem atalho de superuser: accessible_store_ids é a fonte única e só
+        # devolve loja com vínculo. Ver test_superuser_nao_ve_loja_de_cliente.
+        qs = Store.objects.filter(id__in=accessible_store_ids(user))
         return _annotate_store_counts(qs)
     
     def get_object(self):
