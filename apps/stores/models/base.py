@@ -356,16 +356,12 @@ class Store(BaseModel):
         day_name = self._WEEKDAY_NAMES[now.weekday()]
         hours = self.operating_hours.get(day_name)
 
-        if not hours:
-            return False
+        # A vontade de quem administra vem ANTES do relógio: dia desligado não
+        # abre, mesmo com `open`/`close` gravados embaixo do desligamento.
+        # Regra em fonte única — o bot errava por ter a própria cópia dela.
+        from apps.stores.services.horario_de_funcionamento import dia_esta_aberto
 
-        # O painel grava `is_open: false` no dia que o lojista desligou. Isto
-        # era ignorado: só `open`/`close` eram lidos, então sábado marcado como
-        # fechado continuava abrindo das 08:00 às 12:00 — o horário que ficou
-        # gravado embaixo do desligamento. A vontade de quem administra vem
-        # ANTES do relógio.
-        # Ausência do campo NÃO fecha: cadastro antigo não tem a chave.
-        if 'is_open' in hours and not self._verdadeiro(hours['is_open']):
+        if not dia_esta_aberto(hours):
             return False
 
         try:
@@ -383,10 +379,9 @@ class Store(BaseModel):
 
     @staticmethod
     def _verdadeiro(valor):
-        """JSON de painel chega como bool, "false" ou 0 conforme o formulário."""
-        if isinstance(valor, str):
-            return valor.strip().lower() not in ('false', '0', 'no', '')
-        return bool(valor)
+        """Mantido por compatibilidade; a regra mora em services/horario_de_funcionamento."""
+        from apps.stores.services.horario_de_funcionamento import verdadeiro
+        return verdadeiro(valor)
     
     def get_whatsapp_account(self):
         """
