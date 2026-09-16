@@ -245,7 +245,7 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             account.save()
             return Response({"status": "success", "message": "Conta sincronizada"})
         except Exception:
-            logger.exception("Instagram account sync failed for account %s", self.get_object().id if hasattr(self, 'kwargs') else '?')
+            logger.exception("Instagram account sync failed for account %s", account.id)
             return Response(
                 {"status": "error", "message": "Erro ao sincronizar conta Instagram. Tente novamente."},
                 status=status.HTTP_400_BAD_REQUEST,
