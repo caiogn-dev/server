@@ -35,10 +35,14 @@ class UniversalServiceIsStaffTest(SimpleTestCase):
         )
         return UniversalConversationService()
 
-    def test_superuser_retorna_true(self):
-        """is_superuser=True → True (acesso cross-tenant concedido)."""
+    def test_superuser_retorna_false(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+
+        Conversa de outro tenant é PII do cliente final: não existe mais
+        caminho irrestrito em `_is_staff`.
+        """
         svc = self._service()
-        self.assertTrue(svc._is_staff(_make_user(is_superuser=True, is_staff=False)))
+        self.assertFalse(svc._is_staff(_make_user(is_superuser=True, is_staff=False)))
 
     def test_staff_sem_superuser_retorna_false(self):
         """is_staff=True, is_superuser=False → False (sem acesso cross-tenant).
@@ -60,10 +64,10 @@ class UniversalServiceIsStaffTest(SimpleTestCase):
         svc = self._service()
         self.assertFalse(svc._is_staff(AnonymousUser()))
 
-    def test_superuser_com_staff_retorna_true(self):
-        """Superuser que também é staff ainda tem acesso cross-tenant."""
+    def test_superuser_com_staff_retorna_false(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo. As duas flags juntas também não valem."""
         svc = self._service()
-        self.assertTrue(svc._is_staff(_make_user(is_superuser=True, is_staff=True)))
+        self.assertFalse(svc._is_staff(_make_user(is_superuser=True, is_staff=True)))
 
 
 class UniversalServiceIsStaffSourceTest(SimpleTestCase):
@@ -94,10 +98,12 @@ class AssignAgentIsStaffSourceTest(SimpleTestCase):
             "assign_agent usa 'and not agent.is_staff' como bypass — "
             "is_staff não deve bypassar verificação de acesso a conta na atribuição")
 
-    def test_assign_agent_usa_superuser(self):
+    def test_assign_agent_sem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.conversations.api.views import ConversationViewSet
         source = inspect.getsource(ConversationViewSet.assign_agent)
-        self.assertIn('is_superuser', source)
+        self.assertNotIn('is_superuser', source)
+        self.assertIn('accessible_whatsapp_account_ids', source)
 
 
 class AssignAgentLogicTest(SimpleTestCase):

@@ -91,8 +91,8 @@ class CreateAgentFlowSerializerValidateStoreTest(SimpleTestCase):
             result = s.validate_store(store)
         self.assertEqual(result, store)
 
-    def test_superuser_bypassa_check(self):
-        """Superuser pode criar AgentFlow em qualquer loja."""
+    def test_superuser_tambem_passa_pelo_check(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.automation.api.serializers import CreateAgentFlowSerializer
 
         user = _make_user(is_superuser=True)
@@ -100,10 +100,10 @@ class CreateAgentFlowSerializerValidateStoreTest(SimpleTestCase):
         request = _make_request(user)
         s = self._get_serializer(request)
 
-        # user_can_access_store NÃO deve ser chamado — superuser sempre passa
         with patch('apps.core.permissions.user_can_access_store') as mock_check:
+            mock_check.return_value = True
             result = s.validate_store(store)
-        mock_check.assert_not_called()
+        mock_check.assert_called_once()
         self.assertEqual(result, store)
 
     def test_sem_request_no_contexto_nao_explode(self):
@@ -115,13 +115,14 @@ class CreateAgentFlowSerializerValidateStoreTest(SimpleTestCase):
         result = s.validate_store(store)
         self.assertEqual(result, store)
 
-    def test_validate_store_usa_is_superuser(self):
-        """validate_store deve usar is_superuser (não is_staff) como bypass cross-tenant."""
+    def test_validate_store_sem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.automation.api import serializers as mod
         src = inspect.getsource(
             mod.CreateAgentFlowSerializer.validate_store  # noqa: WPS219
         )
-        self.assertIn('is_superuser', src)
+        self.assertIn('user_can_access_store', src)
+        self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)
 
 
@@ -145,8 +146,9 @@ class AutoMessageViewSetIsStaffTest(SimpleTestCase):
             'Apenas is_superuser concede acesso cross-tenant (convenção do projeto).',
         )
 
-    def test_create_usa_is_superuser(self):
-        """O check de tenant deve usar is_superuser."""
+    def test_create_sem_bypass_de_conta(self):
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         from apps.automation.api.views import auto_message_views as mod
         src = inspect.getsource(mod.AutoMessageViewSet.create)
-        self.assertIn('is_superuser', src)
+        self.assertNotIn('is_superuser', src)
+        self.assertIn('store__owner=request.user', src)

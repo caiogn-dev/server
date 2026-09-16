@@ -38,10 +38,8 @@ class MessengerAccountViewSet(viewsets.ModelViewSet):
     serializer_class = MessengerAccountSerializer
 
     def get_queryset(self):
-        queryset = self.queryset
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(user=self.request.user)
+        # Nenhuma flag de conta abre cross-tenant.
+        return self.queryset.filter(user=self.request.user)
 
     @action(detail=True, methods=["post"])
     def sync(self, request, pk=None):
@@ -75,9 +73,7 @@ class MessengerProfileViewSet(viewsets.ViewSet):
 
     def get_account(self):
         account_id = self.request.query_params.get("account_id")
-        queryset = MessengerAccount.objects.all()
-        if not (self.request.user.is_superuser):
-            queryset = queryset.filter(user=self.request.user)
+        queryset = MessengerAccount.objects.filter(user=self.request.user)
         return get_object_or_404(queryset, id=account_id)
 
     @action(detail=False, methods=["get"])
@@ -166,8 +162,6 @@ class MessengerConversationViewSet(viewsets.ModelViewSet):
         account_id = self.request.query_params.get("account")
         if account_id:
             queryset = queryset.filter(account_id=account_id)
-        if self.request.user.is_superuser:
-            return queryset
         return queryset.filter(account__user=self.request.user)
 
     @action(detail=True, methods=["get"])
@@ -270,10 +264,7 @@ class MessengerBroadcastViewSet(viewsets.ModelViewSet):
     serializer_class = MessengerBroadcastSerializer
 
     def get_queryset(self):
-        queryset = self.queryset
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(account__user=self.request.user)
+        return self.queryset.filter(account__user=self.request.user)
 
     @action(detail=True, methods=["post"])
     def send(self, request, pk=None):
@@ -296,9 +287,7 @@ class MessengerBroadcastViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def tags(self, request):
         account_id = request.query_params.get("account_id")
-        queryset = MessengerAccount.objects.all()
-        if not (request.user.is_superuser):
-            queryset = queryset.filter(user=request.user)
+        queryset = MessengerAccount.objects.filter(user=request.user)
         account = get_object_or_404(queryset, id=account_id)
 
         messenger = MessengerService(account)
@@ -315,10 +304,7 @@ class MessengerSponsoredViewSet(viewsets.ModelViewSet):
     serializer_class = MessengerSponsoredMessageSerializer
 
     def get_queryset(self):
-        queryset = self.queryset
-        if self.request.user.is_superuser:
-            return queryset
-        return queryset.filter(account__user=self.request.user)
+        return self.queryset.filter(account__user=self.request.user)
 
     @action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
