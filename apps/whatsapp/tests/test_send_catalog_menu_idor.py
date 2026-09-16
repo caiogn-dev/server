@@ -63,7 +63,7 @@ class SendCatalogMenuStaffIDORTest(APITestCase):
         MS.return_value.send_catalog_message.assert_not_called()
 
     def test_superuser_nao_seleciona_loja_alheia(self):
-"""16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
+        """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo.
 
         Selecionar loja alheia vazaria catálogo e preços dela.
         """
@@ -82,4 +82,4 @@ class SendCatalogMenuStaffIDORTest(APITestCase):
             MSer.return_value.data = {'ok': True}
             resp = self.client.post(URL, payload, format='json')
         self.assertEqual(resp.status_code, 400, resp.content)
-        MS.return_value.send_catalog_message.assert_called_once()
+        MS.return_value.send_catalog_message.assert_not_called()

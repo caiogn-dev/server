@@ -41,7 +41,7 @@ def cenario(db):
         name='Assistente', provider='nvidia', model_name='x', status='active',
         system_prompt='teste',
     )
-    perfil = loja.company_profile
+    perfil = loja.automation_profile
     perfil.default_agent = agente
     perfil.save(update_fields=['default_agent'])
     return dono, loja, agente
