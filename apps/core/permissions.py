@@ -273,15 +273,15 @@ def accessible_store_ids(user):
     """
     Return a QuerySet of store IDs the user can access.
 
-    SÓ superuser vê todas as lojas. is_staff (acesso ao /admin) NÃO concede
-    acesso cross-tenant. Usuário comum acessa lojas onde é owner, está no
-    staff M2M (legado) OU tem StoreTeamMember ativo (sistema de roles).
+    Acesso vem de VÍNCULO, nunca de flag de conta: owner, staff M2M (legado)
+    ou StoreTeamMember ativo. Nem is_staff nem is_superuser concedem acesso
+    cross-tenant — a conta do dono da plataforma não é chave-mestra do painel,
+    senão a loja de um cliente pagante nasce visível para outra conta.
+    Suporte se faz pelo /admin do Django ou entrando no staff da loja.
     """
     from django.db.models import Q
     from apps.stores.models import Store
     qs = Store.objects.filter(is_active=True)
-    if user.is_superuser:
-        return qs.values_list('id', flat=True)
     return qs.filter(
         Q(owner=user)
         | Q(staff=user)
@@ -290,12 +290,11 @@ def accessible_store_ids(user):
 
 
 def user_can_access_store(user, store) -> bool:
-    """True se o usuário pode acessar a loja (owner, staff M2M, StoreTeamMember ou superuser).
+    """True se o usuário pode acessar a loja (owner, staff M2M ou StoreTeamMember).
 
-    is_staff NÃO concede acesso — senão qualquer conta do /admin vaza todas as lojas.
+    Nem is_staff nem is_superuser concedem acesso — senão qualquer conta do
+    /admin, e a conta do dono da plataforma, vazam todas as lojas.
     """
-    if user.is_superuser:
-        return True
     if store.owner_id == user.id or store.staff.filter(id=user.id).exists():
         return True
     from apps.stores.permissions import get_member_role
