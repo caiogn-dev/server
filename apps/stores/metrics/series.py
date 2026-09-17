@@ -113,8 +113,23 @@ def quebra_de_lista(queryset, campo: str, incluir_teste=False) -> list:
     serve para conferir a gaveta e o extrato do gateway, que recebem o frete
     junto (a gaveta de `StoreCashSession.expected_cash` também soma `total`).
     Por isso as partes somam `faturamento + frete`, não o faturamento.
+
+    Agrega SEMPRE sobre um queryset limpo, reconstruído a partir das chaves.
+    O `queryset` chega das views com joins que nada têm a ver com dinheiro —
+    `StoreOrderViewSet` anota `amount_paid_agg` com `Sum('payments__amount')`,
+    que traz um LEFT JOIN em `store_payments`. Reagrupar por `payment_method`
+    em cima desse join conta UMA LINHA POR COBRANÇA: pedido com duas tentativas
+    de PIX (a pendente e a aprovada) vira dois pedidos, com o `total` somado
+    duas vezes. Na Cê Saladas, em 01–17/set/2026, isso mostrava PIX
+    R$ 5.616,49 em 81 pedidos onde o real era R$ 4.334,09 em 66 — R$ 1.282,40
+    de dinheiro que nunca entrou, numa tela cujo trabalho é fechar o caixa.
     """
+    from apps.stores.models import StoreOrder
+
     faturando = apenas_receita(queryset, incluir_teste=incluir_teste)
+    faturando = StoreOrder.objects.filter(
+        pk__in=faturando.order_by().values('pk')
+    )
     return [
         {
             'chave': linha[campo] or 'nao_informado',
