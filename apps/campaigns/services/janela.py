@@ -18,7 +18,8 @@ Por isso `em=` existe: a mesma conta pode ser feita para o instante do envio.
 """
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import time, timedelta
+from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
@@ -90,6 +91,46 @@ def resumo_da_janela(account_ids, em=None) -> dict:
         'medido_em': momento.isoformat(),
         'janela_horas': JANELA_HORAS,
     }
+
+
+#: A faixa em que a loja pode falar. Fora dela, ninguém recebe (D4): promoção
+#: às 23h não é lembrete, é incômodo — e o cliente que bloqueia some para sempre.
+INICIO_DO_DIA = 8
+FIM_DO_DIA = 21
+#: Quanto antes de a janela fechar a pessoa é antecipada (D3).
+ANTECIPACAO = timedelta(hours=1)
+
+
+def horario_alvo(fecha_em, horario_campanha, fuso: str):
+    """Quando ESTA pessoa recebe — ou `None` se não dá para mandar de graça.
+
+    Regra, na ordem (spec, seção 3):
+      1. sem janela (nunca falou) → fora;
+      2. alvo = min(horário da campanha, fecha_em − 1h);
+      3. alvo no silêncio → recua para as 21:00 mais recentes ANTES dele;
+      4. alvo em outro dia (local) que o da campanha → fora (D5);
+      5. alvo já depois do fechamento → fora.
+    """
+    if fecha_em is None:
+        return None
+
+    zona = ZoneInfo(fuso or 'America/Sao_Paulo')
+    alvo = min(horario_campanha, fecha_em - ANTECIPACAO)
+
+    local = alvo.astimezone(zona)
+    if local.time() < time(INICIO_DO_DIA) or local.time() > time(FIM_DO_DIA):
+        # As 21:00 mais recentes ANTES do alvo: 22:30 → 21:00 do mesmo dia;
+        # 05:00 → 21:00 da véspera.
+        fim = local.replace(hour=FIM_DO_DIA, minute=0, second=0, microsecond=0)
+        if fim > local:
+            fim -= timedelta(days=1)
+        alvo = fim.astimezone(alvo.tzinfo)
+
+    if alvo.astimezone(zona).date() != horario_campanha.astimezone(zona).date():
+        return None
+    if alvo >= fecha_em:
+        return None
+    return alvo
 
 
 #: A marca que diz "esta campanha é a grátis". Fica em `audience_filters`, que
