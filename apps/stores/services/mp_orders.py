@@ -6,11 +6,14 @@ statement_descriptor) — melhora a aprovação e a nota de qualidade do MP.
 POST https://api.mercadopago.com/v1/orders  (a SDK 2.x não expõe orders → REST).
 Single-seller: usa o access_token do gateway da loja (sem OAuth por enquanto).
 """
+import logging
 import re
 from decimal import Decimal, ROUND_DOWN
 import unicodedata
 import uuid
 import requests
+
+logger = logging.getLogger(__name__)
 
 ORDERS_URL = 'https://api.mercadopago.com/v1/orders'
 
@@ -101,10 +104,48 @@ def build_items(order, total=None):
     return items
 
 
+def email_aceito_pelo_mp(email):
+    """O e-mail limpo, se o Mercado Pago aceitaria; senão None.
+
+    17/set: o formulário do cartão mandou um e-mail inválido e a Orders API
+    recusou a compra inteira com `invalid_payer_email` — com o e-mail válido do
+    pedido ali do lado. Domínio interno de placeholder e `.local/.test/.invalid`
+    também são recusados pelo MP.
+    """
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+
+    limpo = (email or '').strip()
+    if not limpo:
+        return None
+    try:
+        validate_email(limpo)
+    except ValidationError:
+        return None
+    dominio = limpo.rsplit('@', 1)[-1].lower()
+    if dominio.endswith(('.local', '.test', '.invalid')):
+        return None
+    from apps.stores.services.checkout_service import is_placeholder_email
+    if is_placeholder_email(limpo):
+        return None
+    return limpo
+
+
 def build_payer(order, payer_email, payer_data=None):
     payer_data = payer_data or {}
     first, last = split_name(order.customer_name)
-    payer = {'email': payer_email or order.customer_email, 'first_name': first, 'last_name': last}
+    # O e-mail do formulário do cartão tem prioridade — mas só se o MP aceitar.
+    # Senão vale o do pedido: um e-mail ruim digitado no cartão não pode custar
+    # a venda de quem já tem e-mail válido na conta.
+    email = email_aceito_pelo_mp(payer_email) or email_aceito_pelo_mp(order.customer_email)
+    if email is None:
+        email = payer_email or order.customer_email
+    if (payer_email or '').strip() and email != (payer_email or '').strip():
+        logger.info(
+            '[mp_orders] e-mail do formulário recusado; usando o do pedido %s',
+            getattr(order, 'order_number', ''),
+        )
+    payer = {'email': email, 'first_name': first, 'last_name': last}
 
     id_type = payer_data.get('identification_type') or payer_data.get('identificationType')
     id_num = payer_data.get('identification_number') or payer_data.get('identificationNumber')
@@ -535,6 +576,9 @@ def eh_erro_de_payload(status_code, body) -> bool:
 #: pedido CE-2608310043 (R$ 86,39), que virou PIX depois de o cartão dar erro.
 MENSAGENS_DE_RECUSA = {
     'invalid_card_token': 'Os dados do cartão expiraram. Digite o cartão de novo, por favor.',
+    # 17/set (Madu): sem este texto a tela dizia "tente outro cartão" e o
+    # problema era o e-mail — o cartão estava bom.
+    'invalid_payer_email': 'O e-mail informado no pagamento não é válido. Confira o e-mail e tente de novo.',
     'cc_rejected_bad_filled_card_number': 'Confira o número do cartão.',
     'cc_rejected_bad_filled_date': 'Confira a data de validade do cartão.',
     'cc_rejected_bad_filled_security_code': 'Confira o código de segurança (CVV) do cartão.',
