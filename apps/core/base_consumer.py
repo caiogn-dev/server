@@ -129,17 +129,21 @@ class ThrottledWebSocketConsumer(AsyncJsonWebsocketConsumer):
 
         Default policy:
         - Unauthenticated / missing account_id → deny.
-        - Django staff / superusers → allow (admin access).
+        - Superuser → allow (only is_superuser, never is_staff — convenção do projeto).
         - Regular users → deny unless a subclass overrides this method
           with platform-specific ownership checks.
 
-        Subclasses (WhatsAppConsumer, InstagramConsumer, etc.) are expected
-        to override this and check account.owner_id == self.user.id or
-        equivalent store-staff membership.
+        ⚠️  Subclasses DEVEM sobrescrever este método com verificação de
+        ownership real (ex: account.owner_id == user.id ou membership na loja).
+        O fallback só libera is_superuser para não vazar cross-tenant caso um
+        consumer seja criado sem override.
+
+        is_staff = acesso ao /admin Django; não concede acesso cross-tenant
+        a contas de outros tenants (WhatsApp, Instagram, etc.).
         """
         if not self.user or not account_id:
             return False
-        return self.user.is_staff or self.user.is_superuser
+        return self.user.is_superuser
     
     async def get_conversation_cached(self, conversation_id: str):
         """Get conversation with caching."""

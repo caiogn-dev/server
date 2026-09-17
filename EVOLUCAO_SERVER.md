@@ -880,11 +880,60 @@ Ambos os PRs aguardam merge para `development`.
 - **CI:** jobs `check`/`complexity` falham por infra pré-existente (output vazio, logs 404) — não
   relacionado ao PR. Comentado no #316.
 
-**Próximo backlog (prioridade atualizada):**
+**Próximo backlog (prioridade atualizado):**
 
 1. **P1** — Merge dos PRs acumulados #307–#316 (9 PRs aguardando revisão há até 7 dias).
 2. **P1** — Testes de contrato para checkout payload e pedido por token (OTP já coberto).
 3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedido.
 4. **P2** — Varredura de IDOR em `apps/stores/api/export_views.py` outras classes (concluída nesta
    sessão), `apps/audit/` (verificar cobertura do fix de 2026-06-28).
+
+---
+
+### 2026-09-17
+
+**Baseline de testes:** 65 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN antes do fix.
+Base do trunk: `f85c8b8f` (2026-09-15).
+
+**Gate anti-acúmulo:** 1 PR aberto (`#368` — `str(exc)` Instagram/Messenger, 2026-09-16).
+Varredura executada: str(exc) sweep completo (incluindo módulos novos), is_staff em novas views
+(loyalty, bio, onboarding, comando_views, users/views) — todos limpos. marketing/api IDOR de
+`perform_create` (backlog de 2026-07-22) já corrigido em development. CRM `CustomerSearchView`
+IDOR (backlog de 2026-07-22) já corrigido.
+
+**Bug encontrado e corrigido:** `ThrottledWebSocketConsumer.verify_account_access` usa `is_staff` no fallback [P2]
+
+- **Tipo:** P2 — Latente: fallback incorreto executado quando subclasse não sobrescreve
+  `verify_account_access`. Com `is_staff or is_superuser`, qualquer usuário do /admin Django
+  acessaria qualquer conta WhatsApp/Instagram via WebSocket sem ser dono da conta.
+- **Estado atual:** Ambas as subclasses reais (`WhatsAppConsumer`, `InstagramConsumer`) sobrescrevem
+  corretamente com `is_superuser` — a vulnerabilidade não é atualmente explorável.
+- **Risco sem o fix:** Consumer futuro criado sem override (por descuido ou copiar o padrão da base)
+  herdaria o bypass de `is_staff` silenciosamente.
+- **Arquivo corrigido:** `apps/core/base_consumer.py:142`
+  - `return self.user.is_staff or self.user.is_superuser` → `return self.user.is_superuser`
+  - Docstring atualizado para documentar a convenção e o aviso para implementadores.
+- **Testes (9 SimpleTestCase):** `apps/core/tests/test_base_consumer_is_staff_fallback.py`
+  - Análise estática (3): retorno não contém `is_staff`, contém `is_superuser`, classe existe
+  - Comportamento (6): `is_staff=True/False` × `is_superuser=True/False`, user=None, account_id vazio
+  - RED→GREEN confirmado: 2 FAIL antes do fix, 9/9 OK após
+- **PR:** `bot/server-2026-09-17-base-consumer-is-staff-fallback`
+
+**Varredura completa desta sessão:**
+
+| Módulo | Status |
+|---|---|
+| `str(exc)` em HTTP responses (todos os módulos) | COMPLETO — restos são ValueError intencionais |
+| `is_staff` cross-tenant em views novas (loyalty, bio, onboarding, users) | Limpo |
+| marketing `perform_create` IDOR (backlog jul/2026) | Já corrigido em development |
+| CRM `CustomerSearchView` IDOR (backlog jul/2026) | Já corrigido em development |
+| `base_consumer.py` `is_staff` fallback | Corrigido nesta sessão (P2) |
+
+**Próximo backlog priorizado:**
+
+1. **P1** — PR #368 aguardando merge (str(exc) Instagram/Messenger).
+2. **P1** — Testes de contrato para checkout payload e pedido por token (pendência crítica do CLAUDE.md).
+3. **P2** — Namespace mobile/customer limpo para detalhe/status/rastreio/reordenação de pedidos.
+4. **P2** — Verificar se módulos novos de setembro/2026 (carteira, cashback, loyalty) têm
+   `is_staff` como bypass cross-tenant em algum ponto não coberto pela varredura de hoje.
 
