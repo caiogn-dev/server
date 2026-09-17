@@ -99,3 +99,46 @@ def test_bandeira_invalida_e_recusada_antes_da_rede():
             pedido, card_token='t', brand='alelo',
             holder_name='ANA', holder_document='39053344705',
         )
+
+
+# ---------------------------------------------------------------------------
+# E-mail do cliente no vale (17/set)
+#
+# O payload do voucher nunca mandou `customer.email`. O Pagar.me cadastra o
+# cliente a partir desse bloco, e a mesma armadilha do Mercado Pago vale aqui:
+# identidade interna (`5511...@pastita.local`, de quem entrou só com telefone)
+# não é e-mail de verdade e não pode sair para a operadora.
+# ---------------------------------------------------------------------------
+
+def pedido_com_email(email):
+    pedido = pedido_falso([item('Salada', '25.00')], total=Decimal('25.00'))
+    pedido.customer_email = email
+    return pedido
+
+
+def voucher(pedido):
+    return pagarme_orders.build_voucher_payload(
+        pedido, card_token='tok', brand='vr',
+        holder_name='Madu Silva', holder_document='12345678909',
+    )
+
+
+def test_email_do_pedido_vai_no_customer():
+    payload = voucher(pedido_com_email('madu@gmail.com'))
+    assert payload['customer']['email'] == 'madu@gmail.com'
+
+
+def test_email_de_placeholder_nao_sai_para_a_operadora():
+    payload = voucher(pedido_com_email('5511999999999@pastita.local'))
+    assert 'email' not in payload['customer']
+
+
+def test_email_invalido_nao_sai_para_a_operadora():
+    payload = voucher(pedido_com_email('madu arroba gmail'))
+    assert 'email' not in payload['customer']
+
+
+def test_pedido_sem_email_continua_valido():
+    payload = voucher(pedido_com_email(''))
+    assert 'email' not in payload['customer']
+    assert payload['customer']['document'] == '12345678909'

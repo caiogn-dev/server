@@ -75,6 +75,30 @@ def statement_descriptor(order) -> str:
     return re.sub(r'[^A-Za-z0-9 ]', '', nome).strip().upper()[:13] or 'CARDAPIDEX'
 
 
+def email_aceito_pelo_gateway(email):
+    """O e-mail limpo, se um gateway o aceitaria; senão string vazia.
+
+    Irmã de `mp_orders.email_aceito_pelo_mp` — a regra é a mesma dos dois lados,
+    e vive em cada módulo de gateway para nenhum deles depender do outro.
+    """
+    from django.core.exceptions import ValidationError
+    from django.core.validators import validate_email
+
+    limpo = (email or '').strip()
+    if not limpo:
+        return ''
+    try:
+        validate_email(limpo)
+    except ValidationError:
+        return ''
+    if limpo.rsplit('@', 1)[-1].lower().endswith(('.local', '.test', '.invalid')):
+        return ''
+    from apps.stores.services.checkout_service import is_placeholder_email
+    if is_placeholder_email(limpo):
+        return ''
+    return limpo
+
+
 def build_voucher_payload(order, *, card_token, brand, holder_name,
                            holder_document, total=None):
     """Payload de `POST /orders` para uma cobrança de voucher.
@@ -92,13 +116,21 @@ def build_voucher_payload(order, *, card_token, brand, holder_name,
     items = build_items(order, total=total)
     valor = soma_dos_itens(items)
 
+    cliente = {
+        'name': (holder_name or 'Cliente')[:64],
+        'document': somente_digitos(holder_document),
+        'type': 'individual',
+    }
+    # O Pagar.me cadastra o cliente por este bloco. E-mail inválido ou identidade
+    # interna (`...@pastita.local`) não sai daqui — mesma regra do Mercado Pago,
+    # onde um e-mail ruim derrubou a compra inteira (17/set).
+    email = email_aceito_pelo_gateway(getattr(order, 'customer_email', ''))
+    if email:
+        cliente['email'] = email
+
     return {
         'items': items,
-        'customer': {
-            'name': (holder_name or 'Cliente')[:64],
-            'document': somente_digitos(holder_document),
-            'type': 'individual',
-        },
+        'customer': cliente,
         'payments': [{
             'payment_method': 'voucher',
             'amount': valor,

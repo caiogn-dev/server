@@ -47,3 +47,28 @@ def assumir_atendimento(conversa, origem: str) -> bool:
             exc_info=True, extra={'conversation_id': str(conversa.id)},
         )
         return False
+
+
+def marcar_conversa_como_pendente(conversa) -> bool:
+    """Sobe a conversa para o atendente pelo contador de não lidas.
+
+    Direct (Instagram) e Messenger não têm modo humano nem HandoverRequest —
+    esses vivem aqui, em cima de `Conversation`, que hoje é só WhatsApp. O que
+    esses canais têm é o contador de não lidas do inbox. Quando a IA falha,
+    é ele que faz a conversa aparecer para alguém responder à mão, em vez de
+    mandar "Desculpe, tive um problema" para o cliente (17/set).
+
+    Best-effort: a falha da IA já aconteceu; estourar aqui só a esconderia.
+    """
+    if conversa is None:
+        return False
+    try:
+        from django.db.models import F
+
+        type(conversa).objects.filter(pk=conversa.pk).update(
+            unread_count=F('unread_count') + 1,
+        )
+        return True
+    except Exception as exc:
+        logger.warning('[handover] Falha ao marcar conversa como pendente: %s', exc, exc_info=True)
+        return False

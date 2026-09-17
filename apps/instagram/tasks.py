@@ -47,8 +47,12 @@ def process_instagram_dm(self, message_id: str):
         )
         response_text = result.get('response', '')
     except Exception as e:
+        # IA falhou: o cliente NÃO recebe uma desculpa automática (17/set, regra
+        # do WhatsApp). A conversa volta para não lida e quem atende responde.
         logger.error(f"process_instagram_dm: AgentService error for message {message_id}: {e}", exc_info=True)
-        response_text = 'Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente?'
+        from apps.conversations.services.atendimento_humano import marcar_conversa_como_pendente
+        marcar_conversa_como_pendente(msg.conversation)
+        return
 
     if not response_text:
         logger.warning(f"process_instagram_dm: no response text for message {message_id}")
