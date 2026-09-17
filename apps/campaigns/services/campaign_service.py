@@ -47,6 +47,17 @@ class CampaignService:
             if template.category == MessageTemplate.TemplateCategory.AUTHENTICATION:
                 raise ValidationError("Authentication templates cannot be used for marketing campaigns")
         
+        # D1: texto livre SÓ existe dentro da janela de 24h — a Meta recusa
+        # fora dela (131047). Marcar é decisão do sistema, não caixinha de
+        # tela: 0 de 8 campanhas em produção tinham a marca, e todas saíram
+        # para gente fora da janela. Copia o dict recebido para não mutar o
+        # que o chamador passou, e preserva os filtros que o dono escolheu
+        # (bairro, segmento etc.) — a marca se soma, nunca substitui.
+        from .janela import MARCA
+        audience_filters = dict(audience_filters or {})
+        if not template_id:
+            audience_filters[MARCA] = True
+
         campaign = Campaign.objects.create(
             account=account,
             name=name,
@@ -54,7 +65,7 @@ class CampaignService:
             description=description,
             template_id=template_id,
             message_content=message_content or {},
-            audience_filters=audience_filters or {},
+            audience_filters=audience_filters,
             contact_list=contact_list or [],
             scheduled_at=scheduled_at,
             messages_per_minute=messages_per_minute or 60,
@@ -88,6 +99,23 @@ class CampaignService:
             if hasattr(campaign, key):
                 setattr(campaign, key, value)
                 alterados.append(key)
+
+        # D1: recalcula a marca pelo template FINAL da campanha, não pelo que
+        # veio em `kwargs` — editar pode tirar o template (volta a ser texto
+        # livre, precisa da marca) ou colocar um (marca sai, a Meta já aprovou
+        # o texto). Copia antes de mexer para não mutar o dict que o chamador
+        # passou em `audience_filters`.
+        from .janela import MARCA
+        originais = campaign.audience_filters or {}
+        filtros = dict(originais)
+        if campaign.template_id:
+            filtros.pop(MARCA, None)
+        else:
+            filtros[MARCA] = True
+        if filtros != originais:
+            campaign.audience_filters = filtros
+            if 'audience_filters' not in alterados:
+                alterados.append('audience_filters')
 
         # Só o que foi realmente pedido. Um `save()` inteiro daqui apagaria os
         # contadores de entrega que os recibos escrevem em paralelo — ver o
