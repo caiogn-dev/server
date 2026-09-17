@@ -113,6 +113,43 @@ def process_webhook_event(self, event_id: str):
         release_lock(lock_name)
 
 
+def _passar_para_atendente_por_falha_da_ia(message, erro):
+    """A IA não respondeu: cala o bot, passa para humano e avisa o painel.
+
+    Best-effort em cada passo — a falha da IA já aconteceu, e um erro aqui só
+    esconderia do atendente que tem cliente esperando.
+    """
+    from apps.conversations.services.atendimento_humano import assumir_atendimento
+
+    try:
+        from apps.whatsapp.repositories import MessageRepository
+        MessageRepository().mark_as_processed_by_agent(message)
+    except Exception:
+        logger.warning("Failed to mark message after agent failure", exc_info=True)
+
+    conversa = message.conversation
+    if conversa is None:
+        return
+    assumir_atendimento(conversa, origem='falha_da_ia')
+
+    try:
+        from apps.handover.models import (
+            HandoverRequest, HandoverRequestStatus, notify_handover_request,
+        )
+        pedido = HandoverRequest.objects.create(
+            conversation=conversa,
+            reason=(
+                'A IA não conseguiu responder esta mensagem '
+                f'({type(erro).__name__}). O cliente está esperando — responda por aqui.'
+            ),
+            priority='high',
+            status=HandoverRequestStatus.PENDING,
+        )
+        notify_handover_request(pedido)
+    except Exception:
+        logger.error("Failed to notify panel after agent failure", exc_info=True)
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def process_message_with_agent(self, message_id: str):
     """Process a message with AI Agent (Langchain)."""
@@ -182,11 +219,13 @@ def process_message_with_agent(self, message_id: str):
             
         except Exception as agent_error:
             logger.error(f"AgentService error for message {message_id}: {str(agent_error)}", exc_info=True)
-            # Send fallback message on agent error
-            response_text = "Desculpe, tive um problema ao processar sua mensagem. Pode tentar novamente?"
-            order_created = None
-            whatsapp_response = {}
-        
+            # A IA falhou: o cliente NÃO recebe "desculpe, pode repetir?" — isso
+            # pede para repetir algo que ninguém vai responder. A conversa vai
+            # para o atendente e o painel é avisado (decisão do dono, 17/set,
+            # depois de o Francisco receber dois "desculpe" em 4 minutos).
+            _passar_para_atendente_por_falha_da_ia(message, agent_error)
+            return
+
         # Send response if we have one
         if response_text:
             try:
@@ -194,6 +233,23 @@ def process_message_with_agent(self, message_id: str):
                 if message.processed_by_agent:
                     logger.info("Agent response suppressed; message already claimed: %s", message_id)
                     return
+                # A chamada à IA pode levar minutos. Se um atendente assumiu
+                # nesse meio-tempo, a resposta da IA não sai por cima dele —
+                # 17/set: o atendente respondeu às 10:57 e o bot falou às 11:00.
+                if message.conversation_id:
+                    from apps.conversations.models import Conversation
+                    modo_agora = (
+                        Conversation.objects
+                        .filter(pk=message.conversation_id)
+                        .values_list('mode', flat=True)
+                        .first()
+                    )
+                    if modo_agora == Conversation.ConversationMode.HUMAN:
+                        logger.info(
+                            "Agent response suppressed; human took over while waiting: %s",
+                            message_id,
+                        )
+                        return
                 try:
                     message_repo.mark_as_processed_by_agent(message)
                 except Exception as mark_error:
