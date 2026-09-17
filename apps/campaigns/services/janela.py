@@ -133,6 +133,54 @@ def horario_alvo(fecha_em, horario_campanha, fuso: str):
     return alvo
 
 
+def fechamentos_por_chave(account_ids) -> dict:
+    """{chave do telefone: quando a janela fecha}. Só quem já falou entra.
+
+    Para a rodada (task 3) comparar `fecha_em` contra o horário-alvo de CADA
+    destinatário — `chaves_com_janela_aberta` só diz dentro/fora AGORA, não
+    quando cada um fecha.
+
+    Mesma chave canônica do recorte e da dedupe: o wa_id chega sem o nono
+    dígito e o pedido tem com ele. Duas conversas do mesmo cliente → vale a
+    mensagem MAIS NOVA, senão descartaríamos quem está dentro da janela.
+    """
+    from apps.conversations.models import Conversation
+
+    mapa = {}
+    linhas = (
+        Conversation.objects
+        .filter(account_id__in=list(account_ids))
+        .exclude(last_customer_message_at=None)
+        .values_list('phone_number', 'last_customer_message_at')
+    )
+    for telefone, ultima in linhas:
+        chave = chave_do_telefone(telefone)
+        if not chave:
+            continue
+        fecha = ultima + timedelta(hours=JANELA_HORAS)
+        if chave not in mapa or fecha > mapa[chave]:
+            mapa[chave] = fecha
+    return mapa
+
+
+def fuso_da_campanha(campaign) -> str:
+    """O fuso da LOJA dona da conta — o container roda em UTC.
+
+    A ligação loja→conta tem dois caminhos no sentido inverso: FK direta
+    (`Store.whatsapp_account`) e perfil de automação (`CompanyProfile.account`,
+    acessível como `Store.automation_profile`). Sem loja em nenhum dos dois,
+    cai no fuso do settings — não dá para deixar `horario_alvo` sem fuso.
+    """
+    from django.conf import settings
+    from apps.stores.models import Store
+
+    loja = (
+        Store.objects.filter(whatsapp_account_id=campaign.account_id).first()
+        or Store.objects.filter(automation_profile__account_id=campaign.account_id).first()
+    )
+    return getattr(loja, 'timezone', None) or settings.TIME_ZONE
+
+
 #: A marca que diz "esta campanha é a grátis". Fica em `audience_filters`, que
 #: já é onde a campanha guarda quem recebe.
 MARCA = 'somente_janela_aberta'
