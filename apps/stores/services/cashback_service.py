@@ -351,6 +351,39 @@ class CashbackService:
         StoreCashbackLot.objects.bulk_update(lotes, ['remaining'])
         return abatido
 
+    @staticmethod
+    def devolver_resgate(order):
+        """Devolve ao cliente o saldo que ele gastou num pedido cancelado.
+
+        `redeem` baixa os lotes e grava o `StoreCashbackRedemption`; cancelar
+        não desfazia nada disso. Para o cashback de compra eram centavos, mas
+        para a CARTEIRA PRÉ-PAGA é dinheiro que o cliente pagou antes e que a
+        loja passava a reter por um pedido que ela mesma cancelou.
+
+        O resgate não guarda de quais lotes saiu, então a devolução é um lote
+        novo — com a validade MAIS LONGA da loja, para nunca encurtar o prazo
+        do dinheiro de ninguém. Continua exigindo o telefone comprovado como
+        todo lote (ver `_lotes_vivos`).
+
+        Idempotente pela constraint `cashback_unico_por_cobranca`
+        (`source_ref='estorno:<pedido>'`): cancelar duas vezes, ou o webhook
+        reenviado, não imprime saldo.
+        """
+        from apps.stores.models import StoreCashbackLot, StoreCashbackRedemption
+
+        resgate = StoreCashbackRedemption.objects.filter(order=order).first()
+        if resgate is None or resgate.amount <= 0:
+            return None
+        dias = max(
+            CashbackService.expiry_days(order.store),
+            CashbackService.carteira_expiry_days(order.store),
+        )
+        return CashbackService._creditar(
+            order.store, resgate.phone, resgate.amount,
+            StoreCashbackLot.Origin.ADJUST, order=order,
+            source_ref=f'estorno:{order.id}', validade_dias=dias,
+        )
+
     # ── carteira pré-paga ───────────────────────────────────────────────
 
     @staticmethod

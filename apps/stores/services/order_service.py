@@ -364,14 +364,18 @@ class OrderService:
     def _encerrar_cancelado(self, order) -> None:
         """O que todo cancelamento precisa fazer, venha do botão ou do dropdown.
 
-        Pagamento liquidado e vaga do cupom devolvida. Antes só o webhook do MP
+        Pagamento liquidado, vaga do cupom e saldo gasto devolvidos. Antes só o webhook do MP
         devolvia o cupom: 4 vendas em dinheiro canceladas pelo painel ficaram
         com a vaga presa (medido em 15/set). `_release_coupon` é idempotente
         por `metadata['coupon_released']`.
         """
+        from .cashback_service import CashbackService
         from .checkout_service import CheckoutService
         self._liquidar_pagamento_do_cancelado(order)
         CheckoutService._release_coupon(order)
+        # O saldo que o cliente gastou no pedido volta para ele. Sem isto a
+        # carteira pré-paga perdia dinheiro a cada cancelamento feito pela loja.
+        CashbackService.devolver_resgate(order)
 
     def _liquidar_pagamento_do_cancelado(self, order) -> None:
         """Ao cancelar, o pagamento deixa de estar 'paid' ou 'pending'.
