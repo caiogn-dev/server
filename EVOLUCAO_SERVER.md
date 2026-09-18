@@ -10,6 +10,42 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-09-18
+
+**Baseline de testes:** 4 testes novos (unittest puro, sem Django/Docker) — 4/4 OK após a correção.
+HEAD de `development`: `1d095557`. Gate: 2 PRs bot/ abertos (#368, #369).
+
+**Bug encontrado e corrigido:** segunda camada de janela de 24h ausente em `process_campaign_batch` [P2]
+
+- **Tipo:** P2 — Correção de contagem: destinatários com janela fechada durante o lote marcados como FAILED em vez de SKIPPED.
+- **Contexto:** A janela de 24h é verificada ao INICIAR a campanha (`recortar_para_a_janela`), mas um
+  destinatário perto do fim da janela pode tê-la fechado antes que o lote chegue nele. Sem a segunda
+  camada, a Meta retorna erro 131047 e o destinatário vai para FAILED. Não é falha técnica — é timing.
+  Contar como FAILED infla a taxa de erros da campanha e esconde falhas reais.
+  Situação análoga ao incidente de opt-out de 25→28/ago: a lista pode ter sido cortada mas o envio
+  demora e a janela se fecha durante o processamento do lote.
+- **Arquivo corrigido (1):** `apps/campaigns/services/campaign_service.py`
+  - `process_campaign_batch()`: adicionada segunda camada de verificação da janela de 24h por lote.
+    Consulta bulk (`chaves_com_janela_aberta`) antes do loop, não uma query por destinatário.
+    Só executa para campanhas com `audience_filters[MARCA] = True` (`somente_janela_aberta`).
+    Destinatários fora da janela → SKIPPED + log, sem incrementar `messages_failed`.
+- **Testes:** 4 casos em `apps/campaigns/tests/test_janela_segunda_camada.py` (RED→GREEN confirmado):
+  - `test_batch_importa_chaves_com_janela_aberta` — segunda camada chama `chaves_com_janela_aberta`
+  - `test_batch_verifica_a_marca_somente_janela_aberta` — filtro só ativo em campanhas marcadas
+  - `test_batch_usa_skipped_para_janela_fechada` — resultado é SKIPPED, não FAILED
+  - `test_janela_segunda_camada_usa_continue_nao_messages_failed` — `continue` antes do `try` de envio
+- **PR:** `bot/server-2026-09-18-janela-segunda-camada`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs abertos (#368, #369) — is_staff WebSocket e str(exc) Instagram/Messenger |
+| P2 | Testes de contrato para OTP WhatsApp e checkout (pendência crítica do CLAUDE.md) |
+| P2 | Namespace mobile/customer: `/api/v1/mobile/` existe — verificar contratos de reordenação |
+
+---
+
 ### 2026-07-23
 
 **Baseline de testes:** 19 testes SimpleTestCase (sem Docker/PostgreSQL/psycopg2) — 19/19 OK.
