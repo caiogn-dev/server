@@ -855,22 +855,17 @@ class LangchainService:
             logger.error(f"[AGENT CONTEXT] Error loading store menu: {e}")
 
         # 3. Load business hours + pickup address
-        _DAY_PT = {
-            'monday': 'Segunda', 'tuesday': 'Terça', 'wednesday': 'Quarta',
-            'thursday': 'Quinta', 'friday': 'Sexta', 'saturday': 'Sábado', 'sunday': 'Domingo',
-        }
         try:
             if store and store.operating_hours:
-                all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-                hours_text = "\n⏰ HORÁRIO DE FUNCIONAMENTO:\n"
-                for day in all_days:
-                    day_pt = _DAY_PT.get(day, day.capitalize())
-                    day_hours = store.operating_hours.get(day)
-                    if day_hours:
-                        hours_text += f"• {day_pt}: {day_hours.get('open', '--:--')} às {day_hours.get('close', '--:--')}\n"
-                    else:
-                        hours_text += f"• {day_pt}: FECHADO\n"
-                context_parts.append(hours_text)
+                # Fonte única do "dia aberto" (a lista antiga ignorava dia
+                # desligado: sábado da Cê Saladas saía como 08:00 às 17:00) e
+                # o AGORA — modelo de linguagem não sabe que horas são.
+                from django.utils import timezone as _tz
+                from apps.agents.services.contexto_da_loja import texto_de_agora, texto_do_horario
+                context_parts.append('\n' + texto_do_horario(store))
+                agora = texto_de_agora(store, _tz.localtime())
+                if agora:
+                    context_parts.append(agora)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
 

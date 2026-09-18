@@ -581,10 +581,14 @@ class InteractiveReplyHandler(IntentHandler):
             self._reset_upsell_progress()
             return self._show_next_upsell(items)
         store_name = getattr(self.store, 'name', 'A loja')
+        # Regra do dono (18/09): loja fechada leva o link do cardápio — quem
+        # prefere escolher pelo site agenda por lá.
+        from apps.agents.services.contexto_da_loja import link_do_cardapio
         return HandlerResult.list_message(
             body=(
                 f"😴 *{store_name} está fechada agora* — mas seu pedido não se perde!\n\n"
-                f"📅 *Escolha quando quer receber* e deixamos tudo agendado:"
+                f"🛒 Faça seu pedido agendado pelo cardápio: {link_do_cardapio(self.store)}\n\n"
+                f"📅 Ou *escolha aqui quando quer receber* e deixamos tudo agendado:"
             ),
             button="📅 Agendar pedido",
             sections=[{'title': 'Próximos horários', 'rows': slots}],
