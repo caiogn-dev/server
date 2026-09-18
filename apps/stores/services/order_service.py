@@ -376,6 +376,9 @@ class OrderService:
         # O saldo que o cliente gastou no pedido volta para ele. Sem isto a
         # carteira pré-paga perdia dinheiro a cada cancelamento feito pela loja.
         CashbackService.devolver_resgate(order)
+        # Idem para o brinde de fidelidade trocado neste pedido.
+        from .loyalty_service import LoyaltyService
+        LoyaltyService.devolver_resgate(order)
 
     def _liquidar_pagamento_do_cancelado(self, order) -> None:
         """Ao cancelar, o pagamento deixa de estar 'paid' ou 'pending'.

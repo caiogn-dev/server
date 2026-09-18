@@ -303,6 +303,45 @@ class LoyaltyService:
 
     @staticmethod
     @transaction.atomic
+    def devolver_resgate(order):
+        """Devolve o brinde usado num pedido que foi cancelado.
+
+        `redeem` grava REDEEM ligado ao pedido e soma em `redeemed_count`;
+        cancelar não desfazia nada — o cliente juntava os carimbos, a loja
+        cancelava e a salada grátis ficava gasta.
+
+        A devolução é um ADJUST ligado ao MESMO pedido: a constraint
+        `loyalty_unique_order_kind` (order, kind) faz o segundo cancelamento
+        não devolver outro brinde. Os carimbos GANHOS no pedido não são
+        tocados — isso é decisão de negócio, não defeito.
+        """
+        from django.db import IntegrityError
+
+        resgate = (
+            StoreLoyaltyTransaction.objects
+            .filter(order=order, kind=StoreLoyaltyTransaction.Kind.REDEEM)
+            .first()
+        )
+        if resgate is None or resgate.quantity <= 0:
+            return None
+        try:
+            with transaction.atomic():
+                tx = StoreLoyaltyTransaction.objects.create(
+                    account_id=resgate.account_id, order=order,
+                    kind=StoreLoyaltyTransaction.Kind.ADJUST,
+                    quantity=resgate.quantity,
+                    note='brinde devolvido: pedido cancelado',
+                )
+        except IntegrityError:
+            return None  # já devolvido
+        # Piso zero: um estorno manual feito antes não pode virar dívida.
+        conta = StoreLoyaltyAccount.objects.select_for_update().get(id=resgate.account_id)
+        conta.redeemed_count = max(0, conta.redeemed_count - resgate.quantity)
+        conta.save(update_fields=['redeemed_count', 'updated_at'])
+        return tx
+
+    @staticmethod
+    @transaction.atomic
     def resgatar_manual(store, user, quantidade: int, motivo: str = '', autor=None):
         """Baixa (ou devolve) brinde entregue FORA do checkout.
 
