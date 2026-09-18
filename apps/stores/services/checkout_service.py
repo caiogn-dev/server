@@ -1591,6 +1591,25 @@ class CheckoutService:
         return {'success': False, 'error': resultado.mensagem}
 
     @staticmethod
+    def registrar_cobranca_que_falhou(order) -> None:
+        """Marca o pedido cuja cobrança nem chegou a ser criada.
+
+        `create_payment` tem duas formas de dizer não: devolver
+        `{'success': False}` (e aí ela mesma marca FAILED) ou LEVANTAR — loja
+        sem credencial do gateway, provedor fora do ar. Quem chama e engole a
+        exceção precisa marcar o pedido, senão ele fica `pending` sem cobrança
+        nenhuma: a cobrança fantasma do incidente de 06/jul. Um lugar só,
+        usado pelo checkout do site e pelo pedido do WhatsApp.
+
+        Só `payment_status`: o `status` do pedido não conta história de
+        pagamento (susto de 11/ago — a venda sumia da tela).
+        """
+        if order is None or order.payment_status == StoreOrder.PaymentStatus.FAILED:
+            return
+        order.payment_status = StoreOrder.PaymentStatus.FAILED
+        order.save(update_fields=['payment_status', 'updated_at'])
+
+    @staticmethod
     def create_payment(
         order: StoreOrder,
         payment_method: str = 'pix',

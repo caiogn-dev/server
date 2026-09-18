@@ -1036,9 +1036,7 @@ class StoreCheckoutView(APIView):
         logger.exception(
             'Cobranca do pedido %s falhou por exceção: %s', order.order_number, exc,
         )
-        if order.payment_status != StoreOrder.PaymentStatus.FAILED:
-            order.payment_status = StoreOrder.PaymentStatus.FAILED
-            order.save(update_fields=['payment_status', 'updated_at'])
+        checkout_service.registrar_cobranca_que_falhou(order)
         return {'success': False, 'error': self.RECADO_DE_COBRANCA_INDISPONIVEL}
 
     def _apply_payment_result(self, response_data, payment_result, payment_method):

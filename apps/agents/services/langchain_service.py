@@ -1748,21 +1748,10 @@ class LangchainService:
                 # Limpa o carrinho após sucesso
                 self.redis_client.delete(_cart_key)
 
-                order = result.get("order")
-                pix_code = result.get("pix_code") or result.get("pix", {}).get("qr_code") or ""
-                total = result.get("total") or (order.total if order else "?")
-                delivery_fee = result.get("delivery_fee", "")
-                order_num = order.order_number if order else result.get("order_number", "")
-
-                response = f"Pedido #{order_num} criado!\n"
-                if delivery_fee:
-                    response += f"Taxa de entrega: R$ {delivery_fee}\n"
-                response += f"Total: R$ {total}\n"
-                if pix_code:
-                    response += f"PIX (copia e cola):\n{pix_code}"
-                else:
-                    response += "PIX sendo gerado — use consultar_pagamento em instantes."
-                return response
+                # O PIX vem em result['pix_data']; ler `pix_code` na raiz
+                # nunca entregava o código (ver resposta_do_pedido.py).
+                from apps.agents.services.resposta_do_pedido import resposta_do_pedido_criado
+                return resposta_do_pedido_criado(result)
 
             except Exception as exc:
                 logger.exception("[AGENT] Erro ao finalizar pedido: %s", exc)

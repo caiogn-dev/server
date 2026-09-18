@@ -473,6 +473,8 @@ class WhatsAppOrderService:
                 
         except Exception as e:
             logger.error(f"[_generate_pix] Exceção ao gerar PIX: {e}", exc_info=True)
+            # Sem isto o pedido ficava `pending` sem cobrança nenhuma.
+            CheckoutService.registrar_cobranca_que_falhou(order)
             return {
                 'success': False,
                 'error': str(e)
@@ -498,6 +500,7 @@ class WhatsAppOrderService:
             return {'success': False, 'error': result.get('error', 'Erro ao gerar link de pagamento')}
         except Exception as e:
             logger.error(f"[_generate_card_checkout_link] Exceção: {e}", exc_info=True)
+            CheckoutService.registrar_cobranca_que_falhou(order)
             return {'success': False, 'error': str(e)}
 
     def _register_cash_payment(self, order: StoreOrder) -> Dict[str, Any]:
