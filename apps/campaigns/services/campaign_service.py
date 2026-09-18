@@ -378,6 +378,21 @@ class CampaignService:
         from .optout import chaves_bloqueadas
         bloqueadas = chaves_bloqueadas(campaign.account)
 
+        # Segunda camada para a janela de 24h: análogo ao opt-out.
+        # A janela é verificada ao INICIAR a campanha (recortar_para_a_janela),
+        # mas um destinatário perto do fim da janela pode tê-la fechado antes
+        # que o lote chegue nele. Sem esta verificação, a Meta retorna 131047 e
+        # o envio vai para FAILED — mas não é falha técnica, é timing. Contar
+        # como falha infla a taxa de erros e esconde falhas reais.
+        # Consulta bulk por lote, não por destinatário, para manter O(1) queries.
+        from .janela import MARCA, chaves_com_janela_aberta
+        somente_janela = bool((campaign.audience_filters or {}).get(MARCA))
+        abertas_agora = (
+            chaves_com_janela_aberta([campaign.account_id])
+            if somente_janela
+            else set()
+        )
+
         for recipient in recipients:
             if chave_do_telefone(recipient.phone_number) in bloqueadas:
                 # `skipped`, não `failed`: a pessoa escolheu não receber. Contar
@@ -387,6 +402,15 @@ class CampaignService:
                 recipient.save(update_fields=['status', 'updated_at'])
                 logger.info(
                     'Campanha %s: %s pulado por opt-out',
+                    campaign_id, mask_phone(recipient.phone_number),
+                )
+                continue
+
+            if somente_janela and chave_do_telefone(recipient.phone_number) not in abertas_agora:
+                recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
+                recipient.save(update_fields=['status', 'updated_at'])
+                logger.info(
+                    'Campanha %s: %s pulado — janela de 24h fechou durante o envio',
                     campaign_id, mask_phone(recipient.phone_number),
                 )
                 continue
