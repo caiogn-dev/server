@@ -384,13 +384,18 @@ class CampaignService:
         # que o lote chegue nele. Sem esta verificação, a Meta retorna 131047 e
         # o envio vai para FAILED — mas não é falha técnica, é timing. Contar
         # como falha infla a taxa de erros e esconde falhas reais.
-        # Consulta bulk por lote, não por destinatário, para manter O(1) queries.
-        from .janela import MARCA, chaves_com_janela_aberta
+        #
+        # Usamos fechamentos_por_chave (timestamp de fechamento por chave) em vez
+        # de chaves_com_janela_aberta (snapshot booleano do instante da query):
+        # ainda é uma query bulk por lote (O(1) queries), mas timezone.now() é
+        # chamado fresquinho por destinatário — isola o relógio que avança durante
+        # o loop das dezenas de recipientes no lote.
+        from .janela import MARCA, fechamentos_por_chave
         somente_janela = bool((campaign.audience_filters or {}).get(MARCA))
-        abertas_agora = (
-            chaves_com_janela_aberta([campaign.account_id])
+        fechamentos = (
+            fechamentos_por_chave([campaign.account_id])
             if somente_janela
-            else set()
+            else {}
         )
 
         for recipient in recipients:
@@ -406,14 +411,17 @@ class CampaignService:
                 )
                 continue
 
-            if somente_janela and chave_do_telefone(recipient.phone_number) not in abertas_agora:
-                recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
-                recipient.save(update_fields=['status', 'updated_at'])
-                logger.info(
-                    'Campanha %s: %s pulado — janela de 24h fechou durante o envio',
-                    campaign_id, mask_phone(recipient.phone_number),
-                )
-                continue
+            if somente_janela:
+                chave = chave_do_telefone(recipient.phone_number)
+                fecha_em = fechamentos.get(chave)
+                if fecha_em is None or fecha_em <= timezone.now():
+                    recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
+                    recipient.save(update_fields=['status', 'updated_at'])
+                    logger.info(
+                        'Campanha %s: %s pulado — janela de 24h fechou durante o envio',
+                        campaign_id, mask_phone(recipient.phone_number),
+                    )
+                    continue
 
             try:
                 logger.debug("Sending message to %s", mask_phone(recipient.phone_number))

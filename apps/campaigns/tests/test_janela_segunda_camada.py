@@ -60,13 +60,18 @@ class JanelaSegundaCamadaTests(unittest.TestCase):
     def setUp(self):
         self.src = _source_do_batch()
 
-    def test_batch_importa_chaves_com_janela_aberta(self):
-        """process_campaign_batch deve consultar quais chaves têm janela aberta."""
+    def test_batch_importa_fechamentos_por_chave(self):
+        """process_campaign_batch deve buscar timestamps de fechamento por lote.
+
+        fechamentos_por_chave é preferível a chaves_com_janela_aberta: ainda é
+        uma query bulk (O(1) por lote), mas timezone.now() é chamado fresquinho
+        por destinatário — elimina a janela de race dentro do loop do lote.
+        """
         self.assertIn(
-            'chaves_com_janela_aberta',
+            'fechamentos_por_chave',
             self.src,
-            "process_campaign_batch precisa chamar chaves_com_janela_aberta "
-            "para retestar a janela por lote (análogo à segunda camada do opt-out).",
+            "process_campaign_batch precisa chamar fechamentos_por_chave "
+            "para retestar a janela por lote com relógio fresco por destinatário.",
         )
 
     def test_batch_verifica_a_marca_somente_janela_aberta(self):
@@ -84,7 +89,7 @@ class JanelaSegundaCamadaTests(unittest.TestCase):
         Marcar como FAILED inflaria a taxa de erros da campanha.
         """
         self.assertIn(
-            'chaves_com_janela_aberta',
+            'fechamentos_por_chave',
             self.src,
             "A segunda camada de janela precisa existir antes de verificar "
             "o SKIPPED; este teste está RED enquanto ela não existir.",
@@ -105,11 +110,11 @@ class JanelaSegundaCamadaTests(unittest.TestCase):
         O bloco que detecta janela fechada deve usar 'continue', de forma que
         o código não caia no except que incrementa messages_failed.
         """
-        if 'chaves_com_janela_aberta' not in self.src:
+        if 'fechamentos_por_chave' not in self.src:
             self.skipTest("Segunda camada ainda não implementada (RED nos testes acima)")
 
         # Localiza o bloco de janela e verifica 'continue' antes do 'try' de envio
-        janela_pos = self.src.find('chaves_com_janela_aberta')
+        janela_pos = self.src.find('fechamentos_por_chave')
         try_pos = self.src.find('    try:', janela_pos)
         between = self.src[janela_pos:try_pos] if try_pos > janela_pos else self.src[janela_pos:]
         self.assertIn(
