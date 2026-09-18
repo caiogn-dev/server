@@ -60,3 +60,16 @@ class MarcaAutomaticaDaJanelaTest(TestCase):
         CampaignService().update_campaign(str(campanha.id), template_id=None)
         campanha.refresh_from_db()
         assert campanha.audience_filters[MARCA] is True
+
+    def test_ganhar_template_na_edicao_tira_a_marca(self):
+        """Caminho simétrico: campanha nasceu de texto livre (marcada) e a
+        edição bota um template aprovado nela — a marca some, porque a partir
+        daí quem responde é template, não texto livre fora da janela."""
+        campanha = CampaignService().create_campaign(
+            account_id=str(self.account.id), name='Promo', message_content={'text': 'oi'},
+        )
+        assert campanha.audience_filters[MARCA] is True
+
+        CampaignService().update_campaign(str(campanha.id), template_id=str(self.template.id))
+        campanha.refresh_from_db()
+        assert MARCA not in campanha.audience_filters

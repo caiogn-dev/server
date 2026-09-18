@@ -474,6 +474,25 @@ class CampaignViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
 
+    def perform_update(self, serializer):
+        """Roteia PATCH/PUT pelo `CampaignService` em vez do `serializer.save()`
+        padrão do ModelViewSet.
+
+        Sem isto, editar campanha pelo painel (esta é a rota real que ele usa)
+        nunca recalculava a marca `somente_janela_aberta` (D1): tirar o
+        template na edição não marcava a campanha como texto livre, e pôr
+        template não tirava a marca — a regra só valia para quem chamasse
+        `CampaignService.update_campaign` diretamente. As demais actions
+        (start/pause/resume/schedule) são endpoints próprios que não passam
+        por `perform_update`, então esta troca não afeta elas.
+        """
+        campanha_atualizada = CampaignService().update_campaign(
+            str(serializer.instance.id), **serializer.validated_data,
+        )
+        # `serializer.data` (usado na Response) lê de `serializer.instance` —
+        # sem isto o PATCH devolveria o estado ANTERIOR à edição.
+        serializer.instance = campanha_atualizada
+
     @extend_schema(summary="Upload campaign media")
     @action(
         detail=False,
