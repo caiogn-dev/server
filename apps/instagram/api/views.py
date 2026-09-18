@@ -154,12 +154,10 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             )
             token_resp.raise_for_status()
             short_token = token_resp.json().get("access_token")
-        except Exception as exc:
-            logger.error("Instagram code exchange failed: %s", exc)
-            raw = getattr(exc, "response", None)
-            detail = raw.text if raw is not None else str(exc)
+        except Exception:
+            logger.exception("Instagram code exchange failed")
             return Response(
-                {"error": f"Falha ao trocar code por token: {detail}"},
+                {"error": "Falha ao trocar código por token Instagram. Verifique as configurações do app."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -244,9 +242,10 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
             account.last_sync_at = timezone.now()
             account.save()
             return Response({"status": "success", "message": "Conta sincronizada"})
-        except Exception as exc:
+        except Exception:
+            logger.exception("Instagram account sync failed for account %s", account.id)
             return Response(
-                {"status": "error", "message": str(exc)},
+                {"status": "error", "message": "Erro ao sincronizar conta Instagram. Tente novamente."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -262,8 +261,12 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         try:
             api.refresh_page_token()
             return Response({"status": "success", "message": "Page Access Token renovado com sucesso."})
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram refresh_page_token failed for account %s", account.id)
+            return Response(
+                {"error": "Falha ao renovar Page Access Token. Verifique as permissões da conta."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["get"])
     def insights(self, request, pk=None):
@@ -278,8 +281,12 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         try:
             insights = graph_service.get_account_insights(since, until)
             return Response(insights)
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram account insights failed for account %s", account.id)
+            return Response(
+                {"error": "Erro ao obter insights da conta Instagram. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class InstagramMediaViewSet(viewsets.ModelViewSet):
@@ -345,8 +352,12 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
             media.published_at = timezone.now()
             media.save(update_fields=["instagram_media_id", "status", "published_at", "updated_at"])
             return Response({"status": "success", "id": result.get("id")})
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram media publish failed for media %s", media.id)
+            return Response(
+                {"error": "Falha ao publicar mídia no Instagram. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"])
     def schedule(self, request, pk=None):
@@ -373,8 +384,12 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
         try:
             insights = graph_service.get_media_insights(media.instagram_media_id)
             return Response(insights)
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram media insights failed for media %s", media.id)
+            return Response(
+                {"error": "Erro ao obter insights da mídia. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["get"])
     def comments(self, request, pk=None):
@@ -385,8 +400,12 @@ class InstagramMediaViewSet(viewsets.ModelViewSet):
         try:
             comments = graph_service.get_comments(media.instagram_media_id)
             return Response(comments)
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram comments fetch failed for media %s", media.id)
+            return Response(
+                {"error": "Erro ao obter comentários da mídia. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
 
 class InstagramShoppingViewSet(viewsets.ViewSet):
@@ -431,8 +450,12 @@ class InstagramShoppingViewSet(viewsets.ViewSet):
         try:
             tag = service.add_tag_to_media(media_id, product_id, x, y)
             return Response({"status": "success", "tag_id": str(tag.id)})
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram shopping tag failed for account %s", account.id)
+            return Response(
+                {"error": "Erro ao adicionar tag de produto. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=False, methods=["get"])
     def settings(self, request):
@@ -462,8 +485,12 @@ class InstagramLiveViewSet(viewsets.ModelViewSet):
         try:
             result = service.start_live(str(live.id))
             return Response(result)
-        except Exception as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Instagram live start failed for live %s", live.id)
+            return Response(
+                {"error": "Erro ao iniciar transmissão ao vivo. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"])
     def end(self, request, pk=None):
@@ -554,15 +581,17 @@ class InstagramConversationViewSet(viewsets.ModelViewSet):
             )
             serializer = InstagramMessageSerializer(message)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
-        except Exception as exc:
-            logger.warning(
-                "Instagram send request failed: account=%s conversation=%s participant=%s error=%s",
+        except Exception:
+            logger.exception(
+                "Instagram send request failed: account=%s conversation=%s participant=%s",
                 conversation.account_id,
                 conversation.id,
                 conversation.participant_id,
-                exc,
             )
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"error": "Falha ao enviar mensagem Instagram. Tente novamente."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     @action(detail=True, methods=["post"], url_path="mark_as_read")
     def mark_as_read(self, request, pk=None):
