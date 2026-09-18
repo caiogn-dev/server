@@ -996,6 +996,35 @@ class StoreCheckoutView(APIView):
             },
         }
 
+    #: O que o cliente lê quando a cobrança nem chegou a ser criada. A causa
+    #: real (credencial ausente, MP fora do ar) é da LOJA, não de quem compra.
+    RECADO_DE_COBRANCA_INDISPONIVEL = (
+        'Não foi possível gerar a cobrança agora. Seu pedido está salvo — '
+        'tente pagar de novo ou combine o pagamento com a loja.'
+    )
+
+    def _cobranca_que_explodiu(self, order, exc):
+        """Converte cobrança que LEVANTA no mesmo contrato da que recusa.
+
+        `create_payment` tem duas formas de dizer não: devolver
+        `{'success': False}` (e aí ela mesma marca o pedido FAILED) ou levantar
+        — `ValueError` quando a loja não concluiu o OAuth do Mercado Pago,
+        qualquer coisa quando a rede cai. A segunda caía no `except` que
+        envolve o checkout inteiro e virava 400, com o pedido já criado e
+        `payment_status` parado em `pending`: cobrança fantasma no painel, a
+        mesma que o incidente de 06/jul fechou pela outra porta.
+
+        Aqui a exceção vira a recusa que ela é. O pedido existe e é entregue ao
+        cliente; a causa real fica no log, não na tela de quem está comprando.
+        """
+        logger.exception(
+            'Cobranca do pedido %s falhou por exceção: %s', order.order_number, exc,
+        )
+        if order.payment_status != StoreOrder.PaymentStatus.FAILED:
+            order.payment_status = StoreOrder.PaymentStatus.FAILED
+            order.save(update_fields=['payment_status', 'updated_at'])
+        return {'success': False, 'error': self.RECADO_DE_COBRANCA_INDISPONIVEL}
+
     def _apply_payment_result(self, response_data, payment_result, payment_method):
         """Acrescenta os dados de pagamento (sucesso ou erro) à resposta."""
         if not payment_result:
@@ -1057,8 +1086,23 @@ class StoreCheckoutView(APIView):
         # semântica de mês em fuso local — ver docstring).
         _month_count = billing_service.orders_in_current_month(store)
         if not billing_service.within_order_limit(store, _month_count):
+            # Quem lê esta resposta é a pessoa com a sacola cheia, não o dono:
+            # mandá-la "fazer upgrade do plano" entrega um detalhe comercial da
+            # loja a quem não tem plano nenhum, e não diz o que fazer. O motivo
+            # real fica no `code`, legível por painel, log e suporte — que
+            # precisam distinguir isto de "loja fechada".
+            logger.info(
+                'Checkout barrado pelo limite do plano na loja %s (%s pedidos no mês)',
+                store.slug, _month_count,
+            )
             return Response(
-                {'detail': 'Limite do plano atingido (30 pedidos/mês). Faça upgrade do plano.'},
+                {
+                    'detail': (
+                        'Esta loja não está recebendo novos pedidos no momento. '
+                        'Fale com a loja para combinar o seu.'
+                    ),
+                    'code': 'plan_order_limit',
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1176,9 +1220,12 @@ class StoreCheckoutView(APIView):
             # Process payment if method specified
             payment_result = None
             if payment_requested:
-                payment_result = checkout_service.create_payment(
-                    order, payment_method, payment_payload
-                )
+                try:
+                    payment_result = checkout_service.create_payment(
+                        order, payment_method, payment_payload
+                    )
+                except Exception as exc:  # noqa: BLE001 — ver _cobranca_que_explodiu
+                    payment_result = self._cobranca_que_explodiu(order, exc)
 
             self._maybe_send_meta_purchase(request, order, payment_result)
 

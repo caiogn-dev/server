@@ -133,7 +133,9 @@ class FreePlanOrderLimitCheckoutTest(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('limite do plano', response.json().get('detail', '').lower())
+        # O motivo é lido por MÁQUINA. O `detail` é o recado para quem compra e
+        # não fala de plano — ver test_recado_do_limite_e_para_quem_compra.py.
+        self.assertEqual(response.json().get('code'), 'plan_order_limit')
 
     def test_checkout_nao_bloqueado_quando_plano_pago_excede_30(self):
         store = self._store('loja-pro-limit', plan='pro')
