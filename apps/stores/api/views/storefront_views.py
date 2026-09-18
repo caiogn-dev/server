@@ -986,7 +986,7 @@ class StoreCheckoutView(APIView):
             'access_token': order.access_token,
             'items': [self._serialize_order_item(item) for item in order.items.all()],
             'delivery_quote': (order.metadata or {}).get('delivery_quote', {}),
-            'loyalty': checkout_service.get_loyalty_status(store, order.customer),
+            'loyalty': self._fidelidade_da_resposta(store, order),
             'loyalty_reward': (order.metadata or {}).get('loyalty_reward', {}),
             'customer': {
                 'user_id': str(order.customer_id) if order.customer_id else '',
@@ -995,6 +995,22 @@ class StoreCheckoutView(APIView):
                 'phone': order.customer_phone,
             },
         }
+
+    def _fidelidade_da_resposta(self, store, order):
+        """Bloco de fidelidade da resposta — enfeite, nunca motivo de erro.
+
+        Quando isto roda, o pedido e a cobrança já existem. Deixar a leitura do
+        programa de fidelidade levantar fazia o cliente ler "Erro ao processar
+        checkout." com o PIX gerado e o pedido no painel da loja.
+        """
+        try:
+            return checkout_service.get_loyalty_status(store, order.customer)
+        except Exception:  # noqa: BLE001 — a venda já aconteceu
+            logger.exception(
+                'Fidelidade na resposta do pedido %s falhou; segue sem o bloco',
+                order.order_number,
+            )
+            return None
 
     #: O que o cliente lê quando a cobrança nem chegou a ser criada. A causa
     #: real (credencial ausente, MP fora do ar) é da LOJA, não de quem compra.
@@ -1250,11 +1266,15 @@ class StoreCheckoutView(APIView):
             # o que fazer — e, no caso do cupom, o pedido ainda saía mais caro.
             logger.info("Checkout recusado: %s", e)
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Checkout error: {e}")
+        except Exception:
+            # Defeito NOSSO, não recusa: 500 com traceback. Com 400 e só a
+            # mensagem no log, bug de código chegava ao GlitchTip sem pilha e
+            # parecia cliente digitando errado. O corpo segue `{'error': ...}`
+            # porque a tela lê `data.error` em qualquer status.
+            logger.exception('Checkout error na loja %s', store.slug)
             return Response(
-                {'error': 'Erro ao processar checkout.'},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': 'Erro ao processar checkout. Tente de novo em instantes.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

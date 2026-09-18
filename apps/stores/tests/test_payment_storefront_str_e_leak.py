@@ -291,8 +291,13 @@ class CheckoutStrELeakTest(SimpleTestCase):
     def test_retorna_mensagem_generica(self):
         self.assertIn("Erro ao processar checkout", str(self._call(Exception(SENSITIVE)).data))
 
-    def test_status_400(self):
-        self.assertEqual(self._call(Exception(SENSITIVE)).status_code, status.HTTP_400_BAD_REQUEST)
+    def test_status_500(self):
+        # Exceção que não é ValueError é defeito nosso, não recusa do cliente:
+        # 500 com traceback no log (ver test_checkout_falha_depois_do_pedido.py).
+        self.assertEqual(
+            self._call(Exception(SENSITIVE)).status_code,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
 
 
 class DeliveryFeeStrELeakTest(SimpleTestCase):
