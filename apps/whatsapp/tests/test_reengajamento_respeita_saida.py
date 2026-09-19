@@ -26,8 +26,7 @@ def _enviar(conta, telefone):
     with patch('apps.whatsapp.tasks.automation_tasks._get_store_profile', return_value=object()), \
             patch('apps.whatsapp.tasks.automation_tasks._get_account_for_profile', return_value=conta), \
             patch('apps.whatsapp.tasks.automation_tasks._reengagement_content', return_value=('oi', [])), \
-            patch('apps.whatsapp.services.whatsapp_api_service.WhatsAppAPIService') as api:
-        api.return_value.send_interactive_buttons = envio
+            patch('apps.automation.mensageiro.enviar_botoes', envio):
         send_reengagement_message.run(telefone, str(loja.id))
     return envio
 

@@ -108,12 +108,10 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         reminder_type: 'first' (30min), 'second' (2h), 'final' (24h)
     """
     from apps.stores.models.order import StoreOrder as Order
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-    from apps.automation.models import AutoMessage
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_texto, liberar, reservar
 
     idempotency_key = f"pix_reminder:{order_id}:{reminder_type}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
+    if not reservar(idempotency_key, 3600):
         logger.info("Duplicate pix_reminder task for order %s type %s — skipped", order_id, reminder_type)
         return
 
@@ -151,8 +149,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
 
         account = _get_account_for_profile(profile)
         if account:
-            service = WhatsAppAPIService(account)
-            service.send_text_message(to=order.customer_phone, text=message)
+            enviar_texto(account, order.customer_phone, message, evento='pix_reminder')
             enviado = True
             logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
 
@@ -168,7 +165,7 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         if not enviado:
             # Nada saiu: libera a trava para a nova tentativa passar. Se a
             # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
+            liberar(idempotency_key)
         raise self.retry(exc=e)
 
 
@@ -254,12 +251,10 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         reminder_type: '30min', '2h', '24h'
     """
     from apps.stores.models.cart import StoreCart as Cart
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-    from apps.automation.models import AutoMessage
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_botoes, liberar, reservar
 
     idempotency_key = f"cart_reminder:{cart_id}:{reminder_type}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
+    if not reservar(idempotency_key, 3600):
         logger.info("Duplicate cart_reminder task for cart %s type %s — skipped", cart_id, reminder_type)
         return
 
@@ -312,28 +307,29 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
             )
             return
 
+        # `subtotal`, não `total`: nenhum dos dois modelos tem `total` — o
+        # lembrete levantava AttributeError sempre que achava um telefone.
         items_summary = "\n".join([
-            f"• {item.product.name} x{item.quantity} = R$ {item.total}"
+            f"• {item.product.name} x{item.quantity} = R$ {item.subtotal}"
             for item in cart.items.all()[:5]
         ])
 
         message = template.render_message({
             'customer_name': customer_name,
             'cart_items': items_summary,
-            'cart_total': cart.total,
+            'cart_total': cart.subtotal,
             'cart_item_count': cart.items.count(),
         })
 
         account = _get_account_for_profile(profile)
         if account:
-            service = WhatsAppAPIService(account)
-            service.send_interactive_buttons(
-                to=customer_phone,
-                body_text=message,
-                buttons=[
+            enviar_botoes(
+                account, customer_phone, message,
+                [
                     {'id': f'checkout_{cart.id}', 'title': '✅ Finalizar Pedido'},
                     {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
-                ]
+                ],
+                evento='cart_reminder',
             )
             enviado = True
             logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
@@ -345,7 +341,7 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         if not enviado:
             # Nada saiu: libera a trava para a nova tentativa passar. Se a
             # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
+            liberar(idempotency_key)
         raise self.retry(exc=e)
 
 
@@ -423,13 +419,11 @@ def notify_order_status_change(self, order_id: str, new_status: str):
         new_status: Novo status
     """
     from apps.stores.models.order import StoreOrder as Order
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
-    from django.core.cache import cache
+    from apps.automation.mensageiro import liberar, reservar
 
-    # Atomic idempotency: cache.add returns False if key already exists
     idempotency_key = f"order_notify:{order_id}:{new_status}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
+    if not reservar(idempotency_key, 3600):
         logger.info("Skipping duplicate notification for order %s status %s", order_id, new_status)
         return
 
@@ -537,6 +531,10 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                         'order_id': str(order_id),
                         'order_number': order.order_number,
                         'status': new_status,
+                        # Aviso automático não é resposta de atendente: não
+                        # tira o cliente da Fila humana.
+                        'automatico': True,
+                        'evento': event_type,
                     },
                 )
                 enviado = True
@@ -570,7 +568,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
         if not enviado:
             # Nada saiu: libera a trava para a nova tentativa passar. Se a
             # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
+            liberar(idempotency_key)
         raise self.retry(exc=e)
 
 
@@ -645,6 +643,8 @@ def request_feedback(order_id: str):
                     'source': 'feedback_request',
                     'order_id': str(order.id),
                     'order_number': order.order_number,
+                    'automatico': True,
+                    'evento': 'feedback_request',
                 },
             )
             logger.info(f"Feedback request sent for order {order_id}")
@@ -690,10 +690,10 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
     Diferente de send_cart_reminder que usa StoreCart do site.
     """
     from apps.automation.models import CustomerSession
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_botoes, liberar, reservar
 
     idempotency_key = f"session_reminder:{session_id}:{reminder_type}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
+    if not reservar(idempotency_key, 3600):
         logger.info("Duplicate session_reminder for session %s type %s — skipped", session_id, reminder_type)
         return
 
@@ -737,14 +737,13 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
                 f"Posso te ajudar a finalizar o pedido?"
             )
 
-        from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-        WhatsAppAPIService(account).send_interactive_buttons(
-            to=phone_number,
-            body_text=body,
-            buttons=[
+        enviar_botoes(
+            account, phone_number, body,
+            [
                 {'id': 'continue_checkout', 'title': '✅ Continuar Pedido'},
                 {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
             ],
+            evento='session_cart_reminder',
         )
         enviado = True
         session.add_notification(notification_key)
@@ -757,7 +756,7 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
         if not enviado:
             # Nada saiu: libera a trava para a nova tentativa passar. Se a
             # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
+            liberar(idempotency_key)
         raise self.retry(exc=exc)
 
 
@@ -873,11 +872,10 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
     Envia mensagem de re-engajamento para clientes inativos (10-30 dias sem pedido).
     """
     from apps.stores.models import Store
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_botoes, liberar, reservar
 
     idempotency_key = f"reengagement:{store_id}:{phone_number}"
-    if not cache.add(idempotency_key, 1, timeout=86400):  # 24h
+    if not reservar(idempotency_key, 86400):  # 24h
         return
 
     enviado = False
@@ -900,11 +898,7 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
             return
 
         body_text, buttons = _reengagement_content(store, profile)
-        WhatsAppAPIService(account).send_interactive_buttons(
-            to=phone_number,
-            body_text=body_text,
-            buttons=buttons,
-        )
+        enviar_botoes(account, phone_number, body_text, buttons, evento='reengagement')
         enviado = True
         logger.info("Re-engagement sent to %s for store %s", mask_phone(phone_number), store_id)
 
@@ -915,7 +909,7 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
         if not enviado:
             # Nada saiu: libera a trava para a nova tentativa passar. Se a
             # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
+            liberar(idempotency_key)
         raise self.retry(exc=exc)
 
 

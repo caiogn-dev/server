@@ -731,7 +731,11 @@ class StoreOrder(BaseModel):
                     'source': 'store_order_notification',
                     'order_id': str(self.id),
                     'order_number': self.order_number,
-                    'customer_name': self.customer_name or ''
+                    'customer_name': self.customer_name or '',
+                    # Aviso automático não é resposta de atendente: não tira
+                    # o cliente da Fila humana.
+                    'automatico': True,
+                    'evento': f'order_{new_status}',
                 }
             )
             
