@@ -376,6 +376,7 @@ class CampaignService:
         # depois. Consultar só na montagem deixaria essa janela aberta.
         from .contatos import chave_do_telefone
         from .optout import chaves_bloqueadas
+        from .motivos import JANELA_FECHOU_NO_ENVIO, PEDIU_PARA_PARAR
         bloqueadas = chaves_bloqueadas(campaign.account)
 
         # Segunda camada para a janela de 24h: análogo ao opt-out.
@@ -404,7 +405,8 @@ class CampaignService:
                 # como falha faria a taxa de entrega mentir e sugeriria problema
                 # técnico onde houve decisão do cliente.
                 recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
-                recipient.save(update_fields=['status', 'updated_at'])
+                recipient.error_code = PEDIU_PARA_PARAR
+                recipient.save(update_fields=['status', 'error_code', 'updated_at'])
                 logger.info(
                     'Campanha %s: %s pulado por opt-out',
                     campaign_id, mask_phone(recipient.phone_number),
@@ -416,7 +418,8 @@ class CampaignService:
                 fecha_em = fechamentos.get(chave)
                 if fecha_em is None or fecha_em <= timezone.now():
                     recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
-                    recipient.save(update_fields=['status', 'updated_at'])
+                    recipient.error_code = JANELA_FECHOU_NO_ENVIO
+                    recipient.save(update_fields=['status', 'error_code', 'updated_at'])
                     logger.info(
                         'Campanha %s: %s pulado — janela de 24h fechou durante o envio',
                         campaign_id, mask_phone(recipient.phone_number),

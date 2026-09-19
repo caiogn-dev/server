@@ -739,6 +739,81 @@ class CampaignViewSet(viewsets.ModelViewSet):
         serializer = CampaignRecipientSerializer(recipients, many=True)
         return Response(serializer.data)
     
+    @extend_schema(summary="Quem recebeu, quem falhou e quem ficou de fora — com o motivo")
+    @action(detail=True, methods=['get'])
+    def destinatarios(self, request, pk=None):
+        """Lista de pessoas da campanha com situação e motivo em português.
+
+        O relatório mostrava só contagens: os 352 pulados de 18/09 não tinham
+        motivo e as falhas eram o erro cru da Meta. `situacao` filtra a lista;
+        o resumo sempre conta a campanha inteira.
+        """
+        from apps.campaigns.services.janela import MARCA
+        from apps.campaigns.services.motivos import explicar
+        from apps.campaigns.services.optout import chaves_bloqueadas
+
+        campaign = self.get_object()
+        bloqueadas = chaves_bloqueadas(campaign.account)
+        so_janela = bool((campaign.audience_filters or {}).get(MARCA))
+        filtro = request.query_params.get('situacao')
+        resumo = {'leu': 0, 'recebeu': 0, 'falhou': 0, 'ficou_de_fora': 0, 'na_fila': 0}
+        pessoas = []
+        for r in campaign.recipients.order_by('contact_name', 'phone_number'):
+            e = explicar(r, bloqueadas=bloqueadas, so_janela=so_janela)
+            resumo[e['situacao']] = resumo.get(e['situacao'], 0) + 1
+            if filtro and e['situacao'] != filtro:
+                continue
+            pessoas.append({
+                'id': str(r.id),
+                'nome': r.contact_name or '',
+                'telefone': r.phone_number,
+                'situacao': e['situacao'],
+                'motivo': e['motivo'],
+                'quando': r.read_at or r.delivered_at or r.sent_at or r.failed_at or r.updated_at,
+            })
+        return Response({'resumo': resumo, 'pessoas': pessoas})
+
+    @extend_schema(summary="Quem pediu para parar de receber campanhas")
+    @action(detail=False, methods=['get'], url_path='saidas')
+    def saidas(self, request):
+        """Pedidos de saída ativos das contas que o usuário acessa.
+
+        Os pedidos de "Parar promoções" existiam desde 28/08 sem rota nenhuma:
+        o card do painel somava um contador por campanha e mostrava 0 com 11
+        pessoas fora da lista. Só leitura — sair foi escolha do cliente.
+        """
+        from apps.campaigns.models import CampaignOptOut
+        from apps.conversations.models import Conversation
+
+        account_ids = list(accessible_whatsapp_account_ids(request.user))
+        pedido = request.query_params.get('account_id')
+        if pedido:
+            account_ids = [a for a in account_ids if str(a) == str(pedido)]
+        saidas = list(
+            CampaignOptOut.objects
+            .filter(account_id__in=account_ids, revogado_em__isnull=True)
+            .order_by('-created_at')
+        )
+        nomes = dict(
+            Conversation.objects
+            .filter(account_id__in=account_ids, phone_number__in=[s.phone_number for s in saidas])
+            .exclude(contact_name='')
+            .values_list('phone_number', 'contact_name')
+        )
+        return Response({
+            'total': len(saidas),
+            'pessoas': [
+                {
+                    'nome': nomes.get(s.phone_number, ''),
+                    'telefone': s.phone_number,
+                    'quando': s.created_at,
+                    'origem': s.origem,
+                    'texto': s.texto_recebido,
+                }
+                for s in saidas
+            ],
+        })
+
     @extend_schema(summary="Add recipients to campaign", request=AddRecipientsSerializer)
     @action(detail=True, methods=['post'])
     def add_recipients(self, request, pk=None):

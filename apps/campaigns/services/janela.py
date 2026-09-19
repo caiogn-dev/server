@@ -214,8 +214,10 @@ def recortar_para_a_janela(campaign) -> dict:
         if chave_do_telefone(r.phone_number) not in abertas
     ]
     if fora:
+        from .motivos import FORA_DA_JANELA
         CampaignRecipient.objects.filter(id__in=fora).update(
             status=CampaignRecipient.RecipientStatus.SKIPPED,
+            error_code=FORA_DA_JANELA,
         )
     # Conta DEPOIS do corte: `pendentes` é queryset preguiçoso e contá-lo antes
     # devolveria a lista inteira, dizendo ao dono que a campanha vai para mais
