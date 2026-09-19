@@ -34,7 +34,13 @@ class ConversationService:
         if created:
             logger.info(f"New conversation created: {conversation.id}")
         else:
-            if conversation.status == Conversation.ConversationStatus.CLOSED:
+            # Resolvida também reabre: o cliente voltou a falar, o atendimento
+            # recomeçou. Antes só ENCERRADA reabria e a resolvida ficava com o
+            # rótulo errado enquanto a conversa seguia.
+            if conversation.status in (
+                Conversation.ConversationStatus.CLOSED,
+                Conversation.ConversationStatus.RESOLVED,
+            ):
                 conversation = self.repo.reopen(conversation)
                 logger.info(f"Conversation reopened: {conversation.id}")
         
@@ -94,7 +100,8 @@ class ConversationService:
     def switch_to_human(
         self,
         conversation_id: str,
-        agent=None
+        agent=None,
+        motivo: str = '',
     ) -> Conversation:
         """Switch conversation to human mode."""
         conversation = self.get_conversation(conversation_id)
@@ -103,16 +110,16 @@ class ConversationService:
             raise ValidationError(message="Human handoff is not enabled for this account")
         
         conversation = self.repo.switch_to_human(conversation, agent)
-        self._sync_handover_state(conversation, to_human=True, agent=agent)
+        self._sync_handover_state(conversation, to_human=True, agent=agent, motivo=motivo)
         logger.info(f"Conversation switched to human mode: {conversation.id}")
         
         return conversation
 
-    def switch_to_auto(self, conversation_id: str) -> Conversation:
+    def switch_to_auto(self, conversation_id: str, motivo: str = '') -> Conversation:
         """Switch conversation to auto mode."""
         conversation = self.get_conversation(conversation_id)
         conversation = self.repo.switch_to_auto(conversation)
-        self._sync_handover_state(conversation, to_human=False)
+        self._sync_handover_state(conversation, to_human=False, motivo=motivo)
         logger.info(f"Conversation switched to auto mode: {conversation.id}")
         
         return conversation
@@ -153,6 +160,10 @@ class ConversationService:
         """Mark conversation as resolved."""
         conversation = self.get_conversation(conversation_id)
         conversation = self.repo.resolve(conversation)
+        # Resolver é "o atendimento acabou": o bot volta. Antes só trocava o
+        # rótulo e a conversa seguia muda, em modo humano, para sempre.
+        if conversation.mode == Conversation.ConversationMode.HUMAN:
+            conversation = self.switch_to_auto(str(conversation.id), motivo='Atendimento resolvido')
         logger.info(f"Conversation resolved: {conversation.id}")
         
         return conversation
@@ -248,7 +259,7 @@ class ConversationService:
             'by_mode': {m['mode']: m['count'] for m in mode_stats},
         }
 
-    def _sync_handover_state(self, conversation: Conversation, to_human: bool, agent=None) -> None:
+    def _sync_handover_state(self, conversation: Conversation, to_human: bool, agent=None, motivo: str = '') -> None:
         """
         Keep the dedicated handover module aligned with conversation.mode.
 
@@ -267,12 +278,12 @@ class ConversationService:
                 handover.transfer_to_human(
                     user=agent,
                     assigned_to=agent,
-                    reason='Synced from conversation mode switch',
+                    reason=motivo or 'Synced from conversation mode switch',
                 )
             else:
                 handover.transfer_to_bot(
                     user=agent,
-                    reason='Synced from conversation mode switch',
+                    reason=motivo or 'Synced from conversation mode switch',
                 )
         except Exception as exc:
             logger.warning("Failed to sync handover state for conversation %s: %s", conversation.id, exc)

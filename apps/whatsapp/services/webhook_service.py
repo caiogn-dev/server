@@ -1111,6 +1111,14 @@ class WebhookService:
         if not (message.conversation and message.conversation.mode == 'human'):
             return False
 
+        # Decisão do dono (19/09): o modo humano vale até o fim do dia. Se o
+        # atendimento humano é de um dia anterior, a conversa volta ao bot e
+        # esta mensagem já é respondida por ele. Antes não havia volta: uma
+        # resposta pelo celular emudecia o bot com o cliente para sempre.
+        from apps.conversations.services.atendimento_humano import devolver_ao_bot_se_venceu
+        if devolver_ao_bot_se_venceu(message.conversation):
+            return False
+
         # Clique em botão que o PRÓPRIO bot mandou não é "falar por cima" do
         # atendente — é a continuação de um fluxo que o bot começou. Sem isto,
         # as 3 avaliações 5★ de 06/ago (Leani, Margô, Marilene) morreram em
