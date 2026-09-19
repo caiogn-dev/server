@@ -193,7 +193,7 @@ from .api.exports_views import (
     VendasPorItemExportView, FaturamentoExportView, CardapioPdfView,
 )
 from .api.analytics_views import (
-    HeatmapReportView, AbcReportView, ChannelsReportView, GeographyReportView,
+    HeatmapReportView, CarrinhosAbandonadosView, AbcReportView, ChannelsReportView, GeographyReportView,
     SlaReportView, FinanceReportView, RfmReportView, BotFunnelReportView,
     ReviewsReportView, CouponsReportView, BasketReportView,
     CancellationsReportView, SchedulingReportView, CashHistoryReportView,
@@ -446,6 +446,7 @@ urlpatterns = [
 
     # Analytics/BI Fase 1 (docs/PLANO_RELATORIOS_BI_2026-07-31.md)
     path('reports/heatmap/', HeatmapReportView.as_view(), name='heatmap-report'),
+    path('reports/carrinhos-abandonados/', CarrinhosAbandonadosView.as_view(), name='carrinhos-abandonados-report'),
     path('reports/abc/', AbcReportView.as_view(), name='abc-report'),
     path('reports/channels/', ChannelsReportView.as_view(), name='channels-report'),
     path('reports/geography/', GeographyReportView.as_view(), name='geography-report'),
