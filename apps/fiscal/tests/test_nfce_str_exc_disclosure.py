@@ -105,6 +105,7 @@ class EmitNfceNetworkErrorMessageGenericaTest(SimpleTestCase):
 
         mock_existing_qs = MagicMock()
         mock_existing_qs.first.return_value = None  # sem documento existente
+        mock_existing_qs.filter.return_value = mock_existing_qs  # filtro encadeado (ambiente → modelo)
 
         with (
             patch.object(fiscal_services.FiscalDocument.objects, 'filter',

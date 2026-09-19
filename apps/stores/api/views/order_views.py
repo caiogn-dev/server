@@ -859,13 +859,14 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         """Estado fiscal do pedido: lista de documentos (o mesmo pedido pode ter
         NFC-e e NF-e). Pedido sem nota responde lista vazia, não 404 — o painel
         pergunta isso de todo pedido."""
-        from apps.fiscal.models import FiscalDocument
-        from apps.fiscal.services import get_fiscal_config, refresh_fiscal_document
+        from apps.fiscal.services import (
+            documentos_do_ambiente, get_fiscal_config, refresh_fiscal_document,
+        )
 
         order = self.get_object()
         docs = [
             _nfce_payload(refresh_fiscal_document(doc))
-            for doc in FiscalDocument.objects.filter(order=order)
+            for doc in documentos_do_ambiente(order)
         ]
         return Response({
             'habilitado': bool(get_fiscal_config(order.store).get('habilitado')),
@@ -879,9 +880,10 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         from apps.fiscal.models import FiscalDocument
         from apps.fiscal.providers.base import FiscalNotConfigured
         from apps.fiscal.services import cancel_nfce as cancel_service
+        from apps.fiscal.services import documentos_do_ambiente
 
         order = self.get_object()
-        docs = FiscalDocument.objects.filter(order=order)
+        docs = documentos_do_ambiente(order)
         modelo = request.data.get('modelo')
         if modelo:
             docs = docs.filter(modelo=str(modelo))

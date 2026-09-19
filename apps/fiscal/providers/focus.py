@@ -4,6 +4,7 @@ A Focus cuida de XML, assinatura, SEFAZ e contingência; a gente manda JSON.
 Homologação e produção mudam só a URL base + token.
 """
 import logging
+import re
 
 import requests
 
@@ -64,8 +65,13 @@ class FocusProvider(FiscalProvider):
             raise FiscalNotConfigured('focus_token ausente na config fiscal da loja')
         return (token, '')
 
-    @staticmethod
-    def _to_result(data: dict) -> EmitResult:
+    def _link(self, caminho: str) -> str:
+        """A Focus devolve DANFE/XML como caminho relativo ao host da API;
+        sem o host o link abre no domínio do painel."""
+        caminho = caminho or ''
+        return f'{self.base_url}{caminho}' if caminho.startswith('/') else caminho
+
+    def _to_result(self, data: dict) -> EmitResult:
         status_map = {
             'autorizado': 'authorized',
             'cancelado': 'cancelled',
@@ -76,12 +82,13 @@ class FocusProvider(FiscalProvider):
         mensagem = data.get('mensagem_sefaz') or data.get('mensagem') or ''
         return EmitResult(
             status=status,
-            chave_acesso=data.get('chave_nfe') or data.get('chave') or '',
+            # Vem "NFe" + 44 dígitos; a chave são os dígitos (coluna de 44).
+            chave_acesso=re.sub(r'\D', '', str(data.get('chave_nfe') or data.get('chave') or '')),
             numero=str(data.get('numero') or ''),
             serie=str(data.get('serie') or ''),
             qrcode_url=data.get('qrcode_url') or data.get('url_consulta_nf') or '',
-            danfe_url=data.get('caminho_danfe') or '',
-            xml_url=data.get('caminho_xml_nota_fiscal') or '',
+            danfe_url=self._link(data.get('caminho_danfe')),
+            xml_url=self._link(data.get('caminho_xml_nota_fiscal')),
             error_message=(
                 _com_detalhamento(mensagem, data) if status in ('rejected', 'error') else ''
             ),

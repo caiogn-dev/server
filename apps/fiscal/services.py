@@ -431,6 +431,18 @@ REF_POR_MODELO = {
 
 
 
+def ambiente_da_loja(store) -> str:
+    """Mesma regra do provider: só 'producao' explícito é produção."""
+    return 'producao' if get_fiscal_config(store).get('ambiente') == 'producao' else 'homologacao'
+
+
+def documentos_do_ambiente(order):
+    """Notas do pedido no ambiente em que a loja está AGORA. A de homologação
+    some da lista ao virar para produção — senão o painel diz "Nota emitida"
+    e esconde o botão da nota real."""
+    return FiscalDocument.objects.filter(order=order, ambiente=ambiente_da_loja(order.store))
+
+
 def _alocar_ref(order, modelo: str) -> str:
     """Ref da tentativa atual — nunca reaproveita ref de nota que não vingou.
 
@@ -453,8 +465,7 @@ def emit_nfce_for_order(order, modelo: str = FiscalDocument.Modelo.NFCE) -> Fisc
     if modelo not in REF_POR_MODELO:
         raise FiscalNotConfigured(f'Modelo de nota desconhecido: {modelo}')
 
-    existing = FiscalDocument.objects.filter(
-        order=order,
+    existing = documentos_do_ambiente(order).filter(
         modelo=modelo,
         status__in=[FiscalDocument.Status.AUTHORIZED, FiscalDocument.Status.PENDING],
     ).first()
@@ -486,6 +497,7 @@ def emit_nfce_for_order(order, modelo: str = FiscalDocument.Modelo.NFCE) -> Fisc
         modelo=modelo,
         ref=_alocar_ref(order, modelo),
         serie=str(config.get('serie', '1')),
+        ambiente=ambiente_da_loja(order.store),
     )
 
     emitir = provider.emit_nfe if modelo == FiscalDocument.Modelo.NFE else provider.emit_nfce
