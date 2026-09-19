@@ -413,6 +413,20 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = service.close_conversation(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
+    @extend_schema(summary="Fila humana: quem espera uma pessoa responder")
+    @action(detail=False, methods=['get'], url_path='fila-humana')
+    def fila_humana(self, request):
+        """Clientes esperando resposta humana e atendimentos de hoje.
+
+        Sai da conversa (modo humano + quem falou por último), não da tabela
+        `HandoverRequest`, que nada preenchia — a fila do painel vivia vazia.
+        """
+        from apps.conversations.services.fila_humana import montar_fila
+        conversas = _accessible_conversations(
+            request.user, store=request.query_params.get('store'),
+        )
+        return Response(montar_fila(conversas))
+
     @extend_schema(
         summary="Resolve conversation",
         responses={200: ConversationSerializer}
