@@ -890,6 +890,15 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
         if not account:
             return
 
+        # Reengajamento é promoção: quem apertou "Parar promoções" não recebe.
+        # Só as campanhas consultavam a lista de saída (regra do dono, 19/09:
+        # nenhuma mensagem de marketing para quem marcou que não quer).
+        from apps.campaigns.services.contatos import chave_do_telefone
+        from apps.campaigns.services.optout import chaves_bloqueadas
+        if chave_do_telefone(phone_number) in chaves_bloqueadas(account):
+            logger.info("Re-engagement skipped (opt-out) for %s", mask_phone(phone_number))
+            return
+
         body_text, buttons = _reengagement_content(store, profile)
         WhatsAppAPIService(account).send_interactive_buttons(
             to=phone_number,
