@@ -27,6 +27,7 @@ from apps.core.utils import (
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
 from ..repositories import WebhookEventRepository, WhatsAppAccountRepository
+from . import avisos_da_meta
 from .broadcast_service import get_broadcast_service
 # Trava distribuída: importada aqui em cima (e não dentro da função) para que
 # o teste consiga substituí-la. tasks/__init__ não importa services no topo,
@@ -182,6 +183,19 @@ class WebhookService:
                 # a loja fica muda (todo envio vira #133010) e ninguém fica sabendo.
                 if change.get('field') == 'account_update':
                     event = self._process_account_update_event(
+                        value=change.get('value', {}),
+                        waba_id=waba_id,
+                        headers=headers,
+                    )
+                    if event:
+                        events.append(event)
+                    continue
+
+                # Template aprovado/recusado e qualidade do número: a Meta avisa
+                # a conta; aplicamos na hora e guardamos o aviso.
+                if change.get('field') in avisos_da_meta.CAMPOS:
+                    event = self._process_aviso_da_meta(
+                        field=change['field'],
                         value=change.get('value', {}),
                         waba_id=waba_id,
                         headers=headers,
@@ -604,6 +618,39 @@ class WebhookService:
             ),
             event_type=WebhookEvent.EventType.ACCOUNT_UPDATE,
             payload=value,
+            headers=headers,
+        )
+
+    def _process_aviso_da_meta(
+        self,
+        field: str,
+        value: Dict[str, Any],
+        waba_id: Optional[str],
+        headers: Dict[str, str],
+    ) -> Optional[WebhookEvent]:
+        account = self._resolve_account(
+            phone_number_id=None,
+            display_phone=value.get('display_phone_number'),
+            waba_id=waba_id,
+        )
+        if not account:
+            logger.warning('%s de conta desconhecida', field, extra={'waba_id': waba_id})
+            return None
+
+        if field == avisos_da_meta.CAMPO_TEMPLATE:
+            avisos_da_meta.aplicar_template(account, value)
+        else:
+            avisos_da_meta.aplicar_qualidade(account, value)
+
+        # Tipo ACCOUNT_UPDATE: aviso sobre a conta, já aplicado aqui; o
+        # processamento posterior só o fecha.
+        return self.webhook_repo.create(
+            account=account,
+            event_id=generate_idempotency_key(
+                field, account.id, value.get('event') or '', str(timezone.now().timestamp())
+            ),
+            event_type=WebhookEvent.EventType.ACCOUNT_UPDATE,
+            payload={**value, 'field': field},
             headers=headers,
         )
 
