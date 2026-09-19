@@ -1,0 +1,6 @@
+"""Mensageiro: por onde toda mensagem automática de WhatsApp sai.
+
+Fase 1 (19/09/2026): trava única e canal único que grava a mensagem na
+conversa. Plano: docs/superpowers/plans/2026-09-19-mensageiro-fase1.md.
+"""
+from .trava import liberar, reservar  # noqa: F401
