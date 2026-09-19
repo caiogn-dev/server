@@ -165,3 +165,21 @@ def test_humana_sem_registro_de_quando_nao_e_solta(conversa):
     conversa.refresh_from_db()
 
     assert devolver_ao_bot_se_venceu(conversa, agora=HOJE_9H) is False
+
+
+@pytest.mark.django_db
+def test_resposta_pelo_celular_conta_como_atendente_respondeu(conta, conversa):
+    """A fila humana precisa saber que o dono respondeu pelo celular.
+
+    O eco atualizava só `last_message_at`: respondido pelo celular, o cliente
+    continuaria parecendo "esperando" na fila para sempre.
+    """
+    from apps.whatsapp.services.webhook_service import WebhookService
+    WebhookService()._handle_message_echo(conta, {
+        'id': 'wamid.eco-ciclo-1', 'to': conversa.phone_number,
+        'from': conta.phone_number, 'type': 'text',
+        'text': {'body': 'Oi! Já separei seu pedido.'},
+    })
+
+    conversa.refresh_from_db()
+    assert conversa.last_agent_message_at is not None

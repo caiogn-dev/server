@@ -330,7 +330,13 @@ class WebhookService:
                 content=echo,
                 sent_at=dj_tz.now(),
             )
-            Conversation.objects.filter(pk=conversation.pk).update(last_message_at=message.created_at)
+            # `last_agent_message_at` também: é resposta nossa. Sem ele a fila
+            # humana via o cliente "esperando" depois de o dono já ter
+            # respondido pelo celular.
+            Conversation.objects.filter(pk=conversation.pk).update(
+                last_message_at=message.created_at,
+                last_agent_message_at=message.created_at,
+            )
 
             # Digitar no app do Business é assumir a conversa, igual ao painel.
             # Sem isto o bot respondia por cima do dono — foi o que aconteceu
