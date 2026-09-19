@@ -149,10 +149,10 @@ class EmailCampaignViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             if result['success']:
                 return Response(result)
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.exception(f"Error sending campaign {pk}: {e}")
+        except Exception:
+            logger.exception("Erro inesperado ao enviar campanha %s", pk)
             return Response(
-                {'success': False, 'error': str(e)},
+                {'success': False, 'error': 'Erro ao processar o envio da campanha.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
