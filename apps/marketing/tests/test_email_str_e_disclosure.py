@@ -1,11 +1,12 @@
 """
-Testes de regressão: str(e) de exceção do Resend não deve vazar em respostas HTTP.
+Testes de regressão: exceção do Resend não deve vazar em respostas HTTP.
 
 P1 — info-disclosure: ResendAPIError e outros podem incluir detalhes internos
 (credenciais, rate-limit, URLs de API interna) na mensagem de exceção.
 
-Estratégia: análise estática (sem DB/Docker) — garante que os padrões proibidos
-não existem no fonte, de forma análoga à suíte de segurança de julho/2026.
+Estratégia: análise estática (sem DB/Docker) — verifica que nenhum str(<var>)
+de except genérico aparece em returns/Responses, independente do nome da variável
+(str(e), str(exc), str(err), str(error), …).
 """
 import os
 import re
@@ -19,8 +20,35 @@ def _read(relative_path: str) -> str:
         return f.read()
 
 
+# Captura: except Exception as <var>: <corpo>
+# Grupo 1 = nome da variável, Grupo 2 = corpo do bloco até próximo nível
+_EXCEPT_GENERIC_RE = re.compile(
+    r'except\s+Exception\s+as\s+(\w+)\s*:(.*?)'
+    r'(?=\n\s{0,8}except|\n\s{0,4}def |\n\s{0,0}class |\Z)',
+    re.DOTALL,
+)
+
+
+def _str_exc_in_returns(src: str) -> list:
+    """
+    Retorna [(varname, trecho)] onde str(<varname>) aparece em algum return
+    dentro de um except Exception genérico, independente do nome da variável.
+    """
+    problemas = []
+    for m in _EXCEPT_GENERIC_RE.finditer(src):
+        varname = m.group(1)
+        body = m.group(2)
+        for ret_m in re.finditer(
+            r'return\b(.*?)(?=\n\s*(?:return\b|raise\b|\w)|\Z)', body, re.DOTALL
+        ):
+            ret_text = ret_m.group(1)
+            if re.search(rf'\bstr\s*\(\s*{re.escape(varname)}\s*\)', ret_text):
+                problemas.append((varname, ret_text.strip()))
+    return problemas
+
+
 class EmailMarketingServiceStrExcTest(unittest.TestCase):
-    """send_single_email() não deve retornar str(e) em dict de erro."""
+    """send_single_email() não deve retornar str(<exc>) em dict de erro."""
 
     def setUp(self):
         self.src = _read('apps/marketing/services/email_marketing_service.py')
@@ -33,49 +61,41 @@ class EmailMarketingServiceStrExcTest(unittest.TestCase):
         )
         return match.group(0) if match else ''
 
-    def test_send_single_email_sem_str_e_em_return(self):
-        """send_single_email não deve ter 'error': str(e) em nenhum return."""
+    def test_send_single_email_sem_str_exc_em_return(self):
+        """send_single_email: str(<var>) de except genérico não pode aparecer em return."""
         body = self._func_body('send_single_email')
-        self.assertNotIn("'error': str(e)", body,
-                         "send_single_email retorna str(e) — info-disclosure ao cliente")
-        self.assertNotIn('"error": str(e)', body,
-                         "send_single_email retorna str(e) — info-disclosure ao cliente")
+        problemas = _str_exc_in_returns(body)
+        self.assertEqual(
+            [], problemas,
+            f"send_single_email retorna str(exc) — info-disclosure: {problemas}",
+        )
 
     def test_send_single_email_excecao_nao_vaza_detalhes(self):
-        """except Exception em send_single_email não expõe str(e) na resposta."""
+        """except Exception em send_single_email não expõe str(<var>) na resposta."""
         body = self._func_body('send_single_email')
-        # Acha blocos except Exception (genérico, não ValueError/DoesNotExist)
-        bloco_match = re.search(r'except Exception.*?(?=\n    [^\s]|\Z)', body, re.DOTALL)
-        if bloco_match:
-            bloco = bloco_match.group(0)
-            # Dentro do bloco de captura genérica, não pode haver return com str(e)
-            self.assertNotIn("str(e)", bloco.split('return', 1)[-1] if 'return' in bloco else '',
-                             "str(e) exposto na resposta de except Exception")
+        problemas = _str_exc_in_returns(body)
+        self.assertFalse(
+            problemas,
+            f"str(<exc>) exposto na resposta de except Exception: {problemas}",
+        )
 
 
 class EmailAutomationServiceStrExcTest(unittest.TestCase):
-    """EmailAutomationService.trigger() não deve retornar str(e) em dict de erro."""
+    """EmailAutomationService não deve retornar str(<exc>) em dict de erro."""
 
     def setUp(self):
         self.src = _read('apps/marketing/services/email_automation_service.py')
 
-    def test_trigger_sem_str_e_em_return(self):
-        """trigger() não deve ter 'error': str(e) em nenhum return."""
-        # Busca todos os blocos except genérico do arquivo
-        blocos = re.findall(
-            r'except Exception as e:(.*?)(?=\n\s{0,8}except|\n\s{0,4}def |\Z)',
-            self.src,
-            re.DOTALL,
+    def test_arquivo_sem_str_exc_em_return(self):
+        """Arquivo inteiro: str(<var>) de except genérico não pode aparecer em return."""
+        problemas = _str_exc_in_returns(self.src)
+        self.assertEqual(
+            [], problemas,
+            f"except Exception retorna str(exc) — info-disclosure: {problemas}",
         )
-        for bloco in blocos:
-            if 'return' in bloco:
-                after_return = bloco.split('return', 1)[-1]
-                self.assertNotIn("str(e)", after_return,
-                                 "except Exception retorna str(e) — info-disclosure ao cliente")
 
-    def test_trigger_sem_error_str_e_literal(self):
-        """Padrão literal 'error': str(e) ausente em return de except."""
-        # Extrai somente o método trigger/send principal
+    def test_trigger_send_sem_error_str_exc(self):
+        """Métodos trigger/send: sem 'error': str(<var>) em nenhum return."""
         match = re.search(
             r'def (trigger|send)\b.*?(?=\n    def |\nclass |\Z)',
             self.src,
@@ -83,14 +103,15 @@ class EmailAutomationServiceStrExcTest(unittest.TestCase):
         )
         if match:
             body = match.group(0)
-            self.assertNotIn("'error': str(e)", body,
-                             "except em trigger/send expõe str(e) — info-disclosure")
-            self.assertNotIn('"error": str(e)', body,
-                             "except em trigger/send expõe str(e) — info-disclosure")
+            problemas = _str_exc_in_returns(body)
+            self.assertEqual(
+                [], problemas,
+                f"except em trigger/send expõe str(exc) — info-disclosure: {problemas}",
+            )
 
 
 class MarketingViewStrExcTest(unittest.TestCase):
-    """EmailCampaignViewSet.send não expõe str(e) via except Exception."""
+    """EmailCampaignViewSet.send não expõe str(<exc>) via except Exception."""
 
     def setUp(self):
         self.src = _read('apps/marketing/api/views.py')
@@ -103,24 +124,23 @@ class MarketingViewStrExcTest(unittest.TestCase):
         )
         return match.group(0) if match else ''
 
-    def test_action_send_sem_str_e_em_except(self):
-        """Action 'send' de EmailCampaignViewSet não deve retornar str(e) no except."""
+    def test_action_send_sem_str_exc_em_except(self):
+        """Action 'send': str(<var>) de except genérico não pode aparecer em return/Response."""
         body = self._action_send_body()
-        # Localiza todos os except genéricos dentro da action
-        blocos = re.findall(
-            r'except Exception.*?(?=\n        def |\n    def |\Z)',
-            body,
-            re.DOTALL,
+        problemas = _str_exc_in_returns(body)
+        self.assertEqual(
+            [], problemas,
+            f"Action send: except Exception expõe str(exc) — info-disclosure: {problemas}",
         )
-        for bloco in blocos:
-            self.assertNotIn("'error': str(e)", bloco,
-                             "Action send: except Exception expõe str(e) — info-disclosure")
 
-    def test_action_send_nao_tem_str_e_literal(self):
-        """Padrão literal str(e) ausente na action send."""
+    def test_action_send_nao_tem_str_exc_literal(self):
+        """Action 'send': sem nenhum str(<var>) em returns de excepts genéricos."""
         body = self._action_send_body()
-        self.assertNotIn("'error': str(e)", body,
-                         "Action send: str(e) exposto ao cliente via Response")
+        problemas = _str_exc_in_returns(body)
+        self.assertFalse(
+            problemas,
+            f"Action send: str(exc) exposto ao cliente via Response: {problemas}",
+        )
 
 
 if __name__ == '__main__':
