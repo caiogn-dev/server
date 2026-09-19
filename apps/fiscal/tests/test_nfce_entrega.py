@@ -90,7 +90,7 @@ class NfceDeEntregaTests(APITestCase):
         """Frete grátis continua sendo entrega feita pela loja — não é 'sem frete'."""
         p = self._payload(self._pedido(delivery_fee=Decimal('0'), total=Decimal('40')))
         self.assertEqual(p['modalidade_frete'], 0)
-        self.assertNotIn('frete', p)
+        self.assertNotIn('valor_frete', p)
 
     def test_endereco_sem_numero_nao_quebra_a_nota(self):
         """Número faltando: manda 'S/N', que é o que a SEFAZ aceita e o que o

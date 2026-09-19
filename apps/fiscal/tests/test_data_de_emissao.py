@@ -112,7 +112,7 @@ class AcrescimoNaNotaTests(DataDeEmissaoTests):
         self.assertEqual(payload['valor_outras_despesas'], 2.0)
         itens = sum(i['valor_bruto'] for i in payload['itens'])
         pago = sum(f['valor_pagamento'] for f in payload['formas_pagamento'])
-        soma = (itens + payload.get('frete', 0) + payload['valor_outras_despesas']
+        soma = (itens + payload.get('valor_frete', 0) + payload['valor_outras_despesas']
                 - payload.get('valor_desconto', 0))
         self.assertAlmostEqual(soma, pago, places=2)
 

@@ -22,6 +22,7 @@ DEFAULT_NCM = '21069090'
 # Simples Nacional sem permissão de crédito — regime das lojas de hoje.
 DEFAULT_CSOSN = '102'
 DEFAULT_CFOP = '5102'
+DEFAULT_PIS_COFINS_CST = '07'
 
 
 def get_fiscal_config(store) -> dict:
@@ -56,6 +57,16 @@ def _cnpj_emitente(config: dict) -> str:
     return cnpj
 
 
+def _emitente(config: dict) -> dict:
+    """Documentos do emitente. Nome e endereço a Focus completa pelo cadastro
+    da empresa; a IE ela marca obrigatória e NÃO completa."""
+    dados = {'cnpj_emitente': _cnpj_emitente(config)}
+    ie = _digits(str(config.get('inscricao_estadual') or ''))
+    if ie:
+        dados['inscricao_estadual_emitente'] = ie
+    return dados
+
+
 def _itens(order, config: dict, cfop: str) -> list[dict]:
     itens = []
     for idx, item in enumerate(order.items.all(), start=1):
@@ -78,6 +89,10 @@ def _itens(order, config: dict, cfop: str) -> list[dict]:
             # Simples Nacional: CSOSN 102 (sem permissão de crédito)
             'icms_situacao_tributaria': config.get('csosn') or DEFAULT_CSOSN,
             'icms_origem': 0,
+            # NF-e sem estes grupos é rejeitada. No Simples o PIS/COFINS sai no
+            # DAS; CST 07 (isenta) leva o grupo sem base nem alíquota.
+            'pis_situacao_tributaria': DEFAULT_PIS_COFINS_CST,
+            'cofins_situacao_tributaria': DEFAULT_PIS_COFINS_CST,
             'valor_bruto': float(item.subtotal),
         })
     return itens
@@ -120,7 +135,9 @@ def _aplicar_desconto_e_frete(payload: dict, order) -> None:
     if order.discount and Decimal(order.discount) > 0:
         payload['valor_desconto'] = float(order.discount)
     if order.delivery_fee and Decimal(order.delivery_fee) > 0:
-        payload['frete'] = float(order.delivery_fee)
+        # `valor_frete` é o nome na Focus; `frete` era ignorado e a soma dos
+        # itens ficava menor que o pagamento em todo pedido com taxa.
+        payload['valor_frete'] = float(order.delivery_fee)
         payload['modalidade_frete'] = 0  # por conta do emitente
     # Acréscimo do vale e acréscimo manual do painel são "outras despesas"
     # (vOutro) para a SEFAZ. Fora daqui, o cliente pagou R$ 55 e a nota somava
@@ -204,7 +221,7 @@ def build_nfce_payload(order, config: dict) -> dict:
     """Monta o JSON de NFC-e (modelo 65) no formato Focus NFe (que espelha os
     campos SEFAZ, então o provider sefaz reaproveita o mesmo payload)."""
     payload = {
-        'cnpj_emitente': _cnpj_emitente(config),
+        **_emitente(config),
         'data_emissao': _agora_para_a_sefaz(),
         'indicador_inscricao_estadual_destinatario': '9',
         'modalidade_frete': 9,
@@ -263,7 +280,7 @@ def build_nfe_payload(order, config: dict) -> dict:
     documento e endereço completos a nota não existe. Falhar aqui, com a lista
     do que falta, é melhor do que traduzir código de rejeição da SEFAZ depois.
     """
-    cnpj = _cnpj_emitente(config)
+    emitente = _emitente(config)
 
     tipo, numero = classificar(documento_do_consumidor(order))
     if not tipo:
@@ -287,7 +304,7 @@ def build_nfe_payload(order, config: dict) -> dict:
     inscricao = _digits(str((order.metadata or {}).get('ie_nota') or ''))
 
     payload = {
-        'cnpj_emitente': cnpj,
+        **emitente,
         'data_emissao': _agora_para_a_sefaz(),
         'natureza_operacao': 'VENDA DE MERCADORIA',
         'tipo_documento': 1,          # saída
