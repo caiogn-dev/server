@@ -100,10 +100,14 @@ class OrderService:
         order,
         new_status: str,
         notify_customer: bool = True,
-        notes: str = None
+        notes: str = None,
+        motivo: str = '',
     ) -> Dict[str, Any]:
         """
         Update order status with validation and optional notification.
+
+        `motivo` só vale para cancelamento: é o que o dono escolheu ao cancelar
+        e vira `cancel_reason` (0 de 37 cancelados tinham motivo em 19/09).
         """
         from apps.stores.models import StoreOrder
         
@@ -156,6 +160,9 @@ class OrderService:
         # O painel cancela pelo dropdown de status, não só pelo botão de cancelar
         # — os dois caminhos precisam liquidar o pagamento.
         if new_status == 'cancelled':
+            if motivo:
+                order.cancel_reason = str(motivo).strip()[:140]
+                order.save(update_fields=['cancel_reason', 'updated_at'])
             # O botão "Cancelar" da tela de detalhe do painel vem por aqui, não
             # pelo `/cancel/`. Estoque só na primeira transição: repetir o status
             # ou estornar depois não devolve de novo.

@@ -894,6 +894,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at',
+            # Por que o pedido foi cancelado — o painel mostra no detalhe.
+            'cancel_reason',
             'items', 'combo_items', 'items_count', 'metadata',
             # `source` é o canal de origem (web/whatsapp/pdv). O resumo do
             # histórico já quebrava a receita por canal, mas a coluna da lista
@@ -914,7 +916,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'change_for', 'prep_minutes',
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
-            'delivered_at', 'picked_up_at', 'cancelled_at',
+            'delivered_at', 'picked_up_at', 'cancelled_at', 'cancel_reason',
             'uber_delivery_request_id', 'uber_driver_id', 'uber_driver_name',
             'uber_driver_phone', 'uber_vehicle_info', 'uber_eta_minutes',
             'uber_pickup_instructions', 'uber_created_at',

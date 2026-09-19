@@ -393,7 +393,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         result = order_service.update_status(
             order,
             new_status,
-            notify_customer=True
+            notify_customer=True,
+            motivo=request.data.get('reason') or '',
         )
         
         if not result.get('success'):
