@@ -62,50 +62,18 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="connect-url", permission_classes=[IsAuthenticated])
     def connect_url(self, request):
-        """Gera a URL do Facebook Business Login OAuth com state assinado.
+        """Endereço do Login com Instagram para o lojista conectar a conta dele."""
+        from ..services import login_instagram
 
-        Usa facebook.com/dialog/oauth (Messenger API for Instagram).
-        O state contém o user_id assinado com TimestampSigner (expira em 10 min).
-        O código é trocado server-side em /ig/callback.
-        """
-        app_id = getattr(settings, "INSTAGRAM_APP_ID", "")
-        if not app_id:
+        if not login_instagram.disponivel():
             return Response(
-                {"error": "INSTAGRAM_APP_ID não configurado no servidor"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {
+                    "codigo": "instagram_indisponivel",
+                    "error": "A conexão com o Instagram ainda não está disponível.",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-
-        redirect_uri = getattr(
-            settings, "INSTAGRAM_OAUTH_REDIRECT_URI",
-            f"{getattr(settings, 'BASE_URL', 'https://backend.pastita.com.br')}/ig/callback",
-        )
-
-        signer = TimestampSigner()
-        state = signer.sign(str(request.user.id))
-
-        # Scopes do Facebook Login (Messenger API for Instagram)
-        # Nota: instagram_business_* são exclusivos do Instagram OAuth, NÃO do Facebook OAuth
-        scope = ",".join([
-            "pages_show_list",
-            "pages_read_engagement",
-            "pages_manage_metadata",
-            "pages_messaging",
-            "instagram_basic",
-            "instagram_manage_messages",
-            "business_management",
-        ])
-
-        auth_url = (
-            "https://www.facebook.com/dialog/oauth"
-            f"?client_id={app_id}"
-            f"&redirect_uri={urlquote(redirect_uri, safe='')}"
-            f"&response_type=code"
-            f"&scope={urlquote(scope, safe='')}"
-            f"&state={urlquote(state, safe='')}"
-        )
-
-        logger.info("Facebook OAuth URL gerada: app_id=%s redirect_uri=%s", app_id, redirect_uri)
-        return Response({"url": auth_url})
+        return Response({"url": login_instagram.url_de_autorizacao(request.user)})
 
     @action(detail=False, methods=["post"], url_path="connect", permission_classes=[IsAuthenticated])
     def connect(self, request):
@@ -681,12 +649,25 @@ def ig_oauth_callback(request):
       8. Cria/atualiza InstagramAccount com page_access_token
       9. Redireciona popup para frontend com ?ig_connected=1
     """
-    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
-    callback_base = f"{frontend_url}/instagram/callback"
+    from ..services import login_instagram
 
     code = request.GET.get("code")
     state = request.GET.get("state", "")
     error = request.GET.get("error_description") or request.GET.get("error")
+
+    if login_instagram.eh_deste_fluxo(state) or (error and not state):
+        if error or not code:
+            return HttpResponseRedirect(login_instagram.volta_ao_painel("cancelado"))
+        try:
+            user = login_instagram.usuario_do_state(state)
+            login_instagram.concluir(user, code)
+        except login_instagram.LoginFalhou as falha:
+            return HttpResponseRedirect(login_instagram.volta_ao_painel(str(falha)))
+        return HttpResponseRedirect(login_instagram.volta_ao_painel())
+
+    # Fluxo antigo (login do Facebook). FRONTEND_URL é lista de CORS e quebrava
+    # o endereço de volta; o painel tem endereço próprio.
+    callback_base = f"{settings.PAINEL_URL}/instagram/callback"
 
     if error or not code:
         msg = urlquote(error or "authorization_failed", safe="")

@@ -17,6 +17,13 @@ class InstagramAPI:
         self.account = account
         self.access_token = account.access_token
         self.session = requests.Session()
+        # Conta do Login com Instagram não tem Página: o token dela só vale em
+        # graph.instagram.com. As antigas (login do Facebook) seguem no facebook.
+        self.base_url = self.BASE_URL if self.tem_pagina else settings.INSTAGRAM_GRAPH_URL
+
+    @property
+    def tem_pagina(self) -> bool:
+        return bool((self.account.facebook_page_id or '').strip())
 
     def _resolve_token(self, endpoint: str) -> str:
         """
@@ -37,7 +44,7 @@ class InstagramAPI:
 
     def _make_request(self, method: str, endpoint: str, params: Dict = None, data: Dict = None, files: Dict = None) -> Dict:
         """Faz requisição para a Graph API"""
-        url = f"{self.BASE_URL}/{endpoint}"
+        url = f"{self.base_url}/{endpoint}"
 
         params = params or {}
         params['access_token'] = self._resolve_token(endpoint)
@@ -100,6 +107,8 @@ class InstagramAPI:
     
     def refresh_token(self) -> bool:
         """Renova o token de acesso"""
+        if not self.tem_pagina:
+            return self._renovar_token_do_login_instagram()
         try:
             response = self.get('oauth/access_token', {
                 'grant_type': 'fb_exchange_token',
@@ -118,6 +127,27 @@ class InstagramAPI:
         except Exception as e:
             logger.error(f"Error refreshing token: {e}")
             return False
+
+    def _renovar_token_do_login_instagram(self) -> bool:
+        """Token do Login com Instagram: renova por mais 60 dias no próprio Instagram."""
+        from django.utils import timezone
+        try:
+            response = self.session.get(
+                'https://graph.instagram.com/refresh_access_token',
+                params={'grant_type': 'ig_refresh_token', 'access_token': self.access_token},
+                timeout=30,
+            )
+            response.raise_for_status()
+            dados = response.json()
+        except Exception as e:
+            logger.error("Falha ao renovar token do Instagram @%s: %s", self.account.username, e)
+            return False
+        if not dados.get('access_token'):
+            return False
+        self.account.access_token = self.access_token = dados['access_token']
+        self.account.token_expires_at = timezone.now() + timedelta(seconds=int(dados.get('expires_in') or 5184000))
+        self.account.save(update_fields=['access_token', 'token_expires_at'])
+        return True
 
     def refresh_page_token(self) -> bool:
         """Busca e salva o Page Access Token usando o User Access Token já configurado.

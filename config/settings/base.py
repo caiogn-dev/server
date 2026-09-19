@@ -421,6 +421,14 @@ DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_MET
 # Token needed for /{page_id}/messages: Page Access Token (stored in InstagramAccount.page_access_token)
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
+# Login com Instagram (Business Login): ID e chave do APP DO INSTAGRAM, que a
+# Meta mostra em Instagram > "API setup with Instagram login" — diferentes do
+# app do Facebook acima. Sem eles o painel mostra o Instagram como indisponível.
+INSTAGRAM_LOGIN_APP_ID = os.environ.get('INSTAGRAM_LOGIN_APP_ID', '')
+INSTAGRAM_LOGIN_APP_SECRET = os.environ.get('INSTAGRAM_LOGIN_APP_SECRET', '')
+INSTAGRAM_OAUTH_REDIRECT_URI = os.environ.get(
+    'INSTAGRAM_OAUTH_REDIRECT_URI', 'https://backend.pastita.com.br/ig/callback',
+)
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')
 
 # Maps
@@ -642,6 +650,8 @@ MERCADO_PAGO_RECIPIENT_NAME = os.environ.get('MERCADO_PAGO_RECIPIENT_NAME', '')
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
 # URL do painel (back_url do checkout de assinatura). FRONTEND_URL é lista p/ CORS, não serve.
 BILLING_PANEL_URL = os.environ.get('BILLING_PANEL_URL', 'https://painel.cardapidex.com.br').rstrip('/')
+# Endereço do painel do lojista para voltar de logins externos (Instagram).
+PAINEL_URL = os.environ.get('PAINEL_URL', BILLING_PANEL_URL).rstrip('/')
 # Link na Bio: base do storefront (link "Cardápio") e base pública da página bio.cardapidex.com.br/<slug>.
 STOREFRONT_BASE_URL = os.environ.get('STOREFRONT_BASE_URL', 'https://cardapidex.com.br')
 BIO_BASE_URL = os.environ.get('BIO_BASE_URL', 'https://bio.cardapidex.com.br')
