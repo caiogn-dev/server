@@ -27,7 +27,7 @@
 - 6 envios automáticos em `automation_tasks.py` chamam `WhatsAppAPIService` direto: a mensagem sai mas não é gravada. Log: 79 lembretes/reengajamentos em 30 dias; nas conversas do painel, 1. O atendente não vê que o bot mandou lembrete.
 - Os envios que já gravam (status do pedido, avaliação) atualizam `last_agent_message_at`: um "saiu para entrega" tira o cliente da Fila humana como se alguém tivesse respondido.
 - Cada tarefa reimplementa a trava `cache.add` + `cache.delete` no erro, com pequenas variações.
-- `MessageService.send_*` não levanta em falha (grava `status=failed` e devolve); as tarefas dependem de exceção para o retry.
+- `MessageService.send_*` grava `status=failed` e repassa a exceção da Meta (tipos variados); o canal converte em `EnvioFalhou`.
 
 **Fase 1 (este plano):** canal único + trava única + migração das tarefas. Comportamento preservado.
 **Fase 2 (plano separado, precisa do dono):** política por categoria (transacional × marketing × lembrete): opt-out, modo humano, "silenciar notificações" do pedido; ligar ou não o lembrete de PIX do site.

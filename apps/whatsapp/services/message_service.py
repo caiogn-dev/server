@@ -772,8 +772,14 @@ class MessageService:
         if conversation:
             try:
                 conversation.last_message_at = timezone.now()
-                conversation.last_agent_message_at = timezone.now()
-                conversation.save(update_fields=['last_message_at', 'last_agent_message_at', 'updated_at'])
+                campos = ['last_message_at', 'updated_at']
+                # Mensagem automática (mensageiro) não é "uma pessoa da loja
+                # respondeu": a Fila humana lê last_agent_message_at, e um
+                # "saiu para entrega" tirava da fila quem ainda esperava.
+                if not meta.get('automatico'):
+                    conversation.last_agent_message_at = timezone.now()
+                    campos.append('last_agent_message_at')
+                conversation.save(update_fields=campos)
             except Exception as e:
                 logger.warning(f"Could not update conversation timestamps: {e}")
         
