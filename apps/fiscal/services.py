@@ -98,14 +98,33 @@ def _itens(order, config: dict, cfop: str) -> list[dict]:
     return itens
 
 
+# tPag da SEFAZ por método do pedido. O que não tem código próprio vai como
+# 99 COM descrição — 99 sem `descricao_pagamento` é rejeição. `card` e `link`
+# não dizem se foi crédito ou débito, e `voucher` não diz se VR ou VA: chutar
+# o código seria declarar errado.
+FORMA_PAGAMENTO = {
+    'cash': ('01', ''),
+    'credit_card': ('03', ''),
+    'debit_card': ('04', ''),
+    'pix': ('17', ''),
+    'card': ('99', 'Cartao'),
+    'link': ('99', 'Link de pagamento'),
+    'voucher': ('99', 'Vale refeicao/alimentacao'),
+    'voucher_link': ('99', 'Vale refeicao/alimentacao'),
+}
+CARTAO = {'03', '04'}
+
+
 def _formas_pagamento(order) -> list[dict]:
-    payment_map = {
-        'cash': '01', 'credit_card': '03', 'debit_card': '04', 'pix': '17',
-    }
-    return [{
-        'forma_pagamento': payment_map.get(order.payment_method or '', '99'),
-        'valor_pagamento': float(order.total),
-    }]
+    codigo, descricao = FORMA_PAGAMENTO.get(order.payment_method or '', ('99', 'Outros'))
+    pagamento = {'forma_pagamento': codigo, 'valor_pagamento': float(order.total)}
+    if codigo == '99':
+        pagamento['descricao_pagamento'] = descricao
+    if codigo in CARTAO:
+        # Maquininha não integrada ao sistema: 2 dispensa credenciadora e
+        # número de autorização, que a loja não tem como informar.
+        pagamento['tipo_integracao'] = 2
+    return [pagamento]
 
 
 def _agora_para_a_sefaz() -> str:
