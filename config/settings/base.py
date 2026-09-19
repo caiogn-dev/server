@@ -341,8 +341,13 @@ else:
     }
 
 # WhatsApp Business API
-WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v22.0')
+WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v26.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
+# Versão única da Graph API para o resto da Meta (Instagram, Messenger). Antes
+# cada arquivo fixava a sua (v18, v21, v22) e ninguém sabia qual valia.
+META_GRAPH_VERSION = os.environ.get('META_GRAPH_VERSION', WHATSAPP_API_VERSION)
+META_GRAPH_URL = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
+INSTAGRAM_GRAPH_URL = f"https://graph.instagram.com/{META_GRAPH_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 
 # Quem recebe o aviso de queda da ponte de coexistência, ALÉM do dono da loja.

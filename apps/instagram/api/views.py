@@ -182,7 +182,7 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         # 3. Busca informações da conta Instagram
         try:
             me_resp = requests.get(
-                "https://graph.instagram.com/v22.0/me",
+                f"{settings.INSTAGRAM_GRAPH_URL}/me",
                 params={
                     "fields": "id,username,name,biography,followers_count,follows_count,media_count,profile_picture_url,website",
                     "access_token": long_token,
@@ -715,7 +715,7 @@ def ig_oauth_callback(request):
     # 2. Troca code → short-lived user token (Facebook Graph API)
     try:
         token_resp = requests.get(
-            "https://graph.facebook.com/v22.0/oauth/access_token",
+            f"{settings.META_GRAPH_URL}/oauth/access_token",
             params={
                 "client_id": app_id,
                 "client_secret": app_secret,
@@ -735,7 +735,7 @@ def ig_oauth_callback(request):
     # 3. Troca por long-lived user token (~60 dias)
     try:
         ll_resp = requests.get(
-            "https://graph.facebook.com/v22.0/oauth/access_token",
+            f"{settings.META_GRAPH_URL}/oauth/access_token",
             params={
                 "grant_type": "fb_exchange_token",
                 "client_id": app_id,
@@ -752,7 +752,7 @@ def ig_oauth_callback(request):
     # 4. Busca páginas com instagram_business_account inline
     try:
         pages_resp = requests.get(
-            "https://graph.facebook.com/v22.0/me/accounts",
+            f"{settings.META_GRAPH_URL}/me/accounts",
             params={
                 "access_token": long_token,
                 "fields": "id,name,access_token,instagram_business_account",
@@ -789,7 +789,7 @@ def ig_oauth_callback(request):
                 continue
             try:
                 p_resp = requests.get(
-                    f"https://graph.facebook.com/v22.0/{page['id']}",
+                    f"{settings.META_GRAPH_URL}/{page['id']}",
                     params={"fields": "instagram_business_account", "access_token": p_token},
                     timeout=15,
                 )
@@ -806,14 +806,14 @@ def ig_oauth_callback(request):
     if not ig_biz_id:
         try:
             biz_resp = requests.get(
-                "https://graph.facebook.com/v22.0/me/businesses",
+                f"{settings.META_GRAPH_URL}/me/businesses",
                 params={"access_token": long_token, "fields": "id,name"},
                 timeout=15,
             )
             businesses = biz_resp.json().get("data", [])
             for biz in businesses:
                 ig_resp = requests.get(
-                    f"https://graph.facebook.com/v22.0/{biz['id']}/instagram_accounts",
+                    f"{settings.META_GRAPH_URL}/{biz['id']}/instagram_accounts",
                     params={"access_token": long_token, "fields": "id,username"},
                     timeout=15,
                 )
@@ -837,7 +837,7 @@ def ig_oauth_callback(request):
     token_for_info = page_token or long_token
     try:
         info_resp = requests.get(
-            f"https://graph.facebook.com/v22.0/{ig_biz_id}",
+            f"{settings.META_GRAPH_URL}/{ig_biz_id}",
             params={
                 "fields": "id,username,name,biography,website,followers_count,follows_count,media_count,profile_picture_url",
                 "access_token": token_for_info,

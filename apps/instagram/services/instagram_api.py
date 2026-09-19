@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class InstagramAPI:
     """Cliente base para Instagram Graph API"""
     
-    BASE_URL = "https://graph.facebook.com/v22.0"
+    BASE_URL = settings.META_GRAPH_URL
     
     def __init__(self, account: InstagramAccount):
         self.account = account
