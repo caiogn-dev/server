@@ -65,7 +65,7 @@ def chaves_com_janela_aberta(account_ids, em=None) -> set:
     }
 
 
-def resumo_da_janela(account_ids, em=None) -> dict:
+def resumo_da_janela(account_ids, em=None, fuso=None) -> dict:
     """Quantos estão dentro e quantos ficaram de fora, para a tela mostrar.
 
     "Fora da janela" não é erro — é "não é para essa pessoa hoje". Mas o dono
@@ -85,11 +85,40 @@ def resumo_da_janela(account_ids, em=None) -> dict:
         .values_list('phone_number', flat=True)
         if (chave := chave_do_telefone(telefone))
     }
+    # Com a rodada, "dentro" já não é uma coisa só: parte recebe no horário da
+    # campanha e parte é antecipada porque a janela dela fecharia antes. A tela
+    # mostra as duas, e usa a MESMA conta do envio (horario_alvo).
+    no_horario = antecipados = de_fora = 0
+    por_hora = {}
+    primeiro_antecipado = None
+    if fuso:
+        zona = ZoneInfo(fuso)
+        for fecha_em in fechamentos_por_chave(account_ids).values():
+            alvo = horario_alvo(fecha_em, momento, fuso)
+            if alvo is None:
+                de_fora += 1
+                continue
+            if alvo >= momento:
+                no_horario += 1
+            else:
+                antecipados += 1
+                if primeiro_antecipado is None or alvo < primeiro_antecipado:
+                    # No fuso da loja: quem lê a tela pensa em 11h, não em 14h UTC.
+                    primeiro_antecipado = alvo.astimezone(zona)
+            hora = alvo.astimezone(zona).hour
+            por_hora[hora] = por_hora.get(hora, 0) + 1
+        de_fora += len(todos) - len(fechamentos_por_chave(account_ids))
+
     return {
         'dentro': len(dentro),
         'fora': len(todos - dentro),
         'medido_em': momento.isoformat(),
         'janela_horas': JANELA_HORAS,
+        'no_horario': no_horario,
+        'antecipados': antecipados,
+        'de_fora': de_fora,
+        'primeiro_antecipado_em': primeiro_antecipado,
+        'faixas': [{'hora': h, 'quantidade': q} for h, q in sorted(por_hora.items())],
     }
 
 
@@ -161,6 +190,21 @@ def fechamentos_por_chave(account_ids) -> dict:
         if chave not in mapa or fecha > mapa[chave]:
             mapa[chave] = fecha
     return mapa
+
+
+def fuso_de_conta(account_ids) -> str:
+    """O fuso da loja dona da primeira conta — a prévia é por conta, não por campanha."""
+    from django.conf import settings
+    from apps.stores.models import Store
+
+    for conta_id in list(account_ids):
+        loja = (
+            Store.objects.filter(whatsapp_account_id=conta_id).first()
+            or Store.objects.filter(automation_profile__account_id=conta_id).first()
+        )
+        if getattr(loja, 'timezone', None):
+            return loja.timezone
+    return settings.TIME_ZONE
 
 
 def fuso_da_campanha(campaign) -> str:

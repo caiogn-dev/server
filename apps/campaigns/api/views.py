@@ -739,6 +739,67 @@ class CampaignViewSet(viewsets.ModelViewSet):
         serializer = CampaignRecipientSerializer(recipients, many=True)
         return Response(serializer.data)
     
+    @extend_schema(summary="A campanha hora a hora: o que já saiu e o que ainda falta")
+    @action(detail=True, methods=['get'])
+    def faixas(self, request, pk=None):
+        """A campanha não sai toda no horário marcado — sai ao longo do dia.
+
+        Quem fecharia a janela de 24h antes do horário recebe antes. A tela
+        mostra as faixas para o dono acompanhar em vez de olhar um total parado.
+        """
+        from django.utils import timezone
+        from django.utils.dateparse import parse_datetime
+        from zoneinfo import ZoneInfo
+
+        from apps.campaigns.models import CampaignRecipient
+        from apps.campaigns.services.contatos import chave_do_telefone
+        from apps.campaigns.services.janela import (
+            fechamentos_por_chave, fuso_da_campanha, horario_alvo,
+        )
+
+        campaign = self.get_object()
+        # O alvo de cada pessoa nasce do HORÁRIO DA CAMPANHA — é a mesma conta
+        # que a rodada faz. `em` (opcional) serve só para simular outro horário.
+        referencia = (
+            parse_datetime(request.query_params.get('em') or '')
+            if request.query_params.get('simular') else None
+        ) or campaign.scheduled_at or timezone.now()
+        fuso = fuso_da_campanha(campaign)
+        zona = ZoneInfo(fuso)
+        fechamentos = fechamentos_por_chave([campaign.account_id])
+
+        faixas = {}
+        fora = 0
+        for destinatario in campaign.recipients.all():
+            alvo = horario_alvo(
+                fechamentos.get(chave_do_telefone(destinatario.phone_number)), referencia, fuso,
+            )
+            if alvo is None:
+                fora += 1
+                continue
+            hora = alvo.astimezone(zona).hour
+            faixa = faixas.setdefault(hora, {'hora': hora, 'enviadas': 0, 'aguardando': 0})
+            if destinatario.status in (
+                CampaignRecipient.RecipientStatus.SENT,
+                CampaignRecipient.RecipientStatus.DELIVERED,
+                CampaignRecipient.RecipientStatus.READ,
+            ):
+                faixa['enviadas'] += 1
+            elif destinatario.status in (
+                CampaignRecipient.RecipientStatus.PENDING,
+                CampaignRecipient.RecipientStatus.SENDING,
+            ):
+                faixa['aguardando'] += 1
+
+        ordenadas = [faixas[h] for h in sorted(faixas)]
+        proxima = next((f['hora'] for f in ordenadas if f['aguardando']), None)
+        return Response({
+            'faixas': ordenadas,
+            'proxima_faixa': proxima,
+            'fora_da_janela': fora,
+            'fuso': fuso,
+        })
+
     @extend_schema(summary="Quem recebeu, quem falhou e quem ficou de fora — com o motivo")
     @action(detail=True, methods=['get'])
     def destinatarios(self, request, pk=None):
@@ -946,4 +1007,8 @@ class JanelaDaAudienciaView(APIView):
             except (TypeError, ValueError):
                 em = None
 
-        return Response(resumo_da_janela(contas, em=em))
+        # Sem o fuso da loja a prévia não consegue dizer QUEM é antecipado e em
+        # que faixa — e a tela mostraria um total que não bate com o envio.
+        from apps.campaigns.services.janela import fuso_de_conta
+
+        return Response(resumo_da_janela(contas, em=em, fuso=fuso_de_conta(contas)))
