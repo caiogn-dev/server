@@ -125,6 +125,9 @@ class CampaignRecipient(models.Model):
     
     class RecipientStatus(models.TextChoices):
         PENDING = 'pending', 'Pending'
+        #: Reservado por uma rodada, ainda não enviado. Existe para que duas
+        #: rodadas simultâneas não mandem a mesma mensagem duas vezes.
+        SENDING = 'sending', 'Sending'
         SENT = 'sent', 'Sent'
         DELIVERED = 'delivered', 'Delivered'
         READ = 'read', 'Read'
