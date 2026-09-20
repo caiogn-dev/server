@@ -8,62 +8,70 @@ O risco é: BASE_URL é avaliado no corpo da classe, quando o módulo é importa
 Se META_GRAPH_URL não existir nas settings do ambiente de teste (test_serializer),
 django.setup() falha com AttributeError antes de qualquer teste rodar.
 
-Estes testes garantem que:
-  1. META_GRAPH_URL existe nas settings de teste.
-  2. InstagramAPI.BASE_URL bate com esse valor.
-  3. A URL contém 'graph.facebook.com' (endpoint válido da Meta).
-  4. A URL NÃO tem versão fixa (seria contornado se BASE_URL virasse string literal).
+Estes testes inspecionam diretamente o módulo test_serializer (não as settings
+ativas, que herdam base.py e já têm META_GRAPH_URL). Assim a cobertura resiste
+a removê-la de test_serializer sem tocar base.py.
 """
-import re
+import importlib
 
 from django.conf import settings
 from django.test import SimpleTestCase
 
 
-class InstagramAPIBaseUrlTest(SimpleTestCase):
+class TestSerializerSettingsTest(SimpleTestCase):
+    """Verifica META_GRAPH_URL no módulo test_serializer diretamente."""
 
-    def test_meta_graph_url_definida_nas_settings(self):
-        """META_GRAPH_URL deve existir nas settings — senão django.setup() falha."""
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.ts = importlib.import_module('config.settings.test_serializer')
+
+    def test_meta_graph_url_definida_em_test_serializer(self):
+        """META_GRAPH_URL deve existir em test_serializer — senão django.setup() falha."""
         self.assertTrue(
-            hasattr(settings, 'META_GRAPH_URL'),
-            "settings.META_GRAPH_URL não definida; adicionar em test_serializer.py "
-            "(e em qualquer settings que inclua apps.instagram).",
+            hasattr(self.ts, 'META_GRAPH_URL'),
+            "META_GRAPH_URL ausente em config/settings/test_serializer.py; "
+            "qualquer test que usa esse settings falha em django.setup().",
         )
 
-    def test_base_url_bate_com_settings(self):
-        """BASE_URL da InstagramAPI deve ser o valor de settings.META_GRAPH_URL."""
+    def test_meta_graph_version_definida_em_test_serializer(self):
+        """META_GRAPH_VERSION deve existir em test_serializer para compor META_GRAPH_URL."""
+        self.assertTrue(
+            hasattr(self.ts, 'META_GRAPH_VERSION'),
+            "META_GRAPH_VERSION ausente em config/settings/test_serializer.py.",
+        )
+
+    def test_meta_graph_url_contem_graph_facebook(self):
+        """A URL em test_serializer deve apontar para graph.facebook.com."""
+        url = getattr(self.ts, 'META_GRAPH_URL', '')
+        self.assertIn(
+            'graph.facebook.com',
+            url,
+            f"META_GRAPH_URL='{url}' não aponta para graph.facebook.com.",
+        )
+
+    def test_meta_graph_url_usa_version_do_mesmo_modulo(self):
+        """META_GRAPH_URL deve conter META_GRAPH_VERSION do mesmo módulo."""
+        version = getattr(self.ts, 'META_GRAPH_VERSION', '')
+        url = getattr(self.ts, 'META_GRAPH_URL', '')
+        self.assertIn(
+            version,
+            url,
+            f"META_GRAPH_URL='{url}' não contém META_GRAPH_VERSION='{version}'.",
+        )
+
+
+class InstagramAPIBaseUrlTest(SimpleTestCase):
+    """BASE_URL de InstagramAPI deve ser consistente com as settings ativas."""
+
+    def test_base_url_bate_com_settings_ativas(self):
+        """BASE_URL deve refletir settings.META_GRAPH_URL (seja qual for o módulo ativo)."""
         from apps.instagram.services.instagram_api import InstagramAPI
         self.assertEqual(
             InstagramAPI.BASE_URL,
             settings.META_GRAPH_URL,
-            "BASE_URL não reflete settings.META_GRAPH_URL; "
-            "ou o campo voltou a ser hardcoded ou lê outro atributo.",
         )
 
     def test_base_url_aponta_para_graph_facebook(self):
-        """A URL da Graph API deve apontar para graph.facebook.com."""
         from apps.instagram.services.instagram_api import InstagramAPI
-        self.assertIn(
-            'graph.facebook.com',
-            InstagramAPI.BASE_URL,
-            "BASE_URL não aponta para graph.facebook.com — verifique META_GRAPH_URL.",
-        )
-
-    def test_base_url_sem_versao_hardcoded(self):
-        """BASE_URL não deve conter versão fixa (ex: /v22.0) — a versão vem do env."""
-        from apps.instagram.services.instagram_api import InstagramAPI
-        padrao_versao_fixa = re.compile(r'graph\.(facebook|instagram)\.com/v\d+\.\d+$')
-        # A URL vai ter a versão (META_GRAPH_VERSION), mas ela deve estar em settings
-        # e consistente com META_GRAPH_VERSION — não uma constante diferente.
-        self.assertRegex(
-            InstagramAPI.BASE_URL,
-            r'graph\.facebook\.com/v\d+\.\d+',
-            "BASE_URL não tem formato esperado 'graph.facebook.com/vX.Y'.",
-        )
-        meta_version = getattr(settings, 'META_GRAPH_VERSION', None)
-        if meta_version:
-            self.assertIn(
-                meta_version,
-                InstagramAPI.BASE_URL,
-                f"BASE_URL não usa META_GRAPH_VERSION='{meta_version}' das settings.",
-            )
+        self.assertIn('graph.facebook.com', InstagramAPI.BASE_URL)
