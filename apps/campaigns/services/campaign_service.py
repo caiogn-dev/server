@@ -161,8 +161,16 @@ class CampaignService:
         # uma lista de 15h — e quem falou às 14h de ontem já saiu da janela às
         # 20h de hoje. Sem este recorte o envio falharia com 131047 por
         # destinatário, em silêncio, porque campanha registra erro e segue.
-        from .janela import recortar_para_a_janela
-        recorte = recortar_para_a_janela(campaign)
+        from .janela import MARCA, recortar_para_a_janela
+        marcada = bool((campaign.audience_filters or {}).get(MARCA))
+        # A decisão da campanha marcada passou a ser POR PESSOA, na hora dela
+        # (rodada da janela). Recortar aqui jogaria fora justamente quem só
+        # caberia mais tarde — o caso dos 352 pulados de 18/set.
+        recorte = {'pulados': 0, 'dentro': campaign.total_recipients} if marcada else recortar_para_a_janela(campaign)
+        if marcada and not campaign.scheduled_at:
+            # A rodada precisa de um horário de referência para calcular o alvo.
+            campaign.scheduled_at = timezone.now()
+            campaign.save(update_fields=['scheduled_at', 'updated_at'])
         if recorte['pulados']:
             campaign.total_recipients = recorte['dentro']
             campaign.save(update_fields=['total_recipients'])
@@ -176,7 +184,13 @@ class CampaignService:
         campaign.save(update_fields=['status', 'started_at', 'updated_at'])
         
         logger.info(f"Campaign {campaign_id} started with {campaign.total_recipients} recipients")
-        
+
+        if marcada:
+            # Quem envia campanha marcada é a rodada da janela (a cada minuto,
+            # o dia inteiro), pessoa por pessoa no horário dela. Mandar o lote
+            # aqui faria o disparo em bloco de novo — o erro de 18/set.
+            return campaign
+
         # Trigger async processing (with fallback if Celery unavailable)
         celery_available = self._check_celery_connection()
         
