@@ -20,14 +20,24 @@ ambas pedindo permissões demais de uma vez, do caminho do login do Facebook.
 
 ## Ordem
 
-1. Cancelar/concluir o envio aberto (sem isso a Meta não aceita outro).
+1. No rascunho ("Not submitted"), clicar em **customize use cases** e:
+   - **tirar `instagram_basic`** das novas solicitações;
+   - **acrescentar `instagram_business_manage_comments`**, que não está lá e é a
+     permissão da promoção de comentário.
+   O rascunho listado em 21/set trazia manage_messages + basic + instagram_basic,
+   e NÃO trazia manage_comments — ou seja, pedia uma permissão que o código não
+   usa e deixava de fora a que o produto precisa.
 2. Configurações → Básico: verificar o e-mail e preencher a exclusão de dados com
    `https://backend.pastita.com.br/api/v1/instagram/data-deletion/` (POST-only, valida `signed_request`).
 3. Data Use Checkup: https://developers.facebook.com/apps/2233885800471071/data-use-checkup/
 4. Montar o envio com **exatamente três** permissões: `instagram_business_basic`,
    `instagram_business_manage_messages`, `instagram_business_manage_comments`.
    Remover `instagram_basic` e qualquer permissão de Página.
-5. Gravar UM screencast que mostre as três em uso, na ordem do roteiro abaixo.
+5. Conferir a parte "Existing access for renewal": `whatsapp_business_messaging`,
+   `whatsapp_business_management` e `public_profile`. São as permissões que
+   sustentam o WhatsApp em produção. Ver se dá para renovar em envio separado
+   do pedido do Instagram, para não amarrar o que já funciona ao que pode cair.
+6. Gravar UM screencast que mostre as três em uso, na ordem do roteiro abaixo.
 
 ## O que escrever em cada permissão (inglês, como a Meta pede)
 
