@@ -9,7 +9,9 @@ from rest_framework.routers import DefaultRouter
 from .api import CampaignViewSet, ContactListViewSet
 from .api.views import (
     JanelaDaAudienciaView,
+    CamposDaAudienciaView,
     OpcoesDeAudienciaView,
+    PreviaPorRegraView,
     SystemContactsView,
 )
 
@@ -20,6 +22,8 @@ router.register(r'contacts', ContactListViewSet, basename='contact-list')
 urlpatterns = [
     path('system-contacts/', SystemContactsView.as_view(), name='system-contacts'),
     path('audiencia/opcoes/', OpcoesDeAudienciaView.as_view(), name='audiencia-opcoes'),
+    path('audiencia/campos/', CamposDaAudienciaView.as_view(), name='audiencia-campos'),
+    path('audiencia/previa/', PreviaPorRegraView.as_view(), name='audiencia-previa'),
     path('audiencia/janela/', JanelaDaAudienciaView.as_view(), name='audiencia-janela'),
     path('', include(router.urls)),
 ]
