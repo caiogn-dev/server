@@ -121,12 +121,20 @@ app.conf.beat_schedule = {
         'task': 'apps.whatsapp.tasks.check_inactive_customers',
         'schedule': crontab(hour=11, minute=0),
     },
-    # Lembrete de PIX pendente dos pedidos do SITE (30min/2h/24h): a entrada
-    # 'check-store-pix-reminders' apontava para 'apps.whatsapp.tasks.
-    # check_pending_payments', nome que nenhuma tarefa usa — NUNCA rodou.
-    # Saiu em 19/09 (migração stores/0084). Ligar de verdade é decisão do
-    # dono: a tarefa registrada é 'apps.whatsapp.tasks.automation_tasks.
-    # check_pending_payments', e ligá-la passa a mandar mensagem nova.
+    # Lembrete de PIX pendente dos pedidos do SITE — LIGADO pelo dono em
+    # 21/09/2026. Manda em 30 min e 2 h, e em 24 h avisa que expirou E
+    # CANCELA o pedido (pelo OrderService: devolve estoque, devolve cupom,
+    # liquida o pagamento).
+    #
+    # A entrada anterior apontava para 'apps.whatsapp.tasks.
+    # check_pending_payments' — nome que nenhuma tarefa registra. Ficou no
+    # agendador sem nunca rodar, porque tarefa inexistente falha calada; saiu
+    # em 19/09 (migração stores/0084). O nome certo é o de baixo, e há teste
+    # que confere se toda entrada aponta para tarefa que existe.
+    'check-store-pix-reminders': {
+        'task': 'apps.whatsapp.tasks.automation_tasks.check_pending_payments',
+        'schedule': 300.0,  # a cada 5 min — as janelas são de 5 min
+    },
     # Toca Delivery — poll active corridas for status updates every 60s
     'sync-toca-delivery-statuses': {
         'task': 'apps.stores.tasks.sync_toca_delivery_statuses',
