@@ -47,7 +47,7 @@ class StatusNotificationTenantIsolationTest(TestCase):
             'apps.stores.models.order.get_default_whatsapp_account',
             return_value=self.other_account,
         ) as get_default, mock.patch(
-            'apps.whatsapp.services.MessageService'
+            'apps.whatsapp.services.message_service.MessageService'
         ) as svc:
             order._trigger_status_whatsapp_notification(StoreOrder.OrderStatus.OUT_FOR_DELIVERY)
 
@@ -62,7 +62,7 @@ class StatusNotificationTenantIsolationTest(TestCase):
         self.store.save(update_fields=['whatsapp_account'])
         order = self._order(self.store)
 
-        with mock.patch('apps.whatsapp.services.MessageService') as svc:
+        with mock.patch('apps.whatsapp.services.message_service.MessageService') as svc:
             order._trigger_status_whatsapp_notification(StoreOrder.OrderStatus.OUT_FOR_DELIVERY)
 
         svc.return_value.send_text_message.assert_called_once()

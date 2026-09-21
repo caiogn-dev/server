@@ -7,3 +7,4 @@ from .trava import liberar, reservar  # noqa: F401
 from .canal import EnvioFalhou, enviar_botoes, enviar_texto  # noqa: F401,E402
 
 from . import janela  # noqa: E402,F401  — a regra das 24 h
+from . import politica  # noqa: E402,F401  — quando a loja não fala sozinha

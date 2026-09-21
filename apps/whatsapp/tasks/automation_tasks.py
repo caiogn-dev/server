@@ -590,9 +590,9 @@ def request_feedback(order_id: str):
             logger.info(f"Order {order_id} not delivered, skipping feedback request")
             return
 
-        if _notifications_suppressed(order):
-            logger.info("Order %s has suppress_notifications — skipping feedback request", order_id)
-            return
+        # "Silenciar notificações" cala os STATUS do pedido, não o convite de
+        # avaliação (decisão do dono, 21/09): um é aviso de andamento, o outro
+        # é o pedido de opinião depois que acabou.
 
         profile = _get_store_profile(order.store)
         if not profile:
@@ -630,21 +630,25 @@ def request_feedback(order_id: str):
                 logger.warning("Order %s has no usable phone for feedback request", order_id)
                 return
 
-            MessageService().send_interactive_buttons(
-                account_id=str(account.id),
-                to=phone,
-                body_text=message,
-                buttons=[
+            # Pelo canal, como toda automática: é ele que aplica o modo
+            # humano (atendente na conversa cala o envio) e grava do mesmo
+            # jeito que as outras.
+            from apps.automation.mensageiro import enviar_botoes
+
+            enviar_botoes(
+                account,
+                phone,
+                message,
+                [
                     {'id': f'rating_5_{order.id}', 'title': '⭐⭐⭐⭐⭐'},
                     {'id': f'rating_3_{order.id}', 'title': '⭐⭐⭐'},
                     {'id': f'rating_1_{order.id}', 'title': '⭐'},
                 ],
-                metadata={
+                evento='feedback_request',
+                extra={
                     'source': 'feedback_request',
                     'order_id': str(order.id),
                     'order_number': order.order_number,
-                    'automatico': True,
-                    'evento': 'feedback_request',
                 },
             )
             logger.info(f"Feedback request sent for order {order_id}")
