@@ -281,6 +281,7 @@ store_frontend_patterns = [
     path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),
     path('cart/', StoreCartViewSet.as_view({'get': 'get_cart_by_store'}), name='store-cart'),
     path('cart/add/', StoreCartViewSet.as_view({'post': 'add_item'}), name='store-cart-add'),
+    path('cart/contato/', StoreCartViewSet.as_view({'post': 'contato'}), name='store-cart-contato'),
     path('cart/add-combo/', AddComboToCartView.as_view(), name='add-combo-to-cart'),
     path('cart/item/<uuid:item_id>/', StoreCartViewSet.as_view({
         'patch': 'update_item',
