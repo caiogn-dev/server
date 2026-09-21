@@ -872,6 +872,7 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
     Envia mensagem de re-engajamento para clientes inativos (10-30 dias sem pedido).
     """
     from apps.stores.models import Store
+    from apps.automation import mensageiro
     from apps.automation.mensageiro import enviar_botoes, liberar, reservar
 
     idempotency_key = f"reengagement:{store_id}:{phone_number}"
@@ -897,6 +898,19 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
             logger.info("Re-engagement skipped (opt-out) for %s", mask_phone(phone_number))
             return
 
+        # Texto livre só entra na janela de 24 h. O público do reengajamento
+        # — inativo há 10 a 30 dias — está quase sempre fora dela: em 21/09,
+        # 72 de 74 envios falharam com 131047, e cada falha ainda pedia retry.
+        # Gastar envio com quem não pode receber suja o painel e a taxa de
+        # erro. Alcançar essas pessoas exige modelo aprovado (decisão do dono).
+        if not mensageiro.janela.aberta(account, phone_number):
+            logger.info(
+                "Re-engagement skipped (fora da janela de 24h) for %s",
+                mask_phone(phone_number),
+            )
+            liberar(idempotency_key)
+            return
+
         body_text, buttons = _reengagement_content(store, profile)
         enviar_botoes(account, phone_number, body_text, buttons, evento='reengagement')
         enviado = True
@@ -905,6 +919,12 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
     except Store.DoesNotExist:
         logger.error("Store %s not found for re-engagement", store_id)
     except Exception as exc:
+        # 131047 não é falha passageira: repetir dá exatamente o mesmo erro.
+        if mensageiro.janela.e_janela_fechada(exc):
+            logger.info(
+                "Re-engagement recusado pela janela de 24h para %s", mask_phone(phone_number),
+            )
+            return
         logger.error("Error sending re-engagement: %s", exc)
         if not enviado:
             # Nada saiu: libera a trava para a nova tentativa passar. Se a
