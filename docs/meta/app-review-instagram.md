@@ -63,21 +63,45 @@ ambas pedindo permissões demais de uma vez, do caminho do login do Facebook.
 > ("sent you a DM!"). Comments are used only to decide whether the commenter meets
 > the promotion rules the merchant defined (keyword, number of tagged friends).
 
-## Roteiro do screencast (um vídeo só, ~3 min, com narração ou legenda)
+## Roteiro do screencast (gravação de tela, ~3 min)
 
-1. Painel → **Conexões**. Mostrar o cartão do Instagram desconectado.
-2. Clicar em **Conectar Instagram** → tela de Login com Instagram → aceitar.
-   *(mostra o consentimento e o retorno; cobre `instagram_business_basic`)*
-3. De volta no painel, mostrar o @ da conta conectada no cartão.
-4. Ir em **Marketing → Promoção no Instagram** → Nova promoção.
-   Colar o link de um post real, palavra "EU QUERO", mensagem do direct, salvar.
-   *(mostra a frase pronta para a legenda)*
-5. No celular/segunda conta, comentar **EU QUERO** no post.
-6. Mostrar a DM chegando na conta que comentou e a resposta pública no comentário.
-   *(cobre `_manage_messages` e `_manage_comments`)*
-7. Painel → a promoção mostrando "1 participando" e, se houver, quem ficou de fora
-   com o motivo.
-8. Inbox → aba **Direct**: abrir a conversa e responder.
+### Antes de apertar o rec
+- Reconectar o Instagram em **Conexões** (a conta antiga tem token morto; o
+  cartão mostra "Precisa reconectar"). Sem isso a grade de fotos vem vazia.
+- Ter um **segundo perfil** no celular para comentar no post.
+- Escolher o post que vai receber a promoção. Qualquer comentário nele vira DM
+  automática enquanto a promoção estiver no ar.
+- Navegador limpo: sem outras abas, sem extensão aparecendo, zoom em 100%.
+- Gravar o **celular junto** (ou um segundo trecho) — é onde o revisor vê a DM
+  chegar de verdade.
+
+### Cena a cena
+
+| # | Tela | O que mostrar | Cobre |
+|---|---|---|---|
+| 1 | Painel → Conexões | Cartão do Instagram desconectado | contexto |
+| 2 | Clique em Conectar | Tela de login do Instagram, a **lista de permissões** e o botão de autorizar | consentimento |
+| 3 | Volta ao painel | O @ da conta e o selo "Funcionando" | `instagram_business_basic` |
+| 4 | Marketing → Promoção no Instagram → Nova promoção | A **grade com as fotos da conta** carregando | `instagram_business_basic` (leitura de mídia) |
+| 5 | Clicar numa foto | Passo "o que o cliente faz": palavra EU QUERO, botão "Marcar amigos" | regra |
+| 6 | Passo do prêmio | Escrever a mensagem do direct; mostrar a **prévia** com a frase da legenda | — |
+| 7 | Colocar no ar | A promoção na lista, "0 participando" | — |
+| 8 | Celular, outro perfil | Comentar **EU QUERO** no post | — |
+| 9 | Celular | A **DM chegando** e a resposta pública no comentário | `_manage_messages` + `_manage_comments` |
+| 10 | Painel, promoção | "1 participando"; se alguém comentou errado, o motivo | `_manage_comments` |
+| 11 | Inbox → aba Direct | Abrir a conversa e **responder** | `_manage_messages` |
+
+### Narração (ou legenda) por cena
+- Cena 2: "The merchant authorizes their own Instagram professional account."
+- Cena 4: "We read the merchant's own media so they can attach a promotion to one of their posts."
+- Cena 9: "The customer who commented receives one private reply with the coupon."
+- Cena 11: "The merchant answers that conversation from the Cardapidex inbox."
+
+### Erros que derrubam a análise
+- Cortar a tela de consentimento: o revisor precisa ver as permissões pedidas.
+- Mostrar dado de cliente real (nome, telefone) — usar perfil de teste.
+- Vídeo sem som e sem legenda: a Meta pede que dê para entender o fluxo.
+- Mostrar telas de WhatsApp no meio: confunde o escopo do pedido.
 
 ## Credenciais de teste para o revisor
 
