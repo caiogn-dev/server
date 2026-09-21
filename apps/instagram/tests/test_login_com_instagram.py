@@ -126,7 +126,9 @@ class TestRetornoDoLogin:
         url, = post.call_args_list[1].args
         assert url.endswith('/me/subscribed_apps')
         campos = post.call_args_list[1].kwargs['params']['subscribed_fields'].split(',')
-        assert {'messages', 'comments'} <= set(campos)
+        # 'mentions' entrou em 21/set: é a marcação da loja em post/story, a
+        # matéria-prima do sorteio "marque a gente para concorrer".
+        assert {'messages', 'comments', 'mentions'} <= set(campos)
 
     def test_state_invalido_nao_conecta(self, lojista):
         r, post, _ = self._rodar('forjado')
