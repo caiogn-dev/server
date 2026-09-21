@@ -9,6 +9,7 @@ from django.urls import path, include, re_path
 from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
 
+from .api.views.recuperacao_views import RecuperacaoDeVendasView
 from .api.views import (
     StoreViewSet, StoreIntegrationViewSet, StoreWebhookViewSet,
     StoreCategoryViewSet, StoreProductViewSet, StoreProductVariantViewSet,
@@ -268,6 +269,7 @@ products_router.register(r'variants', StoreProductVariantViewSet, basename='prod
 
 store_frontend_patterns = [
     path('', StorePublicView.as_view(), name='store-public'),
+    path('recuperacao/', RecuperacaoDeVendasView.as_view(), name='store-recuperacao'),
     path('reviews/', StoreReviewListView.as_view(), name='store-reviews'),
     # Caixa (PDV)
     path('cash/open/', CashOpenView.as_view(), name='store-cash-open'),
