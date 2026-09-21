@@ -10,6 +10,7 @@ import uuid as uuid_module
 from decimal import Decimal, InvalidOperation
 from django.db import transaction
 from rest_framework import serializers
+from apps.core.serializers import checar_loja_do_usuario
 from django.utils import timezone
 from apps.stores.models import (
     Store, StoreIntegration, StoreWebhook, StoreCategory,
@@ -326,14 +327,9 @@ class StoreIntegrationCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
-        from apps.core.permissions import user_can_access_store
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
     def create(self, validated_data):
         # Extract credential fields
         api_key = validated_data.pop('api_key', None)
@@ -395,14 +391,9 @@ class StoreWebhookSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(exc.messages[0] if exc.messages else str(exc))
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
-        from apps.core.permissions import user_can_access_store
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
     class Meta:
         model = StoreWebhook
         fields = [
@@ -460,13 +451,9 @@ class StoreCategorySerializer(serializers.ModelSerializer):
         return StoreCategorySerializer(children, many=True).data
 
     def validate_store(self, value):
-        """Bloqueia IDOR de escrita: impede mover categoria para loja alheia."""
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
     def validate_parent(self, value):
         """Bloqueia parent de outra loja: impede árvore de categorias cross-tenant."""
         if value is None:
@@ -633,13 +620,9 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
         ]
     
     def validate_store(self, value):
-        """Bloqueia IDOR de escrita: impede criar/mover produto para loja alheia."""
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
     def validate_category(self, value):
         """Bloqueia categoria de outra loja: impede produto cross-tenant via category FK."""
         if value is None:
@@ -973,14 +956,9 @@ class StorePrintAgentCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'api_key', 'created_at', 'updated_at']
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
-        from apps.core.permissions import user_can_access_store
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
     def create(self, validated_data):
         raw_key, prefix, hashed = StorePrintAgent.generate_api_key()
         agent = StorePrintAgent.objects.create(
@@ -2303,15 +2281,9 @@ class StoreDeliveryZoneCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
-        from apps.core.permissions import user_can_access_store
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
 class DeliveryFeeRequestSerializer(serializers.Serializer):
     """Serializer for delivery fee calculation request."""
     
