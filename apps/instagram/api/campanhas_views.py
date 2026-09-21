@@ -1,13 +1,17 @@
 """Campanha de comentário no painel do lojista."""
 from collections import Counter
 
-from rest_framework import serializers, viewsets
+from rest_framework import serializers, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+import logging
+
 from ..campanhas import regras, sorteio
 from ..models import CampanhaDeComentario, ParticipacaoNoComentario
+
+logger = logging.getLogger(__name__)
 
 
 class ParticipacaoSerializer(serializers.ModelSerializer):
@@ -90,6 +94,58 @@ class CampanhaDeComentarioViewSet(viewsets.ModelViewSet):
         if so_validos:
             fila = fila.filter(aceita=True)
         return Response(ParticipacaoSerializer(fila[:500], many=True).data)
+
+    @action(detail=True, methods=['get'])
+    def comentarios(self, request, pk=None):
+        """Os comentários reais do post, cada um com o que aconteceu com ele.
+
+        O webhook conta o que chegou; isto mostra o post como ele está agora —
+        inclusive o comentário cujo webhook ainda não chegou.
+        """
+        from ..services.instagram_api import InstagramAPI
+
+        campanha = self.get_object()
+        try:
+            resposta = InstagramAPI(campanha.account).get(
+                f'{campanha.media_id}/comments',
+                params={'fields': 'id,text,username,timestamp,like_count', 'limit': 25},
+            )
+        except Exception as erro:
+            logger.warning(
+                'Instagram: não deu para ler comentários de %s: %s', campanha.media_id, erro,
+            )
+            return Response(
+                {
+                    'codigo': 'reconectar',
+                    'detail': 'A Meta recusou o acesso a esta conta. Conecte o Instagram de novo.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        participacoes = {
+            p.comment_id: p for p in campanha.participacoes.all()
+        }
+        saida = []
+        for item in resposta.get('data', []):
+            p = participacoes.get(item.get('id'))
+            if p is None:
+                situacao, motivo = 'aguardando', ''
+            elif p.aceita:
+                situacao = 'recebeu' if p.dm_enviada else 'participando'
+                motivo = p.erro_da_dm
+            else:
+                situacao, motivo = 'de_fora', regras.MOTIVOS.get(p.motivo, p.motivo)
+            saida.append({
+                'id': item.get('id'),
+                'username': item.get('username') or '',
+                'texto': item.get('text') or '',
+                'quando': item.get('timestamp'),
+                'curtidas': item.get('like_count') or 0,
+                'situacao': situacao,
+                'motivo': motivo,
+                'ganhador': bool(p and p.ganhador),
+            })
+        return Response(saida)
 
     @action(detail=True, methods=['post'])
     def sortear(self, request, pk=None):
