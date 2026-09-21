@@ -64,6 +64,10 @@ class InstagramAccount(models.Model):
     # Status
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
+    # Quando a Meta recusou o token (code 190). Enquanto isso estiver
+    # preenchido o canal está MUDO: o painel precisa dizer "reconecte", e não
+    # "funcionando" — foi o que aconteceu com a @cesalada até 21/set.
+    token_invalido_em = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
