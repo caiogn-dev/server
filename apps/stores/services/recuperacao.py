@@ -62,6 +62,16 @@ def painel_de_recuperacao(
         .prefetch_related('items__product', 'items__variant')
         .select_related('user')
     )
+
+    # Carrinho SEM telefone não tem para onde mandar lembrete. Medido em
+    # 21/09 na Cê Saladas: 404 carrinhos em 30 dias, 108 com itens, TRÊS com
+    # telefone — a loja é guest-first e o telefone só aparece no checkout.
+    # Sem este número, a taxa de recuperação baixa parece fracasso do texto do
+    # lembrete, quando o lembrete nem chegou a existir.
+    sem_telefone = sum(
+        1 for c in carrinhos
+        if c.items.exists() and not chave_do_telefone(_telefone_do_carrinho(c))
+    )
     # Só o carrinho que virou lembrete: carrinho de 2 minutos atrás ainda está
     # sendo montado, não foi abandonado.
     abandonados = [
@@ -133,4 +143,5 @@ def painel_de_recuperacao(
         'valor_recuperado': float(valor_recuperado),
         'taxa_de_recuperacao': round(recuperados / total * 100, 1) if total else 0,
         'oportunidade_perdida': float(valor_abandonado - valor_recuperado),
+        'sem_telefone': sem_telefone,
     }

@@ -132,6 +132,25 @@ class TestPainel:
         assert p['mensagens_enviadas'] == 1
 
 
+class TestAlcance:
+    def test_carrinho_sem_telefone_entra_na_conta_do_que_nao_da_para_lembrar(self, loja):
+        """Medido em 21/09 na Cê Saladas: 404 carrinhos em 30 dias, 108 com
+        itens e TRÊS com telefone. A loja é guest-first e o telefone só
+        aparece no checkout — o lembrete não tem para onde mandar. Esconder
+        isso faria a taxa de recuperação parecer fracasso do texto."""
+        from apps.stores.models.cart import StoreCart, StoreCartItem
+        from apps.stores.tests.factories import make_product
+
+        agora = timezone.now()
+        mudo = StoreCart.objects.create(store=loja, is_active=True, metadata={})
+        StoreCartItem.objects.create(cart=mudo, product=make_product(loja), quantity=1)
+        StoreCart.objects.filter(pk=mudo.pk).update(updated_at=agora - timedelta(hours=2))
+
+        p = painel_de_recuperacao([loja.id], dias=7)
+
+        assert p['sem_telefone'] == 1
+
+
 class TestApi:
     def _cliente(self, user):
         from rest_framework.test import APIClient
