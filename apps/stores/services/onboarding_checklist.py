@@ -12,9 +12,35 @@ _STEPS = [
     ('product', 'Cadastrar 1º produto', lambda s: s.products.exists()),
     ('delivery', 'Configurar entrega', lambda s: s.delivery_zones.exists()),
     ('hours', 'Definir horário de funcionamento', lambda s: bool(s.operating_hours)),
-    ('whatsapp', 'Informar WhatsApp', lambda s: bool(s.whatsapp_number)),
+    ('whatsapp', 'Conectar o WhatsApp da loja', lambda s: _whatsapp_conectado(s)),
     ('payment', 'Conectar meio de recebimento', lambda s: _recebe_pagamento(s)),
 ]
+
+
+def _whatsapp_conectado(store):
+    """A loja consegue ATENDER pelo WhatsApp?
+
+    Este passo olhava `store.whatsapp_number` — um campo de texto que o dono
+    digita. Em 22/09, quatro das seis lojas tinham o passo VERDE e nenhuma
+    WABA conectada; a Solo e Zelo tinha como "número" o próprio `waba_id`
+    quebrado, colado no campo errado, e nada acusou.
+
+    Número escrito não recebe mensagem. A resposta é a conta conectada.
+
+    `is_active=False` NÃO conta: conta caída (COEX DISCONNECTED, token
+    revogado) não atende ninguém, e dar o passo por pronto esconderia
+    justamente a queda que o dono precisa ver.
+
+    Também é pré-condição de escala: quem conecta a própria WABA paga as
+    próprias mensagens da Meta. Enquanto o checklist mentir, ninguém é
+    obrigado a conectar.
+
+    Usa `get_whatsapp_account()` — o acessor canônico, que já sabe procurar
+    pelo vínculo direto E pela integração. Escrever a busca aqui criaria a
+    segunda cópia de "como achar o WhatsApp da loja", e as duas divergiriam.
+    """
+    conta = store.get_whatsapp_account()
+    return bool(conta and conta.is_active)
 
 
 def _recebe_pagamento(store):

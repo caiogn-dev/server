@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from apps.whatsapp.models import WhatsAppAccount
 from apps.stores.models import Store
 from apps.stores.models.delivery import StoreDeliveryZone
 from apps.stores.services.onboarding_checklist import build_checklist
@@ -44,12 +45,28 @@ class BuildChecklistTest(TestCase):
         self.assertTrue(done['logo'])
 
     def test_horario_e_whatsapp(self):
+        """Número DIGITADO não cumpre o passo do WhatsApp.
+
+        Até 22/09 cumpria, e o resultado em produção foi quatro de seis lojas
+        com o passo verde e nenhuma WABA conectada — uma delas com o próprio
+        `waba_id` quebrado colado no campo de telefone. Texto num campo não
+        recebe mensagem; conta conectada recebe.
+        """
         s = _store(slug='hw')
         s.operating_hours = {'monday': {'open': '09:00', 'close': '18:00'}}
         s.whatsapp_number = '5563999999999'
         s.save(update_fields=['operating_hours', 'whatsapp_number'])
         done = {x['key']: x['done'] for x in build_checklist(s)['steps']}
         self.assertTrue(done['hours'])
+        self.assertFalse(done['whatsapp'])
+
+        conta = WhatsAppAccount.objects.create(
+            name='hw', waba_id='w1', phone_number_id='p1',
+            phone_number='+5563999999999', is_active=True,
+        )
+        s.whatsapp_account = conta
+        s.save(update_fields=['whatsapp_account'])
+        done = {x['key']: x['done'] for x in build_checklist(s)['steps']}
         self.assertTrue(done['whatsapp'])
 
     def test_zona_de_entrega_conta_como_delivery(self):
@@ -63,6 +80,12 @@ class BuildChecklistTest(TestCase):
         s.logo_url = 'https://x/y.png'
         s.operating_hours = {'monday': {'open': '09:00', 'close': '18:00'}}
         s.whatsapp_number = '556399'
+        # O passo do WhatsApp agora exige conta CONECTADA — ver
+        # `test_horario_e_whatsapp`.
+        s.whatsapp_account = WhatsAppAccount.objects.create(
+            name='full', waba_id='w2', phone_number_id='p2',
+            phone_number='+5563999999999', is_active=True,
+        )
         s.save()
         from apps.stores.models.product import StoreProduct  # noqa
         # cria 1 produto mínimo; slug é SlugField sem default, então setamos explicitamente
