@@ -249,3 +249,38 @@ def mark_setup_fee_paid(external_reference, mp_status):
         sub.save(update_fields=['setup_fee_paid'])
         logger.info('Setup fee paga p/ loja %s', slug)
     return {'processed': True, 'slug': slug}
+
+def assinar_no_anual(store, plan_key, *, criado_por=None):
+    """Contrata o plano no ANUAL: grava o ciclo e emite a fatura PIX do ano.
+
+    NÃO abre preapproval no Mercado Pago. Preapproval é cartão recorrente
+    mensal; misturar os dois cobraria o ano inteiro E deixaria uma recorrência
+    autorizada no cartão do lojista.
+
+    Quem fecha 12 meses não paga implantação — a regra mora em
+    `billing.cobra_adesao` e aqui não se repete.
+    """
+    from apps.stores.services import pix_billing_service
+
+    if billing.is_billing_exempt(store):
+        raise SubscriptionError('Loja isenta de cobrança (grandfather).')
+
+    sub, _ = StoreSubscription.objects.update_or_create(
+        store=store,
+        defaults={
+            'plan': plan_key,
+            'billing_cycle': StoreSubscription.BillingCycle.ANNUAL,
+            'status': StoreSubscription.Status.TRIALING,
+            # Anual não tem cartão recorrente: o campo fica vazio de propósito,
+            # e limpá-lo evita que uma assinatura mensal anterior deixe um id
+            # órfão apontando para uma recorrência que ninguém mais lê.
+            'mp_preapproval_id': '',
+            'canceled_at': None,
+        },
+    )
+    fatura = pix_billing_service.generate_invoice(sub)
+    logger.info(
+        'Assinatura ANUAL para loja %s plano %s (fatura=%s)',
+        store.slug, plan_key, getattr(fatura, 'id', None),
+    )
+    return {'billing_cycle': 'annual', 'invoice_id': str(getattr(fatura, 'id', '') or '')}

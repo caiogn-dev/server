@@ -43,10 +43,34 @@ class StoreSubscribeView(APIView):
         if plan not in ('starter', 'pro', 'premium'):
             return Response({'detail': 'Plano inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Ciclo: o backend sabia cobrar no ano desde sempre, mas este endpoint
+        # nunca leu o campo — saía preapproval MENSAL em qualquer caso. Por
+        # isso o seletor Mensal/Anual foi tirado da tela em 21/09: prometia
+        # "2 meses grátis" e entregava mensal.
+        ciclo = (request.data.get('billing_cycle') or 'monthly').strip()
+        if ciclo not in ('monthly', 'annual'):
+            return Response(
+                {'detail': 'Escolha mensal ou anual.'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if ciclo == 'annual':
+            # Anual é fatura PIX única, não cartão recorrente.
+            try:
+                resultado = subscription_service.assinar_no_anual(store, plan)
+            except subscription_service.SubscriptionError as e:
+                logger.error('Erro no anual (store=%s, plan=%s): %s', store_slug, plan, e)
+                return Response(
+                    {'detail': 'Erro ao criar assinatura.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(resultado, status=status.HTTP_201_CREATED)
+
         payer_email = (request.user.email or '').strip()
         back_url = f"{getattr(settings, 'BILLING_PANEL_URL', 'https://painel.cardapidex.com.br')}/plano"
         try:
-            result = subscription_service.create_subscription(store, plan, payer_email, back_url)
+            result = subscription_service.create_subscription(
+                store, plan, payer_email, back_url, billing_cycle=ciclo,
+            )
         except subscription_service.SubscriptionError as e:
             logger.error('Erro ao criar assinatura (store=%s, plan=%s): %s', store_slug, plan, e)
             return Response({'detail': 'Erro ao criar assinatura.'}, status=status.HTTP_400_BAD_REQUEST)
