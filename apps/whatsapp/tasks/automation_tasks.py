@@ -240,7 +240,7 @@ def check_pending_payments():
     expired = list(
         base_qs.filter(
             created_at__lte=now - timedelta(hours=24),
-        ).exclude(metadata__has_key='payment_expired_notified')
+        ).exclude(metadata__has_key='payment_reminder_final_sent')
         .values_list('id', flat=True)
     )
     from apps.stores.services.order_service import OrderService
