@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 import uuid
 from apps.core.fields import EncryptedCharField
 
@@ -63,6 +64,10 @@ class InstagramAccount(models.Model):
     # Status
     is_active = models.BooleanField(default=True)
     is_verified = models.BooleanField(default=False)
+    # Quando a Meta recusou o token (code 190). Enquanto isso estiver
+    # preenchido o canal está MUDO: o painel precisa dizer "reconecte", e não
+    # "funcionando" — foi o que aconteceu com a @cesalada até 21/set.
+    token_invalido_em = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     last_sync_at = models.DateTimeField(null=True, blank=True)
@@ -469,3 +474,99 @@ class InstagramInsight(models.Model):
         db_table = 'instagram_insights'
         ordering = ['-date']
         unique_together = ['account', 'media', 'date']
+
+class CampanhaDeComentario(models.Model):
+    """Promoção amarrada a UMA publicação: quem comenta recebe DM da loja.
+
+    A Meta permite uma única resposta privada por comentário, dentro de 7 dias
+    (Private Replies). Por isso a campanha vive por publicação e cada comentário
+    vale uma participação — não um fluxo de conversa.
+    """
+
+    class Tipo(models.TextChoices):
+        CUPOM = 'CUPOM', 'Cupom para quem comentar'
+        SORTEIO = 'SORTEIO', 'Sorteio entre quem comentar'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        InstagramAccount, on_delete=models.CASCADE, related_name='campanhas_de_comentario',
+    )
+    nome = models.CharField(max_length=200)
+    tipo = models.CharField(max_length=10, choices=Tipo.choices, default=Tipo.CUPOM)
+
+    # A publicação em que a campanha vale (id da mídia no Instagram).
+    media_id = models.CharField(max_length=255, db_index=True)
+
+    # Regras
+    palavra_chave = models.CharField(max_length=80, blank=True, default='')
+    exige_marcar_amigos = models.PositiveSmallIntegerField(default=0)
+    exige_seguir = models.BooleanField(default=False)
+
+    # O que a loja responde
+    mensagem_dm = models.TextField()
+    resposta_publica = models.CharField(max_length=300, blank=True, default='')
+
+    comeca_em = models.DateTimeField(null=True, blank=True)
+    termina_em = models.DateTimeField(null=True, blank=True)
+    ativa = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'instagram_campanhas_de_comentario'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.nome} (@{self.account.username})'
+
+    def esta_no_ar(self, agora=None) -> bool:
+        agora = agora or timezone.now()
+        if not self.ativa:
+            return False
+        if self.comeca_em and agora < self.comeca_em:
+            return False
+        if self.termina_em and agora > self.termina_em:
+            return False
+        return True
+
+
+class ParticipacaoNoComentario(models.Model):
+    """Um comentário que entrou (ou não) na campanha.
+
+    Guarda também quem NÃO entrou e por quê: é o que explica para o dono por que
+    alguém "comentou e não recebeu nada".
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    campanha = models.ForeignKey(
+        CampanhaDeComentario, on_delete=models.CASCADE, related_name='participacoes',
+    )
+    comment_id = models.CharField(max_length=255)
+    usuario_id = models.CharField(max_length=255, db_index=True)
+    username = models.CharField(max_length=255, blank=True, default='')
+    texto = models.TextField(blank=True, default='')
+    amigos_marcados = models.PositiveSmallIntegerField(default=0)
+
+    aceita = models.BooleanField(default=False)
+    motivo = models.CharField(max_length=40, blank=True, default='')
+
+    dm_enviada = models.BooleanField(default=False)
+    erro_da_dm = models.CharField(max_length=200, blank=True, default='')
+
+    ganhador = models.BooleanField(default=False)
+    sorteado_em = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'instagram_participacoes_no_comentario'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['campanha', 'comment_id'], name='participacao_unica_por_comentario',
+            ),
+        ]
+
+    def __str__(self):
+        return f'@{self.username} em {self.campanha.nome}'

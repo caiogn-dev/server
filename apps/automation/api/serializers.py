@@ -2,6 +2,7 @@
 Automation API serializers.
 """
 from rest_framework import serializers
+from apps.core.serializers import checar_loja_do_usuario
 from ..models import (
     CompanyProfile, AutoMessage, CustomerSession, AutomationLog,
     ScheduledMessage, ReportSchedule, GeneratedReport,
@@ -574,15 +575,9 @@ class CreateAgentFlowSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        """Bloqueia acesso cross-tenant: a loja tem que ser do vínculo."""
-        from apps.core.permissions import user_can_access_store
-        request = self.context.get('request')
-        if request and request.user and request.user.is_authenticated:
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada')
-        return value
-
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
 class UpdateAgentFlowSerializer(serializers.ModelSerializer):
     """Serializer for updating AgentFlow."""
     

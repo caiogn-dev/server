@@ -60,6 +60,45 @@ class InstagramAccountViewSet(viewsets.ModelViewSet):
         # Nenhuma flag de conta abre cross-tenant — nem is_staff nem is_superuser.
         return self.queryset.filter(user=self.request.user)
 
+    @action(detail=True, methods=["get"], url_path="publicacoes")
+    def publicacoes(self, request, pk=None):
+        """As publicações da própria conta, prontas para a grade de escolha.
+
+        Vem direto da Meta: o banco local (InstagramMedia) só tem o que algum
+        fluxo antigo sincronizou, e o lojista precisa ver o post que ele acabou
+        de publicar no celular.
+        """
+        conta = self.get_object()
+        campos = 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp,comments_count'
+        try:
+            resposta = InstagramAPI(conta).get(
+                f'{conta.instagram_business_id}/media',
+                params={'fields': campos, 'limit': 24},
+            )
+        except Exception as erro:
+            logger.warning('Instagram: não deu para listar publicações de %s: %s', conta.username, erro)
+            return Response(
+                {
+                    'codigo': 'reconectar',
+                    'detail': 'A Meta recusou o acesso a esta conta. Conecte o Instagram de novo.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        return Response([
+            {
+                'id': item.get('id'),
+                'legenda': item.get('caption') or '',
+                # Vídeo não renderiza em <img>: a miniatura é o que a grade mostra.
+                'imagem': item.get('thumbnail_url') or item.get('media_url'),
+                'link': item.get('permalink'),
+                'tipo': item.get('media_type'),
+                'quando': item.get('timestamp'),
+                'comentarios': item.get('comments_count') or 0,
+            }
+            for item in resposta.get('data', [])
+        ])
+
     @action(detail=False, methods=["get"], url_path="connect-url", permission_classes=[IsAuthenticated])
     def connect_url(self, request):
         """Endereço do Login com Instagram para o lojista conectar a conta dele."""

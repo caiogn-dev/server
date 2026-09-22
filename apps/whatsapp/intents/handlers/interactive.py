@@ -248,8 +248,7 @@ class InteractiveReplyHandler(IntentHandler):
 
         google_url = (order.store.metadata or {}).get('google_review_url', '').strip()
         if rating >= 4:
-            from apps.stores.services.checkout_service import CheckoutService
-            base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
+            from apps.stores.services.links_da_vitrine import link_da_vitrine
             estrelas = '⭐' * rating
 
             # DOIS botões, não um `if/return` que escolhe um.
@@ -263,7 +262,12 @@ class InteractiveReplyHandler(IntentHandler):
             # E é o inverso do que interessa: quem dá 5★ é justamente quem
             # indica. Estava escondido de quem mais converteria.
             botoes = [{'id': f'refer_friend_{order.id}', 'title': '🎁 Indicar um amigo'}]
-            if rating == 5 and google_url:
+            # 4 OU 5: quem saiu satisfeito vai para o Google. A régua é a
+            # intenção ("gostou"), não o número — antes só o 5★ recebia o
+            # convite, e o 4★ caía num agradecimento sem destino. Decisão do
+            # dono em 21/09: 3 ou menos é que vem para o formulário da casa,
+            # onde existe o que explicar.
+            if google_url:
                 corpo = (
                     f'Que bom que você amou! {estrelas}\n\n'
                     f'Avalia a gente no Google também? Leva 30 segundos:\n{google_url}\n\n'
@@ -273,7 +277,8 @@ class InteractiveReplyHandler(IntentHandler):
             else:
                 corpo = (
                     f'Obrigado pela avaliação! {estrelas}\n\n'
-                    f'Se quiser, avalie também cada prato: {base}/orders/{order.access_token}'
+                    'Se quiser, avalie também cada prato: '
+                    f'{link_da_vitrine(order.store, f"orders/{order.access_token}")}'
                 )
             return HandlerResult.buttons(body=corpo, buttons=botoes)
         # Nota baixa vai para a avaliação PRÓPRIA, não para o Google: pedir
@@ -284,14 +289,17 @@ class InteractiveReplyHandler(IntentHandler):
         # Antes esta resposta não tinha link nenhum: "responda aqui se quiser
         # contar" transformava a insatisfação numa estrela solta na média, e o
         # dono ficava sabendo que alguém não gostou sem saber de quê.
-        from apps.stores.services.checkout_service import CheckoutService
-        base = CheckoutService.get_storefront_base_url(order.store).rstrip('/')
+        # Link canônico, não o domínio próprio da loja: em 21/09 o convite
+        # apontava para `cesaladas.com.br/orders/<token>` e respondia 404 —
+        # todo convite mandado levava ao vazio. Ver `links_da_vitrine`.
+        from apps.stores.services.links_da_vitrine import link_da_vitrine
+
         return HandlerResult.text(
             'Sentimos muito que a experiência não tenha sido boa. 😔\n\n'
             # Nomear os três diz que a resposta cabe em três toques — bem mais
             # provável que um "conte o que aconteceu" em aberto.
             'Conta pra gente o que deu errado: a comida, a entrega ou o '
-            f'atendimento?\n{base}/orders/{order.access_token}\n\n'
+            f'atendimento?\n{link_da_vitrine(order.store, f"orders/{order.access_token}")}\n\n'
             'Leva menos de um minuto e é o que nos ajuda a melhorar.'
         )
 

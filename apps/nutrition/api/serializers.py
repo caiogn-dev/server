@@ -1,6 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
+from apps.core.serializers import checar_loja_do_usuario
 from django.urls import reverse
 
 from apps.nutrition.models import NutritionIngredient, ProductRecipe, RecipeItem, ProductNutritionProfile, NUTRIENT_FIELDS
@@ -14,13 +15,17 @@ class NutritionIngredientSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at")
 
     def validate_store(self, store):
-        user = self.context["request"].user
-        if store is None and not user.is_superuser:
-            raise serializers.ValidationError("Somente administradores podem criar ingredientes globais.")
-        from apps.core.permissions import user_can_access_store
-        if store and not user_can_access_store(user, store):
-            raise serializers.ValidationError("Loja não autorizada.")
-        return store
+        """Ingrediente global (sem loja) é só do administrador da plataforma;
+        com loja, vale a trava comum de `apps.core.serializers`."""
+        if store is None:
+            if not self.context["request"].user.is_superuser:
+                raise serializers.ValidationError(
+                    "Somente administradores podem criar ingredientes globais."
+                )
+            return store
+        return checar_loja_do_usuario(
+            self.context.get("request"), store, "Loja não autorizada.",
+        )
 
     def validate(self, attrs):
         if self.instance and self.instance.store_id is None and not self.context["request"].user.is_superuser:

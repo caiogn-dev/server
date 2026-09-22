@@ -413,12 +413,17 @@ DEFAULT_WHATSAPP_STORE_SLUGS = [
 DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
 
 # Instagram API Configuration
-# Approach: Messenger API for Instagram (Facebook Login)
 # Docs: https://developers.facebook.com/docs/instagram-platform/
-# Required Facebook App permissions:
-#   instagram_basic, instagram_manage_messages,
-#   pages_manage_metadata, pages_showlist, business_management
-# Token needed for /{page_id}/messages: Page Access Token (stored in InstagramAccount.page_access_token)
+#
+# O caminho ATUAL é o Login com Instagram (ver login_instagram.py), que pede só
+# instagram_business_basic / _manage_messages / _manage_comments.
+# O caminho antigo — Messenger API for Instagram via login do FACEBOOK — exigia
+# instagram_basic, instagram_manage_messages, pages_manage_metadata,
+# pages_show_list e business_management: TODAS recusadas pela Meta (2 App
+# Reviews, abr e mai/2026) e nenhuma delas é usada pelo código de hoje. Não
+# volte a pedi-las: pedir permissão que o app não demonstra derruba a análise.
+# As variáveis abaixo só servem a contas antigas que têm Página conectada, onde
+# o envio usa o Page Access Token em /{page_id}/messages.
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
 # Login com Instagram (Business Login): ID e chave do APP DO INSTAGRAM, que a

@@ -90,18 +90,22 @@ class SuppressNotificationTaskTest(TestCase):
         kwargs = svc.return_value.send_text_message.call_args.kwargs
         self.assertEqual(kwargs.get('to'), order.customer_phone)
 
-    def test_feedback_task_skips_when_suppressed(self):
+    def test_silenciar_vale_so_para_status_o_convite_de_avaliacao_continua(self):
+        """Decisão do dono (21/09): silenciar o pedido cala os STATUS.
+
+        O convite de avaliação não é aviso de andamento — é o pedido de
+        opinião depois que acabou, e a loja quer isso mesmo em venda de
+        balcão silenciada.
+        """
         order = _make_order(
             self.store,
             status='delivered',
             metadata={'suppress_notifications': True},
         )
         from apps.whatsapp.tasks.automation_tasks import request_feedback
-        with mock.patch(
-            'apps.whatsapp.services.whatsapp_api_service.WhatsAppAPIService'
-        ) as api_svc:
+        with mock.patch('apps.automation.mensageiro.enviar_botoes') as envio:
             request_feedback(str(order.id))
-        api_svc.assert_not_called()
+        envio.assert_called_once()
 
 
 class SuppressNotificationPatchTest(APITestCase):

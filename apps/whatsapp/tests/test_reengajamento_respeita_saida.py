@@ -20,6 +20,16 @@ def conta(db):
     return WhatsAppAccount.objects.create(name='Conta Reeng', phone_number_id='pn-reeng', waba_id='wa-reeng')
 
 
+def _janela_aberta(conta, telefone):
+    from django.utils import timezone
+
+    from apps.conversations.models import Conversation
+
+    Conversation.objects.create(
+        account=conta, phone_number=telefone, last_customer_message_at=timezone.now(),
+    )
+
+
 def _enviar(conta, telefone):
     loja = make_store()
     envio = MagicMock()
@@ -51,6 +61,18 @@ def test_mesmo_numero_em_outro_formato_tambem_e_barrado(conta):
 
 @pytest.mark.django_db
 def test_cliente_que_nao_saiu_continua_recebendo(conta):
+    # Desde 21/09 o reengajamento também exige janela de 24 h aberta: sem ela
+    # a Meta recusa (131047) e o envio vira desperdício.
+    _janela_aberta(conta, '5563999990403')
+
     envio = _enviar(conta, '5563999990403')
 
     envio.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_fora_da_janela_nao_gasta_envio(conta):
+    """Cliente inativo há semanas está fora das 24 h: não adianta tentar."""
+    envio = _enviar(conta, '5563999990404')
+
+    envio.assert_not_called()

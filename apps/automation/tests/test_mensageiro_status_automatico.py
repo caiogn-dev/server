@@ -74,11 +74,17 @@ class TestStatusAutomatico:
         assert meta['evento'] == 'feedback_request'
 
 
-def test_aviso_sem_template_tambem_marca():
-    """O caminho de reserva (sem template) mora no modelo do pedido."""
+def test_aviso_sem_template_passa_pelo_canal():
+    """O caminho de reserva (sem template) mora no modelo do pedido.
+
+    Ele mandava pelo MessageService direto, com a marcação copiada à mão: ficou
+    de fora do modo humano e do "silenciar notificações". Desde 21/09 usa o
+    canal, que marca, grava e aplica a política uma vez só.
+    """
     fonte = Path('apps/stores/models/order.py').read_text()
-    trecho = fonte[fonte.index("'source': 'store_order_notification'"):][:600]
-    assert "'automatico': True" in trecho
+    trecho = fonte[fonte.index("'source': 'store_order_notification'") - 800:][:900]
+    assert 'enviar_texto(' in trecho
+    assert 'suppress_notifications' in fonte
 
 
 def test_nenhuma_tarefa_automatica_envia_direto_pela_meta():

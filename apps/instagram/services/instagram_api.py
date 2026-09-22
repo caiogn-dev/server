@@ -58,6 +58,7 @@ class InstagramAPI:
                 response = self.session.request(method, url, params=params, json=data, timeout=30)
             
             response.raise_for_status()
+            self._marcar_token(valido=True)
             return response.json()
             
         except requests.exceptions.HTTPError as e:
@@ -78,6 +79,7 @@ class InstagramAPI:
                     'Janela de mensagens fechada: o usuário não enviou nenhuma mensagem nas últimas 24 horas.'
                 )
             if code == 190:
+                self._marcar_token(valido=False)
                 raise InstagramAPIException(
                     'Page Access Token inválido ou expirado. Atualize o token no admin.'
                 )
@@ -96,6 +98,17 @@ class InstagramAPI:
             logger.error(f"Request error: {str(e)}")
             raise InstagramAPIException(str(e))
     
+    def _marcar_token(self, valido: bool) -> None:
+        """Guarda o veredito da Meta sobre o token, para o painel não mentir."""
+        from django.utils import timezone
+
+        atual = self.account.token_invalido_em
+        novo = None if valido else (atual or timezone.now())
+        if atual == novo:
+            return
+        self.account.token_invalido_em = novo
+        type(self.account).objects.filter(pk=self.account.pk).update(token_invalido_em=novo)
+
     def get(self, endpoint: str, params: Dict = None) -> Dict:
         return self._make_request('GET', endpoint, params=params)
     

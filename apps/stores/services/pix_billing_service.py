@@ -15,7 +15,9 @@ from apps.stores.services import mp_orders, subscription_service
 
 logger = logging.getLogger(__name__)
 
-ANNUAL_MONTHS_CHARGED = 10  # paga 10, leva 12 (2 meses grátis)
+#: Reexportado de `billing` para nao existir uma segunda copia do numero.
+#: Quem muda o desconto anual mexe em UM lugar.
+ANNUAL_MONTHS_CHARGED = billing.MESES_COBRADOS_NO_ANUAL  # paga 10, leva 12
 
 
 def _period_key(subscription, now):

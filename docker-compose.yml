@@ -54,9 +54,24 @@ x-django-env: &django-env
   DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL: ${DEFAULT_WHATSAPP_ACCOUNT_OWNER_EMAIL}
   DEFAULT_STORE_SLUG: ${DEFAULT_STORE_SLUG}
   # Instagram
+  # ATENÇÃO: este arquivo NÃO usa env_file — variável nova no .env só chega no
+  # container se estiver listada aqui. Em 21/set as credenciais do Login com
+  # Instagram foram para o .env e o container continuou sem enxergá-las.
+  #
+  # INSTAGRAM_APP_* = app do FACEBOOK (caminho antigo, contas com Página).
+  # INSTAGRAM_LOGIN_APP_* = app do INSTAGRAM ("API setup with Instagram login"),
+  # que é o login usado hoje pelo lojista. São credenciais DIFERENTES.
   INSTAGRAM_APP_ID: ${INSTAGRAM_APP_ID}
   INSTAGRAM_APP_SECRET: ${INSTAGRAM_APP_SECRET}
   INSTAGRAM_WEBHOOK_VERIFY_TOKEN: ${INSTAGRAM_WEBHOOK_VERIFY_TOKEN}
+  INSTAGRAM_LOGIN_APP_ID: ${INSTAGRAM_LOGIN_APP_ID}
+  INSTAGRAM_LOGIN_APP_SECRET: ${INSTAGRAM_LOGIN_APP_SECRET}
+  INSTAGRAM_OAUTH_REDIRECT_URI: ${INSTAGRAM_OAUTH_REDIRECT_URI:-https://backend.pastita.com.br/ig/callback}
+  # Versão única da Graph API (WhatsApp, Meta e Instagram saem daqui).
+  META_GRAPH_VERSION: ${META_GRAPH_VERSION:-v26.0}
+  # Endereço do painel para onde o login do Instagram volta. FRONTEND_URL é
+  # LISTA (vários domínios) e não serve para montar URL de retorno.
+  PAINEL_URL: ${PAINEL_URL:-https://painel.cardapidex.com.br}
   # AI / LLM
   KIMI_API_KEY: ${KIMI_API_KEY}
   KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/}

@@ -8,15 +8,23 @@ from ..models import (
 
 
 class InstagramAccountSerializer(serializers.ModelSerializer):
+    # O painel precisa distinguir "ligado" de "funcionando": conta ativa com
+    # token recusado pela Meta é um canal mudo.
+    precisa_reconectar = serializers.SerializerMethodField()
+
     class Meta:
         model = InstagramAccount
         fields = [
             'id', 'platform', 'username', 'instagram_business_id',
             'followers_count', 'follows_count', 'media_count',
             'profile_picture_url', 'biography', 'website',
-            'is_active', 'is_verified', 'created_at', 'updated_at', 'last_sync_at'
+            'is_active', 'is_verified', 'precisa_reconectar',
+            'created_at', 'updated_at', 'last_sync_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_precisa_reconectar(self, obj) -> bool:
+        return obj.token_invalido_em is not None
 
 
 class InstagramMediaItemSerializer(serializers.ModelSerializer):

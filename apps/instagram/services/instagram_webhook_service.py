@@ -248,6 +248,18 @@ class InstagramWebhookService:
                 }
             )
 
+            # Campanha de comentário: quem comentou na publicação recebe a DM.
+            # Falha aqui não pode derrubar o webhook — a Meta reenviaria tudo.
+            try:
+                from apps.instagram.campanhas import comentarios
+
+                comentarios.processar_comentario(account, value)
+            except Exception as erro:
+                logger.error(
+                    f"Instagram: campanha de comentário falhou em {comment_id}: {erro}",
+                    exc_info=True,
+                )
+
         return {'type': 'comment', 'comment_id': comment_id, 'media_id': media_id}
 
     def _handle_live_comment(self, page_id: str, value: Dict) -> Dict:

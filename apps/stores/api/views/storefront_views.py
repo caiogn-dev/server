@@ -737,6 +737,50 @@ class StoreCartViewSet(viewsets.ViewSet):
         return Response(serializer.data)
     
     @action(detail=False, methods=['post'])
+    def contato(self, request, store_slug=None):
+        """Guarda telefone e nome no carrinho assim que a pessoa digita.
+
+        Medido em 21/09: 404 carrinhos em 30 dias na Cê Saladas, 108 com itens
+        e TRÊS com telefone — porque o número só era gravado quando o PEDIDO
+        nascia. Quem digitava e desistia no meio do checkout sumia, e é
+        exatamente quem o lembrete de carrinho existe para trazer de volta:
+        já escolheu o que quer e já se identificou.
+
+        Não adiciona fricção: é o mesmo dado, gravado mais cedo.
+        """
+        from apps.core.utils import normalize_phone_number
+
+        store = self.get_store(store_slug)
+        cart = self.get_cart(request, store)
+
+        bruto = (request.data.get('telefone') or request.data.get('phone') or '').strip()
+        nome = (request.data.get('nome') or request.data.get('name') or '').strip()
+
+        telefone = normalize_phone_number(bruto) if bruto else ''
+        # `normalize_phone_number` devolve o que recebeu quando não reconhece o
+        # formato ('6399' volta '6399'), então o tamanho é a régua: um número
+        # brasileiro com DDI tem 12 (fixo) ou 13 (celular) dígitos. Metade de
+        # um número é pior que nada — o lembrete sairia e falharia calado.
+        if bruto and len(''.join(c for c in telefone if c.isdigit())) < 12:
+            return Response(
+                {'detail': 'Telefone incompleto.'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not telefone and not nome:
+            return Response(
+                {'detail': 'Informe telefone ou nome.'}, status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        metadata = cart.metadata if isinstance(cart.metadata, dict) else {}
+        if telefone:
+            metadata['customer_phone'] = telefone
+        if nome:
+            metadata['customer_name'] = nome
+        cart.metadata = metadata
+        cart.save(update_fields=['metadata'])
+
+        return Response({'ok': True})
+
+    @action(detail=False, methods=['post'])
     def add_item(self, request, store_slug=None):
         """
         Add item to cart.

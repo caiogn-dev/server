@@ -432,6 +432,65 @@ class OpcoesDeAudienciaView(APIView):
         })
 
 
+class CamposDaAudienciaView(APIView):
+    """O vocabulário do construtor de público: campos e operadores.
+
+    A tela LÊ daqui em vez de manter a própria lista. Duas listas viram dois
+    vocabulários: a tela oferece "termina com" para um campo numérico, o
+    servidor recusa, e o lojista leva a culpa.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.campaigns.services import regras
+
+        return Response({'campos': regras.catalogo()})
+
+
+class PreviaPorRegraView(APIView):
+    """Quantas pessoas a regra alcança — antes de gastar envio.
+
+    Recebe a regra montada na tela (grupos de condições) e devolve o total, uma
+    amostra e a regra escrita em português para o lojista conferir. O mesmo
+    avaliador do disparo decide aqui: prévia e envio nunca discordam.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from apps.campaigns.services import regras, segmentos
+        from apps.campaigns.services.contatos import coletar_por_loja
+
+        regra = request.data.get('regra') or {}
+        pedidas = request.data.get('store_ids') or []
+        permitidas = set(accessible_store_ids(request.user))
+        store_ids = [s for s in permitidas if str(s) in {str(p) for p in pedidas}] \
+            if pedidas else list(permitidas)
+
+        if not store_ids:
+            return Response({
+                'total': 0, 'amostra': [], 'em_portugues': regras.em_portugues(regra),
+            })
+
+        contatos = coletar_por_loja(store_ids)
+        perfis = segmentos.perfis_por_telefone(store_ids)
+
+        escolhidos = [
+            {**contato, 'chave': chave}
+            for chave, contato in contatos.items()
+            if regras.bate(regra, perfis.get(chave))
+        ]
+
+        return Response({
+            'total': len(escolhidos),
+            'de': len(contatos),
+            'em_portugues': regras.em_portugues(regra),
+            'amostra': [
+                {'nome': c.get('nome') or '', 'telefone': mask_phone(c.get('telefone') or '')}
+                for c in escolhidos[:10]
+            ],
+        })
+
+
 @extend_schema_view(
     list=extend_schema(summary="List campaigns"),
     retrieve=extend_schema(summary="Get campaign details"),

@@ -14,12 +14,19 @@ exceção da Meta, que chega de tipos variados. O canal converte tudo em
 """
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class EnvioFalhou(Exception):
     """O WhatsApp recusou ou não respondeu — a tarefa deve tentar de novo."""
 
 
-def _meta(evento: str) -> dict:
-    return {'automatico': True, 'evento': evento}
+def _meta(evento: str, extra: dict | None = None) -> dict:
+    """`extra` carrega o contexto do caminho (pedido, origem) sem repetir a
+    marcação: `automatico` e `evento` são do canal e não se sobrescrevem."""
+    return {**(extra or {}), 'automatico': True, 'evento': evento}
 
 
 def _conferir(mensagem):
@@ -40,18 +47,37 @@ def _enviar(chamada):
     return _conferir(mensagem)
 
 
-def enviar_texto(conta, telefone: str, texto: str, evento: str):
+def _calado(conta, telefone: str, evento: str) -> bool:
+    """Modo humano cala a automática — ver `politica.py`."""
+    from . import politica
+
+    if politica.silenciado(conta, telefone):
+        logger.info('Automática %s não saiu: conversa em modo humano.', evento)
+        return True
+    return False
+
+
+def enviar_texto(conta, telefone: str, texto: str, evento: str, extra: dict | None = None):
+    """Devolve a mensagem enviada, ou `None` quando a política calou o envio."""
     from apps.whatsapp.services.message_service import MessageService
 
+    if _calado(conta, telefone, evento):
+        return None
+
     return _enviar(lambda: MessageService().send_text_message(
-        account_id=str(conta.id), to=telefone, text=texto, metadata=_meta(evento),
+        account_id=str(conta.id), to=telefone, text=texto, metadata=_meta(evento, extra),
     ))
 
 
-def enviar_botoes(conta, telefone: str, texto: str, botoes: list, evento: str):
+def enviar_botoes(conta, telefone: str, texto: str, botoes: list, evento: str,
+                  extra: dict | None = None):
+    """Devolve a mensagem enviada, ou `None` quando a política calou o envio."""
     from apps.whatsapp.services.message_service import MessageService
+
+    if _calado(conta, telefone, evento):
+        return None
 
     return _enviar(lambda: MessageService().send_interactive_buttons(
         account_id=str(conta.id), to=telefone, body_text=texto, buttons=botoes,
-        metadata=_meta(evento),
+        metadata=_meta(evento, extra),
     ))

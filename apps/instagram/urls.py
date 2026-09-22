@@ -6,6 +6,7 @@ from .api.views import (
     InstagramConversationViewSet, InstagramMessageViewSet,
     InstagramWebhookViewSet
 )
+from .api.campanhas_views import CampanhaDeComentarioViewSet
 from .api.data_deletion_view import MetaDataDeletionView, MetaDataDeletionStatusView
 
 app_name = 'instagram'
@@ -17,6 +18,9 @@ router.register(r'shopping', InstagramShoppingViewSet, basename='instagram-shopp
 router.register(r'live', InstagramLiveViewSet, basename='instagram-live')
 router.register(r'conversations', InstagramConversationViewSet, basename='instagram-conversations')
 router.register(r'messages', InstagramMessageViewSet, basename='instagram-messages')
+router.register(
+    r'campanhas-de-comentario', CampanhaDeComentarioViewSet, basename='instagram-campanhas',
+)
 router.register(r'webhooks', InstagramWebhookViewSet, basename='instagram-webhooks')
 
 urlpatterns = [

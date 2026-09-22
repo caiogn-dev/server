@@ -25,7 +25,7 @@ ESCOPOS = (
     'instagram_business_manage_messages',
     'instagram_business_manage_comments',
 )
-WEBHOOKS = ('messages', 'messaging_postbacks', 'messaging_seen', 'comments')
+WEBHOOKS = ('messages', 'messaging_postbacks', 'messaging_seen', 'comments', 'mentions')
 
 
 class LoginFalhou(Exception):
