@@ -225,6 +225,10 @@ MENSAGENS_DE_RECUSA = {
     'transacao nao permitida': 'Este vale não aceita compra pela internet. Use outro cartão ou pague no PIX.',
     'estabelecimento invalido': 'Esta loja ainda não aceita esta bandeira de vale. Use outro cartão ou pague no PIX.',
     'cartao bloqueado': 'Este vale está bloqueado. Fale com a operadora do seu benefício ou pague no PIX.',
+    # Código 1011 do adquirente. Era a ÚNICA recusa já vista em produção
+    # (7 de 7 orders, medido em 22/09) e caía na genérica, que manda
+    # trocar de cartão — conselho errado para um dígito digitado torto.
+    'verifique os dados do cartao': 'Confira o número, a validade e o CVV do cartão do vale e tente de novo.',
 }
 
 RECUSA_GENERICA = 'O pagamento com vale não foi autorizado. Use outro cartão ou pague no PIX.'

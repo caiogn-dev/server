@@ -77,6 +77,26 @@ def test_motivo_COM_ACENTO_chega_na_mensagem_especifica():
     assert 'bloqueado' in msg.lower()
 
 
+
+def test_verifique_os_dados_do_cartao_tem_saida_propria():
+    """A recusa que o adquirente REALMENTE devolve quando o cartao nao existe.
+
+    Medido em 22/09 contra a API de producao, com o cartao de teste do
+    simulador batendo na adquirente de verdade:
+
+        acquirer_return_code : 1011
+        acquirer_message     : 'Verifique os dados do cartao'
+
+    Era a unica recusa ja observada em producao (7 de 7 orders) e caia no
+    texto generico, que manda o cliente "usar outro cartao" quando o problema
+    provavel e um digito errado no que ele acabou de preencher. Trocar de
+    cartao por causa de um typo e conselho errado.
+    """
+    msg = po.mensagem_de_recusa('Verifique os dados do cartão')
+    assert msg != po.RECUSA_GENERICA
+    assert 'confira' in msg.lower() or 'verifique' in msg.lower()
+
+
 #: Forma natural (acentuada) com que o adquirente manda cada motivo.
 #: A chave do dicionario e a versao ja normalizada; se o teste usasse a
 #: chave, ele nao passaria pela transliteracao e nao provaria nada.
@@ -88,6 +108,7 @@ MOTIVOS_COMO_O_ADQUIRENTE_MANDA = {
     'transacao nao permitida': 'Transação não permitida',
     'estabelecimento invalido': 'Estabelecimento inválido',
     'cartao bloqueado': 'Cartão bloqueado',
+    'verifique os dados do cartao': 'Verifique os dados do cartão',
 }
 
 
