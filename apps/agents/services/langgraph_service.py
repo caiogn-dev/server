@@ -8,6 +8,8 @@ from typing import Dict, Any, Optional
 from ..models import Agent
 from .langchain_service import LangchainService
 
+from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,7 +86,9 @@ class LangGraphService:
         except Exception:
             logger.exception("[LANGGRAPH] Erro na execução do grafo")
             return {
-                "response": "Desculpa, tive um problema. Pode repetir?",
+                # Fonte única do aviso: reconhecer o texto é o que liga a
+                # falha ao caminho do atendente (ver apps/agents/avisos.py).
+                "response": MENSAGEM_DE_ERRO_DO_LLM,
                 "session_id": session_id,
                 "processing_time": time.time() - start,
                 "model": self.agent.model_name,

@@ -122,9 +122,9 @@ def resposta_e_falha_da_ia(texto) -> bool:
     a desculpa. Reconhecer o texto é o que liga a falha ao caminho que o dono
     decidiu em 17/set: passa para o atendente.
     """
-    from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+    from apps.agents.avisos import e_aviso_de_falha
 
-    return (texto or '').strip() == MENSAGEM_DE_ERRO_DO_LLM
+    return e_aviso_de_falha(texto)
 
 
 def _passar_para_atendente_por_falha_da_ia(message, erro):
