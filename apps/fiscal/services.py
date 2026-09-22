@@ -69,7 +69,7 @@ def _emitente(config: dict) -> dict:
 
 def _itens(order, config: dict, cfop: str) -> list[dict]:
     itens = []
-    for idx, item in enumerate(order.items.all(), start=1):
+    for idx, item in enumerate(order.items.select_related('product').all(), start=1):
         product = item.product
         ncm = ''
         if product is not None:

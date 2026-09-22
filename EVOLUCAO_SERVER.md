@@ -10,6 +10,28 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-09-18 (execução 2)
+
+**Baseline de testes:** 10 testes SimpleTestCase (sem banco) — 10/10 OK.
+HEAD de `development`: `1d095557`. Gate: 2 PRs bot/ abertos (#368, #369) + #370 recém-mergeado.
+
+**Bug encontrado e corrigido:** N+1 query em `_itens()` — acesso a `item.product` em loop sem `select_related` [P2]
+
+- **Tipo:** P2 — Performance: N queries extras por emissão de NFC-e (uma por item do pedido), rodando síncrona no checkout.
+- **Contexto:** `_itens()` em `apps/fiscal/services.py` iterava `order.items.all()` e acessava `item.product`
+  dentro do loop. Em um PDV com 10 produtos isso gera 10 queries extras por nota fiscal emitida.
+  Bug documentado em backlog desde 2026-07-27 (P2, nunca corrigido).
+- **Arquivo corrigido (1):** `apps/fiscal/services.py` linha 61
+  - `order.items.all()` → `order.items.select_related('product').all()`
+  - ORM resolve o FK com JOIN em uma única query, independentemente do tamanho do pedido.
+- **Testes:** 10 casos em `apps/fiscal/tests/test_nfce_n_mais_um.py` (RED→GREEN confirmado):
+  - AST estático: `select_related('product')` presente; `.items.all()` puro ausente; select_related antes de item.product
+  - Mock comportamental: chamada correta, contagem, numeração 1-indexed (SEFAZ), SKU, NCM, produto None, CFOP
+- **PR:** #371 `bot/server-2026-09-18-fiscal-nfce-select-related` → `development`
+
+---
+
+### 2026-09-18 (execução 1)
 ### 2026-09-20
 
 **Baseline de testes:** 16 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN após o fix.
@@ -124,13 +146,13 @@ HEAD de `development`: `1d095557`. Gate: 2 PRs bot/ abertos (#368, #369).
   - `test_batch_verifica_a_marca_somente_janela_aberta` — filtro só ativo em campanhas marcadas
   - `test_batch_usa_skipped_para_janela_fechada` — resultado é SKIPPED, não FAILED
   - `test_janela_segunda_camada_usa_continue_nao_messages_failed` — `continue` antes do `try` de envio
-- **PR:** `bot/server-2026-09-18-janela-segunda-camada`
+- **PR:** #370 `bot/server-2026-09-18-janela-segunda-camada`
 
 **Próximo backlog priorizado:**
 
 | Prioridade | Item |
 |---|---|
-| P1 | Merge dos PRs abertos (#368, #369) — is_staff WebSocket e str(exc) Instagram/Messenger |
+| P1 | Merge dos PRs abertos (#368, #369, #370, #371) |
 | P2 | Testes de contrato para OTP WhatsApp e checkout (pendência crítica do CLAUDE.md) |
 | P2 | Namespace mobile/customer: `/api/v1/mobile/` existe — verificar contratos de reordenação |
 
