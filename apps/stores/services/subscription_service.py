@@ -43,13 +43,19 @@ def _sdk():
     return mercadopago.SDK(access_token())
 
 
-def create_subscription(store, plan_key, payer_email, back_url):
+def create_subscription(store, plan_key, payer_email, back_url, billing_cycle='monthly'):
     """
     Cria um preapproval (assinatura mensal) no MercadoPago para a loja.
     Retorna dict { 'init_point', 'preapproval_id' }. Persiste StoreSubscription.
 
     NÃO cobra: o dono precisa abrir o init_point e autorizar o cartão.
-    A adesão (setup_fee) é cobrada à parte (1ª fatura/preference) — TODO no wiring final.
+    A adesão (setup_fee) é cobrada à parte (1ª fatura/preference).
+
+    `billing_cycle` decide se a adesão entra: quem fecha 12 meses não paga
+    implantação (decisão de 22/09). Hoje este caminho é só mensal — o anual vai
+    pelo PIX — mas o parâmetro existe para a regra não depender de QUAL caminho
+    chamou. Regra que mora em dois lugares diverge; esta mora em
+    `billing.cobra_adesao`.
     """
     if billing.is_billing_exempt(store):
         raise SubscriptionError('Loja isenta de cobrança (grandfather).')
@@ -106,7 +112,7 @@ def create_subscription(store, plan_key, payer_email, back_url):
     # Taxa de adesão: preference one-off, gated por killswitch global + toggle do plano.
     setup_enabled = getattr(settings, 'BILLING_SETUP_FEE_ENABLED', False)
     setup_fee = plan.get('setup_fee')
-    if setup_enabled and billing.charges_setup_fee(plan_key) and setup_fee is not None:
+    if setup_enabled and billing.cobra_adesao(plan_key, billing_cycle) and setup_fee is not None:
         pref_data = {
             'items': [{
                 'title': f"Adesão Cardapidex {plan['name']} — {store.name}",
