@@ -10,6 +10,64 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-09-22
+
+**Baseline de testes:** 4 testes estáticos (sem DB/langchain) — 4/4 GREEN após o fix.
+HEAD de `development`: `7ac7f187`. Gate: 0 PRs bot/ abertos.
+
+**Varredura dos commits novos desde 2026-09-20 (20 commits):**
+
+| Commit | Descrição | Segurança |
+|---|---|---|
+| `ee88fbc9` | feat(planos): implantação grátis para anuais + fonte única do preço | ✓ lógica pura, sem vetor HTTP |
+| `6d69cff5` | fix(equipe): convidar por telefone (endpoint nunca funcionou) | ✓ `has_store_permission` antes de agir |
+| `fb59866c` | fix(bot): desculpa no gargalo de envio | sem impacto de segurança |
+| `8d2cfbb2` | chore(voucher): script para registrar WebhookEndpoint do Pagar.me | script manual, sem vetor |
+| `f2ad339d` | test(voucher): senha certa abre a porta | documentação do incidente de 12/set |
+| `b51d8d70` | feat(voucher): alerta quando adquirente e Pagar.me divergem | sem impacto de segurança |
+| `0a89143d` | fix(voucher): recusa 1011 com saída própria | sem impacto de segurança |
+| `dfc8b77b` | fix(bot): fonte única do aviso de falha da IA | sem impacto de segurança |
+| `db927e6d` | fix(bot): reação não acorda o bot | sem impacto de segurança |
+| `b83a8d7e` | feat(avaliação): 4 estrelas também vai para o Google | ✓ `if rating >= 4:` guarda correta |
+| `cca1ed72` | feat(carrinho): endpoint para guardar contato | ✓ `get_store` + `get_cart` escopo correto |
+| `84662269` | feat(recuperação): conta carrinhos sem telefone | ✓ escopo por loja |
+| `80102b6f` | feat(campanha): recuperação de vendas | ✓ `accessible_store_ids` |
+| `89bf1cc5` | refactor(dry): moldura única de envio | sem impacto de segurança |
+| `d1e00b8c` | refactor(dry): trava de loja em um lugar só (11→1) | ✓ `checar_loja_do_usuario` mais estrita |
+| `dd9102a2` | fix(pix): lembrete agendado com nome correto | **bug operacional: veja próxima seção** |
+| `51adda39` | feat(mensageiro): modo humano cala a automática | sem impacto de segurança |
+| `fd09d52f` | fix(mensageiro): reengajamento não gasta envio com opt-out | sem impacto de segurança |
+| `6d13b918` | feat(instagram): comentários reais do post | ✓ `get_object()` com queryset do usuário |
+| `1d4ed3dd..549280e6` | feat(instagram): publicações + token recusado | ✓ `account__user=request.user` |
+
+**Bug encontrado e corrigido:** chave errada no `exclude` de expirados — lembrete final em loop [P2]
+
+- **Tipo:** P2 — Correctness: pedidos PIX com mais de 24 h recebiam o aviso de expiração
+  indefinidamente (uma vez por hora, limitado pelo `envio_unico` TTL 3600 s), em vez de uma única vez.
+- **Contexto:** `check_pending_payments` exclui pedidos que já receberam o lembrete via
+  `exclude(metadata__has_key=...)`. Para os lembretes de 30 min e 2 h a chave bate:
+  `payment_reminder_first_sent` e `payment_reminder_second_sent`. Para expirados (>24 h), usava
+  `payment_expired_notified` — mas `send_payment_reminder(type='final')` grava
+  `payment_reminder_final_sent` (padrão `f'payment_reminder_{reminder_type}_sent'`).
+  A chave `payment_expired_notified` nunca foi gravada em nenhum lugar do código.
+- **Arquivo corrigido (1):** `apps/whatsapp/tasks/automation_tasks.py` linha 243
+  - `metadata__has_key='payment_expired_notified'` → `metadata__has_key='payment_reminder_final_sent'`
+- **Testes (4 estáticos)** em `apps/campaigns/tests/test_pix_lembrete_final_sem_spam.py` (RED→GREEN):
+  - `test_check_usa_payment_reminder_final_sent` — chave correta no exclude
+  - `test_check_nao_usa_chave_nunca_definida` — chave morta ausente
+  - `test_send_grava_payment_reminder_X_sent` — padrão de chave dinâmica presente
+  - `test_chave_morta_ausente_em_todo_o_codigo` — varredura de todos os arquivos de produção
+- **PR:** `bot/server-2026-09-22-pix-final-chave-errada`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P2 | Testes de contrato para OTP WhatsApp e checkout (pendência crítica do CLAUDE.md) |
+| P2 | Namespace mobile/customer: `/api/v1/mobile/` existe — verificar contratos de reordenação |
+
+---
+
 ### 2026-09-18 (execução 2)
 
 **Baseline de testes:** 10 testes SimpleTestCase (sem banco) — 10/10 OK.
