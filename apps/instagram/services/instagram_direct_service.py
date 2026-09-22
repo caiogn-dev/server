@@ -190,16 +190,17 @@ class InstagramDirectService:
             else:
                 payload['message'] = {'text': content or ''}
 
+            # Conta antiga (login do Facebook) envia pela Página; a do Login com
+            # Instagram envia pela própria conta profissional.
             page_id = (self.api.account.facebook_page_id or '').strip()
-            if not page_id:
+            remetente = page_id or (self.api.account.instagram_business_id or '').strip()
+            if not remetente:
                 raise InstagramAPIException(
-                    "facebook_page_id not configured for this Instagram account. "
-                    "Instagram DM sends require the connected Facebook Page ID "
-                    "and a Page access token."
+                    "Conta do Instagram sem identificação — conecte de novo em Conexões."
                 )
 
             try:
-                response = self.api.post(f'{page_id}/messages', data=payload)
+                response = self.api.post(f'{remetente}/messages', data=payload)
             except Exception as api_err:
                 logger.error(
                     "Instagram send API error: account=%s page_id=%s participant=%s conversation=%s error=%s",

@@ -42,11 +42,9 @@ app.conf.beat_schedule = {
         'schedule': 300.0,  # Every 5 minutes
     },
     # Automation tasks (WhatsApp sessions)
-    # CANONICAL: use apps.automation.tasks — single source of truth
-    'check-abandoned-carts': {
-        'task': 'apps.automation.tasks.check_abandoned_carts',
-        'schedule': 300.0,  # Every 5 minutes
-    },
+    # Lembrete de carrinho do bot: `check-abandoned-whatsapp-sessions`, abaixo.
+    # Aqui havia 'check-abandoned-carts' apontando para um nome que nenhuma
+    # tarefa usa (nunca rodou; saiu em 19/09 — migração stores/0084).
     'check-pending-pix-payments': {
         'task': 'apps.automation.tasks.check_pending_pix_payments',
         'schedule': 600.0,  # Every 10 minutes
@@ -123,10 +121,19 @@ app.conf.beat_schedule = {
         'task': 'apps.whatsapp.tasks.check_inactive_customers',
         'schedule': crontab(hour=11, minute=0),
     },
-    # StoreOrder PIX reminders (30min / 2h / 24h) for storefront orders
+    # Lembrete de PIX pendente dos pedidos do SITE — LIGADO pelo dono em
+    # 21/09/2026. Manda em 30 min e 2 h, e em 24 h avisa que expirou E
+    # CANCELA o pedido (pelo OrderService: devolve estoque, devolve cupom,
+    # liquida o pagamento).
+    #
+    # A entrada anterior apontava para 'apps.whatsapp.tasks.
+    # check_pending_payments' — nome que nenhuma tarefa registra. Ficou no
+    # agendador sem nunca rodar, porque tarefa inexistente falha calada; saiu
+    # em 19/09 (migração stores/0084). O nome certo é o de baixo, e há teste
+    # que confere se toda entrada aponta para tarefa que existe.
     'check-store-pix-reminders': {
-        'task': 'apps.whatsapp.tasks.check_pending_payments',
-        'schedule': 600.0,  # every 10 min
+        'task': 'apps.whatsapp.tasks.automation_tasks.check_pending_payments',
+        'schedule': 300.0,  # a cada 5 min — as janelas são de 5 min
     },
     # Toca Delivery — poll active corridas for status updates every 60s
     'sync-toca-delivery-statuses': {

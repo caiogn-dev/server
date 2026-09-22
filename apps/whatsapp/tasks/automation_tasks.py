@@ -14,6 +14,8 @@ import logging
 
 from apps.core.pii import mask_phone
 
+from apps.automation.mensageiro import envio_unico
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,6 +79,24 @@ PIX_TEMPLATES = {
     'final': ('pix_expired',),
 }
 
+# O lembrete de sessão (carrinho do BOT) não tem AutoMessage no painel: o texto
+# mora aqui, mas como TABELA, do mesmo jeito que os outros — três variações da
+# mesma mensagem, não três blocos de if.
+TEXTOS_DO_LEMBRETE_DE_SESSAO = {
+    '5min': (
+        "Oi, {nome}! 👋 Parece que você estava finalizando um pedido.\n\n"
+        "Ainda quer continuar? Estou aqui pra ajudar! 😊"
+    ),
+    '20min': (
+        "Oi, {nome}! 👋 Você deixou itens no carrinho.\n\n"
+        "Quer continuar seu pedido? 😊"
+    ),
+    '2h': (
+        "Ei, {nome}! 🥗 Seu carrinho ainda está te esperando.\n\n"
+        "Posso te ajudar a finalizar o pedido?"
+    ),
+}
+
 CART_TEMPLATES = {
     '30min': ('cart_reminder_30', 'cart_abandoned'),
     '2h': ('cart_reminder_2h', 'cart_abandoned'),
@@ -108,68 +128,60 @@ def send_payment_reminder(self, order_id: str, reminder_type: str):
         reminder_type: 'first' (30min), 'second' (2h), 'final' (24h)
     """
     from apps.stores.models.order import StoreOrder as Order
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-    from apps.automation.models import AutoMessage
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_texto
 
-    idempotency_key = f"pix_reminder:{order_id}:{reminder_type}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
-        logger.info("Duplicate pix_reminder task for order %s type %s — skipped", order_id, reminder_type)
-        return
-
-    enviado = False
-    try:
-        order = Order.objects.select_related('store').get(id=order_id)
-
-        if order.payment_status not in ('pending', 'processing'):
-            logger.info(f"Order {order_id} payment_status={order.payment_status}, skipping reminder")
+    with envio_unico(f"pix_reminder:{order_id}:{reminder_type}", 3600) as envio:
+        if envio is None:
+            logger.info("Duplicate pix_reminder task for order %s type %s — skipped", order_id, reminder_type)
             return
 
-        profile = _get_store_profile(order.store)
-        if not profile:
-            logger.warning(f"No CompanyProfile for store {order.store_id}, skipping payment reminder")
-            return
+        try:
+            order = Order.objects.select_related('store').get(id=order_id)
 
-        candidates = PIX_TEMPLATES.get(reminder_type, PIX_TEMPLATES['first'])
-        template = _resolve_template(profile, candidates)
-        if template is None:
-            logger.warning(
-                "Nenhum template ativo (%s) na loja %s — lembrete de PIX não enviado",
-                '/'.join(candidates), order.store_id,
-            )
-            return
+            if order.payment_status not in ('pending', 'processing'):
+                logger.info(f"Order {order_id} payment_status={order.payment_status}, skipping reminder")
+                return
 
-        time_remaining = {'first': '30 minutos', 'second': '2 horas'}.get(reminder_type, 'expirado')
+            profile = _get_store_profile(order.store)
+            if not profile:
+                logger.warning(f"No CompanyProfile for store {order.store_id}, skipping payment reminder")
+                return
 
-        message = template.render_message({
-            'customer_name': order.customer_name,
-            'order_number': order.order_number,
-            'amount': order.total,
-            'pix_code': order.pix_code or 'N/A',
-            'time_remaining': time_remaining,
-        })
+            candidates = PIX_TEMPLATES.get(reminder_type, PIX_TEMPLATES['first'])
+            template = _resolve_template(profile, candidates)
+            if template is None:
+                logger.warning(
+                    "Nenhum template ativo (%s) na loja %s — lembrete de PIX não enviado",
+                    '/'.join(candidates), order.store_id,
+                )
+                return
 
-        account = _get_account_for_profile(profile)
-        if account:
-            service = WhatsAppAPIService(account)
-            service.send_text_message(to=order.customer_phone, text=message)
-            enviado = True
-            logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
+            time_remaining = {'first': '30 minutos', 'second': '2 horas'}.get(reminder_type, 'expirado')
 
-            if not order.metadata:
-                order.metadata = {}
-            order.metadata[f'payment_reminder_{reminder_type}_sent'] = timezone.now().isoformat()
-            order.save(update_fields=['metadata'])
+            message = template.render_message({
+                'customer_name': order.customer_name,
+                'order_number': order.order_number,
+                'amount': order.total,
+                'pix_code': order.pix_code or 'N/A',
+                'time_remaining': time_remaining,
+            })
 
-    except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found")
-    except Exception as e:
-        logger.error(f"Error sending payment reminder: {str(e)}")
-        if not enviado:
-            # Nada saiu: libera a trava para a nova tentativa passar. Se a
-            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
-        raise self.retry(exc=e)
+            account = _get_account_for_profile(profile)
+            if account:
+                enviar_texto(account, order.customer_phone, message, evento='pix_reminder')
+                envio.saiu()
+                logger.info("Payment reminder sent to %s for order %s", mask_phone(order.customer_phone), order_id)
+
+                if not order.metadata:
+                    order.metadata = {}
+                order.metadata[f'payment_reminder_{reminder_type}_sent'] = timezone.now().isoformat()
+                order.save(update_fields=['metadata'])
+
+        except Order.DoesNotExist:
+            logger.error(f"Order {order_id} not found")
+        except Exception as e:
+            logger.error(f"Error sending payment reminder: {str(e)}")
+            raise self.retry(exc=e)
 
 
 @shared_task
@@ -254,99 +266,93 @@ def send_cart_reminder(self, cart_id: str, reminder_type: str):
         reminder_type: '30min', '2h', '24h'
     """
     from apps.stores.models.cart import StoreCart as Cart
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-    from apps.automation.models import AutoMessage
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_botoes
 
-    idempotency_key = f"cart_reminder:{cart_id}:{reminder_type}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
-        logger.info("Duplicate cart_reminder task for cart %s type %s — skipped", cart_id, reminder_type)
-        return
-
-    enviado = False
-    try:
-        cart = Cart.objects.select_related('store').get(id=cart_id)
-        cart_metadata = cart.metadata or {}
-        customer_phone = (
-            cart_metadata.get('customer_phone')
-            or cart_metadata.get('phone_number')
-            or getattr(cart.user, 'phone_number', '')
-            or getattr(cart.user, 'phone', '')
-        )
-        customer_name = (
-            cart_metadata.get('customer_name')
-            or getattr(cart.user, 'name', '')
-            or getattr(cart.user, 'first_name', '')
-            or 'Cliente'
-        )
-
-        if not customer_phone:
-            logger.info(f"Cart {cart_id} has no customer phone, skipping reminder")
+    with envio_unico(f"cart_reminder:{cart_id}:{reminder_type}", 3600) as envio:
+        if envio is None:
+            logger.info("Duplicate cart_reminder task for cart %s type %s — skipped", cart_id, reminder_type)
             return
 
-        if not cart.items.exists():
-            logger.info(f"Cart {cart_id} is empty, skipping reminder")
-            return
-
-        from apps.stores.models.order import StoreOrder as Order
-        recent_order = Order.objects.filter(
-            customer_phone=customer_phone,
-            created_at__gte=cart.updated_at
-        ).first()
-
-        if recent_order:
-            logger.info("Customer already placed order, skipping cart reminder")
-            return
-
-        profile = _get_store_profile(cart.store)
-        if not profile:
-            logger.warning(f"No CompanyProfile for store {cart.store_id}, skipping cart reminder")
-            return
-
-        candidates = CART_TEMPLATES.get(reminder_type, CART_TEMPLATES['30min'])
-        template = _resolve_template(profile, candidates)
-        if template is None:
-            logger.warning(
-                "Nenhum template ativo (%s) na loja %s — lembrete de carrinho não enviado",
-                '/'.join(candidates), cart.store_id,
+        try:
+            cart = Cart.objects.select_related('store').get(id=cart_id)
+            cart_metadata = cart.metadata or {}
+            customer_phone = (
+                cart_metadata.get('customer_phone')
+                or cart_metadata.get('phone_number')
+                or getattr(cart.user, 'phone_number', '')
+                or getattr(cart.user, 'phone', '')
             )
-            return
-
-        items_summary = "\n".join([
-            f"• {item.product.name} x{item.quantity} = R$ {item.total}"
-            for item in cart.items.all()[:5]
-        ])
-
-        message = template.render_message({
-            'customer_name': customer_name,
-            'cart_items': items_summary,
-            'cart_total': cart.total,
-            'cart_item_count': cart.items.count(),
-        })
-
-        account = _get_account_for_profile(profile)
-        if account:
-            service = WhatsAppAPIService(account)
-            service.send_interactive_buttons(
-                to=customer_phone,
-                body_text=message,
-                buttons=[
-                    {'id': f'checkout_{cart.id}', 'title': '✅ Finalizar Pedido'},
-                    {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
-                ]
+            customer_name = (
+                cart_metadata.get('customer_name')
+                or getattr(cart.user, 'name', '')
+                or getattr(cart.user, 'first_name', '')
+                or 'Cliente'
             )
-            enviado = True
-            logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
 
-    except Cart.DoesNotExist:
-        logger.error(f"Cart {cart_id} not found")
-    except Exception as e:
-        logger.error(f"Error sending cart reminder: {str(e)}")
-        if not enviado:
-            # Nada saiu: libera a trava para a nova tentativa passar. Se a
-            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
-        raise self.retry(exc=e)
+            if not customer_phone:
+                logger.info(f"Cart {cart_id} has no customer phone, skipping reminder")
+                return
+
+            if not cart.items.exists():
+                logger.info(f"Cart {cart_id} is empty, skipping reminder")
+                return
+
+            from apps.stores.models.order import StoreOrder as Order
+            recent_order = Order.objects.filter(
+                customer_phone=customer_phone,
+                created_at__gte=cart.updated_at
+            ).first()
+
+            if recent_order:
+                logger.info("Customer already placed order, skipping cart reminder")
+                return
+
+            profile = _get_store_profile(cart.store)
+            if not profile:
+                logger.warning(f"No CompanyProfile for store {cart.store_id}, skipping cart reminder")
+                return
+
+            candidates = CART_TEMPLATES.get(reminder_type, CART_TEMPLATES['30min'])
+            template = _resolve_template(profile, candidates)
+            if template is None:
+                logger.warning(
+                    "Nenhum template ativo (%s) na loja %s — lembrete de carrinho não enviado",
+                    '/'.join(candidates), cart.store_id,
+                )
+                return
+
+            # `subtotal`, não `total`: nenhum dos dois modelos tem `total` — o
+            # lembrete levantava AttributeError sempre que achava um telefone.
+            items_summary = "\n".join([
+                f"• {item.product.name} x{item.quantity} = R$ {item.subtotal}"
+                for item in cart.items.all()[:5]
+            ])
+
+            message = template.render_message({
+                'customer_name': customer_name,
+                'cart_items': items_summary,
+                'cart_total': cart.subtotal,
+                'cart_item_count': cart.items.count(),
+            })
+
+            account = _get_account_for_profile(profile)
+            if account:
+                enviar_botoes(
+                    account, customer_phone, message,
+                    [
+                        {'id': f'checkout_{cart.id}', 'title': '✅ Finalizar Pedido'},
+                        {'id': f'view_cart_{cart.id}', 'title': '🛒 Ver Carrinho'},
+                    ],
+                    evento='cart_reminder',
+                )
+                envio.saiu()
+                logger.info("Cart reminder sent to %s for cart %s", mask_phone(customer_phone), cart_id)
+
+        except Cart.DoesNotExist:
+            logger.error(f"Cart {cart_id} not found")
+        except Exception as e:
+            logger.error(f"Error sending cart reminder: {str(e)}")
+            raise self.retry(exc=e)
 
 
 @shared_task(name='apps.whatsapp.tasks.check_abandoned_store_carts')
@@ -423,155 +429,150 @@ def notify_order_status_change(self, order_id: str, new_status: str):
         new_status: Novo status
     """
     from apps.stores.models.order import StoreOrder as Order
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
     from apps.automation.models import AutoMessage
-    from django.core.cache import cache
-
-    # Atomic idempotency: cache.add returns False if key already exists
-    idempotency_key = f"order_notify:{order_id}:{new_status}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
-        logger.info("Skipping duplicate notification for order %s status %s", order_id, new_status)
-        return
-
-    enviado = False
-    try:
-        order = Order.objects.select_related('store').get(id=order_id)
-
-        if _notifications_suppressed(order):
-            logger.info("Order %s has suppress_notifications — skipping status notification", order_id)
-            return
-
-        status_to_event = {
-            'received': 'order_received',
-            'processing': 'order_processing',
-            'confirmed': 'order_confirmed',
-            'paid': 'order_paid',
-            'preparing': 'order_preparing',
-            'ready': 'order_ready',
-            'shipped': 'order_shipped',
-            'out_for_delivery': 'order_out_for_delivery',
-            'delivered': 'order_delivered',
-            'completed': 'order_completed',
-            'cancelled': 'order_cancelled',
-            'refunded': 'order_refunded',
-        }
-
-        event_type = status_to_event.get(new_status)
-        if not event_type:
-            logger.debug(f"No notification template mapped for status: {new_status}")
-            return
-
-        profile = _get_store_profile(order.store)
-        if not profile:
-            logger.warning(f"No CompanyProfile for store {order.store_id}, skipping status notification")
-            return
-
-        # Toggle geral do painel (CompanyProfileDetail): desligado → silêncio
-        # para a loja inteira, template e fallback.
-        if not profile.order_status_notification_enabled:
-            logger.info(
-                "Store %s has order_status_notification_enabled=False — skipping status notification",
-                order.store_id,
-            )
+    with envio_unico(f"order_notify:{order_id}:{new_status}", 3600) as envio:
+        if envio is None:
+            logger.info("Skipping duplicate notification for order %s status %s", order_id, new_status)
             return
 
         try:
-            template = AutoMessage.objects.get(
-                company=profile,
-                event_type=event_type,
-                is_active=True
-            )
+            order = Order.objects.select_related('store').get(id=order_id)
 
-            status_display = {
-                'received': '📬 Recebido',
-                'processing': '⏳ Em Processamento',
-                'confirmed': '✅ Confirmado',
-                'paid': '💰 Pagamento Confirmado',
-                'preparing': '👨‍🍳 Em preparo',
-                'ready': '✨ Pronto',
-                'shipped': '🚚 Enviado',
-                'out_for_delivery': '🛵 Saiu para entrega',
-                'delivered': '📦 Entregue',
-                'completed': '✨ Finalizado',
-                'cancelled': '❌ Cancelado',
-                'refunded': '💳 Reembolsado',
-            }.get(new_status, new_status)
+            if _notifications_suppressed(order):
+                logger.info("Order %s has suppress_notifications — skipping status notification", order_id)
+                return
 
-            # Retirada e entrega não podem receber a mesma frase. O texto padrão
-            # de "pedido pronto" dizia "aguarde a chegada do entregador OU venha
-            # buscar" — contradição que, numa entrega, chegou dois segundos
-            # antes de "está a caminho" (CE-2608129257, 12/ago).
-            eh_retirada = order.delivery_method in ('pickup', 'digital')
-            proximo_passo = (
-                'Pode vir buscar! 😊' if eh_retirada
-                else 'Já vai sair para entrega.'
-            )
+            status_to_event = {
+                'received': 'order_received',
+                'processing': 'order_processing',
+                'confirmed': 'order_confirmed',
+                'paid': 'order_paid',
+                'preparing': 'order_preparing',
+                'ready': 'order_ready',
+                'shipped': 'order_shipped',
+                'out_for_delivery': 'order_out_for_delivery',
+                'delivered': 'order_delivered',
+                'completed': 'order_completed',
+                'cancelled': 'order_cancelled',
+                'refunded': 'order_refunded',
+            }
 
-            message = template.render_message({
-                'customer_name': order.customer_name,
-                'order_number': order.order_number,
-                'order_status': status_display,
-                'order_total': order.total,
-                'proximo_passo': proximo_passo,
-            })
+            event_type = status_to_event.get(new_status)
+            if not event_type:
+                logger.debug(f"No notification template mapped for status: {new_status}")
+                return
 
-            account = _get_account_for_profile(profile)
+            profile = _get_store_profile(order.store)
+            if not profile:
+                logger.warning(f"No CompanyProfile for store {order.store_id}, skipping status notification")
+                return
 
-            # O telefone vem do banco como "63999451408", SEM o código do país,
-            # e era assim que ia para a API — que precisa do 55. Resultado: nunca
-            # chegou uma notificação de status a ninguém (nem confirmado, nem em
-            # preparo, nem entregue, nem cancelado), enquanto o log dizia
-            # "sent". `send_text_message` NÃO normaliza; quem chama é que
-            # precisa. O outro caminho de notificação já fazia isso.
-            from apps.core.utils import normalize_phone_number
-            destino = normalize_phone_number(order.customer_phone or '')
-
-            if account and destino:
-                from apps.whatsapp.services.message_service import MessageService
-                MessageService().send_text_message(
-                    account_id=str(account.id),
-                    to=destino,
-                    text=message,
-                    metadata={
-                        'source': 'order_status_notification',
-                        'order_id': str(order_id),
-                        'order_number': order.order_number,
-                        'status': new_status,
-                    },
+            # Toggle geral do painel (CompanyProfileDetail): desligado → silêncio
+            # para a loja inteira, template e fallback.
+            if not profile.order_status_notification_enabled:
+                logger.info(
+                    "Store %s has order_status_notification_enabled=False — skipping status notification",
+                    order.store_id,
                 )
-                enviado = True
-                # O log só afirma o que aconteceu. Antes ele vinha solto depois
-                # da chamada e dizia "sent" mesmo quando nada saía — mandou
-                # procurar o problema no lugar errado por semanas.
-                logger.info(f"Status notification sent for order {order_id}: {new_status}")
-            elif not destino:
-                logger.warning(
-                    f"Status notification NOT sent for order {order_id}: "
-                    f"telefone inválido ({order.customer_phone!r})"
-                )
-            else:
-                logger.warning(
-                    f"Status notification NOT sent for order {order_id}: "
-                    f"loja sem conta de WhatsApp"
+                return
+
+            try:
+                template = AutoMessage.objects.get(
+                    company=profile,
+                    event_type=event_type,
+                    is_active=True
                 )
 
-        except AutoMessage.DoesNotExist:
-            # No AutoMessage template configured — fall back to the model's built-in
-            # notification (hardcoded defaults + optional store.metadata overrides).
-            # This preserves backward compatibility for stores that haven't set up templates.
-            logger.debug(f"No active template for event '{event_type}' on store {order.store_id}, using direct fallback")
-            order._trigger_status_whatsapp_notification(new_status)
-            enviado = True
+                status_display = {
+                    'received': '📬 Recebido',
+                    'processing': '⏳ Em Processamento',
+                    'confirmed': '✅ Confirmado',
+                    'paid': '💰 Pagamento Confirmado',
+                    'preparing': '👨‍🍳 Em preparo',
+                    'ready': '✨ Pronto',
+                    'shipped': '🚚 Enviado',
+                    'out_for_delivery': '🛵 Saiu para entrega',
+                    'delivered': '📦 Entregue',
+                    'completed': '✨ Finalizado',
+                    'cancelled': '❌ Cancelado',
+                    'refunded': '💳 Reembolsado',
+                }.get(new_status, new_status)
 
-    except Order.DoesNotExist:
-        logger.error(f"Order {order_id} not found")
-    except Exception as e:
-        logger.error(f"Error notifying status change: {str(e)}")
-        if not enviado:
-            # Nada saiu: libera a trava para a nova tentativa passar. Se a
-            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
-        raise self.retry(exc=e)
+                # Retirada e entrega não podem receber a mesma frase. O texto padrão
+                # de "pedido pronto" dizia "aguarde a chegada do entregador OU venha
+                # buscar" — contradição que, numa entrega, chegou dois segundos
+                # antes de "está a caminho" (CE-2608129257, 12/ago).
+                eh_retirada = order.delivery_method in ('pickup', 'digital')
+                proximo_passo = (
+                    'Pode vir buscar! 😊' if eh_retirada
+                    else 'Já vai sair para entrega.'
+                )
+
+                message = template.render_message({
+                    'customer_name': order.customer_name,
+                    'order_number': order.order_number,
+                    'order_status': status_display,
+                    'order_total': order.total,
+                    'proximo_passo': proximo_passo,
+                })
+
+                account = _get_account_for_profile(profile)
+
+                # O telefone vem do banco como "63999451408", SEM o código do país,
+                # e era assim que ia para a API — que precisa do 55. Resultado: nunca
+                # chegou uma notificação de status a ninguém (nem confirmado, nem em
+                # preparo, nem entregue, nem cancelado), enquanto o log dizia
+                # "sent". `send_text_message` NÃO normaliza; quem chama é que
+                # precisa. O outro caminho de notificação já fazia isso.
+                from apps.core.utils import normalize_phone_number
+                destino = normalize_phone_number(order.customer_phone or '')
+
+                if account and destino:
+                    from apps.whatsapp.services.message_service import MessageService
+                    MessageService().send_text_message(
+                        account_id=str(account.id),
+                        to=destino,
+                        text=message,
+                        metadata={
+                            'source': 'order_status_notification',
+                            'order_id': str(order_id),
+                            'order_number': order.order_number,
+                            'status': new_status,
+                            # Aviso automático não é resposta de atendente: não
+                            # tira o cliente da Fila humana.
+                            'automatico': True,
+                            'evento': event_type,
+                        },
+                    )
+                    envio.saiu()
+                    # O log só afirma o que aconteceu. Antes ele vinha solto depois
+                    # da chamada e dizia "sent" mesmo quando nada saía — mandou
+                    # procurar o problema no lugar errado por semanas.
+                    logger.info(f"Status notification sent for order {order_id}: {new_status}")
+                elif not destino:
+                    logger.warning(
+                        f"Status notification NOT sent for order {order_id}: "
+                        f"telefone inválido ({order.customer_phone!r})"
+                    )
+                else:
+                    logger.warning(
+                        f"Status notification NOT sent for order {order_id}: "
+                        f"loja sem conta de WhatsApp"
+                    )
+
+            except AutoMessage.DoesNotExist:
+                # No AutoMessage template configured — fall back to the model's built-in
+                # notification (hardcoded defaults + optional store.metadata overrides).
+                # This preserves backward compatibility for stores that haven't set up templates.
+                logger.debug(f"No active template for event '{event_type}' on store {order.store_id}, using direct fallback")
+                order._trigger_status_whatsapp_notification(new_status)
+                envio.saiu()
+
+        except Order.DoesNotExist:
+            logger.error(f"Order {order_id} not found")
+        except Exception as e:
+            logger.error(f"Error notifying status change: {str(e)}")
+            raise self.retry(exc=e)
 
 
 @shared_task
@@ -592,9 +593,9 @@ def request_feedback(order_id: str):
             logger.info(f"Order {order_id} not delivered, skipping feedback request")
             return
 
-        if _notifications_suppressed(order):
-            logger.info("Order %s has suppress_notifications — skipping feedback request", order_id)
-            return
+        # "Silenciar notificações" cala os STATUS do pedido, não o convite de
+        # avaliação (decisão do dono, 21/09): um é aviso de andamento, o outro
+        # é o pedido de opinião depois que acabou.
 
         profile = _get_store_profile(order.store)
         if not profile:
@@ -632,16 +633,22 @@ def request_feedback(order_id: str):
                 logger.warning("Order %s has no usable phone for feedback request", order_id)
                 return
 
-            MessageService().send_interactive_buttons(
-                account_id=str(account.id),
-                to=phone,
-                body_text=message,
-                buttons=[
+            # Pelo canal, como toda automática: é ele que aplica o modo
+            # humano (atendente na conversa cala o envio) e grava do mesmo
+            # jeito que as outras.
+            from apps.automation.mensageiro import enviar_botoes
+
+            enviar_botoes(
+                account,
+                phone,
+                message,
+                [
                     {'id': f'rating_5_{order.id}', 'title': '⭐⭐⭐⭐⭐'},
                     {'id': f'rating_3_{order.id}', 'title': '⭐⭐⭐'},
                     {'id': f'rating_1_{order.id}', 'title': '⭐'},
                 ],
-                metadata={
+                evento='feedback_request',
+                extra={
                     'source': 'feedback_request',
                     'order_id': str(order.id),
                     'order_number': order.order_number,
@@ -690,75 +697,57 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
     Diferente de send_cart_reminder que usa StoreCart do site.
     """
     from apps.automation.models import CustomerSession
-    from django.core.cache import cache
+    from apps.automation.mensageiro import enviar_botoes
 
-    idempotency_key = f"session_reminder:{session_id}:{reminder_type}"
-    if not cache.add(idempotency_key, 1, timeout=3600):
-        logger.info("Duplicate session_reminder for session %s type %s — skipped", session_id, reminder_type)
-        return
-
-    enviado = False
-    try:
-        session = CustomerSession.objects.select_related('company').get(id=session_id)
-
-        if session.status not in ('active', 'cart_created', 'checkout'):
-            logger.info("Session %s status=%s — skipping reminder", session_id, session.status)
+    with envio_unico(f"session_reminder:{session_id}:{reminder_type}", 3600) as envio:
+        if envio is None:
+            logger.info("Duplicate session_reminder for session %s type %s — skipped", session_id, reminder_type)
             return
 
-        notification_key = f'session_cart_reminder_{reminder_type}'
-        if session.was_notification_sent(notification_key):
-            return
+        try:
+            session = CustomerSession.objects.select_related('company').get(id=session_id)
 
-        phone_number = session.phone_number
-        if not phone_number:
-            return
+            if session.status not in ('active', 'cart_created', 'checkout'):
+                logger.info("Session %s status=%s — skipping reminder", session_id, session.status)
+                return
 
-        account = _get_account_for_profile(session.company)
-        if not account:
-            logger.warning("No WhatsApp account for company %s", session.company_id)
-            return
+            notification_key = f'session_cart_reminder_{reminder_type}'
+            if session.was_notification_sent(notification_key):
+                return
 
-        from apps.core.utils import primeiro_nome
-        first_name = primeiro_nome(session.customer_name, 'você')
+            phone_number = session.phone_number
+            if not phone_number:
+                return
 
-        if reminder_type == '5min':
-            body = (
-                f"Oi, {first_name}! 👋 Parece que você estava finalizando um pedido.\n\n"
-                f"Ainda quer continuar? Estou aqui pra ajudar! 😊"
+            account = _get_account_for_profile(session.company)
+            if not account:
+                logger.warning("No WhatsApp account for company %s", session.company_id)
+                return
+
+            from apps.core.utils import primeiro_nome
+            first_name = primeiro_nome(session.customer_name, 'você')
+
+            body = TEXTOS_DO_LEMBRETE_DE_SESSAO.get(
+                reminder_type, TEXTOS_DO_LEMBRETE_DE_SESSAO['2h'],
+            ).format(nome=first_name)
+
+            enviar_botoes(
+                account, phone_number, body,
+                [
+                    {'id': 'continue_checkout', 'title': '✅ Continuar Pedido'},
+                    {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
+                ],
+                evento='session_cart_reminder',
             )
-        elif reminder_type == '20min':
-            body = (
-                f"Oi, {first_name}! 👋 Você deixou itens no carrinho.\n\n"
-                f"Quer continuar seu pedido? 😊"
-            )
-        else:
-            body = (
-                f"Ei, {first_name}! 🥗 Seu carrinho ainda está te esperando.\n\n"
-                f"Posso te ajudar a finalizar o pedido?"
-            )
+            envio.saiu()
+            session.add_notification(notification_key)
+            logger.info("Session cart reminder (%s) sent to %s", reminder_type, mask_phone(phone_number))
 
-        from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-        WhatsAppAPIService(account).send_interactive_buttons(
-            to=phone_number,
-            body_text=body,
-            buttons=[
-                {'id': 'continue_checkout', 'title': '✅ Continuar Pedido'},
-                {'id': 'view_menu', 'title': '📋 Ver Cardápio'},
-            ],
-        )
-        enviado = True
-        session.add_notification(notification_key)
-        logger.info("Session cart reminder (%s) sent to %s", reminder_type, mask_phone(phone_number))
-
-    except CustomerSession.DoesNotExist:
-        logger.error("CustomerSession %s not found", session_id)
-    except Exception as exc:
-        logger.error("Error sending session cart reminder: %s", exc)
-        if not enviado:
-            # Nada saiu: libera a trava para a nova tentativa passar. Se a
-            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
-        raise self.retry(exc=exc)
+        except CustomerSession.DoesNotExist:
+            logger.error("CustomerSession %s not found", session_id)
+        except Exception as exc:
+            logger.error("Error sending session cart reminder: %s", exc)
+            raise self.retry(exc=exc)
 
 
 @shared_task(name='apps.whatsapp.tasks.check_abandoned_whatsapp_sessions')
@@ -873,41 +862,60 @@ def send_reengagement_message(self, phone_number: str, store_id: str):
     Envia mensagem de re-engajamento para clientes inativos (10-30 dias sem pedido).
     """
     from apps.stores.models import Store
-    from apps.whatsapp.services.whatsapp_api_service import WhatsAppAPIService
-    from django.core.cache import cache
+    from apps.automation import mensageiro
+    from apps.automation.mensageiro import enviar_botoes
 
-    idempotency_key = f"reengagement:{store_id}:{phone_number}"
-    if not cache.add(idempotency_key, 1, timeout=86400):  # 24h
-        return
-
-    enviado = False
-    try:
-        store = Store.objects.get(id=store_id)
-        profile = _get_store_profile(store)
-        if not profile:
-            return
-        account = _get_account_for_profile(profile)
-        if not account:
+    with envio_unico(f"reengagement:{store_id}:{phone_number}", 86400) as envio:
+        if envio is None:
+            logger.info("Duplicate reengagement for %s — skipped", mask_phone(phone_number))
             return
 
-        body_text, buttons = _reengagement_content(store, profile)
-        WhatsAppAPIService(account).send_interactive_buttons(
-            to=phone_number,
-            body_text=body_text,
-            buttons=buttons,
-        )
-        enviado = True
-        logger.info("Re-engagement sent to %s for store %s", mask_phone(phone_number), store_id)
+        try:
+            store = Store.objects.get(id=store_id)
+            profile = _get_store_profile(store)
+            if not profile:
+                return
+            account = _get_account_for_profile(profile)
+            if not account:
+                return
 
-    except Store.DoesNotExist:
-        logger.error("Store %s not found for re-engagement", store_id)
-    except Exception as exc:
-        logger.error("Error sending re-engagement: %s", exc)
-        if not enviado:
-            # Nada saiu: libera a trava para a nova tentativa passar. Se a
-            # mensagem já saiu, mantém — senão o cliente recebe duas vezes.
-            cache.delete(idempotency_key)
-        raise self.retry(exc=exc)
+            # Reengajamento é promoção: quem apertou "Parar promoções" não recebe.
+            # Só as campanhas consultavam a lista de saída (regra do dono, 19/09:
+            # nenhuma mensagem de marketing para quem marcou que não quer).
+            from apps.campaigns.services.contatos import chave_do_telefone
+            from apps.campaigns.services.optout import chaves_bloqueadas
+            if chave_do_telefone(phone_number) in chaves_bloqueadas(account):
+                logger.info("Re-engagement skipped (opt-out) for %s", mask_phone(phone_number))
+                return
+
+            # Texto livre só entra na janela de 24 h. O público do reengajamento
+            # — inativo há 10 a 30 dias — está quase sempre fora dela: em 21/09,
+            # 72 de 74 envios falharam com 131047, e cada falha ainda pedia retry.
+            # Gastar envio com quem não pode receber suja o painel e a taxa de
+            # erro. Alcançar essas pessoas exige modelo aprovado (decisão do dono).
+            if not mensageiro.janela.aberta(account, phone_number):
+                logger.info(
+                    "Re-engagement skipped (fora da janela de 24h) for %s",
+                    mask_phone(phone_number),
+                )
+                return
+
+            body_text, buttons = _reengagement_content(store, profile)
+            enviar_botoes(account, phone_number, body_text, buttons, evento='reengagement')
+            envio.saiu()
+            logger.info("Re-engagement sent to %s for store %s", mask_phone(phone_number), store_id)
+
+        except Store.DoesNotExist:
+            logger.error("Store %s not found for re-engagement", store_id)
+        except Exception as exc:
+            # 131047 não é falha passageira: repetir dá exatamente o mesmo erro.
+            if mensageiro.janela.e_janela_fechada(exc):
+                logger.info(
+                    "Re-engagement recusado pela janela de 24h para %s", mask_phone(phone_number),
+                )
+                return
+            logger.error("Error sending re-engagement: %s", exc)
+            raise self.retry(exc=exc)
 
 
 @shared_task(name='apps.whatsapp.tasks.check_inactive_customers')

@@ -39,6 +39,9 @@ class FiscalDocument(models.Model):
     provider = models.CharField(max_length=20, choices=Provider.choices)
     modelo = models.CharField(max_length=2, choices=Modelo.choices, default=Modelo.NFCE)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    # Nota de homologação não tem valor fiscal: não pode contar como "já
+    # emitida" quando a loja vira para produção.
+    ambiente = models.CharField(max_length=12, default='homologacao')
 
     # ref idempotente enviada ao provedor (re-emissão consulta em vez de duplicar)
     ref = models.CharField(max_length=64, unique=True)

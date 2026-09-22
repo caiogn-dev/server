@@ -201,9 +201,57 @@ def charges_setup_fee(plan_key):
     return bool(get_plan(plan_key).get('charges_setup_fee', False))
 
 
+#: Quantas mensalidades o anual cobra. "Paga 10, leva 12".
+#:
+#: Estava escrito em DOIS lugares — aqui multiplicado na mão e em
+#: `pix_billing_service.ANNUAL_MONTHS_CHARGED`. Preço em duas fontes já
+#: divergiu neste repo (11/ago: R$ 329 no código, R$ 249 no documento e nas
+#: mensagens de prospecção, ao mesmo tempo). `pix_billing_service` agora
+#: importa daqui.
+MESES_COBRADOS_NO_ANUAL = 10
+
+#: Ciclos que valem como compromisso de 12 meses. Quem se compromete não paga
+#: implantação; quem não se compromete, paga. A implantação custa 7,9 h
+#: medidas — dá-la sem contrapartida é regalar o item mais caro da oferta, que
+#: foi exatamente o erro do "monto seu cardápio de graça".
+CICLOS_COM_COMPROMISSO = frozenset({'annual'})
+
+
+def cobra_adesao(plan_key, billing_cycle=None) -> bool:
+    """A taxa de adesão entra nesta venda?
+
+    Falha FECHADA de propósito: ciclo desconhecido COBRA. O contrário regala
+    R$ 1.200 por um typo no nome do ciclo.
+    """
+    if not charges_setup_fee(plan_key):
+        return False
+    return str(billing_cycle or '') not in CICLOS_COM_COMPROMISSO
+
+
 def annual_price(plan_key):
     """Preço anual do plano (mensal × 10 — paga 10, leva 12). Decimal."""
-    return Decimal(str(get_plan(plan_key)['monthly_price'])) * 10
+    return Decimal(str(get_plan(plan_key)['monthly_price'])) * MESES_COBRADOS_NO_ANUAL
+
+
+def economia_do_anual(plan_key) -> dict:
+    """O que o lojista economiza fechando o ano — o número que vai para a tela.
+
+    Compara o caminho REAL de quem não se compromete (adesão + 12 mensalidades)
+    com o anual (10 mensalidades, implantação inclusa). Sem a adesão na conta,
+    a comparação esconde justamente o degrau que trava a venda.
+    """
+    plano = get_plan(plan_key)
+    mensal = Decimal(str(plano['monthly_price']))
+    adesao = Decimal(str(plano.get('setup_fee') or 0)) if charges_setup_fee(plan_key) else Decimal('0')
+    sem_compromisso = adesao + mensal * 12
+    anual = mensal * MESES_COBRADOS_NO_ANUAL
+    return {
+        'mensal': mensal,
+        'adesao': adesao,
+        'sem_compromisso': sem_compromisso,
+        'anual': anual,
+        'economia': sem_compromisso - anual,
+    }
 
 
 def public_catalog():
@@ -217,8 +265,14 @@ def public_catalog():
             'monthly_price': float(p['monthly_price']),
             'limits': p['limits'],
         }
+        # A oferta sai PRONTA daqui. Quando a tela montava o preço sozinha, o
+        # repo chegou a ter três fontes discordando ao mesmo tempo (11/ago).
+        conta = economia_do_anual(p['key'])
+        entry['adesao_no_mensal'] = float(conta['adesao'])
+        entry['adesao_no_anual'] = 0.0
         if p['monthly_price'] > 0:
             entry['annual_price'] = float(annual_price(p['key']))
+            entry['economia_no_anual'] = float(conta['economia'])
         out.append(entry)
     return out
 

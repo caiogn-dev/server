@@ -77,6 +77,26 @@ def test_motivo_COM_ACENTO_chega_na_mensagem_especifica():
     assert 'bloqueado' in msg.lower()
 
 
+
+def test_verifique_os_dados_do_cartao_tem_saida_propria():
+    """A recusa que o adquirente REALMENTE devolve quando o cartao nao existe.
+
+    Medido em 22/09 contra a API de producao, com o cartao de teste do
+    simulador batendo na adquirente de verdade:
+
+        acquirer_return_code : 1011
+        acquirer_message     : 'Verifique os dados do cartao'
+
+    Era a unica recusa ja observada em producao (7 de 7 orders) e caia no
+    texto generico, que manda o cliente "usar outro cartao" quando o problema
+    provavel e um digito errado no que ele acabou de preencher. Trocar de
+    cartao por causa de um typo e conselho errado.
+    """
+    msg = po.mensagem_de_recusa('Verifique os dados do cartão')
+    assert msg != po.RECUSA_GENERICA
+    assert 'confira' in msg.lower() or 'verifique' in msg.lower()
+
+
 #: Forma natural (acentuada) com que o adquirente manda cada motivo.
 #: A chave do dicionario e a versao ja normalizada; se o teste usasse a
 #: chave, ele nao passaria pela transliteracao e nao provaria nada.
@@ -88,6 +108,7 @@ MOTIVOS_COMO_O_ADQUIRENTE_MANDA = {
     'transacao nao permitida': 'Transação não permitida',
     'estabelecimento invalido': 'Estabelecimento inválido',
     'cartao bloqueado': 'Cartão bloqueado',
+    'verifique os dados do cartao': 'Verifique os dados do cartão',
 }
 
 
@@ -99,3 +120,58 @@ def test_toda_chave_do_dicionario_e_alcancavel_a_partir_do_texto_acentuado():
     )
     for chave, acentuado in MOTIVOS_COMO_O_ADQUIRENTE_MANDA.items():
         assert po.mensagem_de_recusa(acentuado) == po.MENSAGENS_DE_RECUSA[chave]
+
+
+def test_recusa_com_codigo_de_sucesso_do_adquirente_grita_no_log(caplog):
+    """Contradicao medida no sandbox em 22/09, cartao 4000000000000036:
+
+        charge.status           : 'failed'
+        tx.acquirer_return_code : '00'          <- codigo de SUCESSO
+        tx.acquirer_message     : 'Transacao capturada com sucesso'
+        charge.paid_at          : '2026-09-22T13:19:54Z'
+
+    O veredito continua `failed` de proposito: quem decide se houve dinheiro e
+    o Pagar.me, nao o texto do adquirente. Confiar no adquirente aqui seria
+    inventar receita — o mesmo erro do backfill que duplicou faturamento.
+
+    Mas ficar CALADO e o outro extremo: se isso acontecer em producao, a
+    adquirente capturou e o nosso lado diz que falhou. O cliente pagou e o
+    pedido morreu, e ninguem fica sabendo. O log e o unico jeito de achar.
+    """
+    import logging
+    corpo = {'id': 'or_x', 'status': 'failed', 'charges': [{
+        'status': 'failed', 'paid_at': '2026-09-22T13:19:54Z',
+        'last_transaction': {
+            'status': 'failed', 'acquirer_return_code': '00',
+            'acquirer_message': 'Transação capturada com sucesso',
+        },
+    }]}
+    with caplog.at_level(logging.ERROR, logger='apps.stores.services.pagarme_orders'):
+        ok, status, eid, _ = po.interpret(200, corpo)
+
+    assert (ok, status) == (False, 'failed'), 'o veredito NAO pode virar aprovado'
+    assert caplog.records, 'contradicao passou calada'
+    assert 'or_x' in caplog.text
+
+
+def test_recusa_normal_nao_polui_o_log():
+    """Recusa de verdade e rotina — nao pode virar ERROR e afogar o sinal."""
+    import logging
+    corpo = {'id': 'or_y', 'status': 'failed', 'charges': [{
+        'status': 'failed',
+        'last_transaction': {
+            'status': 'not_authorized', 'acquirer_return_code': '1011',
+            'acquirer_message': 'Verifique os dados do cartão',
+        },
+    }]}
+    import pytest as _p
+    logger = logging.getLogger('apps.stores.services.pagarme_orders')
+    registros = []
+    class Captura(logging.Handler):
+        def emit(self, r): registros.append(r)
+    h = Captura(); h.setLevel(logging.ERROR); logger.addHandler(h)
+    try:
+        po.interpret(200, corpo)
+    finally:
+        logger.removeHandler(h)
+    assert registros == []

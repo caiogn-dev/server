@@ -37,7 +37,7 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
     def _get_serializer(self, user, can_access=True):
         from apps.stores.api.serializers import StoreCategorySerializer
         request = _make_request(user)
-        with patch('apps.stores.api.serializers.user_can_access_store', return_value=can_access) as _mock:
+        with patch('apps.core.permissions.user_can_access_store', return_value=can_access) as _mock:
             ser = StoreCategorySerializer(context={'request': request})
             ser._mock_ucan = _mock
         return ser, _mock
@@ -49,7 +49,7 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreCategorySerializer(context={'request': request})
         store = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store') as mock_ucan:
+        with patch('apps.core.permissions.user_can_access_store') as mock_ucan:
             mock_ucan.return_value = True
             result = ser.validate_store(store)
         self.assertEqual(result, store)
@@ -63,7 +63,7 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreCategorySerializer(context={'request': request})
         store = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store', return_value=True):
+        with patch('apps.core.permissions.user_can_access_store', return_value=True):
             result = ser.validate_store(store)
         self.assertEqual(result, store)
 
@@ -75,7 +75,7 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreCategorySerializer(context={'request': request})
         store = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store', return_value=False):
+        with patch('apps.core.permissions.user_can_access_store', return_value=False):
             with self.assertRaises(drf_serializers.ValidationError):
                 ser.validate_store(store)
 
@@ -87,7 +87,7 @@ class TestStoreCategorySerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreCategorySerializer(context={'request': request})
         store = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store', return_value=False):
+        with patch('apps.core.permissions.user_can_access_store', return_value=False):
             try:
                 ser.validate_store(store)
                 self.fail("Deveria ter levantado ValidationError")
@@ -107,7 +107,7 @@ class TestStoreProductCreateSerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreProductCreateSerializer(context={'request': request})
         store = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store') as mock_ucan:
+        with patch('apps.core.permissions.user_can_access_store') as mock_ucan:
             mock_ucan.return_value = True
             result = ser.validate_store(store)
         self.assertEqual(result, store)
@@ -120,7 +120,7 @@ class TestStoreProductCreateSerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreProductCreateSerializer(context={'request': request})
         store = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store', return_value=True):
+        with patch('apps.core.permissions.user_can_access_store', return_value=True):
             result = ser.validate_store(store)
         self.assertEqual(result, store)
 
@@ -132,7 +132,7 @@ class TestStoreProductCreateSerializerValidateStore(SimpleTestCase):
         request = _make_request(user)
         ser = StoreProductCreateSerializer(context={'request': request})
         store_alheio = _make_store()
-        with patch('apps.stores.api.serializers.user_can_access_store', return_value=False):
+        with patch('apps.core.permissions.user_can_access_store', return_value=False):
             with self.assertRaises(drf_serializers.ValidationError):
                 ser.validate_store(store_alheio)
 

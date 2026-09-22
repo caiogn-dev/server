@@ -483,7 +483,8 @@ class StoreService:
             return result
         
         # Test by getting phone number info
-        url = f"https://graph.facebook.com/v18.0/{phone_number_id}"
+        from django.conf import settings
+        url = f"{settings.WHATSAPP_API_BASE_URL}/{phone_number_id}"
         headers = {'Authorization': f'Bearer {access_token}'}
         
         try:
@@ -553,7 +554,8 @@ class StoreService:
             return result
         
         # Test by getting account info
-        url = f"https://graph.facebook.com/v18.0/{instagram_id or 'me'}"
+        from django.conf import settings
+        url = f"{settings.WHATSAPP_API_BASE_URL}/{instagram_id or 'me'}"
         params = {'fields': 'id,username,name,account_type', 'access_token': access_token}
         
         try:

@@ -341,8 +341,13 @@ else:
     }
 
 # WhatsApp Business API
-WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v22.0')
+WHATSAPP_API_VERSION = os.environ.get('WHATSAPP_API_VERSION', 'v26.0')
 WHATSAPP_API_BASE_URL = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}"
+# Versão única da Graph API para o resto da Meta (Instagram, Messenger). Antes
+# cada arquivo fixava a sua (v18, v21, v22) e ninguém sabia qual valia.
+META_GRAPH_VERSION = os.environ.get('META_GRAPH_VERSION', WHATSAPP_API_VERSION)
+META_GRAPH_URL = f"https://graph.facebook.com/{META_GRAPH_VERSION}"
+INSTAGRAM_GRAPH_URL = f"https://graph.instagram.com/{META_GRAPH_VERSION}"
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = os.environ.get('WHATSAPP_WEBHOOK_VERIFY_TOKEN', '')
 
 # Quem recebe o aviso de queda da ponte de coexistência, ALÉM do dono da loja.
@@ -408,14 +413,27 @@ DEFAULT_WHATSAPP_STORE_SLUGS = [
 DEFAULT_WHATSAPP_STORE_METADATA_KEY = os.environ.get('DEFAULT_WHATSAPP_STORE_METADATA_KEY', 'whatsapp_account_id')
 
 # Instagram API Configuration
-# Approach: Messenger API for Instagram (Facebook Login)
 # Docs: https://developers.facebook.com/docs/instagram-platform/
-# Required Facebook App permissions:
-#   instagram_basic, instagram_manage_messages,
-#   pages_manage_metadata, pages_showlist, business_management
-# Token needed for /{page_id}/messages: Page Access Token (stored in InstagramAccount.page_access_token)
+#
+# O caminho ATUAL é o Login com Instagram (ver login_instagram.py), que pede só
+# instagram_business_basic / _manage_messages / _manage_comments.
+# O caminho antigo — Messenger API for Instagram via login do FACEBOOK — exigia
+# instagram_basic, instagram_manage_messages, pages_manage_metadata,
+# pages_show_list e business_management: TODAS recusadas pela Meta (2 App
+# Reviews, abr e mai/2026) e nenhuma delas é usada pelo código de hoje. Não
+# volte a pedi-las: pedir permissão que o app não demonstra derruba a análise.
+# As variáveis abaixo só servem a contas antigas que têm Página conectada, onde
+# o envio usa o Page Access Token em /{page_id}/messages.
 INSTAGRAM_APP_ID = os.environ.get('INSTAGRAM_APP_ID', '')
 INSTAGRAM_APP_SECRET = os.environ.get('INSTAGRAM_APP_SECRET', '')
+# Login com Instagram (Business Login): ID e chave do APP DO INSTAGRAM, que a
+# Meta mostra em Instagram > "API setup with Instagram login" — diferentes do
+# app do Facebook acima. Sem eles o painel mostra o Instagram como indisponível.
+INSTAGRAM_LOGIN_APP_ID = os.environ.get('INSTAGRAM_LOGIN_APP_ID', '')
+INSTAGRAM_LOGIN_APP_SECRET = os.environ.get('INSTAGRAM_LOGIN_APP_SECRET', '')
+INSTAGRAM_OAUTH_REDIRECT_URI = os.environ.get(
+    'INSTAGRAM_OAUTH_REDIRECT_URI', 'https://backend.pastita.com.br/ig/callback',
+)
 INSTAGRAM_WEBHOOK_VERIFY_TOKEN = os.environ.get('INSTAGRAM_WEBHOOK_VERIFY_TOKEN', '')
 
 # Maps
@@ -637,6 +655,8 @@ MERCADO_PAGO_RECIPIENT_NAME = os.environ.get('MERCADO_PAGO_RECIPIENT_NAME', '')
 BILLING_AUTOCHARGE_ENABLED = os.environ.get('BILLING_AUTOCHARGE_ENABLED', 'false').lower() == 'true'
 # URL do painel (back_url do checkout de assinatura). FRONTEND_URL é lista p/ CORS, não serve.
 BILLING_PANEL_URL = os.environ.get('BILLING_PANEL_URL', 'https://painel.cardapidex.com.br').rstrip('/')
+# Endereço do painel do lojista para voltar de logins externos (Instagram).
+PAINEL_URL = os.environ.get('PAINEL_URL', BILLING_PANEL_URL).rstrip('/')
 # Link na Bio: base do storefront (link "Cardápio") e base pública da página bio.cardapidex.com.br/<slug>.
 STOREFRONT_BASE_URL = os.environ.get('STOREFRONT_BASE_URL', 'https://cardapidex.com.br')
 BIO_BASE_URL = os.environ.get('BIO_BASE_URL', 'https://bio.cardapidex.com.br')

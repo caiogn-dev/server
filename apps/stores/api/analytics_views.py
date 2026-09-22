@@ -1234,3 +1234,22 @@ class ReviewsReportView(BaseAnalyticsView):
             'pilares': pilares,
             'pior_pilar': pior_pilar,
         })
+
+
+class CarrinhosAbandonadosView(BaseAnalyticsView):
+    """Quanto ficou em carrinhos que não viraram pedido (todos os planos).
+
+    19/09: R$ 7.782,96 em 51 carrinhos numa semana, invisíveis no painel.
+    """
+    plan_feature = ''
+
+    def get(self, request):
+        store, _, _, err = self.resolve(request)
+        if err:
+            return err
+        from apps.stores.services.carrinhos_abandonados import resumo
+        try:
+            dias = max(1, min(int(request.query_params.get('dias', 7)), 30))
+        except (TypeError, ValueError):
+            dias = 7
+        return Response(resumo(store, dias=dias))

@@ -432,6 +432,65 @@ class OpcoesDeAudienciaView(APIView):
         })
 
 
+class CamposDaAudienciaView(APIView):
+    """O vocabulário do construtor de público: campos e operadores.
+
+    A tela LÊ daqui em vez de manter a própria lista. Duas listas viram dois
+    vocabulários: a tela oferece "termina com" para um campo numérico, o
+    servidor recusa, e o lojista leva a culpa.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.campaigns.services import regras
+
+        return Response({'campos': regras.catalogo()})
+
+
+class PreviaPorRegraView(APIView):
+    """Quantas pessoas a regra alcança — antes de gastar envio.
+
+    Recebe a regra montada na tela (grupos de condições) e devolve o total, uma
+    amostra e a regra escrita em português para o lojista conferir. O mesmo
+    avaliador do disparo decide aqui: prévia e envio nunca discordam.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from apps.campaigns.services import regras, segmentos
+        from apps.campaigns.services.contatos import coletar_por_loja
+
+        regra = request.data.get('regra') or {}
+        pedidas = request.data.get('store_ids') or []
+        permitidas = set(accessible_store_ids(request.user))
+        store_ids = [s for s in permitidas if str(s) in {str(p) for p in pedidas}] \
+            if pedidas else list(permitidas)
+
+        if not store_ids:
+            return Response({
+                'total': 0, 'amostra': [], 'em_portugues': regras.em_portugues(regra),
+            })
+
+        contatos = coletar_por_loja(store_ids)
+        perfis = segmentos.perfis_por_telefone(store_ids)
+
+        escolhidos = [
+            {**contato, 'chave': chave}
+            for chave, contato in contatos.items()
+            if regras.bate(regra, perfis.get(chave))
+        ]
+
+        return Response({
+            'total': len(escolhidos),
+            'de': len(contatos),
+            'em_portugues': regras.em_portugues(regra),
+            'amostra': [
+                {'nome': c.get('nome') or '', 'telefone': mask_phone(c.get('telefone') or '')}
+                for c in escolhidos[:10]
+            ],
+        })
+
+
 @extend_schema_view(
     list=extend_schema(summary="List campaigns"),
     retrieve=extend_schema(summary="Get campaign details"),
@@ -739,6 +798,142 @@ class CampaignViewSet(viewsets.ModelViewSet):
         serializer = CampaignRecipientSerializer(recipients, many=True)
         return Response(serializer.data)
     
+    @extend_schema(summary="A campanha hora a hora: o que já saiu e o que ainda falta")
+    @action(detail=True, methods=['get'])
+    def faixas(self, request, pk=None):
+        """A campanha não sai toda no horário marcado — sai ao longo do dia.
+
+        Quem fecharia a janela de 24h antes do horário recebe antes. A tela
+        mostra as faixas para o dono acompanhar em vez de olhar um total parado.
+        """
+        from django.utils import timezone
+        from django.utils.dateparse import parse_datetime
+        from zoneinfo import ZoneInfo
+
+        from apps.campaigns.models import CampaignRecipient
+        from apps.campaigns.services.contatos import chave_do_telefone
+        from apps.campaigns.services.janela import (
+            fechamentos_por_chave, fuso_da_campanha, horario_alvo,
+        )
+
+        campaign = self.get_object()
+        # O alvo de cada pessoa nasce do HORÁRIO DA CAMPANHA — é a mesma conta
+        # que a rodada faz. `em` (opcional) serve só para simular outro horário.
+        referencia = (
+            parse_datetime(request.query_params.get('em') or '')
+            if request.query_params.get('simular') else None
+        ) or campaign.scheduled_at or timezone.now()
+        fuso = fuso_da_campanha(campaign)
+        zona = ZoneInfo(fuso)
+        fechamentos = fechamentos_por_chave([campaign.account_id])
+
+        faixas = {}
+        fora = 0
+        for destinatario in campaign.recipients.all():
+            alvo = horario_alvo(
+                fechamentos.get(chave_do_telefone(destinatario.phone_number)), referencia, fuso,
+            )
+            if alvo is None:
+                fora += 1
+                continue
+            hora = alvo.astimezone(zona).hour
+            faixa = faixas.setdefault(hora, {'hora': hora, 'enviadas': 0, 'aguardando': 0})
+            if destinatario.status in (
+                CampaignRecipient.RecipientStatus.SENT,
+                CampaignRecipient.RecipientStatus.DELIVERED,
+                CampaignRecipient.RecipientStatus.READ,
+            ):
+                faixa['enviadas'] += 1
+            elif destinatario.status in (
+                CampaignRecipient.RecipientStatus.PENDING,
+                CampaignRecipient.RecipientStatus.SENDING,
+            ):
+                faixa['aguardando'] += 1
+
+        ordenadas = [faixas[h] for h in sorted(faixas)]
+        proxima = next((f['hora'] for f in ordenadas if f['aguardando']), None)
+        return Response({
+            'faixas': ordenadas,
+            'proxima_faixa': proxima,
+            'fora_da_janela': fora,
+            'fuso': fuso,
+        })
+
+    @extend_schema(summary="Quem recebeu, quem falhou e quem ficou de fora — com o motivo")
+    @action(detail=True, methods=['get'])
+    def destinatarios(self, request, pk=None):
+        """Lista de pessoas da campanha com situação e motivo em português.
+
+        O relatório mostrava só contagens: os 352 pulados de 18/09 não tinham
+        motivo e as falhas eram o erro cru da Meta. `situacao` filtra a lista;
+        o resumo sempre conta a campanha inteira.
+        """
+        from apps.campaigns.services.janela import MARCA
+        from apps.campaigns.services.motivos import explicar
+        from apps.campaigns.services.optout import chaves_bloqueadas
+
+        campaign = self.get_object()
+        bloqueadas = chaves_bloqueadas(campaign.account)
+        so_janela = bool((campaign.audience_filters or {}).get(MARCA))
+        filtro = request.query_params.get('situacao')
+        resumo = {'leu': 0, 'recebeu': 0, 'falhou': 0, 'ficou_de_fora': 0, 'na_fila': 0}
+        pessoas = []
+        for r in campaign.recipients.order_by('contact_name', 'phone_number'):
+            e = explicar(r, bloqueadas=bloqueadas, so_janela=so_janela)
+            resumo[e['situacao']] = resumo.get(e['situacao'], 0) + 1
+            if filtro and e['situacao'] != filtro:
+                continue
+            pessoas.append({
+                'id': str(r.id),
+                'nome': r.contact_name or '',
+                'telefone': r.phone_number,
+                'situacao': e['situacao'],
+                'motivo': e['motivo'],
+                'quando': r.read_at or r.delivered_at or r.sent_at or r.failed_at or r.updated_at,
+            })
+        return Response({'resumo': resumo, 'pessoas': pessoas})
+
+    @extend_schema(summary="Quem pediu para parar de receber campanhas")
+    @action(detail=False, methods=['get'], url_path='saidas')
+    def saidas(self, request):
+        """Pedidos de saída ativos das contas que o usuário acessa.
+
+        Os pedidos de "Parar promoções" existiam desde 28/08 sem rota nenhuma:
+        o card do painel somava um contador por campanha e mostrava 0 com 11
+        pessoas fora da lista. Só leitura — sair foi escolha do cliente.
+        """
+        from apps.campaigns.models import CampaignOptOut
+        from apps.conversations.models import Conversation
+
+        account_ids = list(accessible_whatsapp_account_ids(request.user))
+        pedido = request.query_params.get('account_id')
+        if pedido:
+            account_ids = [a for a in account_ids if str(a) == str(pedido)]
+        saidas = list(
+            CampaignOptOut.objects
+            .filter(account_id__in=account_ids, revogado_em__isnull=True)
+            .order_by('-created_at')
+        )
+        nomes = dict(
+            Conversation.objects
+            .filter(account_id__in=account_ids, phone_number__in=[s.phone_number for s in saidas])
+            .exclude(contact_name='')
+            .values_list('phone_number', 'contact_name')
+        )
+        return Response({
+            'total': len(saidas),
+            'pessoas': [
+                {
+                    'nome': nomes.get(s.phone_number, ''),
+                    'telefone': s.phone_number,
+                    'quando': s.created_at,
+                    'origem': s.origem,
+                    'texto': s.texto_recebido,
+                }
+                for s in saidas
+            ],
+        })
+
     @extend_schema(summary="Add recipients to campaign", request=AddRecipientsSerializer)
     @action(detail=True, methods=['post'])
     def add_recipients(self, request, pk=None):
@@ -871,4 +1066,8 @@ class JanelaDaAudienciaView(APIView):
             except (TypeError, ValueError):
                 em = None
 
-        return Response(resumo_da_janela(contas, em=em))
+        # Sem o fuso da loja a prévia não consegue dizer QUEM é antecipado e em
+        # que faixa — e a tela mostraria um total que não bate com o envio.
+        from apps.campaigns.services.janela import fuso_de_conta
+
+        return Response(resumo_da_janela(contas, em=em, fuso=fuso_de_conta(contas)))

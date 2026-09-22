@@ -43,10 +43,15 @@ class ModeloVivoTests(SimpleTestCase):
                 self.assertEqual(modelo_vivo(lapide), MODELO_PADRAO)
 
     def test_modelo_vivo_passa_intacto(self):
-        self.assertEqual(
-            modelo_vivo('deepseek-ai/deepseek-v4-flash-0731'),
-            'deepseek-ai/deepseek-v4-flash-0731',
-        )
+        """Modelo que ESTÁ no catálogo do provedor passa sem troca.
+
+        O teste checava `deepseek-ai/deepseek-v4-flash-0731`, que saiu do
+        catálogo desde então (medido em 22/09: 82 modelos listados, sem ele).
+        Ele passou a cair no padrão — comportamento CERTO do módulo, com o
+        teste apontando para um nome que não existe mais. O padrão é, por
+        definição, um modelo que a gente mediu e escolheu.
+        """
+        self.assertEqual(modelo_vivo(MODELO_PADRAO), MODELO_PADRAO)
 
     def test_modelo_aposentado_cai_no_padrao(self):
         self.assertEqual(modelo_vivo('meta/llama-3.1-70b-instruct'), MODELO_PADRAO)

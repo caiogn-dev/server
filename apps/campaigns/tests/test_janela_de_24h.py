@@ -265,11 +265,13 @@ class CampanhaSoParaQuemEstaNaJanelaTest(TestCase):
 
 
 class OEnvioRecortaAntesDeDispararTest(TestCase):
-    """O recorte tem que estar LIGADO no início do envio.
+    """Campanha marcada NÃO é mais recortada no disparo — 19/set.
 
-    O serviço existir e ninguém chamar é o padrão que mais custou tempo neste
-    projeto: a indicação, a preferência de notificação e a trava do cashback
-    todas nasceram assim. Este teste liga o fio.
+    O recorte media a janela uma vez só, no começo, e descartava quem só
+    caberia mais tarde: em 18/set foram 352 de 380. Agora a decisão é por
+    pessoa, a cada rodada (`rodada_da_janela`), e quem está fora AGORA continua
+    pendente até o horário da campanha, porque pode responder no meio do dia e
+    reabrir a própria janela. O recorte segue valendo para campanha sem a marca.
     """
 
     def setUp(self):
@@ -295,7 +297,7 @@ class OEnvioRecortaAntesDeDispararTest(TestCase):
             last_customer_message_at=timezone.now() - timedelta(hours=2),
         )
 
-    def test_iniciar_a_campanha_pula_quem_saiu_da_janela(self):
+    def test_iniciar_a_campanha_nao_descarta_mais_quem_esta_fora_agora(self):
         from unittest.mock import patch
         from apps.campaigns.models import CampaignRecipient
         from apps.campaigns.services.campaign_service import CampaignService
@@ -312,9 +314,7 @@ class OEnvioRecortaAntesDeDispararTest(TestCase):
         self.dentro.refresh_from_db()
         self.fora.refresh_from_db()
 
-        # Quem estava fora foi PULADO — não tentado e não marcado como falha.
-        self.assertEqual(self.fora.status, CampaignRecipient.RecipientStatus.SKIPPED)
-        # Quem estava dentro seguiu para o envio. O disparo em si falha aqui
-        # (não há WhatsApp no teste); o que este teste garante é que ela NÃO
-        # foi cortada pelo recorte.
-        self.assertNotEqual(self.dentro.status, CampaignRecipient.RecipientStatus.SKIPPED)
+        # Ninguém é descartado no disparo: a rodada decide pessoa por pessoa,
+        # e só desiste de quem continua fora depois do horário da campanha.
+        self.assertEqual(self.fora.status, CampaignRecipient.RecipientStatus.PENDING)
+        self.assertEqual(self.dentro.status, CampaignRecipient.RecipientStatus.PENDING)

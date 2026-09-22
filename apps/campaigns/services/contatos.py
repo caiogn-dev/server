@@ -104,3 +104,47 @@ def contatos_para_resposta(contatos: Dict[str, dict], limite: int) -> list:
         {'phone': c['phone'], 'name': c['name'], 'source': c['source']}
         for c in list(contatos.values())[:limite]
     ]
+
+
+def coletar_por_loja(store_ids) -> Dict[str, dict]:
+    """Todos os contatos das lojas, deduplicados pela chave do telefone.
+
+    Pedido e conversa são as duas fontes que existem de verdade: quem comprou
+    e quem falou com a loja. A mescla usa `mesclar_contato`, a mesma do
+    caminho antigo — chave única, nome do melhor registro.
+
+    Existe para o construtor de público não reimplementar a coleta que a
+    `SystemContactsView` faz inline. (Ela ainda não usa esta função: o caminho
+    dela tem filtro por conta de WhatsApp e mais fontes; adotar é o próximo
+    passo, com teste de caracterização antes.)
+    """
+    from django.db.models import Max
+
+    from apps.conversations.models import Conversation
+    from apps.stores.models import StoreOrder
+
+    contatos: Dict[str, dict] = {}
+
+    pedidos = (
+        StoreOrder.objects
+        .filter(store_id__in=list(store_ids))
+        .exclude(customer_phone='')
+        .values('customer_phone', 'customer_name')
+        .annotate(ultimo=Max('created_at'))
+        .order_by('-ultimo')[:5000]
+    )
+    for pedido in pedidos:
+        mesclar_contato(contatos, pedido['customer_phone'], pedido['customer_name'], 'order')
+
+    conversas = (
+        Conversation.objects
+        .filter(account__stores__id__in=list(store_ids))
+        .exclude(phone_number='')
+        .values('phone_number', 'contact_name')
+        .annotate(ultimo=Max('updated_at'))
+        .order_by('-ultimo')[:5000]
+    )
+    for conversa in conversas:
+        mesclar_contato(contatos, conversa['phone_number'], conversa['contact_name'], 'conversation')
+
+    return contatos

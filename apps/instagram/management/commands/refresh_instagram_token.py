@@ -1,6 +1,7 @@
 """
 Management command to refresh Instagram Page Access Token
 """
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from apps.instagram.models import InstagramAccount
 import requests
@@ -43,7 +44,7 @@ class Command(BaseCommand):
             try:
                 # Exchange current token for a new long-lived token
                 response = requests.get(
-                    "https://graph.facebook.com/v21.0/oauth/access_token",
+                    f"{settings.META_GRAPH_URL}/oauth/access_token",
                     params={
                         "grant_type": "fb_exchange_token",
                         "client_id": account.app_id,

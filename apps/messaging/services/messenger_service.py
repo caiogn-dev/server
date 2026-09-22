@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class MessengerService:
     """Serviço base para Messenger Platform"""
     
-    BASE_URL = "https://graph.facebook.com/v18.0"
+    BASE_URL = settings.WHATSAPP_API_BASE_URL
     
     def __init__(self, account: MessengerAccount):
         self.account = account

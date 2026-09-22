@@ -627,6 +627,16 @@ class StoreOrder(BaseModel):
             logger.warning(f"[WhatsAppNotification] RETURN: No customer phone for order {self.order_number}")
             return
 
+        # "Silenciar notificações" vale para TODOS os status do pedido, por
+        # qualquer porta. Este caminho de reserva nunca olhou a flag: a loja
+        # silenciava a venda de balcão e o cliente recebia assim mesmo.
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        if metadata.get('suppress_notifications'):
+            logger.info(
+                f"[WhatsAppNotification] RETURN: pedido {self.order_number} silenciado pela loja"
+            )
+            return
+
         default_message_map = {
             self.OrderStatus.PROCESSING: "⏳ *Pedido em Processamento!*\n\nOlá {customer_name}!\n\nSeu pedido #{order_number} está sendo processado!",
             self.OrderStatus.CONFIRMED: "✅ *Pedido Confirmado!*\n\nOlá {customer_name}! Seu pedido #{order_number} foi confirmado e logo começaremos a preparar. 🙌",
@@ -722,17 +732,22 @@ class StoreOrder(BaseModel):
             logger.info(f"[WhatsAppNotification] → Sending message...")
             logger.info(f"  account_id={account.id}, to={phone}, store={self.store.slug if self.store else 'N/A'}")
             
-            message_service = MessageService()
-            message_service.send_text_message(
-                account_id=str(account.id),
-                to=phone,
-                text=message_text,
-                metadata={
+            # Pelo canal das automáticas: ele grava a mensagem, marca como
+            # automática (não tira o cliente da Fila humana) e aplica o modo
+            # humano — atendente na conversa cala o aviso.
+            from apps.automation.mensageiro import enviar_texto
+
+            enviar_texto(
+                account,
+                phone,
+                message_text,
+                evento=f'order_{new_status}',
+                extra={
                     'source': 'store_order_notification',
                     'order_id': str(self.id),
                     'order_number': self.order_number,
-                    'customer_name': self.customer_name or ''
-                }
+                    'customer_name': self.customer_name or '',
+                },
             )
             
             logger.info(f"[WhatsAppNotification] ✓ Message sent successfully!")

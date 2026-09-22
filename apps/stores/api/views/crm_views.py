@@ -12,13 +12,17 @@ from django.core.exceptions import PermissionDenied
 from django.db.models import Prefetch, Q
 from django.http import Http404
 from django.shortcuts import get_object_or_404
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, serializers, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from django.contrib.auth import get_user_model
+
 from apps.stores.models import Store, StoreTeamMember, StoreOrder, StoreCustomer
 from apps.stores.permissions import has_store_permission, get_member_role
+
+User = get_user_model()
 from apps.users.models import UnifiedUser, UserAddress
 from ..crm_serializers import (
     CustomerSearchSerializer,
@@ -184,15 +188,43 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
             is_active=True,
         ).select_related('user', 'invited_by')
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        """Convida por telefone e devolve o membro pronto para a lista.
+
+        Reconvidar NAO e erro: `unique_together` e (tenant, user) e DELETE e
+        soft delete, entao chamar de novo tem que reativar/atualizar o papel em
+        vez de estourar IntegrityError. Por isso 200 no reconvite e 201 so no
+        primeiro — a tela distingue "adicionado" de "atualizado" sem adivinhar.
+        """
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from apps.stores.services import equipe as servico_de_equipe
+
         store = self._get_store()
-        if not has_store_permission(self.request.user, store, 'team'):
+        if not has_store_permission(request.user, store, 'team'):
             raise PermissionDenied("Apenas o dono ou gerente pode gerenciar a equipe.")
-        serializer.save(
-            tenant=store,
-            invited_by=self.request.user,
-            created_by=self.request.user,
-        )
+
+        entrada = TeamMemberCreateSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        dados = entrada.validated_data
+
+        usuario = None
+        if dados.get('user_id'):
+            usuario = User.objects.filter(pk=dados['user_id']).first()
+
+        try:
+            membro, criado = servico_de_equipe.convidar(
+                store,
+                telefone=dados.get('phone', ''),
+                nome=dados.get('name', ''),
+                usuario=usuario,
+                papel=dados['role'],
+                convidado_por=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'phone': list(exc.messages)})
+
+        saida = TeamMemberSerializer(membro)
+        return Response(saida.data, status=201 if criado else 200)
 
     def perform_update(self, serializer):
         store = self._get_store()

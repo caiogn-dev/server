@@ -29,6 +29,7 @@ FISCAL_CFG = {
     'serie': '1',
     'habilitado': True,
     'uf': 'TO',
+    'inscricao_estadual': '29.572.414-5',
 }
 
 CNPJ_CLIENTE = '11222333000181'
@@ -122,6 +123,20 @@ class NfePayloadTests(APITestCase):
         self.assertEqual(payload['cpf_destinatario'], CPF_CLIENTE)
         self.assertNotIn('cnpj_destinatario', payload)
 
+    def test_todo_item_leva_o_grupo_de_pis_e_cofins(self):
+        """Rejeição real de 19/set: "NF-e sem grupo do PIS". No Simples o PIS e
+        a COFINS são recolhidos no DAS, mas o grupo tem que existir no item —
+        com CST sem valor (07 = operação isenta) ele sai sem base nem alíquota."""
+        item = self._payload()['itens'][0]
+        self.assertEqual(item['pis_situacao_tributaria'], '07')
+        self.assertEqual(item['cofins_situacao_tributaria'], '07')
+
+    def test_ie_do_emitente_vai_na_nota(self):
+        """A Focus marca `inscricao_estadual_emitente` como obrigatório e, ao
+        contrário do nome e do endereço do emitente, não completa pelo cadastro.
+        A IE já estava salva na config da loja — só não saía no JSON."""
+        self.assertEqual(self._payload()['inscricao_estadual_emitente'], '295724145')
+
     def test_inscricao_estadual_do_cliente_entra_quando_informada(self):
         self.order.metadata = {'cpf_nota': CNPJ_CLIENTE, 'ie_nota': '29.123.456-7'}
         self.order.save(update_fields=['metadata'])
@@ -140,7 +155,7 @@ class NfePayloadTests(APITestCase):
         payload = self._payload()
         soma = sum(i['valor_bruto'] for i in payload['itens'])
         pago = sum(p['valor_pagamento'] for p in payload['formas_pagamento'])
-        self.assertAlmostEqual(soma + payload['frete'] - payload['valor_desconto'], pago, places=2)
+        self.assertAlmostEqual(soma + payload['valor_frete'] - payload['valor_desconto'], pago, places=2)
 
 
 class EmitirNfePelaApiTests(APITestCase):

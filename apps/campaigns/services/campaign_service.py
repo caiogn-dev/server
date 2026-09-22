@@ -161,8 +161,16 @@ class CampaignService:
         # uma lista de 15h — e quem falou às 14h de ontem já saiu da janela às
         # 20h de hoje. Sem este recorte o envio falharia com 131047 por
         # destinatário, em silêncio, porque campanha registra erro e segue.
-        from .janela import recortar_para_a_janela
-        recorte = recortar_para_a_janela(campaign)
+        from .janela import MARCA, recortar_para_a_janela
+        marcada = bool((campaign.audience_filters or {}).get(MARCA))
+        # A decisão da campanha marcada passou a ser POR PESSOA, na hora dela
+        # (rodada da janela). Recortar aqui jogaria fora justamente quem só
+        # caberia mais tarde — o caso dos 352 pulados de 18/set.
+        recorte = {'pulados': 0, 'dentro': campaign.total_recipients} if marcada else recortar_para_a_janela(campaign)
+        if marcada and not campaign.scheduled_at:
+            # A rodada precisa de um horário de referência para calcular o alvo.
+            campaign.scheduled_at = timezone.now()
+            campaign.save(update_fields=['scheduled_at', 'updated_at'])
         if recorte['pulados']:
             campaign.total_recipients = recorte['dentro']
             campaign.save(update_fields=['total_recipients'])
@@ -176,7 +184,13 @@ class CampaignService:
         campaign.save(update_fields=['status', 'started_at', 'updated_at'])
         
         logger.info(f"Campaign {campaign_id} started with {campaign.total_recipients} recipients")
-        
+
+        if marcada:
+            # Quem envia campanha marcada é a rodada da janela (a cada minuto,
+            # o dia inteiro), pessoa por pessoa no horário dela. Mandar o lote
+            # aqui faria o disparo em bloco de novo — o erro de 18/set.
+            return campaign
+
         # Trigger async processing (with fallback if Celery unavailable)
         celery_available = self._check_celery_connection()
         
@@ -337,6 +351,102 @@ class CampaignService:
             'completed_at': campaign.completed_at.isoformat() if campaign.completed_at else None,
         }
     
+    #: A Meta recusa texto livre fora da janela de 24h com este código. Não é
+    #: falha técnica: é a janela do cliente que fechou entre o cálculo e o envio.
+    JANELA_FECHADA = '131047'
+
+    def enviar_para(self, campaign, recipient, message_service=None) -> bool:
+        """Manda a mensagem da campanha para UM destinatário. True = enviou.
+
+        É o único lugar que fala com a Meta em nome de uma campanha: o lote
+        antigo e a rodada da janela chamam este método. Os contadores sobem com
+        `F()` + `update_fields` porque os recibos de entrega chegam durante o
+        envio e um `save()` inteiro apagaria o que chegou no meio.
+        """
+        from django.db.models import F
+
+        message_service = message_service or MessageService()
+        try:
+            if campaign.template:
+                message = message_service.send_template_message(
+                    account_id=str(campaign.account.id),
+                    to=recipient.phone_number,
+                    template_name=campaign.template.name,
+                    language_code=campaign.template.language,
+                    components=self._build_template_components(
+                        campaign.message_content, recipient.variables,
+                    ),
+                )
+            else:
+                text = self._personalize_message(
+                    campaign.message_content.get('caption') or campaign.message_content.get('text', ''),
+                    {
+                        'nome': recipient.contact_name,
+                        'name': recipient.contact_name,
+                        **recipient.variables,
+                    },
+                )
+                media_type = (campaign.message_content.get('media_type') or '').lower()
+                media_url = campaign.message_content.get('media_url') or campaign.message_content.get('image_url')
+                metadata = {'source': 'campaign', 'campaign_id': str(campaign.id)}
+                if media_url and media_type == 'image':
+                    message = message_service.send_image(
+                        account_id=str(campaign.account.id), to=recipient.phone_number,
+                        image_url=media_url, caption=text or None, metadata=metadata,
+                    )
+                elif media_url and media_type == 'document':
+                    message = message_service.send_document(
+                        account_id=str(campaign.account.id), to=recipient.phone_number,
+                        document_url=media_url,
+                        filename=campaign.message_content.get('filename') or 'campanha.pdf',
+                        caption=text or None, metadata=metadata,
+                    )
+                else:
+                    message = message_service.send_text_message(
+                        account_id=str(campaign.account.id), to=recipient.phone_number,
+                        text=text, metadata=metadata,
+                    )
+        except Exception as exc:
+            from .motivos import JANELA_FECHOU_NO_ENVIO  # noqa: F401  (vocabulário dos motivos)
+
+            if self.JANELA_FECHADA in str(exc):
+                recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
+                recipient.error_code = self.JANELA_FECHADA
+                recipient.error_message = str(exc)
+                recipient.save(update_fields=['status', 'error_code', 'error_message', 'updated_at'])
+                logger.info(
+                    'Campanha %s: %s pulado — janela de 24h fechou durante o envio',
+                    campaign.id, mask_phone(recipient.phone_number),
+                )
+                return False
+
+            logger.error(
+                'Campanha %s: erro ao enviar para %s: %s',
+                campaign.id, mask_phone(recipient.phone_number), exc, exc_info=True,
+            )
+            recipient.status = CampaignRecipient.RecipientStatus.FAILED
+            recipient.failed_at = timezone.now()
+            recipient.error_message = str(exc)
+            recipient.save(update_fields=['status', 'failed_at', 'error_message', 'updated_at'])
+            Campaign.objects.filter(pk=campaign.pk).update(messages_failed=F('messages_failed') + 1)
+            campaign.messages_failed = (campaign.messages_failed or 0) + 1
+            return False
+
+        recipient.message_id = str(message.id)
+        recipient.whatsapp_message_id = message.whatsapp_message_id
+        recipient.status = CampaignRecipient.RecipientStatus.SENT
+        recipient.sent_at = timezone.now()
+        recipient.save(update_fields=[
+            'message_id', 'whatsapp_message_id', 'status', 'sent_at', 'updated_at',
+        ])
+        Campaign.objects.filter(pk=campaign.pk).update(messages_sent=F('messages_sent') + 1)
+        campaign.messages_sent = (campaign.messages_sent or 0) + 1
+        logger.info(
+            'Campanha %s: enviado para %s (%s)',
+            campaign.id, mask_phone(recipient.phone_number), message.whatsapp_message_id,
+        )
+        return True
+
     def process_campaign_batch(
         self,
         campaign_id: str,
@@ -376,6 +486,7 @@ class CampaignService:
         # depois. Consultar só na montagem deixaria essa janela aberta.
         from .contatos import chave_do_telefone
         from .optout import chaves_bloqueadas
+        from .motivos import JANELA_FECHOU_NO_ENVIO, PEDIU_PARA_PARAR
         bloqueadas = chaves_bloqueadas(campaign.account)
 
         # Segunda camada para a janela de 24h: análogo ao opt-out.
@@ -404,7 +515,8 @@ class CampaignService:
                 # como falha faria a taxa de entrega mentir e sugeriria problema
                 # técnico onde houve decisão do cliente.
                 recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
-                recipient.save(update_fields=['status', 'updated_at'])
+                recipient.error_code = PEDIU_PARA_PARAR
+                recipient.save(update_fields=['status', 'error_code', 'updated_at'])
                 logger.info(
                     'Campanha %s: %s pulado por opt-out',
                     campaign_id, mask_phone(recipient.phone_number),
@@ -416,85 +528,17 @@ class CampaignService:
                 fecha_em = fechamentos.get(chave)
                 if fecha_em is None or fecha_em <= timezone.now():
                     recipient.status = CampaignRecipient.RecipientStatus.SKIPPED
-                    recipient.save(update_fields=['status', 'updated_at'])
+                    recipient.error_code = JANELA_FECHOU_NO_ENVIO
+                    recipient.save(update_fields=['status', 'error_code', 'updated_at'])
                     logger.info(
                         'Campanha %s: %s pulado — janela de 24h fechou durante o envio',
                         campaign_id, mask_phone(recipient.phone_number),
                     )
                     continue
 
-            try:
-                logger.debug("Sending message to %s", mask_phone(recipient.phone_number))
-                
-                # Send message
-                if campaign.template:
-                    message = message_service.send_template_message(
-                        account_id=str(campaign.account.id),
-                        to=recipient.phone_number,
-                        template_name=campaign.template.name,
-                        language_code=campaign.template.language,
-                        components=self._build_template_components(
-                            campaign.message_content,
-                            recipient.variables
-                        ),
-                    )
-                else:
-                    text = self._personalize_message(
-                        campaign.message_content.get('caption') or campaign.message_content.get('text', ''),
-                        {
-                            'nome': recipient.contact_name,
-                            'name': recipient.contact_name,
-                            **recipient.variables,
-                        }
-                    )
-                    media_type = (campaign.message_content.get('media_type') or '').lower()
-                    media_url = campaign.message_content.get('media_url') or campaign.message_content.get('image_url')
-                    if media_url and media_type == 'image':
-                        message = message_service.send_image(
-                            account_id=str(campaign.account.id),
-                            to=recipient.phone_number,
-                            image_url=media_url,
-                            caption=text or None,
-                            metadata={'source': 'campaign', 'campaign_id': str(campaign.id)},
-                        )
-                    elif media_url and media_type == 'document':
-                        message = message_service.send_document(
-                            account_id=str(campaign.account.id),
-                            to=recipient.phone_number,
-                            document_url=media_url,
-                            filename=campaign.message_content.get('filename') or 'campanha.pdf',
-                            caption=text or None,
-                            metadata={'source': 'campaign', 'campaign_id': str(campaign.id)},
-                        )
-                    else:
-                        message = message_service.send_text_message(
-                            account_id=str(campaign.account.id),
-                            to=recipient.phone_number,
-                            text=text,
-                            metadata={'source': 'campaign', 'campaign_id': str(campaign.id)},
-                        )
-                
-                recipient.message_id = str(message.id)
-                recipient.whatsapp_message_id = message.whatsapp_message_id
-                recipient.status = CampaignRecipient.RecipientStatus.SENT
-                recipient.sent_at = timezone.now()
-                recipient.save()
-                
-                campaign.messages_sent += 1
+            if self.enviar_para(campaign, recipient, message_service):
                 processed += 1
-                
-                logger.info("Campaign %s: Sent to %s (msg_id: %s)",
-                            campaign_id, mask_phone(recipient.phone_number), message.whatsapp_message_id)
-                
-            except Exception as e:
-                logger.error("Campaign %s: Error sending to %s: %s",
-                             campaign_id, mask_phone(recipient.phone_number), e, exc_info=True)
-                recipient.status = CampaignRecipient.RecipientStatus.FAILED
-                recipient.failed_at = timezone.now()
-                recipient.error_message = str(e)
-                recipient.save()
-                
-                campaign.messages_failed += 1
+            else:
                 failed += 1
         
         # Check if campaign is complete
