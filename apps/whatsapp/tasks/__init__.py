@@ -113,6 +113,20 @@ def process_webhook_event(self, event_id: str):
         release_lock(lock_name)
 
 
+def resposta_e_falha_da_ia(texto) -> bool:
+    """O que voltou do agente é o aviso de erro, e não uma resposta?
+
+    O grafo captura o erro do modelo por dentro e devolve
+    `MENSAGEM_DE_ERRO_DO_LLM` como se fosse resposta normal — então o
+    `except` de `send_agent_response` nunca era alcançado e o cliente recebia
+    a desculpa. Reconhecer o texto é o que liga a falha ao caminho que o dono
+    decidiu em 17/set: passa para o atendente.
+    """
+    from apps.agents.avisos import MENSAGEM_DE_ERRO_DO_LLM
+
+    return (texto or '').strip() == MENSAGEM_DE_ERRO_DO_LLM
+
+
 def _passar_para_atendente_por_falha_da_ia(message, erro):
     """A IA não respondeu: cala o bot, passa para humano e avisa o painel.
 
@@ -224,6 +238,17 @@ def process_message_with_agent(self, message_id: str):
             # para o atendente e o painel é avisado (decisão do dono, 17/set,
             # depois de o Francisco receber dois "desculpe" em 4 minutos).
             _passar_para_atendente_por_falha_da_ia(message, agent_error)
+            return
+
+        # A desculpa do LLM não é resposta: é falha com outra roupa. Sem esta
+        # checagem ela seguia como resposta normal e o cliente recebia "tive um
+        # probleminha" — 60 vezes em 30 dias, com a chave do modelo em 403.
+        if resposta_e_falha_da_ia(response_text):
+            logger.warning(
+                'Agente devolveu o aviso de erro do LLM; passando para atendente: %s',
+                message_id,
+            )
+            _passar_para_atendente_por_falha_da_ia(message, 'aviso de erro do LLM')
             return
 
         # Send response if we have one

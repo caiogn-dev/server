@@ -842,10 +842,24 @@ class WebhookService:
         """
         from apps.automation.services.context_service import AutomationContextService
 
-        # Mensagens de áudio: sem transcrição disponível, silêncio é melhor que
-        # "não entendi" — o cliente sabe que mandou um áudio, não precisa de eco.
-        if message.message_type == Message.MessageType.AUDIO:
-            logger.info('[pipeline] Áudio ignorado (sem transcrição) message_id=%s', message.id)
+        # EVENTOS QUE NÃO PEDEM RESPOSTA.
+        #
+        # Áudio: sem transcrição, silêncio é melhor que "não entendi" — o
+        # cliente sabe que mandou um áudio, não precisa de eco.
+        #
+        # Reação: é META-interação. Comenta uma mensagem, não pergunta nada.
+        # Em 21/09 o cliente reagiu com um emoji e o bot respondeu "Desculpa,
+        # tive um probleminha aqui. Pode repetir?" — porque a reação virava
+        # `text_body = '❤️'` e entrava no pipeline como se a pessoa tivesse
+        # digitado aquilo. Nenhum handler entende emoji solto, então caía no
+        # fallback de erro: o cliente toca num coraçãozinho e leva um pedido
+        # de desculpas.
+        SEM_RESPOSTA = (Message.MessageType.AUDIO, Message.MessageType.REACTION)
+        if message.message_type in SEM_RESPOSTA:
+            logger.info(
+                '[pipeline] %s não pede resposta — ignorado. message_id=%s',
+                message.message_type, message.id,
+            )
             return
 
         # "Parar promoções" precisa ser atendido ANTES do pipeline.
