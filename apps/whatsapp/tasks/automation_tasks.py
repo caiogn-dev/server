@@ -236,16 +236,19 @@ def check_pending_payments():
     if second_2h:
         logger.info("Scheduled second PIX reminders for %d orders", len(second_2h))
 
-    # Expirado: criado há mais de 24h
+    # Expirado: criado há mais de 24h — cancela sempre; notifica só uma vez.
+    # Busca id + metadata juntos para checar o lembrete no loop sem query extra,
+    # mas sem excluir da query: um crash entre o delay e o cancel_order deixaria
+    # o pedido pendente para sempre se usássemos exclude aqui.
     expired = list(
         base_qs.filter(
             created_at__lte=now - timedelta(hours=24),
-        ).exclude(metadata__has_key='payment_reminder_final_sent')
-        .values_list('id', flat=True)
+        ).values_list('id', 'metadata')
     )
     from apps.stores.services.order_service import OrderService
-    for oid in expired:
-        send_payment_reminder.delay(str(oid), 'final')
+    for oid, meta in expired:
+        if not (meta or {}).get('payment_reminder_final_sent'):
+            send_payment_reminder.delay(str(oid), 'final')
         # Pelo serviço, não por `.update()` cru: cancelar devolve estoque e cupom,
         # liquida o pagamento e dispara o aviso de cancelado (com trava). O
         # `.update()` pulava tudo isso e não gravava `cancelled_at`.

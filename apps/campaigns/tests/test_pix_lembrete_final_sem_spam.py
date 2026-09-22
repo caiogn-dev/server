@@ -1,19 +1,19 @@
-"""check_pending_payments deve excluir pedidos expirados com a chave correta.
+"""check_pending_payments — lembrete final e cancelamento de expirados.
 
-Raiz do bug (2026-09-22):
-
+Bug original (2026-09-22, fix v1):
   check_pending_payments  → exclude(metadata__has_key='payment_expired_notified')
   send_payment_reminder   → order.metadata[f'payment_reminder_{type}_sent'] = …
-                                                ↑ 'final' → 'payment_reminder_final_sent'
+  A chave 'payment_expired_notified' nunca era gravada; o exclude nunca pegava
+  nada e o cliente recebia spam do lembrete de expiração indefinidamente.
 
-A chave `payment_expired_notified` nunca é gravada em lugar nenhum do código.
-O `exclude` nunca pega nada, e todo pedido PIX com mais de 24 h fica no lote
-para sempre — gerando uma tarefa `send_payment_reminder('final')` a cada 10
-minutos. O `envio_unico` com TTL de 3600 s limita a 1 envio por hora, mas o
-cliente continua recebendo a notificação de expiração indefinidamente.
-
-O fix: trocar a chave do `exclude` para `payment_reminder_final_sent`, que é
-exatamente o que `send_payment_reminder` já grava para `reminder_type='final'`.
+Refinamento (Codex review, 2026-09-22, fix v2):
+  A query de expirados não deve usar .exclude(metadata__has_key=...) porque a
+  lista é usada tanto para notificar quanto para CANCELAR. Se o beat task
+  crashar após o delay mas antes do cancel_order, o pedido fica com
+  'payment_reminder_final_sent' mas sem cancelamento — e um exclude na query
+  o excluiria do próximo ciclo, deixando-o pendente para sempre.
+  Solução: buscar (id, metadata) na query, checar metadata no loop para decidir
+  se envia o lembrete, mas sempre chamar cancel_order.
 
 Estes testes são estáticos (lêem o arquivo fonte diretamente) para não depender
 de langchain_core ou outros módulos pesados que não estão no container de CI.
@@ -75,4 +75,34 @@ def test_chave_morta_ausente_em_todo_o_codigo():
     ]
     assert culpados == [], (
         f"'payment_expired_notified' ainda aparece em: {culpados}"
+    )
+
+
+def test_expired_query_nao_exclui_na_consulta():
+    """A query de expirados não deve ter .exclude(metadata__has_key='payment_reminder_final_sent').
+
+    Um exclude na query impediria o cancel_order para pedidos que já receberam
+    o lembrete — se o beat crashar entre o delay e o cancel_order, o pedido
+    ficaria pendente para sempre.
+    A checagem correta é dentro do loop via .get('payment_reminder_final_sent').
+    """
+    fonte = _fonte()
+    bad_pattern = "exclude(metadata__has_key='payment_reminder_final_sent')"
+    assert bad_pattern not in fonte, (
+        "A query de expirados não deve usar .exclude(metadata__has_key='payment_reminder_final_sent') "
+        "— isso bloquearia o cancel_order para pedidos onde o beat crashou após o lembrete. "
+        "Use a checagem dentro do loop."
+    )
+
+
+def test_expired_loop_busca_metadata_na_query():
+    """A query de expirados deve buscar 'metadata' junto com 'id'.
+
+    Isso garante que a checagem de lembrete é feita no loop (sem query extra
+    por pedido) e que o cancel_order é chamado independentemente.
+    """
+    fonte = _fonte()
+    assert "values_list('id', 'metadata')" in fonte, (
+        "A query de expirados deve usar values_list('id', 'metadata') para "
+        "checar o lembrete no loop sem excluir o pedido do caminho de cancelamento."
     )
