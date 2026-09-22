@@ -121,6 +121,10 @@ def cobrar(secret, public, numero, esperado, rotulo):
     print(f'  HTTP {code} -> ok={ok} status={status} id={oid}')
     if motivo:
         print(f'  motivo cru : {motivo!r}')
+    # `mensagem_de_recusa` so faz sentido quando houve recusa. Imprimi-la no
+    # caso aprovado faz o log dizer "nao foi autorizado" embaixo de uma
+    # transacao capturada — e quem le o log acredita no que esta escrito.
+    if motivo and status == 'failed':
         print(f'  para a tela: {pagarme_orders.mensagem_de_recusa(motivo)}')
 
     # 404 de token nunca e resultado de teste: e o teste nao tendo acontecido.

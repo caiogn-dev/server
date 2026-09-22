@@ -3,6 +3,7 @@
 Funções puras, sem Django e sem rede — no molde de `mp_orders.py`. Quem fala
 com o mundo é `create_order`; o resto é montagem e leitura de dicionário.
 """
+import logging
 import re
 import unicodedata
 import uuid
@@ -13,6 +14,11 @@ import requests
 #: A lista NAO mora aqui — mora no catalogo, que e o que o cardapio e o painel
 #: recebem por API. Repetir os valores neste arquivo criaria a segunda copia.
 from apps.stores.services.voucher import bandeiras
+
+logger = logging.getLogger(__name__)
+
+#: Codigos com que o adquirente diz "deu certo". Ver `_avisar_contradicao`.
+RETORNOS_DE_SUCESSO_DO_ADQUIRENTE = frozenset({'00', '0', '000'})
 
 BASE_URL = 'https://api.pagar.me/core/v5'
 ORDERS_URL = f'{BASE_URL}/orders'
@@ -180,6 +186,32 @@ def consultar_order(secret_key, order_id, timeout=15):
         return r.status_code, {}
 
 
+def _avisar_contradicao(external_id, charge, transacao, status_charge) -> None:
+    """Grita quando o adquirente diz que capturou e o Pagar.me diz que falhou.
+
+    Medido no sandbox em 22/09 (cartao 4000000000000036): `charge.status` era
+    'failed' com `acquirer_return_code='00'`, mensagem "Transacao capturada com
+    sucesso" e `paid_at` preenchido.
+
+    O veredito NAO muda: quem decide se entrou dinheiro e o Pagar.me. Trocar
+    isso por confiar no adquirente inventaria receita — o mesmo erro do
+    backfill que duplicou faturamento. Mas se acontecer em producao, a
+    adquirente capturou e o nosso lado diz que falhou: o cliente pagou e o
+    pedido morreu. Este log e o unico jeito de alguem descobrir.
+    """
+    if status_charge not in ('failed', 'not_authorized'):
+        return
+    retorno = str(transacao.get('acquirer_return_code') or '').strip()
+    if retorno not in RETORNOS_DE_SUCESSO_DO_ADQUIRENTE and not charge.get('paid_at'):
+        return
+    logger.error(
+        '[pagarme] CONTRADICAO em %s: charge=%s mas adquirente devolveu '
+        'codigo=%r mensagem=%r paid_at=%r. Conferir a mao se houve captura.',
+        external_id, status_charge, retorno,
+        transacao.get('acquirer_message'), charge.get('paid_at'),
+    )
+
+
 def interpret(status_code, body):
     """Normaliza a resposta -> (ok, status, external_id, motivo).
 
@@ -207,6 +239,7 @@ def interpret(status_code, body):
         return True, 'approved', external_id, motivo
     if status_charge in ('pending', 'processing', 'waiting_payment', 'analyzing'):
         return True, 'pending', external_id, motivo
+    _avisar_contradicao(external_id, primeira, transacao, status_charge)
     if status_charge in ('refunded', 'chargedback'):
         # Dinheiro que ENTROU e voltou — não é o mesmo caso de nunca ter sido
         # autorizado. Cair no 'failed' de baixo faria o handler gravar uma
