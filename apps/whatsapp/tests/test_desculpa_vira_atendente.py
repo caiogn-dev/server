@@ -64,3 +64,65 @@ def test_texto_que_so_fala_de_problema_nao_e_falha_da_ia():
     assert resposta_e_falha_da_ia(
         'Tive um problema pra gerar o link agora. 😕 Pode pagar na entrega?'
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# 22/09, segunda rodada: o guarda estava no lugar errado.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_send_agent_response_NUNCA_entrega_a_desculpa():
+    """O guarda mora no gargalo, não em cada caminho que chama o agente.
+
+    O fix da manhã de 22/09 protegeu `process_message_with_agent` — e o cliente
+    continuou recebendo a desculpa. Medido na conversa da Sarah Lorrany:
+
+        14:48:49  outbound  "Desculpa, tive um probleminha aqui..."
+        14:49:10  outbound  "Desculpa, tive um probleminha aqui..."
+        14:50:57  outbound  "Desculpa, tive um probleminha aqui..."
+
+    Porque quem enviou não foi aquela tarefa: foi o "Caminho B" de
+    `_dispatch_orchestrator_response`, que enfileirava
+    `orchestrator_response.content` sem olhar o que era. O caminho ATRASADO,
+    logo acima dele, já tinha exatamente esta checagem — o normal não.
+
+    Guardar caminho por caminho é uma corrida que se perde: eram três, e o
+    terceiro não existia quando os dois primeiros foram escritos.
+    `send_agent_response` é por onde TODA resposta automática sai, então é
+    onde a regra tem que morar.
+    """
+    from apps.whatsapp import tasks
+
+    with patch.object(tasks, 'MessageService', create=True) as _ms, \
+         patch('apps.whatsapp.services.MessageService') as servico, \
+         patch.object(tasks, '_passar_para_atendente_por_falha_da_ia') as escalar:
+        tasks.send_agent_response(
+            account_id='00000000-0000-0000-0000-000000000000',
+            to='5563999999999',
+            response_text=MENSAGEM_DE_ERRO_DO_LLM,
+            reply_to=None,
+            response_source='unified_agent',
+        )
+
+    assert not servico.return_value.send_text_message.called, (
+        'a desculpa foi entregue ao cliente'
+    )
+
+
+@pytest.mark.django_db
+def test_send_agent_response_entrega_resposta_de_verdade():
+    """O par do teste acima: o guarda não pode calar o bot que funciona."""
+    from apps.whatsapp import tasks
+
+    with patch('apps.whatsapp.services.MessageService') as servico:
+        tasks.send_agent_response(
+            account_id='00000000-0000-0000-0000-000000000000',
+            to='5563999999999',
+            response_text='Atendemos domingo das 11h às 15h 😊',
+            reply_to=None,
+            response_source='unified_agent',
+        )
+
+    assert servico.return_value.send_text_message.called, (
+        'resposta boa foi engolida pelo guarda'
+    )

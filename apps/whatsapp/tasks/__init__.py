@@ -331,7 +331,38 @@ def send_agent_response(
     """Send an automated WhatsApp response and persist its origin metadata."""
     from ..services import MessageService
     from ..models import Message
-    
+
+    # O aviso de erro do LLM NAO e resposta — e falha, e falha vai para o
+    # atendente (decisao do dono em 17/set).
+    #
+    # A checagem mora AQUI, e nao em quem chama, porque existem tres caminhos
+    # que produzem resposta do agente e todos desembocam nesta tarefa. De
+    # manha protegi so `process_message_with_agent`, e o cliente continuou
+    # recebendo a desculpa: quem enviava era o "Caminho B" de
+    # `_dispatch_orchestrator_response`. Medido na conversa da Sarah Lorrany,
+    # 22/09 — tres desculpas entre 14:48 e 14:51, uma delas depois de um
+    # atendente ja ter respondido.
+    #
+    # Guardar caminho por caminho e corrida que se perde: o terceiro caminho
+    # nao existia quando os dois primeiros foram escritos. No gargalo, o
+    # quarto tambem nasce protegido.
+    if resposta_e_falha_da_ia(response_text):
+        logger.warning(
+            'Aviso de erro do LLM barrado no envio (origem=%s, reply_to=%s); '
+            'passando para atendente', response_source, reply_to,
+        )
+        try:
+            mensagem = Message.objects.filter(
+                whatsapp_message_id=reply_to,
+            ).select_related('conversation').first() if reply_to else None
+            if mensagem is not None:
+                _passar_para_atendente_por_falha_da_ia(mensagem, 'aviso de erro do LLM')
+        except Exception:
+            # A falha da IA ja aconteceu; um erro no escalonamento nao pode
+            # virar exception que reenfileira a tarefa e tenta enviar de novo.
+            logger.warning('Falha ao escalar apos aviso de erro do LLM', exc_info=True)
+        return
+
     try:
         message_service = MessageService()
         # Ensure phone number has + prefix for E.164 format
