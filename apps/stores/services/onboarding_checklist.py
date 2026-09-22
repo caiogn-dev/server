@@ -40,7 +40,26 @@ def _whatsapp_conectado(store):
     segunda cópia de "como achar o WhatsApp da loja", e as duas divergiriam.
     """
     conta = store.get_whatsapp_account()
-    return bool(conta and conta.is_active)
+    if conta is not None and conta.is_active:
+        return True
+
+    # Loja grandfather segue no número digitado — decisão do dono em 22/09.
+    # A exigência de conectar existe para CLIENTE NOVO: é ela que faz a conta
+    # de mensagem da Meta ficar com quem vende. Loja pré-SaaS é atendida pelo
+    # próprio dono, no aparelho dele; exigir embedded signup ali seria criar
+    # trabalho sem destravar nada.
+    #
+    # `billing_exempt` já é a marca de "as regras do SaaS não valem aqui" e é
+    # o que `billing.is_billing_exempt()` usa. Uma segunda flag para o mesmo
+    # conceito criaria duas verdades sobre quem é legado.
+    #
+    # Isentar de conectar NÃO é isentar de ter WhatsApp: sem número nenhum o
+    # passo continua pendente.
+    from apps.stores import billing
+
+    if billing.is_billing_exempt(store):
+        return bool((store.whatsapp_number or '').strip())
+    return False
 
 
 def _recebe_pagamento(store):

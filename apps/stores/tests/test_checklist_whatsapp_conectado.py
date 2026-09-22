@@ -86,3 +86,42 @@ class ChecklistWhatsAppTests(TestCase):
         rotulo = _passo(self.store, 'whatsapp')['label'].lower()
         assert 'conectar' in rotulo or 'conecte' in rotulo
         assert 'informar' not in rotulo
+
+
+class LojaAntigaSegueNoManualTests(TestCase):
+    """Loja grandfather continua no número digitado — decisão do dono em 22/09.
+
+    A exigência de conectar a WABA existe para CLIENTE NOVO: é ela que faz a
+    conta de mensagem da Meta ficar com quem vende, e não com a plataforma.
+    Loja pré-SaaS é atendida pelo próprio dono, no aparelho dele; exigir
+    embedded signup ali seria criar trabalho sem destravar nada.
+
+    `billing_exempt` já é a marca de "as regras do SaaS não valem para esta
+    loja" e é o que `billing.is_billing_exempt()` usa. Inventar uma segunda
+    flag para o mesmo conceito criaria duas verdades sobre quem é legado.
+    """
+
+    def setUp(self):
+        self.dono = User.objects.create_user(
+            username='dono-velho', password='x', email='velho@real.com',
+        )
+
+    def _loja(self, slug, exempt):
+        return Store.objects.create(
+            name=slug, slug=slug, owner=self.dono, status='active',
+            billing_exempt=exempt, whatsapp_number='63999990000',
+        )
+
+    def test_loja_grandfather_cumpre_o_passo_so_com_o_numero(self):
+        assert _passo(self._loja('velha', True), 'whatsapp')['done'] is True
+
+    def test_cliente_novo_continua_tendo_que_conectar(self):
+        assert _passo(self._loja('nova', False), 'whatsapp')['done'] is False
+
+    def test_grandfather_SEM_numero_nenhum_nao_passa(self):
+        """Isentar de conectar não é isentar de ter WhatsApp."""
+        loja = self._loja('velha-sem', True)
+        loja.whatsapp_number = ''
+        loja.save(update_fields=['whatsapp_number'])
+
+        assert _passo(loja, 'whatsapp')['done'] is False
