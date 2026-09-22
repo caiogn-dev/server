@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from unittest.mock import patch
 
@@ -123,3 +124,60 @@ class PagarmeWebhookTests(APITestCase):
         from apps.webhooks import dispatcher
         self.assertIn('pagarme', dispatcher._PROVIDERS_REQUIRE_SIGNATURE)
         self.assertIn('pagarme', dispatcher.WebhookDispatcherView._handlers)
+
+    def test_webhook_autenticado_ATRAVESSA_o_dispatcher(self):
+        """O par do teste acima: provar que a chave certa ABRE a porta.
+
+        Medido em 22/09: `pagarme` esta em `_PROVIDERS_REQUIRE_SIGNATURE`
+        (fail-closed) e nao existia NENHUM `WebhookEndpoint` no banco de
+        producao. Sem o registro, `_verify_signature` devolve None e o
+        dispatcher responde 403 a TODO webhook — foi o que aconteceu com a
+        unica tentativa que o Pagar.me fez, em 12/set.
+
+        O teste antigo so afirmava que a porta estava trancada. Uma porta
+        trancada sem chave nenhuma passa nesse teste — e passou.
+        """
+        import base64
+        from apps.webhooks.models import WebhookEndpoint
+
+        WebhookEndpoint.objects.create(
+            name='Pagar.me', provider='pagarme', path='pagarme',
+            secret='usuario:senha', signature_header='Authorization',
+            handler_class='apps.webhooks.handlers.pagarme_handler.PagarmeHandler',
+            is_active=True,
+        )
+        cabecalho = 'Basic ' + base64.b64encode(b'usuario:senha').decode()
+
+        corpo_pago = {'id': 'or_1', 'status': 'paid', 'charges': [
+            {'status': 'paid', 'paid_at': '2026-09-22T13:00:00Z',
+             'last_transaction': {'status': 'captured'}},
+        ]}
+        with patch(CONSULTA, return_value=(200, corpo_pago)):
+            r = self.client.post(
+                '/webhooks/v1/pagarme/',
+                data=json.dumps(corpo(tipo='charge.paid')),
+                content_type='application/json',
+                HTTP_AUTHORIZATION=cabecalho,
+            )
+
+        self.assertEqual(r.status_code, 200, r.content[:300])
+        self.payment.refresh_from_db()
+        self.assertEqual(self.payment.status, StorePayment.PaymentStatus.COMPLETED)
+
+    def test_webhook_com_senha_errada_continua_barrado(self):
+        import base64
+        from apps.webhooks.models import WebhookEndpoint
+
+        WebhookEndpoint.objects.create(
+            name='Pagar.me', provider='pagarme', path='pagarme',
+            secret='usuario:senha', signature_header='Authorization',
+            handler_class='apps.webhooks.handlers.pagarme_handler.PagarmeHandler',
+            is_active=True,
+        )
+        r = self.client.post(
+            '/webhooks/v1/pagarme/',
+            data=json.dumps(corpo(tipo='charge.paid')),
+            content_type='application/json',
+            HTTP_AUTHORIZATION='Basic ' + base64.b64encode(b'usuario:errada').decode(),
+        )
+        self.assertEqual(r.status_code, 403)
