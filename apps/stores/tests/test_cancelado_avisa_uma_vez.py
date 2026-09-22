@@ -36,10 +36,10 @@ def pedido(db):
 @pytest.mark.django_db
 def test_cancelar_com_aviso_dispara_uma_notificacao_so(pedido, django_capture_on_commit_callbacks):
     with patch('apps.whatsapp.tasks.automation_tasks.notify_order_status_change.delay') as tarefa, \
-         patch.object(OrderService, '_send_status_notification') as envio_direto, \
          django_capture_on_commit_callbacks(execute=True):
         OrderService().cancel_order(pedido, reason='cliente desistiu', restore_stock=False, notify_customer=True)
 
-    envio_direto.assert_not_called()
+    # A segunda porta (`_send_status_notification`) foi apagada em 19/09.
+    assert not hasattr(OrderService, '_send_status_notification')
     chamadas_de_cancelado = [c for c in tarefa.call_args_list if c.args[1:] == ('cancelled',)]
     assert len(chamadas_de_cancelado) == 1

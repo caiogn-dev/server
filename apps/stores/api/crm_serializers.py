@@ -66,15 +66,33 @@ class TeamMemberSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
 
-class TeamMemberCreateSerializer(serializers.ModelSerializer):
-    """Criação/atualização de um membro da equipe."""
-    user_id = serializers.UUIDField()
+class TeamMemberCreateSerializer(serializers.Serializer):
+    """Criação/atualização de um membro da equipe — por TELEFONE.
 
-    class Meta:
-        model = StoreTeamMember
-        fields = ['user_id', 'role']
+    `user_id` era `UUIDField` e a chave do `User` e `AutoField`: toda criação
+    voltava 400 "Deve ser um UUID válido". O endpoint nunca conseguiu criar um
+    membro desde que nasceu, em junho. Agora e `IntegerField`, do tipo certo.
+
+    Mas o caminho normal e o telefone: o dono da loja nao sabe o id de
+    ninguem, e id nao aparece na tela do lojista. `user_id` fica so para quem
+    ja chamava a API assim.
+    """
+    phone = serializers.CharField(required=False, allow_blank=True)
+    name = serializers.CharField(required=False, allow_blank=True)
+    user_id = serializers.IntegerField(required=False)
+    role = serializers.ChoiceField(
+        choices=StoreTeamMember.Role.choices,
+        default=StoreTeamMember.Role.OPERATOR,
+    )
 
     def validate_user_id(self, value):
         if not User.objects.filter(pk=value).exists():
             raise serializers.ValidationError("Usuário não encontrado.")
         return value
+
+    def validate(self, attrs):
+        if not attrs.get('phone') and not attrs.get('user_id'):
+            raise serializers.ValidationError(
+                {'phone': ['Informe o telefone do colaborador, com DDD.']}
+            )
+        return attrs

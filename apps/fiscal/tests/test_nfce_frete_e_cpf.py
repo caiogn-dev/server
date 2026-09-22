@@ -68,14 +68,14 @@ class PayloadFechaComTotalTests(APITestCase):
         return build_nfce_payload(self.order, get_fiscal_config(self.store))
 
     def test_frete_entra_no_payload(self):
-        self.assertEqual(self._payload()['frete'], 9.0)
+        self.assertEqual(self._payload()['valor_frete'], 9.0)
 
     def test_soma_dos_itens_mais_frete_bate_com_o_pagamento(self):
         payload = self._payload()
         soma_itens = sum(i['valor_bruto'] for i in payload['itens'])
         pago = sum(p['valor_pagamento'] for p in payload['formas_pagamento'])
         self.assertAlmostEqual(
-            soma_itens + payload.get('frete', 0.0) - payload.get('valor_desconto', 0.0),
+            soma_itens + payload.get('valor_frete', 0.0) - payload.get('valor_desconto', 0.0),
             pago, places=2,
         )
 
@@ -84,7 +84,7 @@ class PayloadFechaComTotalTests(APITestCase):
         self.order.total = Decimal('40.00')
         self.order.delivery_method = 'pickup'
         self.order.save(update_fields=['delivery_fee', 'total', 'delivery_method'])
-        self.assertNotIn('frete', self._payload())
+        self.assertNotIn('valor_frete', self._payload())
 
     def test_desconto_mantem_a_conta_fechada(self):
         self.order.discount = Decimal('5.00')
@@ -94,7 +94,7 @@ class PayloadFechaComTotalTests(APITestCase):
         soma_itens = sum(i['valor_bruto'] for i in payload['itens'])
         pago = sum(p['valor_pagamento'] for p in payload['formas_pagamento'])
         self.assertEqual(payload['valor_desconto'], 5.0)
-        self.assertAlmostEqual(soma_itens + payload['frete'] - payload['valor_desconto'], pago, places=2)
+        self.assertAlmostEqual(soma_itens + payload['valor_frete'] - payload['valor_desconto'], pago, places=2)
 
 
 class CpfDoConsumidorTests(APITestCase):

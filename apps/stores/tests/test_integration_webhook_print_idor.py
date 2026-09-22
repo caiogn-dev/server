@@ -215,20 +215,26 @@ class NoIsStaffInValidateStoreTest(SimpleTestCase):
     def test_integration_validate_store_sem_bypass_de_conta(self):
         """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         src = self._get_validate_store_blocks('StoreIntegrationCreateSerializer')
-        self.assertIn('user_can_access_store', src)
+        # A trava virou uma só (apps/core/serializers.py) em 21/09: o que o
+        # serializer precisa provar é que DELEGA para ela, sem atalho de conta.
+        self.assertIn('checar_loja_do_usuario', src)
         self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)
 
     def test_webhook_validate_store_sem_bypass_de_conta(self):
         """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         src = self._get_validate_store_blocks('StoreWebhookSerializer')
-        self.assertIn('user_can_access_store', src)
+        # A trava virou uma só (apps/core/serializers.py) em 21/09: o que o
+        # serializer precisa provar é que DELEGA para ela, sem atalho de conta.
+        self.assertIn('checar_loja_do_usuario', src)
         self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)
 
     def test_print_agent_validate_store_sem_bypass_de_conta(self):
         """16/set: superuser deixou de ser chave-mestra. Acesso vem de vínculo."""
         src = self._get_validate_store_blocks('StorePrintAgentCreateSerializer')
-        self.assertIn('user_can_access_store', src)
+        # A trava virou uma só (apps/core/serializers.py) em 21/09: o que o
+        # serializer precisa provar é que DELEGA para ela, sem atalho de conta.
+        self.assertIn('checar_loja_do_usuario', src)
         self.assertNotIn('is_superuser', src)
         self.assertNotIn('is_staff', src)

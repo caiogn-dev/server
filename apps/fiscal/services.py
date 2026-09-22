@@ -22,6 +22,7 @@ DEFAULT_NCM = '21069090'
 # Simples Nacional sem permissão de crédito — regime das lojas de hoje.
 DEFAULT_CSOSN = '102'
 DEFAULT_CFOP = '5102'
+DEFAULT_PIS_COFINS_CST = '07'
 
 
 def get_fiscal_config(store) -> dict:
@@ -56,6 +57,16 @@ def _cnpj_emitente(config: dict) -> str:
     return cnpj
 
 
+def _emitente(config: dict) -> dict:
+    """Documentos do emitente. Nome e endereço a Focus completa pelo cadastro
+    da empresa; a IE ela marca obrigatória e NÃO completa."""
+    dados = {'cnpj_emitente': _cnpj_emitente(config)}
+    ie = _digits(str(config.get('inscricao_estadual') or ''))
+    if ie:
+        dados['inscricao_estadual_emitente'] = ie
+    return dados
+
+
 def _itens(order, config: dict, cfop: str) -> list[dict]:
     itens = []
     for idx, item in enumerate(order.items.select_related('product').all(), start=1):
@@ -78,19 +89,42 @@ def _itens(order, config: dict, cfop: str) -> list[dict]:
             # Simples Nacional: CSOSN 102 (sem permissão de crédito)
             'icms_situacao_tributaria': config.get('csosn') or DEFAULT_CSOSN,
             'icms_origem': 0,
+            # NF-e sem estes grupos é rejeitada. No Simples o PIS/COFINS sai no
+            # DAS; CST 07 (isenta) leva o grupo sem base nem alíquota.
+            'pis_situacao_tributaria': DEFAULT_PIS_COFINS_CST,
+            'cofins_situacao_tributaria': DEFAULT_PIS_COFINS_CST,
             'valor_bruto': float(item.subtotal),
         })
     return itens
 
 
+# tPag da SEFAZ por método do pedido. O que não tem código próprio vai como
+# 99 COM descrição — 99 sem `descricao_pagamento` é rejeição. `card` e `link`
+# não dizem se foi crédito ou débito, e `voucher` não diz se VR ou VA: chutar
+# o código seria declarar errado.
+FORMA_PAGAMENTO = {
+    'cash': ('01', ''),
+    'credit_card': ('03', ''),
+    'debit_card': ('04', ''),
+    'pix': ('17', ''),
+    'card': ('99', 'Cartao'),
+    'link': ('99', 'Link de pagamento'),
+    'voucher': ('99', 'Vale refeicao/alimentacao'),
+    'voucher_link': ('99', 'Vale refeicao/alimentacao'),
+}
+CARTAO = {'03', '04'}
+
+
 def _formas_pagamento(order) -> list[dict]:
-    payment_map = {
-        'cash': '01', 'credit_card': '03', 'debit_card': '04', 'pix': '17',
-    }
-    return [{
-        'forma_pagamento': payment_map.get(order.payment_method or '', '99'),
-        'valor_pagamento': float(order.total),
-    }]
+    codigo, descricao = FORMA_PAGAMENTO.get(order.payment_method or '', ('99', 'Outros'))
+    pagamento = {'forma_pagamento': codigo, 'valor_pagamento': float(order.total)}
+    if codigo == '99':
+        pagamento['descricao_pagamento'] = descricao
+    if codigo in CARTAO:
+        # Maquininha não integrada ao sistema: 2 dispensa credenciadora e
+        # número de autorização, que a loja não tem como informar.
+        pagamento['tipo_integracao'] = 2
+    return [pagamento]
 
 
 def _agora_para_a_sefaz() -> str:
@@ -120,7 +154,9 @@ def _aplicar_desconto_e_frete(payload: dict, order) -> None:
     if order.discount and Decimal(order.discount) > 0:
         payload['valor_desconto'] = float(order.discount)
     if order.delivery_fee and Decimal(order.delivery_fee) > 0:
-        payload['frete'] = float(order.delivery_fee)
+        # `valor_frete` é o nome na Focus; `frete` era ignorado e a soma dos
+        # itens ficava menor que o pagamento em todo pedido com taxa.
+        payload['valor_frete'] = float(order.delivery_fee)
         payload['modalidade_frete'] = 0  # por conta do emitente
     # Acréscimo do vale e acréscimo manual do painel são "outras despesas"
     # (vOutro) para a SEFAZ. Fora daqui, o cliente pagou R$ 55 e a nota somava
@@ -204,7 +240,7 @@ def build_nfce_payload(order, config: dict) -> dict:
     """Monta o JSON de NFC-e (modelo 65) no formato Focus NFe (que espelha os
     campos SEFAZ, então o provider sefaz reaproveita o mesmo payload)."""
     payload = {
-        'cnpj_emitente': _cnpj_emitente(config),
+        **_emitente(config),
         'data_emissao': _agora_para_a_sefaz(),
         'indicador_inscricao_estadual_destinatario': '9',
         'modalidade_frete': 9,
@@ -263,7 +299,7 @@ def build_nfe_payload(order, config: dict) -> dict:
     documento e endereço completos a nota não existe. Falhar aqui, com a lista
     do que falta, é melhor do que traduzir código de rejeição da SEFAZ depois.
     """
-    cnpj = _cnpj_emitente(config)
+    emitente = _emitente(config)
 
     tipo, numero = classificar(documento_do_consumidor(order))
     if not tipo:
@@ -287,7 +323,7 @@ def build_nfe_payload(order, config: dict) -> dict:
     inscricao = _digits(str((order.metadata or {}).get('ie_nota') or ''))
 
     payload = {
-        'cnpj_emitente': cnpj,
+        **emitente,
         'data_emissao': _agora_para_a_sefaz(),
         'natureza_operacao': 'VENDA DE MERCADORIA',
         'tipo_documento': 1,          # saída
@@ -414,6 +450,18 @@ REF_POR_MODELO = {
 
 
 
+def ambiente_da_loja(store) -> str:
+    """Mesma regra do provider: só 'producao' explícito é produção."""
+    return 'producao' if get_fiscal_config(store).get('ambiente') == 'producao' else 'homologacao'
+
+
+def documentos_do_ambiente(order):
+    """Notas do pedido no ambiente em que a loja está AGORA. A de homologação
+    some da lista ao virar para produção — senão o painel diz "Nota emitida"
+    e esconde o botão da nota real."""
+    return FiscalDocument.objects.filter(order=order, ambiente=ambiente_da_loja(order.store))
+
+
 def _alocar_ref(order, modelo: str) -> str:
     """Ref da tentativa atual — nunca reaproveita ref de nota que não vingou.
 
@@ -436,8 +484,7 @@ def emit_nfce_for_order(order, modelo: str = FiscalDocument.Modelo.NFCE) -> Fisc
     if modelo not in REF_POR_MODELO:
         raise FiscalNotConfigured(f'Modelo de nota desconhecido: {modelo}')
 
-    existing = FiscalDocument.objects.filter(
-        order=order,
+    existing = documentos_do_ambiente(order).filter(
         modelo=modelo,
         status__in=[FiscalDocument.Status.AUTHORIZED, FiscalDocument.Status.PENDING],
     ).first()
@@ -469,6 +516,7 @@ def emit_nfce_for_order(order, modelo: str = FiscalDocument.Modelo.NFCE) -> Fisc
         modelo=modelo,
         ref=_alocar_ref(order, modelo),
         serie=str(config.get('serie', '1')),
+        ambiente=ambiente_da_loja(order.store),
     )
 
     emitir = provider.emit_nfe if modelo == FiscalDocument.Modelo.NFE else provider.emit_nfce

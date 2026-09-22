@@ -475,9 +475,9 @@ class EmailMarketingService:
                 'id': response.get('id'),
             }
         
-        except Exception as e:
-            logger.error(f"Failed to send email: {e}")
-            return {'success': False, 'error': str(e)}
+        except Exception:
+            logger.exception("Falha ao enviar e-mail: %s → %s", subject, to_email)
+            return {'success': False, 'error': 'Falha ao enviar e-mail.'}
     
     def send_coupon_email(
         self,

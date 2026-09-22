@@ -32,6 +32,97 @@ HEAD de `development`: `1d095557`. Gate: 2 PRs bot/ abertos (#368, #369) + #370 
 ---
 
 ### 2026-09-18 (execução 1)
+### 2026-09-20
+
+**Baseline de testes:** 16 testes SimpleTestCase (sem Docker/PostgreSQL) GREEN após o fix.
+HEAD de `development`: `fb261002`. Gate: 2 PRs bot/ abertos (#371, #372).
+
+**Bug encontrado e corrigido:** `test_serializer.py` quebrado por `META_GRAPH_URL` ausente [P2]
+
+- **Tipo:** P2 — Regressão de infraestrutura de testes: `django.setup()` falhava com `AttributeError`
+  para qualquer teste usando `config.settings.test_serializer`, impedindo toda a suíte unitária.
+- **Contexto:** Commit `e71f2752` (chore: versão única da Graph API, 2026-09-19) mudou
+  `InstagramAPI.BASE_URL` de string fixa `"https://graph.facebook.com/v22.0"` para
+  `settings.META_GRAPH_URL`. O novo atributo foi adicionado a `config/settings/base.py` mas
+  **não** a `config/settings/test_serializer.py` (que não herda de base). Como `BASE_URL` é
+  avaliado no corpo da classe na importação do módulo, `admin.py` do app instagram carregava
+  `InstagramAPI` durante o `django.setup()` e lançava `AttributeError` antes de qualquer teste.
+- **Arquivo corrigido (1):** `config/settings/test_serializer.py`
+  - Adicionados `META_GRAPH_VERSION = 'v26.0'` e `META_GRAPH_URL = f'https://graph.facebook.com/...'`
+    espelhando `base.py`. Padrão idêntico ao `ENCRYPTION_KEY` já existente.
+- **Testes (4 SimpleTestCase)** em `apps/instagram/tests/test_instagram_api_base_url.py` (RED→GREEN):
+  - `test_meta_graph_url_definida_nas_settings` — META_GRAPH_URL existe nas settings
+  - `test_base_url_bate_com_settings` — InstagramAPI.BASE_URL == settings.META_GRAPH_URL
+  - `test_base_url_aponta_para_graph_facebook` — URL contém 'graph.facebook.com'
+  - `test_base_url_sem_versao_hardcoded` — URL usa META_GRAPH_VERSION das settings
+- **PR:** `bot/server-2026-09-20-meta-graph-url-test-settings`
+
+**Varredura completa dos 20 commits de 2026-09-19 (não cobertos por sessões anteriores):**
+
+| Commit | Descrição | Segurança |
+|---|---|---|
+| `bea53fe1` | fix(atendimento): eco do Business conta como resposta | sem impacto de segurança |
+| `4aea2260` | feat(atendimento): fila humana — `accessible_whatsapp_account_ids` + `_restrict_to_store` | ✓ seguro |
+| `6235c154` | fix(marketing): reengajamento respeita opt-out | sem impacto de segurança |
+| `54ea63e9` | feat(campanha): destinatários — `get_object()` (tenant-scoped) + `accessible_whatsapp_account_ids` | ✓ seguro |
+| `e279b71c` | feat(mensageiro): histórico — `accessible_whatsapp_account_ids` + `_restrict_to_store` | ✓ seguro |
+| `6dc96707` | refactor(mensageiro): canal único — serviço interno sem vetor HTTP | ✓ seguro |
+| `55afbbaf` | feat(whatsapp): aviso de template — webhook interno | ✓ seguro |
+| `cb87467b` | feat(instagram): Login Instagram — state assinado, redirect de settings | ✓ seguro |
+| `e71f2752` | chore(meta): versão única Graph API — introduziu o bug acima | **CORRIGIDO** |
+| `af70f32a` | feat(pedido): cancel_reason — via `update_status` tenant-scoped | ✓ seguro |
+| `0e3f8c74` | feat(relatório): carrinhos abandonados — via `BaseExportView.get_store()` | ✓ seguro |
+| `3df0a8da`..`fb261002` | feat(campanha): faixas de horário — `get_object()` + testes próprios | ✓ seguro |
+
+**Marketing IDOR (backlog de 2026-07-22) verificado:** todos os três serializers
+(`EmailTemplate`, `EmailCampaign`, `EmailAutomation`) já têm `validate_store` com
+`user_can_access_store` — corrigidos em commit anterior, não pendência.
+### 2026-09-19
+
+**Baseline de testes:** 6 testes SimpleTestCase (análise estática, sem DB/Docker) — 6/6 OK após a correção.
+HEAD de `development`: `671c8e90`. Gate: 1 PR bot/ aberto (#371 fiscal NFC-e N+1).
+
+**Bug encontrado e corrigido:** `str(e)` de exceção do Resend exposto em respostas HTTP de e-mail marketing [P1]
+
+- **Tipo:** P1 — info-disclosure: exceções do Resend API (erros de autenticação, rate-limit, falhas de conexão)
+  podiam incluir detalhes como credenciais, URLs internas e parâmetros em `str(exc)`. Esses detalhes
+  chegavam ao cliente HTTP autenticado via três caminhos distintos.
+- **Vetores corrigidos (3):**
+  1. `apps/marketing/services/email_marketing_service.py` — `send_single_email()`:
+     `except Exception as e: return {'success': False, 'error': str(e)}`
+     → `except Exception: logger.exception(...); return {'success': False, 'error': 'Falha ao enviar e-mail.'}`
+     Este dict é devolvido por `send_coupon_email()` e `send_welcome_email()`, que o repassam para
+     `Response(result, 400)` na view. O Resend pode levantar `ResendAPIError` com mensagens como
+     `'API key is invalid: Bearer sk-re-...'` ou `ConnectionError` com host interno.
+  2. `apps/marketing/services/email_automation_service.py` — método de envio de automação:
+     Mesmo padrão. O dict com `str(e)` era devolvido por `email_automation_service.trigger()`,
+     chamado nas actions `trigger` e `test` de `EmailAutomationViewSet` (views.py:710, 750),
+     que fazem `return Response(result, 400)`.
+  3. `apps/marketing/api/views.py` — `EmailCampaignViewSet.send`:
+     `except Exception as e: return Response({'success': False, 'error': str(e)}, 500)`
+     → `except Exception: logger.exception(...); return Response({'success': False, 'error': 'Erro ao processar o envio da campanha.'}, 500)`
+- **Testes:** 6 `SimpleTestCase` em `apps/marketing/tests/test_email_str_e_disclosure.py` (RED→GREEN):
+  - `test_send_single_email_sem_str_e_em_return` — str(e) ausente em return de send_single_email
+  - `test_send_single_email_excecao_nao_vaza_detalhes` — except Exception não expõe str(e) após return
+  - `test_trigger_sem_str_e_em_return` — except Exception em automação não retorna str(e)
+  - `test_trigger_sem_error_str_e_literal` — padrão literal ausente em trigger()
+  - `test_action_send_sem_str_e_em_except` — action send não expõe str(e) em except
+  - `test_action_send_nao_tem_str_e_literal` — padrão literal ausente na action send
+- **PR:** `bot/server-2026-09-19-email-str-e-disclosure`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P1 | Merge dos PRs abertos (#371, #372) |
+| P2 | Testes de contrato para OTP WhatsApp e checkout (pendência crítica do CLAUDE.md) |
+| P1 | Merge do PR aberto (#371 fiscal N+1) e deste PR |
+| P2 | Testes de contrato para OTP WhatsApp e checkout payload (pendência crítica do CLAUDE.md) |
+| P2 | Namespace mobile/customer: `/api/v1/mobile/` existe — verificar contratos de reordenação |
+
+---
+
+### 2026-09-18
 
 **Baseline de testes:** 4 testes novos (unittest puro, sem Django/Docker) — 4/4 OK após a correção.
 HEAD de `development`: `1d095557`. Gate: 2 PRs bot/ abertos (#368, #369).

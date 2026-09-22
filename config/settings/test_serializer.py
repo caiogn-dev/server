@@ -114,6 +114,10 @@ CELERY_BROKER_URL = 'memory://'
 # Cripto para tokens de automação
 ENCRYPTION_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
+# Meta Graph API — espelha base.py; necessário porque instagram_api.py lê em corpo de classe
+META_GRAPH_VERSION = 'v26.0'
+META_GRAPH_URL = f'https://graph.facebook.com/{META_GRAPH_VERSION}'
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': True,

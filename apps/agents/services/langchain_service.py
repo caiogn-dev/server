@@ -161,9 +161,14 @@ class LangchainService:
         # Use ChatOpenAI for NVIDIA (OpenAI-compatible NIM API)
         elif provider == Agent.AgentProvider.NVIDIA:
             from langchain_openai import ChatOpenAI
+            from apps.agents.runtime.modelos import corpo_extra_do_modelo
             model_name = self.agent.model_name or getattr(
                 settings, 'NVIDIA_MODEL_NAME', 'nvidia/nemotron-3-super-120b-a12b'
             )
+            # A família nemotron-3 raciocina por padrão e, com max_tokens=700,
+            # gastava o orçamento inteiro pensando: em 17/09 o raciocínio em
+            # inglês chegou inteiro a uma cliente. Desligado: 1,8s em vez de
+            # 24,6s, resposta completa e tool calling intacto (medido 18/09).
             return ChatOpenAI(
                 model=model_name,
                 temperature=self.agent.temperature,
@@ -171,6 +176,7 @@ class LangchainService:
                 timeout=self.agent.timeout,
                 api_key=api_key,
                 base_url=base_url,
+                extra_body=corpo_extra_do_modelo(model_name) or None,
             )
         else:
             raise BaseAPIException(f"Provedor não suportado: {provider}")
@@ -849,22 +855,17 @@ class LangchainService:
             logger.error(f"[AGENT CONTEXT] Error loading store menu: {e}")
 
         # 3. Load business hours + pickup address
-        _DAY_PT = {
-            'monday': 'Segunda', 'tuesday': 'Terça', 'wednesday': 'Quarta',
-            'thursday': 'Quinta', 'friday': 'Sexta', 'saturday': 'Sábado', 'sunday': 'Domingo',
-        }
         try:
             if store and store.operating_hours:
-                all_days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-                hours_text = "\n⏰ HORÁRIO DE FUNCIONAMENTO:\n"
-                for day in all_days:
-                    day_pt = _DAY_PT.get(day, day.capitalize())
-                    day_hours = store.operating_hours.get(day)
-                    if day_hours:
-                        hours_text += f"• {day_pt}: {day_hours.get('open', '--:--')} às {day_hours.get('close', '--:--')}\n"
-                    else:
-                        hours_text += f"• {day_pt}: FECHADO\n"
-                context_parts.append(hours_text)
+                # Fonte única do "dia aberto" (a lista antiga ignorava dia
+                # desligado: sábado da Cê Saladas saía como 08:00 às 17:00) e
+                # o AGORA — modelo de linguagem não sabe que horas são.
+                from django.utils import timezone as _tz
+                from apps.agents.services.contexto_da_loja import texto_de_agora, texto_do_horario
+                context_parts.append('\n' + texto_do_horario(store))
+                agora = texto_de_agora(store, _tz.localtime())
+                if agora:
+                    context_parts.append(agora)
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
 
@@ -1957,6 +1958,7 @@ class LangchainService:
 
             # Agentic loop: invoke → handle tool calls → repeat (max 5 iterations)
             response_text = ""
+            finish_reason = None
             usage_acc = {}
             max_iterations = 2 if allowed_tools else 5
             for _iteration in range(max_iterations):
@@ -1970,6 +1972,7 @@ class LangchainService:
                     if isinstance(content, bytes):
                         content = content.decode('utf-8')
                     response_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                    finish_reason = (getattr(response, 'response_metadata', None) or {}).get('finish_reason')
                     break
 
                 # Execute each tool and feed results back
@@ -2005,9 +2008,23 @@ class LangchainService:
                     if isinstance(content, bytes):
                         content = content.decode('utf-8')
                     response_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                    finish_reason = (getattr(final_response, 'response_metadata', None) or {}).get('finish_reason')
                 except Exception as final_exc:
                     logger.error('[AGENT] Final text call also failed: %s', final_exc)
                     response_text = ""
+
+            # Segunda camada contra o 17/09: texto truncado ou com cara de
+            # raciocínio NÃO vai para o cliente. Levanta; quem chama trata como
+            # falha da IA e passa a conversa para o atendente.
+            from apps.agents.services.resposta_do_modelo import (
+                RespostaDoModeloInvalida, texto_para_o_cliente,
+            )
+            try:
+                if response_text:
+                    response_text = texto_para_o_cliente(response_text, finish_reason)
+            except RespostaDoModeloInvalida as invalida:
+                self._registrar_resposta_barrada(invalida, finish_reason, start_time)
+                raise
 
             logger.info(f"[AGENT RESPONSE] {response_text[:120]!r}")
 
@@ -2043,6 +2060,13 @@ class LangchainService:
                 model_name, input_tokens, output_tokens, total_tokens,
                 cost_brl, self.agent.id, session_id,
             )
+            # Uma linha por resposta com o que diz se o modelo está saudável:
+            # tempo e motivo de término. Um finish=length ou um tempo de 20s
+            # aparecem aqui ANTES de virarem reclamação de cliente.
+            logger.info(
+                "[LLM SAUDE] model=%s finish=%s segundos=%.1f out_tokens=%s agent=%s",
+                model_name, finish_reason, processing_time, output_tokens, self.agent.id,
+            )
 
             return {
                 'response': response_text,
@@ -2057,8 +2081,38 @@ class LangchainService:
             }
 
         except Exception as e:
+            from apps.agents.services.resposta_do_modelo import RespostaDoModeloInvalida
+            if isinstance(e, RespostaDoModeloInvalida):
+                # Tipo preservado: quem chama vê que foi a resposta, não a rede.
+                raise
             logger.error(f"Error processing message: {e}")
             raise BaseAPIException(f"Erro ao processar mensagem: {str(e)}")
+
+    def _registrar_resposta_barrada(self, invalida, finish_reason, start_time):
+        """Resposta do modelo recusada: log de erro + alerta no GlitchTip.
+
+        Até 17/09 nada disso existia — o vazamento só foi visto porque o dono
+        leu a conversa. Agora cada recusa vira evento no GlitchTip com modelo,
+        motivo e o começo do texto, e não depende de alguém ler o WhatsApp.
+        """
+        segundos = time.time() - start_time
+        logger.error(
+            "[LLM BARRADA] motivo=%s model=%s finish=%s segundos=%.1f agent=%s inicio=%r",
+            invalida.motivo, self.agent.model_name, finish_reason, segundos,
+            self.agent.id, (invalida.texto or '')[:200],
+        )
+        try:
+            import sentry_sdk
+            with sentry_sdk.push_scope() as escopo:
+                escopo.set_tag('llm_model', self.agent.model_name)
+                escopo.set_tag('llm_motivo', invalida.motivo)
+                escopo.set_extra('finish_reason', finish_reason)
+                escopo.set_extra('inicio_do_texto', (invalida.texto or '')[:500])
+                sentry_sdk.capture_message(
+                    f'Resposta do modelo barrada: {invalida.motivo}', level='error',
+                )
+        except Exception:  # noqa: BLE001 — alerta nunca derruba o atendimento
+            pass
 
     def get_conversation_history(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         """

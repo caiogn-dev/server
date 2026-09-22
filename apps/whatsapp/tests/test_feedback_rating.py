@@ -162,3 +162,37 @@ class FeedbackRatingTest(TestCase):
         result = self._click(f'rating_5_{other.id}')
         self.assertFalse(StoreReview.objects.filter(order=other).exists())
         self.assertTrue(result.response_text)
+
+
+class RegraDeQuemVaiProGoogleTest(FeedbackRatingTest):
+    """Decisão do dono (21/09): 4 ou 5 estrelas vão para o Google; 3 ou menos
+    vêm para o formulário da casa.
+
+    O formulário próprio existe para ENTENDER o que deu errado, e nota alta
+    não tem o que explicar. Já pedir nota pública a quem acabou de reclamar é
+    pedir uma nota ruim no Google.
+
+    Antes só o 5★ recebia o convite do Google: a regra estava escrita para o
+    número, não para a intenção — e a intenção é "cliente satisfeito".
+    """
+
+    def _com_google(self):
+        self.store.metadata['google_review_url'] = 'https://g.page/r/ABC/review'
+        self.store.save(update_fields=['metadata'])
+
+    def test_nota_4_tambem_vai_para_o_google(self):
+        self._com_google()
+
+        resultado = self._click(f'rating_4_{self.order.id}')
+
+        corpo = resultado.interactive_data.get('body', '')
+        self.assertIn('g.page/r/ABC/review', corpo)
+
+    def test_nota_3_vai_para_o_formulario_da_casa(self):
+        self._com_google()
+
+        resultado = self._click(f'rating_3_{self.order.id}')
+
+        texto = resultado.response_text or ''
+        self.assertNotIn('g.page', texto)
+        self.assertIn(str(self.order.access_token), texto)

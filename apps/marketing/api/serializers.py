@@ -2,6 +2,7 @@
 Marketing API serializers.
 """
 from rest_framework import serializers
+from apps.core.serializers import checar_loja_do_usuario
 from apps.marketing.models import (
     EmailTemplate, EmailCampaign, EmailRecipient, Subscriber,
     EmailAutomation, EmailAutomationLog
@@ -22,14 +23,9 @@ class EmailTemplateSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
     def validate_store(self, value):
-        request = self.context.get('request')
-        if request:
-            from apps.core.permissions import user_can_access_store
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada.')
-        return value
-
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
 class EmailTemplateListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for template lists."""
     
@@ -72,13 +68,9 @@ class EmailCampaignSerializer(serializers.ModelSerializer):
         ]
     
     def validate_store(self, value):
-        request = self.context.get('request')
-        if request:
-            from apps.core.permissions import user_can_access_store
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada.')
-        return value
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
     def validate(self, data):
         """Validate that either template or html_content is provided."""
         template = data.get('template')
@@ -206,14 +198,9 @@ class EmailAutomationSerializer(serializers.ModelSerializer):
         ]
 
     def validate_store(self, value):
-        request = self.context.get('request')
-        if request:
-            from apps.core.permissions import user_can_access_store
-            if not user_can_access_store(request.user, value):
-                raise serializers.ValidationError('Loja não encontrada.')
-        return value
-
-
+        """Loja de outro dono responde "não encontrada" — a trava é única,
+        em `apps.core.serializers`."""
+        return checar_loja_do_usuario(self.context.get('request'), value)
 class EmailAutomationListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for automation lists."""
     

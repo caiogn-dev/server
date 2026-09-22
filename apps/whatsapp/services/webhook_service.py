@@ -27,6 +27,7 @@ from apps.core.utils import (
 from apps.core.exceptions import WebhookValidationError
 from ..models import WhatsAppAccount, WebhookEvent, Message
 from ..repositories import WebhookEventRepository, WhatsAppAccountRepository
+from . import avisos_da_meta
 from .broadcast_service import get_broadcast_service
 # Trava distribuída: importada aqui em cima (e não dentro da função) para que
 # o teste consiga substituí-la. tasks/__init__ não importa services no topo,
@@ -190,6 +191,19 @@ class WebhookService:
                         events.append(event)
                     continue
 
+                # Template aprovado/recusado e qualidade do número: a Meta avisa
+                # a conta; aplicamos na hora e guardamos o aviso.
+                if change.get('field') in avisos_da_meta.CAMPOS:
+                    event = self._process_aviso_da_meta(
+                        field=change['field'],
+                        value=change.get('value', {}),
+                        waba_id=waba_id,
+                        headers=headers,
+                    )
+                    if event:
+                        events.append(event)
+                    continue
+
                 if change.get('field') != 'messages':
                     continue
                 
@@ -330,7 +344,13 @@ class WebhookService:
                 content=echo,
                 sent_at=dj_tz.now(),
             )
-            Conversation.objects.filter(pk=conversation.pk).update(last_message_at=message.created_at)
+            # `last_agent_message_at` também: é resposta nossa. Sem ele a fila
+            # humana via o cliente "esperando" depois de o dono já ter
+            # respondido pelo celular.
+            Conversation.objects.filter(pk=conversation.pk).update(
+                last_message_at=message.created_at,
+                last_agent_message_at=message.created_at,
+            )
 
             # Digitar no app do Business é assumir a conversa, igual ao painel.
             # Sem isto o bot respondia por cima do dono — foi o que aconteceu
@@ -601,6 +621,39 @@ class WebhookService:
             headers=headers,
         )
 
+    def _process_aviso_da_meta(
+        self,
+        field: str,
+        value: Dict[str, Any],
+        waba_id: Optional[str],
+        headers: Dict[str, str],
+    ) -> Optional[WebhookEvent]:
+        account = self._resolve_account(
+            phone_number_id=None,
+            display_phone=value.get('display_phone_number'),
+            waba_id=waba_id,
+        )
+        if not account:
+            logger.warning('%s de conta desconhecida', field, extra={'waba_id': waba_id})
+            return None
+
+        if field == avisos_da_meta.CAMPO_TEMPLATE:
+            avisos_da_meta.aplicar_template(account, value)
+        else:
+            avisos_da_meta.aplicar_qualidade(account, value)
+
+        # Tipo ACCOUNT_UPDATE: aviso sobre a conta, já aplicado aqui; o
+        # processamento posterior só o fecha.
+        return self.webhook_repo.create(
+            account=account,
+            event_id=generate_idempotency_key(
+                field, account.id, value.get('event') or '', str(timezone.now().timestamp())
+            ),
+            event_type=WebhookEvent.EventType.ACCOUNT_UPDATE,
+            payload={**value, 'field': field},
+            headers=headers,
+        )
+
     def get_pending_events(self, limit: int = 100) -> List[WebhookEvent]:
         """Get pending events for processing."""
         return list(self.webhook_repo.get_pending_events(limit))
@@ -789,10 +842,24 @@ class WebhookService:
         """
         from apps.automation.services.context_service import AutomationContextService
 
-        # Mensagens de áudio: sem transcrição disponível, silêncio é melhor que
-        # "não entendi" — o cliente sabe que mandou um áudio, não precisa de eco.
-        if message.message_type == Message.MessageType.AUDIO:
-            logger.info('[pipeline] Áudio ignorado (sem transcrição) message_id=%s', message.id)
+        # EVENTOS QUE NÃO PEDEM RESPOSTA.
+        #
+        # Áudio: sem transcrição, silêncio é melhor que "não entendi" — o
+        # cliente sabe que mandou um áudio, não precisa de eco.
+        #
+        # Reação: é META-interação. Comenta uma mensagem, não pergunta nada.
+        # Em 21/09 o cliente reagiu com um emoji e o bot respondeu "Desculpa,
+        # tive um probleminha aqui. Pode repetir?" — porque a reação virava
+        # `text_body = '❤️'` e entrava no pipeline como se a pessoa tivesse
+        # digitado aquilo. Nenhum handler entende emoji solto, então caía no
+        # fallback de erro: o cliente toca num coraçãozinho e leva um pedido
+        # de desculpas.
+        SEM_RESPOSTA = (Message.MessageType.AUDIO, Message.MessageType.REACTION)
+        if message.message_type in SEM_RESPOSTA:
+            logger.info(
+                '[pipeline] %s não pede resposta — ignorado. message_id=%s',
+                message.message_type, message.id,
+            )
             return
 
         # "Parar promoções" precisa ser atendido ANTES do pipeline.
@@ -1109,6 +1176,14 @@ class WebhookService:
         Retorna True quando a automação deve ser totalmente ignorada (sem resposta).
         """
         if not (message.conversation and message.conversation.mode == 'human'):
+            return False
+
+        # Decisão do dono (19/09): o modo humano vale até o fim do dia. Se o
+        # atendimento humano é de um dia anterior, a conversa volta ao bot e
+        # esta mensagem já é respondida por ele. Antes não havia volta: uma
+        # resposta pelo celular emudecia o bot com o cliente para sempre.
+        from apps.conversations.services.atendimento_humano import devolver_ao_bot_se_venceu
+        if devolver_ao_bot_se_venceu(message.conversation):
             return False
 
         # Clique em botão que o PRÓPRIO bot mandou não é "falar por cima" do

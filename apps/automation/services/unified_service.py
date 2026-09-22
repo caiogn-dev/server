@@ -821,6 +821,12 @@ class UnifiedService:
             interactive_reply=interactive_reply,
             location_data=location_data,
         )
+        # Cliente que manda "Olá" e "Bom dia" em seguida recebia duas saudações
+        # (e dois avisos de loja fechada). Uma vez a cada 10 min por conversa.
+        from apps.automation.services.sem_repeticao import ja_mandou_agora, tipo_repetivel
+        tipo = tipo_repetivel(resposta)
+        if tipo and self.conversation is not None and ja_mandou_agora(self.conversation.id, tipo):
+            resposta = self._suppressed(f'{tipo}_repetida')
         self._registrar_intencao(
             message_text=message_text,
             resposta=resposta,

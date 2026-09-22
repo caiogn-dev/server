@@ -413,6 +413,40 @@ class ConversationViewSet(viewsets.ModelViewSet):
         conversation = service.close_conversation(str(conversation.id))
         return Response(ConversationSerializer(conversation).data)
 
+    @extend_schema(summary="Fila humana: quem espera uma pessoa responder")
+    @action(detail=False, methods=['get'], url_path='fila-humana')
+    def fila_humana(self, request):
+        """Clientes esperando resposta humana e atendimentos de hoje.
+
+        Sai da conversa (modo humano + quem falou por último), não da tabela
+        `HandoverRequest`, que nada preenchia — a fila do painel vivia vazia.
+        """
+        from apps.conversations.services.fila_humana import montar_fila
+        conversas = _accessible_conversations(
+            request.user, store=request.query_params.get('store'),
+        )
+        return Response(montar_fila(conversas))
+
+    @action(detail=False, methods=['get'], url_path='mensagens-automaticas')
+    def mensagens_automaticas(self, request):
+        """O que a loja mandou sozinha: status, lembretes, avaliação, reengajamento."""
+        from apps.automation.mensageiro.historico import listar_enviadas
+        from apps.core.permissions import accessible_whatsapp_account_ids
+
+        # Sem o `_accessible_conversations` inteiro: as anotações dele (contagem,
+        # prévia) não servem aqui e viram subquery pesada. O recorte é o mesmo.
+        conversas = _restrict_to_store(
+            Conversation.objects.filter(
+                is_active=True, account_id__in=accessible_whatsapp_account_ids(request.user),
+            ),
+            request.query_params.get('store'),
+        )
+        return Response(listar_enviadas(
+            conversas,
+            dias=request.query_params.get('dias'),
+            tipo=request.query_params.get('tipo') or None,
+        ))
+
     @extend_schema(
         summary="Resolve conversation",
         responses={200: ConversationSerializer}
