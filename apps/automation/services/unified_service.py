@@ -1257,6 +1257,14 @@ class UnifiedService:
             interactive_data={'buttons': _fallback_buttons},
         )
 
+    def _get_session_manager(self):
+        # Mesmo dono de sessão que os handlers (`handlers/base.py`): perfil >
+        # loja > conta. Sem este método a montagem de combo levantava
+        # AttributeError em toda mensagem e o `except` engolia calado.
+        from apps.automation.services import get_session_manager
+        context_owner = self.company or self.store or self.account
+        return get_session_manager(context_owner, self.conversation.phone_number)
+
     def _por_no_carrinho(self, item: dict) -> str:
         """Acrescenta a linha aos itens pendentes e devolve o resumo do carrinho.
 
