@@ -10,6 +10,32 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-09-23
+
+**Baseline de testes:** 22/24 GREEN antes; 24/24 GREEN após o fix.
+HEAD de `development`: `a119e169`. Gate: 0 PRs bot/ abertos.
+
+**Bug encontrado e corrigido:** `'auth'` ausente em `DEFAULT_THROTTLE_RATES` no settings de teste [P2]
+
+- **Tipo:** P2 — Regressão de infraestrutura: `WhatsAppAuthThrottle` (scope `'auth'`) levantava
+  `ImproperlyConfigured` no `__init__` porque `config/settings/test_serializer.py` não tinha o
+  escopo `'auth'`. Dois testes P1 de info-disclosure dos endpoints OTP WhatsApp ficavam em ERROR
+  permanente, nunca validando que `/send/` e `/resend/` não vazam mensagens internas.
+- **Arquivo corrigido (1):** `config/settings/test_serializer.py`
+  - Adicionados `'auth': '10/minute'`, `'public_read': '300/minute'`, `'lead_create': '10/hour'`
+    espelhando `base.py`.
+- **Testes:** 24 SimpleTestCase em `apps/core/tests/test_otp_whatsapp_contract.py` → 22/24→24/24.
+- **PR:** `bot/server-2026-09-23-auth-throttle-test-settings`
+
+**Próximo backlog priorizado:**
+
+| Prioridade | Item |
+|---|---|
+| P2 | Testes de regressão para guardrails do agente WhatsApp (pendência crítica do CLAUDE.md) |
+| P2 | Suporte a itens de salada customizados (Flutter builder) no checkout/pedido/recibo |
+
+---
+
 ### 2026-09-22
 
 **Baseline de testes:** 4 testes estáticos (sem DB/langchain) — 4/4 GREEN após o fix.
