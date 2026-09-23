@@ -2,12 +2,14 @@
 Product management API views.
 """
 import uuid as uuid_module
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from django.db import transaction
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.http import Http404
 
 from apps.stores.models import (
@@ -529,3 +531,44 @@ class StoreProductTypeAdminViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         if store_param:
             qs, _ = filter_by_store(qs, store_param)
         return qs.select_related('store').order_by('sort_order', 'name')
+
+class ImportarCardapioView(APIView):
+    """POST /stores/{slug}/produtos/importar/ — cardápio inteiro de uma planilha.
+
+    DOIS PASSOS de propósito. `confirmar=false` confere e devolve o que entra e
+    o que falhou, SEM tocar no banco; `confirmar=true` grava. Importar 80
+    produtos errados é pior que não importar, e o dono precisa ver antes.
+
+    Existe porque a implantação custa 7,9 h medidas por cliente e a maior fatia
+    é digitar produto por produto — é o teto que impede vender volume.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, store_slug):
+        from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
+        from apps.core.permissions import user_can_access_store
+        from apps.stores.services import importador_de_cardapio as importador
+
+        store = get_object_or_404(Store, slug=store_slug)
+        if not user_can_access_store(request.user, store):
+            raise Http404
+
+        try:
+            linhas = importador.ler_csv(request.data.get('csv') or '')
+        except importador.LinhaInvalida as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        conferencia = importador.conferir(linhas)
+        erros = [{'linha': e.linha, 'motivo': e.motivo} for e in conferencia.erros]
+        validos = [
+            {'nome': v['nome'], 'preco': str(v['preco']), 'categoria': v['categoria']}
+            for v in conferencia.validos
+        ]
+
+        if not request.data.get('confirmar'):
+            return Response({'validos': validos, 'erros': erros})
+
+        contagem = importador.gravar(
+            store, conferencia.validos, criado_por=request.user,
+        )
+        return Response({**contagem, 'erros': erros}, status=status.HTTP_201_CREATED)
