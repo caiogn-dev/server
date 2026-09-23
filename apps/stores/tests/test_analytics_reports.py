@@ -375,7 +375,7 @@ class CashHistoryReportTest(AnalyticsReportsBase):
         s = StoreCashSession.objects.create(
             store=self.store, status='closed', opening_amount=Decimal('100.00'),
             opened_by=self.owner, closed_by=self.owner,
-            counted_amount=Decimal('480.00'), expected_amount=Decimal('500.00'),
+            counted_amount=Decimal('480.00'), closing_expected_amount=Decimal('500.00'),
             difference=Decimal('-20.00'), closed_at=timezone.now(),
         )
         StoreCashSession.objects.filter(pk=s.pk).update(opened_at=timezone.now() - timedelta(hours=8))

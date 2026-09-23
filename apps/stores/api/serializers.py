@@ -30,6 +30,12 @@ class StoreSerializer(serializers.ModelSerializer):
     banner_url = serializers.SerializerMethodField()
     is_open = serializers.SerializerMethodField()
     integrations_count = serializers.SerializerMethodField()
+    # O menu de Automação do painel decidia por `whatsapp_number ||
+    # integrations_count > 0`. O primeiro é texto que o dono digita; o segundo
+    # conta QUALQUER integração ativa — loja com Mercado Pago e nada mais abria
+    # as dez telas de automação. A resposta honesta é a conta conectada, e ela
+    # vem do mesmo lugar que o checklist usa.
+    whatsapp_conectado = serializers.SerializerMethodField()
     products_count = serializers.SerializerMethodField()
     orders_count = serializers.SerializerMethodField()
     avg_rating = serializers.SerializerMethodField()
@@ -76,7 +82,8 @@ class StoreSerializer(serializers.ModelSerializer):
             # da plataforma" de "loja de cliente sem conta cadastrada". Sem isto
             # a tela mostrava alerta de "sem conta" para loja que recebe normal.
             'usa_gateway_da_plataforma',
-            'integrations_count', 'products_count', 'orders_count',
+            'integrations_count', 'whatsapp_conectado',
+            'products_count', 'orders_count',
             'created_at', 'updated_at', 'is_active'
         ]
         read_only_fields = ['id', 'owner', 'created_at', 'updated_at',
@@ -201,6 +208,10 @@ class StoreSerializer(serializers.ModelSerializer):
         if hasattr(obj, 'anno_integrations_count'):
             return obj.anno_integrations_count
         return obj.integrations.filter(is_active=True).count()
+
+    def get_whatsapp_conectado(self, obj):
+        from apps.stores.services.onboarding_checklist import whatsapp_conectado
+        return whatsapp_conectado(obj)
 
     def get_products_count(self, obj):
         if hasattr(obj, 'anno_products_count'):

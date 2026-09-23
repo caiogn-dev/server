@@ -20,6 +20,9 @@ class CashMovementSerializer(serializers.ModelSerializer):
 
 class CashSessionSerializer(serializers.ModelSerializer):
     movements = CashMovementSerializer(many=True, read_only=True)
+    # `expected_amount` é a resposta; `expected_cash` fica como apelido só
+    # porque a tela do caixa já lê essa chave. Os dois devolvem o MESMO valor.
+    expected_amount = serializers.SerializerMethodField()
     expected_cash = serializers.SerializerMethodField()
 
     class Meta:
@@ -30,8 +33,11 @@ class CashSessionSerializer(serializers.ModelSerializer):
             'closed_by', 'closed_at', 'notes', 'movements', 'expected_cash',
         ]
 
+    def get_expected_amount(self, obj):
+        return str(obj.expected_amount)
+
     def get_expected_cash(self, obj):
-        return str(obj.expected_cash())
+        return str(obj.expected_amount)
 
 
 def _get_store(store_slug):
@@ -136,7 +142,7 @@ class CashCloseView(CashSessionBaseView):
 
         expected = session.expected_cash()
         session.counted_amount = counted
-        session.expected_amount = expected
+        session.closing_expected_amount = expected
         session.difference = counted - expected
         session.status = StoreCashSession.Status.CLOSED
         session.closed_by = request.user

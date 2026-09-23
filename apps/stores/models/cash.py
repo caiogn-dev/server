@@ -22,7 +22,15 @@ class StoreCashSession(models.Model):
     opened_at = models.DateTimeField(auto_now_add=True)
 
     counted_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
-    expected_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    # O valor CONGELADO no fechamento. Enquanto o caixa está aberto ele é
+    # nulo — por isso não pode se chamar `expected_amount`: a tela perguntava
+    # "quanto devia ter na gaveta" e recebia nulo justamente durante a sessão,
+    # que é a única hora em que a pergunta importa. O relatório de sessões
+    # mostrava "—" no caixa aberto. Quem responde agora é a propriedade abaixo.
+    closing_expected_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        db_column='expected_amount',
+    )
     difference = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     closed_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cash_sessions_closed',
@@ -41,6 +49,18 @@ class StoreCashSession(models.Model):
                 name='cash_unique_open_session_per_store',
             ),
         ]
+
+    @property
+    def expected_amount(self) -> Decimal:
+        """Quanto DEVE ter na gaveta — agora, se aberto; congelado, se fechado.
+
+        Havia dois nomes para isto na API (`expected_amount`, do banco, e
+        `expected_cash`, calculado) e a tela que escolhesse o errado não
+        mostrava nada. Um nome só, e ele sempre responde.
+        """
+        if self.status == self.Status.CLOSED and self.closing_expected_amount is not None:
+            return Decimal(self.closing_expected_amount)
+        return self.expected_cash()
 
     def expected_cash(self) -> Decimal:
         """Fundo de troco + vendas em dinheiro da sessão + reforços - sangrias.

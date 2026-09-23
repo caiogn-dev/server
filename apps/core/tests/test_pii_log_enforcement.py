@@ -194,7 +194,22 @@ class CampaignServiceLogMaskingTests(SimpleTestCase):
                         mock_msg.whatsapp_message_id = 'wamid.TEST'
                         MockMS.return_value.send_template_message.return_value = mock_msg
 
-                    with self.assertLogs(
+                    # Opt-out e janela de 24 h entraram em `process_campaign_batch`
+                    # DEPOIS que este teste foi escrito, e consultam o banco —
+                    # num SimpleTestCase, sem banco. O teste passou a estourar
+                    # na montagem e parou de cobrar o que ele existe para
+                    # cobrar: que o telefone não saia cru no log. Ficou vermelho
+                    # em silêncio porque ninguém lê a suíte inteira.
+                    #
+                    # Peneirar aqui mantém o recorte: este teste é sobre LOG,
+                    # não sobre opt-out — quem cobra opt-out são os testes dele.
+                    with patch(
+                        'apps.campaigns.services.optout.chaves_bloqueadas',
+                        return_value=set(),
+                    ), patch(
+                        'apps.campaigns.services.janela.fechamentos_por_chave',
+                        return_value={},
+                    ), self.assertLogs(
                         'apps.campaigns.services.campaign_service', level='DEBUG'
                     ) as cm:
                         svc.process_campaign_batch(campaign_id='1', batch_size=10)

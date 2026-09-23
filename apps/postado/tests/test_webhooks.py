@@ -1,9 +1,33 @@
+import hashlib
+import hmac
 import json
 from unittest.mock import patch
-from django.test import TestCase, Client as DjangoClient
+
+from django.test import TestCase, Client as DjangoClient, override_settings
+
 from apps.postado.models import PostadoClient, PostadoPack
 
+SEGREDO = 'segredo-de-teste'
 
+
+def _assinar(data_id: str, request_id: str = 'req-1', ts: str = '1700000000'):
+    """Cabeçalhos que o Mercado Pago mandaria — assinados de verdade.
+
+    O endpoint ganhou verificação HMAC (sem ela qualquer um forja um pagamento
+    aprovado) e estes testes nunca aprenderam a assinar: passaram a receber 403
+    e a acusar o acerto como se fosse defeito. Assinar aqui devolve o teste ao
+    que ele cobra — o fluxo depois do pagamento — e o teste de forja abaixo
+    passa a cobrar a trava.
+    """
+    manifesto = f'id:{data_id};request-id:{request_id};ts:{ts};'
+    v1 = hmac.new(SEGREDO.encode(), manifesto.encode(), hashlib.sha256).hexdigest()
+    return {
+        'HTTP_X_SIGNATURE': f'ts={ts},v1={v1}',
+        'HTTP_X_REQUEST_ID': request_id,
+    }
+
+
+@override_settings(DEBUG=False)
 class TestMPWebhook(TestCase):
     def setUp(self):
         self.client = DjangoClient()
@@ -23,24 +47,46 @@ class TestMPWebhook(TestCase):
             "action": "payment.created",
             "data": {"id": "PAY_999"},
         }
-        url = "/api/postado/webhook/mp/?preapproval_id=SUB_123"
-        response = self.client.post(
-            url,
-            data=json.dumps(payload),
-            content_type='application/json',
-        )
-        self.assertEqual(response.status_code, 200)
+        url = "/api/postado/webhook/mp/?preapproval_id=SUB_123&data.id=PAY_999"
+        with self.settings(MERCADO_PAGO_WEBHOOK_SECRET=SEGREDO):
+            with patch.dict('os.environ', {'MERCADO_PAGO_WEBHOOK_SECRET': SEGREDO}):
+                response = self.client.post(
+                    url,
+                    data=json.dumps(payload),
+                    content_type='application/json',
+                    **_assinar('PAY_999'),
+                )
+        self.assertEqual(response.status_code, 200, response.content)
         mock_generate_pack.delay.assert_called_once()
+
+    @patch('apps.postado.api.views.generate_pack')
+    def test_corpo_forjado_nao_gera_pacote(self, mock_generate_pack):
+        """Sem o segredo, ninguém manda gerar pacote de graça."""
+        payload = {"type": "payment", "action": "payment.created",
+                   "data": {"id": "PAY_999"}}
+        url = "/api/postado/webhook/mp/?preapproval_id=SUB_123&data.id=PAY_999"
+        with patch.dict('os.environ', {'MERCADO_PAGO_WEBHOOK_SECRET': SEGREDO}):
+            response = self.client.post(
+                url,
+                data=json.dumps(payload),
+                content_type='application/json',
+                HTTP_X_SIGNATURE='ts=1700000000,v1=' + 'f' * 64,
+                HTTP_X_REQUEST_ID='req-1',
+            )
+        self.assertEqual(response.status_code, 403)
+        mock_generate_pack.delay.assert_not_called()
 
     def test_unknown_action_is_ignored(self):
         payload = {"action": "some.other.action"}
         url = "/api/postado/webhook/mp/?preapproval_id=SUB_123"
-        response = self.client.post(
-            url,
-            data=json.dumps(payload),
-            content_type='application/json',
-        )
-        self.assertEqual(response.status_code, 200)
+        with patch.dict('os.environ', {'MERCADO_PAGO_WEBHOOK_SECRET': SEGREDO}):
+            response = self.client.post(
+                url,
+                data=json.dumps(payload),
+                content_type='application/json',
+                **_assinar(''),
+            )
+        self.assertEqual(response.status_code, 200, response.content)
         data = response.json()
         self.assertEqual(data['status'], 'ignored')
 

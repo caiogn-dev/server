@@ -151,9 +151,15 @@ class TestAsOutrasSuperficies:
 
         agora = timezone.now()
         sessao = StoreCashSession.objects.create(
-            store=loja, opened_at=agora - timezone.timedelta(hours=1),
-            opening_amount=Decimal('0.00'), status='open',
+            store=loja, opening_amount=Decimal('0.00'), status='open',
         )
+        # `opened_at` é auto_now_add: passar no create() não adianta, o Django
+        # sobrescreve. Sem isto a sessão nasce DEPOIS do pedido e o pagamento
+        # cai fora da janela — o teste acusaria o caixa de um erro que é dele.
+        StoreCashSession.objects.filter(id=sessao.id).update(
+            opened_at=agora - timezone.timedelta(hours=1),
+        )
+        sessao.refresh_from_db()
         p = StoreOrder.objects.create(
             store=loja, total=Decimal('40.00'), subtotal=Decimal('40.00'),
             status='delivered', payment_status='paid', payment_method='cash',
@@ -169,9 +175,15 @@ class TestAsOutrasSuperficies:
 
         agora = timezone.now()
         sessao = StoreCashSession.objects.create(
-            store=loja, opened_at=agora - timezone.timedelta(hours=1),
-            opening_amount=Decimal('0.00'), status='open',
+            store=loja, opening_amount=Decimal('0.00'), status='open',
         )
+        # `opened_at` é auto_now_add: passar no create() não adianta, o Django
+        # sobrescreve. Sem isto a sessão nasce DEPOIS do pedido e o pagamento
+        # cai fora da janela — o teste acusaria o caixa de um erro que é dele.
+        StoreCashSession.objects.filter(id=sessao.id).update(
+            opened_at=agora - timezone.timedelta(hours=1),
+        )
+        sessao.refresh_from_db()
         p = StoreOrder.objects.create(
             store=loja, total=Decimal('40.00'), subtotal=Decimal('40.00'),
             status='delivered', payment_status='paid', payment_method='pix',

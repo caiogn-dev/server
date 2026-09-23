@@ -12,12 +12,12 @@ _STEPS = [
     ('product', 'Cadastrar 1º produto', lambda s: s.products.exists()),
     ('delivery', 'Configurar entrega', lambda s: s.delivery_zones.exists()),
     ('hours', 'Definir horário de funcionamento', lambda s: bool(s.operating_hours)),
-    ('whatsapp', 'Conectar o WhatsApp da loja', lambda s: _whatsapp_conectado(s)),
+    ('whatsapp', 'Conectar o WhatsApp da loja', lambda s: whatsapp_conectado(s)),
     ('payment', 'Conectar meio de recebimento', lambda s: _recebe_pagamento(s)),
 ]
 
 
-def _whatsapp_conectado(store):
+def whatsapp_conectado(store):
     """A loja consegue ATENDER pelo WhatsApp?
 
     Este passo olhava `store.whatsapp_number` — um campo de texto que o dono

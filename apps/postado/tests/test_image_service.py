@@ -14,6 +14,30 @@ def _make_png_b64(size=(100, 100), color=(255, 0, 0)) -> str:
     return base64.b64encode(buf.getvalue()).decode()
 
 
+def _png_bytes(size=(100, 100), color=(255, 0, 0)) -> bytes:
+    img = Image.new('RGB', size, color=color)
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    return buf.getvalue()
+
+
+def _resposta_da_imagem():
+    """A imagem como o provedor atual entrega: bytes de um GET.
+
+    Estes testes mockavam `openai.images.generate` (base64 num JSON). A
+    geração migrou para Pollinations, que é um GET que devolve o PNG cru, e o
+    módulo não tem mais o nome `openai` — os mocks estouravam em
+    `AttributeError` antes de exercitar qualquer coisa.
+
+    Mockar continua sendo obrigatório, e não só pela velocidade: sem isto o
+    teste de sucesso faz uma chamada de rede de verdade, com 90 s de timeout.
+    """
+    r = MagicMock()
+    r.content = _png_bytes()
+    r.raise_for_status.return_value = None
+    return r
+
+
 class TestImageService(TestCase):
     def _make_post(self, niche='restaurant'):
         c = PostadoClient.objects.create(
@@ -27,16 +51,16 @@ class TestImageService(TestCase):
         pack = PostadoPack.objects.create(client=c, month="2026-06")
         return PostadoPost.objects.create(pack=pack, post_number=1, post_type='promo')
 
-    @patch('apps.postado.services.image_service.openai.images.generate')
+    @patch('apps.postado.services.image_service.requests.get')
     def test_generate_base_image_returns_pil_1080(self, mock_gen):
-        mock_gen.return_value = MagicMock(data=[MagicMock(b64_json=_make_png_b64())])
+        mock_gen.return_value = _resposta_da_imagem()
         svc = ImageService()
         post = self._make_post()
         result = svc.generate_base_image(post, caption="Promoção especial!")
         self.assertIsInstance(result, Image.Image)
         self.assertEqual(result.size, (1080, 1080))
 
-    @patch('apps.postado.services.image_service.openai.images.generate')
+    @patch('apps.postado.services.image_service.requests.get')
     def test_generate_base_image_fallback_on_error(self, mock_gen):
         mock_gen.side_effect = Exception("API down")
         svc = ImageService()

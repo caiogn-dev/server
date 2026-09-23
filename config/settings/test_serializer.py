@@ -82,6 +82,19 @@ CACHES = {
     }
 }
 
+# As TAXAS vêm de `base.py`, não de uma cópia.
+#
+# Este arquivo declarava a lista de escopos à mão e ela divergiu DUAS VEZES em
+# uma semana: `auth` (PR #373) e `public_read`/`lead_create` (PR #375). O
+# estrago não é um teste que falha e sim COMO ele falha — o DRF resolve a taxa
+# dentro do `__init__` do throttle, antes de qualquer linha da view, e levanta
+# `ImproperlyConfigured`. Os testes que quebraram foram justamente os de
+# info-disclosure do OTP: enquanto estouravam na criação do throttle, nenhuma
+# regressão de segurança nesses endpoints seria vista.
+#
+# Escopo novo em base.py passa a chegar aqui sozinho.
+from .base import REST_FRAMEWORK as _REST_FRAMEWORK_BASE  # noqa: E402
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
@@ -90,16 +103,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_THROTTLE_RATES': {
-        'anon': '120/minute',
-        'user': '1000/minute',
-        'auth': '10/minute',
-        'order_token': '30/minute',
-        'public_write': '60/minute',
-        'checkout': '30/minute',
-        'public_read': '300/minute',
-        'lead_create': '10/hour',
-    },
+    'DEFAULT_THROTTLE_RATES': dict(_REST_FRAMEWORK_BASE['DEFAULT_THROTTLE_RATES']),
 }
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -117,9 +121,9 @@ CELERY_BROKER_URL = 'memory://'
 # Cripto para tokens de automação
 ENCRYPTION_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
-# Meta Graph API — espelha base.py; necessário porque instagram_api.py lê em corpo de classe
-META_GRAPH_VERSION = 'v26.0'
-META_GRAPH_URL = f'https://graph.facebook.com/{META_GRAPH_VERSION}'
+# Meta Graph API — necessário porque instagram_api.py lê em corpo de classe.
+# Vem de base.py pelo mesmo motivo das taxas: a versão sobe e a cópia fica.
+from .base import META_GRAPH_VERSION, META_GRAPH_URL  # noqa: E402,F401
 
 LOGGING = {
     'version': 1,

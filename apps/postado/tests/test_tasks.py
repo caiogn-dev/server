@@ -101,7 +101,14 @@ class TestGeneratePackTask(TestCase):
         self._make_img_mock(mock_img_cls)
         self._make_drive_mock(mock_drive_cls)
 
-        generate_pack(str(self.pack.id))
+        # O Drive é OPCIONAL e o passo inteiro só roda com a conta de serviço
+        # configurada. Mockar a classe não basta: sem a variável, a tarefa nem
+        # chama o Drive e `drive_folder_url` fica vazio — que é o certo, e o
+        # teste acusava como defeito. Ligar aqui devolve o teste ao que ele
+        # cobra, que é a URL da pasta do mês ser gravada no pacote.
+        with patch.dict('os.environ',
+                        {'POSTADO_GOOGLE_SERVICE_ACCOUNT_JSON': '{"tipo": "teste"}'}):
+            generate_pack(str(self.pack.id))
 
         self.pack.refresh_from_db()
         self.assertEqual(self.pack.drive_folder_url, 'https://drive.google.com/month_folder')

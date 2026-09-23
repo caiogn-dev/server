@@ -76,12 +76,33 @@ class TestCompraDeSaldo:
         assert lote.origin == StoreCashbackLot.Origin.PREPAID
         assert CashbackService.balance(loja, TELEFONE, verificado=True) == Decimal('304.00')
 
-    def test_saldo_vence_em_30_dias(self, loja):
+    def test_saldo_comprado_dura_mais_que_o_cashback(self):
+        """São dois dinheiros com dois prazos, e este teste cobra o certo.
+
+        Nasceu cravado em 30 dias, herdados do cashback. O padrão virou 90 em
+        seguida, com a conta escrita no código: os 30 dias obrigavam quem
+        comprou o pacote Família a comer R$ 15,20 de salada por dia, e das dez
+        melhores clientes da Cê uma só conseguiria. O teste ficou vermelho por
+        cinco semanas apontando para a regra velha.
+        """
+        from apps.stores.services.cashback_service import (
+            DIAS_DA_CARTEIRA_PADRAO, DIAS_PARA_VENCER,
+        )
+
+        assert DIAS_DA_CARTEIRA_PADRAO > DIAS_PARA_VENCER, (
+            'o saldo que a cliente PAGOU não pode vencer antes do bônus'
+        )
+
+    def test_saldo_vence_na_validade_da_carteira(self, loja):
+        from apps.stores.services.cashback_service import DIAS_DA_CARTEIRA_PADRAO
+
         lote = CashbackService.credit_prepaid(
             loja, TELEFONE, tier_id='padrao', source_ref='mp:1',
         )
         dias = (lote.expires_at - timezone.now()).days
-        assert 29 <= dias <= 30, f'esperava ~30 dias, veio {dias}'
+        assert DIAS_DA_CARTEIRA_PADRAO - 1 <= dias <= DIAS_DA_CARTEIRA_PADRAO, (
+            f'esperava ~{DIAS_DA_CARTEIRA_PADRAO} dias, veio {dias}'
+        )
 
     def test_webhook_repetido_nao_credita_duas_vezes(self, loja):
         """A mesma cobrança chega duas vezes — o segundo crédito é um pacote de graça."""

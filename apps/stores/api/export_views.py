@@ -111,11 +111,27 @@ class OrdersExportView(BaseExportView):
 
         start_date, end_date = self.get_date_range(request)
 
-        orders = StoreOrder.objects.filter(
-            store=store,
-            created_at__date__gte=start_date,
-            created_at__date__lte=end_date
-        ).select_related('customer').prefetch_related('items__product').order_by('-created_at')
+        # `somente_receita=1` devolve EXATAMENTE os pedidos que o faturamento
+        # conta — mesmo conjunto, mesmo eixo de data (pagamento, não criação).
+        # Sem isso, o dono exportava o período, somava a coluna Total no Excel
+        # e achava um número maior que o do relatório, porque a planilha trazia
+        # cancelado, não pago e pedido de teste junto.
+        #
+        # O padrão continua trazendo tudo: para conferir a operação, o pedido
+        # cancelado precisa aparecer.
+        if str(request.query_params.get('somente_receita', '')).strip().lower() in ('1', 'true', 'sim'):
+            from apps.stores import metrics
+            orders = metrics.pedidos_de_receita(
+                loja=store, inicio=start_date, fim=end_date,
+            )
+        else:
+            orders = StoreOrder.objects.filter(
+                store=store,
+                created_at__date__gte=start_date,
+                created_at__date__lte=end_date,
+            )
+        orders = orders.select_related('customer').prefetch_related(
+            'items__product').order_by('-created_at')
 
         # `fmt`, não `format`: este último é reservado pelo DRF para content
         # negotiation e faz a requisição virar 404 antes de chegar aqui.
@@ -554,27 +570,34 @@ class StoreDashboardStatsView(BaseExportView):
         if not store:
             return Response({'error': 'Store parameter required'}, status=400)
         
-        today = hoje_local()
-        yesterday = today - timedelta(days=1)
-        last_7_days = today - timedelta(days=7)
-        last_30_days = today - timedelta(days=30)
-        
         # Faturamento vem do núcleo: janela no fuso da loja e agrupamento pela
         # data do PAGAMENTO. Aqui filtrava por `created_at`, eixo diferente do
         # resto do painel — este resumo não batia com o card da home.
         from apps.stores import metrics
 
-        today_revenue = metrics.totais(store, metrics.hoje())['receita']
-        yesterday_revenue = metrics.totais(store, metrics.ontem())['receita']
-        week_revenue = metrics.totais(store, metrics.ultimos_dias(8))['receita']
-        month_revenue = metrics.totais(store, metrics.ultimos_dias(31))['receita']
+        # Uma janela por cartão, e o MESMO conjunto responde pedidos e receita.
+        # Antes a receita vinha do núcleo e a contagem de um queryset cru por
+        # `created_at`, incluindo cancelado e não pago: o cartão mostrava 4
+        # pedidos e R$ 150, e quem dividisse — que é o que o cartão convida a
+        # fazer — achava um ticket de R$ 37,50 que nunca existiu.
+        #
+        # A contagem operacional (que precisa enxergar o cancelado) é outra
+        # pergunta e vive em `alerts`; não se mistura com dinheiro no mesmo
+        # cartão.
+        janela_hoje = metrics.hoje()
+        janela_semana = metrics.ultimos_dias(7)
+        # 'month' é o mês do CALENDÁRIO. Era `últimos 31 dias`: no dia 2, o
+        # cartão "Mês" mostrava quase tudo do mês passado.
+        janela_mes = metrics.mes_corrente()
 
-        # Contagem operacional continua sobre o queryset cru: a operação
-        # precisa ver o pedido cancelado, o faturamento não.
-        _op = StoreOrder.objects.filter(store=store)
-        today_orders = _op.filter(created_at__date=today)
-        week_orders = _op.filter(created_at__date__gte=last_7_days)
-        month_orders = _op.filter(created_at__date__gte=last_30_days)
+        t_hoje = metrics.totais(store, janela_hoje)
+        t_semana = metrics.totais(store, janela_semana)
+        t_mes = metrics.totais(store, janela_mes)
+        yesterday_revenue = metrics.totais(store, metrics.ontem())['receita']
+
+        today_revenue = t_hoje['receita']
+        week_revenue = t_semana['receita']
+        month_revenue = t_mes['receita']
         
         # Pending orders
         pending_orders = StoreOrder.objects.filter(
@@ -591,7 +614,7 @@ class StoreDashboardStatsView(BaseExportView):
         
         return Response({
             'today': {
-                'orders': today_orders.count(),
+                'orders': t_hoje['pedidos'],
                 'revenue': float(today_revenue),
                 'revenue_change': float(today_revenue - yesterday_revenue),
                 'revenue_change_percent': round(
@@ -600,14 +623,16 @@ class StoreDashboardStatsView(BaseExportView):
                 )
             },
             'week': {
-                'orders': week_orders.count(),
+                'orders': t_semana['pedidos'],
                 'revenue': float(week_revenue),
-                'avg_daily_revenue': float(week_revenue / 7)
+                'avg_daily_revenue': float(week_revenue / janela_semana.dias)
             },
             'month': {
-                'orders': month_orders.count(),
+                'orders': t_mes['pedidos'],
                 'revenue': float(month_revenue),
-                'avg_daily_revenue': float(month_revenue / 30)
+                # Divide pelos dias que a janela REALMENTE cobre. Dividir por 30
+                # fixo no dia 3 do mês achatava a média por dez.
+                'avg_daily_revenue': float(month_revenue / janela_mes.dias)
             },
             'alerts': {
                 'pending_orders': pending_orders,
