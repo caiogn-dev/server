@@ -150,3 +150,17 @@ Provides tools: `debug_message`, `detect_intent`, `get_session`, `trace_conversa
 - `ARCHITECTURE.md` — Detailed architecture with all URL routes and WebSocket consumers
 - `AGENTS.md` — AI agent system knowledge base (models, endpoints, automation flow)
 - `BACKEND_IMPLEMENTATION_GUIDE.md` — Implementation guide for backend features
+
+## Registro do loop diário — um arquivo por dia
+
+**Não anexe ao `EVOLUCAO_SERVER.md`.** Cada execução do loop escreve o seu relato em
+`docs/evolucao/AAAA-MM-DD.md` (crie a pasta se não existir).
+
+O motivo é concreto: enquanto todo loop anexava no mesmo arquivo, **dois PRs
+abertos nunca mergeavam limpos** — o conflito era garantido por construção, e
+sobrava para quem fosse mergear resolver um changelog à mão. Medido em 22/09:
+dos 6 PRs abertos, 5 conflitavam, e 4 deles SÓ no changelog.
+
+O `EVOLUCAO_SERVER.md` permanece como índice e história até 23/09/2026. Não o edite;
+leia-o se precisar de contexto antigo.
+
