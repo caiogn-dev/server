@@ -229,6 +229,84 @@ def gravar(store, validos, *, criado_por=None) -> dict:
     return {'criados': criados, 'atualizados': atualizados}
 
 
+#: Assinatura de arquivo ZIP — todo .xlsx é um ZIP por dentro.
+_ASSINATURA_XLSX = b'PK\x03\x04'
+
+#: Ordem de tentativa para decodificar CSV.
+#:
+#: `utf-8-sig` primeiro porque come o BOM que o próprio modelo daqui escreve.
+#: `cp1252` no fim porque é o que o Excel brasileiro salva: sem ele, "Preço"
+#: vira "Pre?o", a coluna não casa com nenhum sinônimo e a tela dizia
+#: "A planilha está vazia" para um arquivo cheio.
+CODIFICACOES = ('utf-8-sig', 'utf-8', 'cp1252', 'latin-1')
+
+
+def _linhas_do_xlsx(conteudo: bytes) -> list[dict]:
+    """Lê a primeira aba de um .xlsx. É o formato que o lojista TEM.
+
+    Excel e Google Sheets salvam .xlsx por padrão; pedir CSV é devolver ao
+    dono o trabalho que o importador veio tirar.
+    """
+    import io
+    from openpyxl import load_workbook
+
+    wb = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=True)
+    aba = wb.worksheets[0]
+    linhas = list(aba.iter_rows(values_only=True))
+    if not linhas:
+        return []
+
+    cabecalho = [coluna_canonica(c) for c in linhas[0]]
+    if not any(cabecalho):
+        raise LinhaInvalida(
+            'A primeira linha da planilha precisa ter os títulos das colunas '
+            '(Nome, Preço, Categoria).'
+        )
+
+    saida = []
+    for crua in linhas[1:]:
+        linha = {
+            col: valor for col, valor in zip(cabecalho, crua)
+            if col and valor not in (None, '')
+        }
+        if linha:
+            saida.append(linha)
+    return saida
+
+
+def _texto_do_csv(conteudo: bytes) -> str:
+    for codec in CODIFICACOES:
+        try:
+            return conteudo.decode(codec)
+        except UnicodeDecodeError:
+            continue
+    # `latin-1` nunca falha, então só chegamos aqui se a tupla mudar.
+    return conteudo.decode('utf-8', errors='replace')
+
+
+def ler_planilha(conteudo: bytes, nome: str = '') -> list[dict]:
+    """O arquivo do lojista -> linhas com colunas canônicas.
+
+    Decide pelo CONTEÚDO, não pela extensão: um .xlsx renomeado para .csv
+    continua sendo um ZIP, e o lojista não tem como saber disso.
+    """
+    if not conteudo:
+        raise LinhaInvalida('Envie a planilha com o cardápio.')
+
+    if conteudo[:4] == _ASSINATURA_XLSX:
+        return _linhas_do_xlsx(conteudo)
+
+    texto = _texto_do_csv(conteudo)
+    # Um PDF ou uma imagem viram lixo binário decodificado: sem linha nenhuma
+    # com separador reconhecível. Recusar é certo; recusar calado, não.
+    if '\x00' in texto[:200] or not any(s in texto[:400] for s in (',', ';', '\n')):
+        raise LinhaInvalida(
+            f'Não consegui ler {nome or "o arquivo"}. Envie a planilha em '
+            'Excel (.xlsx) ou CSV.'
+        )
+    return ler_csv(texto)
+
+
 def ler_csv(texto: str) -> list[dict]:
     """Texto CSV -> linhas com as colunas já canônicas.
 

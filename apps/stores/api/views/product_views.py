@@ -553,8 +553,18 @@ class ImportarCardapioView(APIView):
         if not user_can_access_store(request.user, store):
             raise Http404
 
+        # O ARQUIVO é o caminho principal. A planilha que o lojista tem é
+        # `.xlsx`, e texto não carrega binário; o CSV do Excel brasileiro vem
+        # em cp1252, que o `.text()` do navegador estraga. Mandando o arquivo,
+        # o servidor decide pelo CONTEÚDO e os dois casos somem.
+        #
+        # `csv` como texto fica para quem já chamava a API assim.
+        arquivo = request.FILES.get('arquivo')
         try:
-            linhas = importador.ler_csv(request.data.get('csv') or '')
+            if arquivo is not None:
+                linhas = importador.ler_planilha(arquivo.read(), arquivo.name)
+            else:
+                linhas = importador.ler_csv(request.data.get('csv') or '')
         except importador.LinhaInvalida as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -565,7 +575,12 @@ class ImportarCardapioView(APIView):
             for v in conferencia.validos
         ]
 
-        if not request.data.get('confirmar'):
+        # No multipart tudo chega como string: `'false'` é verdadeiro em
+        # Python, e sem isto um upload de CONFERÊNCIA gravaria no banco.
+        confirmar = request.data.get('confirmar')
+        if isinstance(confirmar, str):
+            confirmar = confirmar.strip().lower() in ('true', '1', 'sim')
+        if not confirmar:
             return Response({'validos': validos, 'erros': erros})
 
         contagem = importador.gravar(

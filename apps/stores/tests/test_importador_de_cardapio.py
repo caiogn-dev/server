@@ -212,3 +212,120 @@ class EndpointDeImportacaoTests(APITestCase):
         r = self.client.post(self.url, {'csv': '', 'confirmar': False}, format='json')
         assert r.status_code == 400
         assert 'planilha' in str(r.data).lower() or 'arquivo' in str(r.data).lower()
+
+
+# ── 23/09: o arquivo que o lojista REALMENTE tem ────────────────────────────
+
+class TestArquivoDeVerdade:
+    """O dono abriu a tela e disse: "está cru, não entendi a lógica".
+
+    Estava certo. Em 22/09 eu testei só com CSV que EU escrevi — UTF-8,
+    separador vírgula, cabeçalho exatamente como o parser espera. O lojista
+    não tem isso. Ele tem:
+
+      - um `.xlsx`, porque é o que Excel e Google Sheets salvam por padrão;
+      - se exportar CSV pelo Excel brasileiro, vem em `cp1252` e com `;`.
+
+    Nos dois casos a tela dizia "A planilha está vazia" — mensagem que não
+    ajuda ninguém a consertar nada.
+    """
+
+    def test_xlsx_e_lido(self):
+        import io
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.append(['Nome', 'Preço', 'Categoria'])
+        ws.append(['Salada Caesar', '32,90', 'Saladas'])
+        ws.append(['Água', 5, 'Bebidas'])
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        linhas = imp.ler_planilha(buf.getvalue(), 'cardapio.xlsx')
+
+        assert len(linhas) == 2
+        assert linhas[0]['nome'] == 'Salada Caesar'
+        assert imp.ler_preco(linhas[0]['preco']) == Decimal('32.90')
+
+    def test_csv_do_excel_brasileiro_nao_vira_mojibake(self):
+        """`Preço` em cp1252 lido como utf-8 vira `Pre?o` e a coluna some."""
+        bruto = 'Nome;Preço;Categoria\nÁgua;5,00;Bebidas\n'.encode('cp1252')
+
+        linhas = imp.ler_planilha(bruto, 'cardapio.csv')
+
+        assert len(linhas) == 1
+        assert linhas[0]['nome'] == 'Água'
+        assert imp.ler_preco(linhas[0]['preco']) == Decimal('5.00')
+
+    def test_csv_utf8_com_BOM_continua_funcionando(self):
+        bruto = '﻿Nome,Preço\nSuco,9\n'.encode('utf-8')
+        linhas = imp.ler_planilha(bruto, 'cardapio.csv')
+        assert linhas[0]['nome'] == 'Suco'
+
+    def test_arquivo_que_nao_e_planilha_diz_o_que_fazer(self):
+        """Um PDF ou uma foto: recusar é certo, mas tem que explicar."""
+        with pytest.raises(imp.LinhaInvalida) as e:
+            imp.ler_planilha(b'%PDF-1.4 ...', 'cardapio.pdf')
+        msg = str(e.value).lower()
+        assert 'csv' in msg or 'excel' in msg or 'planilha' in msg
+
+    def test_xlsx_vazio_nao_explode(self):
+        import io
+        from openpyxl import Workbook
+        buf = io.BytesIO(); Workbook().save(buf)
+        assert imp.ler_planilha(buf.getvalue(), 'vazio.xlsx') == []
+
+
+class EndpointAceitaArquivoTests(APITestCase):
+    """O endpoint recebia só `csv` como TEXTO — e texto não carrega .xlsx.
+
+    O navegador lia o arquivo com `.text()`, o que já quebrava duas vezes: em
+    xlsx (binário) e em CSV do Excel BR (cp1252 lido como utf-8). Mandar o
+    ARQUIVO resolve os dois de uma vez, e o servidor decide pelo conteúdo.
+    """
+
+    def setUp(self):
+        self.dono = User.objects.create_user(
+            username='dono-arq', password='x', email='arq@real.com',
+        )
+        self.store = Store.objects.create(
+            name='Loja Arq', slug='loja-arq', owner=self.dono, status='active',
+        )
+        self.client.force_authenticate(user=self.dono)
+        self.url = f'/api/v1/stores/{self.store.slug}/produtos/importar/'
+
+    def _xlsx(self):
+        import io
+        from openpyxl import Workbook
+        wb = Workbook(); ws = wb.active
+        ws.append(['Nome', 'Preço', 'Categoria'])
+        ws.append(['Salada Caesar', '32,90', 'Saladas'])
+        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+        buf.name = 'cardapio.xlsx'
+        return buf
+
+    def test_upload_de_xlsx_confere(self):
+        r = self.client.post(self.url, {'arquivo': self._xlsx()}, format='multipart')
+
+        assert r.status_code == 200, r.data
+        assert len(r.data['validos']) == 1
+        assert r.data['validos'][0]['nome'] == 'Salada Caesar'
+        assert StoreProduct.objects.filter(store=self.store).count() == 0
+
+    def test_upload_de_xlsx_grava_quando_confirma(self):
+        r = self.client.post(
+            self.url, {'arquivo': self._xlsx(), 'confirmar': 'true'}, format='multipart',
+        )
+
+        assert r.status_code in (200, 201), r.data
+        assert r.data['criados'] == 1
+        assert StoreProduct.objects.filter(store=self.store, name='Salada Caesar').exists()
+
+    def test_csv_como_texto_continua_funcionando(self):
+        """Compatibilidade: quem já mandava `csv` no corpo não pode quebrar."""
+        r = self.client.post(
+            self.url, {'csv': 'Nome,Preço\nÁgua,5\n', 'confirmar': False}, format='json',
+        )
+        assert r.status_code == 200, r.data
+        assert len(r.data['validos']) == 1
