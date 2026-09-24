@@ -53,16 +53,20 @@ def evento(conta):
 @pytest.mark.django_db
 class TestPipelineRodaUmaVezSo:
 
-    def test_reprocessar_o_mesmo_evento_nao_roda_o_pipeline_de_novo(self, evento):
+    def test_reprocessar_o_mesmo_evento_nao_roda_o_pipeline_de_novo(
+        self, evento, django_capture_on_commit_callbacks,
+    ):
         """O cenário do pedido fantasma: mesmo evento, duas execuções."""
         svc = WebhookService()
         with patch.object(svc, 'post_process_inbound_message') as pipeline:
-            svc.process_event(evento, post_process_inbound=True)
+            with django_capture_on_commit_callbacks(execute=True):
+                svc.process_event(evento, post_process_inbound=True)
             primeira = pipeline.call_count
 
             evento.processing_status = WebhookEvent.ProcessingStatus.PENDING
             evento.save(update_fields=['processing_status'])
-            svc.process_event(evento, post_process_inbound=True)
+            with django_capture_on_commit_callbacks(execute=True):
+                svc.process_event(evento, post_process_inbound=True)
 
         assert primeira == 1, 'o pipeline deveria ter rodado na primeira vez'
         assert pipeline.call_count == 1, (
@@ -77,7 +81,9 @@ class TestPipelineRodaUmaVezSo:
         msg = Message.objects.get(whatsapp_message_id=WAMID)
         assert msg.pipeline_processed_at is not None
 
-    def test_mensagem_ja_marcada_nunca_reprocessa(self, evento, conta):
+    def test_mensagem_ja_marcada_nunca_reprocessa(
+        self, evento, conta, django_capture_on_commit_callbacks,
+    ):
         """Simula o worker concorrente que chegou primeiro."""
         Message.objects.create(
             account=conta, whatsapp_message_id=WAMID,
@@ -89,7 +95,8 @@ class TestPipelineRodaUmaVezSo:
         )
         svc = WebhookService()
         with patch.object(svc, 'post_process_inbound_message') as pipeline:
-            svc.process_event(evento, post_process_inbound=True)
+            with django_capture_on_commit_callbacks(execute=True):
+                svc.process_event(evento, post_process_inbound=True)
         assert pipeline.call_count == 0
 
     def test_sem_post_process_nao_marca(self, evento):
@@ -98,3 +105,41 @@ class TestPipelineRodaUmaVezSo:
         svc.process_event(evento, post_process_inbound=False)
         msg = Message.objects.get(whatsapp_message_id=WAMID)
         assert msg.pipeline_processed_at is None
+
+
+@pytest.mark.django_db
+class TestPipelineSoRodaDepoisDoCommit:
+    """O bot roda numa thread com conexão PRÓPRIA ao banco.
+
+    Rodando dentro do `@transaction.atomic` de `process_event`, a thread não
+    enxergava a conversa nem a mensagem do cliente NOVO — ainda não comitadas.
+    Medido em 23/09: 6 de 6 falhas de `IntentLog` com FK para uma conversa que
+    existia no banco, gravadas 80–1500ms depois de ela nascer, sempre na
+    primeira mensagem do cliente.
+    """
+
+    def test_pipeline_espera_o_commit(self, evento, django_capture_on_commit_callbacks):
+        svc = WebhookService()
+        with patch.object(svc, 'post_process_inbound_message') as pipeline:
+            with django_capture_on_commit_callbacks(execute=False) as callbacks:
+                svc.process_event(evento, post_process_inbound=True)
+                assert pipeline.call_count == 0, 'o bot rodou antes do commit'
+            assert len(callbacks) == 1
+            callbacks[0]()
+        assert pipeline.call_count == 1
+
+    def test_transacao_desfeita_nao_roda_o_pipeline(self, evento):
+        """Se a transação volta, a reserva volta junto — e o bot não roda."""
+        from django.db import transaction
+        svc = WebhookService()
+        with patch.object(svc, 'post_process_inbound_message') as pipeline:
+            try:
+                with transaction.atomic():
+                    svc.process_event(evento, post_process_inbound=True)
+                    raise RuntimeError('falha depois do process_event')
+            except RuntimeError:
+                pass
+        assert pipeline.call_count == 0
+        assert not Message.objects.filter(
+            whatsapp_message_id=WAMID, pipeline_processed_at__isnull=False,
+        ).exists()

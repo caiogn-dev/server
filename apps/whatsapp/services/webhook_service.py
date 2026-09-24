@@ -721,7 +721,14 @@ class WebhookService:
                         pk=message.pk, pipeline_processed_at__isnull=True,
                     ).update(pipeline_processed_at=timezone.now())
                     if reservou:
-                        self.post_process_inbound_message(event, message)
+                        # Só depois do commit: o bot roda numa thread com
+                        # conexão própria, que não enxerga a conversa nem a
+                        # mensagem do cliente novo enquanto a transação está
+                        # aberta. Se ela for desfeita, a reserva volta junto e
+                        # o bot não roda.
+                        transaction.on_commit(
+                            lambda: self.post_process_inbound_message(event, message)
+                        )
                     else:
                         logger.info(
                             "Pipeline já rodou para a mensagem %s — pulando pós-processamento",
