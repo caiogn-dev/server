@@ -421,5 +421,5 @@ def owner_signup(request):
 @throttle_classes([_PublicReadThrottle])
 def public_plans(request):
     """GET /api/v1/public/plans/ — catálogo de planos SaaS (landing/dash)."""
-    from apps.stores.billing import public_catalog
-    return Response({'plans': public_catalog()})
+    from apps.stores.billing import public_adicionais, public_catalog
+    return Response({'plans': public_catalog(), 'adicionais': public_adicionais()})

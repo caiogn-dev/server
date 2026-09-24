@@ -23,7 +23,9 @@ class BasePublicaTest(TestCase):
     def setUp(self):
         self.dona = get_user_model().objects.create_user(
             username="dona", email="dona@t.local", password="x")
-        self.loja = Store.objects.create(name="Minha", slug="minha-loja", owner=self.dona)
+        # billing_exempt: o módulo é o adicional Etiqueta ANVISA (grandfather tem).
+        self.loja = Store.objects.create(name="Minha", slug="minha-loja", owner=self.dona,
+                                         billing_exempt=True)
         self.oficial = NutritionIngredient.objects.create(
             store=None, canonical_name="alface, crespa, crua", display_name="Alface, crespa, crua",
             source="taco", source_code="123", energy_kcal=10, allergens_reviewed=False)

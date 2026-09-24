@@ -18,7 +18,9 @@ class AprovacaoImpressaoTest(TestCase):
     def setUp(self):
         self.dono = get_user_model().objects.create_user(
             username="dona-loja", email="dona@teste.local", password="x")
-        self.store = Store.objects.create(name="Loja", slug="loja-aprovacao", owner=self.dono)
+        # billing_exempt: o módulo é o adicional Etiqueta ANVISA (grandfather tem).
+        self.store = Store.objects.create(name="Loja", slug="loja-aprovacao", owner=self.dono,
+                                          billing_exempt=True)
         produto = StoreProduct.objects.create(store=self.store, name="Prato", slug="prato-ap", price=10)
         self.perfil = ProductNutritionProfile.objects.create(product=produto)
         self.client = APIClient()

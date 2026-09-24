@@ -175,6 +175,7 @@ from .api.views.subscription_views import (
     StoreSubscriptionDetailView,
     StoreSubscriptionCancelView,
     StoreSubscriptionChangePlanView,
+    StoreSubscriptionAdicionaisView,
     StoreInvoiceListView,
     StoreInvoiceCurrentView,
 )
@@ -296,6 +297,7 @@ store_frontend_patterns = [
     path('subscription/', StoreSubscriptionDetailView.as_view(), name='store-subscription-detail'),
     path('subscription/cancel/', StoreSubscriptionCancelView.as_view(), name='store-subscription-cancel'),
     path('subscription/change-plan/', StoreSubscriptionChangePlanView.as_view(), name='store-subscription-change-plan'),
+    path('subscription/adicionais/', StoreSubscriptionAdicionaisView.as_view(), name='store-subscription-adicionais'),
     path('invoices/', StoreInvoiceListView.as_view(), name='store-invoice-list'),
     path('invoices/current/', StoreInvoiceCurrentView.as_view(), name='store-invoice-current'),
     path('produtos/importar/', ImportarCardapioView.as_view(), name='importar-cardapio'),

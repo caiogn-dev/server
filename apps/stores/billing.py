@@ -7,6 +7,7 @@ sub-projeto Billing — este módulo só define o catálogo e os helpers de leit
 """
 from decimal import Decimal
 
+from django.db.models import Q
 from django.utils import timezone
 
 # Catálogo dos 4 planos. limits.max_products / max_orders_per_month = None => ilimitado.
@@ -102,6 +103,32 @@ PLAN_CATALOG = {
 }
 
 DEFAULT_PLAN = 'free'
+
+#: Adicionais vendidos à parte do plano. Fonte ÚNICA do preço: a vitrine
+#: (/public/plans/), a fatura e o painel leem daqui.
+#:
+#: A implantação segue a régua da adesão (`cobra_adesao`): quem fecha o anual
+#: não paga. A mensalidade entra em toda fatura, × MESES_COBRADOS_NO_ANUAL no
+#: anual.
+ADICIONAIS = {
+    'etiqueta_anvisa': {
+        'key': 'etiqueta_anvisa',
+        'nome': 'Etiqueta nutricional ANVISA',
+        'implantacao': Decimal('390.00'),
+        'mensal': Decimal('79.00'),
+        'descricao': (
+            'Tabela nutricional calculada pela receita, pronta para imprimir '
+            'na embalagem dentro das regras da ANVISA.'
+        ),
+        'inclui': [
+            'Base de alimentos TACO e POF para montar a receita',
+            'Alergênicos declarados conforme a RDC 26',
+            'Lupa frontal (alto em açúcar, sódio, gordura) conforme a RDC 429',
+            'Arredondamento dos valores conforme a IN 75',
+            'Impressão em etiquetadora Zebra ou Elgin',
+        ],
+    },
+}
 
 
 def get_plan(plan_key):
@@ -201,6 +228,37 @@ def charges_setup_fee(plan_key):
     return bool(get_plan(plan_key).get('charges_setup_fee', False))
 
 
+def adicionais_da_loja(store) -> list:
+    """Chaves dos adicionais que a loja pode usar agora.
+
+    Grandfather tem todos: ela não paga nada e já usava o módulo antes de ele
+    virar produto — tirar agora seria confiscar o que o cliente já tinha.
+    """
+    if is_billing_exempt(store):
+        return list(ADICIONAIS)
+    from apps.stores.models import StoreSubscription
+    try:
+        contratados = store.subscription.adicionais or {}
+    except StoreSubscription.DoesNotExist:
+        return []
+    return [chave for chave in ADICIONAIS if chave in contratados]
+
+
+def loja_tem_adicional(store, chave) -> bool:
+    return chave in adicionais_da_loja(store)
+
+
+def q_lojas_com_adicional(chave, prefixo='') -> Q:
+    """O mesmo critério de `loja_tem_adicional`, como filtro de banco.
+
+    `prefixo` é o caminho até a loja (ex.: 'product__store__').
+    """
+    return (
+        Q(**{f'{prefixo}billing_exempt': True})
+        | Q(**{f'{prefixo}subscription__adicionais__has_key': chave})
+    )
+
+
 #: Quantas mensalidades o anual cobra. "Paga 10, leva 12".
 #:
 #: Estava escrito em DOIS lugares — aqui multiplicado na mão e em
@@ -226,6 +284,46 @@ def cobra_adesao(plan_key, billing_cycle=None) -> bool:
     if not charges_setup_fee(plan_key):
         return False
     return str(billing_cycle or '') not in CICLOS_COM_COMPROMISSO
+
+
+def valor_dos_adicionais(contratados, billing_cycle) -> dict:
+    """Quanto os adicionais somam na fatura deste ciclo.
+
+    `contratados` é o `StoreSubscription.adicionais`. A implantação entra na
+    primeira fatura depois da contratação e some quando uma fatura com ela é
+    paga (`implantacao_quitada`). Chave fora do catálogo não cobra nada.
+    """
+    anual = str(billing_cycle or '') in CICLOS_COM_COMPROMISSO
+    total = Decimal('0')
+    chaves = []
+    for chave, estado in (contratados or {}).items():
+        adicional = ADICIONAIS.get(chave)
+        if not adicional:
+            continue
+        chaves.append(chave)
+        if anual:
+            total += adicional['mensal'] * MESES_COBRADOS_NO_ANUAL
+            continue
+        total += adicional['mensal']
+        if not (estado or {}).get('implantacao_quitada'):
+            total += adicional['implantacao']
+    return {'total': total, 'chaves': chaves}
+
+
+def public_adicionais():
+    """Adicionais serializáveis para a vitrine e o painel."""
+    return [
+        {
+            'key': a['key'],
+            'nome': a['nome'],
+            'descricao': a['descricao'],
+            'inclui': list(a['inclui']),
+            'implantacao': float(a['implantacao']),
+            'mensal': float(a['mensal']),
+            'anual': float(a['mensal'] * MESES_COBRADOS_NO_ANUAL),
+        }
+        for a in ADICIONAIS.values()
+    ]
 
 
 def annual_price(plan_key):

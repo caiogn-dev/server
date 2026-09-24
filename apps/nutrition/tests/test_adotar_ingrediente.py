@@ -30,6 +30,7 @@ class AdotarIngredienteTest(TestCase):
         self.dono = User.objects.create_user(username='dono-nut', password='x')
         self.store = Store.objects.create(
             name='Loja NUT', slug='loja-nut', owner=self.dono, status='active',
+            billing_exempt=True,  # o módulo é o adicional Etiqueta ANVISA
         )
         self.oficial = NutritionIngredient.objects.create(
             canonical_name='Arroz, integral, cozido',
