@@ -34,7 +34,7 @@ _VAGUE_FIRST_CONTACT_PATTERNS = [
 ]
 
 _SPECIFIC_TERMS = [
-    "cardápio", "cardapio", "menu", "pedir", "pedido", "quero ",
+    "cardápio", "cardapio", "menu", "pedir", "pedido",
     "salada", "bebida", "entrega", "frete", "preço", "preco",
     "quanto", "disponível", "disponivel",
 ]
