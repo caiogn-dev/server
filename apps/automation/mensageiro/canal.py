@@ -64,9 +64,25 @@ def enviar_texto(conta, telefone: str, texto: str, evento: str, extra: dict | No
     if _calado(conta, telefone, evento):
         return None
 
+    # Fora da janela de 24 h o texto livre é recusado (131047). Para aviso de
+    # status de pedido existe o modelo de utilidade — ver `modelo.py`.
+    por_modelo = _por_modelo_se_janela_fechada(conta, telefone, evento, extra)
+    if por_modelo is not None:
+        return por_modelo
+
     return _enviar(lambda: MessageService().send_text_message(
         account_id=str(conta.id), to=telefone, text=texto, metadata=_meta(evento, extra),
     ))
+
+
+def _por_modelo_se_janela_fechada(conta, telefone: str, evento: str, extra: dict | None):
+    from . import janela, modelo
+
+    if evento not in modelo.FRASES or not modelo.modelo_aprovado(conta):
+        return None
+    if janela.aberta(conta, telefone):
+        return None
+    return _enviar(lambda: modelo.enviar_aviso_de_pedido(conta, telefone, evento, extra, _meta(evento, extra)))
 
 
 def enviar_botoes(conta, telefone: str, texto: str, botoes: list, evento: str,
