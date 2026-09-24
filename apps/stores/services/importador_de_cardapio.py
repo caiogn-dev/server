@@ -7,13 +7,13 @@ produto por produto no formulário. Com 92 min/mês de suporte por loja, o teto
 de um dev solo fica em ~35 clientes. O teto é o que impede vender volume — não
 o preço. Este módulo é o corte desse teto, não uma conveniência.
 
-POR QUE PLANILHA E NÃO FOTO/PDF
+FOTO E PDF (24/09)
 
-A versão "foto do cardápio → produtos" da estratégia depende de LLM, e a chave
-da NVIDIA está devolvendo **403 na inferência** (medido em 22/09). Construir
-em cima de um modelo morto entregaria uma tela que não funciona no dia em que
-o vendedor precisa dela. Planilha é determinístico: funciona hoje, resolve a
-mesma hora, e o caminho por foto pode ser somado depois sem refazer isto.
+A primeira versão foi só planilha porque a chave da NVIDIA devolvia 403
+(22/09). Com a chave nova, foto e PDF entram por `cardapio_por_ia`, que só
+TRANSCREVE e devolve as mesmas linhas que `ler_planilha()` — daqui em diante
+é o mesmo funil: `conferir()` decide o que é preço, o que é repetido e o que
+entra. Uma regra só para as três portas.
 
 O DESENHO EM UMA FRASE
 
@@ -109,17 +109,20 @@ class Conferencia:
     erros: list = field(default_factory=list)
 
 
-def conferir(linhas) -> Conferencia:
+def conferir(linhas, *, primeira: int = 2) -> Conferencia:
     """Separa o que vira produto do que falhou. NÃO grava nada.
 
     Uma linha torta não derruba o arquivo: um cardápio de 80 itens com 2 linhas
     ruins importa 78 e diz quais 2 falharam. Abortar tudo obrigaria o dono a
     recomeçar do zero por causa de uma vírgula.
+
+    `primeira` é o número da primeira linha: 2 na planilha (1 é o cabeçalho),
+    1 na foto/PDF, onde o número é a posição do item no cardápio.
     """
     resultado = Conferencia()
     ja_vistos = set()
 
-    for indice, linha in enumerate(linhas or [], start=2):  # 1 é o cabeçalho
+    for indice, linha in enumerate(linhas or [], start=primeira):
         nome = str((linha or {}).get('nome') or '').strip()
         if not nome:
             resultado.erros.append(ErroDeLinha(indice, 'Falta o nome do produto.'))
@@ -128,14 +131,16 @@ def conferir(linhas) -> Conferencia:
         chave = _chave(nome)
         if chave in ja_vistos:
             resultado.erros.append(
-                ErroDeLinha(indice, f'{nome!r} está repetido na planilha.')
+                ErroDeLinha(indice, f'{nome!r} está repetido no cardápio.')
             )
             continue
 
         try:
             preco = ler_preco(linha.get('preco'))
         except LinhaInvalida as exc:
-            resultado.erros.append(ErroDeLinha(indice, str(exc)))
+            # O NOME na mensagem: "Linha 14: informe o preço" obriga o dono a
+            # contar linhas; na foto nem existe linha para contar.
+            resultado.erros.append(ErroDeLinha(indice, f'{nome}: {exc}'))
             continue
 
         ja_vistos.add(chave)
@@ -334,3 +339,63 @@ def ler_csv(texto: str) -> list[dict]:
         if linha:
             linhas.append(linha)
     return linhas
+
+
+# ── Foto e PDF: outras portas, o mesmo funil ────────────────────────────────
+
+_ASSINATURAS_DE_IMAGEM = (b'\xff\xd8\xff', b'\x89PNG\r\n\x1a\n', b'GIF87a', b'GIF89a')
+
+
+def tipo_do_arquivo(conteudo: bytes) -> str:
+    """'pdf', 'imagem', 'heic' ou 'planilha' — pelo CONTEÚDO, nunca pelo nome."""
+    cabeca = (conteudo or b'')[:16]
+    if cabeca.startswith(b'%PDF'):
+        return 'pdf'
+    if cabeca.startswith(_ASSINATURAS_DE_IMAGEM) or (
+        cabeca[:4] == b'RIFF' and cabeca[8:12] == b'WEBP'
+    ):
+        return 'imagem'
+    if cabeca[4:8] == b'ftyp' and cabeca[8:12] in (b'heic', b'heix', b'mif1', b'msf1'):
+        return 'heic'
+    return 'planilha'
+
+
+def ler_foto(conteudos: list[bytes]) -> list[dict]:
+    """Fotos do cardápio -> linhas no formato de `ler_planilha()`."""
+    from apps.stores.services import cardapio_por_ia
+    return cardapio_por_ia.ler_foto(conteudos)
+
+
+def ler_pdf(conteudo: bytes) -> list[dict]:
+    """PDF do cardápio -> linhas no formato de `ler_planilha()`."""
+    from apps.stores.services import cardapio_por_ia
+    return cardapio_por_ia.ler_pdf(conteudo)
+
+
+def ler_arquivos(arquivos: list[tuple[str, bytes]]) -> tuple[list[dict], str]:
+    """Os arquivos enviados -> (linhas, origem). Origem: planilha, foto ou pdf.
+
+    Várias fotos são várias páginas do mesmo cardápio. Planilha e PDF vão um
+    por vez: misturar portas no mesmo envio não tem leitura óbvia, e adivinhar
+    aqui é gravar cardápio errado.
+    """
+    if not arquivos:
+        raise LinhaInvalida('Envie a planilha, a foto ou o PDF do cardápio.')
+    tipos = [tipo_do_arquivo(conteudo) for _, conteudo in arquivos]
+
+    if 'heic' in tipos:
+        raise LinhaInvalida(
+            'Esta foto está em HEIC (formato do iPhone). Envie em JPG — ou tire '
+            'um print da foto e envie o print.'
+        )
+    if all(t == 'imagem' for t in tipos):
+        return ler_foto([conteudo for _, conteudo in arquivos]), 'foto'
+    if len(arquivos) > 1:
+        raise LinhaInvalida(
+            'Envie uma planilha ou um PDF por vez. Várias fotos juntas podem — '
+            'são as páginas do cardápio.'
+        )
+    nome, conteudo = arquivos[0]
+    if tipos[0] == 'pdf':
+        return ler_pdf(conteudo), 'pdf'
+    return ler_planilha(conteudo, nome), 'planilha'

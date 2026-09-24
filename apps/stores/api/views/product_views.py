@@ -532,8 +532,27 @@ class StoreProductTypeAdminViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             qs, _ = filter_by_store(qs, store_param)
         return qs.select_related('store').order_by('sort_order', 'name')
 
+def _linhas_confirmadas(bruto) -> list:
+    """`linhas` do corpo (lista, ou JSON em string no multipart) -> list[dict]."""
+    import json
+    from apps.stores.services.importador_de_cardapio import LinhaInvalida
+
+    if isinstance(bruto, str):
+        try:
+            bruto = json.loads(bruto)
+        except ValueError:
+            raise LinhaInvalida('A lista de produtos conferidos chegou ilegível. Confira de novo.')
+    if not isinstance(bruto, list):
+        raise LinhaInvalida('A lista de produtos conferidos chegou ilegível. Confira de novo.')
+    campos = ('nome', 'preco', 'categoria', 'descricao')
+    return [
+        {c: item.get(c) for c in campos if item.get(c) is not None}
+        for item in bruto if isinstance(item, dict)
+    ]
+
+
 class ImportarCardapioView(APIView):
-    """POST /stores/{slug}/produtos/importar/ — cardápio inteiro de uma planilha.
+    """POST /stores/{slug}/produtos/importar/ — cardápio de planilha, foto ou PDF.
 
     DOIS PASSOS de propósito. `confirmar=false` confere e devolve o que entra e
     o que falhou, SEM tocar no banco; `confirmar=true` grava. Importar 80
@@ -556,22 +575,40 @@ class ImportarCardapioView(APIView):
         # O ARQUIVO é o caminho principal. A planilha que o lojista tem é
         # `.xlsx`, e texto não carrega binário; o CSV do Excel brasileiro vem
         # em cp1252, que o `.text()` do navegador estraga. Mandando o arquivo,
-        # o servidor decide pelo CONTEÚDO e os dois casos somem.
+        # o servidor decide pelo CONTEÚDO — planilha, PDF ou foto (várias
+        # fotos = várias páginas).
+        #
+        # `linhas` é a CONFIRMAÇÃO do que o dono já conferiu: a tela devolve a
+        # tabela que ele viu, em vez de reenviar a foto. Ler de novo chamaria
+        # o modelo outra vez — mais 7 s e uma leitura que pode sair diferente
+        # da que ele aprovou. Passa pelo mesmo `conferir()`: quem chama a API
+        # direto não pula a regra do preço.
         #
         # `csv` como texto fica para quem já chamava a API assim.
-        arquivo = request.FILES.get('arquivo')
+        arquivos = request.FILES.getlist('arquivo')
+        origem = 'planilha'
+        primeira = 2
         try:
-            if arquivo is not None:
-                linhas = importador.ler_planilha(arquivo.read(), arquivo.name)
+            if arquivos:
+                linhas, origem = importador.ler_arquivos(
+                    [(a.name, a.read()) for a in arquivos]
+                )
+            elif request.data.get('linhas') not in (None, ''):
+                linhas = _linhas_confirmadas(request.data.get('linhas'))
+                origem = 'conferencia'
             else:
                 linhas = importador.ler_csv(request.data.get('csv') or '')
         except importador.LinhaInvalida as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        conferencia = importador.conferir(linhas)
+        if origem != 'planilha':
+            # Na foto não há cabeçalho: o número é a posição do item.
+            primeira = 1
+        conferencia = importador.conferir(linhas, primeira=primeira)
         erros = [{'linha': e.linha, 'motivo': e.motivo} for e in conferencia.erros]
         validos = [
-            {'nome': v['nome'], 'preco': str(v['preco']), 'categoria': v['categoria']}
+            {'nome': v['nome'], 'preco': str(v['preco']), 'categoria': v['categoria'],
+             'descricao': v['descricao']}
             for v in conferencia.validos
         ]
 
@@ -581,7 +618,7 @@ class ImportarCardapioView(APIView):
         if isinstance(confirmar, str):
             confirmar = confirmar.strip().lower() in ('true', '1', 'sim')
         if not confirmar:
-            return Response({'validos': validos, 'erros': erros})
+            return Response({'validos': validos, 'erros': erros, 'origem': origem})
 
         contagem = importador.gravar(
             store, conferencia.validos, criado_por=request.user,

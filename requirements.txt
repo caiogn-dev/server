@@ -46,6 +46,9 @@ xlsxwriter>=3.1.9
 # PDF receipt generation (pure-Python, no system libs needed)
 reportlab>=4.0.0
 
+# Importador de cardápio: texto de PDF sem LLM (puro Python, sem lib de sistema)
+pypdf>=5.0.0
+
 # Web Push notifications (VAPID)
 pywebpush>=2.0.0
 
