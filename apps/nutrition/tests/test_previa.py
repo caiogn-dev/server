@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 from apps.nutrition.models import NutritionIngredient, ProductRecipe
 from apps.nutrition.services.calculator import calculate_recipe
 from apps.nutrition.services.previa import montar
+from apps.stores.models import Store
 
 
 def ingrediente(nome, **valores):
@@ -71,6 +72,8 @@ class MontarPreviaTest(TestCase):
 class PreviaEndpointTest(TestCase):
     def setUp(self):
         u = get_user_model().objects.create_user(username="chef", email="chef@t.local", password="x")
+        # O módulo é o adicional Etiqueta ANVISA: sem loja com ele, 402.
+        Store.objects.create(name="Chef", slug="chef-previa", owner=u, billing_exempt=True)
         self.client = APIClient()
         self.client.credentials(HTTP_AUTHORIZATION=f"Token {Token.objects.create(user=u).key}")
 

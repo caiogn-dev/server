@@ -112,9 +112,11 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, BaseAPIException):
         logger.warning(
             f'API Exception: {exc.code}',
+            # `message` é atributo reservado do LogRecord: com ele aqui, o
+            # logging levantava KeyError e TODA BaseAPIException virava 500.
             extra={
                 'code': exc.code,
-                'message': exc.message,
+                'error_message': exc.message,
                 'view': view.__class__.__name__ if view else None,
                 'method': request.method if request else None,
                 'path': request.path if request else None,

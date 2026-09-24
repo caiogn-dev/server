@@ -14,23 +14,20 @@ from apps.nutrition.services.previa import montar as montar_previa
 
 from apps.nutrition.models import NutritionIngredient, ProductRecipe, ProductNutritionProfile, RecipeItem
 from apps.stores.models import Store
+from .permissions import ExigeAdicionalEtiqueta, lojas_liberadas
 from .serializers import NutritionIngredientSerializer, ProductRecipeSerializer, ProductNutritionProfileSerializer
-
-
-def stores_for(user):
-    return Q(store__owner=user) | Q(store__staff=user)
 
 
 class NutritionIngredientViewSet(viewsets.ModelViewSet):
     serializer_class = NutritionIngredientSerializer
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, ExigeAdicionalEtiqueta)
     filter_backends = (filters.SearchFilter, filters.OrderingFilter)
     search_fields = ("canonical_name", "display_name", "category", "source_code")
     ordering_fields = ("display_name", "category", "source")
 
     def get_queryset(self):
         qs = NutritionIngredient.objects.filter(is_active=True)
-        qs = qs.filter(Q(store__isnull=True) | stores_for(self.request.user)).distinct()
+        qs = qs.filter(Q(store__isnull=True) | lojas_liberadas(self.request.user)).distinct()
         store = self.request.query_params.get("store")
         category = self.request.query_params.get("category")
         # `escopo` separa o que é da loja do catálogo oficial. Sem isso os ~70
@@ -139,10 +136,10 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
 
 class ProductRecipeViewSet(viewsets.ModelViewSet):
     serializer_class = ProductRecipeSerializer
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, ExigeAdicionalEtiqueta)
     def get_queryset(self):
         qs = ProductRecipe.objects.select_related("product", "product__store").prefetch_related("items__ingredient")
-        qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
+        qs = qs.filter(lojas_liberadas(self.request.user, "product__store__")).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
 
@@ -166,10 +163,10 @@ class ProductRecipeViewSet(viewsets.ModelViewSet):
 
 class ProductNutritionProfileViewSet(viewsets.ModelViewSet):
     serializer_class = ProductNutritionProfileSerializer
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, ExigeAdicionalEtiqueta)
     def get_queryset(self):
         qs = ProductNutritionProfile.objects.select_related("product", "recipe")
-        qs = qs.filter(Q(product__store__owner=self.request.user) | Q(product__store__staff=self.request.user)).distinct()
+        qs = qs.filter(lojas_liberadas(self.request.user, "product__store__")).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
 
@@ -181,7 +178,7 @@ class AlergenicosView(APIView):
     um dia as duas divirjam, e a que o lojista marca na tela é a que vale na
     etiqueta.
     """
-    permission_classes = (IsAuthenticated,)
+    permission_classes = (IsAuthenticated, ExigeAdicionalEtiqueta)
 
     def get(self, request):
         return Response({

@@ -46,6 +46,12 @@ class StoreSubscription(models.Model):
     dunning_since = models.DateTimeField(null=True, blank=True)    # início do past_due
     mp_setup_payment_id = models.CharField(max_length=255, blank=True, default='')  # pagamento da adesão
 
+    # Adicionais contratados (catálogo em billing.ADICIONAIS), por chave:
+    #   {'etiqueta_anvisa': {'contratado_em': iso, 'implantacao_quitada': bool}}
+    # Dicionário e não M2M: são poucos, vivem e morrem com a assinatura, e o
+    # portão precisa filtrar lojas por chave numa query só (has_key).
+    adicionais = models.JSONField(default=dict, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

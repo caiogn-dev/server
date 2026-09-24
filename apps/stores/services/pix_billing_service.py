@@ -50,7 +50,8 @@ def generate_invoice(subscription, now=None):
         return existing
 
     plan = billing.get_plan(subscription.plan)
-    amount = _invoice_amount(plan, subscription.billing_cycle)
+    adicionais = billing.valor_dos_adicionais(subscription.adicionais, subscription.billing_cycle)
+    amount = _invoice_amount(plan, subscription.billing_cycle) + adicionais["total"]
     kind = "annual" if subscription.billing_cycle == StoreSubscription.BillingCycle.ANNUAL else "monthly"
 
     # Orders API (/v1/orders), igual ao PIX das lojas. A rota antiga
@@ -95,6 +96,10 @@ def generate_invoice(subscription, now=None):
         metadata={
             "kind": kind, "subscription_id": str(subscription.id),
             "period_key": period_key, "sent_steps": [],
+            # Quais adicionais esta fatura cobrou: pagá-la quita a implantação
+            # deles (apply_invoice_paid). Sem isso a implantação voltaria
+            # todo mês.
+            "adicionais": adicionais["chaves"],
         },
     )
 
@@ -131,6 +136,12 @@ def apply_invoice_paid(store_payment):
     if store.plan != sub.plan:
         store.plan = sub.plan
         store.save(update_fields=["plan"])
+
+    quitados = [c for c in meta.get("adicionais") or [] if c in (sub.adicionais or {})]
+    if quitados:
+        for chave in quitados:
+            sub.adicionais[chave] = {**(sub.adicionais[chave] or {}), "implantacao_quitada": True}
+        sub.save(update_fields=["adicionais"])
 
     meta["applied"] = True
     store_payment.metadata = meta
