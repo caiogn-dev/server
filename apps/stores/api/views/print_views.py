@@ -143,12 +143,17 @@ class PrintAgentHeartbeatView(APIView):
                 agent.available_printers = cleaned
                 agent.save(update_fields=['available_printers', 'updated_at'])
 
+        from apps.stores.services import vigia_de_impressao
+
         return Response({
             'ok': True,
             'agent_id': str(agent.id),
             'store_id': str(agent.store_id),
             # O agent obedece a impressora escolhida no painel
             'printer_name': agent.printer_name,
+            # O agent avisa no log quando está velho; o painel mostra o selo.
+            'versao_atual': vigia_de_impressao.VERSAO_ATUAL_DO_AGENT,
+            'versao_desatualizada': vigia_de_impressao.versao_desatualizada(agent.app_version),
         })
 
 

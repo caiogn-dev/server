@@ -929,6 +929,13 @@ class StorePrintAgentSerializer(serializers.ModelSerializer):
     """Serializer for local print agents."""
 
     is_online = serializers.SerializerMethodField()
+    # Situação vista pelo vigia (ver services/vigia_de_impressao.py): é o que
+    # acende a faixa "impressora parada" no quadro de pedidos.
+    situacao = serializers.SerializerMethodField()
+    situacao_desde = serializers.SerializerMethodField()
+    situacao_detalhe = serializers.SerializerMethodField()
+    versao_desatualizada = serializers.SerializerMethodField()
+    versao_atual = serializers.SerializerMethodField()
 
     class Meta:
         model = StorePrintAgent
@@ -938,6 +945,7 @@ class StorePrintAgentSerializer(serializers.ModelSerializer):
             'printer_port', 'poll_interval_seconds', 'max_retries',
             'last_seen_at', 'last_seen_ip', 'last_error',
             'app_version', 'host_name', 'available_printers', 'metadata', 'is_online',
+            'situacao', 'situacao_desde', 'situacao_detalhe', 'versao_desatualizada', 'versao_atual',
             'created_at', 'updated_at', 'is_active',
         ]
         read_only_fields = [
@@ -949,6 +957,33 @@ class StorePrintAgentSerializer(serializers.ModelSerializer):
         if not obj.last_seen_at:
             return False
         return (timezone.now() - obj.last_seen_at).total_seconds() <= (obj.poll_interval_seconds * 4)
+
+    def _situacao(self, obj):
+        from apps.stores.services import vigia_de_impressao
+
+        if not hasattr(obj, '_situacao_do_vigia'):
+            obj._situacao_do_vigia = vigia_de_impressao.situacao_do_agente(obj)
+        return obj._situacao_do_vigia
+
+    def get_situacao(self, obj):
+        return self._situacao(obj).codigo
+
+    def get_situacao_desde(self, obj):
+        desde = self._situacao(obj).desde
+        return desde.isoformat() if desde else None
+
+    def get_situacao_detalhe(self, obj):
+        return self._situacao(obj).detalhe
+
+    def get_versao_desatualizada(self, obj):
+        from apps.stores.services import vigia_de_impressao
+
+        return vigia_de_impressao.versao_desatualizada(obj.app_version)
+
+    def get_versao_atual(self, obj):
+        from apps.stores.services import vigia_de_impressao
+
+        return vigia_de_impressao.VERSAO_ATUAL_DO_AGENT
 
 
 class StorePrintAgentCreateSerializer(serializers.ModelSerializer):

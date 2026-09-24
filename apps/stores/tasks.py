@@ -608,3 +608,13 @@ def renovar_tokens_oauth_do_mercadopago():
             )
 
     return {'renovados': renovados, 'falhas': falhas}
+
+
+@shared_task(name='stores.vigiar_impressoras')
+def vigiar_impressoras():
+    """A cada 5 min: quem parou de imprimir? Avisa o dono uma vez por episódio."""
+    from apps.stores.services.vigia_de_impressao import vigiar_todos
+
+    contagem = vigiar_todos()
+    logger.info('vigia de impressão: %s', contagem)
+    return contagem
