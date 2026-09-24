@@ -2,18 +2,22 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q
 from rest_framework import filters, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.exceptions import ValidationError as DRFValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.nutrition.allergens import ALERGENICOS
-from apps.nutrition.services.calculator import calculate_recipe
+from apps.core.permissions import user_can_access_store
+from apps.nutrition.services.calculator import calculate_recipe, peso_total
+from apps.nutrition.services.custo import custo_dos_itens, ficha_de_custo
 from apps.nutrition.services.previa import montar as montar_previa
 
-from apps.nutrition.models import NutritionIngredient, ProductRecipe, ProductNutritionProfile, RecipeItem
-from apps.stores.models import Store
+from apps.nutrition.models import (
+    CAMPOS_DE_CUSTO, NutritionIngredient, ProductNutritionProfile, ProductRecipe, RecipeItem,
+)
+from apps.stores.models import Store, StoreProduct
 from .permissions import ExigeAdicionalEtiqueta, lojas_liberadas
 from .serializers import NutritionIngredientSerializer, ProductRecipeSerializer, ProductNutritionProfileSerializer
 
@@ -106,8 +110,10 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
         # O que o formulário mandou vence a cópia crua. Adotar de novo é a via
         # de reeditar: o unique (store, canonical_name, preparation_state)
         # proíbe uma segunda cópia, então a mesma linha é atualizada.
+        # O preço também: a receita da loja aponta para a base, e o lojista
+        # informa quanto paga no mesmo formulário em que adota.
         for campo in ("allergens", "may_contain", "allergens_reviewed",
-                      "display_name", "category", *NUTRIENT_FIELDS):
+                      "display_name", "category", *NUTRIENT_FIELDS, *CAMPOS_DE_CUSTO):
             if campo in request.data:
                 setattr(copia, campo, request.data[campo])
 
@@ -152,13 +158,30 @@ class ProductRecipeViewSet(viewsets.ModelViewSet):
         onde dói, com o número visto na tela diferente do impresso.
         """
         dados = request.data or {}
+        # Com o produto, a prévia devolve também a margem contra o preço dele.
+        # O preço só sai para quem acessa a loja do produto (IDOR de leitura).
+        preco = None
+        if dados.get("product"):
+            produto = _produto_acessivel(request.user, dados["product"])
+            if produto is None:
+                raise NotFound("Produto não encontrado.")
+            preco = produto.price
         receita = montar_previa(
             itens_crus=dados.get("items") or [],
             serving_size_g=dados.get("serving_size_g", 100),
             prepared_weight_g=dados.get("prepared_weight_g"),
             physical_form=dados.get("physical_form", "solido"),
         )
-        return Response(calculate_recipe(receita))
+        calculo = calculate_recipe(receita)
+        return Response({**calculo, "custo": ficha_de_custo(calculo, preco)})
+
+
+def _produto_acessivel(user, produto_id):
+    try:
+        produto = StoreProduct.objects.select_related("store").filter(pk=produto_id).first()
+    except DjangoValidationError:  # id que não é UUID
+        return None
+    return produto if produto and user_can_access_store(user, produto.store) else None
 
 
 class ProductNutritionProfileViewSet(viewsets.ModelViewSet):
@@ -169,6 +192,50 @@ class ProductNutritionProfileViewSet(viewsets.ModelViewSet):
         qs = qs.filter(lojas_liberadas(self.request.user, "product__store__")).distinct()
         product = self.request.query_params.get("product")
         return qs.filter(product_id=product) if product else qs
+
+
+class CustosDaLojaView(APIView):
+    """Custo e margem de todo prato com receita, pior margem primeiro.
+
+    É a lista que responde "onde estou perdendo dinheiro": o prato com CMV
+    alto aparece no topo. Prato com ingrediente sem preço vai para o FIM,
+    marcado — ordenar um custo incompleto junto dos outros o poria entre os
+    de margem boa, e é margem que ele não tem.
+
+    Escopo pela régua comum (`user_can_access_store`): dono, staff ou membro
+    da equipe. Loja alheia responde 404 — confirmar que ela existe já é
+    informação sobre o vizinho.
+    """
+    # Mesma porta das receitas: custo e margem nascem da receita, que é do adicional.
+    permission_classes = (IsAuthenticated, ExigeAdicionalEtiqueta)
+
+    def get(self, request):
+        loja_id = request.query_params.get("store")
+        if not loja_id:
+            raise DRFValidationError({"store": "Informe a loja."})
+        try:
+            loja = Store.objects.filter(pk=loja_id).first()
+        except DjangoValidationError:
+            loja = None
+        if loja is None or not user_can_access_store(request.user, loja):
+            raise NotFound("Loja não encontrada.")
+
+        receitas = (ProductRecipe.objects.filter(product__store=loja)
+                    .select_related("product").prefetch_related("items__ingredient"))
+        linhas = []
+        for receita in receitas:
+            itens = list(receita.items.all())
+            custo = ficha_de_custo(
+                custo_dos_itens(itens, peso_total(receita, itens), receita.serving_size_g),
+                receita.product.price)
+            linhas.append({
+                "produto_id": str(receita.product_id),
+                "produto": receita.product.name,
+                **custo,
+                "completo": custo["margem_bruta_pct"] is not None,
+            })
+        linhas.sort(key=lambda l: (not l["completo"], l["margem_bruta_pct"] or 0, l["produto"]))
+        return Response(linhas)
 
 
 class AlergenicosView(APIView):

@@ -15,6 +15,8 @@ class RecipeCalculatorTests(SimpleTestCase):
         ingredient.allergens = values.get("allergens", [])
         ingredient.may_contain = values.get("may_contain", [])
         ingredient.allergens_reviewed = values.get("allergens_reviewed", True)
+        # Ficha de custo: sem preço declarado, o custo sai em branco.
+        ingredient.preco_pago = None
         return Mock(ingredient=ingredient, quantity_g=Decimal(str(grams)), prepared_quantity_g=None)
 
     def recipe(self, items, serving=100):
