@@ -30,7 +30,7 @@ _VAGUE_FIRST_CONTACT_PATTERNS = [
     r'^(oi|olá|ola)[!?.\s,]*(tudo\s*(bem|bom|certo|ok)|como\s*vai)?[!?.\s,]*$',
     r'^(quero?\s+)?(mais\s+)?informa[çc][õo]es[!?.\s]*$',
     r'^(tenho interesse|pode me ajudar|me\s*ajuda|queria saber|vim saber)[!?.\s]*$',
-    r'^(oi.{0,30})?(quero?\s+)?(mais\s+)?informa[çc][õo]es[!?.\s]*$',
+    r'^(oi[!?,.\s]*)?(quero?\s+)?(mais\s+)?informa[çc][õo]es[!?.\s]*$',
 ]
 
 _SPECIFIC_TERMS = [

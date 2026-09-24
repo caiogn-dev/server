@@ -87,6 +87,11 @@ class TestSondagemNode(unittest.TestCase):
         r = sondagem_node(self._state("Quero uma salada"))
         self.assertFalse(r.get("messages"))
 
+    def test_oi_sobre_pagamento_nao_interceptado(self):
+        """'Oi, sobre pagamento quero informações' é pergunta específica — vai para o LLM."""
+        r = sondagem_node(self._state("Oi, sobre pagamento quero informações"))
+        self.assertFalse(r.get("messages"))
+
     def test_pergunta_de_preco_nao_interceptada(self):
         r = sondagem_node(self._state("Qual o preço da salada?"))
         self.assertFalse(r.get("messages"))
