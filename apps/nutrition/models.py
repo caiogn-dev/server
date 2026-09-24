@@ -14,6 +14,10 @@ NUTRIENT_FIELDS = (
 )
 
 
+UNIDADES_DE_COMPRA = (("g", "g"), ("ml", "ml"), ("un", "unidade"))
+CAMPOS_DE_CUSTO = ("preco_pago", "quantidade_comprada", "unidade_compra", "quantidade_por_unidade")
+
+
 class NutritionIngredient(BaseModel):
     class Source(models.TextChoices):
         TACO = "taco", "TACO/NEPA-Unicamp"
@@ -71,6 +75,16 @@ class NutritionIngredient(BaseModel):
     trans_fat_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     fiber_g = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
     sodium_mg = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    # Ficha de custo: "paguei R$ X por Y g/ml/un". Guarda-se o que está na
+    # nota, não o custo por grama: é o número que o lojista confere quando o
+    # fornecedor reajusta. Só existe em ingrediente da LOJA — a base pública
+    # é compartilhada e cada cozinha paga um preço diferente.
+    preco_pago = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    quantidade_comprada = models.DecimalField(max_digits=12, decimal_places=3, null=True, blank=True)
+    unidade_compra = models.CharField(max_length=2, blank=True, choices=UNIDADES_DE_COMPRA)
+    # Comprado por unidade (bandeja de ovos, lata): quanto de g/ml vem em cada
+    # uma, na unidade da receita. Sem isso não há custo por grama honesto.
+    quantidade_por_unidade = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True)
 
     class Meta:
         ordering = ("display_name",)
@@ -89,8 +103,25 @@ class NutritionIngredient(BaseModel):
             desconhecidos = validar_alergenicos(valor)
             if desconhecidos:
                 errors[campo] = f"Alergênico não previsto na RDC 26/2015: {', '.join(desconhecidos)}."
+        errors.update(self._erros_de_custo())
         if errors:
             raise ValidationError(errors)
+
+    def _erros_de_custo(self):
+        if self.preco_pago is None and self.quantidade_comprada is None and not self.unidade_compra:
+            return {}
+        if not self.store_id:
+            return {"preco_pago": "Alimento da base oficial não tem preço. Adote-o na sua loja para informar quanto você paga."}
+        errors = {}
+        if self.preco_pago is None or self.preco_pago < 0:
+            errors["preco_pago"] = "Informe quanto você pagou."
+        if self.quantidade_comprada is None or self.quantidade_comprada <= 0:
+            errors["quantidade_comprada"] = "Informe quanto veio na compra (maior que zero)."
+        if not self.unidade_compra:
+            errors["unidade_compra"] = "Informe se a compra foi em g, ml ou unidade."
+        if self.unidade_compra == "un" and not (self.quantidade_por_unidade and self.quantidade_por_unidade > 0):
+            errors["quantidade_por_unidade"] = f"Informe quantos {self.default_unit} vêm em cada unidade."
+        return errors
 
     def __str__(self):
         return self.display_name

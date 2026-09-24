@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from apps.nutrition.allergens import da_receita as allergens_da_receita
 from apps.nutrition.lactose import da_receita as lactose_da_receita
 from apps.nutrition.models import NUTRIENT_FIELDS
+from apps.nutrition.services.custo import custo_dos_itens
 from apps.nutrition.services.rotulagem import (
     LIMITES_FRONTAIS as FORMAS_VALIDAS, alertas_frontais, arredondar_tabela,
 )
@@ -28,10 +29,16 @@ def _q(value, places="0.01"):
     return value.quantize(Decimal(places), rounding=ROUND_HALF_UP) if value is not None else None
 
 
+def peso_total(recipe, items):
+    """Peso do preparo pronto quando declarado; senão, a soma dos itens."""
+    return recipe.prepared_weight_g or sum(
+        (item.prepared_quantity_g or item.quantity_g for item in items), Decimal("0"))
+
+
 def calculate_recipe(recipe):
     items = list(recipe.items.select_related("ingredient").all())
     weights = [item.prepared_quantity_g or item.quantity_g for item in items]
-    total_weight = recipe.prepared_weight_g or sum(weights, Decimal("0"))
+    total_weight = peso_total(recipe, items)
     totals, missing = {}, []
     for field in NUTRIENT_FIELDS:
         if any(getattr(item.ingredient, field) is None for item in items):
@@ -116,4 +123,6 @@ def calculate_recipe(recipe):
         "front_of_pack": frontal,
         "allergens": allergens_da_receita(recipe),
         "lactose": lactose_da_receita(recipe),
+        # Ficha de custo: `custo_total`, `custo_por_porcao`, `ingredientes_sem_preco`.
+        **custo_dos_itens(items, total_weight, serving),
     }

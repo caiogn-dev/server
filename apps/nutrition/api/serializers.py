@@ -1,18 +1,36 @@
+from decimal import Decimal
+
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
 from apps.core.serializers import checar_loja_do_usuario
 from django.urls import reverse
 
-from apps.nutrition.models import NutritionIngredient, ProductRecipe, RecipeItem, ProductNutritionProfile, NUTRIENT_FIELDS
+from apps.nutrition.models import (
+    CAMPOS_DE_CUSTO, NUTRIENT_FIELDS, NutritionIngredient, ProductNutritionProfile, ProductRecipe, RecipeItem,
+)
 from apps.nutrition.services.calculator import calculate_recipe
+from apps.nutrition.services.custo import custo_por_g_ml, ficha_de_custo
+
+
+def _calculo(recipe):
+    """Um cálculo por receita por resposta: `calculation` e `custo` leem o mesmo."""
+    if not hasattr(recipe, "_calculo_da_resposta"):
+        recipe._calculo_da_resposta = calculate_recipe(recipe)
+    return recipe._calculo_da_resposta
 
 
 class NutritionIngredientSerializer(serializers.ModelSerializer):
+    custo_por_g_ml = serializers.SerializerMethodField()
+
     class Meta:
         model = NutritionIngredient
         fields = "__all__"
         read_only_fields = ("id", "created_at", "updated_at")
+
+    def get_custo_por_g_ml(self, obj):
+        custo = custo_por_g_ml(obj)
+        return custo.quantize(Decimal("0.000001")) if custo is not None else None
 
     def validate_store(self, store):
         """Ingrediente global (sem loja) é só do administrador da plataforma;
@@ -30,7 +48,11 @@ class NutritionIngredientSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         if self.instance and self.instance.store_id is None and not self.context["request"].user.is_superuser:
             raise serializers.ValidationError("Ingredientes oficiais globais são somente leitura.")
-        instance = NutritionIngredient(**{**({k: getattr(self.instance, k) for k in NUTRIENT_FIELDS} if self.instance else {}), **attrs})
+        # PATCH parcial: o que não veio sai da instância. `store` entra porque
+        # preço só vale em ingrediente da loja — sem ele, mandar só o preço
+        # pareceria alimento oficial e seria recusado.
+        herdados = (*NUTRIENT_FIELDS, *CAMPOS_DE_CUSTO, "store", "default_unit")
+        instance = NutritionIngredient(**{**({k: getattr(self.instance, k) for k in herdados} if self.instance else {}), **attrs})
         instance.clean()
         return attrs
 
@@ -45,6 +67,7 @@ class RecipeItemSerializer(serializers.ModelSerializer):
 class ProductRecipeSerializer(serializers.ModelSerializer):
     items = RecipeItemSerializer(many=True, required=False)
     calculation = serializers.SerializerMethodField()
+    custo = serializers.SerializerMethodField()
     product_name = serializers.CharField(source="product.name", read_only=True)
 
     class Meta:
@@ -53,7 +76,10 @@ class ProductRecipeSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at", "updated_at", "reviewed_by", "reviewed_at")
 
     def get_calculation(self, obj):
-        return calculate_recipe(obj)
+        return _calculo(obj)
+
+    def get_custo(self, obj):
+        return ficha_de_custo(_calculo(obj), obj.product.price)
 
     def validate_product(self, product):
         user = self.context["request"].user
@@ -111,6 +137,7 @@ class ProductRecipeSerializer(serializers.ModelSerializer):
 class ProductNutritionProfileSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
     calculation = serializers.SerializerMethodField()
+    custo = serializers.SerializerMethodField()
     public_url = serializers.SerializerMethodField()
     class Meta:
         model = ProductNutritionProfile
@@ -126,7 +153,10 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
         return product
 
     def get_calculation(self, obj):
-        return calculate_recipe(obj.recipe) if obj.recipe_id else None
+        return _calculo(obj.recipe) if obj.recipe_id else None
+
+    def get_custo(self, obj):
+        return ficha_de_custo(_calculo(obj.recipe), obj.product.price) if obj.recipe_id else None
 
     def update(self, instance, validated_data):
         """Carimba quem aprovou e quando.
