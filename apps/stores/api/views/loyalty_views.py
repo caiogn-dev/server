@@ -196,6 +196,24 @@ class LoyaltyAccountsView(APIView):
         return agg
 
 
+class LoyaltyImpactoView(APIView):
+    """GET — quanto o programa custa e se está fazendo alguém voltar (90 dias).
+
+    Alimenta o simulador da tela de Fidelidade: o dono muda "itens para ganhar"
+    e vê o custo mensal, e vê a recompra de quem participa × quem não. A conta
+    mora em `services/loyalty_impacto.py`; aqui só a porta e a permissão.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, store_slug):
+        from ...services.loyalty_impacto import calcular_impacto
+
+        store = get_active_store(store_slug)
+        if not user_can_access_store(request.user, store):
+            return Response({'error': 'Sem permissão para esta loja.'}, status=403)
+        return Response(calcular_impacto(store))
+
+
 class LoyaltyResgateManualView(APIView):
     """POST — o dono baixa (ou devolve) um brinde entregue fora do checkout.
 

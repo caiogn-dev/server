@@ -207,7 +207,7 @@ from .api.payment_views import (
     StorePaymentViewSet, StorePaymentGatewayViewSet, StorePaymentWebhookEventViewSet
 )
 from .api.views.loyalty_views import (
-    LoyaltyResgateManualView,
+    LoyaltyResgateManualView, LoyaltyImpactoView,
     LoyaltyStatusView, LoyaltyRedeemCheckView, LoyaltyAccountsView,
     LoyaltyGuestStatusView, ConquistasView, CashbackResumoView, CashbackSaldoView,
     CarteiraView, CarteiraCompraView, CashbackAjusteView, CashbackExtratoView, IndicacoesView,
@@ -316,6 +316,7 @@ store_frontend_patterns = [
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),
     path('loyalty/accounts/', LoyaltyAccountsView.as_view(), name='store-loyalty-accounts'),
+    path('loyalty/impacto/', LoyaltyImpactoView.as_view(), name='store-loyalty-impacto'),
     path('loyalty/accounts/<int:user_id>/resgatar/', LoyaltyResgateManualView.as_view(),
          name='store-loyalty-resgate-manual'),
     path('cashback/', CashbackResumoView.as_view(), name='store-cashback-resumo'),
