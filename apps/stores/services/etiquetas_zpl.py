@@ -217,15 +217,29 @@ def _nutricao(etiquetas) -> str:
 
 # ---------------------------------------------------------------- QR 30 × 22
 
-def _nutricao_qr(etiquetas) -> str:
-    W, H = 30, 22
+def _celula_qr(p, x, y, label_w, label_h, et):
+    """Nome + dica à esquerda, QR à direita, dentro de uma célula label_w × label_h."""
+    qr_lado = min(label_h - 4, 16)
+    texto_w = mm(label_w) - mm(qr_lado) - mm(3)
+    p.append(_campo(x + mm(1.2), y + mm(1.2), 16, et.get('name', ''), largura=texto_w, linhas=3))
+    p.append(_campo(x + mm(1.2), y + mm(label_h) - mm(9), 11, 'Escaneie para ver a informação nutricional', largura=texto_w, linhas=3))
+    if et.get('publicUrl'):
+        p.append(_qr(x + mm(label_w) - mm(qr_lado) - mm(1.5), y + mm((label_h - qr_lado) / 2), et['publicUrl'], 3))
+
+
+def _nutricao_qr(etiquetas, cfg) -> str:
+    """30 × 22 por padrão; com `cols` no config vira rolo de N colunas (Elgin),
+    exatamente como a validade — era o que faltava para o rolo de 3."""
+    cols = max(1, int(cfg.get('cols', 1) or 1))
+    label_w = float(cfg.get('labelW', 30)); label_h = float(cfg.get('labelH', 22))
+    gap = float(cfg.get('gap', 0)); paper_w = float(cfg.get('paperW', cols * label_w + (cols - 1) * gap))
+    off_x = float(cfg.get('offsetX', 0)); off_y = float(cfg.get('offsetY', 0))
+    margem = max(0.0, (paper_w - (cols * label_w + (cols - 1) * gap)) / 2)
     saida = []
-    for et in etiquetas:
-        p = [_cabecalho(W, H)]
-        p.append(_campo(mm(1.2), mm(1.2), 16, et.get('name', ''), largura=mm(13.5), linhas=3))
-        p.append(_campo(mm(1.2), mm(12), 11, 'Escaneie para consultar a informação nutricional', largura=mm(13.5), linhas=4))
-        if et.get('publicUrl'):
-            p.append(_qr(mm(15.5), mm(3), et['publicUrl'], 3))
+    for i in range(0, len(etiquetas), cols):
+        p = [_cabecalho(paper_w, label_h)]
+        for col, et in enumerate(etiquetas[i:i + cols]):
+            _celula_qr(p, mm(margem + off_x + col * (label_w + gap)), mm(off_y), label_w, label_h, et)
         p.append('^XZ')
         saida.append(''.join(p))
     return '\n'.join(saida)
@@ -241,5 +255,5 @@ def render_etiquetas(modelo: str, etiquetas: list, config: dict | None) -> str:
     if modelo == 'nutricao':
         return _nutricao(etiquetas)
     if modelo == 'nutricao-qr':
-        return _nutricao_qr(etiquetas)
+        return _nutricao_qr(etiquetas, cfg)
     raise ValueError(f'Modelo de etiqueta desconhecido: {modelo}')

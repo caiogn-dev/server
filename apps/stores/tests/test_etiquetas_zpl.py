@@ -61,6 +61,15 @@ class RenderTests(APITestCase):
         # açúcares totais sem valor → travessão, nunca "0"
         self.assertRegex(zpl, r'Açúcares totais \(g\)[^\n]*?-')
 
+    def test_nutricao_qr_em_rolo_de_3_colunas(self):
+        tres = [dict(NUTRI[0], name=f'Prato {i}') for i in range(3)]
+        cfg = {'cols': 3, 'labelW': 30, 'labelH': 22, 'gap': 3, 'paperW': 100}
+        zpl = render_etiquetas('nutricao-qr', tres, cfg)
+        self.assertEqual(zpl.count('^XA'), 1)
+        self.assertIn('^PW800', zpl); self.assertIn('^LL176', zpl)
+        self.assertEqual(zpl.count('^BQN'), 3)
+        self.assertIn('Prato 2', zpl)
+
     def test_nutricao_qr_30x22(self):
         zpl = render_etiquetas('nutricao-qr', NUTRI, {})
         self.assertIn('^PW240', zpl); self.assertIn('^LL176', zpl)
