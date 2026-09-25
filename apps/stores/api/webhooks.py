@@ -475,7 +475,7 @@ class PaymentStatusView(APIView):
 
             has_valid_token = bool(
                 token and order.access_token
-                and hmac.compare_digest(str(token), str(order.access_token))
+                and hmac.compare_digest(str(token).encode(), str(order.access_token).encode())
             )
 
             if not has_valid_token and not is_authenticated_owner:
@@ -809,7 +809,7 @@ class CustomerOrderDetailView(APIView):
             )
             has_valid_token = bool(
                 token and order.access_token
-                and hmac.compare_digest(str(token), str(order.access_token))
+                and hmac.compare_digest(str(token).encode(), str(order.access_token).encode())
             )
 
             if not is_owner and not has_valid_token:
