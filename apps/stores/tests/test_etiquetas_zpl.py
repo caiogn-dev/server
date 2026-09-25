@@ -76,6 +76,39 @@ class RenderTests(APITestCase):
             render_etiquetas('comanda', VALIDADE, {})
 
 
+PRODUTO = [{'name': 'Bowl de frango', 'description': 'Frango, arroz integral, brócolis', 'price': 'R$ 29,90', 'barcode': '2010000000015'}]
+CFG_PRODUTO = {'width': 100, 'height': 80, 'paperW': 100, 'rotate': False, 'offsetX': 0, 'offsetY': 0,
+               'border': 'solid', 'showPrice': True, 'showDesc': True}
+
+
+class RenderProdutoTests(APITestCase):
+    def test_produto_100x80_com_ean13_preco_e_borda(self):
+        zpl = render_etiquetas('produto', PRODUTO, CFG_PRODUTO)
+        self.assertIn('^PW800', zpl); self.assertIn('^LL640', zpl)
+        self.assertIn('Bowl de frango', zpl)
+        self.assertIn('R$ 29,90', zpl)
+        self.assertIn('^BEN', zpl)                     # EAN-13 nativo
+        self.assertIn('^FD2010000000015^FS', zpl)
+        self.assertIn('^GB', zpl)                      # borda
+        self.assertIn('Frango, arroz integral', zpl)
+
+    def test_codigo_que_nao_e_ean13_sai_em_code128(self):
+        zpl = render_etiquetas('produto', [dict(PRODUTO[0], barcode='ABC-77')], CFG_PRODUTO)
+        self.assertIn('^BCN', zpl); self.assertNotIn('^BEN', zpl)
+
+    def test_sem_preco_e_sem_descricao_quando_desligados(self):
+        zpl = render_etiquetas('produto', PRODUTO, dict(CFG_PRODUTO, showPrice=False, showDesc=False, border='none'))
+        self.assertNotIn('R$ 29,90', zpl); self.assertNotIn('Frango, arroz', zpl); self.assertNotIn('^GB', zpl)
+
+    def test_girar_90_troca_largura_por_altura(self):
+        zpl = render_etiquetas('produto', PRODUTO, dict(CFG_PRODUTO, rotate=True, width=100, height=50, paperW=100))
+        self.assertIn('^PW400', zpl); self.assertIn('^LL800', zpl); self.assertIn('^FWR', zpl)
+
+    def test_sem_codigo_nao_manda_barcode(self):
+        zpl = render_etiquetas('produto', [dict(PRODUTO[0], barcode='')], CFG_PRODUTO)
+        self.assertNotIn('^BEN', zpl); self.assertNotIn('^BCN', zpl)
+
+
 class EndpointTests(APITestCase):
     URL = '/api/v1/stores/print-jobs/etiquetas/'
 
@@ -129,6 +162,11 @@ class EndpointTests(APITestCase):
         StoreSubscription.objects.filter(store=self.store).update(adicionais={'etiqueta_anvisa': {}})
         r = self._post(modelo='nutricao', etiquetas=NUTRI, config={})
         self.assertEqual(r.status_code, 201, r.content)
+
+    def test_produto_e_modelo_valido_no_endpoint(self):
+        r = self._post(modelo='produto', etiquetas=PRODUTO, config=CFG_PRODUTO)
+        self.assertEqual(r.status_code, 201, r.content)
+        self.assertIn('^BEN', StorePrintJob.objects.get().payload['zpl'])
 
     def test_sem_etiquetas_e_400(self):
         r = self._post(etiquetas=[])

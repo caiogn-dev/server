@@ -26,7 +26,7 @@ LINHAS_NUTRICIONAIS = [
     ('sodium_mg', 'Sódio', 'mg', 2000),
 ]
 
-MODELOS = ('validade', 'nutricao', 'nutricao-qr')
+MODELOS = ('produto', 'validade', 'nutricao', 'nutricao-qr')
 
 
 def mm(v) -> int:
@@ -91,6 +91,51 @@ def _validade(etiquetas, cfg) -> str:
             partes.append(_campo(x, mm(off_y + label_h) - mm(4.4), 22, f"Val.: {et.get('val', '')}", largura=largura))
         partes.append('^XZ')
         saida.append(''.join(partes))
+    return '\n'.join(saida)
+
+
+# ---------------------------------------------------------------- produto (código de barras)
+
+def _e_ean13(codigo: str) -> bool:
+    return len(codigo) == 13 and codigo.isdigit()
+
+
+def _produto(etiquetas, cfg) -> str:
+    w = float(cfg.get('width', 100)); h = float(cfg.get('height', 80))
+    paper_w = max(float(cfg.get('paperW', w)), w)
+    rotate = bool(cfg.get('rotate', False))
+    off_x = float(cfg.get('offsetX', 0)); off_y = float(cfg.get('offsetY', 0))
+    borda = str(cfg.get('border', 'none'))
+    mostrar_preco = bool(cfg.get('showPrice', True))
+    mostrar_desc = bool(cfg.get('showDesc', True))
+    margem = (paper_w - w) / 2
+
+    saida = []
+    for et in etiquetas:
+        # Girado: o rolo é estreito e a etiqueta é impressa "deitada". Trocamos
+        # largura por altura e viramos os campos com ^FWR.
+        p = [_cabecalho(h if rotate else paper_w, w if rotate else h)]
+        if rotate:
+            p.append('^FWR')
+        x0 = mm(margem + off_x) + mm(3)
+        y = mm(off_y) + mm(3)
+        largura = mm(w - 6)
+        if borda in ('solid', 'dashed'):
+            p.append(f'^FO{mm(margem + off_x)},{mm(off_y)}^GB{mm(w)},{mm(h)},2^FS')
+        p.append(_campo(x0, y, 30, et.get('name', ''), largura=largura, linhas=2)); y += 66
+        if mostrar_desc and et.get('description'):
+            p.append(_campo(x0, y, 16, et['description'], largura=largura, linhas=3)); y += 3 * 18 + 4
+        if mostrar_preco and et.get('price'):
+            p.append(_campo(x0, y, 40, et['price'], largura=largura)); y += 46
+        codigo = texto(et.get('barcode') or '').strip()
+        if codigo:
+            altura_barra = max(40, mm(h) - y - mm(3) - 24)
+            if _e_ean13(codigo):
+                p.append(f'^FO{x0 + (largura - 380) // 2},{y}^BY3^BEN,{altura_barra},Y,N^FD{codigo}^FS')
+            else:
+                p.append(f'^FO{x0},{y}^BY2^BCN,{altura_barra},Y,N,N^FD{codigo}^FS')
+        p.append('^XZ')
+        saida.append(''.join(p))
     return '\n'.join(saida)
 
 
@@ -189,6 +234,8 @@ def _nutricao_qr(etiquetas) -> str:
 def render_etiquetas(modelo: str, etiquetas: list, config: dict | None) -> str:
     cfg = config or {}
     etiquetas = [e for e in (etiquetas or []) if isinstance(e, dict)]
+    if modelo == 'produto':
+        return _produto(etiquetas, cfg)
     if modelo == 'validade':
         return _validade(etiquetas, cfg)
     if modelo == 'nutricao':
