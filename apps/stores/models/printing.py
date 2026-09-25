@@ -152,11 +152,14 @@ class StorePrintJob(BaseModel):
     class Template(models.TextChoices):
         KITCHEN_TICKET = 'kitchen_ticket', 'Kitchen Ticket'
         CUSTOMER_RECEIPT = 'customer_receipt', 'Customer Receipt'
+        # ZPL pronto para a Zebra: payload['zpl']. O agent só repassa os bytes.
+        ETIQUETA_ZPL = 'etiqueta_zpl', 'Etiqueta ZPL'
 
     class Source(models.TextChoices):
         ORDER_CREATED = 'order_created', 'Order Created'
         MANUAL_REPRINT = 'manual_reprint', 'Manual Reprint'
         TEST = 'test', 'Test'
+        ETIQUETA = 'etiqueta', 'Etiqueta'
 
     store = models.ForeignKey(
         'stores.Store',

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Versão do pastita-print-agent que o painel considera atual. Bumpar junto com
 # o `package.json` do agent: é o que acende "atualize o programa de impressão".
-VERSAO_ATUAL_DO_AGENT = '0.3.0'
+VERSAO_ATUAL_DO_AGENT = '0.4.0'
 
 # Heartbeat é a cada 30 s; 3 minutos = seis batidas perdidas, sem falso alarme
 # por um soluço de rede.

@@ -14,7 +14,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.stores.models import StorePrintAgent, StorePrintJob
+from apps.stores.models import Store, StorePrintAgent, StorePrintJob
 from apps.stores.services.print_service import (
     claim_next_print_job,
     complete_print_job,
@@ -29,6 +29,15 @@ from .base import IsStoreOwnerOrStaff, filter_by_store
 from apps.core.permissions import accessible_store_ids
 
 logger = logging.getLogger(__name__)
+
+
+def _uuid_valido(valor) -> bool:
+    import uuid as _uuid
+    try:
+        _uuid.UUID(str(valor))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 def _recusa(request, prefix: str, motivo: str) -> None:
@@ -112,6 +121,55 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         if store_param:
             queryset, _ = filter_by_store(queryset, store_param)
         return queryset.filter(store_id__in=accessible_store_ids(self.request.user))
+
+    @action(detail=False, methods=['post'], url_path='etiquetas')
+    def etiquetas(self, request):
+        """Etiqueta (validade / nutricional / QR) para a Zebra de um agent.
+
+        O painel manda os mesmos dados que usa na impressão pelo navegador;
+        aqui viram ZPL e entram na fila apontados para o agent escolhido —
+        nunca para "qualquer agent da loja", senão a etiqueta cai na Epson.
+        """
+        from apps.stores import billing
+        from apps.stores.services.etiquetas_zpl import MODELOS, render_etiquetas
+
+        dados = request.data if hasattr(request.data, 'get') else {}
+        modelo = str(dados.get('modelo') or '')
+        etiquetas = dados.get('etiquetas')
+        if modelo not in MODELOS:
+            return Response({'detail': f'modelo inválido: {modelo}'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(etiquetas, list) or not etiquetas:
+            return Response({'detail': 'Nenhuma etiqueta para imprimir.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        store = Store.objects.filter(
+            id__in=accessible_store_ids(request.user), pk=dados.get('store'),
+        ).first() if _uuid_valido(dados.get('store')) else None
+        if not store:
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        agent = StorePrintAgent.objects.filter(
+            pk=dados.get('agent'), store=store, is_active=True,
+            status=StorePrintAgent.AgentStatus.ACTIVE,
+        ).first() if _uuid_valido(dados.get('agent')) else None
+        if not agent:
+            return Response({'detail': 'Escolha um programa de impressão desta loja.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if modelo.startswith('nutricao') and not billing.loja_tem_adicional(store, 'etiqueta_anvisa'):
+            from apps.nutrition.api.permissions import AdicionalNecessario
+            raise AdicionalNecessario()
+
+        zpl = render_etiquetas(modelo, etiquetas, dados.get('config') or {})
+        job = StorePrintJob.objects.create(
+            store=store,
+            station=agent.station,
+            template=StorePrintJob.Template.ETIQUETA_ZPL,
+            source=StorePrintJob.Source.ETIQUETA,
+            title=f'Etiquetas {modelo} ×{len(etiquetas)} → {agent.name}',
+            payload={'zpl': zpl, 'modelo': modelo, 'quantidade': len(etiquetas)},
+            target_agent=agent,
+            max_attempts=agent.max_retries,
+            metadata={'requested_by': str(request.user.id)},
+        )
+        return Response({'job': StorePrintJobSerializer(job).data}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'], url_path='requeue')
     def requeue(self, request, pk=None):
