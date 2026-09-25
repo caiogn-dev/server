@@ -3,6 +3,7 @@ Services for automatic print job generation and agent orchestration.
 """
 from __future__ import annotations
 
+from datetime import timedelta
 import base64
 import logging
 import re
@@ -601,8 +602,33 @@ def enqueue_order_print_job(
     return PrintJobResult(job=first_result.job, created=any_created)
 
 
+# Um agent que pegou o job e morreu no meio (processo encerrado, PowerShell
+# pendurado) deixava o job `claimed` para sempre — nenhum outro agent enxergava.
+CLAIM_TRAVADO_APOS = timedelta(minutes=5)
+
+
+def _liberar_claims_travados(store) -> None:
+    limite = timezone.now() - CLAIM_TRAVADO_APOS
+    travados = (
+        StorePrintJob.objects
+        .select_for_update(skip_locked=True)
+        .filter(store=store, status=StorePrintJob.JobStatus.CLAIMED, claimed_at__lt=limite)
+    )
+    for job in travados:
+        minutos = int((timezone.now() - job.claimed_at).total_seconds() // 60)
+        job.fail(
+            error_message=(
+                f'Job ficou {minutos} min em claimed sem o agent confirmar a impressão '
+                f'(agent {job.claimed_by.name if job.claimed_by else "?"} morreu no meio?)'
+            ),
+            retryable=True,
+            retry_delay_seconds=0,
+        )
+
+
 def claim_next_print_job(agent: StorePrintAgent) -> StorePrintJob | None:
     with transaction.atomic():
+        _liberar_claims_travados(agent.store)
         job = (
             StorePrintJob.objects
             .select_for_update(skip_locked=True)

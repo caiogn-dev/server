@@ -31,19 +31,40 @@ from apps.core.permissions import accessible_store_ids
 logger = logging.getLogger(__name__)
 
 
+def _recusa(request, prefix: str, motivo: str) -> None:
+    """Um 401 mudo não diz qual PC está com a chave errada. O prefixo é público
+    (aparece no painel); o segredo nunca entra no log."""
+    logger.warning(
+        'print-agent recusado: prefixo=%s motivo=%s ip=%s host=%s path=%s',
+        prefix or '-', motivo,
+        request.META.get('HTTP_X_FORWARDED_FOR', '').split(',')[0].strip()
+        or request.META.get('REMOTE_ADDR', ''),
+        str(getattr(request, 'data', {}).get('host_name', '') if hasattr(request, 'data') else ''),
+        request.path,
+    )
+
+
 def _get_agent_from_request(request) -> StorePrintAgent | None:
     raw_key = request.headers.get('X-Print-Agent-Key') or request.META.get('HTTP_X_PRINT_AGENT_KEY', '')
     if not raw_key or '.' not in raw_key:
+        _recusa(request, raw_key[:32], 'formato_invalido')
         return None
 
     prefix, _secret = raw_key.split('.', 1)
     agent = (
         StorePrintAgent.objects
         .select_related('store')
-        .filter(api_key_prefix=prefix, is_active=True, status=StorePrintAgent.AgentStatus.ACTIVE)
+        .filter(api_key_prefix=prefix)
         .first()
     )
-    if not agent or not agent.verify_api_key(raw_key):
+    if not agent:
+        _recusa(request, prefix, 'prefixo_desconhecido')
+        return None
+    if not agent.is_active or agent.status != StorePrintAgent.AgentStatus.ACTIVE:
+        _recusa(request, prefix, 'agente_inativo')
+        return None
+    if not agent.verify_api_key(raw_key):
+        _recusa(request, prefix, 'segredo_errado')
         return None
     return agent
 
