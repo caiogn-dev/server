@@ -152,6 +152,11 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         ).first() if _uuid_valido(dados.get('agent')) else None
         if not agent:
             return Response({'detail': 'Escolha um programa de impressão desta loja.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not agent.imprime_o(StorePrintAgent.IMPRIME_ETIQUETAS):
+            return Response(
+                {'detail': f'{agent.name} não imprime etiquetas. Marque "etiquetas" nele na tela de Impressão.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if modelo.startswith('nutricao') and not billing.loja_tem_adicional(store, 'etiqueta_anvisa'):
             from apps.nutrition.api.permissions import AdicionalNecessario

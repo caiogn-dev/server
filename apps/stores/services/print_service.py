@@ -551,14 +551,20 @@ def enqueue_order_print_job(
     requested_by: str = '',
 ) -> PrintJobResult:
     payload = build_order_print_payload(order, template=template)
-    target_agents = list(
-        StorePrintAgent.objects.filter(
+    papel = (
+        StorePrintAgent.IMPRIME_RECIBO
+        if template == StorePrintJob.Template.CUSTOMER_RECEIPT
+        else StorePrintAgent.IMPRIME_COMANDA
+    )
+    target_agents = [
+        a for a in StorePrintAgent.objects.filter(
             store=order.store,
             station=station,
             status=StorePrintAgent.AgentStatus.ACTIVE,
             is_active=True,
         ).order_by('created_at')
-    )
+        if a.imprime_o(papel)
+    ]
     targets: list[StorePrintAgent | None] = target_agents or [None]
 
     first_result: PrintJobResult | None = None

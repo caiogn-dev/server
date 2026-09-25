@@ -925,6 +925,19 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         return StoreOrderComboItemSerializer(obj.combo_items.all(), many=True).data
 
 
+def validar_imprime(value):
+    """Lista de papéis do agent; só os conhecidos, sem repetição."""
+    if not isinstance(value, list):
+        raise serializers.ValidationError('Informe uma lista: comanda, recibo, etiquetas.')
+    limpos = []
+    for item in value:
+        if item not in StorePrintAgent.IMPRIME_OPCOES:
+            raise serializers.ValidationError(f'Valor desconhecido: {item}')
+        if item not in limpos:
+            limpos.append(item)
+    return limpos
+
+
 class StorePrintAgentSerializer(serializers.ModelSerializer):
     """Serializer for local print agents."""
 
@@ -940,7 +953,7 @@ class StorePrintAgentSerializer(serializers.ModelSerializer):
     class Meta:
         model = StorePrintAgent
         fields = [
-            'id', 'store', 'name', 'slug', 'status', 'station',
+            'id', 'store', 'name', 'slug', 'status', 'station', 'imprime',
             'platform', 'connection_mode', 'printer_name', 'printer_host',
             'printer_port', 'poll_interval_seconds', 'max_retries',
             'last_seen_at', 'last_seen_ip', 'last_error',
@@ -952,6 +965,9 @@ class StorePrintAgentSerializer(serializers.ModelSerializer):
             'id', 'last_seen_at', 'last_seen_ip', 'last_error',
             'app_version', 'host_name', 'created_at', 'updated_at',
         ]
+
+    def validate_imprime(self, value):
+        return validar_imprime(value)
 
     def get_is_online(self, obj):
         if not obj.last_seen_at:
@@ -994,7 +1010,7 @@ class StorePrintAgentCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = StorePrintAgent
         fields = [
-            'id', 'store', 'name', 'slug', 'status', 'station',
+            'id', 'store', 'name', 'slug', 'status', 'station', 'imprime',
             'platform', 'connection_mode', 'printer_name', 'printer_host',
             'printer_port', 'poll_interval_seconds', 'max_retries',
             'metadata', 'api_key', 'created_at', 'updated_at',
@@ -1005,6 +1021,10 @@ class StorePrintAgentCreateSerializer(serializers.ModelSerializer):
         """Loja de outro dono responde "não encontrada" — a trava é única,
         em `apps.core.serializers`."""
         return checar_loja_do_usuario(self.context.get('request'), value)
+
+    def validate_imprime(self, value):
+        return validar_imprime(value)
+
     def create(self, validated_data):
         raw_key, prefix, hashed = StorePrintAgent.generate_api_key()
         agent = StorePrintAgent.objects.create(

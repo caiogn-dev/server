@@ -87,7 +87,7 @@ class EndpointTests(APITestCase):
         _, p, h = StorePrintAgent.generate_api_key()
         self.zebra = StorePrintAgent.objects.create(
             store=self.store, name='pc desktop', slug='pc-desktop-z', station='kitchen',
-            printer_name='ZDesigner ZD220-203dpi ZPL', api_key_prefix=p, api_key_hash=h)
+            printer_name='ZDesigner ZD220-203dpi ZPL', imprime=['etiquetas'], api_key_prefix=p, api_key_hash=h)
         _, p2, h2 = StorePrintAgent.generate_api_key()
         self.agent_alheio = StorePrintAgent.objects.create(
             store=self.loja_alheia, name='x', slug='x-z', api_key_prefix=p2, api_key_hash=h2)

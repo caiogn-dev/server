@@ -14,6 +14,10 @@ from django.utils import timezone
 from apps.core.models import BaseModel
 
 
+def _imprime_padrao() -> list:
+    return list(StorePrintAgent.IMPRIME_PADRAO)
+
+
 class StorePrintAgent(BaseModel):
     """Local print agent installed on a store workstation."""
 
@@ -55,6 +59,14 @@ class StorePrintAgent(BaseModel):
         choices=ConnectionMode.choices,
         default=ConnectionMode.WINDOWS_PRINTER,
     )
+    # O que este agent imprime. Todo agent ativo recebia comanda: a Zebra de
+    # etiqueta do pc desktop da Cê Saladas acumulou 230 comandas falhadas.
+    IMPRIME_COMANDA = 'comanda'
+    IMPRIME_RECIBO = 'recibo'
+    IMPRIME_ETIQUETAS = 'etiquetas'
+    IMPRIME_OPCOES = (IMPRIME_COMANDA, IMPRIME_RECIBO, IMPRIME_ETIQUETAS)
+    IMPRIME_PADRAO = (IMPRIME_COMANDA, IMPRIME_RECIBO)
+    imprime = models.JSONField(default=_imprime_padrao, blank=True)
     printer_name = models.CharField(max_length=255, blank=True)
     printer_host = models.CharField(max_length=255, blank=True)
     printer_port = models.PositiveIntegerField(default=9100)
@@ -118,6 +130,9 @@ class StorePrintAgent(BaseModel):
 
         expected = self._hash_secret(secret)
         return hmac.compare_digest(expected, self.api_key_hash)
+
+    def imprime_o(self, papel: str) -> bool:
+        return papel in (self.imprime or [])
 
     def mark_seen(self, *, ip_address: str = '', app_version: str = '', host_name: str = '') -> None:
         # Debounce: only write to DB if last seen more than 30s ago
