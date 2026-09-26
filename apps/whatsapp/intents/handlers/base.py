@@ -39,7 +39,12 @@ def _parse_items_from_text_dynamic(text: str, store) -> List[Dict[str, Any]]:
     if not store:
         return []
 
-    text_lower = text.lower().strip()
+    # "sem cebola roxa" TIRA, não pede: só a parte que pede entra no
+    # casamento (25/09: a Cebola roxa negada virou o único item do pedido).
+    from apps.stores.services.busca_de_produto import separar_negacoes
+
+    text_lower, _negados = separar_negacoes(text)
+    text_lower = text_lower.lower().strip()
     if not text_lower:
         return []
 
@@ -53,17 +58,25 @@ def _parse_items_from_text_dynamic(text: str, store) -> List[Dict[str, Any]]:
     ]
 
     def _match(search_term: str) -> Optional[Any]:
+        """Ganha quem casa MAIS palavras da frase — não quem aparece primeiro.
+
+        Antes, o primeiro produto cujo nome coubesse no texto vencia: com um
+        erro de digitação em "espécie filé de frango", "Frango em pedaços"
+        (1 palavra) passava na frente de "Especial Filé de Frango" (2).
+        """
         norm_search = _normalize_text(search_term)
-        best = None
+        palavras = {w for w in norm_search.split() if len(w) > 3}
+        melhor, melhor_peso = None, (0, 0)
         for product, norm_name, words in normalized_products:
-            if norm_search in norm_name or norm_name in norm_search:
+            if norm_search == norm_name:
                 return product
-            if words and len(words[0]) > 2 and words[0] in search_term:
-                best = best or product
-            for word in search_term.split():
-                if len(word) > 3 and word in norm_name:
-                    best = best or product
-        return best
+            casadas = len({w for w in norm_name.split() if len(w) > 3} & palavras)
+            exato = int(norm_search in norm_name or norm_name in norm_search)
+            primeira = int(bool(words) and len(words[0]) > 2 and words[0] in norm_search)
+            peso = (exato + casadas, primeira)
+            if peso > melhor_peso:
+                melhor, melhor_peso = product, peso
+        return melhor
 
     quantity_patterns = [
         r'(\d+)\s*x?\s+([\w\s]{3,40}?)(?:\s+(?:e|com|sem|por|para)|$)',
@@ -407,7 +420,24 @@ class IntentHandler:
             return self._ask_payment_method('delivery')
         try:
             from apps.stores.services.geo import geo_service
-            geo = geo_service.geocode(address_text, restrict_to_city=True)
+            from apps.stores.services.endereco_de_palmas import (
+                consulta_para_geocodificar, resultado_bate_com_o_setor, setor_digitado,
+            )
+
+            # Em Palmas a quadra localiza; alameda e lote se repetem em todas.
+            # 25/09: "307 norte Al 19 lote 53" cru virou Plano Diretor SUL, 14 km.
+            geo = geo_service.geocode(consulta_para_geocodificar(address_text), restrict_to_city=True)
+            if geo and geo.get('lat') and not resultado_bate_com_o_setor(address_text, geo):
+                logger.warning(
+                    "[_handle_address_input] geocode devolveu outro setor para %r: %s",
+                    address_text[:60], geo.get('formatted_address'),
+                )
+                session_manager.bump_address_attempts()
+                return HandlerResult.text(
+                    f"🤔 Não achei esse endereço na *{setor_digitado(address_text)}*.\n\n"
+                    "Pra eu calcular a entrega certinho, compartilhe sua *localização* "
+                    "pelo clipe 📎 — ou digite de novo com quadra, alameda e lote."
+                )
             if not geo or not geo.get('lat'):
                 # Anti-loop: na 2ª falha consecutiva (geo fora do ar, key
                 # bloqueada etc.) aceita o endereço como digitado com a taxa

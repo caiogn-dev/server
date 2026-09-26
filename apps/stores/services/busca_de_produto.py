@@ -124,6 +124,55 @@ _NEGACOES = (
 )
 
 
+#: Verbos de acréscimo: "acrescenta cenoura" é recado pra cozinha, não item.
+_ACRESCIMOS = ('acrescenta', 'acrescentar', 'adiciona', 'adicionar', 'coloca', 'colocar',
+               'capricha', 'caprichar', 'com mais', 'extra ', 'a mais')
+
+# Um trecho negado vai do marcador até a próxima vírgula / " e " / ponto.
+_TRECHO_NEGADO = re.compile(
+    r'\b(sem|tirar|retirar|tira|nao quero|nada de|menos|exceto|fora|nao coloca|nao ponha)\s+'
+    r'(?P<alvo>[^,.;!?\n]+?)(?=\s+\b(?:e|ou|se|mas|porem|por favor|pfv)\b|[,.;!?\n]|$)',
+)
+
+
+def separar_negacoes(texto: str) -> tuple[str, list[str]]:
+    """Divide a frase em (o que PEDE, [trechos que TIRAM]).
+
+    25/09, Cê Saladas: "Vou querer uma espécie filé de frango, sem tomate
+    cereja e sem cebola roxa, se poder acrescentar cenoura ralada" virou
+    1x Cebola roxa — o item negado entrou e a salada de R$ 39,99 ficou de
+    fora. Quem casa produto com texto tem que olhar só a parte que pede;
+    a parte que tira é observação.
+
+    Devolve os dois lados com a grafia do cliente: os negados viram nota e o
+    que sobra vai ao casamento (que normaliza sozinho).
+    """
+    bruto = str(texto or '')
+    if not bruto.strip():
+        return '', []
+    # Trabalha sobre a versão sem acento para casar "não", mas recorta do
+    # texto original para a nota sair como o cliente escreveu.
+    plano = unicodedata.normalize('NFD', bruto).encode('ascii', 'ignore').decode()
+    negados, pedido, cursor = [], [], 0
+    for m in _TRECHO_NEGADO.finditer(plano.lower()):
+        pedido.append(bruto[cursor:m.start()])
+        negados.append(bruto[m.start():m.end()].strip(' ,'))
+        cursor = m.end()
+    pedido.append(bruto[cursor:])
+    sobra = re.sub(r'\s+', ' ', ' '.join(pedido)).strip(' ,')
+    return sobra, negados
+
+
+def trechos_de_acrescimo(texto: str) -> list[str]:
+    """"acrescenta cenoura ralada", "capricha no molho": recado, não item."""
+    plano = normalizar(texto)
+    achados = []
+    for frase in re.split(r'[,.;!?\n]', str(texto or '')):
+        if any(v in normalizar(frase) for v in _ACRESCIMOS):
+            achados.append(frase.strip(' ,'))
+    return achados if plano else []
+
+
 def tem_negacao(texto: str) -> bool:
     """Compara PALAVRA inteira, nunca substring.
 

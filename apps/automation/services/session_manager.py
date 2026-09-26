@@ -472,7 +472,13 @@ class SessionManager:
         return False
 
     def save_customer_notes(self, notes: str) -> None:
-        """Salva observações do cliente e encerra estado de espera de notas."""
+        """Soma a observação às anteriores. NÃO fecha a espera de notas.
+
+        25/09: "Sem tomate cereja também" fechava a porta e "Acrescenta
+        cenoura ralada", logo em seguida, caía em mensagem desconhecida. A
+        porta fecha quando o pedido nasce (`_fechar_checkout`), não na 1ª nota.
+        Nota vazia (palavra de pular) não apaga o que já foi anotado.
+        """
         session = self.get_or_create_session()
         if session:
             data = _append_checkout_snapshot(
@@ -480,8 +486,14 @@ class SessionManager:
                 'notes_collected',
                 {'has_notes': bool(notes), 'notes_preview': (notes or '')[:80]},
             )
-            data['customer_notes'] = notes
-            data['waiting_for_notes'] = False
+            anteriores = (data.get('customer_notes') or '').strip()
+            nova = (notes or '').strip()
+            if nova and anteriores and nova.lower() not in anteriores.lower():
+                data['customer_notes'] = f'{anteriores}; {nova}'
+            elif nova:
+                data['customer_notes'] = nova
+            else:
+                data['customer_notes'] = anteriores
             session.cart_data = data
             session.save(update_fields=['cart_data'])
             logger.info("[SessionManager] Customer notes saved: %r", notes[:60] if notes else '')

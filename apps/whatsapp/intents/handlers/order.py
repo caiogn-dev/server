@@ -169,7 +169,26 @@ class CreateOrderHandler(IntentHandler):
 
     def _create_real_order(self, items: List[Dict], message_text: str) -> HandlerResult:
         logger.info(f"[CreateOrderHandler] Perguntando método de entrega para {self.conversation.phone_number}")
-        return self._ask_delivery_method(items)
+        resultado = self._ask_delivery_method(items)
+        self._guardar_observacoes_da_frase(message_text)
+        return resultado
+
+    def _guardar_observacoes_da_frase(self, message_text: str) -> None:
+        """"sem tomate", "acrescenta cenoura" ditos junto com o pedido viram nota.
+
+        25/09: as três observações da cliente foram jogadas fora com o item
+        errado; ela precisou repetir tudo e chamar o atendente.
+        """
+        from apps.stores.services.busca_de_produto import separar_negacoes, trechos_de_acrescimo
+
+        _, negados = separar_negacoes(message_text)
+        trechos = negados + [t for t in trechos_de_acrescimo(message_text) if t not in negados]
+        if not trechos:
+            return
+        try:
+            self._get_session_manager().save_customer_notes('; '.join(trechos))
+        except Exception as exc:
+            logger.warning('[CreateOrderHandler] não guardou observações da frase: %s', exc)
 
     def _show_catalog(self) -> HandlerResult:
         # Fluxo enxuto (29/jul): sem itens na mensagem → catálogo direto.
