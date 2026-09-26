@@ -28,7 +28,7 @@ import logging
 from django.conf import settings
 from apps.stores.models import Store, StoreCategory, StoreProduct, StoreCombo, StoreProductVariant
 from .models import Lead
-from .cache import cache_publico
+from .cache import cache_publico, nunca_cachear
 from .serializers import (
     PublicStoreSerializer,
     PublicCategorySerializer,
@@ -215,13 +215,16 @@ def public_store_combos(request, slug):
     return paginator.get_paginated_response(serializer.data)
 
 
+@nunca_cachear
 @api_view(['GET'])
 @permission_classes([AllowAny])
 @throttle_classes([_PublicReadThrottle])
 def public_store_availability(request, slug):
     """Return whether the store is currently open, plus today's hours."""
     store = _get_active_store(slug)
-    now = timezone.now()
+    # Dia LOCAL: `timezone.now()` é UTC, e das 21h à meia-noite em Brasília
+    # `today` apontava para amanhã (o bot tinha o mesmo defeito, set16).
+    now = timezone.localtime()
     day_name = now.strftime('%A').lower()
     hours = (store.operating_hours or {}).get(day_name)
     return Response({

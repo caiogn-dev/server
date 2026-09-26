@@ -47,3 +47,19 @@ def cache_publico(segundos: int = TTL_PADRAO, stale: int = JANELA_STALE):
             return resposta
         return wrapper
     return decorador
+
+
+def nunca_cachear(view):
+    """Resposta de um instante (loja aberta/fechada): borda E navegador buscam sempre.
+
+    Silêncio não basta: a regra "cache everything" do Cloudflare guarda pelo
+    TTL padrão qualquer 200 sem `Cache-Control`. Em 26/09 o lojista abriu o
+    sábado no painel e o cardápio seguiu "fechado" por horas — a borda servia
+    o JSON velho com `cf-cache-status: HIT`.
+    """
+    @wraps(view)
+    def wrapper(request, *args, **kwargs):
+        resposta = view(request, *args, **kwargs)
+        resposta['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        return resposta
+    return wrapper
