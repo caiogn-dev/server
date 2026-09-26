@@ -15,7 +15,7 @@ não dá para confundir por acidente.
 """
 from decimal import Decimal
 
-from django.db.models import Count, Sum
+from django.db.models import Q, Count, Sum
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 
 from .definicoes import (
@@ -94,6 +94,16 @@ def resumo_de_lista(queryset, incluir_teste=False) -> dict:
     return {
         'pedidos': queryset.count(),
         'cancelados': queryset.filter(status=StoreOrder.OrderStatus.CANCELLED).count(),
+        # Reembolsado também não fatura, e o dono precisa VER isso ao lado do
+        # cancelado. Entra pelo status (webhook do gateway) OU só pelo
+        # payment_status (reembolso pela cobrança, que deixa o pedido "entregue").
+        'reembolsados': queryset.filter(
+            Q(status=StoreOrder.OrderStatus.REFUNDED)
+            | Q(payment_status__in=(
+                StoreOrder.PaymentStatus.REFUNDED,
+                StoreOrder.PaymentStatus.PARTIALLY_REFUNDED,
+            ))
+        ).count(),
         'pedidos_faturados': pagos,
         'receita': receita,
         'frete': _decimal(agg['frete']),

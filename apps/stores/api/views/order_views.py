@@ -247,6 +247,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         return Response({
             'pedidos': resumo['pedidos'],
             'cancelados': resumo['cancelados'],
+            'reembolsados': resumo['reembolsados'],
             'pedidos_faturados': resumo['pedidos_faturados'],
             'faturamento': f"{resumo['receita']:.2f}",
             'frete': f"{resumo['frete']:.2f}",
