@@ -29,7 +29,11 @@ _SETTINGS = dict(
         ),
         'DEFAULT_PERMISSION_CLASSES': ('rest_framework.permissions.IsAuthenticated',),
         'DEFAULT_THROTTLE_CLASSES': [],
-        'DEFAULT_THROTTLE_RATES': {},
+        # `DEFAULT_THROTTLE_CLASSES: []` suprime o throttle padrão, mas views
+        # que declaram `throttle_classes` explicitamente (ex.: OrderByTokenView
+        # usa _OrderTokenThrottle com scope='order_token') ainda resolvem a taxa
+        # pelo scope — sem ela o DRF levanta KeyError antes de servir a requisição.
+        'DEFAULT_THROTTLE_RATES': {'order_token': '1000/minute'},
     },
     CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
 )
