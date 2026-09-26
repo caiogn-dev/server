@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     'apps.agents',
     'apps.fiscal',
     'apps.mobile_api',
+    'django_celery_beat',
 ]
 
 SILENCED_SYSTEM_CHECKS = []
@@ -75,6 +76,27 @@ DATABASES = {
         'NAME': ':memory:',
     }
 }
+
+# `agents.0009` e `whatsapp.0007` usam AddIndexConcurrently (postgres-only);
+# o schema editor do SQLite não aceita `concurrently=True`.  O patch abaixo
+# faz a operação cair silenciosamente para AddIndex normal em backends que não
+# sejam PostgreSQL, sem alterar as migrations em si nem quebrar dependências.
+def _patch_add_index_concurrently():
+    from django.contrib.postgres import operations as _pg_ops
+
+    _orig = _pg_ops.AddIndexConcurrently.database_forwards
+
+    def _safe_forward(self, app_label, schema_editor, from_state, to_state):
+        if schema_editor.connection.vendor != 'postgresql':
+            model = to_state.apps.get_model(app_label, self.model_name)
+            schema_editor.add_index(model, self.index)
+        else:
+            _orig(self, app_label, schema_editor, from_state, to_state)
+
+    _pg_ops.AddIndexConcurrently.database_forwards = _safe_forward
+
+
+_patch_add_index_concurrently()
 
 CACHES = {
     'default': {
