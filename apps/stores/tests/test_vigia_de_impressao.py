@@ -2,12 +2,11 @@
 sistema, não o cliente.
 
 Medido em 24/09/2026: a Cê Saladas ficou da noite de 23/09 até a tarde de
-24/09 sem imprimir — 14 comandas falhas, 10 presas no spooler do Windows —
-e o painel não avisou ninguém.
+24/09 sem imprimir — 14 comandas falhas, 10 presas no spooler do Windows.
+A situação aparece na tela de Impressão; aviso por WhatsApp foi retirado a
+pedido do dono (26/09).
 """
 from datetime import timedelta
-from unittest.mock import patch
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -141,96 +140,6 @@ class VersaoDoAgentTests(TestCase):
 
     def test_compara_numero_a_numero_e_nao_texto(self):
         self.assertFalse(vigia.versao_desatualizada('0.10.0'))
-
-
-class TelefoneDeAlertaTests(TestCase):
-    def test_usa_o_telefone_de_alerta_da_loja_quando_existe(self):
-        store = _loja(phone='63999990000', metadata={'telefone_de_alerta': '63988887777'})
-        self.assertEqual(vigia.telefone_de_alerta(store, numero_da_conta='5563991386719'), '5563988887777')
-
-    def test_cai_no_telefone_da_loja(self):
-        store = _loja(phone='(63) 99999-0000')
-        self.assertEqual(vigia.telefone_de_alerta(store, numero_da_conta='5563991386719'), '5563999990000')
-
-    def test_nao_manda_para_o_proprio_numero_do_whatsapp_da_loja(self):
-        # Na Cê Saladas o telefone da loja É o número da conta: mandar seria falar sozinho.
-        store = _loja(phone='63991386719')
-        self.assertIsNone(vigia.telefone_de_alerta(store, numero_da_conta='+55 63 991386719'))
-
-
-class AvisarDonoTests(TestCase):
-    """Um aviso por episódio, e um quando volta. Nunca a cada 5 minutos."""
-
-    def setUp(self):
-        self.agora = timezone.now()
-        self.store = _loja(phone='63988880000')
-        # Heartbeat "no futuro": os testes avançam o relógio em minutos e o
-        # agente precisa continuar vivo — o episódio aqui é da IMPRESSORA.
-        self.agent = _agent(self.store, last_seen_at=self.agora + timedelta(hours=1))
-        self.conta = object()
-        patcher_conta = patch.object(Store, 'get_whatsapp_account', autospec=True, return_value=self.conta)
-        self.mock_conta = patcher_conta.start()
-        self.addCleanup(patcher_conta.stop)
-        patcher_numero = patch.object(vigia, '_numero_da_conta', autospec=True, return_value='5563991386719')
-        patcher_numero.start()
-        self.addCleanup(patcher_numero.stop)
-
-    def test_impressora_parada_avisa_uma_vez(self):
-        _job(self.agent, status=StorePrintJob.JobStatus.FAILED, quando=self.agora - timedelta(minutes=30), erro=ERRO_DA_EPSON)
-
-        with patch.object(vigia, 'enviar_texto_para_a_loja', autospec=True) as enviar:
-            vigia.vigiar_agente(self.agent, agora=self.agora)
-            vigia.vigiar_agente(self.agent, agora=self.agora + timedelta(minutes=5))
-
-        enviar.assert_called_once()
-        conta, telefone, texto, evento = enviar.call_args.args
-        self.assertIs(conta, self.conta)
-        self.assertEqual(telefone, '5563988880000')
-        self.assertIn('EPSON TM-T20 não responde', texto)
-        self.assertIn('Caixa', texto)
-        self.assertEqual(evento, 'impressora_parada')
-        self.agent.refresh_from_db()
-        self.assertEqual(self.agent.metadata['alerta']['codigo'], 'impressora_indisponivel')
-
-    def test_quando_volta_avisa_que_voltou_e_limpa(self):
-        _job(self.agent, status=StorePrintJob.JobStatus.FAILED, quando=self.agora - timedelta(hours=1), erro=ERRO_DA_EPSON)
-        with patch.object(vigia, 'enviar_texto_para_a_loja', autospec=True):
-            vigia.vigiar_agente(self.agent, agora=self.agora)
-        _job(self.agent, status=StorePrintJob.JobStatus.COMPLETED, quando=self.agora + timedelta(minutes=1))
-
-        with patch.object(vigia, 'enviar_texto_para_a_loja', autospec=True) as enviar:
-            vigia.vigiar_agente(self.agent, agora=self.agora + timedelta(minutes=5))
-            vigia.vigiar_agente(self.agent, agora=self.agora + timedelta(minutes=10))
-
-        enviar.assert_called_once()
-        self.assertIn('voltou a imprimir', enviar.call_args.args[2])
-        self.assertEqual(enviar.call_args.args[3], 'impressora_voltou')
-        self.agent.refresh_from_db()
-        self.assertNotIn('alerta', self.agent.metadata)
-
-    def test_ok_sem_episodio_nao_manda_nada(self):
-        with patch.object(vigia, 'enviar_texto_para_a_loja', autospec=True) as enviar:
-            vigia.vigiar_agente(self.agent, agora=self.agora)
-        enviar.assert_not_called()
-
-    def test_sem_conta_de_whatsapp_registra_o_episodio_sem_mandar(self):
-        # O painel continua mostrando a faixa; só o WhatsApp não sai.
-        _job(self.agent, status=StorePrintJob.JobStatus.FAILED, quando=self.agora - timedelta(minutes=30), erro=ERRO_DA_EPSON)
-        self.mock_conta.return_value = None
-        with patch.object(vigia, 'enviar_texto_para_a_loja', autospec=True) as enviar:
-            vigia.vigiar_agente(self.agent, agora=self.agora)
-        enviar.assert_not_called()
-        self.agent.refresh_from_db()
-        self.assertEqual(self.agent.metadata['alerta']['codigo'], 'impressora_indisponivel')
-
-    def test_falha_no_envio_nao_marca_como_avisado(self):
-        from apps.automation.mensageiro.canal import EnvioFalhou
-
-        _job(self.agent, status=StorePrintJob.JobStatus.FAILED, quando=self.agora - timedelta(minutes=30), erro=ERRO_DA_EPSON)
-        with patch.object(vigia, 'enviar_texto_para_a_loja', autospec=True, side_effect=EnvioFalhou('x')):
-            vigia.vigiar_agente(self.agent, agora=self.agora)
-        self.agent.refresh_from_db()
-        self.assertNotIn('avisado_em', self.agent.metadata.get('alerta', {}))
 
 
 class ApiDoPainelTests(APITestCase):

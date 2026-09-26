@@ -14,9 +14,8 @@ Duas situações, na ordem em que doem:
   IMPRESSORA (desligada, USB solta, fila presa). Falha de software (template
   desconhecido) não conta: isso é bug, não impressora.
 
-O aviso ao dono sai UMA vez por episódio (e uma quando volta), pelo WhatsApp
-da loja para o telefone de alerta — nunca a cada rodada do vigia. O painel lê
-a mesma situação pelo serializer do agente.
+O painel lê a situação pelo serializer do agente (tela de Impressão). Não
+manda aviso nenhum: o dono decidiu em 26/09 que não quer aviso de impressora.
 """
 from __future__ import annotations
 
@@ -27,7 +26,6 @@ from datetime import datetime, timedelta
 
 from django.utils import timezone
 
-from apps.core.utils import normalize_phone_number
 
 logger = logging.getLogger(__name__)
 
@@ -113,112 +111,3 @@ def _tupla(versao: str) -> tuple[int, ...]:
 def versao_desatualizada(versao: str) -> bool:
     """Compara número a número: '0.10.0' é mais nova que '0.9.0'."""
     return _tupla(versao) < _tupla(VERSAO_ATUAL_DO_AGENT)
-
-
-def _numero_da_conta(conta) -> str:
-    return normalize_phone_number(getattr(conta, 'display_phone_number', '') or getattr(conta, 'phone_number', '') or '')
-
-
-def telefone_de_alerta(store, *, numero_da_conta: str) -> str | None:
-    """Para quem avisar: o telefone de alerta da loja, senão o telefone da loja.
-
-    Nunca o próprio número do WhatsApp da loja — na Cê Saladas o telefone da
-    loja É a conta, e mandar para ele seria falar sozinho.
-    """
-    metadata = store.metadata if isinstance(store.metadata, dict) else {}
-    bruto = (metadata.get('telefone_de_alerta') or '').strip() or (store.phone or '')
-    telefone = normalize_phone_number(bruto)
-    if not telefone or telefone == normalize_phone_number(numero_da_conta):
-        return None
-    return telefone
-
-
-def enviar_texto_para_a_loja(conta, telefone: str, texto: str, evento: str):
-    """Aviso operacional para a LOJA, não para cliente: não passa pela política
-    do modo humano (o dono estar atendendo alguém não é motivo para calar o
-    aviso de que a cozinha parou de imprimir). Grava como automática, como
-    tudo que sai do canal."""
-    from apps.automation.mensageiro import canal
-
-    return canal._enviar(lambda: _service().send_text_message(  # noqa: SLF001 — mesmo canal, sem a política
-        account_id=str(conta.id), to=telefone, text=texto, metadata=canal._meta(evento),
-    ))
-
-
-def _service():
-    from apps.whatsapp.services.message_service import MessageService
-
-    return MessageService()
-
-
-def _texto_parada(agent, situacao: Situacao) -> str:
-    hora = timezone.localtime(situacao.desde).strftime('%H:%M') if situacao.desde else ''
-    desde = f' desde {hora}' if hora else ''
-    return (
-        f'⚠️ Impressora *{agent.name}* da {agent.store.name} parada{desde}.\n'
-        f'{situacao.detalhe}.\n\n'
-        'Os pedidos continuam entrando no painel; a comanda não está saindo na cozinha. '
-        'Confira se a impressora está ligada e o cabo conectado.'
-    )
-
-
-def _texto_voltou(agent) -> str:
-    return f'✅ Impressora *{agent.name}* da {agent.store.name} voltou a imprimir.'
-
-
-def vigiar_agente(agent, agora=None) -> Situacao:
-    """Confere a situação e avisa o dono na MUDANÇA — uma vez por episódio."""
-    agora = agora or timezone.now()
-    situacao = situacao_do_agente(agent, agora=agora)
-    metadata = agent.metadata if isinstance(agent.metadata, dict) else {}
-    alerta = metadata.get('alerta') or {}
-    episodio = situacao.desde.isoformat() if situacao.desde else ''
-
-    if situacao.parada:
-        mesmo_episodio = alerta.get('codigo') == situacao.codigo and alerta.get('desde') == episodio
-        if mesmo_episodio and alerta.get('avisado_em'):
-            return situacao
-        novo = {'codigo': situacao.codigo, 'desde': episodio, 'detalhe': situacao.detalhe}
-        if _avisar(agent, _texto_parada(agent, situacao), 'impressora_parada'):
-            novo['avisado_em'] = agora.isoformat()
-        metadata['alerta'] = novo
-    else:
-        if not alerta:
-            return situacao
-        _avisar(agent, _texto_voltou(agent), 'impressora_voltou')
-        metadata.pop('alerta', None)
-
-    agent.metadata = metadata
-    agent.save(update_fields=['metadata', 'updated_at'])
-    return situacao
-
-
-def _avisar(agent, texto: str, evento: str) -> bool:
-    from apps.automation.mensageiro.canal import EnvioFalhou
-
-    conta = agent.store.get_whatsapp_account()
-    if not conta:
-        return False
-    telefone = telefone_de_alerta(agent.store, numero_da_conta=_numero_da_conta(conta))
-    if not telefone:
-        return False
-    try:
-        enviar_texto_para_a_loja(conta, telefone, texto, evento)
-    except EnvioFalhou as exc:
-        logger.warning('Aviso de impressora (%s) não saiu para %s: %s', evento, agent.store.slug, exc)
-        return False
-    return True
-
-
-def vigiar_todos(agora=None) -> dict[str, int]:
-    from apps.stores.models import StorePrintAgent
-
-    contagem: dict[str, int] = {}
-    for agent in StorePrintAgent.objects.filter(is_active=True, status=StorePrintAgent.AgentStatus.ACTIVE).select_related('store'):
-        try:
-            situacao = vigiar_agente(agent, agora=agora)
-        except Exception:  # noqa: BLE001 — um agente com problema não cala os outros
-            logger.exception('Vigia falhou no agente %s', agent.id)
-            continue
-        contagem[situacao.codigo] = contagem.get(situacao.codigo, 0) + 1
-    return contagem

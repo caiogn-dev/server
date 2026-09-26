@@ -165,11 +165,6 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.database_integrity_check',
         'schedule': 21600.0,  # Every 6 hours
     },
-    # Impressão: quem parou de imprimir? (ver stores/services/vigia_de_impressao.py)
-    'vigiar-impressoras': {
-        'task': 'stores.vigiar_impressoras',
-        'schedule': 300.0,  # a cada 5 min
-    },
     # Billing: ciclo de vida de assinaturas — diário às 4h
     'enforce-subscription-lifecycle': {
         'task': 'stores.enforce_subscription_lifecycle',
