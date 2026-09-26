@@ -18,30 +18,30 @@ def _nome(conversa) -> str:
 
 
 def _esta_esperando(conversa) -> bool:
-    escreveu = conversa.last_customer_message_at
-    if not escreveu:
-        return False
-    respondemos = conversa.last_agent_message_at
-    return respondemos is None or escreveu > respondemos
+    from apps.conversations.services.operacao_humana import esta_esperando
+
+    return esta_esperando(conversa)
 
 
 def _item(conversa, agora) -> dict:
+    from apps.conversations.services import operacao_humana as op
+
     handover = getattr(conversa, 'handover', None)
     escreveu = conversa.last_customer_message_at
+    motivo = op.motivo(conversa)
+    desde = op.esperando_desde(conversa)
     return {
         'id': str(conversa.id),
         'telefone': conversa.phone_number,
         'nome': _nome(conversa),
-        'motivo': (getattr(handover, 'transfer_reason', '') or '').replace(
-            'Synced from conversation mode switch', 'Passou para atendimento humano',
-        ) or 'Passou para atendimento humano',
+        'motivo': motivo,
         'humano_desde': getattr(handover, 'last_transfer_at', None),
         'cliente_escreveu_em': escreveu,
-        'minutos_esperando': (
-            int((agora - escreveu).total_seconds() // 60)
-            if escreveu and _esta_esperando(conversa) else 0
-        ),
+        'esperando_desde': desde,
+        'esperando_ha_segundos': op.segundos_desde(desde, agora),
+        'minutos_esperando': op.segundos_desde(desde, agora) // 60,
         'ultima_mensagem': (getattr(conversa, 'anno_last_text', '') or '')[:160],
+        'atendente': op.atendente(conversa),
     }
 
 
@@ -61,10 +61,16 @@ def montar_fila(conversas, agora=None) -> dict:
         # mensagem do cliente (decisão do dono, 19/09).
         if marco and timezone.localtime(marco).date() >= hoje:
             em_atendimento.append(_item(conversa, agora))
-    esperando.sort(key=lambda i: i['cliente_escreveu_em'])
+    # Maior espera primeiro — é quem o atendente pega antes.
+    esperando.sort(key=lambda i: -i['esperando_ha_segundos'])
     return {
         'esperando': esperando,
         'em_atendimento': em_atendimento,
         'total_esperando': len(esperando),
         'total_em_atendimento': len(em_atendimento),
+        'resumo': {
+            'esperando': len(esperando),
+            'em_atendimento': len(em_atendimento),
+            'mais_antiga_segundos': esperando[0]['esperando_ha_segundos'] if esperando else 0,
+        },
     }

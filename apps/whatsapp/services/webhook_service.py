@@ -1625,7 +1625,12 @@ class WebhookService:
         try:
             from apps.conversations.services import ConversationService
 
-            ConversationService().switch_to_human(str(conversa.id))
+            # Com motivo: sem ele a fila mostrava "Synced from conversation
+            # mode switch" e o atendente não sabia que era pedido de catálogo.
+            ConversationService().switch_to_human(
+                str(conversa.id),
+                motivo=f'O bot não conseguiu tratar o pedido do catálogo ({motivo})',
+            )
             logger.info(
                 '[handoff] Conversa passada para humano (%s)',
                 motivo,

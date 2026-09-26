@@ -131,6 +131,12 @@ app.conf.beat_schedule = {
     # agendador sem nunca rodar, porque tarefa inexistente falha calada; saiu
     # em 19/09 (migração stores/0084). O nome certo é o de baixo, e há teste
     # que confere se toda entrada aponta para tarefa que existe.
+    # Aviso de cliente esperando atendente — OPT-IN por loja
+    # (Store.metadata['aviso_fila_humana'].ativo). Sem loja ligada, não faz nada.
+    'avisar-fila-humana': {
+        'task': 'apps.conversations.tasks.avisar_fila_humana',
+        'schedule': 120.0,
+    },
     'check-store-pix-reminders': {
         'task': 'apps.whatsapp.tasks.automation_tasks.check_pending_payments',
         'schedule': 300.0,  # a cada 5 min — as janelas são de 5 min

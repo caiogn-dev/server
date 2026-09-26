@@ -625,3 +625,121 @@ class ConversationViewSet(viewsets.ModelViewSet):
         service = ConversationService()
         stats = service.get_conversation_stats(account_id)
         return Response(stats)
+
+    # ── Operação do atendimento humano (26/09) ─────────────────────────────
+    # Todas as rotas de conversa passam por `get_object()` → `get_queryset()`
+    # → `_accessible_conversations`: conversa de outra loja é 404, nunca 403
+    # (não confirma que o id existe).
+
+    def _item_da_fila(self, conversa):
+        from apps.conversations.services.fila_humana import _item
+
+        conversa = _accessible_conversations(self.request.user).get(pk=conversa.pk)
+        return _item(conversa, timezone.now())
+
+    @extend_schema(summary="O que o bot já sabia desta conversa (para o atendente)")
+    @action(detail=True, methods=['get'], url_path='contexto-do-bot')
+    def contexto_do_bot(self, request, pk=None):
+        from apps.conversations.services.operacao_humana import contexto_do_bot
+
+        return Response(contexto_do_bot(self.get_object()))
+
+    @extend_schema(summary="Assumir o atendimento desta conversa")
+    @action(detail=True, methods=['post'])
+    def assumir(self, request, pk=None):
+        from apps.core.exceptions import ValidationError as ErroDeRegra
+        from apps.conversations.services.operacao_humana import MOTIVO_ASSUMIU
+        from apps.handover.models import ConversationHandover, HandoverLog, HandoverStatus
+
+        conversa = self.get_object()
+        service = ConversationService()
+        if conversa.mode != Conversation.ConversationMode.HUMAN:
+            try:
+                service.switch_to_human(str(conversa.id), agent=request.user, motivo=MOTIVO_ASSUMIU)
+            except ErroDeRegra as erro:
+                return Response({'error': str(erro)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            # Já era humana: só troca quem atende. O log humano→humano fica de
+            # histórico e NÃO substitui o motivo da passagem (ver `motivo()`).
+            service.assign_agent(str(conversa.id), request.user)
+            handover, _ = ConversationHandover.objects.get_or_create(
+                conversation=conversa, defaults={'status': HandoverStatus.HUMAN},
+            )
+            if handover.assigned_to_id != request.user.id or handover.status != HandoverStatus.HUMAN:
+                handover.status = HandoverStatus.HUMAN
+                handover.assigned_to = request.user
+                handover.save(update_fields=['status', 'assigned_to', 'updated_at'])
+            HandoverLog.objects.create(
+                conversation=conversa, from_status=HandoverStatus.HUMAN,
+                to_status=HandoverStatus.HUMAN, performed_by=request.user,
+                assigned_to=request.user, reason=MOTIVO_ASSUMIU,
+            )
+        return Response(self._item_da_fila(conversa))
+
+    @extend_schema(summary="Devolver a conversa ao bot")
+    @action(detail=True, methods=['post'], url_path='devolver-ao-bot')
+    def devolver_ao_bot(self, request, pk=None):
+        conversa = self.get_object()
+        if conversa.mode == Conversation.ConversationMode.HUMAN:
+            ConversationService().switch_to_auto(
+                str(conversa.id), motivo='Atendente devolveu ao bot', agent=request.user,
+            )
+        return Response(self._item_da_fila(conversa))
+
+    def _lojas_pedidas(self, request, exigir_uma=False):
+        """(ids das lojas, loja única | None, resposta de erro | None).
+
+        `store` só restringe dentro do que o usuário alcança — loja alheia ou
+        inexistente é 404, igual.
+        """
+        import uuid as uuid_module
+        from apps.core.permissions import accessible_store_ids
+        from apps.stores.models import Store
+
+        alcancaveis = Store.objects.filter(id__in=accessible_store_ids(request.user))
+        pedida = (request.query_params.get('store') or request.data.get('store') if request.method == 'POST'
+                  else request.query_params.get('store'))
+        pedida = (str(pedida or '')).strip()
+        if pedida:
+            filtro = Q(slug=pedida)
+            try:
+                filtro |= Q(id=uuid_module.UUID(pedida))
+            except (ValueError, AttributeError, TypeError):
+                pass
+            loja = alcancaveis.filter(filtro).first()
+            if loja is None:
+                return None, None, Response({'error': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+            return [loja.id], loja, None
+        ids = list(alcancaveis.values_list('id', flat=True))
+        if exigir_uma:
+            if len(ids) != 1:
+                return None, None, Response(
+                    {'error': 'Informe a loja (store).'}, status=status.HTTP_400_BAD_REQUEST,
+                )
+            return ids, alcancaveis.get(), None
+        return ids, None, None
+
+    @extend_schema(summary="Mensagens que o bot não entendeu (deduplicadas)")
+    @action(detail=False, methods=['get'], url_path='nao-entendi')
+    def nao_entendi(self, request):
+        from apps.conversations.services.nao_entendi import listar
+
+        ids, _, erro = self._lojas_pedidas(request)
+        if erro is not None:
+            return erro
+        return Response(listar(ids, dias=request.query_params.get('dias')))
+
+    @extend_schema(summary="Ensinar o bot: apelido de produto, resposta pronta ou ignorar")
+    @action(detail=False, methods=['post'], url_path='nao-entendi/ensinar')
+    def nao_entendi_ensinar(self, request):
+        from apps.conversations.services.nao_entendi import NaoEncontrado, PedidoInvalido, ensinar
+
+        _, loja, erro = self._lojas_pedidas(request, exigir_uma=True)
+        if erro is not None:
+            return erro
+        try:
+            return Response(ensinar(loja, request.data, usuario=request.user))
+        except PedidoInvalido as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except NaoEncontrado as e:
+            return Response({'error': str(e)}, status=status.HTTP_404_NOT_FOUND)

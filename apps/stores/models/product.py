@@ -214,6 +214,10 @@ class StoreProduct(BaseModel):
     # Attributes and Tags
     attributes = models.JSONField(default=dict, blank=True)
     tags = models.JSONField(default=list, blank=True)
+    # Dado interno, fora do formulário do produto (que regrava `attributes`
+    # inteiro). `apelidos`: como o cliente chama o produto no WhatsApp,
+    # ensinado pela tela "O bot não entendeu".
+    metadata = models.JSONField(default=dict, blank=True)
 
     # Sort order and Stats
     sort_order = models.PositiveIntegerField(default=0)
