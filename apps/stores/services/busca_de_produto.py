@@ -29,17 +29,30 @@ def _melhor(candidatos, alvo, nome_de):
     )[0]
 
 
+def _nomes(objeto) -> list:
+    """Nome + apelidos, já normalizados.
+
+    Apelido é o nome que o cliente usa ("filé especial"), gravado pelo dono na
+    tela "ensinar" do painel em `metadata['apelidos']`. Vale como nome.
+    Leitura defensiva: o campo `metadata` do StoreProduct chega por outra
+    branch (migração 0089), e apelido que não é texto é ignorado.
+    """
+    apelidos = (getattr(objeto, 'metadata', None) or {}).get('apelidos') or []
+    return [n for n in (normalizar(x) for x in [objeto.name, *apelidos] if isinstance(x, str)) if n]
+
+
+def _casa_objeto(alvo: str, objeto) -> bool:
+    return any(_casa(alvo, nome) for nome in _nomes(objeto))
+
+
 def casar_produto(store, texto: str):
-    """Produto ativo desta loja cujo nome aparece no texto (ou vice-versa)."""
+    """Produto ativo desta loja cujo nome (ou apelido) aparece no texto."""
     from apps.stores.models import StoreProduct
 
     alvo = normalizar(texto)
     if not alvo:
         return None
-    candidatos = [
-        p for p in StoreProduct.disponiveis(store)
-        if _casa(alvo, normalizar(p.name))
-    ]
+    candidatos = [p for p in StoreProduct.disponiveis(store) if _casa_objeto(alvo, p)]
     return _melhor(candidatos, alvo, lambda p: p.name)
 
 
@@ -50,8 +63,7 @@ def casar_combo(store, texto: str):
     if not alvo:
         return None
     candidatos = [
-        c for c in StoreCombo.objects.filter(store=store, is_active=True)
-        if _casa(alvo, normalizar(c.name))
+        c for c in StoreCombo.objects.filter(store=store, is_active=True) if _casa_objeto(alvo, c)
     ]
     return _melhor(candidatos, alvo, lambda c: c.name)
 
@@ -257,14 +269,14 @@ def candidatos_pontuados(store, texto: str) -> list:
     # vazio na Cê Saladas, onde salada é vendida por combo — e a mensagem caía
     # em observação de novo, que é o bug que este módulo existe para matar.
     pontuados = [
-        (o, _pontos(alvo, normalizar(o.name)))
+        (o, max(_pontos(alvo, nome) for nome in _nomes(o)))
         for o in [
             # disponiveis() e não is_active: o painel escreve em `status`, e
             # filtrar pelo campo errado oferecia produto que o dono desativou.
             *StoreProduct.disponiveis(store),
             *StoreCombo.objects.filter(store=store, is_active=True),
         ]
-        if _casa(alvo, normalizar(o.name))
+        if _casa_objeto(alvo, o)
     ]
     # Ganha quem casa MAIS palavras da frase, não quem tem o nome mais curto.
     # "quero 2 combos de 5 saladas" devolvia "Combo Salmão" — qualquer "Combo X"
