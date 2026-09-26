@@ -2,7 +2,7 @@ from typing import Optional
 
 from apps.whatsapp.intents.detector import IntentType  # noqa: F401 — re-exported
 
-from .base import HandlerResult, IntentHandler, _normalize_text, _parse_items_from_text_dynamic
+from .base import HandlerResult, IntentHandler, _normalize_text
 from .catalog import MenuRequestHandler, PriceCheckHandler, ProductMentionHandler, ProductNotFoundHandler
 from .fallback import AffirmativeHandler, HumanHandoffHandler, UnknownHandler
 from .greeting import GreetingHandler
@@ -14,7 +14,7 @@ from .payment import CopyPixHandler, PaymentStatusHandler, ViewQRCodeHandler
 
 __all__ = [
     'HandlerResult', 'IntentHandler',
-    '_normalize_text', '_parse_items_from_text_dynamic',
+    '_normalize_text',
     'GreetingHandler',
     'PriceCheckHandler', 'ProductMentionHandler', 'MenuRequestHandler', 'ProductNotFoundHandler',
     'TrackOrderHandler', 'CreateOrderHandler', 'QuickOrderHandler', 'CancelOrderHandler',

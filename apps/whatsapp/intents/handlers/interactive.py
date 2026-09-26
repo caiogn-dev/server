@@ -8,7 +8,8 @@ from apps.stores.models import StoreProduct
 from .base import HandlerResult, IntentHandler
 from .catalog import MenuRequestHandler
 from .fallback import HumanHandoffHandler
-from .order import CancelOrderHandler, CreateOrderHandler, TrackOrderHandler
+from .order import CancelOrderHandler, TrackOrderHandler
+from .pedido_digitado import CONFIRMAR, CORRIGIR, PREFIXO_ESCOLHA, PedidoDigitadoHandler
 from .payment import CopyPixHandler
 
 from apps.whatsapp.formatacao import moeda
@@ -38,6 +39,15 @@ class InteractiveReplyHandler(IntentHandler):
 
         if reply_id.startswith('product_'):
             return self._handle_product_selection(reply_id, reply_title)
+
+        # "Qual destes?" e "Entendi: … Certo?" do pedido digitado.
+        if reply_id.startswith(PREFIXO_ESCOLHA) or reply_id in (CONFIRMAR, CORRIGIR):
+            pedido = PedidoDigitadoHandler(self.account, self.conversation, self.company_profile)
+            if reply_id == CONFIRMAR:
+                return pedido.confirmar()
+            if reply_id == CORRIGIR:
+                return pedido.corrigir()
+            return pedido.escolher(reply_id[len(PREFIXO_ESCOLHA):])
 
         # 'add_more_items' antes do prefixo 'add_' — senão cai no parser de
         # add_{produto}_{qty} e vira "Erro ao processar pedido".
@@ -77,6 +87,9 @@ class InteractiveReplyHandler(IntentHandler):
 
         if reply_id == 'new_address':
             return self._handle_new_address()
+
+        if reply_id == 'endereco_confirmado':
+            return self._handle_endereco_confirmado()
 
         if reply_id == 'change_details':
             return self._handle_change_details()
@@ -442,6 +455,19 @@ class InteractiveReplyHandler(IntentHandler):
             delivery_fee=float(addr['fee'] or 0),
             distance_km=addr.get('distance_km'),
             duration_minutes=addr.get('duration_minutes'),
+        )
+
+    def _handle_endereco_confirmado(self) -> HandlerResult:
+        """"Ficou a 14 km — confirma?" → ✅: segue para o resumo com pagamento."""
+        info = self._get_session_manager().get_delivery_address_info()
+        if not info.get('address'):
+            return self._handle_new_address()
+        return self._show_order_summary_and_ask_notes(
+            delivery_method='delivery',
+            delivery_address=info['address'],
+            delivery_fee=float(info.get('fee') or 0),
+            distance_km=info.get('distance_km'),
+            duration_minutes=info.get('duration_minutes'),
         )
 
     def _handle_new_address(self) -> HandlerResult:

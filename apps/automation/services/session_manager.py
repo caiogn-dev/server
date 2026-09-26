@@ -498,6 +498,81 @@ class SessionManager:
             session.save(update_fields=['cart_data'])
             logger.info("[SessionManager] Customer notes saved: %r", notes[:60] if notes else '')
 
+    def guardar_pedido_digitado(self, estado: dict) -> None:
+        """Pedido lido do texto que ainda espera o cliente (dúvida ou confirmação).
+
+        Fica fora de `pending_items` de propósito: o que está aqui o cliente
+        ainda não confirmou, e `pending_items` é o que a finalização cobra.
+        """
+        session = self.get_or_create_session()
+        if session:
+            data = _append_checkout_snapshot(session.cart_data or {}, 'typed_order_read')
+            data['pedido_digitado'] = estado
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    def pedido_digitado(self) -> dict:
+        session = self.get_or_create_session()
+        if session:
+            return (session.cart_data or {}).get('pedido_digitado') or {}
+        return {}
+
+    def descartar_pedido_digitado(self) -> None:
+        session = self.get_or_create_session()
+        if session and 'pedido_digitado' in (session.cart_data or {}):
+            data = dict(session.cart_data)
+            data.pop('pedido_digitado', None)
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    #: Tudo que um checkout em curso guarda e que, largado, fecharia um pedido
+    #: por cima do atendente (botão de pagamento antigo lê daqui).
+    _CHAVES_DO_CHECKOUT = (
+        'pending_items', 'pending_delivery_method', 'customer_notes', 'pedido_digitado',
+        'waiting_for_address', 'waiting_for_notes', 'address_attempts',
+        'delivery_address', 'delivery_fee_calculated', 'delivery_distance_km',
+        'delivery_duration_minutes', 'delivery_lat', 'delivery_lng',
+        'delivery_address_components', 'scheduled_date', 'scheduled_time',
+        'endereco_sem_quadra', 'quadra_perguntada',
+    )
+
+    def deixar_pedido_de_lado(self) -> bool:
+        """Larga o checkout em curso. True quando havia pedido sendo montado."""
+        session = self.get_or_create_session()
+        if not session:
+            return False
+        data = dict(session.cart_data or {})
+        havia = bool(data.get('pending_items') or (data.get('pedido_digitado') or {}).get('itens')
+                     or (data.get('pedido_digitado') or {}).get('duvidas'))
+        for chave in self._CHAVES_DO_CHECKOUT:
+            data.pop(chave, None)
+        session.cart_data = _append_checkout_snapshot(data, 'handed_to_human')
+        session.cart_items_count = 0
+        session.save(update_fields=['cart_data', 'cart_items_count'])
+        return havia
+
+    def pedir_quadra(self, texto: str) -> None:
+        """Guarda o endereço sem quadra enquanto o bot pergunta a quadra (uma vez)."""
+        session = self.get_or_create_session()
+        if session:
+            data = _append_checkout_snapshot(session.cart_data or {}, 'asked_block')
+            data['endereco_sem_quadra'] = texto
+            data['quadra_perguntada'] = True
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    def tirar_endereco_sem_quadra(self) -> tuple:
+        """(já perguntou a quadra?, texto guardado — que sai da sessão)."""
+        session = self.get_or_create_session()
+        if not session:
+            return False, ''
+        data = dict(session.cart_data or {})
+        guardado = data.pop('endereco_sem_quadra', '') or ''
+        if guardado:
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+        return bool(data.get('quadra_perguntada')), guardado
+
     def get_customer_notes(self) -> str:
         """Recupera observações do cliente salvas na sessão."""
         session = self.get_or_create_session()
@@ -537,6 +612,8 @@ class SessionManager:
             data['delivery_lng'] = lng
             data['waiting_for_address'] = False
             data['waiting_for_notes'] = False
+            data.pop('endereco_sem_quadra', None)
+            data.pop('quadra_perguntada', None)
             if address_components:
                 data['delivery_address_components'] = address_components
             session.cart_data = data

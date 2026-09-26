@@ -3,7 +3,6 @@ Base classes for WhatsApp intent handlers: HandlerResult + IntentHandler.
 Also contains shared module-level helpers for product text parsing.
 """
 import logging
-import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
@@ -15,7 +14,7 @@ from apps.whatsapp.formatacao import moeda
 logger = logging.getLogger(__name__)
 
 
-# ─── Shared helpers: dynamic item extraction ──────────────────────────────────
+# ─── Shared helpers ───────────────────────────────────────────────────────────
 
 def _normalize_text(s: str) -> str:
     """Remove accents and lowercase for fuzzy product matching."""
@@ -23,88 +22,6 @@ def _normalize_text(s: str) -> str:
         c for c in unicodedata.normalize('NFD', s.lower())
         if unicodedata.category(c) != 'Mn'
     )
-
-
-def _parse_items_from_text_dynamic(text: str, store) -> List[Dict[str, Any]]:
-    """
-    Extrai pares (product_id, quantity) de um texto livre.
-
-    1. Regex extrai pares (quantity, search_term) do texto.
-    2. Para cada par, busca o produto da loja que melhor corresponde:
-       a. Correspondência exata (accent-insensitive substring)
-       b. Primeira palavra do nome do produto dentro do search_term
-       c. Qualquer palavra do search_term dentro do nome do produto
-    3. Se nenhum par qty+nome for encontrado, tenta apenas nome → qty=1.
-    """
-    if not store:
-        return []
-
-    # "sem cebola roxa" TIRA, não pede: só a parte que pede entra no
-    # casamento (25/09: a Cebola roxa negada virou o único item do pedido).
-    from apps.stores.services.busca_de_produto import separar_negacoes
-
-    text_lower, _negados = separar_negacoes(text)
-    text_lower = text_lower.lower().strip()
-    if not text_lower:
-        return []
-
-    products = list(StoreProduct.disponiveis(store).exclude(tags__contains=['ingrediente']))
-    if not products:
-        return []
-
-    normalized_products = [
-        (p, _normalize_text(p.name), p.name.lower().split())
-        for p in products
-    ]
-
-    def _match(search_term: str) -> Optional[Any]:
-        """Ganha quem casa MAIS palavras da frase — não quem aparece primeiro.
-
-        Antes, o primeiro produto cujo nome coubesse no texto vencia: com um
-        erro de digitação em "espécie filé de frango", "Frango em pedaços"
-        (1 palavra) passava na frente de "Especial Filé de Frango" (2).
-        """
-        norm_search = _normalize_text(search_term)
-        palavras = {w for w in norm_search.split() if len(w) > 3}
-        melhor, melhor_peso = None, (0, 0)
-        for product, norm_name, words in normalized_products:
-            if norm_search == norm_name:
-                return product
-            casadas = len({w for w in norm_name.split() if len(w) > 3} & palavras)
-            exato = int(norm_search in norm_name or norm_name in norm_search)
-            primeira = int(bool(words) and len(words[0]) > 2 and words[0] in norm_search)
-            peso = (exato + casadas, primeira)
-            if peso > melhor_peso:
-                melhor, melhor_peso = product, peso
-        return melhor
-
-    quantity_patterns = [
-        r'(\d+)\s*x?\s+([\w\s]{3,40}?)(?:\s+(?:e|com|sem|por|para)|$)',
-        r'(\d+)\s+([\w\s]{3,40})',
-    ]
-
-    found_ids: set = set()
-    items: List[Dict[str, Any]] = []
-
-    for pattern in quantity_patterns:
-        for qty_str, search_term in re.findall(pattern, text_lower):
-            search_term = search_term.strip()
-            if not search_term:
-                continue
-            quantity = int(qty_str)
-            product = _match(search_term)
-            if product and str(product.id) not in found_ids:
-                found_ids.add(str(product.id))
-                items.append({'product_id': str(product.id), 'quantity': quantity})
-
-    if not items:
-        product = _match(text_lower)
-        if product:
-            items.append({'product_id': str(product.id), 'quantity': 1})
-
-    logger.info('[_parse_items_from_text_dynamic] store=%s text=%r items=%d',
-                getattr(store, 'slug', store), text[:60], len(items))
-    return items
 
 
 # ─── HandlerResult ─────────────────────────────────────────────────────────────
@@ -418,6 +335,12 @@ class IntentHandler:
         if not self.store:
             session_manager.set_waiting_for_address(False)
             return self._ask_payment_method('delivery')
+        address_text = self._endereco_com_quadra(session_manager, address_text)
+        if address_text is None:
+            return HandlerResult.text(
+                "📍 Qual a quadra? (ex.: 307 Norte, ARSE 72)\n\n"
+                "Em Palmas alameda e lote se repetem em todas as quadras."
+            )
         try:
             from apps.stores.services.geo import geo_service
             from apps.stores.services.endereco_de_palmas import (
@@ -474,6 +397,27 @@ class IntentHandler:
             default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
             session_manager.save_delivery_address_info(address=address_text, fee=default_fee)
         return self._ask_payment_method('delivery')
+
+    def _endereco_com_quadra(self, session_manager, texto: str) -> Optional[str]:
+        """Em Palmas, sem quadra + setor o bot pergunta a quadra UMA vez.
+
+        None = acabou de perguntar. Na resposta, a quadra vem na FRENTE do que
+        foi guardado: `analisar` lê a primeira dezena como quadra, e
+        "Alameda 19 …, 307 norte" viraria quadra 19.
+        """
+        from apps.stores.services.busca_de_produto import normalizar
+        from apps.stores.services.endereco_de_palmas import analisar
+
+        if normalizar(getattr(self.store, 'city', '')) != 'palmas':
+            return texto
+        perguntou, guardado = session_manager.tirar_endereco_sem_quadra()
+        if guardado:
+            return f'{texto}, {guardado}'
+        dado = analisar(texto)
+        if perguntou or ('quadra' in dado and 'setor' in dado):
+            return texto
+        session_manager.pedir_quadra(texto)
+        return None
 
     def _handle_location_input(self, lat: float, lng: float, address_hint: str = '') -> 'HandlerResult':
         session_manager = self._get_session_manager()
@@ -563,6 +507,18 @@ class IntentHandler:
                     f"Escolha um item no cardápio para montar seu pedido 👇"
                 ),
                 buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+            )
+        # 25/09: 307 Norte virou Plano Diretor Sul, 14 km, e o frete de R$ 19,30
+        # foi cobrado sem pergunta. Longe demais, o cliente confere antes.
+        limite = float((getattr(self.store, 'metadata', None) or {}).get('distancia_maxima_sem_confirmar_km', 10))
+        if distance_km and float(distance_km) > limite:
+            km = f'{float(distance_km):.1f}'.rstrip('0').rstrip('.').replace('.', ',')
+            return HandlerResult.buttons(
+                body=f"📍 {formatted_address}\n\n🤔 Ficou a {km} km — confirma esse endereço?",
+                buttons=[
+                    {'id': 'endereco_confirmado', 'title': '✅ Confirmo'},
+                    {'id': 'new_address', 'title': '✏️ Outro endereço'},
+                ],
             )
         return self._show_order_summary_and_ask_notes(
             delivery_method='delivery',

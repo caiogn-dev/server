@@ -26,7 +26,6 @@ from .handlers import (
     ContactHandler,
     HumanHandoffHandler,
     InteractiveReplyHandler,
-    _parse_items_from_text_dynamic,
 )
 
 __all__ = [
@@ -52,5 +51,4 @@ __all__ = [
     'ContactHandler',
     'HumanHandoffHandler',
     'InteractiveReplyHandler',
-    '_parse_items_from_text_dynamic',
 ]

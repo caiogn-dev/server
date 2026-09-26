@@ -29,17 +29,30 @@ def _melhor(candidatos, alvo, nome_de):
     )[0]
 
 
+def _nomes(objeto) -> list:
+    """Nome + apelidos, já normalizados.
+
+    Apelido é o nome que o cliente usa ("filé especial"), gravado pelo dono na
+    tela "ensinar" do painel em `metadata['apelidos']`. Vale como nome.
+    Leitura defensiva: o campo `metadata` do StoreProduct chega por outra
+    branch (migração 0089), e apelido que não é texto é ignorado.
+    """
+    apelidos = (getattr(objeto, 'metadata', None) or {}).get('apelidos') or []
+    return [n for n in (normalizar(x) for x in [objeto.name, *apelidos] if isinstance(x, str)) if n]
+
+
+def _casa_objeto(alvo: str, objeto) -> bool:
+    return any(_casa(alvo, nome) for nome in _nomes(objeto))
+
+
 def casar_produto(store, texto: str):
-    """Produto ativo desta loja cujo nome aparece no texto (ou vice-versa)."""
+    """Produto ativo desta loja cujo nome (ou apelido) aparece no texto."""
     from apps.stores.models import StoreProduct
 
     alvo = normalizar(texto)
     if not alvo:
         return None
-    candidatos = [
-        p for p in StoreProduct.disponiveis(store)
-        if _casa(alvo, normalizar(p.name))
-    ]
+    candidatos = [p for p in StoreProduct.disponiveis(store) if _casa_objeto(alvo, p)]
     return _melhor(candidatos, alvo, lambda p: p.name)
 
 
@@ -50,8 +63,7 @@ def casar_combo(store, texto: str):
     if not alvo:
         return None
     candidatos = [
-        c for c in StoreCombo.objects.filter(store=store, is_active=True)
-        if _casa(alvo, normalizar(c.name))
+        c for c in StoreCombo.objects.filter(store=store, is_active=True) if _casa_objeto(alvo, c)
     ]
     return _melhor(candidatos, alvo, lambda c: c.name)
 
@@ -67,22 +79,50 @@ def _raiz(palavra: str) -> str:
     return palavra
 
 
+def distancia(a: str, b: str) -> int:
+    """Levenshtein: letras a inserir, apagar ou trocar para ir de `a` a `b`."""
+    anterior = list(range(len(b) + 1))
+    for i, letra_a in enumerate(a, 1):
+        atual = [i]
+        for j, letra_b in enumerate(b, 1):
+            atual.append(min(anterior[j] + 1, atual[j - 1] + 1, anterior[j - 1] + (letra_a != letra_b)))
+        anterior = atual
+    return anterior[-1]
+
+
+def _peso_da_palavra(do_cliente: str, do_nome: str) -> int:
+    """2 = mesma palavra (ou plural); 1 = erro de digitação; 0 = outra palavra.
+
+    "espesial" é "especial" digitado torto — 30 dias de prod: 160 mensagens
+    em `unknown` e 12 pedidos pelo WhatsApp. A régua é curta de propósito:
+    palavra de até 3 letras só casa exata ("mel" não vira "gel"), e a
+    tolerância é 1 letra — 2 só quando as duas têm 7 ou mais.
+    """
+    if _raiz(do_cliente) == _raiz(do_nome):
+        return 2
+    menor = min(len(do_cliente), len(do_nome))
+    if menor < 4:
+        return 0
+    return 1 if distancia(do_cliente, do_nome) <= (2 if menor >= 7 else 1) else 0
+
+
+def _palavras(texto: str) -> list:
+    """Palavra de uma letra ou duas não casa nada — "de", "e", "ml" fariam meio
+    catálogo casar com qualquer frase."""
+    return [p for p in texto.split() if len(p) > 2]
+
+
 def _casa(alvo: str, nome: str) -> bool:
-    """O texto contém o nome, ou o nome contém o texto.
+    """O texto contém o nome, o nome contém o texto, ou uma palavra casa.
 
     As duas direções importam: "Suco de laranja 400ml" (o cliente copiou o nome
     inteiro) e "quero salada" (o cliente disse uma palavra que está no nome).
-
-    Palavra de uma letra ou duas não casa nada — "de", "e", "ml" fariam meio
-    catálogo casar com qualquer frase.
     """
     if not alvo or not nome:
         return False
     if nome in alvo or alvo in nome:
         return True
-    palavras_do_nome = {_raiz(p) for p in nome.split() if len(p) > 2}
-    palavras_do_alvo = {_raiz(p) for p in alvo.split() if len(p) > 2}
-    return bool(palavras_do_nome & palavras_do_alvo)
+    return any(_peso_da_palavra(a, n) for n in _palavras(nome) for a in _palavras(alvo))
 
 
 #: Aberturas de pergunta. Interrogativa que cita produto é DÚVIDA, não pedido.
@@ -208,36 +248,57 @@ def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
     o pedido da Yeda saiu R$ 20 em vez de R$ 100. Devolvendo a lista, quem fala
     com o cliente pode perguntar "qual delas?" em vez de adivinhar.
     """
-    from apps.stores.models import StoreProduct
+    if tem_negacao(texto):
+        return []
+    return [o for o, _ in candidatos_pontuados(store, texto)[:limite]]
+
+
+def candidatos_pontuados(store, texto: str) -> list:
+    """[(produto ou combo, pontos)] do melhor ao pior — os pontos decidem empate.
+
+    Quem precisa saber se há UM vencedor claro (a leitura do pedido digitado)
+    olha os pontos: empatou no topo, pergunta ao cliente. Não filtra negação —
+    quem chama já separou o que o cliente tira do que ele pede.
+    """
+    from apps.stores.models import StoreCombo, StoreProduct
 
     alvo = normalizar(texto)
-    if not store or not alvo or tem_negacao(texto):
+    if not store or not alvo:
         return []
     # Produtos E combos. Varrer só StoreProduct fazia "Quero salada" voltar
     # vazio na Cê Saladas, onde salada é vendida por combo — e a mensagem caía
     # em observação de novo, que é o bug que este módulo existe para matar.
-    from apps.stores.models import StoreCombo
-
-    candidatos = [
-        o for o in [
+    pontuados = [
+        (o, max(_pontos(alvo, nome) for nome in _nomes(o)))
+        for o in [
             # disponiveis() e não is_active: o painel escreve em `status`, e
             # filtrar pelo campo errado oferecia produto que o dono desativou.
             *StoreProduct.disponiveis(store),
             *StoreCombo.objects.filter(store=store, is_active=True),
         ]
-        if _casa(alvo, normalizar(o.name))
+        if _casa_objeto(alvo, o)
     ]
     # Ganha quem casa MAIS palavras da frase, não quem tem o nome mais curto.
     # "quero 2 combos de 5 saladas" devolvia "Combo Salmão" — qualquer "Combo X"
     # vencia "COMBO 5 SALADAS", que casa duas palavras.
-    def _peso(o):
-        nome = normalizar(o.name)
-        casadas = len({_raiz(p) for p in nome.split() if len(p) > 2}
-                      & {_raiz(p) for p in alvo.split() if len(p) > 2})
-        return (nome != alvo, -casadas, len(o.name))
+    pontuados.sort(key=lambda par: (-par[1], len(par[0].name)))
+    return pontuados
 
-    candidatos.sort(key=_peso)
-    return candidatos[:limite]
+
+def _pontos(alvo: str, nome: str) -> int:
+    """Nome idêntico > nome inteiro dentro da frase > palavras casadas.
+
+    Palavra exata vale 2 e digitada torta vale 1: com "Molho" e "Milho" no
+    cardápio, "quero molho" tem vencedor claro em vez de empate.
+    """
+    if nome == alvo:
+        return 1000
+    do_cliente = _palavras(alvo)
+    casadas = sum(
+        max((_peso_da_palavra(a, n) for a in do_cliente), default=0)
+        for n in dict.fromkeys(_raiz(p) for p in _palavras(nome))
+    )
+    return casadas + (100 if nome in alvo else 0)
 
 
 # Avisos de que o dinheiro já saiu da mão do cliente.
