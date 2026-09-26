@@ -17,14 +17,19 @@ class HumanHandoffHandler(IntentHandler):
             logger.info(f"[HumanHandoffHandler] Conversation {self.conversation.id} switched to human mode")
         except Exception as exc:
             logger.warning(f"[HumanHandoffHandler] switch_to_human failed: {exc}")
+        # Quem chama gente sai do checkout. 25/09: a transferência limpava só as
+        # esperas; itens e notas ficavam, e o botão 💠 PIX da mensagem anterior
+        # (que passa pelo modo humano) fechava o pedido errado por cima do
+        # atendente.
+        havia_pedido = False
         try:
-            session_manager = self._get_session_manager()
-            session_manager.set_waiting_for_address(False)
-            session_manager.set_waiting_for_notes(False)
+            havia_pedido = self._get_session_manager().deixar_pedido_de_lado()
         except Exception as exc:
             logger.warning("[HumanHandoffHandler] Failed to clear session state: %s", exc)
+        pedido = "Sem problema: deixei seu pedido de lado; o atendente monta com você.\n" if havia_pedido else ""
         return HandlerResult.text(
             f"👨‍💼 *Transferindo para atendimento humano...*\n\n"
+            f"{pedido}"
             f"Um de nossos atendentes vai te atender em breve.\n"
             f"Por favor, aguarde um momento. 🙏"
         )

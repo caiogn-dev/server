@@ -525,6 +525,31 @@ class SessionManager:
             session.cart_data = data
             session.save(update_fields=['cart_data'])
 
+    #: Tudo que um checkout em curso guarda e que, largado, fecharia um pedido
+    #: por cima do atendente (botão de pagamento antigo lê daqui).
+    _CHAVES_DO_CHECKOUT = (
+        'pending_items', 'pending_delivery_method', 'customer_notes', 'pedido_digitado',
+        'waiting_for_address', 'waiting_for_notes', 'address_attempts',
+        'delivery_address', 'delivery_fee_calculated', 'delivery_distance_km',
+        'delivery_duration_minutes', 'delivery_lat', 'delivery_lng',
+        'delivery_address_components', 'scheduled_date', 'scheduled_time',
+    )
+
+    def deixar_pedido_de_lado(self) -> bool:
+        """Larga o checkout em curso. True quando havia pedido sendo montado."""
+        session = self.get_or_create_session()
+        if not session:
+            return False
+        data = dict(session.cart_data or {})
+        havia = bool(data.get('pending_items') or (data.get('pedido_digitado') or {}).get('itens')
+                     or (data.get('pedido_digitado') or {}).get('duvidas'))
+        for chave in self._CHAVES_DO_CHECKOUT:
+            data.pop(chave, None)
+        session.cart_data = _append_checkout_snapshot(data, 'handed_to_human')
+        session.cart_items_count = 0
+        session.save(update_fields=['cart_data', 'cart_items_count'])
+        return havia
+
     def get_customer_notes(self) -> str:
         """Recupera observações do cliente salvas na sessão."""
         session = self.get_or_create_session()

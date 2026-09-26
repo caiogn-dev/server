@@ -1135,6 +1135,10 @@ class UnifiedService:
                 logger.error('[unified] pending checkout text handler failed: %s', exc, exc_info=True)
 
         intent_data = self.detector.detect(normalized.lower())
+        if _early_human:
+            # "suporte" casava CONTACT e respondia o telefone da loja — quem
+            # pede gente vai para a transferência, que também larga o checkout.
+            intent_data['intent'] = IntentType.HUMAN_HANDOFF
         intent = intent_data.get('intent', IntentType.UNKNOWN)
 
         if intent == IntentType.UNKNOWN and self._message_matches_catalog_product(normalized):
