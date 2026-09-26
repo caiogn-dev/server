@@ -34,6 +34,7 @@ IDS_TRANSACIONAIS = frozenset({
 PREFIXOS_DE_FLUXO_DO_BOT = (
     'add_',
     'product_',
+    'qual_',
     'rating_',
     'review_done_',
     'refer_friend_',

@@ -8,7 +8,8 @@ from apps.stores.models import StoreProduct
 from .base import HandlerResult, IntentHandler
 from .catalog import MenuRequestHandler
 from .fallback import HumanHandoffHandler
-from .order import CancelOrderHandler, CreateOrderHandler, TrackOrderHandler
+from .order import CancelOrderHandler, TrackOrderHandler
+from .pedido_digitado import PREFIXO_ESCOLHA, PedidoDigitadoHandler
 from .payment import CopyPixHandler
 
 from apps.whatsapp.formatacao import moeda
@@ -38,6 +39,12 @@ class InteractiveReplyHandler(IntentHandler):
 
         if reply_id.startswith('product_'):
             return self._handle_product_selection(reply_id, reply_title)
+
+        # "Qual destes?" do pedido digitado (`pedido_digitado.py`).
+        if reply_id.startswith(PREFIXO_ESCOLHA):
+            return PedidoDigitadoHandler(self.account, self.conversation, self.company_profile).escolher(
+                reply_id[len(PREFIXO_ESCOLHA):],
+            )
 
         # 'add_more_items' antes do prefixo 'add_' — senão cai no parser de
         # add_{produto}_{qty} e vira "Erro ao processar pedido".

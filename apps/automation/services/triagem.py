@@ -95,7 +95,19 @@ def triar(
     # Negação é observação mesmo quando casa com produto. A Cê Saladas vende
     # ingrediente avulso, então "sem cebola" — o exemplo que o próprio bot dá —
     # casa com o produto "Cebola roxa".
+    #
+    # Mas só o TRECHO negado. 25/09: "vou querer uma espécie filé de frango,
+    # sem tomate cereja e sem cebola roxa" é pedido com observação; olhar a
+    # frase inteira como negação jogava fora a salada.
     if tem_negacao(texto):
+        from apps.stores.services.leitura_do_pedido import parte_que_pede
+
+        achados = _produtos(store, parte_que_pede(texto))
+        if achados:
+            return Decisao(
+                intencao=Intencao.ITEM, itens=achados, texto=texto,
+                confianca=1.0 if len(achados) == 1 else 0.5,
+            )
         if esperando == 'observacao':
             return Decisao(intencao=Intencao.OBSERVACAO, texto=texto)
         return Decisao(intencao=Intencao.CONSULTIVA, texto=texto)

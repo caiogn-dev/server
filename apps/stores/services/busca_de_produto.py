@@ -208,18 +208,29 @@ def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
     o pedido da Yeda saiu R$ 20 em vez de R$ 100. Devolvendo a lista, quem fala
     com o cliente pode perguntar "qual delas?" em vez de adivinhar.
     """
-    from apps.stores.models import StoreProduct
+    if tem_negacao(texto):
+        return []
+    return [o for o, _ in candidatos_pontuados(store, texto)[:limite]]
+
+
+def candidatos_pontuados(store, texto: str) -> list:
+    """[(produto ou combo, pontos)] do melhor ao pior — os pontos decidem empate.
+
+    Quem precisa saber se há UM vencedor claro (a leitura do pedido digitado)
+    olha os pontos: empatou no topo, pergunta ao cliente. Não filtra negação —
+    quem chama já separou o que o cliente tira do que ele pede.
+    """
+    from apps.stores.models import StoreCombo, StoreProduct
 
     alvo = normalizar(texto)
-    if not store or not alvo or tem_negacao(texto):
+    if not store or not alvo:
         return []
     # Produtos E combos. Varrer só StoreProduct fazia "Quero salada" voltar
     # vazio na Cê Saladas, onde salada é vendida por combo — e a mensagem caía
     # em observação de novo, que é o bug que este módulo existe para matar.
-    from apps.stores.models import StoreCombo
-
-    candidatos = [
-        o for o in [
+    pontuados = [
+        (o, _pontos(alvo, normalizar(o.name)))
+        for o in [
             # disponiveis() e não is_active: o painel escreve em `status`, e
             # filtrar pelo campo errado oferecia produto que o dono desativou.
             *StoreProduct.disponiveis(store),
@@ -230,14 +241,17 @@ def candidatos_de_produto(store, texto: str, limite: int = 4) -> list:
     # Ganha quem casa MAIS palavras da frase, não quem tem o nome mais curto.
     # "quero 2 combos de 5 saladas" devolvia "Combo Salmão" — qualquer "Combo X"
     # vencia "COMBO 5 SALADAS", que casa duas palavras.
-    def _peso(o):
-        nome = normalizar(o.name)
-        casadas = len({_raiz(p) for p in nome.split() if len(p) > 2}
-                      & {_raiz(p) for p in alvo.split() if len(p) > 2})
-        return (nome != alvo, -casadas, len(o.name))
+    pontuados.sort(key=lambda par: (-par[1], len(par[0].name)))
+    return pontuados
 
-    candidatos.sort(key=_peso)
-    return candidatos[:limite]
+
+def _pontos(alvo: str, nome: str) -> int:
+    """Nome idêntico > nome inteiro dentro da frase > palavras casadas."""
+    if nome == alvo:
+        return 1000
+    casadas = len({_raiz(p) for p in nome.split() if len(p) > 2}
+                  & {_raiz(p) for p in alvo.split() if len(p) > 2})
+    return casadas * 2 + (100 if nome in alvo else 0)
 
 
 # Avisos de que o dinheiro já saiu da mão do cliente.

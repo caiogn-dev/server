@@ -1,12 +1,12 @@
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from django.utils import timezone
 
 from apps.stores.models.order import StoreOrder as Order
 
-from .base import HandlerResult, IntentHandler, _parse_items_from_text_dynamic
+from .base import HandlerResult, IntentHandler
 
 logger = logging.getLogger(__name__)
 
@@ -136,61 +136,14 @@ class TrackOrderHandler(IntentHandler):
 
 
 class CreateOrderHandler(IntentHandler):
-    """Handler para criar pedido — extrai produtos da mensagem e inicia fluxo de pedido real."""
+    """"Quero fazer um pedido" sem produto reconhecível → catálogo.
+
+    Não escolhe item: quando a frase nomeia produto, a porta do texto livre
+    (`pedido_digitado.py`) atende antes deste handler. O extrator que morava
+    aqui lançou 1× Cebola roxa para "sem cebola roxa" em 25/09.
+    """
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info(f"[CreateOrderHandler] Iniciando handle")
-        message_text = intent_data.get('original_message', '')
-        items = self._extract_items_from_context(intent_data)
-        if not items:
-            items = self._parse_items_from_text(message_text)
-        logger.info(f"[CreateOrderHandler] Itens extraídos: {items}")
-        if items:
-            return self._create_real_order(items, message_text)
-        return self._show_catalog()
-
-    def _extract_items_from_context(self, intent_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        items = []
-        try:
-            from apps.whatsapp.models import Message
-            recent_messages = Message.objects.filter(
-                conversation=self.conversation,
-                direction='inbound',
-                status='received',
-            ).order_by('-created_at')[:5]
-            for msg in recent_messages:
-                parsed = self._parse_items_from_text(msg.body or '')
-                if parsed:
-                    items.extend(parsed)
-                    break
-        except Exception as e:
-            logger.warning(f"[CreateOrderHandler] Erro ao buscar contexto: {e}")
-        return items
-
-    def _create_real_order(self, items: List[Dict], message_text: str) -> HandlerResult:
-        logger.info(f"[CreateOrderHandler] Perguntando método de entrega para {self.conversation.phone_number}")
-        resultado = self._ask_delivery_method(items)
-        self._guardar_observacoes_da_frase(message_text)
-        return resultado
-
-    def _guardar_observacoes_da_frase(self, message_text: str) -> None:
-        """"sem tomate", "acrescenta cenoura" ditos junto com o pedido viram nota.
-
-        25/09: as três observações da cliente foram jogadas fora com o item
-        errado; ela precisou repetir tudo e chamar o atendente.
-        """
-        from apps.stores.services.busca_de_produto import separar_negacoes, trechos_de_acrescimo
-
-        _, negados = separar_negacoes(message_text)
-        trechos = negados + [t for t in trechos_de_acrescimo(message_text) if t not in negados]
-        if not trechos:
-            return
-        try:
-            self._get_session_manager().save_customer_notes('; '.join(trechos))
-        except Exception as exc:
-            logger.warning('[CreateOrderHandler] não guardou observações da frase: %s', exc)
-
-    def _show_catalog(self) -> HandlerResult:
         # Fluxo enxuto (29/jul): sem itens na mensagem → catálogo direto.
         # O passo "Como prefere começar?" (Cardápio/Pedido Rápido/Ajuda) era
         # loop puro — todos os caminhos terminavam no catálogo mesmo.
@@ -201,18 +154,12 @@ class CreateOrderHandler(IntentHandler):
         from .catalog import MenuRequestHandler
         return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle({})
 
-    def _parse_items_from_text(self, text: str) -> List[Dict[str, Any]]:
-        return _parse_items_from_text_dynamic(text, self.store)
-
 
 class QuickOrderHandler(IntentHandler):
-    """Handler para pedido rápido — cria pedido diretamente a partir do texto livre."""
+    """"quero 2 …" que a porta do texto livre não reconheceu como produto."""
 
     def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
-        logger.info(f"[QuickOrderHandler] Iniciando handle")
-        message_text = intent_data.get('original_message', '')
-        logger.info(f"[QuickOrderHandler] Mensagem original: {message_text}")
-        if not message_text:
+        if not intent_data.get('original_message', ''):
             return HandlerResult.text(
                 "🛒 *Pedido Rápido*\n\n"
                 "Digite seu pedido:\n"
@@ -220,19 +167,10 @@ class QuickOrderHandler(IntentHandler):
                 "• '1 lasanha e 1 nhoque'\n\n"
                 "Ou digite 'cardápio' para ver opções."
             )
-        items = self._parse_items_from_text(message_text)
-        logger.info(f"[QuickOrderHandler] Itens extraídos: {items}")
-        if not items:
-            logger.warning(f"[QuickOrderHandler] Nenhum item encontrado na mensagem: {message_text}")
-            return HandlerResult.text(
-                "❌ Não consegui identificar os itens do seu pedido.\n\n"
-                "Tente escrever de outra forma ou digite 'cardápio'."
-            )
-        logger.info(f"[QuickOrderHandler] {len(items)} itens extraídos, perguntando método de entrega")
-        return self._ask_delivery_method(items)
-
-    def _parse_items_from_text(self, text: str) -> List[Dict[str, Any]]:
-        return _parse_items_from_text_dynamic(text, self.store)
+        return HandlerResult.text(
+            "❌ Não consegui identificar os itens do seu pedido.\n\n"
+            "Tente escrever de outra forma ou digite 'cardápio'."
+        )
 
 
 class CancelOrderHandler(IntentHandler):

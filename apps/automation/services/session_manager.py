@@ -498,6 +498,33 @@ class SessionManager:
             session.save(update_fields=['cart_data'])
             logger.info("[SessionManager] Customer notes saved: %r", notes[:60] if notes else '')
 
+    def guardar_pedido_digitado(self, estado: dict) -> None:
+        """Pedido lido do texto que ainda espera o cliente (dúvida ou confirmação).
+
+        Fica fora de `pending_items` de propósito: o que está aqui o cliente
+        ainda não confirmou, e `pending_items` é o que a finalização cobra.
+        """
+        session = self.get_or_create_session()
+        if session:
+            data = _append_checkout_snapshot(session.cart_data or {}, 'typed_order_read')
+            data['pedido_digitado'] = estado
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    def pedido_digitado(self) -> dict:
+        session = self.get_or_create_session()
+        if session:
+            return (session.cart_data or {}).get('pedido_digitado') or {}
+        return {}
+
+    def descartar_pedido_digitado(self) -> None:
+        session = self.get_or_create_session()
+        if session and 'pedido_digitado' in (session.cart_data or {}):
+            data = dict(session.cart_data)
+            data.pop('pedido_digitado', None)
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
     def get_customer_notes(self) -> str:
         """Recupera observações do cliente salvas na sessão."""
         session = self.get_or_create_session()

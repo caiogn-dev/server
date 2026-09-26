@@ -633,6 +633,10 @@ class UnifiedService:
         if result.requires_llm:
             return None
 
+        return self._resposta_do_handler(result, intent.value, handler.__class__.__name__)
+
+    def _resposta_do_handler(self, result, intent_value: str, handler_name: str) -> Optional[UnifiedResponse]:
+        """HandlerResult → UnifiedResponse; None quando o handler não tem o que dizer."""
         if result.use_interactive:
             interactive_data = result.interactive_data or {}
             self.stats['handler'] += 1
@@ -642,7 +646,7 @@ class UnifiedService:
                 buttons=interactive_data.get('buttons'),
                 header=interactive_data.get('header'),
                 footer=interactive_data.get('footer'),
-                metadata={'intent': intent.value, 'handler': handler.__class__.__name__},
+                metadata={'intent': intent_value, 'handler': handler_name},
                 interactive_type=result.interactive_type,
                 interactive_data=interactive_data,
             )
@@ -652,10 +656,42 @@ class UnifiedService:
             return UnifiedResponse(
                 content=result.response_text,
                 source=ResponseSource.HANDLER,
-                metadata={'intent': intent.value, 'handler': handler.__class__.__name__},
+                metadata={'intent': intent_value, 'handler': handler_name},
             )
 
         return None
+
+    #: Intenções em que o regex só sabe que há um pedido, não QUAL. Nelas quem
+    #: escolhe o item é a triagem. Saudação, cardápio, rastrear, cancelar,
+    #: atendente, horário e entrega continuam decididos pelo regex.
+    INTENTS_DA_PORTA_DO_PEDIDO = frozenset({
+        IntentType.CREATE_ORDER, IntentType.ADD_TO_CART, IntentType.UNKNOWN,
+    })
+
+    def _porta_do_pedido_digitado(self, texto: str, intent: IntentType) -> Optional[UnifiedResponse]:
+        """Texto livre que nomeia produto: a triagem decide, não o regex.
+
+        25/09: "vou querer … sem cebola roxa" casou `create_order` e o extrator
+        do handler pôs a Cebola roxa no carrinho. Mensagem desconhecida com
+        agente de IA conversando fica com o agente — ali a frase curta costuma
+        ser resposta a uma pergunta dele (o "Branco" de 09/ago).
+        """
+        if intent not in self.INTENTS_DA_PORTA_DO_PEDIDO or not self.store or not self._bot_order_enabled():
+            return None
+        if intent == IntentType.UNKNOWN and self._tem_agente_conversando():
+            return None
+        from apps.whatsapp.intents.handlers.pedido_digitado import PedidoDigitadoHandler
+
+        handler = PedidoDigitadoHandler(self.account, self.conversation, self.company)
+        handler.store = self.store
+        try:
+            result = handler.propor(texto)
+        except Exception as exc:
+            logger.error('[unified] porta do pedido digitado falhou: %s', exc, exc_info=True)
+            return None
+        if result is None:
+            return None
+        return self._resposta_do_handler(result, 'pedido_digitado', handler.__class__.__name__)
 
     def _call_llm(self, message: str, context_text: str) -> Optional[str]:
         """
@@ -1141,8 +1177,11 @@ class UnifiedService:
             self.stats['template'] += 1
             return response
 
-        # 1. Handler determinístico
-        handler_response = self._run_handler(intent_data)
+        # 1. Handler determinístico — o pedido digitado passa antes pela triagem
+        handler_response = (
+            self._porta_do_pedido_digitado(normalized, intent)
+            or self._run_handler(intent_data)
+        )
         if handler_response is not None:
             self._reset_dead_end()
             _ms = round((time.monotonic() - _t0) * 1000, 1)
