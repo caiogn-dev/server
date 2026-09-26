@@ -77,6 +77,9 @@ DATABASES = {
     }
 }
 
+import tempfile as _tempfile  # noqa: E402
+MEDIA_ROOT = _tempfile.mkdtemp(prefix='django_test_media_')
+
 # `agents.0009` e `whatsapp.0007` usam AddIndexConcurrently (postgres-only);
 # o schema editor do SQLite não aceita `concurrently=True`.  O patch abaixo
 # faz a operação cair silenciosamente para AddIndex normal em backends que não
