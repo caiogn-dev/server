@@ -427,6 +427,15 @@ class CashbackResumoView(APIView):
             )
             .order_by('vence_em', '-saldo')
         )
+        # RECORTES da mesma lista, para o dono achar quem acabou de comprar
+        # saldo: 26/09 a compra da Flaviane (vence em 30 dias) ficou na página 2
+        # de 69 clientes ordenados por vencimento — invisível na tela.
+        origem = (request.query_params.get('origem') or '').strip()
+        if origem in dict(StoreCashbackLot.Origin.choices):
+            linhas = linhas.filter(origin=origem)
+        if (request.query_params.get('ordem') or '') == 'recente':
+            from django.db.models import Max
+            linhas = linhas.annotate(ultimo=Max('created_at')).order_by('-ultimo')
         try:
             page = max(1, int(request.query_params.get('page', 1)))
         except (TypeError, ValueError):

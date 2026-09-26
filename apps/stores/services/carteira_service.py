@@ -304,6 +304,27 @@ class CarteiraService:
             return None
 
     @staticmethod
+    def _cadastrar_cliente(store, telefone: str, nome: str = ''):
+        """Garante usuário + StoreCustomer para quem comprou saldo. Nunca levanta:
+        crédito concedido não pode ser desfeito por falha de cadastro."""
+        from apps.core.services.customer_identity import CustomerIdentityService
+        from apps.stores.models import StoreCustomer
+
+        try:
+            usuario, _perfil, _criado = CustomerIdentityService.resolve_user(
+                phone=telefone, full_name=(nome or '').strip(), create=True,
+            )
+            if usuario is None:
+                return None
+            StoreCustomer.objects.get_or_create(
+                store=store, user=usuario, defaults={'phone': telefone, 'whatsapp': telefone},
+            )
+            return usuario
+        except Exception as exc:  # noqa: BLE001 — cadastro é acessório do crédito
+            logger.warning('carteira: não cadastrou o cliente %s: %s', telefone, exc)
+            return None
+
+    @staticmethod
     def _venda_do_pacote(store_payment, tier_id: str, lote):
         """A venda do pacote no relatório.
 
@@ -357,6 +378,14 @@ class CarteiraService:
         )
         store_payment.order = order
         store_payment.save(update_fields=['order', 'updated_at'])
+        # Quem comprou saldo é CLIENTE da loja — precisa existir em Clientes.
+        # 26/09: Flaviane comprou o Pacote Leve e não aparecia em lugar nenhum
+        # do painel (nem Clientes, nem a ficha), porque só o lote e o pedido
+        # nasciam; ninguém criava a pessoa.
+        usuario = CarteiraService._cadastrar_cliente(store_payment.store, lote.phone, store_payment.payer_name)
+        if usuario is not None:
+            order.customer = usuario
+            order.save(update_fields=['customer'])
         logger.info(
             'carteira: pacote %s creditado para %s (R$ %s) — pedido %s',
             tier_id, lote.phone, lote.amount, order.order_number,
