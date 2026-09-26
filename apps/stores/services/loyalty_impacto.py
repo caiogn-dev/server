@@ -19,12 +19,12 @@ zero diz "custa R$ 0", nulo diz "sem dados ainda".
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Count, Q, Sum
-from django.db.models.functions import Coalesce
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from apps.core.pii import mask_phone
 from apps.core.utils import normalize_phone_number
+from apps.stores.metrics import apenas_receita, soma_de_venda
 from apps.stores.models import (
     StoreCashbackLot, StoreLoyaltyAccount, StoreLoyaltyTransaction, StoreOrder,
 )
@@ -67,10 +67,8 @@ def calcular_impacto(store) -> dict:
     desde = agora - timedelta(days=JANELA_DIAS)
     threshold, _ligado = LoyaltyService._config(store)
 
-    pagos = StoreOrder.objects.filter(
-        store=store, payment_status=StoreOrder.PaymentStatus.PAID, created_at__gte=desde,
-    )
-    agg = pagos.aggregate(n=Count('id'), receita=Coalesce(Sum('total'), Decimal('0')))
+    pagos = apenas_receita(StoreOrder.objects.filter(store=store, created_at__gte=desde))
+    agg = pagos.aggregate(n=Count('id'), receita=soma_de_venda())
     n_pedidos = agg['n']
     receita = agg['receita']
     ticket_medio = (receita / n_pedidos) if n_pedidos else None
