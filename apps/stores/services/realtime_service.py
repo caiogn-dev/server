@@ -94,6 +94,10 @@ def broadcast_order_event(order, event_type: str | None = None, reason: str | No
             'created_at': order.created_at.isoformat() if getattr(order, 'created_at', None) else None,
             'customer_name': getattr(order, 'customer_name', None),
             'total': str(order.total) if getattr(order, 'total', None) is not None else None,
+            # Venda de saldo (source='carteira') não é pedido de comida: o painel
+            # avisa "crédito comprado" em vez de tocar o bipe de pedido novo.
+            'source': getattr(order, 'source', None),
+            'credito_concedido': (getattr(order, 'metadata', None) or {}).get('credito_concedido'),
             'paid_at': order.paid_at.isoformat() if getattr(order, 'paid_at', None) else None,
             'cancelled_at': order.cancelled_at.isoformat() if getattr(order, 'cancelled_at', None) else None,
         }

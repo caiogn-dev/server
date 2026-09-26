@@ -85,6 +85,26 @@ def enforce_subscription_lifecycle():
     return counts
 
 
+def texto_do_aviso_de_pedido(order) -> tuple[str, str, str]:
+    """(título, mensagem, url) do push de pedido novo.
+
+    Venda de saldo da carteira nasce como StoreOrder (source='carteira') para
+    entrar no faturamento, mas não é comida: não aparece no quadro nem imprime.
+    Em 26/09 o push dizia "Novo pedido #CE-… — R$ 139,00", o dono abriu o
+    quadro, não achou nada e concluiu que o pedido tinha sumido.
+    """
+    nome = order.customer_name or 'Cliente'
+    if getattr(order, 'source', '') == 'carteira':
+        credito = (order.metadata or {}).get('credito_concedido') or order.total
+        return (
+            f"💳 Crédito comprado — {nome}",
+            f"{nome} comprou R$ {float(credito):.2f} de saldo na carteira (pagou R$ {order.total:.2f}). "
+            "Não é pedido: nada para preparar.",
+            '/loyalty',
+        )
+    return (f"Novo pedido #{order.order_number}", f"{nome} — R$ {order.total:.2f}", f'/orders/{order.id}')
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def notify_new_order_push(self, order_id: str):
     """
@@ -115,16 +135,12 @@ def notify_new_order_push(self, order_id: str):
             return
 
         service = NotificationService()
-        title = f"Novo pedido #{order.order_number}"
-        message = (
-            f"{order.customer_name or 'Cliente'} — "
-            f"R$ {order.total:.2f}"
-        )
+        title, message, url = texto_do_aviso_de_pedido(order)
         data = {
             'order_id': str(order.id),
             'order_number': order.order_number,
             'store_id': str(store.id),
-            'url': f'/orders/{order.id}',
+            'url': url,
         }
 
         for user in recipients:
