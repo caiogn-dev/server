@@ -115,11 +115,11 @@ class ConversationService:
         
         return conversation
 
-    def switch_to_auto(self, conversation_id: str, motivo: str = '') -> Conversation:
-        """Switch conversation to auto mode."""
+    def switch_to_auto(self, conversation_id: str, motivo: str = '', agent=None) -> Conversation:
+        """Switch conversation to auto mode. `agent`: quem devolveu (vai no log)."""
         conversation = self.get_conversation(conversation_id)
         conversation = self.repo.switch_to_auto(conversation)
-        self._sync_handover_state(conversation, to_human=False, motivo=motivo)
+        self._sync_handover_state(conversation, to_human=False, agent=agent, motivo=motivo)
         logger.info(f"Conversation switched to auto mode: {conversation.id}")
         
         return conversation

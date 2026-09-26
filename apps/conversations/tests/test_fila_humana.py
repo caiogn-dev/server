@@ -72,7 +72,7 @@ class TestFilaHumana:
         assert r.status_code == 200, r.content
         esperando = r.json()['esperando']
         assert [e['nome'] for e in esperando] == ['Joana']
-        assert 'IA' in esperando[0]['motivo']
+        assert esperando[0]['motivo']['codigo'] == 'bot_nao_entendeu'
         assert 38 <= esperando[0]['minutos_esperando'] <= 42
 
     def test_quem_espera_ha_mais_tempo_vem_primeiro(self, cliente, conta):
