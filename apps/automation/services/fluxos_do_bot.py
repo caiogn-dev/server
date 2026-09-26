@@ -31,6 +31,9 @@ IDS_TRANSACIONAIS = frozenset({
     # "Entendi: … Certo?" do pedido digitado: só o Sim grava o carrinho.
     'pedido_confirmar',
     'pedido_corrigir',
+    # "Ficou a 14 km — confirma esse endereço?" antes de cobrar o frete.
+    'endereco_confirmado',
+    'new_address',
 })
 
 #: Prefixos de botão seguidos do id do objeto (`rating_5_<order_id>`).

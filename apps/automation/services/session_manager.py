@@ -533,6 +533,7 @@ class SessionManager:
         'delivery_address', 'delivery_fee_calculated', 'delivery_distance_km',
         'delivery_duration_minutes', 'delivery_lat', 'delivery_lng',
         'delivery_address_components', 'scheduled_date', 'scheduled_time',
+        'endereco_sem_quadra', 'quadra_perguntada',
     )
 
     def deixar_pedido_de_lado(self) -> bool:
@@ -549,6 +550,28 @@ class SessionManager:
         session.cart_items_count = 0
         session.save(update_fields=['cart_data', 'cart_items_count'])
         return havia
+
+    def pedir_quadra(self, texto: str) -> None:
+        """Guarda o endereço sem quadra enquanto o bot pergunta a quadra (uma vez)."""
+        session = self.get_or_create_session()
+        if session:
+            data = _append_checkout_snapshot(session.cart_data or {}, 'asked_block')
+            data['endereco_sem_quadra'] = texto
+            data['quadra_perguntada'] = True
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+
+    def tirar_endereco_sem_quadra(self) -> tuple:
+        """(já perguntou a quadra?, texto guardado — que sai da sessão)."""
+        session = self.get_or_create_session()
+        if not session:
+            return False, ''
+        data = dict(session.cart_data or {})
+        guardado = data.pop('endereco_sem_quadra', '') or ''
+        if guardado:
+            session.cart_data = data
+            session.save(update_fields=['cart_data'])
+        return bool(data.get('quadra_perguntada')), guardado
 
     def get_customer_notes(self) -> str:
         """Recupera observações do cliente salvas na sessão."""
@@ -589,6 +612,8 @@ class SessionManager:
             data['delivery_lng'] = lng
             data['waiting_for_address'] = False
             data['waiting_for_notes'] = False
+            data.pop('endereco_sem_quadra', None)
+            data.pop('quadra_perguntada', None)
             if address_components:
                 data['delivery_address_components'] = address_components
             session.cart_data = data

@@ -335,6 +335,12 @@ class IntentHandler:
         if not self.store:
             session_manager.set_waiting_for_address(False)
             return self._ask_payment_method('delivery')
+        address_text = self._endereco_com_quadra(session_manager, address_text)
+        if address_text is None:
+            return HandlerResult.text(
+                "📍 Qual a quadra? (ex.: 307 Norte, ARSE 72)\n\n"
+                "Em Palmas alameda e lote se repetem em todas as quadras."
+            )
         try:
             from apps.stores.services.geo import geo_service
             from apps.stores.services.endereco_de_palmas import (
@@ -391,6 +397,27 @@ class IntentHandler:
             default_fee = float(getattr(self.store, 'default_delivery_fee', 0) or 0)
             session_manager.save_delivery_address_info(address=address_text, fee=default_fee)
         return self._ask_payment_method('delivery')
+
+    def _endereco_com_quadra(self, session_manager, texto: str) -> Optional[str]:
+        """Em Palmas, sem quadra + setor o bot pergunta a quadra UMA vez.
+
+        None = acabou de perguntar. Na resposta, a quadra vem na FRENTE do que
+        foi guardado: `analisar` lê a primeira dezena como quadra, e
+        "Alameda 19 …, 307 norte" viraria quadra 19.
+        """
+        from apps.stores.services.busca_de_produto import normalizar
+        from apps.stores.services.endereco_de_palmas import analisar
+
+        if normalizar(getattr(self.store, 'city', '')) != 'palmas':
+            return texto
+        perguntou, guardado = session_manager.tirar_endereco_sem_quadra()
+        if guardado:
+            return f'{texto}, {guardado}'
+        dado = analisar(texto)
+        if perguntou or ('quadra' in dado and 'setor' in dado):
+            return texto
+        session_manager.pedir_quadra(texto)
+        return None
 
     def _handle_location_input(self, lat: float, lng: float, address_hint: str = '') -> 'HandlerResult':
         session_manager = self._get_session_manager()
@@ -480,6 +507,18 @@ class IntentHandler:
                     f"Escolha um item no cardápio para montar seu pedido 👇"
                 ),
                 buttons=[{'id': 'view_menu', 'title': '📋 Ver Cardápio'}],
+            )
+        # 25/09: 307 Norte virou Plano Diretor Sul, 14 km, e o frete de R$ 19,30
+        # foi cobrado sem pergunta. Longe demais, o cliente confere antes.
+        limite = float((getattr(self.store, 'metadata', None) or {}).get('distancia_maxima_sem_confirmar_km', 10))
+        if distance_km and float(distance_km) > limite:
+            km = f'{float(distance_km):.1f}'.rstrip('0').rstrip('.').replace('.', ',')
+            return HandlerResult.buttons(
+                body=f"📍 {formatted_address}\n\n🤔 Ficou a {km} km — confirma esse endereço?",
+                buttons=[
+                    {'id': 'endereco_confirmado', 'title': '✅ Confirmo'},
+                    {'id': 'new_address', 'title': '✏️ Outro endereço'},
+                ],
             )
         return self._show_order_summary_and_ask_notes(
             delivery_method='delivery',

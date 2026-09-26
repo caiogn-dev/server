@@ -88,6 +88,9 @@ class InteractiveReplyHandler(IntentHandler):
         if reply_id == 'new_address':
             return self._handle_new_address()
 
+        if reply_id == 'endereco_confirmado':
+            return self._handle_endereco_confirmado()
+
         if reply_id == 'change_details':
             return self._handle_change_details()
 
@@ -452,6 +455,19 @@ class InteractiveReplyHandler(IntentHandler):
             delivery_fee=float(addr['fee'] or 0),
             distance_km=addr.get('distance_km'),
             duration_minutes=addr.get('duration_minutes'),
+        )
+
+    def _handle_endereco_confirmado(self) -> HandlerResult:
+        """"Ficou a 14 km — confirma?" → ✅: segue para o resumo com pagamento."""
+        info = self._get_session_manager().get_delivery_address_info()
+        if not info.get('address'):
+            return self._handle_new_address()
+        return self._show_order_summary_and_ask_notes(
+            delivery_method='delivery',
+            delivery_address=info['address'],
+            delivery_fee=float(info.get('fee') or 0),
+            distance_km=info.get('distance_km'),
+            duration_minutes=info.get('duration_minutes'),
         )
 
     def _handle_new_address(self) -> HandlerResult:
