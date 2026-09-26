@@ -73,15 +73,20 @@ class _Loja(TestCase):
     def _botoes(resposta):
         return [b['id'] for b in (resposta.buttons or [])]
 
+    def _clicar(self, reply_id, titulo=''):
+        return self._bot().process_message('', interactive_reply={'id': reply_id, 'title': titulo})
+
 
 class FraseDe25DeSetembroTest(_Loja):
     def test_a_salada_entra_e_a_cebola_roxa_nao(self):
         self._bot().process_message(FRASE)
+        self._clicar('pedido_confirmar')
 
         self.assertEqual(self._pendentes(), [('Especial Filé de Frango', 1)])
 
     def test_as_observacoes_da_frase_seguem_com_o_pedido(self):
         self._bot().process_message(FRASE)
+        self._clicar('pedido_confirmar')
 
         notas = self._sessao().get_customer_notes().lower()
         self.assertIn('sem tomate cereja', notas)
@@ -107,9 +112,9 @@ class EmpateViraPerguntaTest(_Loja):
         self._bot().process_message('quero pedir uma salada sem cebola')
         escolhido = self.p['Salada Caesar']
 
-        self._bot().process_message(
-            '', interactive_reply={'id': f'qual_{escolhido.id}', 'title': 'Salada Caesar'},
-        )
+        confirmacao = self._clicar(f'qual_{escolhido.id}', 'Salada Caesar')
+        self.assertIn('Entendi: 1× Salada Caesar', confirmacao.content)
+        self._clicar('pedido_confirmar')
 
         self.assertEqual(self._pendentes(), [('Salada Caesar', 1)])
         self.assertIn('sem cebola', self._sessao().get_customer_notes().lower())
@@ -124,6 +129,7 @@ class RegexContinuaNoQueEleSabeTest(_Loja):
 
     def test_varios_itens_com_quantidade(self):
         self._bot().process_message('vou querer 2 frango em pedaços e 1 suco de laranja')
+        self._clicar('pedido_confirmar')
 
         self.assertEqual(
             sorted(self._pendentes()), [('Frango em pedaços', 2), ('Suco de laranja', 1)],
@@ -134,6 +140,65 @@ class RegexContinuaNoQueEleSabeTest(_Loja):
 
         self.assertEqual(resposta.interactive_type, 'catalog_message')
         self.assertEqual(self._pendentes(), [])
+
+
+class ConfirmarAntesDeGravarTest(_Loja):
+    """Pedido por texto sempre mostra o que foi entendido antes de gravar.
+
+    Com o resumo "Entendi: 1× Cebola roxa. Certo?" na tela, a cliente de 25/09
+    teria tocado em Corrigir — em vez de ver o PIX de R$ 22,29 já gerado.
+    """
+
+    def test_mostra_o_que_entendeu_e_nao_grava_nada(self):
+        resposta = self._bot().process_message(FRASE)
+
+        self.assertIn('Entendi: 1× Especial Filé de Frango · Obs.: sem tomate cereja; sem cebola roxa', resposta.content)
+        self.assertIn('cenoura ralada', resposta.content)
+        self.assertTrue(resposta.content.rstrip().endswith('Certo?'), resposta.content)
+        self.assertEqual(
+            [(b['id'], b['title']) for b in resposta.buttons],
+            [('pedido_confirmar', '✅ Sim'), ('pedido_corrigir', '✏️ Corrigir')],
+        )
+        self.assertEqual(self._pendentes(), [])
+        self.assertEqual(self._sessao().get_customer_notes(), '')
+
+    def test_sim_grava_e_pergunta_como_receber(self):
+        self._bot().process_message(FRASE)
+
+        resposta = self._clicar('pedido_confirmar', '✅ Sim')
+
+        self.assertEqual(self._pendentes(), [('Especial Filé de Frango', 1)])
+        self.assertEqual(self._botoes(resposta), ['order_delivery', 'order_pickup'])
+
+    def test_sim_digitado_tambem_confirma(self):
+        self._bot().process_message(FRASE)
+
+        self._bot().process_message('sim')
+
+        self.assertEqual(self._pendentes(), [('Especial Filé de Frango', 1)])
+
+    def test_corrigir_abre_o_cardapio_sem_gravar(self):
+        self._bot().process_message(FRASE)
+
+        resposta = self._clicar('pedido_corrigir', '✏️ Corrigir')
+
+        self.assertEqual(resposta.interactive_type, 'catalog_message')
+        self.assertEqual(self._pendentes(), [])
+        self.assertEqual(self._sessao().get_customer_notes(), '')
+        self.assertEqual(self._clicar('pedido_confirmar').content.count('Entendi'), 0,
+                         'Sim depois de Corrigir não pode ressuscitar o pedido lido')
+        self.assertEqual(self._pendentes(), [])
+
+    def test_varios_itens_aparecem_na_confirmacao(self):
+        resposta = self._bot().process_message('vou querer 2 frango em pedaços e 1 suco de laranja')
+
+        self.assertIn('Entendi: 2× Frango em pedaços, 1× Suco de laranja. Certo?', resposta.content)
+
+    def test_botoes_da_confirmacao_passam_pelo_modo_humano(self):
+        from apps.automation.services.fluxos_do_bot import eh_fluxo_do_bot
+
+        self.assertTrue(eh_fluxo_do_bot('pedido_confirmar'))
+        self.assertTrue(eh_fluxo_do_bot('pedido_corrigir'))
 
 
 class TriagemComNegacaoTest(_Loja):

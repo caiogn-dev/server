@@ -42,6 +42,12 @@ class AffirmativeHandler(IntentHandler):
         try:
             session_manager = self._get_session_manager()
 
+            # "Entendi: 1× … Certo?" respondido digitando em vez de tocar no botão.
+            from .pedido_digitado import PedidoDigitadoHandler
+            pedido = PedidoDigitadoHandler(self.account, self.conversation, self.company_profile)
+            if pedido.ha_pedido_para_confirmar():
+                return pedido.confirmar()
+
             # Esperando observações → "Sim" = sem observações, prosseguir
             if session_manager.is_waiting_for_notes():
                 logger.info('[AffirmativeHandler] Sessão waiting_for_notes — tratando como sem obs.')

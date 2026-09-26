@@ -5,9 +5,11 @@ que escolhia o item sozinho — em 25/09 ele pôs 1× Cebola roxa no carrinho de
 quem escreveu "sem cebola roxa". Agora quem entende a frase é a triagem; aqui
 só se age sobre o que ela leu:
 
-- um vencedor claro por trecho → segue o pedido;
+- um vencedor claro por trecho → "Entendi: 1× … · Obs.: …. Certo?";
 - empate → "qual destes?" com botões `qual_<id>`, sem chutar;
 - "sem …" / "acrescenta …" → observação do pedido.
+
+Nada vai para `pending_items` (o que a finalização cobra) antes do ✅ Sim.
 """
 import logging
 from typing import Optional
@@ -19,6 +21,8 @@ from .base import HandlerResult, IntentHandler
 logger = logging.getLogger(__name__)
 
 PREFIXO_ESCOLHA = 'qual_'
+CONFIRMAR = 'pedido_confirmar'
+CORRIGIR = 'pedido_corrigir'
 
 
 class PedidoDigitadoHandler(IntentHandler):
@@ -53,21 +57,55 @@ class PedidoDigitadoHandler(IntentHandler):
         sessao = self._get_session_manager()
         estado = sessao.pedido_digitado()
         if not estado.get('duvidas'):
-            from .catalog import MenuRequestHandler
-            return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle({})
+            return self._cardapio()
         duvida = estado['duvidas'].pop(0)
         estado['itens'].append({'product_id': str(product_id), 'quantity': duvida['quantidade']})
         return self._seguir(estado)
 
-    def _seguir(self, estado: dict) -> HandlerResult:
+    def confirmar(self) -> HandlerResult:
+        """✅ Sim: só agora o pedido lido vira carrinho."""
         sessao = self._get_session_manager()
-        if estado['duvidas']:
-            sessao.guardar_pedido_digitado(estado)
-            return self._perguntar_qual(estado['duvidas'][0]['opcoes'])
+        estado = sessao.pedido_digitado()
+        if not estado.get('itens') or estado.get('duvidas'):
+            return self._cardapio()
         sessao.descartar_pedido_digitado()
         if estado['notas']:
             sessao.save_customer_notes(estado['notas'])
         return self._ask_delivery_method(estado['itens'])
+
+    def corrigir(self) -> HandlerResult:
+        """✏️ Corrigir: esquece o que foi lido e abre o cardápio."""
+        self._get_session_manager().descartar_pedido_digitado()
+        return self._cardapio()
+
+    def ha_pedido_para_confirmar(self) -> bool:
+        estado = self._get_session_manager().pedido_digitado()
+        return bool(estado.get('itens')) and not estado.get('duvidas')
+
+    def _cardapio(self) -> HandlerResult:
+        from .catalog import MenuRequestHandler
+        return MenuRequestHandler(self.account, self.conversation, self.company_profile).handle({})
+
+    def _seguir(self, estado: dict) -> HandlerResult:
+        self._get_session_manager().guardar_pedido_digitado(estado)
+        if estado['duvidas']:
+            return self._perguntar_qual(estado['duvidas'][0]['opcoes'])
+        return self._perguntar_se_entendeu(estado)
+
+    def _perguntar_se_entendeu(self, estado: dict) -> HandlerResult:
+        from apps.stores.models import StoreProduct
+
+        nomes = {
+            str(pk): nome for pk, nome in
+            StoreProduct.objects.filter(id__in=[i['product_id'] for i in estado['itens']])
+            .values_list('id', 'name')
+        }
+        itens = ', '.join(f"{i['quantity']}× {nomes.get(i['product_id'], '?')}" for i in estado['itens'])
+        obs = f" · Obs.: {estado['notas']}" if estado['notas'] else ''
+        return HandlerResult.buttons(
+            body=f'Entendi: {itens}{obs}. Certo?',
+            buttons=[{'id': CONFIRMAR, 'title': '✅ Sim'}, {'id': CORRIGIR, 'title': '✏️ Corrigir'}],
+        )
 
     def _perguntar_qual(self, opcoes: list) -> HandlerResult:
         from apps.stores.models import StoreProduct

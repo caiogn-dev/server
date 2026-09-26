@@ -28,6 +28,9 @@ IDS_TRANSACIONAIS = frozenset({
     'pay_pix',
     'pay_card',
     'pay_pickup',
+    # "Entendi: … Certo?" do pedido digitado: só o Sim grava o carrinho.
+    'pedido_confirmar',
+    'pedido_corrigir',
 })
 
 #: Prefixos de botão seguidos do id do objeto (`rating_5_<order_id>`).
