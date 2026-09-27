@@ -58,8 +58,8 @@ class CreateDeliveryRequestView(APIView):
                 status=status.HTTP_202_ACCEPTED
             )
 
-        except Exception as e:
-            logger.error(f'Error creating delivery request: {str(e)}')
+        except Exception:
+            logger.exception('Erro ao criar solicitação de entrega')
             return Response(
                 {'detail': 'Erro ao criar solicitação de entrega.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -89,8 +89,8 @@ class DeliveryRequestStatusView(APIView):
 
             return Response(status_data, status=status.HTTP_200_OK)
 
-        except Exception as e:
-            logger.error(f'Error polling delivery status: {str(e)}')
+        except Exception:
+            logger.exception('Erro ao consultar status da entrega')
             return Response(
                 {'detail': 'Erro ao consultar status da entrega.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -135,8 +135,8 @@ class CancelDeliveryRequestView(APIView):
                 status=status.HTTP_200_OK
             )
 
-        except Exception as e:
-            logger.error(f'Error cancelling delivery request: {str(e)}')
+        except Exception:
+            logger.exception('Erro ao cancelar solicitação de entrega')
             return Response(
                 {'detail': 'Erro ao cancelar solicitação de entrega.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

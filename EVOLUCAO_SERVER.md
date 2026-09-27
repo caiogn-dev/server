@@ -1151,3 +1151,26 @@ baixo, não prioritário.
 4. **P2** — Varredura de `is_staff` como bypass cross-tenant nos novos módulos adicionados desde
    setembro/2026 (loyalty, payments, pdv, fiscal).
 
+
+---
+
+### 2026-09-27
+
+**Baseline de testes:** 9/9 (6 HTTP + 3 RED) antes do fix; 9/9 + 24 OTP após.
+**Base do trunk:** `ab9e9226` (2026-09-26).
+
+**Bug encontrado e corrigido:** `logger.error(f'...: {str(e)}')` em 3 handlers de `apps/orders/views.py` [P3]
+
+- **Tipo:** P3 — `str(e)` interpolado no campo de mensagem do logger (não em respostas HTTP).
+  Erros da Uber Direct API podem incluir tokens Bearer/endpoints internos em texto simples em
+  agregadores de log (Sentry, CloudWatch, Datadog) sem possibilidade de scrubbing por campo.
+- **Correção:** `except Exception as e: logger.error(f'...: {str(e)}')` →
+  `except Exception: logger.exception('...')` em 3 views (CreateDelivery, DeliveryStatus, CancelDelivery).
+- **Testes:** 3 novos `SimpleTestCase` RED→GREEN em `test_delivery_str_e_leak.py`.
+- **PR:** `bot/server-2026-09-27-orders-logger-str-exc`
+
+**Próximo backlog priorizado:**
+1. **P1** — Merge dos PRs abertos #378.
+2. **P2** — `is_staff` como gate de inativo em `StoreComboViewSet`/`StoreProductTypeViewSet` →
+   trocar por `user_can_access_store` (convenção CLAUDE.md).
+3. **P2** — Suporte a itens de salada customizados no checkout/pedido/recibo.
