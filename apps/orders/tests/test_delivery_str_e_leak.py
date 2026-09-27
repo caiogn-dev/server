@@ -181,7 +181,7 @@ class CreateDeliveryLoggerStrETest(SimpleTestCase):
     @patch('apps.orders.views.get_object_or_404', return_value=_mock_order_create())
     @patch('apps.orders.views._get_store_for_user', return_value=_mock_store())
     def test_logger_nao_inclui_str_exc_na_mensagem(self, _sf, _go, mock_task):
-        """logger.error não deve interpolar o secreto no campo de mensagem."""
+        """logger.exception não deve interpolar o secreto no campo de mensagem."""
         mock_task.delay.side_effect = Exception(_SECRET)
 
         with patch('apps.orders.views.logger') as mock_log:
@@ -195,7 +195,11 @@ class CreateDeliveryLoggerStrETest(SimpleTestCase):
                 mock_log.error.called or mock_log.exception.called,
                 'Logger deve ser chamado ao ocorrer uma exceção',
             )
-            for call in mock_log.error.call_args_list:
+            # Inspeciona logger.error E logger.exception para cobrir qualquer
+            # implementação futura que volte a usar um ou outro método.
+            all_calls = list(mock_log.error.call_args_list) + list(mock_log.exception.call_args_list)
+            self.assertTrue(all_calls, 'Logger deve ter ao menos uma chamada')
+            for call in all_calls:
                 msg = str(call.args[0]) if call.args else ''
                 self.assertNotIn(_SECRET, msg, 'str(e) não deve ser interpolado na mensagem do logger')
 
@@ -223,7 +227,9 @@ class DeliveryStatusLoggerStrETest(SimpleTestCase):
                 mock_log.error.called or mock_log.exception.called,
                 'Logger deve ser chamado ao ocorrer uma exceção',
             )
-            for call in mock_log.error.call_args_list:
+            all_calls = list(mock_log.error.call_args_list) + list(mock_log.exception.call_args_list)
+            self.assertTrue(all_calls, 'Logger deve ter ao menos uma chamada')
+            for call in all_calls:
                 msg = str(call.args[0]) if call.args else ''
                 self.assertNotIn(_SECRET, msg, 'str(e) não deve ser interpolado na mensagem do logger')
 
@@ -251,6 +257,8 @@ class CancelDeliveryLoggerStrETest(SimpleTestCase):
                 mock_log.error.called or mock_log.exception.called,
                 'Logger deve ser chamado ao ocorrer uma exceção',
             )
-            for call in mock_log.error.call_args_list:
+            all_calls = list(mock_log.error.call_args_list) + list(mock_log.exception.call_args_list)
+            self.assertTrue(all_calls, 'Logger deve ter ao menos uma chamada')
+            for call in all_calls:
                 msg = str(call.args[0]) if call.args else ''
                 self.assertNotIn(_SECRET, msg, 'str(e) não deve ser interpolado na mensagem do logger')
