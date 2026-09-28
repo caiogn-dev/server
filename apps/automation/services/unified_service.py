@@ -714,19 +714,9 @@ class UnifiedService:
         try:
             service = LangGraphService(self.agent)
 
-            # Busca conversa existente para reutilizar o session_id do Redis
-            agent_conversation = AgentConversation.objects.filter(
-                agent=self.agent,
-                phone_number=self.conversation.phone_number,
-            ).order_by('-last_message_at').first()
-            # Use a stable Redis memory key even before the DB tracking row exists.
-            # This avoids context loss when two inbound messages for the same
-            # WhatsApp conversation are processed concurrently.
-            session_id = (
-                str(agent_conversation.session_id)
-                if agent_conversation
-                else str(self.conversation.id)
-            )
+            # Chave de memória estável mesmo antes da linha de rastreio existir —
+            # a mesma que `_memorizar_turno_do_bot` usa.
+            session_id = self._sessao_do_agente()
 
             # Passa a mensagem diretamente — LangchainService já constrói o contexto
             # completo (cardápio, pedidos, horários) via _build_dynamic_context().
@@ -868,7 +858,39 @@ class UnifiedService:
             resposta=resposta,
             duracao_ms=round((_time.monotonic() - inicio) * 1000, 1),
         )
+        self._memorizar_turno_do_bot(message_text, resposta)
         return resposta
+
+    def _memorizar_turno_do_bot(self, message_text, resposta) -> None:
+        """Turno respondido por handler/template entra na memória da IA.
+
+        28/09: o handler disse "Monte sua Salada R$ 9.99", a cliente disse
+        "2 dessa promoção" e a IA perguntou "qual promoção?" — ela só via os
+        próprios turnos. Para a cliente é UMA conversa. Nunca estoura.
+        """
+        try:
+            if resposta is None or not self._tem_agente_conversando():
+                return
+            fonte = getattr(getattr(resposta, 'source', None), 'value', None)
+            conteudo = (getattr(resposta, 'content', '') or '').strip()
+            if fonte in (None, 'llm', 'suppressed') or not conteudo or not (message_text or '').strip():
+                return
+            from apps.agents.services.langchain_service import memoria_do_agente
+            memoria = memoria_do_agente(self.agent, self._sessao_do_agente())
+            if memoria is None:
+                return
+            memoria.add_user_message(message_text)
+            memoria.add_ai_message(conteudo)
+        except Exception as exc:
+            logger.warning('[unified] não consegui memorizar o turno do bot: %s', exc)
+
+    def _sessao_do_agente(self) -> str:
+        """A mesma chave de memória que `_call_llm` usa — conversa existente ou o id da conversa."""
+        agent_conversation = AgentConversation.objects.filter(
+            agent=self.agent,
+            phone_number=self.conversation.phone_number,
+        ).order_by('-last_message_at').first()
+        return str(agent_conversation.session_id) if agent_conversation else str(self.conversation.id)
 
     def _registrar_intencao(self, message_text, resposta, duracao_ms) -> None:
         """Grava a linha da tela "Intenções". Nunca estoura para o chamador."""

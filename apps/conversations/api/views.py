@@ -727,7 +727,8 @@ class ConversationViewSet(viewsets.ModelViewSet):
         ids, _, erro = self._lojas_pedidas(request)
         if erro is not None:
             return erro
-        return Response(listar(ids, dias=request.query_params.get('dias')))
+        todas = str(request.query_params.get('todas') or '').lower() in ('1', 'true', 'sim')
+        return Response(listar(ids, dias=request.query_params.get('dias'), todas=todas))
 
     @extend_schema(summary="Ensinar o bot: apelido de produto, resposta pronta ou ignorar")
     @action(detail=False, methods=['post'], url_path='nao-entendi/ensinar')

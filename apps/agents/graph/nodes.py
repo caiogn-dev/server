@@ -172,7 +172,46 @@ Não peça confirmação de cada passo — seja direto e proativo
 ━━━━ ENTREGA ━━━━
 {delivery_info}
 
-{store_rules}{knowledge_context}{customer_context}"""
+{fatos_da_loja}{store_rules}{knowledge_context}{customer_context}"""
+
+
+TEMAS_DE_FATO = {
+    "loja": "Sobre a loja",
+    "produtos": "Produtos",
+    "entrega": "Entrega",
+    "pagamento": "Pagamento",
+    "horarios": "Horários",
+    "outro": "Outros",
+}
+_MAX_FATOS_CHARS = 4000
+
+
+def fatos_da_loja(store) -> str:
+    """`store.metadata['bot_fatos']` → texto agrupado por tema.
+
+    Cada fato é `{tema, texto, ativo}`; o que não tiver essa forma é ignorado
+    (o metadata é editado por gente). Tema desconhecido cai em "Outros".
+    """
+    brutos = (getattr(store, "metadata", None) or {}).get("bot_fatos") or []
+    por_tema: dict[str, list[str]] = {}
+    for fato in brutos:
+        if not isinstance(fato, dict):
+            continue
+        texto = " ".join(str(fato.get("texto") or "").split())
+        if not texto or fato.get("ativo", True) is False:
+            continue
+        tema = fato.get("tema") if fato.get("tema") in TEMAS_DE_FATO else "outro"
+        por_tema.setdefault(tema, []).append(texto)
+    if not por_tema:
+        return ""
+    linhas = []
+    for tema, rotulo in TEMAS_DE_FATO.items():
+        if tema not in por_tema:
+            continue
+        linhas.append(f"{rotulo}:")
+        linhas.extend(f"• {t}" for t in por_tema[tema])
+    texto = "\n".join(linhas)
+    return texto[:_MAX_FATOS_CHARS]
 
 
 def _build_system_prompt(state: AgentState, agent) -> str:
@@ -198,6 +237,19 @@ def _build_system_prompt(state: AgentState, agent) -> str:
     knowledge_ctx = (state.get("knowledge_context") or "").strip()
     knowledge_section = f"━━━━ EXEMPLOS DE BOM ATENDIMENTO ━━━━\n{knowledge_ctx}\n\n" if knowledge_ctx else ""
 
+    # O que o dono confirmou no painel. Vem ANTES da voz da loja e dos
+    # exemplos: é dado, não estilo. 28/09: "quantos dias dura na geladeira?"
+    # → "até 24 horas", inventado. Proibir de inventar sem dar a fonte só
+    # troca o chute por um chute educado.
+    fatos = fatos_da_loja(store) if store else ""
+    fatos_section = (
+        f"━━━━ O QUE A LOJA CONFIRMOU ━━━━\n{fatos}\n"
+        "Isto é o que a loja garante. Pergunta sobre a loja, os produtos, a "
+        "entrega ou o pagamento que NÃO esteja aqui nem nas ferramentas: diga que "
+        "vai confirmar com a equipe — nunca complete com o que é comum em outras lojas.\n\n"
+        if fatos else ""
+    )
+
     # Camada do lojista: o que ele escreve no painel entra AQUI, depois das
     # regras de motor. Ajusta voz e política; não desmonta tool-calling nem
     # o fluxo de pedido, que ficam acima e continuam valendo.
@@ -217,6 +269,7 @@ def _build_system_prompt(state: AgentState, agent) -> str:
         store_desc=store_desc,
         store_context=state.get("store_context") or "Use a ferramenta buscar_produto.",
         delivery_info=state.get("delivery_info") or "Use a ferramenta informacoes_entrega.",
+        fatos_da_loja=fatos_section,
         store_rules=store_rules_section,
         knowledge_context=knowledge_section,
         customer_context=customer_section,
@@ -355,7 +408,13 @@ def _load_knowledge_context(agent, store) -> str:
             .filter(
                 models.Q(store=store) | models.Q(store__isnull=True)
             )
-            .order_by("-confidence", "-usage_count")[:5]
+            # O que o dono ensinou à mão vem antes do que foi extraído sozinho:
+            # cinco automáticos de confiança 1.0 empurravam o ensino para fora.
+            .annotate(_manual=models.Case(
+                models.When(source__in=("manual", "reviewed"), then=0), default=1,
+                output_field=models.IntegerField(),
+            ))
+            .order_by("_manual", "-confidence", "-usage_count")[:12]
         )
         if not entries:
             return ""

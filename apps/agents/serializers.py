@@ -118,3 +118,17 @@ class AgentStatsSerializer(serializers.Serializer):
     total_messages = serializers.IntegerField()
     avg_response_time_ms = serializers.FloatField()
     active_sessions = serializers.IntegerField()
+
+
+class ConhecimentoSerializer(serializers.ModelSerializer):
+    """O que o dono ensinou à IA — pergunta + resposta. Agente e loja vêm do escopo, não do corpo."""
+
+    class Meta:
+        from .models import AgentKnowledgeEntry
+
+        model = AgentKnowledgeEntry
+        fields = [
+            'id', 'topic', 'example_input', 'example_response', 'notes',
+            'is_active', 'source', 'usage_count', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'source', 'usage_count', 'created_at', 'updated_at']

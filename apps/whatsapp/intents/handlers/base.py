@@ -862,4 +862,9 @@ class IntentHandler:
         raise NotImplementedError
 
     def get_customer_name(self) -> str:
-        return self.conversation.contact_name or 'Cliente'
+        """Nome sem letra ("." e emoji são nomes comuns no WhatsApp) vira 'Cliente'.
+
+        28/09: "Olá, .! 👋 Bem-vindo(a)".
+        """
+        nome = (getattr(self.conversation, 'contact_name', None) or '').strip()
+        return nome if any(c.isalpha() for c in nome) else 'Cliente'

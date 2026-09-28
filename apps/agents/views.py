@@ -308,3 +308,57 @@ class AgentConversationViewSet(viewsets.ReadOnlyModelViewSet):
         service = LangchainService(conversation.agent)
         success = service.clear_memory(str(session_id))
         return Response({'success': success})
+
+
+class ConhecimentoViewSet(viewsets.ModelViewSet):
+    """O que o dono ensinou à IA da loja (`AgentKnowledgeEntry` manual/revisado).
+
+    Escopo pela loja (`?store=slug|uuid`), como o resto do painel: loja que o
+    usuário não alcança é 404. Entradas automáticas (extraídas pelo beat) não
+    aparecem aqui — o dono edita o que ELE ensinou.
+    """
+    permission_classes = [IsAuthenticated]
+    pagination_class = None  # a tela lista tudo que o dono ensinou; são dezenas, não milhares
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
+
+    def get_serializer_class(self):
+        from .serializers import ConhecimentoSerializer
+        return ConhecimentoSerializer
+
+    def _loja(self):
+        from rest_framework.exceptions import NotFound
+        from apps.core.permissions import accessible_store_ids
+        from apps.stores.models import Store
+
+        pedida = str(self.request.query_params.get('store') or '').strip()
+        if not pedida:
+            raise NotFound('Informe a loja (store).')
+        filtro = Q(slug=pedida)
+        if _uuid_ok(pedida):
+            filtro |= Q(id=pedida)
+        loja = Store.objects.filter(id__in=accessible_store_ids(self.request.user)).filter(filtro).first()
+        if loja is None:
+            raise NotFound('Loja não encontrada.')
+        return loja
+
+    def get_queryset(self):
+        from .models import AgentKnowledgeEntry
+        if getattr(self, 'swagger_fake_view', False):
+            return AgentKnowledgeEntry.objects.none()
+        return (
+            AgentKnowledgeEntry.objects
+            .filter(store=self._loja(), source__in=('manual', 'reviewed'))
+            .order_by('-updated_at')
+        )
+
+    def create(self, request, *args, **kwargs):
+        from apps.conversations.services.nao_entendi import PedidoInvalido, _agente_da_loja
+        loja = self._loja()
+        try:
+            agente = _agente_da_loja(loja)
+        except PedidoInvalido as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(agent=agente, store=loja, source='manual', confidence=1.0)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)

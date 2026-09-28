@@ -45,6 +45,26 @@ def remove_accents(text):
     )
 
 
+def memoria_do_agente(agent, session_id: str) -> Optional[RedisChatMessageHistory]:
+    """A memória Redis do agente para uma sessão.
+
+    Fonte única da chave: o pipeline de regex (`UnifiedService`) grava aqui
+    os turnos dos handlers para a IA ler a MESMA conversa que o cliente vê.
+    """
+    if not getattr(agent, 'use_memory', False):
+        return None
+    try:
+        redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
+        return RedisChatMessageHistory(
+            session_id=f"agent_{agent.id}_{session_id}",
+            url=redis_url,
+            ttl=agent.memory_ttl,
+        )
+    except Exception as e:
+        logger.error(f"Error creating memory: {e}")
+        return None
+
+
 class LangchainService:
     """Service for managing Langchain agents."""
 
@@ -183,20 +203,7 @@ class LangchainService:
 
     def _get_memory(self, session_id: str) -> Optional[RedisChatMessageHistory]:
         """Get conversation memory from Redis."""
-        if not self.agent.use_memory:
-            return None
-
-        try:
-            redis_url = getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
-            history = RedisChatMessageHistory(
-                session_id=f"agent_{self.agent.id}_{session_id}",
-                url=redis_url,
-                ttl=self.agent.memory_ttl
-            )
-            return history
-        except Exception as e:
-            logger.error(f"Error creating memory: {e}")
-            return None
+        return memoria_do_agente(self.agent, session_id)
 
     def _generate_session_id(self) -> str:
         """Generate a unique session ID."""
@@ -1577,10 +1584,10 @@ class LangchainService:
                 # Estoque no ATO, não na confirmação. Em 09/ago o cliente montou
                 # o combo inteiro e só ao confirmar descobriu que o 4 Queijos
                 # estava fora de estoque — 4 minutos de trabalho jogados fora.
-                if not product.is_in_stock():
+                if not product.is_in_stock:  # @property — chamá-lo estourava a tool (28/09)
                     disponiveis = [
                         p.name for p in all_prods
-                        if p.id != product.id and p.is_in_stock()
+                        if p.id != product.id and p.is_in_stock
                     ][:4]
                     sugestao = f" Disponíveis: {', '.join(disponiveis)}." if disponiveis else ""
                     return (

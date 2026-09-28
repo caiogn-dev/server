@@ -352,8 +352,19 @@ class TestNaoEntendi:
         alheio.refresh_from_db()
         assert 'apelidos' not in (alheio.metadata or {})
 
-    def test_ensinar_resposta_cria_e_atualiza_mensagem_de_palavra_chave(self, cliente, loja_e_conta):
+    def test_ensinar_resposta_vira_conhecimento_que_a_ia_le(self, cliente, loja_e_conta):
+        """Antes gravava uma AutoMessage com `gatilhos` que nenhum código lia.
+
+        Medido em 28/09: zero ensinos em produção — e os que houvesse não
+        mudariam nada. Agora vira AgentKnowledgeEntry manual, que o prompt injeta.
+        """
+        from apps.agents.models import Agent, AgentKnowledgeEntry
         loja, _ = loja_e_conta
+        agente = Agent.objects.create(name='IA', provider=Agent.AgentProvider.NVIDIA)
+        perfil = _perfil(loja)
+        perfil.use_ai_agent = True
+        perfil.default_agent = agente
+        perfil.save()
         url = f'{BASE}/nao-entendi/ensinar/?store={loja.slug}'
 
         cliente.post(url, {'texto': 'Aceita VR?', 'acao': 'resposta', 'resposta': 'Aceitamos sim!'}, format='json')
@@ -361,11 +372,57 @@ class TestNaoEntendi:
                          format='json')
 
         assert r.status_code == 200, r.content
-        msgs = AutoMessage.objects.filter(company__store=loja, conditions__origem='nao_entendi')
-        assert msgs.count() == 1
-        msg = msgs.get()
-        assert msg.message_text == 'Aceitamos VR e VA.'
-        assert msg.conditions['gatilhos'] == ['aceita vr']
+        entradas = AgentKnowledgeEntry.objects.filter(agent=agente, store=loja)
+        assert entradas.count() == 1
+        e = entradas.get()
+        assert e.example_response == 'Aceitamos VR e VA.'
+        assert e.example_input == 'aceita vr'
+        assert e.source == 'manual'
+        assert AutoMessage.objects.filter(conditions__origem='nao_entendi').count() == 0
+
+    def test_ensinar_resposta_sem_agente_de_ia_e_400(self, cliente, loja_e_conta):
+        loja, _ = loja_e_conta
+        r = cliente.post(f'{BASE}/nao-entendi/ensinar/?store={loja.slug}',
+                         {'texto': 'x', 'acao': 'resposta', 'resposta': 'y'}, format='json')
+        assert r.status_code == 400
+        assert 'atendente de IA' in r.json()['error']
+
+    def test_ensinar_regra_grava_fato_da_loja(self, cliente, loja_e_conta):
+        """"Quantos dias dura?" não é produto nem resposta decorada: é um FATO."""
+        loja, _ = loja_e_conta
+        _nao_entendeu(loja, 'quantos dias dura na geladeira')
+
+        r = cliente.post(f'{BASE}/nao-entendi/ensinar/?store={loja.slug}', {
+            'texto': 'quantos dias dura na geladeira', 'acao': 'regra', 'tema': 'produtos',
+            'resposta': 'A salada dura até 2 dias na geladeira, fechada.',
+        }, format='json')
+
+        assert r.status_code == 200, r.content
+        loja.refresh_from_db()
+        assert loja.metadata['bot_fatos'] == [
+            {'tema': 'produtos', 'texto': 'A salada dura até 2 dias na geladeira, fechada.', 'ativo': True},
+        ]
+        assert cliente.get(f'{BASE}/nao-entendi/?store={loja.slug}').json() == []
+
+    def test_lista_so_o_que_foi_falha_de_verdade(self, cliente, loja_e_conta):
+        """`intent=unknown` é o REGEX antes da IA. Medido em 28/09: "quais sabores
+        disponíveis hj" estava na lista com a IA tendo listado os sabores."""
+        loja, _ = loja_e_conta
+        _nao_entendeu(loja, 'quais sabores disponíveis hj', resposta='Claro! Temos rondelli de queijo, frango e tomate seco.')
+        _nao_entendeu(loja, '63981145001', resposta='Oi! Tudo bem? 😊 Aqui é a Pastita')
+        _nao_entendeu(loja, 'agriaosaudavel.oficial@gmail.com', resposta='Oi! Que bom que entrou em contato 😊 O que você gostaria de saber')
+        _nao_entendeu(loja, 'Residencial Spazio di Palmas', resposta='Oi! Que bom que entrou em contato 😊 O que você gostaria de saber — tem algum prato em mente?')
+        _nao_entendeu(loja, 'Bom diaa', resposta='Bom dia! 😊 O que você gostaria de saber hoje — tem algum prato em mente?')
+        _nao_entendeu(loja, 'cade vc', resposta='Desculpa, tive um probleminha aqui. Pode repetir?')
+        _nao_entendeu(loja, '2 unidades', intent='unknown', resposta='Como posso te ajudar? 👇')
+        _nao_entendeu(loja, 'quero 4 molho de tomate', resposta='Thelma, o sistema travou de novo na hora de adicionar os itens')
+
+        textos = [l['texto'] for l in cliente.get(f'{BASE}/nao-entendi/?store={loja.slug}').json()]
+
+        assert sorted(textos) == sorted(['quero 4 molho de tomate', '2 unidades', 'cade vc', 'residencial spazio di palmas'])
+
+        todas = [l['texto'] for l in cliente.get(f'{BASE}/nao-entendi/?store={loja.slug}&todas=1').json()]
+        assert len(todas) == 8
 
     def test_acao_invalida_400(self, cliente, loja_e_conta):
         loja, _ = loja_e_conta
