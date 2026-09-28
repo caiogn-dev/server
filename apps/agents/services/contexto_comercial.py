@@ -147,7 +147,11 @@ def fidelidade(store) -> str:
             except Exception:
                 onde = ''
         linhas.append(f"• Fidelidade: a cada {exigidas} {rotulo}{onde}, 1 grátis. O cliente vê os carimbos no site.")
-    tiers = [t for t in (meta.get('carteira_tiers') or []) if isinstance(t, dict) and t.get('nome')]
+    # "Teste do dono: paga R$ 1 e recebe R$ 2" foi anunciado em prod (28/09).
+    tiers = [
+        t for t in (meta.get('carteira_tiers') or [])
+        if isinstance(t, dict) and t.get('nome') and 'teste' not in str(t.get('nome')).lower()
+    ]
     if tiers:
         pacotes = "; ".join(f"{t['nome']}: paga {_reais(t.get('paga'))} e recebe {_reais(t.get('credito'))}" for t in tiers)
         linhas.append(f"• Carteira pré-paga (crédito com bônus): {pacotes}.")

@@ -107,13 +107,17 @@ class TestEntregaPagamentoFidelidade:
             'cashback_enabled': True, 'cashback_percent': 2,
             'loyalty_enabled': True, 'loyalty_salads_required': 10,
             'loyalty_qualifying_categories': [str(cat.id)],
-            'carteira_tiers': [{'nome': 'Leve', 'paga': '139.00', 'credito': '152.00'}],
+            'carteira_tiers': [
+                {'nome': 'Leve', 'paga': '139.00', 'credito': '152.00'},
+                {'nome': 'Teste do dono', 'paga': '1.00', 'credito': '2.00'},
+            ],
         }
         store.save()
         texto = fidelidade(store)
         assert '2%' in texto
         assert '10' in texto and 'grátis' in texto and 'Saladas Especiais' in texto
         assert 'Leve' in texto and '139' in texto and '152' in texto
+        assert 'Teste do dono' not in texto
 
     def test_fidelidade_desligada_fica_vazia(self):
         assert fidelidade(make_store()) == ''
