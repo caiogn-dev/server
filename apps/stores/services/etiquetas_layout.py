@@ -28,6 +28,7 @@ MODELOS = ('validade', 'nutricao-qr', 'produto')
 TIPOS = ('texto', 'qr', 'barras', 'linha', 'caixa')
 CAMPOS = ('name', 'manip', 'val', 'price', 'description', 'barcode', 'publicUrl', 'coluna')
 ALINHAMENTOS = ('esquerda', 'centro', 'direita')
+MODOS_DE_MIDIA = ('gap', 'continuo', 'auto')
 
 
 class LayoutInvalido(ValueError):
@@ -114,6 +115,14 @@ def validar_layout(layout) -> dict:
         raise LayoutInvalido(f'papel de {papel_w} mm não cabe {colunas} coluna(s) de {largura} mm')
     margem = papel.get('margem')
     margem = None if margem in (None, '') else _num(margem, 'papel.margem', 0, 200)
+    # Rolo com vão entre linhas (gap, o normal em etiqueta picotada) / contínuo /
+    # auto = não mexe no que está na impressora. Em contínuo a impressora avança
+    # ^LL por etiqueta, então ^LL precisa ser o PASSO (altura + vão de linha).
+    modo_midia = papel.get('modo_midia', 'gap') or 'gap'
+    if modo_midia not in MODOS_DE_MIDIA:
+        raise LayoutInvalido(f'papel.modo_midia desconhecido: {modo_midia}')
+    passo = papel.get('passo')
+    passo = None if passo in (None, '') else _num(passo, 'papel.passo', altura, 400)
 
     elementos = layout.get('elementos')
     if not isinstance(elementos, list) or len(elementos) > 60:
@@ -148,7 +157,8 @@ def validar_layout(layout) -> dict:
     return {
         'versao': 1,
         'etiqueta': {'largura': largura, 'altura': altura},
-        'papel': {'largura': papel_w, 'colunas': colunas, 'espaco': espaco, 'margem': margem},
+        'papel': {'largura': papel_w, 'colunas': colunas, 'espaco': espaco, 'margem': margem,
+                  'modo_midia': modo_midia, 'passo': passo},
         'elementos': saida,
     }
 
@@ -294,7 +304,13 @@ def _cabecalho(lay, calibracao) -> str:
     ls = mm(cal.get('desloc_x', 0) or 0)
     lt = max(-120, min(120, mm(cal.get('desloc_y', 0) or 0)))
     md = max(0, min(30, int(cal.get('escuro', 10) or 10)))
-    return f"^XA^CI28^PW{mm(lay['papel']['largura'])}^LL{mm(lay['etiqueta']['altura'])}^LH0,0^LS{ls}^LT{lt}^MD{md}"
+    papel = lay['papel']
+    modo = papel.get('modo_midia', 'gap')
+    mn = {'gap': '^MNY', 'continuo': '^MNN'}.get(modo, '')
+    altura = lay['etiqueta']['altura']
+    if modo == 'continuo' and papel.get('passo'):
+        altura = papel['passo']
+    return f"^XA^CI28{mn}^PW{mm(papel['largura'])}^LL{mm(altura)}^LH0,0^LS{ls}^LT{lt}^MD{md}"
 
 
 def _gfa(img: Image.Image) -> str:

@@ -49,6 +49,22 @@ class RenderBitmapTests(APITestCase):
         sem = motor.render_zpl(lay, [VALIDADE])
         self.assertIn('^LS0', sem); self.assertIn('^LT0', sem)
 
+    def test_rolo_com_vao_manda_modo_gap_e_continuo_usa_o_passo_como_altura(self):
+        """Manual da L42 PRO: se a calibração falha a impressora cai em 'Contínuo' e
+        avança só ^LL por etiqueta — com passo real de 25 mm, desliza 3 mm por linha.
+        ^MNY força o sensor de vão; em contínuo, ^LL precisa ser o passo, não a altura."""
+        lay = motor.layout_padrao('validade')
+        zpl = motor.render_zpl(lay, [VALIDADE])
+        self.assertIn('^MNY', zpl); self.assertIn('^LL176', zpl)
+        lay['papel']['modo_midia'] = 'continuo'; lay['papel']['passo'] = 25
+        zpl = motor.render_zpl(lay, [VALIDADE])
+        self.assertIn('^MNN', zpl); self.assertIn('^LL200', zpl)
+        lay['papel']['modo_midia'] = 'auto'
+        zpl = motor.render_zpl(lay, [VALIDADE])
+        self.assertNotIn('^MN', zpl)
+        with self.assertRaises(motor.LayoutInvalido):
+            motor.validar_layout(dict(lay, papel=dict(lay['papel'], modo_midia='foguete')))
+
     def test_bitmap_tem_tinta_no_nome_e_papel_limpo_no_vao_entre_colunas(self):
         lay = motor.layout_padrao('validade')
         img = motor.render_bitmap(lay, [dict(VALIDADE, name='XXXXXXXX')] * 3)
