@@ -31,6 +31,19 @@ from apps.core.permissions import accessible_store_ids
 logger = logging.getLogger(__name__)
 
 
+def _layout_da_loja(store, modelo, enviado=None):
+    """Layout a usar: o mandado no pedido > o salvo na loja > o padrão."""
+    from apps.stores.services import etiquetas_layout as desenho
+    if enviado is not None:
+        return desenho.validar_layout(enviado)
+    salvo = ((store.metadata or {}).get('etiquetas_layouts') or {}).get(modelo)
+    return desenho.validar_layout(salvo) if salvo else desenho.layout_padrao(modelo)
+
+
+def _calibracao(agent) -> dict:
+    return dict((agent.metadata or {}).get('calibracao') or {})
+
+
 def _uuid_valido(valor) -> bool:
     import uuid as _uuid
     try:
@@ -107,6 +120,33 @@ class StorePrintAgentViewSet(viewsets.ModelViewSet):
         return Response(data)
 
 
+
+    @action(detail=True, methods=['post'], url_path='calibracao')
+    def calibracao(self, request, pk=None):
+        """Deslocamento (mm) e escurecimento desta impressora. Fica em
+        metadata['calibracao'] sem apagar o resto (alerta, versão...)."""
+        agent = self.get_object()
+        dados = request.data if hasattr(request.data, 'get') else {}
+        atual = dict((agent.metadata or {}).get('calibracao') or {})
+        try:
+            for chave, minimo, maximo in (('desloc_x', -30, 30), ('desloc_y', -15, 15)):
+                if chave in dados:
+                    v = float(dados[chave])
+                    if not (minimo <= v <= maximo):
+                        raise ValueError(chave)
+                    atual[chave] = v
+            if 'escuro' in dados:
+                v = int(dados['escuro'])
+                if not (0 <= v <= 30):
+                    raise ValueError('escuro')
+                atual['escuro'] = v
+        except (TypeError, ValueError) as exc:
+            return Response({'detail': f'Calibração fora da faixa: {exc}'}, status=status.HTTP_400_BAD_REQUEST)
+        metadata = dict(agent.metadata or {})
+        metadata['calibracao'] = atual
+        agent.metadata = metadata
+        agent.save(update_fields=['metadata', 'updated_at'])
+        return Response({'calibracao': atual})
 class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
     """Read print jobs and allow manual retries."""
 
@@ -162,16 +202,123 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
             from apps.nutrition.api.permissions import AdicionalNecessario
             raise AdicionalNecessario()
 
-        zpl = render_etiquetas(modelo, etiquetas, dados.get('config') or {})
+        motor = 'bitmap' if dados.get('motor') == 'bitmap' else 'zpl'
+        if motor == 'bitmap':
+            from apps.stores.services import etiquetas_layout as desenho
+            try:
+                layout = _layout_da_loja(store, modelo, dados.get('layout'))
+                zpl = desenho.render_zpl(layout, etiquetas, _calibracao(agent))
+            except desenho.LayoutInvalido as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            zpl = render_etiquetas(modelo, etiquetas, dados.get('config') or {})
         job = StorePrintJob.objects.create(
             store=store,
             station=agent.station,
             template=StorePrintJob.Template.ETIQUETA_ZPL,
             source=StorePrintJob.Source.ETIQUETA,
             title=f'Etiquetas {modelo} ×{len(etiquetas)} → {agent.name}',
-            payload={'zpl': zpl, 'modelo': modelo, 'quantidade': len(etiquetas)},
+            payload={'zpl': zpl, 'modelo': modelo, 'quantidade': len(etiquetas), 'motor': motor},
             target_agent=agent,
             max_attempts=agent.max_retries,
+            metadata={'requested_by': str(request.user.id)},
+        )
+        return Response({'job': StorePrintJobSerializer(job).data}, status=status.HTTP_201_CREATED)
+
+    # ---- etiqueta desenhada (layout em mm → bitmap) ----------------------
+
+    def _loja_do_pedido(self, request, valor):
+        if not _uuid_valido(valor):
+            return None
+        return Store.objects.filter(id__in=accessible_store_ids(request.user), pk=valor).first()
+
+    @action(detail=False, methods=['get', 'put'], url_path='etiquetas/layouts')
+    def etiquetas_layouts(self, request):
+        """GET ?store= → {modelo: {layout, padrao}}. PUT {store, modelo, layout|null} salva
+        (ou volta ao padrão) em store.metadata['etiquetas_layouts']."""
+        from apps.stores.services import etiquetas_layout as desenho
+
+        dados = request.data if request.method == 'PUT' else request.query_params
+        store = self._loja_do_pedido(request, dados.get('store'))
+        if not store:
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        salvos = (store.metadata or {}).get('etiquetas_layouts') or {}
+
+        if request.method == 'GET':
+            return Response({
+                modelo: {'layout': salvos.get(modelo) or desenho.layout_padrao(modelo), 'padrao': modelo not in salvos}
+                for modelo in desenho.MODELOS
+            })
+
+        modelo = str(dados.get('modelo') or '')
+        if modelo not in desenho.MODELOS:
+            return Response({'detail': f'modelo inválido: {modelo}'}, status=status.HTTP_400_BAD_REQUEST)
+        layout = dados.get('layout')
+        metadata = dict(store.metadata or {})
+        if layout is None:
+            salvos = {k: v for k, v in salvos.items() if k != modelo}
+        else:
+            try:
+                salvos = dict(salvos, **{modelo: desenho.validar_layout(layout)})
+            except desenho.LayoutInvalido as exc:
+                return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        metadata['etiquetas_layouts'] = salvos
+        store.metadata = metadata
+        store.save(update_fields=['metadata'])
+        return Response({'layout': salvos.get(modelo) or desenho.layout_padrao(modelo), 'padrao': modelo not in salvos})
+
+    @action(detail=False, methods=['post'], url_path='etiquetas/preview')
+    def etiquetas_preview(self, request):
+        """PNG (base64) de UMA linha física do rolo — o mesmo bitmap que vai imprimir."""
+        import base64
+        from apps.stores.services import etiquetas_layout as desenho
+
+        dados = request.data if hasattr(request.data, 'get') else {}
+        store = self._loja_do_pedido(request, dados.get('store'))
+        if not store:
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        modelo = str(dados.get('modelo') or '')
+        if modelo not in desenho.MODELOS:
+            return Response({'detail': f'modelo inválido: {modelo}'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            layout = _layout_da_loja(store, modelo, dados.get('layout'))
+            etiquetas = [e for e in (dados.get('etiquetas') or []) if isinstance(e, dict)]
+            png = desenho.preview_png(layout, etiquetas, grade=bool(dados.get('grade')))
+        except desenho.LayoutInvalido as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'png': base64.b64encode(png).decode('ascii'),
+            'largura_mm': layout['papel']['largura'], 'altura_mm': layout['etiqueta']['altura'],
+        })
+
+    @action(detail=False, methods=['post'], url_path='etiquetas/calibracao')
+    def etiquetas_calibracao(self, request):
+        """Imprime a grade de calibração (moldura + régua) no agent escolhido."""
+        from apps.stores.services import etiquetas_layout as desenho
+
+        dados = request.data if hasattr(request.data, 'get') else {}
+        store = self._loja_do_pedido(request, dados.get('store'))
+        if not store:
+            return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
+        modelo = str(dados.get('modelo') or 'validade')
+        if modelo not in desenho.MODELOS:
+            return Response({'detail': f'modelo inválido: {modelo}'}, status=status.HTTP_400_BAD_REQUEST)
+        agent = StorePrintAgent.objects.filter(
+            pk=dados.get('agent'), store=store, is_active=True, status=StorePrintAgent.AgentStatus.ACTIVE,
+        ).first() if _uuid_valido(dados.get('agent')) else None
+        if not agent or not agent.imprime_o(StorePrintAgent.IMPRIME_ETIQUETAS):
+            return Response({'detail': 'Escolha um programa de impressão desta loja que imprima etiquetas.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+        try:
+            zpl = desenho.grade_de_calibracao(_layout_da_loja(store, modelo, dados.get('layout')), _calibracao(agent))
+        except desenho.LayoutInvalido as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        job = StorePrintJob.objects.create(
+            store=store, station=agent.station,
+            template=StorePrintJob.Template.ETIQUETA_ZPL, source=StorePrintJob.Source.ETIQUETA,
+            title=f'Grade de calibração ({modelo}) → {agent.name}',
+            payload={'zpl': zpl, 'modelo': 'calibracao', 'quantidade': 1, 'motor': 'bitmap'},
+            target_agent=agent, max_attempts=agent.max_retries,
             metadata={'requested_by': str(request.user.id)},
         )
         return Response({'job': StorePrintJobSerializer(job).data}, status=status.HTTP_201_CREATED)
