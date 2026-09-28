@@ -62,3 +62,28 @@ def test_produto_sem_estoque_e_recusado_sem_estourar(agent, db):
     assert 'SEM ESTOQUE' in resultado
     assert 'Frango' in resultado  # sugere o que tem
     assert 'Erro' not in resultado
+
+
+def test_nome_ambiguo_pergunta_em_vez_de_escolher_o_mais_curto(agent, db):
+    """"camarão" → Combo Camarão (R$ 124,70) em vez da salada de R$ 36,74."""
+    store = make_store()
+    make_product(store, name='Magnifico Camarão', price=Decimal('36.74'))
+    make_product(store, name='Combo Camarão', price=Decimal('124.70'))
+    tools, redis = _tools(agent, store)
+
+    resultado = tools['adicionar_ao_carrinho'].invoke({'produto_nome': 'camarão', 'quantidade': 1})
+
+    assert 'NÃO adicione' in resultado
+    assert 'Magnifico Camarão' in resultado and 'Combo Camarão' in resultado
+    assert not redis.setex.called
+
+
+def test_nome_exato_vence_mesmo_com_outros_parecidos(agent, db):
+    store = make_store()
+    make_product(store, name='Magnifico Camarão', price=Decimal('36.74'))
+    make_product(store, name='Combo Camarão', price=Decimal('124.70'))
+    tools, _ = _tools(agent, store)
+
+    resultado = tools['adicionar_ao_carrinho'].invoke({'produto_nome': 'Magnifico Camarão', 'quantidade': 1})
+
+    assert resultado.startswith('✓ 1x Magnifico Camarão'), resultado

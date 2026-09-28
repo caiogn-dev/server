@@ -1580,6 +1580,16 @@ class LangchainService:
                 # o carrinho recebia o primeiro que o Postgres devolvesse.
                 matches.sort(key=lambda p: (_norm(p.name) != nq, len(p.name)))
                 product = matches[0]
+                # Sem nome exato e com mais de um candidato, o mais curto
+                # ganhava: "camarão" virava o Combo Camarão de R$ 124,70 em vez
+                # da Magnifico Camarão de R$ 36,74 (medido 28/09). Quem
+                # escolhe é o cliente.
+                if _norm(product.name) != nq and len(matches) > 1:
+                    nomes = ", ".join(f"{p.name} (R$ {p.preco_vigente()})" for p in matches[:5])
+                    return (
+                        f"'{produto_nome}' casa com mais de um produto — NÃO adicione. "
+                        f"Pergunte ao cliente qual: {nomes}."
+                    )
 
                 # Estoque no ATO, não na confirmação. Em 09/ago o cliente montou
                 # o combo inteiro e só ao confirmar descobriu que o 4 Queijos
