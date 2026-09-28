@@ -730,6 +730,18 @@ class ConversationViewSet(viewsets.ModelViewSet):
         todas = str(request.query_params.get('todas') or '').lower() in ('1', 'true', 'sim')
         return Response(listar(ids, dias=request.query_params.get('dias'), todas=todas))
 
+    @extend_schema(summary="Conversão do bot: conversas → pedidos, e onde a venda parou")
+    @action(detail=False, methods=['get'], url_path='bot/conversao')
+    def bot_conversao(self, request):
+        from apps.conversations.services.conversao_do_bot import funil
+        from apps.stores.models import Store
+
+        ids, _, erro = self._lojas_pedidas(request)
+        if erro is not None:
+            return erro
+        lojas = Store.objects.filter(id__in=ids).only('id', 'whatsapp_account_id')
+        return Response(funil(lojas, dias=request.query_params.get('dias')))
+
     @extend_schema(summary="Ensinar o bot: apelido de produto, resposta pronta ou ignorar")
     @action(detail=False, methods=['post'], url_path='nao-entendi/ensinar')
     def nao_entendi_ensinar(self, request):
