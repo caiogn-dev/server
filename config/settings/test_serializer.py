@@ -131,7 +131,9 @@ from .base import REST_FRAMEWORK as _REST_FRAMEWORK_BASE  # noqa: E402
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        # TokenOuVisitante trata token inválido como visitante (não 401),
+        # replicando o comportamento de produção (ver apps/core/authentication.py).
+        'apps.core.authentication.TokenOuVisitante',
         'rest_framework.authentication.SessionAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
@@ -155,9 +157,14 @@ CELERY_BROKER_URL = 'memory://'
 # Cripto para tokens de automação
 ENCRYPTION_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 
+# Chave fictícia para que get_insights_llm() chegue ao create_llm nos testes
+# (test_resumo_diario_timeout faz mock de create_llm; sem qualquer chave a
+# função levanta RuntimeError antes de chegar à linha mockada).
+OPENAI_API_KEY = 'test-dummy-insights-llm'
+
 # Meta Graph API — necessário porque instagram_api.py lê em corpo de classe.
 # Vem de base.py pelo mesmo motivo das taxas: a versão sobe e a cópia fica.
-from .base import META_GRAPH_VERSION, META_GRAPH_URL  # noqa: E402,F401
+from .base import META_GRAPH_VERSION, META_GRAPH_URL, WHATSAPP_API_BASE_URL  # noqa: E402,F401
 
 LOGGING = {
     'version': 1,
@@ -165,3 +172,22 @@ LOGGING = {
     'handlers': {'null': {'class': 'logging.NullHandler'}},
     'root': {'handlers': ['null']},
 }
+
+# SQLite não tem regexp_replace; registra uma implementação em Python para
+# que as views que normalizam telefones via regexp_replace funcionem nos testes.
+def _register_sqlite_regexp_replace(sender, connection, **kwargs):
+    if connection.vendor != 'sqlite':
+        return
+    import re as _re
+
+    def _regexp_replace(source, pattern, replacement, flags=''):
+        if source is None:
+            return None
+        re_flags = _re.IGNORECASE if 'i' in (flags or '') else 0
+        return _re.sub(pattern, replacement, source, flags=re_flags)
+
+    connection.connection.create_function('regexp_replace', 4, _regexp_replace)
+
+
+from django.db.backends.signals import connection_created  # noqa: E402
+connection_created.connect(_register_sqlite_regexp_replace)
