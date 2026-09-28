@@ -79,6 +79,10 @@ class TeamMemberCreateSerializer(serializers.Serializer):
     """
     phone = serializers.CharField(required=False, allow_blank=True)
     name = serializers.CharField(required=False, allow_blank=True)
+    # A senha com que a pessoa entra no painel (celular + senha). Sem ela o
+    # convite criava um usuário com senha inutilizável e ninguém conseguia
+    # entrar — medido em 28/09: "eu registro ele e ele acessa como?".
+    password = serializers.CharField(required=False, allow_blank=True, write_only=True, min_length=6)
     user_id = serializers.IntegerField(required=False)
     role = serializers.ChoiceField(
         choices=StoreTeamMember.Role.choices,

@@ -134,6 +134,16 @@ class LoginView(APIView):
         user_obj = User.objects.filter(email__iexact=normalized_email).first()
         if not user_obj:
             user_obj = User.objects.filter(username__iexact=identifier).first()
+        if not user_obj:
+            # Colaborador convidado pelo painel só tem CELULAR (e-mail é
+            # placeholder). Mesma resolução de telefone do resto do sistema.
+            from apps.core.services.customer_identity import CustomerIdentityService
+            digitos = CustomerIdentityService.digits_only(identifier)
+            if '@' not in identifier and len(digitos) >= 10:
+                try:
+                    user_obj, _perfil, _ = CustomerIdentityService.resolve_user(phone=identifier, create=False)
+                except Exception:
+                    user_obj = None
 
         if user_obj:
             user = authenticate(username=user_obj.username, password=password)

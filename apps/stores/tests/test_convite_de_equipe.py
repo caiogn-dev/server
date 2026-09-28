@@ -99,3 +99,46 @@ class ConviteDeEquipeTests(APITestCase):
         self.assertTrue(
             StoreTeamMember.objects.filter(tenant=self.store, user=outro).exists()
         )
+
+
+class ColaboradorEntraNoPainelTests(APITestCase):
+    """O convite criava a pessoa com senha INUTILIZÁVEL e o login só aceitava
+    e-mail: ninguém convidado conseguia entrar (28/09)."""
+
+    def setUp(self):
+        self.dono = User.objects.create_user(username='dono-eq2', password='x', email='dono-eq2@real.com')
+        self.store = Store.objects.create(name='Loja Equipe 2', slug='loja-equipe-2', owner=self.dono, status='active')
+        self.client.force_authenticate(user=self.dono)
+
+    def _convidar(self, **corpo):
+        return self.client.post(f'/api/v1/stores/{self.store.slug}/team/', corpo, format='json')
+
+    def _login(self, identificador, senha):
+        from rest_framework.test import APIClient
+        anonimo = APIClient()
+        return anonimo.post('/api/v1/auth/login/', {'email': identificador, 'password': senha}, format='json')
+
+    def test_convite_com_senha_permite_entrar_pelo_celular(self):
+        r = self._convidar(phone='63 98888-0002', name='João Lima', role='operator', password='segredo1')
+        self.assertIn(r.status_code, (200, 201), r.data)
+
+        for como in ('63 98888-0002', '5563988880002', '(63) 98888-0002'):
+            r = self._login(como, 'segredo1')
+            self.assertEqual(r.status_code, 200, (como, r.data))
+            self.assertIn('token', r.data)
+
+        self.assertEqual(self._login('63 98888-0002', 'errada').status_code, 401)
+
+    def test_senha_curta_e_recusada(self):
+        r = self._convidar(phone='63 98888-0003', role='operator', password='123')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('password', str(r.data))
+
+    def test_sem_senha_continua_convidando_mas_sem_acesso(self):
+        r = self._convidar(phone='63 98888-0004', role='operator')
+        self.assertIn(r.status_code, (200, 201))
+        self.assertEqual(self._login('63 98888-0004', 'qualquer1').status_code, 401)
+
+    def test_a_senha_nao_volta_na_resposta(self):
+        r = self._convidar(phone='63 98888-0005', role='operator', password='segredo1')
+        self.assertNotIn('segredo1', str(r.data))

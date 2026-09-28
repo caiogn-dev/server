@@ -49,7 +49,8 @@ def telefone_valido(telefone: str) -> str:
 
 
 def convidar(store, *, telefone: str = '', nome: str = '', usuario=None,
-             papel: str = StoreTeamMember.Role.OPERATOR, convidado_por=None):
+             papel: str = StoreTeamMember.Role.OPERATOR, convidado_por=None,
+             senha: str = ''):
     """Põe alguém na equipe da loja. Devolve (membro, criado).
 
     Reconvidar não é erro: `unique_together` é (tenant, user) e DELETE é soft
@@ -63,6 +64,11 @@ def convidar(store, *, telefone: str = '', nome: str = '', usuario=None,
             phone=telefone, full_name=nome, create=True,
         )
 
+    if senha:
+        # Entrada no painel: celular + esta senha. Trocar a senha de quem já
+        # tem uma é decisão do dono que preencheu o campo de novo.
+        usuario.set_password(senha)
+        usuario.save(update_fields=['password'])
     membro, criado = StoreTeamMember.objects.get_or_create(
         tenant=store,
         user=usuario,

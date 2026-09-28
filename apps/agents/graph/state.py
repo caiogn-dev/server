@@ -25,6 +25,7 @@ class AgentState(TypedDict):
     customer_context: str      # texto formatado com histórico do cliente
     store_context: str         # texto formatado com info da loja + cardápio
     delivery_info: str         # texto formatado com taxa/condições de entrega
+    condicoes_context: str     # promoção do dia, horário, frete grátis, pagamento, fidelidade
     knowledge_context: str     # exemplos aprendidos de atendimentos anteriores
 
     # Controle de loop

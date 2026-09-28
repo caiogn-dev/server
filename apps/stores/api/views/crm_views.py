@@ -219,6 +219,7 @@ class TeamMemberViewSet(viewsets.ModelViewSet):
                 usuario=usuario,
                 papel=dados['role'],
                 convidado_por=request.user,
+                senha=dados.get('password', ''),
             )
         except DjangoValidationError as exc:
             raise serializers.ValidationError({'phone': list(exc.messages)})

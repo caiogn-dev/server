@@ -172,7 +172,7 @@ Não peça confirmação de cada passo — seja direto e proativo
 ━━━━ ENTREGA ━━━━
 {delivery_info}
 
-{fatos_da_loja}{store_rules}{knowledge_context}{customer_context}"""
+{condicoes}{fatos_da_loja}{store_rules}{knowledge_context}{customer_context}"""
 
 
 TEMAS_DE_FATO = {
@@ -241,6 +241,14 @@ def _build_system_prompt(state: AgentState, agent) -> str:
     # exemplos: é dado, não estilo. 28/09: "quantos dias dura na geladeira?"
     # → "até 24 horas", inventado. Proibir de inventar sem dar a fonte só
     # troca o chute por um chute educado.
+    # Promoção do dia, horário, frete grátis, vale, cashback: dados do sistema
+    # que valem AGORA. 28/09: 7 promoções cadastradas e a IA dizia "não temos".
+    condicoes_ctx = (state.get("condicoes_context") or "").strip()
+    condicoes_section = (
+        f"━━━━ PROMOÇÕES, HORÁRIO E CONDIÇÕES (dados do sistema, valem AGORA) ━━━━\n{condicoes_ctx}\n\n"
+        if condicoes_ctx else ""
+    )
+
     fatos = fatos_da_loja(store) if store else ""
     fatos_section = (
         f"━━━━ O QUE A LOJA CONFIRMOU ━━━━\n{fatos}\n"
@@ -269,6 +277,7 @@ def _build_system_prompt(state: AgentState, agent) -> str:
         store_desc=store_desc,
         store_context=state.get("store_context") or "Use a ferramenta buscar_produto.",
         delivery_info=state.get("delivery_info") or "Use a ferramenta informacoes_entrega.",
+        condicoes=condicoes_section,
         fatos_da_loja=fatos_section,
         store_rules=store_rules_section,
         knowledge_context=knowledge_section,
@@ -301,9 +310,16 @@ def load_context_node(state: AgentState, *, agent, langchain_service) -> dict:
 
     store_context = ""
     delivery_info = ""
+    condicoes_context = ""
     if store:
         store_context = _catalog_summary(store)
         delivery_info = _delivery_summary(store)
+        try:
+            from django.utils import timezone as _tz
+            from apps.agents.services.contexto_comercial import contexto_comercial
+            condicoes_context = contexto_comercial(store, _tz.localtime())
+        except Exception:
+            logger.exception("[AGENT] Falha ao montar promoções/condições da loja")
 
     # Conhecimento aprendido de atendimentos anteriores
     knowledge_context = _load_knowledge_context(agent=agent, store=store)
@@ -317,6 +333,7 @@ def load_context_node(state: AgentState, *, agent, langchain_service) -> dict:
         "customer_context": customer_context,
         "store_context": store_context,
         "delivery_info": delivery_info,
+        "condicoes_context": condicoes_context,
         "knowledge_context": knowledge_context,
         "tool_call_count": 0,
     }
@@ -374,7 +391,16 @@ def _catalog_summary(store) -> str:
             for p in products:
                 cat = f"[{p.category.name}] " if p.category else ""
                 desc = f" — {_resumo_da_descricao(p.description)}" if getattr(p, "description", "") else ""
-                lines.append(f"  • {cat}{p.name} — R$ {p.preco_vigente()}{desc}")
+                vigente = p.preco_vigente()
+                # Preço final sem dizer que é promoção = IA negando a promoção
+                # que a vitrine anuncia (28/09).
+                if vigente < p.price:
+                    preco = f"R$ {vigente} (PROMOÇÃO DE HOJE, de R$ {p.price})"
+                elif p.compare_at_price and p.compare_at_price > p.price:
+                    preco = f"R$ {vigente} (de R$ {p.compare_at_price})"
+                else:
+                    preco = f"R$ {vigente}"
+                lines.append(f"  • {cat}{p.name} — {preco}{desc}")
 
         # Combos eram invisíveis: o agente não sabia que "Sexta do Bacalhau"
         # existia, muito menos o que vinha dentro.
