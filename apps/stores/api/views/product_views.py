@@ -440,10 +440,18 @@ class StoreComboViewSet(viewsets.ModelViewSet):
                 from apps.core.permissions import accessible_store_ids
                 queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 
-        # Only hide inactive combos for unauthenticated / non-staff public requests
-        is_admin = self.request.user.is_authenticated and (
-            self.request.user.is_staff or self.request.user.is_superuser
-        )
+        # Visibilidade de combos inativos: apenas is_superuser (bypass global) ou
+        # quem tem vínculo real com a loja em questão (dono, staff M2M, StoreTeamMember).
+        # is_staff NÃO é bypass cross-tenant — convenção do projeto (CLAUDE.md,
+        # apps/core/permissions.py:284 "Nem is_staff nem is_superuser concedem acesso").
+        user = self.request.user
+        is_admin = False
+        if user.is_authenticated:
+            if user.is_superuser:
+                is_admin = True
+            elif store_slug or store_param:
+                from apps.core.permissions import accessible_store_ids
+                is_admin = queryset.filter(store_id__in=accessible_store_ids(user)).exists()
         if self.action == 'list' and not is_admin:
             queryset = queryset.filter(is_active=True)
 
