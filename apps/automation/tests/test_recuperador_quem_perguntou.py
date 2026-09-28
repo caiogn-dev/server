@@ -58,7 +58,7 @@ def test_manda_so_para_quem_perguntou_e_sumiu_uma_vez():
     assert enviados == 1
     args, kwargs = enviar.call_args
     assert args[1] == alvo.phone_number
-    assert 'Oi, Ana!' in args[2] and 'Queridinha por R$ 28,99' in args[2]
+    assert 'Oi, Ana!' in args[2] and 'Queridinha de ~R$ 36,99~ por *R$ 28,99*' in args[2]
     assert kwargs['evento'] == 'recuperador_perguntou'
     alvo.refresh_from_db()
     assert alvo.context['recuperador_perguntou_em']

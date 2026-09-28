@@ -47,7 +47,8 @@ class TestMontar:
         assert plano['dia'] == '2026-09-29' and plano['weekday'] == 1
         assert plano['card'] == 'https://x/terca.png'
         assert plano['ofertas'] == [{'nome': 'Basic Lombo', 'preco': 'R$ 30,75', 'de': 'R$ 40,99'}]
-        assert 'Amanhã (terça)' in plano['texto'] and 'Basic Lombo' in plano['texto']
+        assert 'Amanhã (terça)' in plano['texto']
+        assert '• Basic Lombo — de ~R$ 40,99~ por *R$ 30,75*' in plano['texto']  # riscado + negrito no WhatsApp
         assert '{{nome}}' in plano['texto'] and '{nome}!' not in plano['texto']  # o motor troca chaves DUPLAS
 
     def test_configurado_como_hoje_continua_sendo_amanha(self):

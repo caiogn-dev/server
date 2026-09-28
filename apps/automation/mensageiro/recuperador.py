@@ -58,7 +58,7 @@ def linha_da_oferta(store, agora=None) -> str:
     itens = ofertas(store, agora.astimezone(fuso(store)).weekday())
     if not itens:
         return ''
-    partes = ", ".join(f"{o['nome']} por {o['preco']} (de {o['de']})" for o in itens[:3])
+    partes = ", ".join(f"{o['nome']} de ~{o['de']}~ por *{o['preco']}*" for o in itens[:3])
     return f"\n\nHoje tem: {partes}."
 
 

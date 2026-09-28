@@ -120,7 +120,7 @@ class TestLembreteCitaAOferta:
             _rodar(sessao, '2h')
 
         texto = enviar.call_args.args[2]
-        assert 'Hoje tem: Queridinha por R$ 28,99' in texto
+        assert 'Hoje tem: Queridinha de ~R$ 36,99~ por *R$ 28,99*' in texto
 
     def test_dono_pode_desligar_a_oferta_no_lembrete(self, sessao):
         from decimal import Decimal

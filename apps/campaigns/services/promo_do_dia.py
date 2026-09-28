@@ -93,7 +93,8 @@ def montar(store, agora=None) -> dict | None:
     # chave o cliente recebia "Oi, {nome}!" literalmente (28/09).
     texto = cfg['texto'].format(
         nome='{{nome}}', dia=quando, loja=store.name,
-        ofertas="\n".join(f"• {o['nome']} — *{o['preco']}* (de {o['de']})" for o in itens),
+        # No WhatsApp ~texto~ sai riscado: "de ~R$ 40,99~ por *R$ 30,75*" (pedido do dono, 28/09).
+        ofertas="\n".join(f"• {o['nome']} — de ~{o['de']}~ por *{o['preco']}*" for o in itens),
         cardapio=link_do_cardapio(store),
     )
     return {
