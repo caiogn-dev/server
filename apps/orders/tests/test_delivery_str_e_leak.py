@@ -1,10 +1,14 @@
 """Regressão de segurança: handlers de exceção nas views de delivery Uber
-não devem expor str(e) nas respostas HTTP.
+não devem expor str(e) nas respostas HTTP nem no campo de mensagem do logger.
 
-Vetor: `except Exception as e: return Response({'detail': str(e)}, 500)`
-vaza mensagens internas da Uber API (incluindo tokens, endpoints, dados de
-rastreamento) e do ORM para qualquer usuário autenticado que acione uma
-falha de rede/API.
+Vetor HTTP: `except Exception as e: return Response({'detail': str(e)}, 500)`
+vaza mensagens internas da Uber API para clientes.
+
+Vetor logger: `logger.error(f'...: {str(e)}')` interpola o str(exc) no campo
+de mensagem do log — tokens Bearer e respostas de API ficam em plaintext em
+qualquer agregador de logs (Sentry, CloudWatch, Datadog) sem possibilidade de
+scrubbing automático. O padrão correto é logger.exception('...') que registra
+o traceback em exc_info, separado da mensagem.
 
 Três views afetadas: CreateDeliveryRequestView, DeliveryRequestStatusView,
 CancelDeliveryRequestView.
@@ -159,3 +163,102 @@ class CancelDeliveryStrELeakTest(SimpleTestCase):
 
         self.assertIn('detail', resp.data)
         self.assertNotIn(_SECRET, str(resp.data['detail']))
+
+
+# ---------------------------------------------------------------------------
+# Testes RED para o vetor "logger": str(e) não deve aparecer no campo de
+# mensagem do logger.error / logger.exception.  Esses testes FALHAM antes do
+# fix porque o código atual usa logger.error(f'...: {str(e)}').
+# ---------------------------------------------------------------------------
+
+class CreateDeliveryLoggerStrETest(SimpleTestCase):
+    """CreateDeliveryRequestView: logger não interpola str(e) na mensagem."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+
+    @patch('apps.orders.views.create_uber_delivery_request')
+    @patch('apps.orders.views.get_object_or_404', return_value=_mock_order_create())
+    @patch('apps.orders.views._get_store_for_user', return_value=_mock_store())
+    def test_logger_nao_inclui_str_exc_na_mensagem(self, _sf, _go, mock_task):
+        """logger.exception não deve interpolar o secreto no campo de mensagem."""
+        mock_task.delay.side_effect = Exception(_SECRET)
+
+        with patch('apps.orders.views.logger') as mock_log:
+            req = self.factory.post('/fake/')
+            force_authenticate(req, user=MagicMock(is_authenticated=True))
+            CreateDeliveryRequestView.as_view()(
+                req, store_slug='loja-test', order_id='order-uuid-222'
+            )
+
+            self.assertTrue(
+                mock_log.error.called or mock_log.exception.called,
+                'Logger deve ser chamado ao ocorrer uma exceção',
+            )
+            # Inspeciona logger.error E logger.exception para cobrir qualquer
+            # implementação futura que volte a usar um ou outro método.
+            all_calls = list(mock_log.error.call_args_list) + list(mock_log.exception.call_args_list)
+            self.assertTrue(all_calls, 'Logger deve ter ao menos uma chamada')
+            for call in all_calls:
+                msg = str(call.args[0]) if call.args else ''
+                self.assertNotIn(_SECRET, msg, 'str(e) não deve ser interpolado na mensagem do logger')
+
+
+class DeliveryStatusLoggerStrETest(SimpleTestCase):
+    """DeliveryRequestStatusView: logger não interpola str(e) na mensagem."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+
+    @patch('apps.orders.views.UberDeliveryClient')
+    @patch('apps.orders.views.get_object_or_404', return_value=_mock_order_with_request())
+    @patch('apps.orders.views._get_store_for_user', return_value=_mock_store())
+    def test_logger_nao_inclui_str_exc_na_mensagem(self, _sf, _go, mock_client_cls):
+        mock_client_cls.return_value.poll_delivery_status.side_effect = Exception(_SECRET)
+
+        with patch('apps.orders.views.logger') as mock_log:
+            req = self.factory.get('/fake/')
+            force_authenticate(req, user=MagicMock(is_authenticated=True))
+            DeliveryRequestStatusView.as_view()(
+                req, store_slug='loja-test', order_id='order-uuid-222'
+            )
+
+            self.assertTrue(
+                mock_log.error.called or mock_log.exception.called,
+                'Logger deve ser chamado ao ocorrer uma exceção',
+            )
+            all_calls = list(mock_log.error.call_args_list) + list(mock_log.exception.call_args_list)
+            self.assertTrue(all_calls, 'Logger deve ter ao menos uma chamada')
+            for call in all_calls:
+                msg = str(call.args[0]) if call.args else ''
+                self.assertNotIn(_SECRET, msg, 'str(e) não deve ser interpolado na mensagem do logger')
+
+
+class CancelDeliveryLoggerStrETest(SimpleTestCase):
+    """CancelDeliveryRequestView: logger não interpola str(e) na mensagem."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+
+    @patch('apps.orders.views.UberDeliveryClient')
+    @patch('apps.orders.views.get_object_or_404', return_value=_mock_order_with_request())
+    @patch('apps.orders.views._get_store_for_user', return_value=_mock_store())
+    def test_logger_nao_inclui_str_exc_na_mensagem(self, _sf, _go, mock_client_cls):
+        mock_client_cls.return_value.cancel_delivery_request.side_effect = Exception(_SECRET)
+
+        with patch('apps.orders.views.logger') as mock_log:
+            req = self.factory.delete('/fake/')
+            force_authenticate(req, user=MagicMock(is_authenticated=True))
+            CancelDeliveryRequestView.as_view()(
+                req, store_slug='loja-test', order_id='order-uuid-222'
+            )
+
+            self.assertTrue(
+                mock_log.error.called or mock_log.exception.called,
+                'Logger deve ser chamado ao ocorrer uma exceção',
+            )
+            all_calls = list(mock_log.error.call_args_list) + list(mock_log.exception.call_args_list)
+            self.assertTrue(all_calls, 'Logger deve ter ao menos uma chamada')
+            for call in all_calls:
+                msg = str(call.args[0]) if call.args else ''
+                self.assertNotIn(_SECRET, msg, 'str(e) não deve ser interpolado na mensagem do logger')

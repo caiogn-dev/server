@@ -1150,4 +1150,3 @@ baixo, não prioritário.
    pendente: busca de isolamento de tenant em views recentemente adicionadas.
 4. **P2** — Varredura de `is_staff` como bypass cross-tenant nos novos módulos adicionados desde
    setembro/2026 (loyalty, payments, pdv, fiscal).
-
