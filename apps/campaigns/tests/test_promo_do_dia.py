@@ -47,12 +47,14 @@ class TestMontar:
         assert plano['dia'] == '2026-09-29' and plano['weekday'] == 1
         assert plano['card'] == 'https://x/terca.png'
         assert plano['ofertas'] == [{'nome': 'Basic Lombo', 'preco': 'R$ 30,75', 'de': 'R$ 40,99'}]
-        assert 'Amanhã (terça)' in plano['texto'] and 'Basic Lombo' in plano['texto'] and '{nome}' in plano['texto']
+        assert 'Amanhã (terça)' in plano['texto'] and 'Basic Lombo' in plano['texto']
+        assert '{{nome}}' in plano['texto'] and '{nome}!' not in plano['texto']  # o motor troca chaves DUPLAS
 
-    def test_hoje_usa_a_de_segunda(self):
+    def test_configurado_como_hoje_continua_sendo_amanha(self):
+        """28/09: saiu a promoção de segunda às 17h de segunda. A véspera é a regra, sem opção."""
         loja, _ = _loja(para='hoje')
         plano = promo_do_dia.montar(loja, SEGUNDA_18H)
-        assert plano['ofertas'][0]['nome'] == 'Magnifico Camarão' and 'Hoje (segunda)' in plano['texto']
+        assert plano['ofertas'][0]['nome'] == 'Basic Lombo' and 'Amanhã (terça)' in plano['texto']
 
     def test_dia_sem_promocao_nao_monta(self):
         loja, _ = _loja()
@@ -71,6 +73,9 @@ class TestDisparar:
         assert campanha.message_content['media_url'] == 'https://x/terca.png'
         assert campanha.message_content['media_type'] == 'image'
         assert 'Basic Lombo' in campanha.message_content['text']
+        # o que o cliente recebe: nome trocado de verdade
+        from apps.campaigns.services.campaign_service import CampaignService
+        assert CampaignService()._personalize_message(campanha.message_content['text'], {'nome': 'Ana'}).startswith('Oi, Ana!')
         assert campanha.recipients.count() == 2
         assert campanha.metadata['promo_do_dia'] == '2026-09-29'
         # de novo no mesmo dia: não duplica

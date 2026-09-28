@@ -10,7 +10,7 @@ cria a campanha do dia sozinho, com o card daquele dia da semana:
     {
       'ativo': True,
       'hora': '18:00',            # hora local da loja em que a campanha nasce
-      'para': 'amanha' | 'hoje',  # de qual dia é a promoção anunciada
+      'para': sempre 'amanha'     # às 18h de segunda sai a promoção de TERÇA (28/09: 'hoje' não faz sentido)
       'modo': 'janela' | 'modelo',# grátis para quem falou em 24h | modelo pago p/ todos
       'modelo': 'ce_saladas_oferta_do_dia',   # nome do template aprovado (modo modelo)
       'cards': {'0': url, ..., '6': url},      # imagem por dia da semana da PROMOÇÃO
@@ -44,8 +44,9 @@ def config(store) -> dict:
     cfg = {**PADRAO, **{k: v for k, v in bruto.items() if k in PADRAO}}
     if not isinstance(cfg.get('cards'), dict):
         cfg['cards'] = {}
-    if cfg['para'] not in ('amanha', 'hoje'):
-        cfg['para'] = 'amanha'
+    # 28/09: a loja ficou em 'hoje' e às 17h saiu a promoção de segunda. Não
+    # existe caso para isso — a véspera é a regra.
+    cfg['para'] = 'amanha'
     if cfg['modo'] not in ('janela', 'modelo'):
         cfg['modo'] = 'janela'
     if not str(cfg.get('texto') or '').strip():
@@ -88,8 +89,10 @@ def montar(store, agora=None) -> dict | None:
     if not itens:
         return None
     quando = ('Amanhã' if cfg['para'] == 'amanha' else 'Hoje') + f" ({DIAS_PT[weekday]})"
+    # O motor de campanha personaliza com chaves DUPLAS ({{nome}}); com uma
+    # chave o cliente recebia "Oi, {nome}!" literalmente (28/09).
     texto = cfg['texto'].format(
-        nome='{nome}', dia=quando, loja=store.name,
+        nome='{{nome}}', dia=quando, loja=store.name,
         ofertas="\n".join(f"• {o['nome']} — *{o['preco']}* (de {o['de']})" for o in itens),
         cardapio=link_do_cardapio(store),
     )
