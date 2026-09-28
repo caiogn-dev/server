@@ -19,7 +19,8 @@ zero diz "custa R$ 0", nulo diz "sem dados ainda".
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Count, Q
+from django.db.models import Count, Q, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from apps.core.pii import mask_phone
