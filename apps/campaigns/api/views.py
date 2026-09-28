@@ -1071,3 +1071,58 @@ class JanelaDaAudienciaView(APIView):
         from apps.campaigns.services.janela import fuso_de_conta
 
         return Response(resumo_da_janela(contas, em=em, fuso=fuso_de_conta(contas)))
+
+
+def _uuid_ok(valor) -> bool:
+    import uuid as _uuid
+    try:
+        _uuid.UUID(str(valor))
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+class PromoDoDiaView(APIView):
+    """GET: configuração, prévia do que sairia agora, modelos aprovados e histórico.
+    POST {"acao": "disparar"}: cria a campanha de hoje agora (mesmo desligada)."""
+    permission_classes = [IsAuthenticated]
+
+    def _loja(self, request):
+        from apps.stores.models import Store
+        pedida = str(request.query_params.get('store') or request.data.get('store') or '').strip()
+        qs = Store.objects.filter(id__in=accessible_store_ids(request.user))
+        loja = qs.filter(Q(slug=pedida) | Q(id=pedida)).first() if pedida and _uuid_ok(pedida) else qs.filter(slug=pedida).first()
+        if loja is None:
+            raise NotFound('Loja não encontrada.')
+        return loja
+
+    def get(self, request):
+        from apps.campaigns.services import promo_do_dia
+        from apps.whatsapp.models import MessageTemplate
+        loja = self._loja(request)
+        plano = promo_do_dia.montar(loja)
+        modelos = list(MessageTemplate.objects.filter(
+            account_id=loja.whatsapp_account_id, is_active=True, status=MessageTemplate.TemplateStatus.APPROVED,
+            category='marketing',
+        ).values_list('name', flat=True)) if loja.whatsapp_account_id else []
+        historico = [
+            {
+                'id': str(c.id), 'nome': c.name, 'dia': (c.metadata or {}).get('promo_do_dia'),
+                'modo': (c.metadata or {}).get('modo'), 'status': c.status, 'criada_em': c.created_at.isoformat(),
+                'enviadas': c.messages_sent, 'destinatarios': c.total_recipients,
+            }
+            for c in Campaign.objects.filter(account_id=loja.whatsapp_account_id, metadata__has_key='promo_do_dia')
+            .order_by('-created_at')[:14]
+        ] if loja.whatsapp_account_id else []
+        return Response({
+            'config': promo_do_dia.config(loja), 'previa': plano, 'modelos': modelos, 'historico': historico,
+            'tem_whatsapp': bool(loja.whatsapp_account_id),
+        })
+
+    def post(self, request):
+        from apps.campaigns.services import promo_do_dia
+        loja = self._loja(request)
+        if request.data.get('acao') != 'disparar':
+            return Response({'error': 'acao deve ser "disparar".'}, status=status.HTTP_400_BAD_REQUEST)
+        campanha, motivo = promo_do_dia.disparar(loja, forcar=True, criado_por=request.user)
+        return Response({'motivo': motivo, 'campanha_id': str(campanha.id) if campanha else None})

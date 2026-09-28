@@ -92,6 +92,14 @@ app.conf.beat_schedule = {
         'task': 'apps.campaigns.tasks.check_scheduled_campaigns',
         'schedule': 60.0,  # Every minute
     },
+    'recuperador-seguir-quem-perguntou': {
+        'task': 'apps.automation.tasks.recuperador_seguir_quem_perguntou',
+        'schedule': 1800.0,  # 30 min: quem perguntou e sumiu recebe um texto na janela
+    },
+    'disparar-promocoes-do-dia': {
+        'task': 'apps.campaigns.tasks.disparar_promocoes_do_dia',
+        'schedule': 600.0,  # A cada 10 min: cria a campanha do dia na hora da loja
+    },
     # Instagram token refresh (daily) — renew tokens expiring within 7 days
     'refresh-instagram-tokens': {
         'task': 'apps.instagram.tasks.refresh_instagram_tokens',

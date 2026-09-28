@@ -733,6 +733,16 @@ def send_session_cart_reminder(self, session_id: str, reminder_type: str):
             body = TEXTOS_DO_LEMBRETE_DE_SESSAO.get(
                 reminder_type, TEXTOS_DO_LEMBRETE_DE_SESSAO['2h'],
             ).format(nome=first_name)
+            # O lembrete das 2 h cita a promoção de hoje (recuperador, 28/09).
+            # Falha aqui não pode derrubar o lembrete.
+            if reminder_type == '2h':
+                try:
+                    from apps.automation.mensageiro.recuperador import config as _cfg_rec, linha_da_oferta
+                    loja = getattr(session.company, 'store', None)
+                    if loja is not None and _cfg_rec(loja)['carrinho'].get('incluir_oferta', True):
+                        body += linha_da_oferta(loja)
+                except Exception:
+                    logger.exception('lembrete 2h: não consegui montar a linha da oferta')
 
             enviar_botoes(
                 account, phone_number, body,

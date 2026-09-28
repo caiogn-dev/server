@@ -108,3 +108,15 @@ def check_scheduled_campaigns():
 
         process_campaign.delay(str(campaign.id))
         logger.info(f"Started scheduled campaign: {campaign.id}")
+
+
+@shared_task(name='apps.campaigns.tasks.disparar_promocoes_do_dia')
+def disparar_promocoes_do_dia():
+    """Beat (10 min): cria a campanha da promoção do dia nas lojas que ligaram isso."""
+    from ..services.promo_do_dia import rodar_para_todas
+
+    saida = rodar_para_todas()
+    for slug, motivo, campanha_id in saida:
+        if motivo not in ('ja_saiu', 'desligado'):
+            logger.info('[promo_do_dia] %s: %s %s', slug, motivo, campanha_id or '')
+    return saida

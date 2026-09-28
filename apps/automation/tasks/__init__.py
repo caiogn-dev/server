@@ -230,3 +230,11 @@ def cleanup_expired_sessions():
             CustomerSession.SessionStatus.CART_ABANDONED,
         ]
     ).update(status=CustomerSession.SessionStatus.EXPIRED)
+
+
+@shared_task(name='apps.automation.tasks.recuperador_seguir_quem_perguntou')
+def recuperador_seguir_quem_perguntou():
+    """Beat (30 min): texto para quem falou com o bot, não pediu e sumiu (lojas que ligaram)."""
+    from apps.automation.mensageiro.recuperador import rodar_para_todas
+
+    return rodar_para_todas()

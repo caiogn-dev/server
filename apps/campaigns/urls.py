@@ -12,6 +12,7 @@ from .api.views import (
     CamposDaAudienciaView,
     OpcoesDeAudienciaView,
     PreviaPorRegraView,
+    PromoDoDiaView,
     SystemContactsView,
 )
 
@@ -25,5 +26,6 @@ urlpatterns = [
     path('audiencia/campos/', CamposDaAudienciaView.as_view(), name='audiencia-campos'),
     path('audiencia/previa/', PreviaPorRegraView.as_view(), name='audiencia-previa'),
     path('audiencia/janela/', JanelaDaAudienciaView.as_view(), name='audiencia-janela'),
+    path('promo-do-dia/', PromoDoDiaView.as_view(), name='promo-do-dia'),
     path('', include(router.urls)),
 ]

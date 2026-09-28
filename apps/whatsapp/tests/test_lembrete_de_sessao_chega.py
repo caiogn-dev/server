@@ -105,3 +105,34 @@ class TestLembreteDeSessao:
         msg = Message.objects.get(direction='outbound', to_number__endswith='992338269')
         assert msg.metadata.get('automatico') is True
         assert msg.metadata.get('evento') == 'session_cart_reminder'
+
+
+class TestLembreteCitaAOferta:
+    def test_lembrete_de_2h_cita_a_promocao_de_hoje(self, sessao):
+        from decimal import Decimal
+        from django.utils import timezone as _tz
+        from apps.stores.tests.factories import make_product
+        loja = sessao.company.store
+        p = make_product(loja, name='Queridinha', price=Decimal('36.99'))
+        p.promo_price = Decimal('28.99'); p.promo_weekday = _tz.localtime().weekday(); p.save()
+
+        with patch('apps.automation.mensageiro.enviar_botoes') as enviar:
+            _rodar(sessao, '2h')
+
+        texto = enviar.call_args.args[2]
+        assert 'Hoje tem: Queridinha por R$ 28,99' in texto
+
+    def test_dono_pode_desligar_a_oferta_no_lembrete(self, sessao):
+        from decimal import Decimal
+        from django.utils import timezone as _tz
+        from apps.stores.tests.factories import make_product
+        loja = sessao.company.store
+        p = make_product(loja, name='Queridinha', price=Decimal('36.99'))
+        p.promo_price = Decimal('28.99'); p.promo_weekday = _tz.localtime().weekday(); p.save()
+        loja.metadata = {'recuperador': {'carrinho': {'incluir_oferta': False}}}
+        loja.save()
+
+        with patch('apps.automation.mensageiro.enviar_botoes') as enviar:
+            _rodar(sessao, '2h')
+
+        assert 'Hoje tem' not in enviar.call_args.args[2]
