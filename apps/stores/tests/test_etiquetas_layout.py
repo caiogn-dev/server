@@ -156,6 +156,7 @@ class RenderBitmapTests(APITestCase):
         self.assertEqual(motor.layout_padrao('validade')['papel']['rolo'], motor.layout_padrao('nutricao-qr')['papel']['rolo'])
         self.assertNotEqual(motor.layout_padrao('validade')['papel']['rolo'], motor.layout_padrao('produto')['papel']['rolo'])
         salvos = {'nutricao-qr': motor.layout_padrao('nutricao-qr')}
+        salvos['nutricao-qr']['papel'].pop('rolo')                              # salvo antes do conceito de rolo: herda o do padrão
         salvos['nutricao-qr']['elementos'][2].update({'x': 20, 'w': 12})     # QR encostado na direita
         novo = motor.layout_padrao('validade')
         novo['etiqueta'] = {'largura': 30, 'altura': 20}

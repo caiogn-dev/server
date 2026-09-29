@@ -456,6 +456,14 @@ def _origem_x(lay, margem, coluna) -> float:
     return margem + coluna * (lay['etiqueta']['largura'] + lay['papel']['espaco'])
 
 
+def rolo_do(modelo: str, layout: dict) -> str | None:
+    """Layout salvo antes do conceito de rolo herda o rolo do padrão do modelo."""
+    rolo = (layout.get('papel') or {}).get('rolo')
+    if rolo:
+        return rolo
+    return layout_padrao(modelo)['papel'].get('rolo') if modelo in _PADRAO else None
+
+
 def _puxar_para_dentro(elemento, largura, altura):
     e = dict(elemento)
     e['w'] = min(e['w'], largura); e['h'] = min(e['h'], altura)
@@ -468,7 +476,7 @@ def propagar_rolo(salvos: dict, modelo: str, layout: dict) -> dict:
     do mesmo rolo de 3 colunas. Devolve {outro_modelo: layout_atualizado} para
     cada modelo do mesmo rolo (salvo ou padrão), com os elementos puxados para
     dentro da etiqueta nova. Modelos de outro rolo não entram."""
-    rolo = (layout.get('papel') or {}).get('rolo')
+    rolo = rolo_do(modelo, layout)
     if not rolo:
         return {}
     saida = {}
@@ -476,7 +484,7 @@ def propagar_rolo(salvos: dict, modelo: str, layout: dict) -> dict:
         if outro == modelo:
             continue
         base = salvos.get(outro) or layout_padrao(outro)
-        if (base.get('papel') or {}).get('rolo') != rolo:
+        if rolo_do(outro, base) != rolo:
             continue
         novo = copy.deepcopy(base)
         novo['etiqueta'] = dict(layout['etiqueta'])
