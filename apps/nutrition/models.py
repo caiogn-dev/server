@@ -27,6 +27,9 @@ class NutritionIngredient(BaseModel):
         # gordura trans e saturada medidos.
         POF = "pof", "POF/IBGE (Composição Nutricional)"
         MANUFACTURER = "manufacturer", "Fabricante"
+        # Rótulos de produtos industrializados com marca, digitados pela comunidade
+        # (licença ODbL). É o que evita cada cliente cadastrar molho/queijo à mão.
+        OFF = "off", "Open Food Facts (rótulo do fabricante)"
         LAB = "lab", "Laudo laboratorial"
         MANUAL = "manual", "Manual"
 
