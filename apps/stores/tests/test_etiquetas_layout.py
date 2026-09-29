@@ -218,6 +218,20 @@ class ApiTests(APITestCase):
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.data['padrao'])
 
+    def test_preferencias_da_etiqueta_ficam_na_loja(self):
+        """'Validade em N dias' é regra da loja, não do navegador: vai junto dos layouts."""
+        r = self.client.get('/api/v1/stores/print-jobs/etiquetas/layouts/', {'store': str(self.store.id)})
+        self.assertEqual(r.data['preferencias'], {'validade_dias': 5})
+        r = self.client.put('/api/v1/stores/print-jobs/etiquetas/layouts/',
+                            {'store': str(self.store.id), 'preferencias': {'validade_dias': 7}}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data['preferencias'], {'validade_dias': 7})
+        r = self.client.get('/api/v1/stores/print-jobs/etiquetas/layouts/', {'store': str(self.store.id)})
+        self.assertEqual(r.data['preferencias']['validade_dias'], 7)
+        r = self.client.put('/api/v1/stores/print-jobs/etiquetas/layouts/',
+                            {'store': str(self.store.id), 'preferencias': {'validade_dias': 0}}, format='json')
+        self.assertEqual(r.status_code, 400)
+
     def test_layout_invalido_da_400_e_loja_alheia_404(self):
         r = self.client.put('/api/v1/stores/print-jobs/etiquetas/layouts/',
                             {'store': str(self.store.id), 'modelo': 'validade',

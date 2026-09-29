@@ -244,11 +244,29 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
             return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         salvos = (store.metadata or {}).get('etiquetas_layouts') or {}
 
+        prefs = dict((store.metadata or {}).get('etiquetas_preferencias') or {})
+        prefs.setdefault('validade_dias', 5)
         if request.method == 'GET':
-            return Response({
+            resposta = {
                 modelo: {'layout': salvos.get(modelo) or desenho.layout_padrao(modelo), 'padrao': modelo not in salvos}
                 for modelo in desenho.MODELOS
-            })
+            }
+            resposta['preferencias'] = prefs
+            return Response(resposta)
+
+        if 'preferencias' in dados and 'modelo' not in dados:
+            novas = dados.get('preferencias') or {}
+            try:
+                dias = int(novas.get('validade_dias', prefs['validade_dias']))
+            except (TypeError, ValueError):
+                return Response({'detail': 'validade_dias precisa ser inteiro'}, status=status.HTTP_400_BAD_REQUEST)
+            if not (1 <= dias <= 365):
+                return Response({'detail': 'validade_dias entre 1 e 365'}, status=status.HTTP_400_BAD_REQUEST)
+            metadata = dict(store.metadata or {})
+            metadata['etiquetas_preferencias'] = {'validade_dias': dias}
+            store.metadata = metadata
+            store.save(update_fields=['metadata'])
+            return Response({'preferencias': metadata['etiquetas_preferencias']})
 
         modelo = str(dados.get('modelo') or '')
         if modelo not in desenho.MODELOS:
