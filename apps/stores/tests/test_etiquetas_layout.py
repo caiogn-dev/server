@@ -87,6 +87,26 @@ class RenderBitmapTests(APITestCase):
         with self.assertRaises(motor.LayoutInvalido):
             motor.validar_layout(dict(lay, elementos=[dict(nome, ajuste='esticar')]))
 
+    def test_margens_explicitas_e_vao_entre_linhas(self):
+        """O dono mede o rolo: margem esquerda, margem direita e vão entre LINHAS.
+        Com margens explícitas a 1ª coluna começa na margem esquerda (não centraliza)
+        e a largura do rolo é a soma. Em contínuo, ^LL = altura + vão entre linhas."""
+        lay = motor.layout_padrao('validade')
+        lay['papel'].update({'margem_esquerda': 3, 'margem_direita': 1, 'vao_linhas': 3})
+        lay['papel'].pop('largura', None)
+        v = motor.validar_layout(lay)
+        self.assertEqual(v['papel']['largura'], 3 + 103 + 1)
+        self.assertEqual(v['papel']['margem'], 3)
+        img = motor.render_bitmap(v, [dict(VALIDADE, name='XXXX')])
+        self.assertTrue(motor._tem_tinta(img, 3 + 1.6, 1.4, 3 + 12, 6))
+        self.assertFalse(motor._tem_tinta(img, 0, 0, 2.9, 22))
+        zpl = motor.render_zpl(v, [VALIDADE])
+        self.assertIn('^LL176', zpl)                     # gap: a impressora acha o vão
+        v['papel']['modo_midia'] = 'continuo'
+        self.assertIn('^LL200', motor.render_zpl(v, [VALIDADE]))   # (22 + 3) × 8
+        with self.assertRaises(motor.LayoutInvalido):
+            motor.validar_layout(dict(lay, papel=dict(lay['papel'], margem_esquerda=3, largura=100)))  # não fecha a conta
+
     def test_bitmap_tem_tinta_no_nome_e_papel_limpo_no_vao_entre_colunas(self):
         lay = motor.layout_padrao('validade')
         img = motor.render_bitmap(lay, [dict(VALIDADE, name='XXXXXXXX')] * 3)

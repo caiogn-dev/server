@@ -119,11 +119,24 @@ def validar_layout(layout) -> dict:
     colunas = int(_num(papel.get('colunas', 1), 'papel.colunas', 1, 12))
     espaco = _num(papel.get('espaco', 0), 'papel.espaco', 0, 50)
     bloco = colunas * largura + (colunas - 1) * espaco
-    papel_w = _num(papel.get('largura', bloco), 'papel.largura', 5, 400)
+    # Margens medidas no rolo. Com margem esquerda informada a 1ª coluna começa
+    # nela (nada de centralizar) e a largura do rolo é a soma das partes.
+    m_esq = papel.get('margem_esquerda', papel.get('margem'))
+    m_esq = None if m_esq in (None, '') else _num(m_esq, 'papel.margem_esquerda', 0, 200)
+    m_dir = papel.get('margem_direita')
+    m_dir = None if m_dir in (None, '') else _num(m_dir, 'papel.margem_direita', 0, 200)
+    vao_linhas = papel.get('vao_linhas')
+    vao_linhas = None if vao_linhas in (None, '') else _num(vao_linhas, 'papel.vao_linhas', 0, 100)
+    if m_esq is not None and m_dir is not None:
+        soma = m_esq + bloco + m_dir
+        papel_w = _num(papel.get('largura', soma), 'papel.largura', 5, 400)
+        if abs(papel_w - soma) > 0.05:
+            raise LayoutInvalido(f'rolo de {papel_w} mm não fecha: {m_esq} + {bloco} + {m_dir} = {soma} mm')
+    else:
+        papel_w = _num(papel.get('largura', bloco), 'papel.largura', 5, 400)
     if papel_w + 0.01 < bloco:
         raise LayoutInvalido(f'papel de {papel_w} mm não cabe {colunas} coluna(s) de {largura} mm')
-    margem = papel.get('margem')
-    margem = None if margem in (None, '') else _num(margem, 'papel.margem', 0, 200)
+    margem = m_esq
     # Rolo com vão entre linhas (gap, o normal em etiqueta picotada) / contínuo /
     # auto = não mexe no que está na impressora. Em contínuo a impressora avança
     # ^LL por etiqueta, então ^LL precisa ser o PASSO (altura + vão de linha).
@@ -175,6 +188,7 @@ def validar_layout(layout) -> dict:
         'versao': 1,
         'etiqueta': {'largura': largura, 'altura': altura},
         'papel': {'largura': papel_w, 'colunas': colunas, 'espaco': espaco, 'margem': margem,
+                  'margem_esquerda': m_esq, 'margem_direita': m_dir, 'vao_linhas': vao_linhas,
                   'modo_midia': modo_midia, 'passo': passo},
         'elementos': saida,
     }
@@ -332,8 +346,11 @@ def _cabecalho(lay, calibracao) -> str:
     modo = papel.get('modo_midia', 'gap')
     mn = {'gap': '^MNY', 'continuo': '^MNN'}.get(modo, '')
     altura = lay['etiqueta']['altura']
-    if modo == 'continuo' and papel.get('passo'):
-        altura = papel['passo']
+    if modo == 'continuo':
+        if papel.get('passo'):
+            altura = papel['passo']
+        elif papel.get('vao_linhas') is not None:
+            altura = altura + papel['vao_linhas']
     return f"^XA^CI28{mn}^PW{mm(papel['largura'])}^LL{mm(altura)}^LH0,0^LS{ls}^LT{lt}^MD{md}"
 
 
