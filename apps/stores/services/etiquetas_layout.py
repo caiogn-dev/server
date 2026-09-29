@@ -29,6 +29,15 @@ TIPOS = ('texto', 'qr', 'barras', 'linha', 'caixa')
 CAMPOS = ('name', 'manip', 'val', 'price', 'description', 'barcode', 'publicUrl', 'coluna')
 ALINHAMENTOS = ('esquerda', 'centro', 'direita')
 MODOS_DE_MIDIA = ('gap', 'continuo', 'auto')
+# Liberation (SIL OFL), vendorizada em apps/stores/fonts: métricas de Arial/Arial Narrow/Times/Courier.
+FONTES = {
+    'sans': ('LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf'),
+    'estreita': ('LiberationSansNarrow-Regular.ttf', 'LiberationSansNarrow-Bold.ttf'),
+    'serif': ('LiberationSerif-Regular.ttf', 'LiberationSerif-Bold.ttf'),
+    'mono': ('LiberationMono-Regular.ttf', 'LiberationMono-Bold.ttf'),
+}
+AJUSTES = ('quebrar', 'encolher')
+DIR_FONTES = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'fonts')
 
 
 class LayoutInvalido(ValueError):
@@ -146,6 +155,14 @@ def validar_layout(layout) -> dict:
             n['linhas'] = int(_num(e.get('linhas', 1), f'elemento {i}.linhas', 1, 20))
             al = e.get('alinhar', 'esquerda')
             n['alinhar'] = al if al in ALINHAMENTOS else 'esquerda'
+            fonte = e.get('fonte', 'sans') or 'sans'
+            if fonte not in FONTES:
+                raise LayoutInvalido(f'elemento {i}: fonte desconhecida')
+            n['fonte'] = fonte
+            ajuste = e.get('ajuste', 'quebrar') or 'quebrar'
+            if ajuste not in AJUSTES:
+                raise LayoutInvalido(f'elemento {i}: ajuste desconhecido')
+            n['ajuste'] = ajuste
         elif n['tipo'] in ('qr', 'barras'):
             campo = e.get('campo') or ('publicUrl' if n['tipo'] == 'qr' else 'barcode')
             if campo not in CAMPOS:
@@ -184,13 +201,11 @@ def preencher(texto: str, dados: dict) -> str:
         return str(texto)
 
 
-@lru_cache(maxsize=64)
-def _fonte(px: int, negrito: bool):
-    """Bitstream Vera (Latin-1 completo: ç ã é) vem com o reportlab da imagem."""
+@lru_cache(maxsize=256)
+def _fonte(px: int, negrito: bool, familia: str = 'sans'):
+    arquivo = FONTES.get(familia, FONTES['sans'])[1 if negrito else 0]
     try:
-        import reportlab
-        base = os.path.join(os.path.dirname(reportlab.__file__), 'fonts')
-        return ImageFont.truetype(os.path.join(base, 'VeraBd.ttf' if negrito else 'Vera.ttf'), max(4, px))
+        return ImageFont.truetype(os.path.join(DIR_FONTES, arquivo), max(4, px))
     except Exception:  # noqa: BLE001 — sem a fonte, ainda imprime (feio, mas imprime)
         return ImageFont.load_default()
 
@@ -215,11 +230,20 @@ def _desenhar_texto(draw, e, dados):
     if not conteudo:
         return
     px = int(round(e['tamanho'] * DPMM * 0.92))
-    fonte = _fonte(px, e['negrito'])
+    familia = e.get('fonte', 'sans')
+    fonte = _fonte(px, e['negrito'], familia)
     x0, y0, w, h = mm(e['x']), mm(e['y']), mm(e['w']), mm(e['h'])
+    if e.get('ajuste') == 'encolher':
+        # Uma linha só: diminui a letra até caber na largura (mínimo 4 px).
+        while px > 4 and fonte.getlength(conteudo) > w:
+            px -= 1
+            fonte = _fonte(px, e['negrito'], familia)
+        linhas = [conteudo]
+    else:
+        linhas = _quebrar(conteudo, fonte, w, e['linhas'])
     passo = int(round(px * 1.12))
     y = y0
-    for linha in _quebrar(conteudo, fonte, w, e['linhas']):
+    for linha in linhas:
         if y + passo > y0 + h + 2:  # não invade o elemento de baixo
             break
         lw = fonte.getlength(linha)

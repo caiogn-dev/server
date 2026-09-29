@@ -65,6 +65,28 @@ class RenderBitmapTests(APITestCase):
         with self.assertRaises(motor.LayoutInvalido):
             motor.validar_layout(dict(lay, papel=dict(lay['papel'], modo_midia='foguete')))
 
+    def test_fontes_e_ajuste_em_uma_linha(self):
+        """`fonte` escolhe a família (Liberation: sans, estreita, serif, mono) e
+        `ajuste: 'encolher'` mantém o texto em UMA linha, diminuindo a letra até caber."""
+        lay = motor.layout_padrao('validade')
+        nome = lay['elementos'][0]
+        nome.update({'ajuste': 'encolher', 'w': 20, 'h': 4, 'tamanho': 3, 'linhas': 1})
+        et = {'name': 'Salada Caesar com frango grelhado e molho', 'manip': '1', 'val': '2'}
+        img = motor.render_bitmap(lay, [et])
+        # tinta só dentro da caixa do nome (x 2+1.6 .. +20 mm; y 1.4 .. 5.4 mm)
+        self.assertTrue(motor._tem_tinta(img, 3.6, 1.4, 23.6, 5.4))
+        self.assertFalse(motor._tem_tinta(img, 23.8, 1.4, 35, 5.6))       # não passou da largura
+        self.assertFalse(motor._tem_tinta(img, 3.6, 5.6, 23.6, 12))       # não desceu para 2ª linha
+        # famílias diferentes produzem bitmaps diferentes; desconhecida é recusada
+        lay_serif = motor.layout_padrao('validade'); lay_serif['elementos'][0]['fonte'] = 'serif'
+        self.assertNotEqual(motor.render_bitmap(lay, [VALIDADE]).tobytes(), motor.render_bitmap(lay_serif, [VALIDADE]).tobytes())
+        for fam in motor.FONTES:
+            self.assertTrue(motor._fonte(20, False, fam).getname()[0].startswith('Liberation'), fam)
+        with self.assertRaises(motor.LayoutInvalido):
+            motor.validar_layout(dict(lay, elementos=[dict(nome, fonte='comic')]))
+        with self.assertRaises(motor.LayoutInvalido):
+            motor.validar_layout(dict(lay, elementos=[dict(nome, ajuste='esticar')]))
+
     def test_bitmap_tem_tinta_no_nome_e_papel_limpo_no_vao_entre_colunas(self):
         lay = motor.layout_padrao('validade')
         img = motor.render_bitmap(lay, [dict(VALIDADE, name='XXXXXXXX')] * 3)
