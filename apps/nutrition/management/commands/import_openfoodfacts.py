@@ -122,6 +122,34 @@ def mapear_produto_off(p: dict, hoje: date | None = None):
     }
 
 
+def produtos_do_tsv(caminho: str):
+    """Export CSV (tab) do OFF filtrado para o Brasil → dicts no formato da API.
+    Colunas *_100g viram `nutriments`; `allergens`/`traces_tags` viram listas de tags."""
+    import csv
+    csv.field_size_limit(1 << 30)
+    with open(caminho, newline="", encoding="utf-8", errors="replace") as f:
+        rd = csv.reader(f, delimiter="\t", quoting=csv.QUOTE_NONE)
+        hdr = next(rd)
+        idx = {nome: i for i, nome in enumerate(hdr)}
+        nutri_cols = [(nome, i) for nome, i in idx.items() if nome.endswith("_100g")]
+        def col(row, nome):
+            i = idx.get(nome)
+            return row[i] if i is not None and i < len(row) else ""
+        for row in rd:
+            nutriments = {nome: row[i] for nome, i in nutri_cols if i < len(row) and row[i] not in ("", None)}
+            yield {
+                "code": col(row, "code"),
+                "product_name": col(row, "product_name"),
+                "product_name_pt": col(row, "product_name_pt"),
+                "brands": col(row, "brands"),
+                "quantity": col(row, "quantity"),
+                "categories_tags": [t for t in col(row, "categories_tags").split(",") if t],
+                "allergens_tags": [t.strip() for t in col(row, "allergens").split(",") if t.strip()],
+                "traces_tags": [t.strip() for t in col(row, "traces_tags").split(",") if t.strip()],
+                "nutriments": nutriments,
+            }
+
+
 def buscar_pagina(pagina: int, categoria: str | None, page_size: int = 100, tentativas: int = 10) -> dict | None:
     """None quando o OFF não respondeu depois de todas as tentativas: quem chama pula a página."""
     params = {
@@ -156,6 +184,7 @@ class Command(BaseCommand):
         parser.add_argument("--page-size", type=int, default=100)
         parser.add_argument("--pausa", type=float, default=1.0, help="Segundos entre páginas (respeita o rate limit do OFF)")
         parser.add_argument("--pagina-inicial", type=int, default=1, help="Retomar de uma página")
+        parser.add_argument("--arquivo", help="Export CSV (tab) do OFF já filtrado para o Brasil — não usa a API")
         parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args, **o):
@@ -164,6 +193,33 @@ class Command(BaseCommand):
                      .values_list("canonical_name", flat=True)) if not o["dry_run"] else set()
         total = criados = atualizados = descartados = puladas = 0
         amostra = []
+        if o["arquivo"]:
+            lote = []
+            for p in produtos_do_tsv(o["arquivo"]):
+                r = mapear_produto_off(p)
+                if not r:
+                    descartados += 1
+                    continue
+                if r["canonical_name"] in vistos:
+                    continue
+                vistos.add(r["canonical_name"])
+                lote.append(r)
+                if len(lote) >= 500:
+                    if o["dry_run"]:
+                        amostra.extend(lote[: max(0, 15 - len(amostra))])
+                    else:
+                        c, a = self._gravar(lote); criados += c; atualizados += a
+                    total += len(lote); lote = []
+                    self.stdout.write(f"arquivo: {total} válidos, {descartados} descartados")
+                if total + len(lote) >= o["max"]:
+                    break
+            if lote:
+                if o["dry_run"]:
+                    amostra.extend(lote[: max(0, 15 - len(amostra))])
+                else:
+                    c, a = self._gravar(lote); criados += c; atualizados += a
+                total += len(lote)
+            categorias = []
         for cat in categorias:
             pagina = o["pagina_inicial"]
             while total < o["max"]:

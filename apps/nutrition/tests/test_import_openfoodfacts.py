@@ -50,3 +50,28 @@ class MapeamentoTests(TestCase):
         self.assertEqual(q.count(), 1)
         i = q.get()
         self.assertIsNone(i.store); self.assertEqual(i.source_code, "7891234500011"); self.assertEqual(i.allergens, ["leite"])
+
+
+class ArquivoTests(TestCase):
+    def test_importa_do_export_tsv_filtrado(self):
+        import tempfile, os
+        hdr = ["code", "product_name", "brands", "quantity", "categories_tags", "countries_tags", "allergens", "traces_tags",
+               "energy-kcal_100g", "carbohydrates_100g", "sugars_100g", "proteins_100g", "fat_100g", "saturated-fat_100g", "sodium_100g", "fiber_100g"]
+        linhas = [
+            ["7891", "Requeijão cremoso", "Catupiry", "250 g", "en:dairies,pt:requeijao", "en:brazil", "en:milk", "", "260", "3", "3", "9", "24", "15", "0.5", ""],
+            ["7892", "Sem marca", "", "", "", "en:brazil", "", "", "100", "1", "1", "1", "1", "1", "0.1", ""],
+        ]
+        with tempfile.NamedTemporaryFile("w", suffix=".tsv", delete=False, encoding="utf-8") as f:
+            f.write("\t".join(hdr) + "\n")
+            for l in linhas:
+                f.write("\t".join(l) + "\n")
+            caminho = f.name
+        try:
+            call_command("import_openfoodfacts", "--arquivo", caminho, "--max", "100")
+        finally:
+            os.unlink(caminho)
+        q = NutritionIngredient.objects.filter(source=NutritionIngredient.Source.OFF)
+        self.assertEqual(q.count(), 1)
+        i = q.get()
+        self.assertEqual(i.display_name, "Requeijão cremoso — Catupiry"); self.assertEqual(i.sodium_mg, Decimal("500.0000"))
+        self.assertEqual(i.allergens, ["leite"]); self.assertEqual(i.category, "requeijao")
