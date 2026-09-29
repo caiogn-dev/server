@@ -24,9 +24,9 @@ from functools import lru_cache
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 DPMM = 8  # 203 dpi
-MODELOS = ('validade', 'nutricao-qr', 'produto')
-TIPOS = ('texto', 'qr', 'barras', 'linha', 'caixa')
-CAMPOS = ('name', 'manip', 'val', 'price', 'description', 'barcode', 'publicUrl', 'coluna')
+MODELOS = ('validade', 'nutricao-qr', 'produto', 'nutricao')
+TIPOS = ('texto', 'qr', 'barras', 'linha', 'caixa', 'tabela')
+CAMPOS = ('name', 'manip', 'val', 'price', 'description', 'barcode', 'publicUrl', 'coluna', 'ingredients', 'allergens')
 ALINHAMENTOS = ('esquerda', 'centro', 'direita')
 MODOS_DE_MIDIA = ('gap', 'continuo', 'auto')
 # Liberation (SIL OFL), vendorizada em apps/stores/fonts: métricas de Arial/Arial Narrow/Times/Courier.
@@ -87,6 +87,21 @@ _PADRAO = {
             {'id': 'barras', 'tipo': 'barras', 'x': 3, 'y': 23, 'w': 94, 'h': 50, 'campo': 'barcode'},
         ],
     },
+}
+
+
+_PADRAO['nutricao'] = {
+    'versao': 1,
+    'etiqueta': {'largura': 100, 'altura': 80},
+    'papel': {'largura': 100, 'colunas': 1, 'espaco': 0},
+    'elementos': [
+        _texto('nome', 3, 2, 76, 6, '{name}', 3.2, negrito=True, linhas=1),
+        {'id': 'tabela', 'tipo': 'tabela', 'x': 3, 'y': 8.5, 'w': 60, 'h': 62},
+        _texto('ingredientes', 65, 8.5, 32, 30, 'INGREDIENTES: {ingredients}', 1.7, linhas=12),
+        _texto('alergenicos', 65, 40, 32, 10, '{allergens}', 1.8, negrito=True, linhas=4),
+        {'id': 'qr', 'tipo': 'qr', 'x': 79, 'y': 58, 'w': 18, 'h': 18, 'campo': 'publicUrl'},
+        _texto('rodape', 3, 72, 60, 6, 'Escaneie o QR para a tabela completa e a lista de alergênicos.', 1.5, linhas=2),
+    ],
 }
 
 
@@ -183,6 +198,11 @@ def validar_layout(layout) -> dict:
             n['campo'] = campo
         elif n['tipo'] == 'caixa':
             n['espessura'] = _num(e.get('espessura', 0.3), f'elemento {i}.espessura', 0.1, 10)
+        elif n['tipo'] == 'tabela':
+            fonte = e.get('fonte', 'sans') or 'sans'
+            if fonte not in FONTES:
+                raise LayoutInvalido(f'elemento {i}: fonte desconhecida')
+            n['fonte'] = fonte
         saida.append(n)
     return {
         'versao': 1,
@@ -266,6 +286,126 @@ def _desenhar_texto(draw, e, dados):
         y += passo
 
 
+# ---------------------------------------------------------------- tabela nutricional (IN 75/2020)
+
+_LINHAS_ANVISA = [
+    # (chave, rótulo, unidade, VD, recuo)
+    ('energy_kcal', 'Valor energético (kcal)', 'kcal', 2000, 0),
+    ('carbohydrates_g', 'Carboidratos (g)', 'g', 300, 0),
+    ('total_sugars_g', 'Açúcares totais (g)', 'g', None, 1),
+    ('added_sugars_g', 'Açúcares adicionados (g)', 'g', 50, 2),
+    ('protein_g', 'Proteínas (g)', 'g', 50, 0),
+    ('total_fat_g', 'Gorduras totais (g)', 'g', 65, 0),
+    ('saturated_fat_g', 'Gorduras saturadas (g)', 'g', 20, 1),
+    ('trans_fat_g', 'Gorduras trans (g)', 'g', None, 1),
+    ('fiber_g', 'Fibras alimentares (g)', 'g', 25, 0),
+    ('sodium_mg', 'Sódio (mg)', 'mg', 2000, 0),
+]
+
+
+def _fmt(v, unidade):
+    if v is None or v == '':
+        return '-'
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return '-'
+    if unidade == 'mg' or unidade == 'kcal':
+        return f'{int(round(f))}'
+    return f'{f:.1f}'.rstrip('0').rstrip('.').replace('.', ',')
+
+
+def linhas_da_tabela(et: dict) -> list:
+    """[(rótulo, por 100 g, por porção, %VD, recuo)] com travessão onde não há valor."""
+    per100 = et.get('per100g') or {}
+    porcao = et.get('perServing') or {}
+    try:
+        fator = float(et.get('servingG', 100)) / 100.0
+    except (TypeError, ValueError):
+        fator = 1.0
+    saida = []
+    for chave, rotulo, unidade, vd, recuo in _LINHAS_ANVISA:
+        base = per100.get(chave)
+        na_porcao = porcao.get(chave)
+        if na_porcao is None and base not in (None, ''):
+            try:
+                na_porcao = float(base) * fator
+            except (TypeError, ValueError):
+                na_porcao = None
+        pct = '-'
+        if vd and na_porcao not in (None, ''):
+            try:
+                pct = str(int(round(float(na_porcao) / vd * 100)))
+            except (TypeError, ValueError):
+                pct = '-'
+        saida.append((rotulo, _fmt(base, unidade), _fmt(na_porcao, unidade), pct, recuo))
+    return saida
+
+
+def cabecalho_da_tabela(et: dict) -> tuple:
+    porcoes = et.get('servingsPerContainer')
+    porcoes_txt = _fmt(porcoes, 'g') if porcoes not in (None, '') else '-'
+    porcao = f"{_fmt(et.get('servingG', 100), 'g')} g"
+    if et.get('householdMeasure'):
+        porcao += f" ({et['householdMeasure']})"
+    return (f'Porções por embalagem: {porcoes_txt}', f'Porção: {porcao}')
+
+
+def _desenhar_tabela(draw, e, dados):
+    """Tabela no padrão da ANVISA dentro da caixa (x, y, w, h em mm): moldura,
+    título, porções, barra grossa, cabeçalho de colunas, 10 linhas, rodapé."""
+    x0, y0, w, h = mm(e['x']), mm(e['y']), mm(e['w']), mm(e['h'])
+    familia = e.get('fonte', 'sans')
+    draw.rectangle([x0, y0, x0 + w - 1, y0 + h - 1], outline=0, width=max(2, mm(0.4)))
+    pad = mm(1.2)
+    # alturas proporcionais à caixa: título 11%, porções 14%, cabeçalho 9%, rodapé 8%, resto = 10 linhas
+    y = y0 + pad
+    h_titulo = int(h * 0.11); h_porc = int(h * 0.14); h_cab = int(h * 0.09); h_rod = int(h * 0.08)
+    h_linhas = h - 2 * pad - h_titulo - h_porc - h_cab - h_rod
+    h_linha = h_linhas // len(_LINHAS_ANVISA)
+    def texto(tx, ty, s, px, negrito=False, alinhar='L', largura=None):
+        f = _fonte(px, negrito, familia)
+        lw = f.getlength(s)
+        if alinhar == 'C' and largura:
+            tx = tx + (largura - lw) / 2
+        elif alinhar == 'R' and largura:
+            tx = tx + largura - lw
+        draw.text((tx, ty), s, font=f, fill=0)
+    # título
+    px_t = max(6, int(h_titulo * 0.62))
+    texto(x0 + pad, y + (h_titulo - px_t) // 2, 'INFORMAÇÃO NUTRICIONAL', px_t, True, 'C', w - 2 * pad)
+    y += h_titulo
+    draw.rectangle([x0 + pad, y, x0 + w - pad, y + 1], fill=0)
+    # porções
+    l1, l2 = cabecalho_da_tabela(dados)
+    px_p = max(5, int(h_porc * 0.36))
+    texto(x0 + pad, y + 2, l1, px_p, False)
+    texto(x0 + pad, y + 2 + int(px_p * 1.25), l2, px_p, False)
+    y += h_porc
+    draw.rectangle([x0 + pad, y, x0 + w - pad, y + max(3, mm(0.8))], fill=0)   # barra grossa
+    y += max(3, mm(0.8)) + 1
+    # colunas
+    c_val = int((w - 2 * pad) * 0.16)
+    x_c3 = x0 + w - pad - c_val; x_c2 = x_c3 - c_val; x_c1 = x_c2 - c_val
+    px_c = max(5, int(h_cab * 0.55))
+    texto(x_c1, y + (h_cab - px_c) // 2, '100 g', px_c, True, 'C', c_val)
+    texto(x_c2, y + (h_cab - px_c) // 2, f"{_fmt(dados.get('servingG', 100), 'g')} g", px_c, True, 'C', c_val)
+    texto(x_c3, y + (h_cab - px_c) // 2, '%VD*', px_c, True, 'C', c_val)
+    y += h_cab
+    px_l = max(5, int(h_linha * 0.55))
+    for rotulo, v100, vporc, pct, recuo in linhas_da_tabela(dados):
+        draw.rectangle([x0 + pad, y, x0 + w - pad, y], fill=0)   # linha fina
+        ty = y + (h_linha - px_l) // 2
+        texto(x0 + pad + recuo * mm(1.5), ty, rotulo, px_l)
+        for xx, v in ((x_c1, v100), (x_c2, vporc), (x_c3, pct)):
+            draw.rectangle([xx, y, xx, y + h_linha], fill=0)     # divisória vertical
+            texto(xx, ty, v, px_l, False, 'C', c_val)
+        y += h_linha
+    draw.rectangle([x0 + pad, y, x0 + w - pad, y], fill=0)
+    px_r = max(4, int(h_rod * 0.45))
+    texto(x0 + pad, y + (h_rod - px_r) // 2, '*Percentual de valores diários fornecidos pela porção.', px_r)
+
+
 def _marcador_qr(draw, e):
     """Prévia: quadro com os 3 olhos do QR, no lugar e tamanho do real."""
     x, y, lado = mm(e['x']), mm(e['y']), mm(min(e['w'], e['h']))
@@ -297,6 +437,8 @@ def _desenhar_etiqueta(lay, dados, elementos, marcadores):
             _desenhar_texto(draw, e, dados)
         elif e['tipo'] == 'linha':
             draw.rectangle([mm(e['x']), mm(e['y']), mm(e['x'] + e['w']) - 1, max(mm(e['y']), mm(e['y'] + e['h']) - 1)], fill=0)
+        elif e['tipo'] == 'tabela':
+            _desenhar_tabela(draw, e, dados or {})
         elif e['tipo'] == 'caixa':
             draw.rectangle([mm(e['x']), mm(e['y']), mm(e['x'] + e['w']) - 1, mm(e['y'] + e['h']) - 1],
                            outline=0, width=max(1, mm(e['espessura'])))

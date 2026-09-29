@@ -107,6 +107,35 @@ class RenderBitmapTests(APITestCase):
         with self.assertRaises(motor.LayoutInvalido):
             motor.validar_layout(dict(lay, papel=dict(lay['papel'], margem_esquerda=3, largura=100)))  # não fecha a conta
 
+    def test_tabela_nutricional_anvisa_desenhada_no_bitmap(self):
+        """Elemento `tabela`: a tabela da IN 75/2020 (título, porções, porção,
+        colunas 100 g / porção / %VD, 10 linhas, rodapé) desenhada dentro da caixa.
+        O modelo `nutricao` passa a ser desenhável como os outros."""
+        lay = motor.layout_padrao('nutricao')
+        self.assertEqual((lay['etiqueta']['largura'], lay['etiqueta']['altura']), (100, 80))
+        tipos = [e['tipo'] for e in lay['elementos']]
+        self.assertIn('tabela', tipos); self.assertIn('qr', tipos)
+        et = {'name': 'Bowl', 'servingG': 350, 'householdMeasure': '1 pote', 'servingsPerContainer': 1,
+              'per100g': {'energy_kcal': 128, 'carbohydrates_g': 28.1, 'total_sugars_g': None, 'added_sugars_g': 0,
+                          'protein_g': 8.5, 'total_fat_g': 4.2, 'saturated_fat_g': 1.1, 'trans_fat_g': 0, 'fiber_g': 3.2, 'sodium_mg': 210},
+              'perServing': {'energy_kcal': 448, 'sodium_mg': 735},
+              'ingredients': 'Alface, frango, parmesão', 'allergens': 'CONTÉM LEITE.', 'publicUrl': 'https://x/abc/'}
+        tab = next(e for e in lay['elementos'] if e['tipo'] == 'tabela')
+        img = motor.render_bitmap(lay, [et])
+        # moldura da tabela: tinta na borda esquerda e na direita da caixa
+        self.assertTrue(motor._tem_tinta(img, tab['x'], tab['y'] + 5, tab['x'] + 0.6, tab['y'] + 6))
+        self.assertTrue(motor._tem_tinta(img, tab['x'] + tab['w'] - 0.6, tab['y'] + 5, tab['x'] + tab['w'], tab['y'] + 6))
+        # texto da tabela existe (cabeçalho é a faixa mais escura)
+        self.assertTrue(motor._tem_tinta(img, tab['x'] + 10, tab['y'] + 1, tab['x'] + tab['w'] - 10, tab['y'] + 5))
+        linhas = motor.linhas_da_tabela(et)
+        self.assertEqual(linhas[0][:3], ('Valor energético (kcal)', '128', '448'))
+        self.assertEqual(linhas[0][3], '22')                     # 448 / 2000
+        self.assertEqual(linhas[2][2], '-')                      # açúcares totais sem valor: travessão, nunca 0
+        self.assertEqual(linhas[-1][:3], ('Sódio (mg)', '210', '735'))
+        zpl = motor.render_zpl(lay, [et])
+        self.assertIn('^GFA', zpl); self.assertIn('^BQN', zpl)
+        self.assertEqual(motor.cabecalho_da_tabela(et), ('Porções por embalagem: 1', 'Porção: 350 g (1 pote)'))
+
     def test_bitmap_tem_tinta_no_nome_e_papel_limpo_no_vao_entre_colunas(self):
         lay = motor.layout_padrao('validade')
         img = motor.render_bitmap(lay, [dict(VALIDADE, name='XXXXXXXX')] * 3)

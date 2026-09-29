@@ -139,6 +139,10 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
     calculation = serializers.SerializerMethodField()
     custo = serializers.SerializerMethodField()
     public_url = serializers.SerializerMethodField()
+    # O que a etiqueta ANVISA imprime além dos nutrientes: lista de ingredientes em
+    # ordem decrescente de peso (RDC 727/2022) e porções por embalagem da receita.
+    ingredientes_declaracao = serializers.SerializerMethodField()
+    porcoes_por_embalagem = serializers.SerializerMethodField()
     class Meta:
         model = ProductNutritionProfile
         fields = "__all__"
@@ -154,6 +158,18 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
 
     def get_calculation(self, obj):
         return _calculo(obj.recipe) if obj.recipe_id else None
+
+    def get_ingredientes_declaracao(self, obj):
+        if not obj.recipe_id:
+            return ""
+        itens = sorted(obj.recipe.items.select_related("ingredient"), key=lambda i: -(i.quantity_g or 0))
+        nomes = [(i.ingredient.display_name or i.ingredient.canonical_name).strip() for i in itens if i.ingredient and (i.ingredient.display_name or i.ingredient.canonical_name)]
+        if not nomes:
+            return ""
+        return ", ".join([nomes[0][:1].upper() + nomes[0][1:]] + [n[:1].lower() + n[1:] for n in nomes[1:]])
+
+    def get_porcoes_por_embalagem(self, obj):
+        return obj.recipe.servings_per_container if obj.recipe_id else None
 
     def get_custo(self, obj):
         return ficha_de_custo(_calculo(obj.recipe), obj.product.price) if obj.recipe_id else None
