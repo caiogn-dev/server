@@ -519,8 +519,27 @@ class StoreProductTypeViewSet(viewsets.ModelViewSet):
                 from apps.core.permissions import accessible_store_ids
                 queryset = queryset.filter(store_id__in=accessible_store_ids(user))
 
-        if self.action == 'list' and not self.request.user.is_staff:
+        # Visibilidade de tipos inativos: apenas is_superuser (bypass global) ou
+        # quem tem vínculo real com a loja (dono, staff M2M, StoreTeamMember).
+        # is_staff NÃO é bypass cross-tenant — convenção do projeto (CLAUDE.md,
+        # apps/core/permissions.py "Nem is_staff nem is_superuser concedem acesso").
+        user = self.request.user
+        is_admin = False
+        if user.is_authenticated:
+            if user.is_superuser:
+                is_admin = True
+            elif store_slug or store_param:
+                from apps.core.permissions import accessible_store_ids
+                is_admin = queryset.filter(store_id__in=accessible_store_ids(user)).exists()
+        if self.action == 'list' and not is_admin:
             queryset = queryset.filter(is_active=True)
+
+        # Filtro explícito ?is_active=true|false (usado pelo painel). Só admins
+        # conseguem pedir os inativos; para os demais o filtro acima já restringe.
+        is_active_param = self.request.query_params.get('is_active')
+        if is_active_param is not None:
+            wants_active = is_active_param.lower() in ('1', 'true', 'yes')
+            queryset = queryset.filter(is_active=wants_active)
 
         return queryset.select_related('store').order_by('sort_order', 'name')
 
