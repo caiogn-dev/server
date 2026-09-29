@@ -132,12 +132,15 @@ def buscar_pagina(pagina: int, categoria: str | None, page_size: int = 100, tent
         params["categories_tags"] = categoria
     espera = 2
     for _ in range(tentativas):
-        r = requests.get(API, params=params, headers={"User-Agent": UA}, timeout=60)
-        if r.status_code == 200:
-            try:
-                return r.json()
-            except ValueError:
-                pass
+        try:
+            r = requests.get(API, params=params, headers={"User-Agent": UA}, timeout=60)
+            if r.status_code == 200:
+                try:
+                    return r.json()
+                except ValueError:
+                    pass
+        except requests.RequestException as exc:   # DNS/conexão caindo no meio: é retentável
+            logger.warning("OFF: %s", str(exc)[:120])
         time.sleep(espera)          # 503 intermitente do OFF: espera e tenta de novo
         espera = min(espera * 2, 45)
     logger.warning("OFF não respondeu a página %s (%s) — pulada", pagina, categoria or "todas")
