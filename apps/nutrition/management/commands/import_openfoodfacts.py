@@ -122,7 +122,8 @@ def mapear_produto_off(p: dict, hoje: date | None = None):
     }
 
 
-def buscar_pagina(pagina: int, categoria: str | None, page_size: int = 100, tentativas: int = 5) -> dict:
+def buscar_pagina(pagina: int, categoria: str | None, page_size: int = 100, tentativas: int = 10) -> dict | None:
+    """None quando o OFF não respondeu depois de todas as tentativas: quem chama pula a página."""
     params = {
         "countries_tags": "en:brazil", "states_tags": "en:nutrition-facts-completed",
         "fields": CAMPOS, "page_size": page_size, "page": pagina, "sort_by": "unique_scans_n",
@@ -138,8 +139,9 @@ def buscar_pagina(pagina: int, categoria: str | None, page_size: int = 100, tent
             except ValueError:
                 pass
         time.sleep(espera)          # 503 intermitente do OFF: espera e tenta de novo
-        espera = min(espera * 2, 30)
-    raise RuntimeError(f"OFF não respondeu a página {pagina} ({categoria or 'todas'})")
+        espera = min(espera * 2, 45)
+    logger.warning("OFF não respondeu a página %s (%s) — pulada", pagina, categoria or "todas")
+    return None
 
 
 class Command(BaseCommand):
@@ -150,41 +152,57 @@ class Command(BaseCommand):
         parser.add_argument("--max", type=int, default=30000)
         parser.add_argument("--page-size", type=int, default=100)
         parser.add_argument("--pausa", type=float, default=1.0, help="Segundos entre páginas (respeita o rate limit do OFF)")
+        parser.add_argument("--pagina-inicial", type=int, default=1, help="Retomar de uma página")
         parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args, **o):
         categorias = o["categoria"] or [None]
-        vistos, registros, descartados = set(), [], 0
+        vistos = set(NutritionIngredient.objects.filter(source=NutritionIngredient.Source.OFF, store=None)
+                     .values_list("canonical_name", flat=True)) if not o["dry_run"] else set()
+        total = criados = atualizados = descartados = puladas = 0
+        amostra = []
         for cat in categorias:
-            pagina = 1
-            while len(registros) < o["max"]:
+            pagina = o["pagina_inicial"]
+            while total < o["max"]:
                 dados = buscar_pagina(pagina, cat, o["page_size"])
+                if dados is None:
+                    puladas += 1; pagina += 1
+                    if puladas > 30:
+                        self.stdout.write(self.style.ERROR("OFF fora do ar: parando; retome com --pagina-inicial"))
+                        break
+                    continue
                 produtos = dados.get("products") or []
                 if not produtos:
                     break
+                registros = []
                 for p in produtos:
                     r = mapear_produto_off(p)
                     if not r:
                         descartados += 1
                         continue
                     if r["canonical_name"] in vistos:
-                        continue                      # mesmo produto em outra embalagem
+                        continue                      # mesmo produto em outra embalagem, ou já importado
                     vistos.add(r["canonical_name"])
                     registros.append(r)
-                    if len(registros) >= o["max"]:
+                    if total + len(registros) >= o["max"]:
                         break
-                self.stdout.write(f"{cat or 'todas'} p.{pagina}: {len(registros)} válidos, {descartados} descartados")
+                if o["dry_run"]:
+                    amostra.extend(registros[: max(0, 15 - len(amostra))])
+                else:
+                    c, a = self._gravar(registros)   # grava por página: o que veio fica, mesmo se o OFF cair depois
+                    criados += c; atualizados += a
+                total += len(registros)
+                self.stdout.write(f"{cat or 'todas'} p.{pagina}: +{len(registros)} (total {total}), {descartados} descartados, {puladas} páginas puladas")
                 pagina += 1
                 if pagina * o["page_size"] > (dados.get("count") or 0):
                     break
                 time.sleep(o["pausa"])
         if o["dry_run"]:
-            for r in registros[:15]:
+            for r in amostra:
                 self.stdout.write(f"  {r['display_name']} | {r['energy_kcal']} kcal | Na {r['sodium_mg']} mg | {r['allergens']}")
-            self.stdout.write(self.style.WARNING(f"dry-run: {len(registros)} produtos entrariam, {descartados} descartados"))
+            self.stdout.write(self.style.WARNING(f"dry-run: {total} produtos entrariam, {descartados} descartados"))
             return
-        criados, atualizados = self._gravar(registros)
-        self.stdout.write(self.style.SUCCESS(f"Open Food Facts: {criados} novos, {atualizados} atualizados, {descartados} descartados"))
+        self.stdout.write(self.style.SUCCESS(f"Open Food Facts: {criados} novos, {atualizados} atualizados, {descartados} descartados, {puladas} páginas puladas"))
 
     @transaction.atomic
     def _gravar(self, registros):
