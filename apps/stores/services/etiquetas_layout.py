@@ -60,7 +60,7 @@ _PADRAO = {
     'validade': {
         'versao': 1,
         'etiqueta': {'largura': 33, 'altura': 22},
-        'papel': {'largura': 107, 'colunas': 3, 'espaco': 2},
+        'papel': {'largura': 107, 'colunas': 3, 'espaco': 2, 'rolo': 'rolo-3-colunas'},
         'elementos': [
             _texto('nome', 1.6, 1.4, 29.8, 9.5, '{name}', 2.6, negrito=True, linhas=3),
             _texto('manip', 1.6, 14.6, 29.8, 2.8, 'Manip.: {manip}', 2.1),
@@ -70,7 +70,7 @@ _PADRAO = {
     'nutricao-qr': {
         'versao': 1,
         'etiqueta': {'largura': 30, 'altura': 22},
-        'papel': {'largura': 100, 'colunas': 3, 'espaco': 3},
+        'papel': {'largura': 100, 'colunas': 3, 'espaco': 3, 'rolo': 'rolo-3-colunas'},
         'elementos': [
             _texto('nome', 1.2, 1.2, 11, 9, '{name}', 2.2, negrito=True, linhas=3),
             _texto('dica', 1.2, 13, 11, 8, 'Escaneie para ver a informação nutricional', 1.5, linhas=4),
@@ -80,7 +80,7 @@ _PADRAO = {
     'produto': {
         'versao': 1,
         'etiqueta': {'largura': 100, 'altura': 80},
-        'papel': {'largura': 100, 'colunas': 1, 'espaco': 0},
+        'papel': {'largura': 100, 'colunas': 1, 'espaco': 0, 'rolo': 'zebra-100'},
         'elementos': [
             _texto('nome', 3, 3, 94, 10, '{name}', 3.8, negrito=True, linhas=2),
             _texto('preco', 3, 14, 94, 7, '{price}', 5.5, negrito=True),
@@ -93,7 +93,7 @@ _PADRAO = {
 _PADRAO['nutricao'] = {
     'versao': 1,
     'etiqueta': {'largura': 100, 'altura': 80},
-    'papel': {'largura': 100, 'colunas': 1, 'espaco': 0},
+    'papel': {'largura': 100, 'colunas': 1, 'espaco': 0, 'rolo': 'zebra-100'},
     'elementos': [
         _texto('nome', 3, 2, 76, 6, '{name}', 3.2, negrito=True, linhas=1),
         {'id': 'tabela', 'tipo': 'tabela', 'x': 3, 'y': 8.5, 'w': 60, 'h': 62},
@@ -160,6 +160,7 @@ def validar_layout(layout) -> dict:
         raise LayoutInvalido(f'papel.modo_midia desconhecido: {modo_midia}')
     passo = papel.get('passo')
     passo = None if passo in (None, '') else _num(passo, 'papel.passo', altura, 400)
+    rolo = str(papel.get('rolo') or '')[:40] or None
 
     elementos = layout.get('elementos')
     if not isinstance(elementos, list) or len(elementos) > 60:
@@ -180,7 +181,7 @@ def validar_layout(layout) -> dict:
             n['texto'] = str(e.get('texto') or '')[:200]
             n['tamanho'] = _num(e.get('tamanho', 2.5), f'elemento {i}.tamanho', 0.8, 60)
             n['negrito'] = bool(e.get('negrito', False))
-            n['linhas'] = int(_num(e.get('linhas', 1), f'elemento {i}.linhas', 1, 20))
+            n['linhas'] = int(_num(e.get('linhas', 1), f'elemento {i}.linhas', 0, 20))  # 0 = quantas couberem
             al = e.get('alinhar', 'esquerda')
             n['alinhar'] = al if al in ALINHAMENTOS else 'esquerda'
             fonte = e.get('fonte', 'sans') or 'sans'
@@ -209,7 +210,7 @@ def validar_layout(layout) -> dict:
         'etiqueta': {'largura': largura, 'altura': altura},
         'papel': {'largura': papel_w, 'colunas': colunas, 'espaco': espaco, 'margem': margem,
                   'margem_esquerda': m_esq, 'margem_direita': m_dir, 'vao_linhas': vao_linhas,
-                  'modo_midia': modo_midia, 'passo': passo},
+                  'modo_midia': modo_midia, 'passo': passo, 'rolo': rolo},
         'elementos': saida,
     }
 
@@ -274,11 +275,13 @@ def _desenhar_texto(draw, e, dados):
             fonte = _fonte(px, e['negrito'], familia)
         linhas = [conteudo]
     else:
-        linhas = _quebrar(conteudo, fonte, w, e['linhas'])
+        passo_auto = max(1, int(round(px * 1.12)))
+        maximo = e['linhas'] if e['linhas'] > 0 else max(1, h // passo_auto)
+        linhas = _quebrar(conteudo, fonte, w, maximo)
     passo = int(round(px * 1.12))
     y = y0
     for linha in linhas:
-        if y + passo > y0 + h + 2:  # não invade o elemento de baixo
+        if y + passo > y0 + h + max(2, passo // 4):  # a última linha pode encostar na borda; não invade o de baixo
             break
         lw = fonte.getlength(linha)
         x = x0 if e['alinhar'] == 'esquerda' else (x0 + (w - lw) / 2 if e['alinhar'] == 'centro' else x0 + w - lw)
@@ -451,6 +454,36 @@ def _desenhar_etiqueta(lay, dados, elementos, marcadores):
 
 def _origem_x(lay, margem, coluna) -> float:
     return margem + coluna * (lay['etiqueta']['largura'] + lay['papel']['espaco'])
+
+
+def _puxar_para_dentro(elemento, largura, altura):
+    e = dict(elemento)
+    e['w'] = min(e['w'], largura); e['h'] = min(e['h'], altura)
+    e['x'] = max(0.0, min(e['x'], largura - e['w'])); e['y'] = max(0.0, min(e['y'], altura - e['h']))
+    return e
+
+
+def propagar_rolo(salvos: dict, modelo: str, layout: dict) -> dict:
+    """Papel e tamanho da etiqueta são do ROLO, não do modelo: validade e QR saem
+    do mesmo rolo de 3 colunas. Devolve {outro_modelo: layout_atualizado} para
+    cada modelo do mesmo rolo (salvo ou padrão), com os elementos puxados para
+    dentro da etiqueta nova. Modelos de outro rolo não entram."""
+    rolo = (layout.get('papel') or {}).get('rolo')
+    if not rolo:
+        return {}
+    saida = {}
+    for outro in MODELOS:
+        if outro == modelo:
+            continue
+        base = salvos.get(outro) or layout_padrao(outro)
+        if (base.get('papel') or {}).get('rolo') != rolo:
+            continue
+        novo = copy.deepcopy(base)
+        novo['etiqueta'] = dict(layout['etiqueta'])
+        novo['papel'] = dict(layout['papel'])
+        novo['elementos'] = [_puxar_para_dentro(e, novo['etiqueta']['largura'], novo['etiqueta']['altura']) for e in novo['elementos']]
+        saida[outro] = validar_layout(novo)
+    return saida
 
 
 def render_bitmap(layout, etiquetas, *, elementos=None, marcadores=False) -> Image.Image:

@@ -277,7 +277,10 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
             salvos = {k: v for k, v in salvos.items() if k != modelo}
         else:
             try:
-                salvos = dict(salvos, **{modelo: desenho.validar_layout(layout)})
+                validado = desenho.validar_layout(layout)
+                salvos = dict(salvos, **{modelo: validado})
+                # Mesmo rolo, mesmo papel: o que se mede num modelo vale para os outros.
+                salvos.update(desenho.propagar_rolo(salvos, modelo, validado))
             except desenho.LayoutInvalido as exc:
                 return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         metadata['etiquetas_layouts'] = salvos

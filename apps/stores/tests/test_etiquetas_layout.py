@@ -136,6 +136,38 @@ class RenderBitmapTests(APITestCase):
         self.assertIn('^GFA', zpl); self.assertIn('^BQN', zpl)
         self.assertEqual(motor.cabecalho_da_tabela(et), ('Porções por embalagem: 1', 'Porção: 350 g (1 pote)'))
 
+    def test_linhas_zero_e_automatico_e_texto_ocupa_a_caixa_inteira(self):
+        """Dono: "texto com mais de 1 linha imprime só 1". `linhas: 0` = quantas caberem
+        na altura da caixa; e a última linha que começa dentro da caixa é desenhada."""
+        lay = motor.layout_padrao('validade')
+        nome = lay['elementos'][0]
+        nome.update({'linhas': 0, 'h': 9, 'tamanho': 2.2, 'w': 20})
+        et = dict(VALIDADE, name='Salada Caesar com frango grelhado e molho da casa')
+        img = motor.render_bitmap(lay, [et])
+        # 2 mm de altura de letra × ~1,12 → 3 linhas em 9 mm: há tinta na 3ª faixa (y 6..9)
+        self.assertTrue(motor._tem_tinta(img, 3.6, 1.4 + 5.6, 23.6, 1.4 + 9))
+        self.assertFalse(motor._tem_tinta(img, 3.6, 1.4 + 9.6, 23.6, 14))   # não invade o de baixo
+        v = motor.validar_layout(lay)
+        self.assertEqual(v['elementos'][0]['linhas'], 0)
+
+    def test_mesmo_rolo_compartilha_papel_e_etiqueta_entre_modelos(self):
+        """Validade e QR saem do mesmo rolo de 3 colunas: mudar o papel de um muda o do outro,
+        e os elementos do outro são puxados para dentro da etiqueta nova."""
+        self.assertEqual(motor.layout_padrao('validade')['papel']['rolo'], motor.layout_padrao('nutricao-qr')['papel']['rolo'])
+        self.assertNotEqual(motor.layout_padrao('validade')['papel']['rolo'], motor.layout_padrao('produto')['papel']['rolo'])
+        salvos = {'nutricao-qr': motor.layout_padrao('nutricao-qr')}
+        salvos['nutricao-qr']['elementos'][2].update({'x': 20, 'w': 12})     # QR encostado na direita
+        novo = motor.layout_padrao('validade')
+        novo['etiqueta'] = {'largura': 30, 'altura': 20}
+        novo['papel'].update({'largura': 100, 'espaco': 3, 'modo_midia': 'continuo', 'vao_linhas': 3})
+        resultado = motor.propagar_rolo(salvos, 'validade', motor.validar_layout(novo))
+        qr = resultado['nutricao-qr']
+        self.assertEqual(qr['etiqueta'], {'largura': 30.0, 'altura': 20.0})
+        self.assertEqual(qr['papel']['modo_midia'], 'continuo'); self.assertEqual(qr['papel']['vao_linhas'], 3.0)
+        e = qr['elementos'][2]
+        self.assertLessEqual(e['x'] + e['w'], 30.0)                          # puxado para dentro
+        self.assertNotIn('produto', resultado)                                # outro rolo: intocado
+
     def test_bitmap_tem_tinta_no_nome_e_papel_limpo_no_vao_entre_colunas(self):
         lay = motor.layout_padrao('validade')
         img = motor.render_bitmap(lay, [dict(VALIDADE, name='XXXXXXXX')] * 3)
@@ -231,6 +263,17 @@ class ApiTests(APITestCase):
         r = self.client.put('/api/v1/stores/print-jobs/etiquetas/layouts/',
                             {'store': str(self.store.id), 'preferencias': {'validade_dias': 0}}, format='json')
         self.assertEqual(r.status_code, 400)
+
+    def test_put_em_um_modelo_do_rolo_atualiza_os_outros_do_mesmo_rolo(self):
+        lay = motor.layout_padrao('validade'); lay['etiqueta']['largura'] = 30; lay['papel']['largura'] = 100
+        r = self.client.put('/api/v1/stores/print-jobs/etiquetas/layouts/',
+                            {'store': str(self.store.id), 'modelo': 'validade', 'layout': lay}, format='json')
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.client.get('/api/v1/stores/print-jobs/etiquetas/layouts/', {'store': str(self.store.id)})
+        self.assertEqual(r.data['nutricao-qr']['layout']['etiqueta']['largura'], 30)
+        self.assertEqual(r.data['nutricao-qr']['layout']['papel']['largura'], 100)
+        self.assertFalse(r.data['nutricao-qr']['padrao'])
+        self.assertEqual(r.data['produto']['layout']['etiqueta']['largura'], 100)
 
     def test_layout_invalido_da_400_e_loja_alheia_404(self):
         r = self.client.put('/api/v1/stores/print-jobs/etiquetas/layouts/',
