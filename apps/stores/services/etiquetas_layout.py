@@ -422,15 +422,19 @@ def _desenhar_tabela(draw, e, dados):
     y += h_porc
     draw.rectangle([x0 + pad, y, x0 + w - pad, y + max(3, mm(0.8))], fill=0)   # barra grossa
     y += max(3, mm(0.8)) + 1
-    # colunas
-    c_val = int((w - 2 * pad) * 0.16)
-    x_c3 = x0 + w - pad - c_val; x_c2 = x_c3 - c_val; x_c1 = x_c2 - c_val
-    px_c = max(5, int(h_cab * 0.55))
-    texto(x_c1, y + (h_cab - px_c) // 2, '100 g', px_c, True, 'C', c_val)
-    texto(x_c2, y + (h_cab - px_c) // 2, f"{_fmt(dados.get('servingG', 100), 'g')} g", px_c, True, 'C', c_val)
-    texto(x_c3, y + (h_cab - px_c) // 2, '%VD*', px_c, True, 'C', c_val)
-    y += h_cab
+    # colunas: cabeçalho com a MESMA letra das linhas (em negrito), e largura da
+    # coluna dimensionada pelo texto mais largo — "425,5 g" não pode estourar.
     px_l = max(5, int(h_linha * 0.55))
+    px_c = px_l
+    cab = ['100 g', f"{_fmt(dados.get('servingG', 100), 'g')} g", '%VD*']
+    f_cab = _fonte(px_c, True, familia)
+    mais_largo = max(f_cab.getlength(t) for t in cab)
+    c_val = int(max((w - 2 * pad) * 0.14, mais_largo + mm(1.6)))
+    c_val = min(c_val, int((w - 2 * pad) * 0.22))
+    x_c3 = x0 + w - pad - c_val; x_c2 = x_c3 - c_val; x_c1 = x_c2 - c_val
+    for xx, t in ((x_c1, cab[0]), (x_c2, cab[1]), (x_c3, cab[2])):
+        texto(xx, y + (h_cab - px_c) // 2, t, px_c, True, 'C', c_val)
+    y += h_cab
     for rotulo, v100, vporc, pct, recuo in linhas_da_tabela(dados):
         draw.rectangle([x0 + pad, y, x0 + w - pad, y], fill=0)   # linha fina
         ty = y + (h_linha - px_l) // 2
