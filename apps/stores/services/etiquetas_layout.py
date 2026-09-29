@@ -25,7 +25,9 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 DPMM = 8  # 203 dpi
 MODELOS = ('validade', 'nutricao-qr', 'produto', 'nutricao')
-TIPOS = ('texto', 'qr', 'barras', 'linha', 'caixa', 'tabela')
+TIPOS = ('texto', 'qr', 'barras', 'linha', 'caixa', 'tabela', 'imagem')
+ROTACOES = (0, 90, 180, 270)
+TAMANHO_MAX_IMAGEM = 200_000  # bytes de base64 — logo de loja, não foto
 CAMPOS = ('name', 'manip', 'val', 'price', 'description', 'barcode', 'publicUrl', 'coluna', 'ingredients', 'allergens')
 ALINHAMENTOS = ('esquerda', 'centro', 'direita')
 MODOS_DE_MIDIA = ('gap', 'continuo', 'auto')
@@ -176,6 +178,7 @@ def validar_layout(layout) -> dict:
             'y': _num(e.get('y', 0), f'elemento {i}.y', -50, 400),
             'w': _num(e.get('w', 1), f'elemento {i}.w', 0.1, 400),
             'h': _num(e.get('h', 1), f'elemento {i}.h', 0.1, 400),
+            'bloqueado': bool(e.get('bloqueado', False)),   # só o editor usa: não deixa arrastar sem querer
         }
         if n['tipo'] == 'texto':
             n['texto'] = str(e.get('texto') or '')[:200]
@@ -192,11 +195,25 @@ def validar_layout(layout) -> dict:
             if ajuste not in AJUSTES:
                 raise LayoutInvalido(f'elemento {i}: ajuste desconhecido')
             n['ajuste'] = ajuste
+            n['inverso'] = bool(e.get('inverso', False))
+            rot = int(_num(e.get('rotacao', 0) or 0, f'elemento {i}.rotacao', 0, 270))
+            if rot not in ROTACOES:
+                raise LayoutInvalido(f'elemento {i}: rotação só 0, 90, 180 ou 270')
+            n['rotacao'] = rot
         elif n['tipo'] in ('qr', 'barras'):
             campo = e.get('campo') or ('publicUrl' if n['tipo'] == 'qr' else 'barcode')
             if campo not in CAMPOS:
                 raise LayoutInvalido(f'elemento {i}: campo desconhecido')
             n['campo'] = campo
+            if n['tipo'] == 'barras':
+                n['mostrar_numero'] = bool(e.get('mostrar_numero', True))
+        elif n['tipo'] == 'imagem':
+            imagem = str(e.get('imagem') or '')
+            if not imagem.startswith('data:image/') or ';base64,' not in imagem:
+                raise LayoutInvalido(f'elemento {i}: imagem precisa ser data:image/...;base64')
+            if len(imagem) > TAMANHO_MAX_IMAGEM:
+                raise LayoutInvalido(f'elemento {i}: imagem grande demais (máx. {TAMANHO_MAX_IMAGEM // 1000} KB)')
+            n['imagem'] = imagem
         elif n['tipo'] == 'caixa':
             n['espessura'] = _num(e.get('espessura', 0.3), f'elemento {i}.espessura', 0.1, 10)
         elif n['tipo'] == 'tabela':
@@ -227,11 +244,15 @@ def _geometria(layout):
 
 def preencher(texto: str, dados: dict) -> str:
     """'Val.: {val}' + {'val': '30/09'} → 'Val.: 30/09'. Campo desconhecido vira vazio."""
+    import datetime
     class _Vazio(dict):
         def __missing__(self, k):
             return ''
+    agora = datetime.datetime.now()
+    base = {'hoje': agora.strftime('%d/%m/%Y'), 'hora': agora.strftime('%H:%M')}
+    base.update({k: ('' if v is None else v) for k, v in (dados or {}).items()})
     try:
-        return str(texto).format_map(_Vazio({k: ('' if v is None else v) for k, v in (dados or {}).items()}))
+        return str(texto).format_map(_Vazio(base))
     except (ValueError, IndexError):
         return str(texto)
 
@@ -260,9 +281,23 @@ def _quebrar(texto, fonte, largura_px, max_linhas):
     return linhas[:max_linhas]
 
 
-def _desenhar_texto(draw, e, dados):
+def _desenhar_texto(draw, e, dados, img=None):
     conteudo = preencher(e['texto'], dados).strip()
     if not conteudo:
+        return
+    rot = int(e.get('rotacao', 0) or 0)
+    inverso = bool(e.get('inverso'))
+    if (rot or inverso) and img is not None:
+        # Desenha numa folha própria (sem rotação, sem inversão), depois vira e cola.
+        w_c, h_c = (mm(e['h']), mm(e['w'])) if rot in (90, 270) else (mm(e['w']), mm(e['h']))
+        folha = Image.new('1', (max(1, w_c), max(1, h_c)), 1)
+        e_plano = dict(e, x=0, y=0, w=e['h'] if rot in (90, 270) else e['w'], h=e['w'] if rot in (90, 270) else e['h'], rotacao=0, inverso=False)
+        _desenhar_texto(ImageDraw.Draw(folha), e_plano, dados)
+        if inverso:
+            folha = ImageOps.invert(folha.convert('L')).convert('1')
+        if rot:
+            folha = folha.rotate(rot, expand=True, fillcolor=1 if not inverso else 0)
+        img.paste(folha, (mm(e['x']), mm(e['y'])))
         return
     px = int(round(e['tamanho'] * DPMM * 0.92))
     familia = e.get('fonte', 'sans')
@@ -409,6 +444,33 @@ def _desenhar_tabela(draw, e, dados):
     texto(x0 + pad, y + (h_rod - px_r) // 2, '*Percentual de valores diários fornecidos pela porção.', px_r)
 
 
+@lru_cache(maxsize=32)
+def _imagem_tramada(imagem_b64: str, w_px: int, h_px: int):
+    """PNG/JPG em base64 → 1 bit com meio-tom (Floyd–Steinberg), no tamanho da caixa."""
+    import base64, io
+    try:
+        bruto = base64.b64decode(imagem_b64.split(';base64,', 1)[1])
+        im = Image.open(io.BytesIO(bruto))
+        if im.mode in ('RGBA', 'LA', 'P'):
+            fundo = Image.new('RGBA', im.size, (255, 255, 255, 255))
+            fundo.paste(im.convert('RGBA'), mask=im.convert('RGBA').split()[-1])
+            im = fundo
+        im = im.convert('L')
+        im.thumbnail((max(1, w_px), max(1, h_px)))
+        return im.convert('1')
+    except Exception:  # noqa: BLE001 — imagem corrompida não derruba a etiqueta
+        return None
+
+
+def _desenhar_imagem(img, e):
+    tramada = _imagem_tramada(e['imagem'], mm(e['w']), mm(e['h']))
+    if tramada is None:
+        return
+    # centraliza dentro da caixa
+    dx = (mm(e['w']) - tramada.width) // 2; dy = (mm(e['h']) - tramada.height) // 2
+    img.paste(tramada, (mm(e['x']) + dx, mm(e['y']) + dy))
+
+
 def _marcador_qr(draw, e):
     """Prévia: quadro com os 3 olhos do QR, no lugar e tamanho do real."""
     x, y, lado = mm(e['x']), mm(e['y']), mm(min(e['w'], e['h']))
@@ -437,7 +499,9 @@ def _desenhar_etiqueta(lay, dados, elementos, marcadores):
     draw = ImageDraw.Draw(img)
     for e in elementos:
         if e['tipo'] == 'texto':
-            _desenhar_texto(draw, e, dados)
+            _desenhar_texto(draw, e, dados, img)
+        elif e['tipo'] == 'imagem':
+            _desenhar_imagem(img, e)
         elif e['tipo'] == 'linha':
             draw.rectangle([mm(e['x']), mm(e['y']), mm(e['x'] + e['w']) - 1, max(mm(e['y']), mm(e['y'] + e['h']) - 1)], fill=0)
         elif e['tipo'] == 'tabela':
@@ -564,11 +628,13 @@ def _nativos(lay, margem, col, e, dados) -> str:
         escala = max(2, min(10, lado // _modulos_qr(len(valor))))
         return f'^FO{x},{y}^BQN,2,{escala}^FDQA,{valor}^FS'
     h = mm(e['h']); w = mm(e['w'])
+    numero = 'Y' if e.get('mostrar_numero', True) else 'N'
+    altura_barras = max(20, h - 24) if numero == 'Y' else max(20, h - 4)
     if len(valor) == 13 and valor.isdigit():
         modulo = max(1, min(4, w // 113))  # EAN-13 = 95 módulos + texto
         largura_real = modulo * 95
-        return f'^FO{x + max(0, (w - largura_real) // 2)},{y}^BY{modulo}^BEN,{max(20, h - 24)},Y,N^FD{valor}^FS'
-    return f'^FO{x},{y}^BY2^BCN,{max(20, h - 24)},Y,N,N^FD{valor}^FS'
+        return f'^FO{x + max(0, (w - largura_real) // 2)},{y}^BY{modulo}^BEN,{altura_barras},{numero},N^FD{valor}^FS'
+    return f'^FO{x},{y}^BY2^BCN,{altura_barras},{numero},N,N^FD{valor}^FS'
 
 
 def render_zpl(layout, etiquetas, calibracao=None) -> str:

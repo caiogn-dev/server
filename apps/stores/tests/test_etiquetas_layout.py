@@ -169,6 +169,56 @@ class RenderBitmapTests(APITestCase):
         self.assertLessEqual(e['x'] + e['w'], 30.0)                          # puxado para dentro
         self.assertNotIn('produto', resultado)                                # outro rolo: intocado
 
+    def test_texto_invertido_rotacionado_e_datas_dinamicas(self):
+        """O que todo app de etiqueta tem: texto branco em fundo preto (PROMOÇÃO),
+        texto girado 90° para etiqueta estreita, e {hoje}/{hora} preenchidos na impressão."""
+        lay = motor.layout_padrao('validade')
+        lay['elementos'] = [
+            {'id': 'promo', 'tipo': 'texto', 'x': 1, 'y': 1, 'w': 20, 'h': 5, 'texto': 'PROMOÇÃO', 'tamanho': 3, 'negrito': True, 'inverso': True},
+            {'id': 'lado', 'tipo': 'texto', 'x': 28, 'y': 1, 'w': 4, 'h': 20, 'texto': 'LOTE 12', 'tamanho': 2.5, 'rotacao': 90},
+            {'id': 'data', 'tipo': 'texto', 'x': 1, 'y': 8, 'w': 20, 'h': 4, 'texto': 'Impresso {hoje} {hora}', 'tamanho': 2},
+        ]
+        v = motor.validar_layout(lay)
+        self.assertTrue(v['elementos'][0]['inverso']); self.assertEqual(v['elementos'][1]['rotacao'], 90)
+        img = motor.render_bitmap(v, [VALIDADE])
+        # invertido: a caixa inteira fica preta (cantos com tinta)
+        self.assertTrue(motor._tem_tinta(img, 2 + 1.2, 1.2, 2 + 1.8, 1.8))
+        self.assertTrue(motor._tem_tinta(img, 2 + 20.2, 5.2, 2 + 20.8, 5.8))
+        # rotacionado: tinta na coluna estreita ao longo da altura
+        self.assertTrue(motor._tem_tinta(img, 2 + 28, 3, 2 + 32, 18))
+        import datetime
+        hoje = datetime.date.today().strftime('%d/%m/%Y')
+        self.assertEqual(motor.preencher('Impresso {hoje}', {}), f'Impresso {hoje}')
+        with self.assertRaises(motor.LayoutInvalido):
+            motor.validar_layout(dict(lay, elementos=[dict(lay['elementos'][1], rotacao=45)]))
+
+    def test_imagem_no_layout_vira_bitmap_tramado(self):
+        """Logo da loja: PNG em base64 dentro do layout, desenhado com meio-tom."""
+        import base64, io
+        from PIL import Image as PILImage
+        im = PILImage.new('L', (40, 40), 255)
+        for x in range(40):
+            for y in range(40):
+                if x < 20:
+                    im.putpixel((x, y), 0)          # metade esquerda preta
+        buf = io.BytesIO(); im.save(buf, format='PNG')
+        b64 = 'data:image/png;base64,' + base64.b64encode(buf.getvalue()).decode()
+        lay = motor.layout_padrao('validade')
+        lay['elementos'] = [{'id': 'logo', 'tipo': 'imagem', 'x': 2, 'y': 2, 'w': 10, 'h': 10, 'imagem': b64}]
+        v = motor.validar_layout(lay)
+        img = motor.render_bitmap(v, [VALIDADE])
+        self.assertTrue(motor._tem_tinta(img, 2 + 2.5, 4, 2 + 6, 8))       # lado preto
+        self.assertFalse(motor._tem_tinta(img, 2 + 8, 4, 2 + 11.5, 8))     # lado branco
+        with self.assertRaises(motor.LayoutInvalido):
+            motor.validar_layout(dict(lay, elementos=[{'id': 'x', 'tipo': 'imagem', 'x': 0, 'y': 0, 'w': 5, 'h': 5, 'imagem': 'data:image/png;base64,' + 'A' * 400_000}]))
+
+    def test_barras_sem_numero(self):
+        lay = motor.layout_padrao('produto')
+        barras = next(e for e in lay['elementos'] if e['tipo'] == 'barras')
+        barras['mostrar_numero'] = False
+        zpl = motor.render_zpl(lay, [{'name': 'x', 'barcode': '7891234567895'}])
+        self.assertIn('^BEN,', zpl); self.assertRegex(zpl, r'\^BEN,\d+,N,N')
+
     def test_bitmap_tem_tinta_no_nome_e_papel_limpo_no_vao_entre_colunas(self):
         lay = motor.layout_padrao('validade')
         img = motor.render_bitmap(lay, [dict(VALIDADE, name='XXXXXXXX')] * 3)
