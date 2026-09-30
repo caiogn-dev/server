@@ -5,8 +5,10 @@ declarada. O cardapio e o painel recebem esta lista por API; nenhum dos dois
 tem o direito de repetir um valor, um rotulo ou uma logo. Bandeira nova entra
 aqui e aparece nos dois na hora, sem deploy de frontend.
 
-A Alelo esta fora porque o Pagar.me encerrou novas integracoes com ela (fim do
-contrato Cielo/Alelo). Ela sai por ausencia — nao ha `if` de excecao nenhum.
+SOBRE O `trilho`: e o gateway que sabe cobrar aquela bandeira. O Pagar.me
+encerrou novas integracoes com a Alelo (fim do contrato Cielo/Alelo), entao ela
+entra pelo trilho da Cielo (API E-commerce). Quem roteia e o `registry`, por
+este campo — nao ha `if brand == 'alelo'` em lugar nenhum.
 
 SOBRE O `value` DA PLUXEE: a Sodexo Beneficios virou Pluxee em 2024, e o
 cartao que o cliente tem hoje diz "Pluxee". Mas o `value` continua 'sodexo'
@@ -20,9 +22,10 @@ sem importar Django — e os testes rodam sem settings.
 """
 
 CATALOGO = (
-    {'value': 'vr', 'label': 'VR Benefícios', 'logo': 'voucher/vr.svg'},
-    {'value': 'sodexo', 'label': 'Pluxee', 'logo': 'voucher/pluxee.svg'},
-    {'value': 'ticket', 'label': 'Ticket', 'logo': 'voucher/ticket.svg'},
+    {'value': 'vr', 'label': 'VR Benefícios', 'logo': 'voucher/vr.svg', 'trilho': 'pagarme'},
+    {'value': 'sodexo', 'label': 'Pluxee', 'logo': 'voucher/pluxee.svg', 'trilho': 'pagarme'},
+    {'value': 'ticket', 'label': 'Ticket', 'logo': 'voucher/ticket.svg', 'trilho': 'pagarme'},
+    {'value': 'alelo', 'label': 'Alelo', 'logo': 'voucher/alelo.svg', 'trilho': 'cielo'},
 )
 
 
@@ -44,9 +47,20 @@ def valores_manuais():
     return tuple(b['value'] for b in CATALOGO_MANUAL)
 
 
-def valores():
-    """Só os códigos, na ordem do catálogo."""
-    return tuple(b['value'] for b in CATALOGO)
+def valores(trilho=None):
+    """Só os códigos, na ordem do catálogo. Com `trilho`, só os daquele gateway."""
+    return tuple(
+        b['value'] for b in CATALOGO
+        if trilho is None or b.get('trilho') == trilho
+    )
+
+
+def trilho(valor):
+    """Gateway que cobra a bandeira, ou '' se ela não for integrada."""
+    for b in CATALOGO:
+        if b['value'] == valor:
+            return b.get('trilho', '')
+    return ''
 
 
 def rotulo(valor):

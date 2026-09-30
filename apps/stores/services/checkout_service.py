@@ -1504,9 +1504,13 @@ class CheckoutService:
         if order is None:
             return {'success': False, 'error': 'Pagamento com vale exige um pedido.'}
 
-        gateway = registry.gateway_de_voucher(order.store)
+        # O gateway sai da BANDEIRA: VR vai pelo Pagar.me, Alelo pela Cielo.
+        bandeira = str(payment_data.get('brand') or '').strip().lower()
+        gateway = registry.gateway_de_voucher(order.store, bandeira)
         if gateway is None:
-            return {'success': False, 'error': 'Esta loja não aceita pagamento com vale.'}
+            if registry.gateway_de_voucher(order.store) is None:
+                return {'success': False, 'error': 'Esta loja não aceita pagamento com vale.'}
+            return {'success': False, 'error': 'Esta loja não aceita essa bandeira de vale.'}
 
         documento = ''.join(ch for ch in str(payment_data.get('holder_document') or '') if ch.isdigit())
         if len(documento) not in (11, 14):
@@ -1539,7 +1543,7 @@ class CheckoutService:
 
         dados = DadosDoVoucher(
             card_token=token,
-            brand=str(payment_data.get('brand') or '').strip().lower(),
+            brand=bandeira,
             holder_name=str(payment_data.get('holder_name') or ''),
             holder_document=documento,
         )

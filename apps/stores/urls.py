@@ -19,7 +19,7 @@ from .api.views import (
     StoreCartViewSet, StoreCheckoutView, StoreDeliveryFeeView,
     StoreSharedLocationView,
     StoreCouponValidateView, StoreCatalogView, StorePublicView,
-    StoreAppConfigView, StoreCustomerProfileView, TemplateCatalogView,
+    StoreAppConfigView, CieloSopTokenView, StoreCustomerProfileView, TemplateCatalogView,
     StoreComboViewSet, StoreProductTypeViewSet,
     # Coupon and Delivery Zone views
     StoreCouponViewSet, StoreDeliveryZoneViewSet,
@@ -279,6 +279,7 @@ store_frontend_patterns = [
     path('cash/movement/', CashMovementView.as_view(), name='store-cash-movement'),
     path('cash/close/', CashCloseView.as_view(), name='store-cash-close'),
     path('app-config/', StoreAppConfigView.as_view(), name='store-app-config'),
+    path('voucher/cielo/sop-token/', CieloSopTokenView.as_view(), name='store-cielo-sop-token'),
     path('catalog/', StoreCatalogView.as_view(), name='store-catalog'),
     path('customer/profile/', StoreCustomerProfileView.as_view(), name='store-customer-profile'),
     path('cart/', StoreCartViewSet.as_view({'get': 'get_cart_by_store'}), name='store-cart'),

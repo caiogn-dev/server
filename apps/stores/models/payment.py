@@ -30,6 +30,7 @@ class StorePaymentGateway(BaseModel):
         PAGSEGURO = 'pagseguro', 'PagSeguro'
         PIX = 'pix', 'PIX'
         PAGARME = 'pagarme', 'Pagar.me (Stone)'
+        CIELO = 'cielo', 'Cielo'
         CUSTOM = 'custom', 'Custom'
 
     # Relationship

@@ -113,10 +113,10 @@ def build_voucher_payload(order, *, card_token, brand, holder_name,
     igual à soma dos itens. Não existe caminho aqui que gere pagamento parcial.
     """
     bandeira = (brand or '').strip().lower()
-    if bandeira not in bandeiras.valores():
+    if bandeira not in bandeiras.valores('pagarme'):
         raise ValueError(
             f'Bandeira de voucher não aceita: {bandeira!r}. '
-            f'Aceitas: {", ".join(bandeiras.valores())}.'
+            f'Aceitas: {", ".join(bandeiras.valores("pagarme"))}.'
         )
 
     items = build_items(order, total=total)

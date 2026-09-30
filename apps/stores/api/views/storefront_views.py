@@ -191,15 +191,33 @@ def build_store_payment_config(store):
     from apps.stores.services import pagarme_orders
     from apps.stores.services.voucher import bandeiras as catalogo
 
-    voucher_gateway = voucher_registry.gateway_de_voucher(store)
-    valores = voucher_registry.bandeiras_da_loja(store)
-    # Rotulo vem do catalogo, aqui. O cardapio recebe pronto e nao repete nada.
+    # Um bloco por trilho: o cardápio tokeniza o cartão de um jeito no
+    # Pagar.me e de outro na Cielo, então precisa saber qual bandeira é de quem.
+    from apps.stores.services import cielo_ecommerce
+    from apps.stores.services.voucher import logos as catalogo_logos
+
+    por_tipo = {
+        gateway.gateway_type: (gateway, marcas)
+        for gateway, marcas in reversed(voucher_registry.bandeiras_por_gateway(store))
+    }
+    voucher_gateway, valores = por_tipo.get(
+        StorePaymentGateway.GatewayType.PAGARME.value, (None, []))
     # Rotulo E logo vem do catalogo, aqui. O cardapio recebe pronto e nao
     # repete nada — nem o nome da bandeira, nem o endereco da imagem.
-    from apps.stores.services.voucher import logos as catalogo_logos
     marcas = catalogo_logos.marcas_da_loja(valores)
     voucher_public_key = (voucher_gateway.public_key if voucher_gateway else '') or ''
-    if voucher_public_key and marcas:
+    if not voucher_public_key:
+        marcas = []
+
+    cielo_gateway, valores_cielo = por_tipo.get(
+        StorePaymentGateway.GatewayType.CIELO.value, (None, []))
+    # Sem a credencial do Silent Order Post não há como abrir o formulário do
+    # cartão: anunciar Alelo seria oferecer um caminho que morre no clique.
+    if cielo_gateway is not None and not cielo_ecommerce.sop_configurado(cielo_gateway):
+        valores_cielo = []
+    marcas_cielo = catalogo_logos.marcas_da_loja(valores_cielo)
+
+    if marcas or marcas_cielo:
         enabled_methods.append('voucher')
 
     # Bandeiras SEM integracao: nao dependem de gateway nem de chave, porque o
@@ -231,6 +249,13 @@ def build_store_payment_config(store):
             # URL da API do Pagar.me servida pelo backend: o navegador nao deve
             # carregar endereco de gateway fixo no bundle.
             'tokens_url': pagarme_orders.TOKENS_URL,
+        },
+        # Alelo. O cartão vai do navegador direto para a Cielo (Silent Order
+        # Post); o token de sessão sai de `voucher/cielo/sop-token/`.
+        'cielo': {
+            'brands': marcas_cielo,
+            'is_sandbox': bool(cielo_gateway.is_sandbox) if cielo_gateway else True,
+            'script_url': cielo_ecommerce.SOP_SCRIPT_URL,
         },
         'vale_por_link': {
             'brands': marcas_manuais,
@@ -584,6 +609,52 @@ class StoreAppConfigView(APIView):
                 'banner_url': store.get_banner_url(),
             },
         })
+
+
+class CieloSopTokenView(APIView):
+    """Sessão do formulário seguro do cartão Alelo (Silent Order Post).
+
+    O cardápio pede um token aqui, entrega ao script da Cielo e o cartão vai do
+    navegador DIRETO para a Cielo. O número nunca encosta neste servidor — é o
+    que mantém o Cardapidex fora do escopo PCI. O token vale para um cartão só.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [CheckoutThrottle]
+
+    def post(self, request, store_slug):
+        from apps.stores.services import cielo_ecommerce
+        from apps.stores.services.voucher import registry as voucher_registry
+
+        store = get_active_store(store_slug)
+        gateway = next(
+            (g for g, _marcas in voucher_registry.bandeiras_por_gateway(store)
+             if g.gateway_type == StorePaymentGateway.GatewayType.CIELO.value),
+            None,
+        )
+        if gateway is None:
+            return Response(
+                {'detail': 'Esta loja não aceita Alelo pelo site.'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            token = cielo_ecommerce.token_do_sop(gateway)
+        except cielo_ecommerce.SopIndisponivel as erro:
+            logger.error('[cielo] SOP indisponível para a loja %s: %s', store.slug, erro)
+            return Response(
+                {'detail': 'Não foi possível abrir o pagamento com Alelo agora. '
+                           'Tente de novo ou pague no PIX.'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        resposta = Response({
+            'access_token': token,
+            'environment': 'sandbox' if gateway.is_sandbox else 'production',
+            'script_url': cielo_ecommerce.SOP_SCRIPT_URL,
+            'provider': cielo_ecommerce.SOP_PROVIDER,
+        })
+        # Token de uso único: nenhum cache (nem o do Cloudflare) pode guardá-lo.
+        resposta['Cache-Control'] = 'no-store'
+        return resposta
 
 
 class StoreCustomerProfileView(APIView):

@@ -17,6 +17,8 @@ FALHA_DE_REDE = (
 class PagarmeVoucherProvider(VoucherProvider):
     """`__init__` e `bandeiras()` vêm de `VoucherProvider` (base.py)."""
 
+    TRILHO = 'pagarme'
+
     def cobrar(self, order, dados: DadosDoVoucher, total=None) -> ResultadoDaCobranca:
         bandeira = (dados.brand or '').strip().lower()
         if bandeira not in self.bandeiras():

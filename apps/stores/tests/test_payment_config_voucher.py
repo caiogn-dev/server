@@ -55,7 +55,12 @@ class PaymentConfigVoucherTests(APITestCase):
         r = self.client.get('/api/v1/stores/payments/gateways/bandeiras-de-vale/')
         self.assertEqual(r.status_code, 200)
         self.assertEqual(
-            [b['value'] for b in r.data['brands']], ['vr', 'sodexo', 'ticket'],
+            [b['value'] for b in r.data['brands']], ['vr', 'sodexo', 'ticket', 'alelo'],
+        )
+        # O painel poe cada toggle na conexao que sabe cobrar aquela bandeira.
+        self.assertEqual(
+            {b['value']: b['gateway'] for b in r.data['brands']},
+            {'vr': 'pagarme', 'sodexo': 'pagarme', 'ticket': 'pagarme', 'alelo': 'cielo'},
         )
         self.assertTrue(all(b['label'] for b in r.data['brands']))
         self.assertTrue(all('logo' in b for b in r.data['brands']))

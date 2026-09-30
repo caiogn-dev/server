@@ -40,6 +40,11 @@ class VoucherProvider(ABC):
     para que a implementação tenha lembrado de escrevê-lo.
     """
 
+    #: Trilho do catálogo que este provedor cobra ('pagarme', 'cielo'...).
+    #: Com ele, `bandeiras()` descarta marca que a loja marcou mas que ESTE
+    #: gateway não sabe cobrar — Alelo numa conexão Pagar.me morreria no clique.
+    TRILHO = None
+
     def __init__(self, gateway):
         self.gateway = gateway
 
@@ -47,7 +52,12 @@ class VoucherProvider(ABC):
         """Marcas que ESTA loja habilitou, em minúsculas."""
         config = getattr(self.gateway, 'configuration', None) or {}
         marcas = config.get('voucher_brands') or []
-        return [str(m).strip().lower() for m in marcas if str(m).strip()]
+        marcas = [str(m).strip().lower() for m in marcas if str(m).strip()]
+        if self.TRILHO:
+            from . import bandeiras as catalogo
+            aceitas = set(catalogo.valores(self.TRILHO))
+            marcas = [m for m in marcas if m in aceitas]
+        return marcas
 
     @abstractmethod
     def cobrar(self, order, dados: DadosDoVoucher, total=None) -> ResultadoDaCobranca:

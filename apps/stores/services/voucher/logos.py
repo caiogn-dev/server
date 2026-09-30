@@ -52,6 +52,9 @@ def _com_logo(valor, rotulo=None):
         'value': valor,
         'label': rotulo if rotulo is not None else bandeiras.rotulo(valor),
         'logo': url_da_logo(valor),
+        # Qual gateway cobra: o painel mostra o toggle na conexão certa e o
+        # cardápio escolhe o formulário de cartão certo. '' = cobrada por link.
+        'gateway': bandeiras.trilho(valor),
     }
 
 

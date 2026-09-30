@@ -115,6 +115,7 @@ def formas_de_pagamento(store) -> str:
     metodos = config.get('enabled_methods') or []
     partes = [_NOMES_DE_PAGAMENTO[m] for m in metodos if m in _NOMES_DE_PAGAMENTO]
     marcas = [b.get('label') for b in (config.get('pagarme') or {}).get('brands') or [] if b.get('label')]
+    marcas += [b.get('label') for b in (config.get('cielo') or {}).get('brands') or [] if b.get('label')]
     marcas += [b.get('label') for b in (config.get('vale_por_link') or {}).get('brands') or [] if b.get('label')]
     if marcas:
         vale = "vale-refeição/alimentação (" + ", ".join(dict.fromkeys(marcas)) + ")"
