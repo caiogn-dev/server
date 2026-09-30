@@ -140,3 +140,32 @@ def enviar_nota_por_email(doc: FiscalDocument, email: str = '') -> FiscalDocumen
         salvo.email = para
         salvo.save(update_fields=['email', 'updated_at'])
     return doc
+
+
+def guardar_envio_para_depois(doc: FiscalDocument) -> FiscalDocument:
+    """A SEFAZ ainda está processando: guarda o endereço e deixa o envio para
+    quando a consulta trouxer a autorização. `email_enviado_em` vazio com
+    `email_enviado_para` preenchido é exatamente esse "falta mandar"."""
+    salvo = _destinatario_salvo(doc)
+    if salvo is None or not salvo.email:
+        return doc
+    doc.email_enviado_para = salvo.email
+    doc.email_enviado_em = None
+    doc.save(update_fields=['email_enviado_para', 'email_enviado_em', 'updated_at'])
+    return doc
+
+
+def enviar_se_ficou_pendente(doc: FiscalDocument) -> FiscalDocument:
+    """Nota que acabou de ser autorizada e tinha envio guardado: manda agora.
+    Falha aqui não derruba a lista — fica registrada e o operador reenvia."""
+    if (
+        doc.status != FiscalDocument.Status.AUTHORIZED
+        or not doc.email_enviado_para
+        or doc.email_enviado_em is not None
+    ):
+        return doc
+    try:
+        return enviar_nota_por_email(doc, doc.email_enviado_para)
+    except (EnvioInvalido, EnvioFalhou):
+        logger.warning('nota %s: envio guardado não saiu', doc.id)
+        return doc

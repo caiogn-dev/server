@@ -458,3 +458,53 @@ class EmitirEEnviarTests(APITestCase):
         self.assertEqual(resp.status_code, 201, resp.content)
         self.assertEqual(resp.data['status'], 'authorized')
         self.assertTrue(resp.data['email_erro'])
+
+
+class EnvioQuandoASefazDemoraTests(APITestCase):
+    """30/set, nota real do Sindicato: a NF-e voltou "processando" e o e-mail
+    pedido na emissão nunca saiu — só sai nota autorizada. O pedido de envio
+    fica guardado e dispara quando a consulta traz a autorização."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username='dono-fila', email='fila@t.com', password='x')
+        self.store = _loja('loja-fila', self.owner)
+        self.order = _pedido(self.store)
+        self.client.force_authenticate(self.owner)
+        self.base = f'/api/v1/stores/{self.store.slug}/fiscal'
+
+    @patch('apps.fiscal.envio.requests.get')
+    @patch('apps.fiscal.envio.EmailMarketingService.send_single_email', return_value={'success': True})
+    @patch('apps.fiscal.services.FocusProvider.consult')
+    @patch('apps.fiscal.services.FocusProvider.emit_nfe')
+    def test_email_sai_quando_a_nota_processando_e_autorizada(self, mock_emit, mock_consult, mock_envio, mock_get):
+        mock_get.return_value = type('R', (), {'status_code': 200, 'content': b'x'})()
+        mock_emit.return_value = EmitResult(status='pending')
+        resp = self.client.post(f'{self.base}/notas/emitir/', {
+            'order_id': str(self.order.id), 'modelo': '55', 'enviar_email': True,
+            'destinatario': {**DESTINATARIO, 'email': 'financeiro@sindicato.org'},
+        }, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        mock_envio.assert_not_called()
+        self.assertIsNone(resp.data['email_enviado_em'])
+
+        mock_consult.return_value = EmitResult(status='authorized', chave_acesso='5' * 44, numero='3', serie='1')
+        lista = self.client.get(f'{self.base}/notas/')
+        self.assertEqual(mock_envio.call_count, 1)
+        self.assertEqual(mock_envio.call_args.kwargs['to_email'], 'financeiro@sindicato.org')
+        self.assertIsNotNone(lista.data['notas'][0]['email_enviado_em'])
+
+        self.client.get(f'{self.base}/notas/')
+        self.assertEqual(mock_envio.call_count, 1)
+
+    @patch('apps.fiscal.envio.EmailMarketingService.send_single_email')
+    @patch('apps.fiscal.services.FocusProvider.consult')
+    @patch('apps.fiscal.services.FocusProvider.emit_nfe')
+    def test_processando_que_vira_rejeitada_nao_manda(self, mock_emit, mock_consult, mock_envio):
+        mock_emit.return_value = EmitResult(status='pending')
+        self.client.post(f'{self.base}/notas/emitir/', {
+            'order_id': str(self.order.id), 'modelo': '55', 'enviar_email': True,
+            'destinatario': {**DESTINATARIO, 'email': 'financeiro@sindicato.org'},
+        }, format='json')
+        mock_consult.return_value = EmitResult(status='rejected', error_message='x')
+        self.client.get(f'{self.base}/notas/')
+        mock_envio.assert_not_called()

@@ -18,7 +18,10 @@ from apps.stores.models import Store, StoreOrder
 
 from . import destinatarios
 from .consulta_cnpj import ConsultaIndisponivel, consultar_cnpj
-from .envio import EnvioFalhou, EnvioInvalido, email_sugerido, enviar_nota_por_email
+from .envio import (
+    EnvioFalhou, EnvioInvalido, email_sugerido, enviar_nota_por_email, enviar_se_ficou_pendente,
+    guardar_envio_para_depois,
+)
 from .documents import classificar, cnpj_valido, limpar
 from .models import DestinatarioFiscal, FiscalDocument
 from .providers.base import FiscalNotConfigured
@@ -159,7 +162,7 @@ class NotasView(APIView):
         consultas = 0
         for indice, doc in enumerate(lista):
             if doc.status == FiscalDocument.Status.PENDING and consultas < MAXIMO_DE_CONSULTAS:
-                lista[indice] = refresh_fiscal_document(doc)
+                lista[indice] = enviar_se_ficou_pendente(refresh_fiscal_document(doc))
                 consultas += 1
 
         emails = _emails_dos_destinatarios(store, lista)
@@ -211,6 +214,8 @@ class EmitirNotaView(APIView):
                 doc = enviar_nota_por_email(doc)
             except (EnvioInvalido, EnvioFalhou) as exc:
                 email_erro = str(exc)
+        elif request.data.get('enviar_email') and doc.status == FiscalDocument.Status.PENDING:
+            doc = guardar_envio_para_depois(doc)
 
         return Response(
             {**nota_como_dict(doc), 'email_erro': email_erro},
