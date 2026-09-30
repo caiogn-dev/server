@@ -25,7 +25,7 @@ CATALOGO = (
     {'value': 'vr', 'label': 'VR Benefícios', 'logo': 'voucher/vr.svg', 'trilho': 'pagarme'},
     {'value': 'sodexo', 'label': 'Pluxee', 'logo': 'voucher/pluxee.svg', 'trilho': 'pagarme'},
     {'value': 'ticket', 'label': 'Ticket', 'logo': 'voucher/ticket.svg', 'trilho': 'pagarme'},
-    {'value': 'alelo', 'label': 'Alelo', 'logo': 'voucher/alelo.svg', 'trilho': 'cielo'},
+    {'value': 'alelo', 'label': 'Alelo', 'logo': 'voucher/alelo.png', 'trilho': 'cielo'},
 )
 
 
