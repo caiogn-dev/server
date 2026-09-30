@@ -63,6 +63,46 @@ class StorePaymentGatewaySerializer(serializers.ModelSerializer):
             'public_key': {'required': False, 'allow_blank': True},
         }
 
+    def validate(self, attrs):
+        """Credencial da Cielo no formato certo, ou erro no campo.
+
+        Um ponto final colado no Merchant ID (30/09) passou calado, e a Cielo
+        respondeu 500 no checkout sem dizer o motivo. Espaço em volta é
+        limpo; qualquer outro caractere a mais é recusado aqui, na tela.
+        """
+        attrs = super().validate(attrs)
+        tipo = attrs.get('gateway_type') or getattr(self.instance, 'gateway_type', '')
+        if tipo != StorePaymentGateway.GatewayType.CIELO:
+            return attrs
+
+        from apps.stores.services import cielo_ecommerce
+        erros = {}
+        if 'public_key' in attrs:
+            attrs['public_key'] = (attrs['public_key'] or '').strip()
+            if attrs['public_key'] and not cielo_ecommerce.GUID.match(attrs['public_key']):
+                erros['public_key'] = (
+                    'Merchant ID inválido: são 36 caracteres no formato '
+                    'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.'
+                )
+        if attrs.get('api_key'):
+            attrs['api_key'] = attrs['api_key'].strip()
+            if not cielo_ecommerce.MERCHANT_KEY.match(attrs['api_key']):
+                erros['api_key'] = 'Merchant Key inválida: são 40 letras e números.'
+        if attrs.get('api_secret'):
+            attrs['api_secret'] = attrs['api_secret'].strip()
+        config = attrs.get('configuration')
+        if isinstance(config, dict) and 'sop_client_id' in config:
+            client_id = str(config.get('sop_client_id') or '').strip()
+            attrs['configuration'] = {**config, 'sop_client_id': client_id}
+            if client_id and not cielo_ecommerce.GUID.match(client_id):
+                erros['configuration'] = (
+                    'Client ID do Silent Order Post inválido: são 36 caracteres '
+                    'no formato xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.'
+                )
+        if erros:
+            raise serializers.ValidationError(erros)
+        return attrs
+
     def update(self, instance, validated_data):
         # Campo de segredo em branco = "não mexi nisso". Sem esta guarda, editar
         # o nome do gateway apagaria a credencial e derrubaria o checkout.

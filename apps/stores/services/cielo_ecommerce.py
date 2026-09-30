@@ -52,6 +52,13 @@ EM_VOO = frozenset({0, 1, 12})
 DEVOLVIDO = frozenset({10, 11})
 
 
+#: Merchant ID e Client ID do SOP são GUIDs. Um ponto final colado na cópia
+#: (30/09) fazia a Cielo responder 500 sem dizer o motivo.
+GUID = re.compile(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$')
+#: Merchant Key: 40 caracteres alfanuméricos.
+MERCHANT_KEY = re.compile(r'^[A-Za-z0-9]{40}$')
+
+
 def urls(sandbox: bool):
     """(host transacional, host de consulta)."""
     return _HOSTS[bool(sandbox)]
@@ -208,6 +215,15 @@ def cancelar(merchant_id, merchant_key, payment_id, valor, *, sandbox, timeout=2
 
 # ── Silent Order Post ────────────────────────────────────────────────────────
 
+def _trecho(r, limite=300):
+    """O corpo da resposta, curto, para o log. Só "respondeu 500" (30/09) não
+    dizia nada; o corpo costuma trazer o motivo."""
+    try:
+        return str(r.text or '')[:limite] or '(corpo vazio)'
+    except Exception:
+        return '(corpo ilegível)'
+
+
 class SopIndisponivel(Exception):
     """Não deu para abrir o formulário seguro do cartão. O checkout mostra
     "pague de outro jeito" em vez de um 500."""
@@ -245,7 +261,7 @@ def _bearer_do_sop(gateway):
     status, corpo = _json(r)
     token = (corpo or {}).get('access_token') if isinstance(corpo, dict) else None
     if status not in (200, 201) or not token:
-        raise SopIndisponivel(f'OAuth do SOP respondeu {status}.')
+        raise SopIndisponivel(f'OAuth do SOP respondeu {status}: {_trecho(r)}')
     # Margem de 60 s: não entregar ao navegador um bearer que morre no caminho.
     vida = max(int(corpo.get('expires_in') or 0) - 60, 0)
     if vida:
@@ -272,5 +288,5 @@ def token_do_sop(gateway) -> str:
     status, corpo = _json(r)
     token = (corpo or {}).get('AccessToken') if isinstance(corpo, dict) else None
     if status not in (200, 201) or not token:
-        raise SopIndisponivel(f'AccessToken do SOP respondeu {status}.')
+        raise SopIndisponivel(f'AccessToken do SOP respondeu {status}: {_trecho(r)}')
     return token
