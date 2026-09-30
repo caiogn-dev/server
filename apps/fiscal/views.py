@@ -18,6 +18,7 @@ from apps.stores.models import Store, StoreOrder
 
 from . import destinatarios
 from .consulta_cnpj import ConsultaIndisponivel, consultar_cnpj
+from .envio import EnvioFalhou, EnvioInvalido, email_sugerido, enviar_nota_por_email
 from .documents import classificar, cnpj_valido, limpar
 from .models import DestinatarioFiscal, FiscalDocument
 from .providers.base import FiscalNotConfigured
@@ -68,8 +69,23 @@ def _destinatario_do_pedido(order) -> dict | None:
     return None
 
 
-def nota_como_dict(doc: FiscalDocument) -> dict:
+def _emails_dos_destinatarios(store, docs) -> dict:
+    """documento → e-mail do cadastro, numa consulta só para a lista inteira."""
+    documentos = {limpar(documento_do_consumidor(d.order)) for d in docs} - {''}
+    if not documentos:
+        return {}
+    return dict(
+        DestinatarioFiscal.objects.filter(store=store, documento__in=documentos)
+        .values_list('documento', 'email')
+    )
+
+
+def nota_como_dict(doc: FiscalDocument, emails: dict | None = None) -> dict:
     order = doc.order
+    if emails is None:
+        sugerido = email_sugerido(doc)
+    else:
+        sugerido = emails.get(limpar(documento_do_consumidor(order)), '')
     return {
         'id': str(doc.id),
         'status': doc.status,
@@ -84,6 +100,9 @@ def nota_como_dict(doc: FiscalDocument) -> dict:
         'xml_url': doc.xml_url,
         'error_message': doc.error_message,
         'created_at': doc.created_at,
+        'email_enviado_para': doc.email_enviado_para,
+        'email_enviado_em': doc.email_enviado_em,
+        'email_sugerido': sugerido,
         'pedido': {
             'id': str(order.id),
             'order_number': order.order_number,
@@ -143,11 +162,12 @@ class NotasView(APIView):
                 lista[indice] = refresh_fiscal_document(doc)
                 consultas += 1
 
+        emails = _emails_dos_destinatarios(store, lista)
         return Response({
             'habilitado': bool(get_fiscal_config(store).get('habilitado')),
             'ambiente': ambiente,
             'resumo': resumo,
-            'notas': [nota_como_dict(doc) for doc in lista],
+            'notas': [nota_como_dict(doc, emails) for doc in lista],
         })
 
 
@@ -183,8 +203,17 @@ class EmitirNotaView(APIView):
             logger.warning('emitir nota: recusada pedido=%s loja=%s: %s', order.id, store.id, exc)
             return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # A nota já existe na SEFAZ: e-mail que falha não a desfaz. O erro vai
+        # na resposta e o operador reenvia pela lista.
+        email_erro = ''
+        if request.data.get('enviar_email') and doc.status == FiscalDocument.Status.AUTHORIZED:
+            try:
+                doc = enviar_nota_por_email(doc)
+            except (EnvioInvalido, EnvioFalhou) as exc:
+                email_erro = str(exc)
+
         return Response(
-            nota_como_dict(doc),
+            {**nota_como_dict(doc), 'email_erro': email_erro},
             status=status.HTTP_201_CREATED if doc.status == 'authorized' else status.HTTP_200_OK,
         )
 
@@ -223,6 +252,25 @@ class CancelarNotaView(APIView):
             logger.exception('Falha ao cancelar nota %s', doc.id)
             return Response(
                 {'error': 'Falha de comunicação com o provedor fiscal. Tente novamente.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(nota_como_dict(doc))
+
+
+class EnviarNotaPorEmailView(APIView):
+    """POST notas/{id}/enviar-email/ — DANFE e XML no e-mail do destinatário."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, store_slug, pk):
+        store = _loja_do_painel(request, store_slug)
+        doc = get_object_or_404(FiscalDocument.objects.select_related('order', 'store'), store=store, pk=pk)
+        try:
+            doc = enviar_nota_por_email(doc, str(request.data.get('email') or ''))
+        except EnvioInvalido as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except EnvioFalhou:
+            return Response(
+                {'error': 'O e-mail não saiu. Tente novamente em instantes.'},
                 status=status.HTTP_502_BAD_GATEWAY,
             )
         return Response(nota_como_dict(doc))
@@ -331,18 +379,23 @@ class PedidosParaNotaView(APIView):
                 'documento': retrato.get('documento') or '',
                 'nome': retrato.get('nome') or '',
                 'inscricao_estadual': retrato.get('inscricao_estadual') or '',
+                'email': getattr(salvos.get(retrato.get('documento')), 'email', ''),
                 'endereco': retrato.get('endereco') or {},
             }
         _, documento = classificar(documento_do_consumidor(order))
         salvo = salvos.get(documento)
         if salvo is not None:
             dados = destinatarios.como_dict(salvo)
-            return {chave: dados[chave] for chave in ('documento', 'nome', 'inscricao_estadual', 'endereco')}
+            return {
+                chave: dados[chave]
+                for chave in ('documento', 'nome', 'inscricao_estadual', 'email', 'endereco')
+            }
         endereco = order.delivery_address if isinstance(order.delivery_address, dict) else {}
         return {
             'documento': documento,
             'nome': order.customer_name,
             'inscricao_estadual': str(metadata.get('ie_nota') or ''),
+            'email': '',
             'endereco': {
                 campo: str(endereco.get(campo) or '') for campo in destinatarios.CAMPOS_DO_ENDERECO
             },

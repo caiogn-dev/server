@@ -450,8 +450,9 @@ class EmailMarketingService:
         from_email: Optional[str] = None,
         from_name: Optional[str] = None,
         reply_to: Optional[str] = None,
+        attachments: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Send a single email."""
+        """Send a single email. `attachments`: [{'filename', 'content': bytes}]."""
         if not self.enabled:
             logger.warning(f"Email not sent (disabled): {subject} to {to_email}")
             return {'success': False, 'error': 'Email service not configured'}
@@ -466,6 +467,13 @@ class EmailMarketingService:
             
             if reply_to:
                 params['reply_to'] = reply_to
+
+            if attachments:
+                # O Resend recebe o arquivo como lista de bytes.
+                params['attachments'] = [
+                    {'filename': anexo['filename'], 'content': list(anexo['content'])}
+                    for anexo in attachments
+                ]
             
             response = resend.Emails.send(params)
             logger.info(f"Email sent: {subject} to {to_email}")

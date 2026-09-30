@@ -297,3 +297,164 @@ class ListaDeNotasTests(APITestCase):
             resp = self.client.get(f'/api/v1/stores/{self.store.slug}/fiscal/cnpj/11222333000100/')
         self.assertEqual(resp.status_code, 400)
         mock_consulta.assert_not_called()
+
+
+class EnviarNotaPorEmailTests(APITestCase):
+    """A nota autorizada vai para o e-mail do destinatário, com a marca da
+    loja, DANFE e XML anexos — sem o dono baixar o PDF e abrir o Gmail."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username='dono-email', email='dono@t.com', password='x')
+        self.store = _loja('loja-email', self.owner)
+        self.order = _pedido(self.store, metadata={
+            'cpf_nota': CNPJ_CLIENTE,
+            'destinatario_nota': {'documento': CNPJ_CLIENTE, 'nome': 'Sindicato LTDA', 'endereco': {}},
+        })
+        self.doc = FiscalDocument.objects.create(
+            store=self.store, order=self.order, provider='focus', modelo='55',
+            status='authorized', ambiente='homologacao', ref='nfe-email-1',
+            numero='3', serie='1', chave_acesso='1' * 44,
+            danfe_url='https://api.focusnfe.com.br/arquivos/danfe.pdf',
+            xml_url='https://api.focusnfe.com.br/arquivos/nota.xml',
+        )
+        self.client.force_authenticate(self.owner)
+        self.url = f'/api/v1/stores/{self.store.slug}/fiscal/notas/{self.doc.id}/enviar-email/'
+
+    def _baixa(self, conteudo=b'%PDF-1.4 conteudo', status=200):
+        resposta = type('R', (), {'status_code': status, 'content': conteudo})()
+        return patch('apps.fiscal.envio.requests.get', return_value=resposta)
+
+    def _envio(self, sucesso=True):
+        return patch(
+            'apps.fiscal.envio.EmailMarketingService.send_single_email',
+            return_value={'success': sucesso, 'id': 'e1'} if sucesso else {'success': False, 'error': 'x'},
+        )
+
+    def test_envia_com_danfe_e_xml_anexos(self):
+        with self._baixa(), self._envio() as envio:
+            resp = self.client.post(self.url, {'email': 'Financeiro@Sindicato.org '}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+
+        chamada = envio.call_args.kwargs
+        self.assertEqual(chamada['to_email'], 'financeiro@sindicato.org')
+        self.assertIn('NF-e', chamada['subject'])
+        self.assertIn(self.store.name, chamada['from_name'])
+        self.assertEqual(
+            sorted(a['filename'] for a in chamada['attachments']),
+            ['NF-e-3.pdf', 'NF-e-3.xml'],
+        )
+        self.assertIn('1' * 44, chamada['html_content'])
+
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.email_enviado_para, 'financeiro@sindicato.org')
+        self.assertIsNotNone(self.doc.email_enviado_em)
+        self.assertEqual(resp.data['email_enviado_para'], 'financeiro@sindicato.org')
+
+    def test_email_informado_fica_no_cadastro_do_destinatario(self):
+        DestinatarioFiscal.objects.create(store=self.store, documento=CNPJ_CLIENTE, nome='Sindicato LTDA')
+        with self._baixa(), self._envio():
+            self.client.post(self.url, {'email': 'financeiro@sindicato.org'}, format='json')
+        self.assertEqual(
+            DestinatarioFiscal.objects.get(store=self.store).email, 'financeiro@sindicato.org',
+        )
+
+    def test_sem_email_no_corpo_usa_o_do_cadastro(self):
+        DestinatarioFiscal.objects.create(
+            store=self.store, documento=CNPJ_CLIENTE, nome='Sindicato LTDA', email='salvo@sindicato.org',
+        )
+        with self._baixa(), self._envio() as envio:
+            resp = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(envio.call_args.kwargs['to_email'], 'salvo@sindicato.org')
+
+    def test_sem_email_em_lugar_nenhum_pede_o_endereco(self):
+        with self._baixa(), self._envio() as envio:
+            resp = self.client.post(self.url, {}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        envio.assert_not_called()
+
+    def test_email_invalido_e_recusado(self):
+        with self._baixa(), self._envio() as envio:
+            resp = self.client.post(self.url, {'email': 'sem-arroba'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        envio.assert_not_called()
+
+    def test_nota_que_nao_foi_autorizada_nao_vai_por_email(self):
+        self.doc.status = 'rejected'
+        self.doc.save(update_fields=['status'])
+        with self._baixa(), self._envio() as envio:
+            resp = self.client.post(self.url, {'email': 'a@b.org'}, format='json')
+        self.assertEqual(resp.status_code, 400)
+        envio.assert_not_called()
+
+    def test_arquivo_que_nao_baixa_nao_impede_o_envio(self):
+        """O e-mail leva os links; sem o anexo ainda é melhor do que não avisar."""
+        with self._baixa(status=500), self._envio() as envio:
+            resp = self.client.post(self.url, {'email': 'a@b.org'}, format='json')
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(envio.call_args.kwargs['attachments'], [])
+        self.assertIn('https://api.focusnfe.com.br/arquivos/danfe.pdf', envio.call_args.kwargs['html_content'])
+
+    def test_falha_do_provedor_de_email_vira_erro_e_nao_marca_enviado(self):
+        with self._baixa(), self._envio(sucesso=False):
+            resp = self.client.post(self.url, {'email': 'a@b.org'}, format='json')
+        self.assertEqual(resp.status_code, 502)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.email_enviado_para, '')
+
+    def test_nota_de_outra_loja_nao_envia(self):
+        outro = User.objects.create_user(username='outro-email', email='o2@t.com', password='x')
+        self.client.force_authenticate(outro)
+        _loja('loja-do-outro', outro)
+        resp = self.client.post(
+            f'/api/v1/stores/loja-do-outro/fiscal/notas/{self.doc.id}/enviar-email/',
+            {'email': 'a@b.org'}, format='json',
+        )
+        self.assertEqual(resp.status_code, 404)
+
+
+class EmitirEEnviarTests(APITestCase):
+    def setUp(self):
+        self.owner = User.objects.create_user(username='dono-ee', email='ee@t.com', password='x')
+        self.store = _loja('loja-ee', self.owner)
+        self.order = _pedido(self.store)
+        self.client.force_authenticate(self.owner)
+        self.url = f'/api/v1/stores/{self.store.slug}/fiscal/notas/emitir/'
+        self.corpo = {
+            'order_id': str(self.order.id), 'modelo': '55', 'enviar_email': True,
+            'destinatario': {**DESTINATARIO, 'email': 'financeiro@sindicato.org'},
+        }
+
+    @patch('apps.fiscal.envio.EmailMarketingService.send_single_email', return_value={'success': True})
+    @patch('apps.fiscal.envio.requests.get')
+    @patch('apps.fiscal.services.FocusProvider.emit_nfe')
+    def test_autorizada_ja_sai_por_email(self, mock_emit, mock_get, mock_envio):
+        mock_emit.return_value = EmitResult(
+            status='authorized', chave_acesso='5' * 44, numero='4', serie='1',
+            danfe_url='https://api.focusnfe.com.br/d.pdf', xml_url='https://api.focusnfe.com.br/n.xml',
+        )
+        mock_get.return_value = type('R', (), {'status_code': 200, 'content': b'x'})()
+        resp = self.client.post(self.url, self.corpo, format='json')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(mock_envio.call_args.kwargs['to_email'], 'financeiro@sindicato.org')
+        self.assertEqual(resp.data['email_enviado_para'], 'financeiro@sindicato.org')
+
+    @patch('apps.fiscal.envio.EmailMarketingService.send_single_email')
+    @patch('apps.fiscal.services.FocusProvider.emit_nfe')
+    def test_rejeitada_nao_manda_email(self, mock_emit, mock_envio):
+        mock_emit.return_value = EmitResult(status='rejected', error_message='x')
+        self.client.post(self.url, self.corpo, format='json')
+        mock_envio.assert_not_called()
+
+    @patch('apps.fiscal.envio.EmailMarketingService.send_single_email', return_value={'success': False})
+    @patch('apps.fiscal.envio.requests.get')
+    @patch('apps.fiscal.services.FocusProvider.emit_nfe')
+    def test_email_que_falha_nao_desfaz_a_nota(self, mock_emit, mock_get, mock_envio):
+        """A nota já existe na SEFAZ: o erro do e-mail vai junto na resposta,
+        e o operador reenvia pela lista."""
+        mock_emit.return_value = EmitResult(status='authorized', chave_acesso='5' * 44, numero='4')
+        mock_get.return_value = type('R', (), {'status_code': 200, 'content': b'x'})()
+        resp = self.client.post(self.url, self.corpo, format='json')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        self.assertEqual(resp.data['status'], 'authorized')
+        self.assertTrue(resp.data['email_erro'])

@@ -54,6 +54,11 @@ class FiscalDocument(models.Model):
     error_message = models.TextField(blank=True)
     response = models.JSONField(default=dict, blank=True)
 
+    # Último envio da nota ao destinatário. Fica aqui, e não em `response`,
+    # porque `response` é reescrito a cada consulta ao provedor.
+    email_enviado_para = models.EmailField(blank=True)
+    email_enviado_em = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
