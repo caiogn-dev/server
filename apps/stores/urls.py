@@ -351,6 +351,9 @@ store_frontend_patterns = [
     path('orders/<uuid:pk>/nfce/', store_order_nfce, name='store-order-nfce'),
     path('orders/<uuid:pk>/cancel_nfce/', store_order_cancel_nfce, name='store-order-cancel-nfce'),
 
+    # Página de Notas fiscais do painel (lista, emissão manual, destinatários)
+    path('fiscal/', include('apps.fiscal.urls')),
+
     # CRM
     path('crm/customers/search/', CustomerSearchView.as_view(), name='store-crm-customer-search'),
     path('crm/customers/<uuid:user_id>/addresses/', CustomerAddressViewSet.as_view({

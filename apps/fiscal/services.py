@@ -292,6 +292,31 @@ CAMPOS_ENDERECO = (
 )
 
 
+def destinatario_da_nota(order) -> dict:
+    """Quem recebe a nota: o destinatário registrado na emissão, e só na falta
+    dele o que o pedido sabe.
+
+    O endereço de entrega não é o endereço fiscal. Pedido de retirada para
+    empresa guarda, quando muito, rua e CEP — e a NF-e travava pedindo número
+    e bairro sem que houvesse onde digitá-los. `destinatario_nota` é o retrato
+    do cadastro no momento da emissão: fica no pedido para a nota continuar
+    explicável depois que o cadastro mudar.
+    """
+    metadata = order.metadata or {}
+    registrado = metadata.get('destinatario_nota')
+    if isinstance(registrado, dict) and isinstance(registrado.get('endereco'), dict):
+        return {
+            'nome': str(registrado.get('nome') or '').strip() or order.customer_name,
+            'inscricao_estadual': str(registrado.get('inscricao_estadual') or ''),
+            'endereco': registrado['endereco'],
+        }
+    return {
+        'nome': order.customer_name,
+        'inscricao_estadual': str(metadata.get('ie_nota') or ''),
+        'endereco': order.delivery_address if isinstance(order.delivery_address, dict) else {},
+    }
+
+
 def build_nfe_payload(order, config: dict) -> dict:
     """Monta o JSON de NF-e (modelo 55) — venda a empresa.
 
@@ -307,7 +332,8 @@ def build_nfe_payload(order, config: dict) -> dict:
             'NF-e exige o CPF ou CNPJ do destinatário — informe o documento antes de emitir.'
         )
 
-    endereco = order.delivery_address or {}
+    destinatario = destinatario_da_nota(order)
+    endereco = destinatario['endereco']
     faltando = [rotulo for chave, rotulo in CAMPOS_ENDERECO if not str(endereco.get(chave) or '').strip()]
     if faltando:
         raise FiscalNotConfigured(
@@ -320,7 +346,7 @@ def build_nfe_payload(order, config: dict) -> dict:
     interestadual = bool(uf_emitente) and uf_destino != uf_emitente
     cfop = CFOP_INTERESTADUAL if interestadual else (config.get('cfop_padrao') or DEFAULT_CFOP)
 
-    inscricao = _digits(str((order.metadata or {}).get('ie_nota') or ''))
+    inscricao = _digits(destinatario['inscricao_estadual'])
 
     payload = {
         **emitente,
@@ -335,7 +361,7 @@ def build_nfe_payload(order, config: dict) -> dict:
         'itens': _itens(order, config, cfop),
         'formas_pagamento': _formas_pagamento(order),
         f'{tipo}_destinatario': numero,
-        'nome_destinatario': order.customer_name,
+        'nome_destinatario': destinatario['nome'],
         'logradouro_destinatario': str(endereco['street']).strip(),
         'numero_destinatario': str(endereco['number']).strip(),
         'bairro_destinatario': str(endereco['neighborhood']).strip(),

@@ -66,3 +66,47 @@ class FiscalDocument(models.Model):
 
     def __str__(self):
         return f'{self.get_modelo_display()} {self.status} pedido={self.order_id}'
+
+
+class DestinatarioFiscal(models.Model):
+    """Para quem a nota sai — cadastro da loja, não endereço de entrega.
+
+    A NF-e lia o destinatário de `order.delivery_address`. Pedido de retirada
+    para empresa não tem endereço de entrega completo, e o endereço de entrega
+    de um pedido com frete não é necessariamente a sede de quem compra. Aqui o
+    operador registra uma vez e reaproveita na próxima nota.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    store = models.ForeignKey('stores.Store', on_delete=models.CASCADE, related_name='destinatarios_fiscais')
+    customer = models.ForeignKey(
+        'stores.StoreCustomer', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='destinatarios_fiscais',
+    )
+
+    # Só dígitos: CPF (11) ou CNPJ (14).
+    documento = models.CharField(max_length=14)
+    nome = models.CharField(max_length=255)
+    inscricao_estadual = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+    telefone = models.CharField(max_length=20, blank=True)
+
+    street = models.CharField(max_length=255, blank=True)
+    number = models.CharField(max_length=20, blank=True)
+    complement = models.CharField(max_length=120, blank=True)
+    neighborhood = models.CharField(max_length=120, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    state = models.CharField(max_length=2, blank=True)
+    zip_code = models.CharField(max_length=8, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['nome']
+        constraints = [
+            models.UniqueConstraint(fields=['store', 'documento'], name='destinatario_unico_por_loja'),
+        ]
+
+    def __str__(self):
+        return f'{self.nome} ({self.documento})'
