@@ -89,7 +89,11 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
         loja_id = request.data.get("store")
         if not loja_id:
             return Response({"detail": "Informe a loja que vai adotar o ingrediente."}, status=400)
-        if not Store.objects.filter(Q(pk=loja_id) & (Q(owner=request.user) | Q(staff=request.user))).exists():
+        try:
+            loja_alvo = Store.objects.filter(pk=loja_id).first()
+        except (ValueError, DjangoValidationError):
+            loja_alvo = None
+        if loja_alvo is None or not user_can_access_store(request.user, loja_alvo):
             raise PermissionDenied("Loja não pertence a você.")
 
         copia = NutritionIngredient.objects.filter(
