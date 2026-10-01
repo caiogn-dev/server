@@ -108,6 +108,7 @@ FORMA_PAGAMENTO = {
     'debit_card': ('04', ''),
     'pix': ('17', ''),
     'card': ('99', 'Cartao'),
+    'card_on_delivery': ('99', 'Cartao na entrega'),
     'link': ('99', 'Link de pagamento'),
     'voucher': ('99', 'Vale refeicao/alimentacao'),
     'voucher_link': ('99', 'Vale refeicao/alimentacao'),

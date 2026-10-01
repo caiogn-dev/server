@@ -569,7 +569,7 @@ class StoreOrder(BaseModel):
         # → marca pago p/ entrarem no faturamento (a receita filtra payment_status=paid,
         # então sem isto a venda em dinheiro zerava nos relatórios). NÃO toca pedidos
         # online (pix/cartão), que pagam via webhook antes da entrega.
-        OFFLINE_PAYMENT_METHODS = {'cash'}
+        from apps.stores.formas_de_pagamento import PAGOS_NA_ENTREGA as OFFLINE_PAYMENT_METHODS
         RECEIVED_STATUSES = {self.OrderStatus.DELIVERED, self.OrderStatus.COMPLETED}
         if (
             new_status in RECEIVED_STATUSES

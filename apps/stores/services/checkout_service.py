@@ -1660,10 +1660,11 @@ class CheckoutService:
         if target_store is None:
             raise ValueError("Loja obrigatoria para a cobranca")
 
-        if payment_method == 'cash':
+        from apps.stores.formas_de_pagamento import PAGOS_NA_ENTREGA, rotulo
+        if payment_method in PAGOS_NA_ENTREGA:
             if order is None:
-                raise ValueError("Pagamento em dinheiro requer pedido")
-            order.payment_method = 'cash'
+                raise ValueError("Pagamento na entrega requer pedido")
+            order.payment_method = payment_method
             order.payment_status = StoreOrder.PaymentStatus.PENDING
             order.save(update_fields=['payment_method', 'payment_status', 'updated_at'])
 
@@ -1671,8 +1672,8 @@ class CheckoutService:
                 'success': True,
                 'payment_id': None,
                 'status': 'pending',
-                'payment_method': 'cash',
-                'message': 'Pagamento em dinheiro na entrega/retirada'
+                'payment_method': payment_method,
+                'message': f'{rotulo(payment_method)} na entrega/retirada'
             }
 
         if payment_method == 'voucher_link':

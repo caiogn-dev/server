@@ -181,7 +181,9 @@ def build_store_payment_config(store):
     if credentials and public_key:
         enabled_methods.append('credit_card')
     if (store.metadata or {}).get('cash_enabled', True):
-        enabled_methods.append('cash')
+        # "Pagar na entrega" = dinheiro OU maquininha. A maquininha é anunciada
+        # à parte para o cardápio só oferecer quando o backend já a entende.
+        enabled_methods.extend(['cash', 'card_on_delivery'])
 
     # Voucher (VR/VA). Só entra quando existe gateway habilitado COM chave
     # pública e COM ao menos uma bandeira — anunciar sem os três seria oferecer

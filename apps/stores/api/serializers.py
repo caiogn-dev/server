@@ -1833,7 +1833,7 @@ class CheckoutSerializer(serializers.Serializer):
     
     # Payment
     payment_method = serializers.ChoiceField(
-        choices=['pix', 'card', 'cash', 'voucher', 'voucher_link'], default='pix')
+        choices=['pix', 'card', 'cash', 'card_on_delivery', 'voucher', 'voucher_link'], default='pix')
     
     # Coupon
     coupon_code = serializers.CharField(required=False, allow_blank=True, default='')

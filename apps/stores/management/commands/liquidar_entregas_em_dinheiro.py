@@ -21,7 +21,7 @@ from django.utils import timezone
 
 #: Espelha `OFFLINE_PAYMENT_METHODS` em `apps/stores/models/order.py`. Pago em
 #: mãos na entrega — o único caso em que entregar é a prova do pagamento.
-METODOS_OFFLINE = {'cash'}
+from apps.stores.formas_de_pagamento import PAGOS_NA_ENTREGA as METODOS_OFFLINE  # noqa: E402
 
 
 class Command(BaseCommand):

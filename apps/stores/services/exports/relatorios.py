@@ -14,6 +14,7 @@ from decimal import Decimal
 from django.db.models import Count, DecimalField, Sum
 from django.db.models.functions import Coalesce, TruncDate
 
+from apps.stores.formas_de_pagamento import ROTULOS as ROTULOS_DE_PAGAMENTO
 from apps.stores.metrics import eixo_de_receita, media_de_venda, pedidos_de_receita, soma_de_venda
 
 _DEC = DecimalField(max_digits=12, decimal_places=2)
@@ -21,15 +22,9 @@ _DEC = DecimalField(max_digits=12, decimal_places=2)
 # O banco guarda o código cru do gateway/checkout. Num relatório que o dono lê
 # (e manda para o contador), "cash" e "pickup" não dizem nada.
 _ROTULO_PAGAMENTO = {
-    'cash': 'Dinheiro',
-    'pix': 'PIX',
-    'credit_card': 'Cartão de crédito',
-    'debit_card': 'Cartão de débito',
-    'card': 'Cartão',
+    **ROTULOS_DE_PAGAMENTO,
     'mercadopago': 'Mercado Pago',
     'meal_voucher': 'Vale-refeição',
-    'bank_transfer': 'Transferência',
-    'other': 'Outro',
 }
 
 _ROTULO_ENTREGA = {

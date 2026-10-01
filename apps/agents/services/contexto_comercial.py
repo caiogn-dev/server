@@ -102,7 +102,8 @@ def condicoes_de_entrega(store) -> str:
 _NOMES_DE_PAGAMENTO = {
     'pix': 'PIX (o código vem ao fechar o pedido)',
     'credit_card': 'cartão de crédito pelo link do pedido',
-    'cash': 'pagar na entrega ou na retirada (dinheiro ou maquininha)',
+    'cash': 'pagar na entrega ou na retirada em dinheiro',
+    'card_on_delivery': 'cartão na maquininha, na entrega ou na retirada',
 }
 
 
