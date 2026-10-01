@@ -1568,7 +1568,27 @@ class CheckoutService:
             # sem ler `StorePayment._sync_with_order` inteiro primeiro.
             order.payment_status = StoreOrder.PaymentStatus.PAID
             order.payment_method = 'voucher'
-            order.save(update_fields=['payment_status', 'payment_method', 'updated_at'])
+            order.paid_at = timezone.now()
+            campos = ['payment_status', 'payment_method', 'paid_at', 'updated_at']
+            # Igual ao cartão: pago = confirmado. Sem isto o Alelo da Wanny
+            # (CE-2610016820, 01/10) capturou e o pedido ficou 'pending'.
+            if order.status in {
+                StoreOrder.OrderStatus.PENDING,
+                StoreOrder.OrderStatus.PROCESSING,
+                StoreOrder.OrderStatus.PAID,
+            }:
+                order.status = StoreOrder.OrderStatus.CONFIRMED
+                if not order.confirmed_at:
+                    order.confirmed_at = timezone.now()
+                campos += ['status', 'confirmed_at']
+            order.save(update_fields=campos)
+            try:
+                from apps.stores.services.loyalty_service import LoyaltyService
+                LoyaltyService.credit_order(order)
+            except Exception:
+                logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
+            from apps.stores.services.cashback_service import CashbackService
+            CashbackService.credit_order(order)
             return {'success': True, 'payment_id': pagamento.payment_id}
 
         # 🚨 `pending` NAO e falha. A cobranca segue viva e quem decide e o

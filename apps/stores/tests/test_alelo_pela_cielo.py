@@ -81,6 +81,21 @@ class AleloPelaCieloTests(APITestCase):
         order.refresh_from_db()
         assert order.payment_status == StoreOrder.PaymentStatus.PAID
 
+    def test_vale_aprovado_confirma_o_pedido_como_o_cartao(self):
+        """01/10: o Alelo da Wanny (CE-2610016820) capturou na Cielo e o pedido
+        ficou 'pending' — sem confirmed_at, sem paid_at, sem cashback."""
+        order = self._order()
+        with patch(COBRAR_CIELO, return_value=aprovado('pay-2')), \
+             patch('apps.stores.services.cashback_service.CashbackService.credit_order') as cashback, \
+             patch('apps.stores.services.loyalty_service.LoyaltyService.credit_order') as fidelidade:
+            CheckoutService._cobrar_voucher(order, self._dados('alelo'))
+        order.refresh_from_db()
+        assert order.status == StoreOrder.OrderStatus.CONFIRMED
+        assert order.confirmed_at is not None
+        assert order.paid_at is not None
+        cashback.assert_called_once()
+        fidelidade.assert_called_once()
+
     def test_vr_continua_indo_para_o_pagarme(self):
         order = self._order()
         with patch(COBRAR_PAGARME, return_value=aprovado('or_1')) as pagarme, \
