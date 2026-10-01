@@ -423,6 +423,9 @@ class GoogleMapsProvider:
             'key': self.api_key,
             'language': 'pt-BR',
             'components': 'country:br',
+            # Endereço, não estabelecimento: sem isto "Quadra 104 Norte" voltava
+            # Câmara, clínica e ótica (01/10).
+            'types': 'geocode',
         }
         if center:
             params['location'] = f'{center[0]},{center[1]}'
@@ -432,6 +435,12 @@ class GoogleMapsProvider:
         response = requests.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=params, timeout=10)
         response.raise_for_status()
         payload = response.json()
+        if payload.get('status') == 'ZERO_RESULTS':
+            # Nenhum endereço: quem digitou "Shopping X" ainda acha pelo nome.
+            aberta = {k: v for k, v in params.items() if k != 'types'}
+            response = requests.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=aberta, timeout=10)
+            response.raise_for_status()
+            payload = response.json()
 
         status = payload.get('status')
         if status not in {'OK', 'ZERO_RESULTS'}:
