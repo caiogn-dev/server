@@ -924,6 +924,19 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     def get_combo_items(self, obj):
         return StoreOrderComboItemSerializer(obj.combo_items.all(), many=True).data
 
+    def to_representation(self, instance):
+        dados = super().to_representation(instance)
+        # O aviso de endereço mora em AlertaDeEndereco (o save do pedido apagava
+        # quando ficava no metadata). O painel lê `metadata.endereco_divergente`.
+        try:
+            alerta = instance.alerta_de_endereco
+        except Exception:
+            alerta = None
+        if alerta is not None and isinstance(alerta.dados, dict) and alerta.dados:
+            meta = dados.get('metadata')
+            dados['metadata'] = {**(meta if isinstance(meta, dict) else {}), 'endereco_divergente': alerta.dados}
+        return dados
+
 
 def validar_imprime(value):
     """Lista de papéis do agent; só os conhecidos, sem repetição."""
@@ -936,6 +949,7 @@ def validar_imprime(value):
         if item not in limpos:
             limpos.append(item)
     return limpos
+
 
 
 class StorePrintAgentSerializer(serializers.ModelSerializer):

@@ -24,6 +24,7 @@ from .customer import StoreCustomer, StoreCustomerAddress
 # Order models
 from .order import StoreOrder, StoreOrderItem
 from .order_combo_item import StoreOrderComboItem
+from .alerta_de_endereco import AlertaDeEndereco
 
 # Cart models
 from .cart import StoreCart, StoreCartItem, StoreCartComboItem

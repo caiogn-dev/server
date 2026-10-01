@@ -48,8 +48,11 @@ class TestOAvisoChegaNoPedido:
                    return_value=PIN_NA_706):
             conferir_endereco_do_pedido(str(p.id))
 
-        p.refresh_from_db()
-        aviso = p.metadata['endereco_divergente']
+        # 01/10: o aviso mora em AlertaDeEndereco e chega ao painel pelo
+        # serializer, em `metadata.endereco_divergente` (no metadata o checkout
+        # apagava ao salvar o pedido de novo).
+        from apps.stores.api.serializers import StoreOrderSerializer
+        aviso = StoreOrderSerializer(StoreOrder.objects.get(pk=p.pk)).data['metadata']['endereco_divergente']
         assert aviso['digitado'] == '110 sul'
         assert aviso['pin'] == '706 sul'
         assert '110 sul' in aviso['aviso'] and '706 sul' in aviso['aviso']
@@ -73,9 +76,11 @@ class TestOAvisoChegaNoPedido:
                    return_value=PIN_NA_706):
             conferir_endereco_do_pedido(str(p.id))
 
+        from apps.stores.api.serializers import StoreOrderSerializer
         p.refresh_from_db()
         assert p.metadata['origem'] == 'whatsapp'
-        assert 'endereco_divergente' in p.metadata
+        meta = StoreOrderSerializer(p).data['metadata']
+        assert meta['origem'] == 'whatsapp' and 'endereco_divergente' in meta
 
     def test_pedido_inexistente_nao_levanta(self, loja):
         import uuid

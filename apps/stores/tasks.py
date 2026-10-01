@@ -551,9 +551,9 @@ def conferir_endereco_do_pedido(order_id: str):
     de distância. O Maps segue a coordenada e o frete também — ela pagou R$ 11
     onde antes pagou R$ 7, e a entrega foi para o lugar errado.
 
-    Grava em `metadata` porque o serializer do pedido já expõe esse campo: o
-    aviso chega ao painel sem encanamento novo. Usa `.update()` para não
-    disparar o post_save de novo.
+    Grava em AlertaDeEndereco (tabela própria) — em `metadata` o checkout
+    apagava o aviso ao salvar o pedido de novo. O serializer devolve em
+    `metadata.endereco_divergente`, onde o painel já lê.
     """
     from apps.stores.models import StoreOrder
     from apps.stores.services.conferencia_de_endereco import conferir
@@ -566,9 +566,11 @@ def conferir_endereco_do_pedido(order_id: str):
     if not divergencia:
         return None
 
-    metadata = order.metadata if isinstance(order.metadata, dict) else {}
-    metadata['endereco_divergente'] = divergencia
-    StoreOrder.objects.filter(id=order_id).update(metadata=metadata)
+    # Tabela própria: gravar em `metadata` era apagado pelo próximo save do
+    # pedido (o checkout salva de novo logo depois de criar) — 0 avisos em 30
+    # dias. O serializer devolve o aviso em `metadata.endereco_divergente`.
+    from apps.stores.models import AlertaDeEndereco
+    AlertaDeEndereco.objects.update_or_create(order_id=order.id, defaults={'dados': divergencia})
 
     logger.warning(
         '[endereco] pedido %s: cliente escreveu %r, pin cai em %r',

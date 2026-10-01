@@ -86,10 +86,15 @@ class TestNaoPodeDarAlarMEFalso:
     def test_geocoder_sem_resposta_nao_opina(self):
         assert conferir(BARBARA, reverse_geocode=_geocoder(None)) is None
 
-    def test_pin_sem_quadra_no_reverse_nao_opina(self):
+    def test_pin_sem_quadra_no_reverse_e_texto_sem_geocode_confiavel_nao_opina(self):
+        # 01/10: pin sem quadra agora confere pela DISTÂNCIA ao texto (caso da
+        # Simone). Sem um geocode confiável do texto (sem rua = centro do
+        # bairro), continua calando.
+        from unittest.mock import patch
         vago = {'formatted_address': 'Palmas - TO, Brasil'}
-
-        assert conferir(BARBARA, reverse_geocode=_geocoder(vago)) is None
+        with patch('apps.stores.services.conferencia_de_endereco._geocode_do_geoservice',
+                   return_value={'lat': -10.2, 'lng': -48.3, 'street': ''}):
+            assert conferir(BARBARA, reverse_geocode=_geocoder(vago)) is None
 
     def test_retirada_na_loja_nao_opina(self):
         assert conferir({}, reverse_geocode=_geocoder(ERRADO)) is None

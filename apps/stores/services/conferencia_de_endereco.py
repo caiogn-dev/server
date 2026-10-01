@@ -77,11 +77,16 @@ def conferir(endereco, *, reverse_geocode=None):
     if not resposta:
         return None
 
-    do_pin = _quadra(
-        resposta.get('formatted_address') if isinstance(resposta, dict) else resposta
-    )
-    if not do_pin or do_pin == digitada:
+    endereco_do_pin = resposta.get('formatted_address') if isinstance(resposta, dict) else resposta
+    do_pin = _quadra(endereco_do_pin)
+    if do_pin == digitada:
         return None
+    if not do_pin:
+        # O endereço do pin não diz a quadra ("Alameda 9, Plano Diretor Sul" —
+        # existe Alameda 9 em várias). Antes isto calava, e a Simone (704 Sul
+        # escrita, pin na 702) passou batida (01/10). Agora compara a DISTÂNCIA
+        # entre o pin e o endereço escrito.
+        return _conferir_pela_distancia(endereco, digitada, endereco_do_pin, float(lat), float(lng))
 
     return {
         'digitado': digitada,
@@ -94,6 +99,51 @@ def conferir(endereco, *, reverse_geocode=None):
             f'calculado pelo pin.'
         ),
     }
+
+
+def _conferir_pela_distancia(endereco, digitada, endereco_do_pin, lat, lng):
+    from apps.stores.services.coerencia_do_ponto import TOLERANCIA_KM, distancia_km
+
+    texto = ', '.join(p for p in (
+        str(endereco.get('street') or '').strip(),
+        str(endereco.get('neighborhood') or '').strip(),
+        ' - '.join(x for x in (str(endereco.get('city') or ''), str(endereco.get('state') or '')) if x),
+    ) if p)
+    try:
+        achado = _geocode_do_geoservice(texto)
+    except Exception as exc:
+        logger.info('[conferencia] geocode falhou (%s) — sem opinião', exc)
+        return None
+    if not isinstance(achado, dict):
+        return None
+    # Resultado sem rua é o centro do bairro, não o endereço: não serve de régua.
+    if not str(achado.get('street') or '').strip():
+        return None
+    try:
+        lat_txt, lng_txt = float(achado['lat']), float(achado['lng'])
+    except (KeyError, TypeError, ValueError):
+        return None
+    km = distancia_km(lat, lng, lat_txt, lng_txt)
+    if km <= TOLERANCIA_KM:
+        return None
+    return {
+        'digitado': digitada,
+        'pin': endereco_do_pin or 'ponto sem quadra',
+        'lat': lat,
+        'lng': lng,
+        'distancia_km': round(km, 2),
+        'aviso': (
+            f'O cliente escreveu "{digitada}" mas o pin do mapa está a '
+            f'{km:.1f} km desse endereço. Confirme antes de sair para a entrega '
+            f'— o frete foi calculado pelo pin.'
+        ),
+    }
+
+
+def _geocode_do_geoservice(texto):
+    from apps.stores.services.geo.service import GeoService
+
+    return GeoService().geocode(texto)
 
 
 def _reverse_do_geoservice(lat, lng):

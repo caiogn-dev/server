@@ -173,6 +173,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             qs = qs.select_related(
                 'store',
                 'customer',
+                'alerta_de_endereco',
             ).prefetch_related(
                 'items__product',
                 # combo_items é serializado (get_combo_items) — sem prefetch dava
@@ -185,6 +186,7 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             qs = qs.select_related(
                 'store',
                 'customer',
+                'alerta_de_endereco',
             ).prefetch_related(
                 'items__product',
                 'combo_items__combo',
