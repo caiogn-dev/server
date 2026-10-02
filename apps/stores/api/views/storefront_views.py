@@ -21,6 +21,7 @@ from rest_framework.views import APIView
 # Sem imports de app no topo deste módulo: `carteira_service` só puxa
 # `checkout_service` dentro das funções, então não há ciclo.
 from apps.stores.services.carteira_service import telefone_comprovado
+from apps.core.permissions import user_can_access_store
 
 
 class PublicReadThrottle(AnonRateThrottle):
@@ -365,11 +366,30 @@ class StorePublicView(APIView):
     permission_classes = [permissions.AllowAny]
     throttle_classes = [PublicReadThrottle]
 
+    # O que o mundo vê da loja. O `StoreSerializer` é o do painel e carrega
+    # `metadata` inteiro — em 02/10 isso expunha `metadata.fiscal.focus_token`
+    # (emite e cancela nota em nome da loja), CNPJ, IE, plano e dono para
+    # qualquer um. Lista de PERMITIDOS: campo novo no serializer do painel não
+    # vaza sozinho.
+    CAMPOS_PUBLICOS = (
+        'id', 'name', 'slug', 'description', 'tagline', 'store_type', 'template',
+        'status', 'is_active', 'is_open', 'logo', 'logo_url', 'banner', 'banner_url',
+        'banners', 'primary_color', 'secondary_color', 'address', 'city', 'state',
+        'zip_code', 'country', 'latitude', 'longitude', 'phone', 'whatsapp_number',
+        'custom_domain', 'operating_hours', 'delivery_enabled', 'pickup_enabled',
+        'min_order_value', 'default_delivery_fee', 'free_delivery_threshold',
+        'default_prep_minutes', 'currency', 'timezone', 'avg_rating',
+        'reviews_count', 'products_count', 'created_at', 'updated_at',
+    )
+
     def get(self, request, store_slug):
         """Get public store information."""
         store = get_active_store(store_slug)
-        serializer = StoreSerializer(store)
-        return Response(serializer.data)
+        dados = StoreSerializer(store).data
+        # O painel chama esta mesma rota logado e precisa do cadastro completo.
+        if request.user.is_authenticated and user_can_access_store(request.user, store):
+            return Response(dados)
+        return Response({campo: dados[campo] for campo in self.CAMPOS_PUBLICOS if campo in dados})
 
 
 class StoreCatalogView(APIView):
