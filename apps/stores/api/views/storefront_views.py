@@ -1985,10 +1985,9 @@ class StoreSharedLocationView(APIView):
         lat, lng = loc.get('latitude'), loc.get('longitude')
         if lat is None or lng is None:
             return Response({'location': None})
-        return Response({'location': {
-            'lat': float(lat),
-            'lng': float(lng),
-            'name': loc.get('name') or '',
-            'address': loc.get('address') or '',
-            'shared_at': msg.created_at.isoformat(),
-        }})
+        # O WhatsApp manda só a coordenada: o endereço legível sai daqui, para o
+        # pedido não ficar "Localização enviada (-10.18, -48.32)" (02/10).
+        from apps.stores.services.localizacao_do_whatsapp import endereco_da_localizacao
+        dados = endereco_da_localizacao(loc)
+        dados['shared_at'] = msg.created_at.isoformat()
+        return Response({'location': dados})
