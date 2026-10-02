@@ -2615,10 +2615,34 @@ class CheckoutService:
             StoreOrder.OrderStatus.CANCELLED,
             StoreOrder.OrderStatus.REFUNDED,
         }
+        # Pedido que a loja já aceitou — cobrança recusada não o cancela.
+        _ACEITOS_PELA_LOJA = {
+            StoreOrder.OrderStatus.CONFIRMED,
+            StoreOrder.OrderStatus.PREPARING,
+            StoreOrder.OrderStatus.READY,
+            StoreOrder.OrderStatus.OUT_FOR_DELIVERY,
+            StoreOrder.OrderStatus.SHIPPED,
+        }
 
         update_fields = ['updated_at']
 
         if status == 'approved':
+            metadata = dict(order.metadata or {})
+            if (
+                order.status == StoreOrder.OrderStatus.CANCELLED
+                and metadata.pop('cancelado_pelo_gateway', False)
+            ):
+                # O gateway cancelou por uma tentativa recusada e o dinheiro
+                # entrou depois, no mesmo link (CE-2610029555, Carla, 02/10:
+                # PIX pago 4 min após o cancelamento, venda relançada à mão).
+                # Quem cancelou foi a cobrança, não a loja — a venda volta, e o
+                # estoque devolvido no cancelamento sai de novo. O `pop` da
+                # marca é a trava contra webhook `approved` repetido.
+                CheckoutService._baixar_estoque_de_novo(order)
+                order.status = StoreOrder.OrderStatus.PENDING
+                order.cancelled_at = None
+                order.metadata = metadata
+                update_fields.extend(['cancelled_at', 'metadata'])
             order.payment_status = StoreOrder.PaymentStatus.PAID
             order.paid_at = timezone.now()
             if order.status in {
@@ -2669,7 +2693,23 @@ class CheckoutService:
                 )
                 return order
 
+            if order.status in _ACEITOS_PELA_LOJA:
+                # A loja já aceitou: a comida está sendo feita. Uma tentativa
+                # recusada no link de pagamento não é o fim da venda — o
+                # cliente tenta de novo, ou paga na entrega. Em 02/10 isso
+                # cancelou o pedido da Carla em preparo, avisou "pedido
+                # cancelado" no WhatsApp e a loja relançou em duplicidade.
+                order.payment_status = StoreOrder.PaymentStatus.FAILED
+                order.save(update_fields=['payment_status', 'updated_at'])
+                logger.info(
+                    "Webhook '%s' em %s (%s): só a cobrança falhou, pedido segue.",
+                    status, order.order_number, order.status,
+                )
+                return order
+
             order.status = StoreOrder.OrderStatus.CANCELLED
+            order.metadata = {**(order.metadata or {}), 'cancelado_pelo_gateway': True}
+            update_fields.append('metadata')
             order.payment_status = StoreOrder.PaymentStatus.FAILED
             order.cancelled_at = timezone.now()
             update_fields.extend(['status', 'payment_status', 'cancelled_at'])
@@ -2744,6 +2784,27 @@ class CheckoutService:
             if combo_item.combo_id and combo_item.combo.track_stock:
                 StoreCombo.objects.filter(id=combo_item.combo_id).update(
                     stock_quantity=F('stock_quantity') + combo_item.quantity
+                )
+
+    @staticmethod
+    def _baixar_estoque_de_novo(order: StoreOrder):
+        """Inverso exato de `_restore_stock`, para a venda que volta à vida."""
+        from apps.stores.models import StoreCombo, StoreProductVariant
+        for item in order.items.select_related('product', 'variant'):
+            if item.product and item.product.track_stock:
+                if item.variant:
+                    StoreProductVariant.objects.filter(id=item.variant.id).update(
+                        stock_quantity=F('stock_quantity') - item.quantity
+                    )
+                else:
+                    StoreProduct.objects.filter(id=item.product.id).update(
+                        stock_quantity=F('stock_quantity') - item.quantity,
+                        sold_count=F('sold_count') + item.quantity,
+                    )
+        for combo_item in order.combo_items.select_related('combo'):
+            if combo_item.combo_id and combo_item.combo.track_stock:
+                StoreCombo.objects.filter(id=combo_item.combo_id).update(
+                    stock_quantity=F('stock_quantity') - combo_item.quantity
                 )
 
     @staticmethod
