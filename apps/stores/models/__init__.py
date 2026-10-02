@@ -73,6 +73,8 @@ from .bio import BioClickStat, StoreBioLink
 from .ifood import StoreIfoodIntegration
 
 
+from .salada_salva import SaladaSalva
+
 __all__ = [
     'StoreBanner', 'MAXIMO_DE_BANNERS',
     'StoreIfoodIntegration',
@@ -134,4 +136,6 @@ __all__ = [
     # Bio (Link na Bio)
     'BioClickStat',
     'StoreBioLink',
+    # Saladas criadas pelo cliente
+    'SaladaSalva',
 ]

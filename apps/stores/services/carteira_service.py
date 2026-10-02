@@ -114,6 +114,29 @@ def telefone_comprovado(request, telefone_informado: str) -> bool:
     return any(informadas & set(phone_variants(p)) for p in provas)
 
 
+def telefone_provado(request) -> str:
+    """O número que o visitante PROVOU ter, em dígitos — ou '' se nenhum.
+
+    Mesmas provas de `telefone_comprovado` (código do WhatsApp ou conta legada
+    que o próprio código criou), para quem precisa da CHAVE e não de um sim/não:
+    as saladas salvas são guardadas por número.
+    """
+    import re
+
+    user = getattr(request, 'user', None)
+    if user is None or not getattr(user, 'is_authenticated', False):
+        return ''
+    perfil = getattr(user, 'profile', None)
+    verificado = ''.join(ch for ch in (getattr(perfil, 'telefone_verificado', '') or '') if ch.isdigit())
+    if verificado:
+        return verificado
+    if not user.has_usable_password():
+        achou = re.fullmatch(r'cliente_(\d{10,13})', getattr(user, 'username', '') or '')
+        if achou:
+            return achou.group(1)
+    return ''
+
+
 def e_de_carteira(external_reference: str) -> bool:
     return str(external_reference or '').startswith(f'{PREFIXO}{SEP}')
 

@@ -181,6 +181,7 @@ from .api.views.subscription_views import (
 )
 from .api.views.product_views import ImportarCardapioView
 from .api.views.onboarding_views import StoreOnboardingChecklistView, StoreOnboardingSeenView
+from .api.views.salada_salva_views import SaladaSalvaDetalheView, SaladasSalvasView
 from .api.views.cash_views import CashOpenView, CashCurrentView, CashMovementView, CashCloseView
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
@@ -305,6 +306,8 @@ store_frontend_patterns = [
     path('onboarding/checklist/', StoreOnboardingChecklistView.as_view(), name='store-onboarding-checklist'),
     path('onboarding/seen/', StoreOnboardingSeenView.as_view(), name='store-onboarding-seen'),
     path('validate-coupon/', StoreCouponValidateView.as_view(), name='store-validate-coupon'),
+    path('saladas/', SaladasSalvasView.as_view(), name='store-saladas-salvas'),
+    path('saladas/<uuid:pk>/', SaladaSalvaDetalheView.as_view(), name='store-salada-salva'),
     path('wishlist/', StoreWishlistViewSet.as_view({'get': 'list'}), name='store-wishlist'),
     path('wishlist/add/', StoreWishlistViewSet.as_view({'post': 'add'}), name='store-wishlist-add'),
     path('wishlist/remove/', StoreWishlistViewSet.as_view({'post': 'remove'}), name='store-wishlist-remove'),
