@@ -21,6 +21,7 @@ from rest_framework.test import APIClient
 
 from apps.nutrition.models import NutritionIngredient, ProductRecipe, RecipeItem
 from apps.stores.models import Store, StoreProduct
+from apps.stores.models.team import StoreTeamMember
 
 User = get_user_model()
 
@@ -48,6 +49,34 @@ class AdotarIngredienteTest(TestCase):
             f'/api/v1/nutrition/ingredients/{self.oficial.id}/adotar/',
             {'store': str(self.store.id), **payload}, format='json',
         )
+
+    def test_membro_da_equipe_sem_adicional_recebe_402(self):
+        """StoreTeamMember em loja sem etiqueta_anvisa deve receber 402, não conseguir adotar.
+
+        ExigeAdicionalEtiqueta trata StoreTeamMember como "loja alheia" e
+        devolve True sem conferir billing — a verificação explícita dentro de
+        adotar garante que nenhum caminho de acesso contorna o adicional pago.
+        """
+        membro = User.objects.create_user(username='membro-sem-adicional', password='x')
+        loja_sem_adicional = Store.objects.create(
+            name='Sem Adicional', slug='sem-adicional', owner=self.dono, status='active',
+            # billing_exempt=False (padrão) — não tem o adicional
+        )
+        StoreTeamMember.objects.create(
+            tenant=loja_sem_adicional, user=membro, role=StoreTeamMember.Role.MANAGER,
+        )
+        client_membro = APIClient()
+        client_membro.credentials(
+            HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=membro).key}',
+        )
+
+        r = client_membro.post(
+            f'/api/v1/nutrition/ingredients/{self.oficial.id}/adotar/',
+            {'store': str(loja_sem_adicional.id)}, format='json',
+        )
+
+        self.assertEqual(r.status_code, 402, r.data)
+        self.assertFalse(NutritionIngredient.objects.filter(store=loja_sem_adicional).exists())
 
     def test_lojista_nao_pode_editar_o_oficial(self):
         """A trava que motiva tudo isso continua de pé."""
@@ -152,6 +181,32 @@ class AdotarIngredienteTest(TestCase):
 
         self.assertIn(r.status_code, (400, 403))
         self.assertFalse(NutritionIngredient.objects.filter(store=alheia).exists())
+
+    def test_membro_da_equipe_pode_adotar(self):
+        """StoreTeamMember tem acesso à loja — deve poder adotar ingredientes.
+
+        O check original usava Q(owner=...) | Q(staff=...), ignorando
+        StoreTeamMember. Um gerente cadastrado pelo sistema de papéis recebia
+        403 ao tentar adotar, travando a revisão de alergênicos da loja.
+        """
+        membro = User.objects.create_user(username='membro-nut', password='x')
+        StoreTeamMember.objects.create(
+            tenant=self.store, user=membro, role=StoreTeamMember.Role.MANAGER,
+        )
+        client_membro = APIClient()
+        client_membro.credentials(
+            HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=membro).key}',
+        )
+
+        r = client_membro.post(
+            f'/api/v1/nutrition/ingredients/{self.oficial.id}/adotar/',
+            {'store': str(self.store.id)}, format='json',
+        )
+
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(
+            NutritionIngredient.objects.filter(store=self.store).count(), 1
+        )
 
     def test_nao_adota_ingrediente_que_ja_e_de_loja(self):
         proprio = NutritionIngredient.objects.create(

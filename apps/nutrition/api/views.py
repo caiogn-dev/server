@@ -18,7 +18,7 @@ from apps.nutrition.models import (
     CAMPOS_DE_CUSTO, NutritionIngredient, ProductNutritionProfile, ProductRecipe, RecipeItem,
 )
 from apps.stores.models import Store, StoreProduct
-from .permissions import ExigeAdicionalEtiqueta, lojas_liberadas
+from .permissions import AdicionalNecessario, ExigeAdicionalEtiqueta, lojas_liberadas
 from .serializers import NutritionIngredientSerializer, ProductRecipeSerializer, ProductNutritionProfileSerializer
 
 
@@ -89,8 +89,18 @@ class NutritionIngredientViewSet(viewsets.ModelViewSet):
         loja_id = request.data.get("store")
         if not loja_id:
             return Response({"detail": "Informe a loja que vai adotar o ingrediente."}, status=400)
-        if not Store.objects.filter(Q(pk=loja_id) & (Q(owner=request.user) | Q(staff=request.user))).exists():
+        try:
+            loja_alvo = Store.objects.filter(pk=loja_id).first()
+        except (ValueError, DjangoValidationError):
+            loja_alvo = None
+        if loja_alvo is None or not user_can_access_store(request.user, loja_alvo):
             raise PermissionDenied("Loja não pertence a você.")
+        # ExigeAdicionalEtiqueta reconhece apenas owner/staff M2M: StoreTeamMember
+        # passa pelo gate sem a verificação de billing. Conferimos aqui para
+        # garantir que nenhum caminho de acesso contorna o adicional pago.
+        from apps.stores import billing as _billing
+        if not _billing.loja_tem_adicional(loja_alvo, 'etiqueta_anvisa'):
+            raise AdicionalNecessario(details={'adicional': 'etiqueta_anvisa'})
 
         copia = NutritionIngredient.objects.filter(
             store_id=loja_id, canonical_name=original.canonical_name,
