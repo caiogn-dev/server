@@ -405,6 +405,22 @@ def _troco_da_comanda(order: StoreOrder) -> dict:
     }
 
 
+def _notas_da_loja(order: StoreOrder) -> str:
+    """Faixa "ATENCAO DA LOJA" da comanda — a única que todo agente imprime.
+
+    Cartão na maquininha ainda não pago: o entregador precisa sair com a
+    máquina. "Não veio maquininha" era reclamação recorrente da Cê Saladas
+    (relatório de conversas, 02/10). Vai aqui, e não num campo novo, porque os
+    PCs das lojas rodam agentes antigos que não leriam um campo novo.
+    """
+    notas = (order.internal_notes or '').strip()
+    if order.payment_method == 'card_on_delivery' and order.payment_status != 'paid':
+        valor = f"{Decimal(order.total or 0):.2f}".replace('.', ',')
+        aviso = f'LEVAR MAQUININHA - cobrar R$ {valor} no cartao'
+        notas = f'{aviso} | {notas}' if notas else aviso
+    return notas
+
+
 def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJob.Template.KITCHEN_TICKET) -> dict:
     # Combos ligados a uma linha de item são pulados no loop de combos abaixo
     # (evita duplicar a linha), então os sabores escolhidos precisam entrar
@@ -506,7 +522,7 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'source': order.source or '',
             'coupon_code': order.coupon_code or '',
             'customer_notes': order.customer_notes or '',
-            'internal_notes': order.internal_notes or '',
+            'internal_notes': _notas_da_loja(order),
             'delivery_notes': order.delivery_notes or '',
             # Troco do dinheiro. `None` = ninguém perguntou; '0.00' = cliente
             # disse que não precisa; senão "troco para" e quanto levar.
