@@ -6,6 +6,7 @@
 
 LLM indisponível NUNCA quebra o painel: cai no resumo template/estatísticas.
 """
+import contextvars
 import json
 import re
 import logging
@@ -17,8 +18,18 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-#: Segundos que o painel espera pelo modelo antes de mostrar o template.
-LLM_TIMEOUT_PAINEL = 18
+#: Orçamento TOTAL (segundos) que o painel espera pelos modelos, somando
+#: todas as tentativas, antes de mostrar o template.
+LLM_TIMEOUT_PAINEL = 20
+
+#: Prazo da PRIMEIRA tentativa. O nemotron-3-super respondeu o resumo real em
+#: 1,4–7,3 s (medido 02/out/2026, 6/6 JSON); passar de 10 s é sinal de NIM
+#: pendurada, e o resto do orçamento vale mais no próximo modelo.
+LLM_TIMEOUT_TENTATIVA = 10
+
+#: Abaixo disso não vale começar outra tentativa: nenhum modelo medido
+#: responde o resumo em menos de ~1,4 s.
+LLM_TEMPO_MINIMO_TENTATIVA = 3
 
 #: Dias da semana em português, na ordem de `datetime.weekday()` (segunda = 0).
 #:
@@ -39,6 +50,7 @@ from apps.agents.runtime.modelos import (  # noqa: E402
     MODELO_PADRAO,
     MODELOS_APOSENTADOS,
     corpo_extra_do_modelo,
+    escada_de_modelos,
     modelo_vivo,
 )
 
@@ -60,52 +72,121 @@ def modelo_de_insights() -> str:
     )
 
 
-def get_insights_llm():
-    """LLM para análises internas — pseudo-agente pelo provider disponível no env."""
+#: Quem respondeu a última chamada de `_llm_text` neste contexto (thread/req).
+_ULTIMO_MODELO = contextvars.ContextVar('ai_insights_ultimo_modelo', default=None)
+
+
+class LLMIndisponivel(RuntimeError):
+    """Todos os modelos NVIDIA da escada falharam. A mensagem diz quem e por quê."""
+
+
+def get_insights_llm(modelo: str | None = None, timeout: float = LLM_TIMEOUT_TENTATIVA):
+    """Cliente NVIDIA NIM para as análises do painel.
+
+    SÓ NVIDIA: o provedor da casa é a NIM. A lista antiga caía para Anthropic,
+    Kimi e OpenAI quando a chave da NVIDIA faltava — chave ausente é erro de
+    configuração e precisa aparecer como tal, não virar outro provedor.
+
+    `max_retries=0`: quem tenta de novo é a escada (`_llm_text`), com OUTRO
+    modelo e dentro do orçamento. O retry do cliente repetia o mesmo modelo
+    pendurado e triplicava o prazo.
+    """
     from apps.agents.models import Agent
     from apps.agents.runtime.factory import create_llm
 
-    nvidia_model = modelo_de_insights()
-    candidates = [
-        (Agent.AgentProvider.NVIDIA, 'NVIDIA_API_KEY', nvidia_model),
-        (Agent.AgentProvider.ANTHROPIC, 'ANTHROPIC_API_KEY', 'claude-haiku-4-5-20251001'),
-        (Agent.AgentProvider.KIMI, 'KIMI_API_KEY',
-         getattr(dj_settings, 'KIMI_MODEL_NAME', '') or 'moonshot-v1-8k'),
-        (Agent.AgentProvider.OPENAI, 'OPENAI_API_KEY', 'gpt-4o-mini'),
-    ]
-    for provider, key_name, model in candidates:
-        if getattr(dj_settings, key_name, ''):
-            agent = Agent(
-                name='painel-insights',
-                provider=provider,
-                model_name=model,
-                temperature=0.3,
-                max_tokens=1200,
-                # 45s era mais do que o dono espera olhando uma tela. O
-                # template já está pronto e responde na hora; passar disso é
-                # trocar uma resposta boa por uma tela parada.
-                timeout=LLM_TIMEOUT_PAINEL,
-                # O default do campo é a URL da Anthropic — zera p/ o factory
-                # resolver a base_url correta do provider escolhido.
-                base_url='',
-            )
-            return create_llm(agent)
-    raise RuntimeError('Nenhum provider LLM configurado no ambiente')
+    if not getattr(dj_settings, 'NVIDIA_API_KEY', ''):
+        raise LLMIndisponivel('NVIDIA_API_KEY ausente no ambiente')
+
+    agent = Agent(
+        name='painel-insights',
+        provider=Agent.AgentProvider.NVIDIA,
+        model_name=modelo or modelo_de_insights(),
+        temperature=0.3,
+        max_tokens=1200,
+        timeout=max(1, int(timeout)),
+        # O default do campo é a URL da Anthropic — zera p/ o factory
+        # resolver a base_url da NIM.
+        base_url='',
+    )
+    agent.max_retries = 0
+    return create_llm(agent)
+
+
+def _json_do_modelo(bruto: str):
+    """JSON (dict ou lista não vazios) da resposta, tolerando cerca ```json."""
+    texto = (bruto or '').strip()
+    if texto.startswith('```'):
+        texto = re.sub(r'^```[a-zA-Z]*\s*', '', texto)
+        texto = re.sub(r'\s*```$', '', texto)
+    try:
+        dados = json.loads(texto)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return None
+    return dados if isinstance(dados, (dict, list)) and dados else None
+
+
+def _resumir_erro(exc: Exception) -> str:
+    nome = type(exc).__name__
+    if 'timeout' in nome.lower() or 'timed out' in str(exc).lower():
+        return 'timeout'
+    return f'{nome}: {str(exc)[:120]}'
 
 
 def _llm_text(prompt: str) -> str:
-    """Texto do modelo, já com os parâmetros que a família dele exige.
+    """Texto JSON de um modelo NVIDIA, descendo a escada medida.
 
-    O `extra_body` vai por `bind` e não no construtor porque o factory é
-    compartilhado com o agente do WhatsApp: um parâmetro específico do painel
-    não pode vazar para o fluxo do cliente.
+    Ordem: o modelo dos insights e depois a PREFERENCIA viva do catálogo
+    (`escada_de_modelos`). Passa para o próximo quando o modelo levanta
+    (timeout, 4xx/5xx) OU responde 200 sem JSON — resposta vazia não é
+    insight, e antes ela caía no template sem deixar rastro.
+
+    Guarda em `_ULTIMO_MODELO` quem respondeu, para o payload.
+    Levanta `LLMIndisponivel` com o motivo de cada degrau quando nenhum serve.
     """
-    llm = get_insights_llm()
-    extra = corpo_extra_do_modelo(modelo_de_insights())
-    if extra:
-        llm = llm.bind(extra_body=extra)
-    result = llm.invoke(prompt)
-    return getattr(result, 'content', str(result)).strip()
+    import time
+
+    _ULTIMO_MODELO.set(None)
+    inicio = time.monotonic()
+    motivos = []
+    for modelo in escada_de_modelos(
+        getattr(dj_settings, 'NVIDIA_INSIGHTS_MODEL', ''), padrao=MODELO_INSIGHTS_PADRAO,
+    ):
+        restante = LLM_TIMEOUT_PAINEL - (time.monotonic() - inicio)
+        prazo = min(LLM_TIMEOUT_TENTATIVA if not motivos else restante, restante)
+        if prazo < LLM_TEMPO_MINIMO_TENTATIVA:
+            motivos.append(f'{modelo}: sem tempo no orçamento de {LLM_TIMEOUT_PAINEL}s')
+            break
+        t0 = time.monotonic()
+        try:
+            llm = get_insights_llm(modelo, timeout=prazo)
+            extra = corpo_extra_do_modelo(modelo)
+            if extra:
+                # Por `bind` e não no construtor: o factory é compartilhado
+                # com o agente do WhatsApp e não pode herdar parâmetro do painel.
+                llm = llm.bind(extra_body=extra)
+            result = llm.invoke(prompt)
+            texto = (getattr(result, 'content', None) or '').strip()
+        except LLMIndisponivel:
+            raise
+        except Exception as exc:
+            motivo = _resumir_erro(exc)
+        else:
+            if _json_do_modelo(texto) is not None:
+                if motivos:
+                    logger.warning('[ai_insights] %s respondeu depois de: %s',
+                                   modelo, '; '.join(motivos))
+                _ULTIMO_MODELO.set(modelo)
+                return texto
+            motivo = 'resposta vazia' if not texto else 'resposta sem JSON'
+        dt = time.monotonic() - t0
+        logger.warning('[ai_insights] %s falhou em %.1fs: %s', modelo, dt, motivo)
+        motivos.append(f'{modelo}: {motivo} ({dt:.1f}s)')
+
+    raise LLMIndisponivel('; '.join(motivos) or 'nenhum modelo NVIDIA disponível')
+
+
+def _modelo_que_respondeu():
+    return _ULTIMO_MODELO.get() or modelo_de_insights()
 
 
 # ── Resumo diário ────────────────────────────────────────────────────────────
@@ -460,6 +541,17 @@ def generate_daily_summary(store, day=None) -> dict:
     dia_de_hoje = DIAS_DA_SEMANA[hoje.weekday()]
     media_de_hoje = (forecast.get('weekday_avg') or {}).get(dia_de_hoje)
 
+    # O MESMO vale para ontem. Em 02/out/2026 (sexta) o resumo saiu com
+    # "Ontem teve R$ 409,61, bem acima da média de sexta" — os números eram
+    # de quinta, mas a única média de dia da semana no prompt era a de hoje.
+    from datetime import date as _date
+    try:
+        dia_dos_dados = _date.fromisoformat(str(stats.get('date')))
+    except (TypeError, ValueError):
+        dia_dos_dados = (hoje - timedelta(days=1)).date()
+    dia_de_ontem = DIAS_DA_SEMANA[dia_dos_dados.weekday()]
+    media_de_ontem = (forecast.get('weekday_avg') or {}).get(dia_de_ontem)
+
     prompt = (
         "Você é o analista de negócios do dono do restaurante "
         f"\"{store.name}\". Responda APENAS com JSON válido, sem texto antes ou "
@@ -467,6 +559,11 @@ def generate_daily_summary(store, day=None) -> dict:
         f"HOJE é {dia_de_hoje}, {hoje.strftime('%d/%m/%Y')}"
         + (f" (média histórica de {dia_de_hoje}: R$ {media_de_hoje:.2f})"
            if media_de_hoje is not None else "")
+        + ".\n"
+        f"ONTEM foi {dia_de_ontem}, {dia_dos_dados.strftime('%d/%m/%Y')} — é o dia dos "
+        "\"Dados de ontem\" abaixo"
+        + (f"; compare ontem com a média histórica de {dia_de_ontem}: "
+           f"R$ {media_de_ontem:.2f}" if media_de_ontem is not None else "")
         + ".\n\n"
         "Formato:\n"
         '{"blocos":[{"tipo":"...","titulo":"...","texto":"..."}]}\n\n'
@@ -493,16 +590,25 @@ def generate_daily_summary(store, day=None) -> dict:
 
     blocos = []
     source = 'template'
+    modelo = None
+    erro = None
+    _ULTIMO_MODELO.set(None)
     try:
         blocos = _blocos_do_json(_llm_text(prompt))
         if blocos:
             source = 'llm'
+            modelo = _modelo_que_respondeu()
+        else:
+            erro = 'modelo respondeu JSON sem nenhum bloco com texto'
     except Exception as exc:
-        logger.warning('[ai_insights] LLM indisponível para resumo diário: %s', exc)
+        erro = str(exc) or type(exc).__name__
 
     if not blocos:
         # JSON inválido, lista vazia ou todos os blocos sem texto: o template
-        # tem o que dizer, e um card vazio leria como falha nossa.
+        # tem o que dizer, e um card vazio leria como falha nossa. Mas a falha
+        # é REGISTRADA — ERROR (vai para o GlitchTip) e `llm_error` no payload.
+        logger.error('[ai_insights] resumo diário sem IA (loja=%s): %s',
+                     getattr(store, 'id', '?'), erro)
         blocos = _template_blocos(store, stats, forecast)
         source = 'template'
 
@@ -514,6 +620,8 @@ def generate_daily_summary(store, day=None) -> dict:
         # blocos, não de uma segunda chamada ao modelo.
         'summary': _texto_dos_blocos(blocos),
         'source': source,
+        'model': modelo,
+        'llm_error': erro if source != 'llm' else None,
     }
 
 
@@ -563,13 +671,17 @@ def generate_conversation_insights(store, days: int = 7) -> dict:
         "Máximo 5 itens por lista; listas vazias se não houver. Não invente.\n\n"
         + '\n'.join(texts)
     )
+    _ULTIMO_MODELO.set(None)
     try:
-        raw = _llm_text(prompt)
-        raw = raw.strip().removeprefix('```json').removeprefix('```').removesuffix('```').strip()
-        insights = json.loads(raw)
+        insights = _json_do_modelo(_llm_text(prompt))
+        if not isinstance(insights, dict):
+            raise LLMIndisponivel('modelo não devolveu um objeto JSON')
         return {**base, 'insights': insights,
-                'summary': insights.get('summary', ''), 'source': 'llm'}
+                'summary': insights.get('summary', ''), 'source': 'llm',
+                'model': _modelo_que_respondeu()}
     except Exception as exc:
-        logger.warning('[ai_insights] LLM indisponível para conversas: %s', exc)
-        return {**base, 'insights': None, 'source': 'error',
+        erro = str(exc) or type(exc).__name__
+        logger.error('[ai_insights] análise de conversas sem IA (loja=%s): %s',
+                     getattr(store, 'id', '?'), erro)
+        return {**base, 'insights': None, 'source': 'error', 'llm_error': erro,
                 'summary': 'Análise de IA indisponível no momento — tente novamente em instantes.'}

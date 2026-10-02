@@ -61,6 +61,11 @@ MODELOS_APOSENTADOS = frozenset({
     'meta/llama-3.1-8b-instruct',
     'nvidia/nemotron-3-nano-30b-a3b',
     'openai/gpt-oss-120b',
+    # LISTADOS em `/v1/models` mas 404 para a conta (medido 02/out/2026, 3/3
+    # cada). A listagem do provedor não garante que o modelo é servido — por
+    # isso a lápide vale mesmo quando o catálogo responde.
+    'nvidia/llama-3.1-nemotron-70b-instruct',
+    'nvidia/nemotron-nano-3-30b-a3b',
 })
 
 #: Ordem de preferência, MEDIDA — não escolhida pelo nome. Medição de
@@ -78,8 +83,26 @@ MODELOS_APOSENTADOS = frozenset({
 #: `openai/gpt-oss-*` é modelo de PESO ABERTO servido pela própria NVIDIA NIM
 #: — mesma chave, mesma base_url, mesmo endpoint. Não é a API da OpenAI, e
 #: trocar para ela seria mudar de provedor, o que este sistema não faz.
+#:
+#: Remedição de 02/out/2026, mesmo método (resumo real da Cê Saladas, 6
+#: chamadas por modelo):
+#:
+#:   nvidia/nemotron-3-super-120b-a12b   6/6 JSON válido   1,4–7,3 s
+#:   nvidia/nemotron-3-ultra-550b-a55b   3/3 JSON válido   6,6–19,9 s
+#:   openai/gpt-oss-20b                  5/6 (1 VAZIA)     7,9–29,9 s
+#:   google/gemma-4-31b-it               2/3 (1 timeout)   16–22 s / >40 s
+#:   moonshotai/kimi-k3                  2/3 (1 VAZIA)     26–30 s
+#:   z-ai/glm-5.3, glm-5.3-flash, deepseek-v4.1-flash    timeout >30 s 3/3
+#:   nvidia/nemotron-3.5-lightning-30b   0/2 JSON (prosa de 3,5 kB)
+#:   nemotron-3-nano-omni-30b-reasoning  503 em 2/3
+#:   mistral-large(-2), mistral-nemo-12b, gemma-3-*, kimi-k2.6,
+#:   llama-3.1-nemotron-70b/ultra-253b, nemotron-4-340b   404 (listados!)
+#:
+#: O ultra sobe para segundo: o gpt-oss-20b não cabe no orçamento do painel
+#: (20 s) e devolveu content vazio — como segundo degrau ele era decorativo.
 PREFERENCIA = (
     'nvidia/nemotron-3-super-120b-a12b',
+    'nvidia/nemotron-3-ultra-550b-a55b',
     'openai/gpt-oss-20b',
 )
 
@@ -167,10 +190,10 @@ def modelo_vivo(nome: str | None, padrao: str = MODELO_PADRAO) -> str:
         catalogo = None
 
     if catalogo:
-        if escolhido and escolhido in catalogo:
+        if escolhido and escolhido in catalogo and escolhido not in MODELOS_APOSENTADOS:
             return escolhido
         for candidato in PREFERENCIA:
-            if candidato in catalogo:
+            if candidato in catalogo and candidato not in MODELOS_APOSENTADOS:
                 if escolhido:
                     logger.warning(
                         '[modelos] %s não está no catálogo do provedor; usando %s',
@@ -196,6 +219,29 @@ def modelo_vivo(nome: str | None, padrao: str = MODELO_PADRAO) -> str:
         )
         return padrao
     return escolhido
+
+
+def escada_de_modelos(nome: str | None, padrao: str = MODELO_PADRAO) -> list[str]:
+    """Os modelos a tentar, em ordem: o pedido (já filtrado) e depois a
+    PREFERENCIA medida — só quem está vivo, sem repetir, sem lápide.
+
+    Uma tentativa só transformava o primeiro timeout da NIM em "gerado sem
+    IA", com outro modelo bom servido pela mesma chave a um passo.
+    """
+    primeiro = modelo_vivo(nome, padrao=padrao)
+    try:
+        catalogo = catalogo_vivo()
+    except Exception:
+        catalogo = None
+
+    escada = [primeiro]
+    for candidato in PREFERENCIA:
+        if candidato in escada or candidato in MODELOS_APOSENTADOS:
+            continue
+        if catalogo and candidato not in catalogo:
+            continue
+        escada.append(candidato)
+    return escada
 
 
 def corpo_extra_do_modelo(model_name: str | None) -> dict:

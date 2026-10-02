@@ -108,8 +108,10 @@ class ProviderResolutionTest(TestCase):
             captured['provider'] = agent.provider
             return object()
 
+        # Desde 02/out o painel é SÓ NVIDIA NIM (regra da casa); o pseudo-agente
+        # continua tendo de zerar a base_url herdada do default do campo.
         with override_settings(
-            NVIDIA_API_KEY='', ANTHROPIC_API_KEY='', KIMI_API_KEY='', OPENAI_API_KEY='sk-test',
+            NVIDIA_API_KEY='nvapi-test', ANTHROPIC_API_KEY='', KIMI_API_KEY='', OPENAI_API_KEY='',
         ):
             with patch('apps.agents.runtime.factory.create_llm', fake_create_llm):
                 ai_insights.get_insights_llm()

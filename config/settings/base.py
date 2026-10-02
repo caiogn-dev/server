@@ -497,7 +497,7 @@ NVIDIA_MODEL_NAME = os.environ.get('NVIDIA_MODEL_NAME', 'nvidia/llama-3.1-nemotr
 # Modelo dos insights do painel (resumo diário/análise de conversas)
 # O default sai do catálogo medido (apps/agents/runtime/modelos.py) em vez de
 # um nome literal: nome literal aqui é a lápide da próxima aposentadoria.
-NVIDIA_INSIGHTS_MODEL = os.environ.get('NVIDIA_INSIGHTS_MODEL', 'nvidia/nemotron-3-super-120b-a12b')
+NVIDIA_INSIGHTS_MODEL = os.environ.get('NVIDIA_INSIGHTS_MODEL', '')
 
 # Unified AI Configuration Helper
 def get_ai_config():

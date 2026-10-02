@@ -107,10 +107,17 @@ def create_llm(agent: Agent):
         model_name = modelo_vivo(
             agent.model_name or getattr(settings, 'NVIDIA_MODEL_NAME', '')
         )
+        extra = {}
+        # `max_retries` não é campo do modelo Agent: só quem monta um
+        # pseudo-agente com orçamento de tempo próprio (o painel) o define.
+        # Sem ele o cliente OpenAI refaz a chamada 2x e um prazo de 18 s
+        # vira 54 s com a NIM pendurada.
+        if getattr(agent, 'max_retries', None) is not None:
+            extra['max_retries'] = agent.max_retries
         return ChatOpenAI(
             model=model_name, temperature=agent.temperature,
             max_tokens=agent.max_tokens, timeout=agent.timeout,
-            api_key=api_key, base_url=base_url,
+            api_key=api_key, base_url=base_url, **extra,
         )
     else:
         raise BaseAPIException(f"Provedor não suportado: {provider}")
