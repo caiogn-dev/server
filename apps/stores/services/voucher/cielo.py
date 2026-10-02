@@ -57,8 +57,9 @@ class CieloVoucherProvider(VoucherProvider):
             status_code, detalhe = cielo_ecommerce.consultar_venda(
                 g.public_key, g.api_key, payment_id, sandbox=g.is_sandbox,
             )
-        except requests.RequestException as erro:
-            logger.error('[cielo] venda do pedido %s em estado DESCONHECIDO: %s', order.id, erro)
+        except requests.RequestException as exc:
+            # logger.error sem exc_info: evita captura de locals (credenciais Cielo) pelo Sentry
+            logger.error('[cielo] venda do pedido %s em estado DESCONHECIDO (%s)', order.id, type(exc).__name__)
             return ResultadoDaCobranca(
                 aprovado=False, status='pending', external_id=None, mensagem='', bruto={},
             )
@@ -78,8 +79,9 @@ class CieloVoucherProvider(VoucherProvider):
             status_code, body = cielo_ecommerce.criar_venda(
                 g.public_key, g.api_key, payload, sandbox=g.is_sandbox,
             )
-        except requests.RequestException as erro:
-            logger.error('[cielo] POST da venda do pedido %s falhou: %s', order.id, erro)
+        except requests.RequestException as exc:
+            # logger.error sem exc_info: evita captura de locals (credenciais Cielo) pelo Sentry
+            logger.error('[cielo] POST da venda do pedido %s falhou (%s)', order.id, type(exc).__name__)
             return self._procurar_venda_perdida(order)
 
         return self._resultado(status_code, body)
