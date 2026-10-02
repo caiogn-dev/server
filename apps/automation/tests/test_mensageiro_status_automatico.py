@@ -21,7 +21,7 @@ BOTOES = 'apps.whatsapp.services.message_service.MessageService.send_interactive
 
 
 class _Conta:
-    id = 'conta-fake'
+    id = '00000000-0000-0000-0000-0000000000f1'
 
 
 @pytest.fixture(autouse=True)

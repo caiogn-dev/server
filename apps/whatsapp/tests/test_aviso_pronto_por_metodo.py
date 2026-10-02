@@ -51,7 +51,7 @@ class AvisoDeProntoPorMetodoTest(TestCase):
         cache.clear()  # a task é idempotente por (pedido, status)
         with patch('apps.whatsapp.services.message_service.MessageService.send_text_message') as envio, \
              patch('apps.whatsapp.tasks.automation_tasks._get_account_for_profile') as conta:
-            conta.return_value = type('C', (), {'id': 'conta-1'})()
+            conta.return_value = type('C', (), {'id': '00000000-0000-0000-0000-0000000000f3'})()
             notify_order_status_change(str(order.id), 'ready')
             if not envio.called:
                 return None

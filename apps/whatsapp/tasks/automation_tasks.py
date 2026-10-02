@@ -531,22 +531,32 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 destino = normalize_phone_number(order.customer_phone or '')
 
                 if account and destino:
-                    from apps.whatsapp.services.message_service import MessageService
-                    MessageService().send_text_message(
-                        account_id=str(account.id),
-                        to=destino,
-                        text=message,
-                        metadata={
+                    # Pelo CANAL, como o caminho de reserva: dentro da janela de
+                    # 24 h sai este texto da loja; fora dela, o modelo aprovado
+                    # `aviso_de_pedido` (texto livre ali é 131047); modo humano
+                    # cala. Até 02/10 este ramo chamava o MessageService direto —
+                    # 324 avisos da Cê Saladas em 14 dias, 0 pelo modelo, 76
+                    # perdidos por 131047.
+                    from apps.automation.mensageiro import enviar_texto
+                    enviada = enviar_texto(
+                        account,
+                        destino,
+                        message,
+                        evento=event_type,
+                        extra={
                             'source': 'order_status_notification',
                             'order_id': str(order_id),
                             'order_number': order.order_number,
                             'status': new_status,
-                            # Aviso automático não é resposta de atendente: não
-                            # tira o cliente da Fila humana.
-                            'automatico': True,
-                            'evento': event_type,
+                            'customer_name': order.customer_name or '',
                         },
                     )
+                    if enviada is None:
+                        logger.info(
+                            "Status notification for order %s (%s) calada: conversa em modo humano",
+                            order_id, new_status,
+                        )
+                        return
                     envio.saiu()
                     # O log só afirma o que aconteceu. Antes ele vinha solto depois
                     # da chamada e dizia "sent" mesmo quando nada saía — mandou

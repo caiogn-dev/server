@@ -45,7 +45,7 @@ def modelo_aprovado(conta):
     from apps.whatsapp.models import MessageTemplate
 
     return MessageTemplate.objects.filter(
-        account=conta, name=NOME_DO_MODELO, language=IDIOMA, is_active=True,
+        account_id=getattr(conta, 'id', None), name=NOME_DO_MODELO, language=IDIOMA, is_active=True,
         status=MessageTemplate.TemplateStatus.APPROVED,
     ).first()
 

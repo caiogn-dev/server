@@ -64,7 +64,7 @@ def pedido(db):
 class _ContaFalsa:
     """A loja de teste não tem conta de WhatsApp; o que importa aqui é o
     NÚMERO que sai, não de qual conta sai."""
-    id = 'conta-de-teste'
+    id = '00000000-0000-0000-0000-0000000000f2'
     phone_number_id = '000'
 
 
