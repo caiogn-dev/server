@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 ANNUAL_MONTHS_CHARGED = billing.MESES_COBRADOS_NO_ANUAL  # paga 10, leva 12
 
 
+# A Orders API do Mercado Pago só aceita external_reference em [A-Za-z0-9_-],
+# até 64 caracteres. "subpix:<uuid>:<mês>" voltava 400 "does not match
+# pattern" e nenhuma fatura de assinatura nasceu até 03/10/2026. O prefixo
+# antigo continua reconhecido na leitura (webhook, lista de faturas).
+PREFIXO_FATURA = "subpix-"
+PREFIXOS_DE_FATURA = ("subpix-", "subpix:")
+
+
+def eh_fatura_de_assinatura(referencia) -> bool:
+    return str(referencia or "").startswith(PREFIXOS_DE_FATURA)
+
+
 def _period_key(subscription, now):
     if subscription.billing_cycle == StoreSubscription.BillingCycle.ANNUAL:
         return now.strftime("%Y")
@@ -40,10 +52,11 @@ def generate_invoice(subscription, now=None):
         return None
     now = now or timezone.now()
     period_key = _period_key(subscription, now)
-    ext_ref = f"subpix:{subscription.id}:{period_key}"
+    ext_ref = f"{PREFIXO_FATURA}{subscription.id}-{period_key}"
 
+    referencia_antiga = f"subpix:{subscription.id}:{period_key}"
     existing = StorePayment.objects.filter(
-        store=store, external_reference=ext_ref,
+        store=store, external_reference__in=[ext_ref, referencia_antiga],
         status__in=[StorePayment.PaymentStatus.PENDING, StorePayment.PaymentStatus.COMPLETED],
     ).first()
     if existing:

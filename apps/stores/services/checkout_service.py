@@ -2548,8 +2548,8 @@ class CheckoutService:
                 store_payment.paid_at = timezone.now()
             store_payment.save()  # _sync_with_order espelha pix/paid_at (se houver order)
 
-            if (store_payment.external_reference or "").startswith("subpix:"):
-                from apps.stores.services import pix_billing_service
+            from apps.stores.services import pix_billing_service
+            if pix_billing_service.eh_fatura_de_assinatura(store_payment.external_reference):
                 pix_billing_service.apply_invoice_paid(store_payment)
 
             # Compra de saldo da carteira. Precisa vir ANTES da venda avulsa:
