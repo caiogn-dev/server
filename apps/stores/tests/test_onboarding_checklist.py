@@ -2,7 +2,6 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from apps.whatsapp.models import WhatsAppAccount
 from apps.stores.models import Store
-from apps.stores.models.delivery import StoreDeliveryZone
 from apps.stores.services.onboarding_checklist import build_checklist
 
 User = get_user_model()
@@ -69,9 +68,13 @@ class BuildChecklistTest(TestCase):
         done = {x['key']: x['done'] for x in build_checklist(s)['steps']}
         self.assertTrue(done['whatsapp'])
 
-    def test_zona_de_entrega_conta_como_delivery(self):
+    def test_coordenada_da_loja_conta_como_delivery(self):
+        # Até 03/10 bastava existir faixa de entrega — mesmo desligada. O frete
+        # sai da fórmula por distância, que só precisa da coordenada da loja.
+        # Ver test_saude_da_loja.py.
         s = _store(slug='deliv')
-        StoreDeliveryZone.objects.create(store=s, name='Centro', delivery_fee=5)
+        s.latitude, s.longitude = -10.19, -48.30
+        s.save(update_fields=['latitude', 'longitude'])
         done = {x['key']: x['done'] for x in build_checklist(s)['steps']}
         self.assertTrue(done['delivery'])
 
@@ -90,9 +93,9 @@ class BuildChecklistTest(TestCase):
         from apps.stores.models.product import StoreProduct  # noqa
         # cria 1 produto mínimo; slug é SlugField sem default, então setamos explicitamente
         StoreProduct.objects.create(store=s, name='X', slug='x', price=10)
-        StoreDeliveryZone.objects.create(store=s, name='Centro', delivery_fee=5)
+        s.latitude, s.longitude = -10.19, -48.30
         s.usa_gateway_da_plataforma = True
-        s.save(update_fields=['usa_gateway_da_plataforma'])
+        s.save(update_fields=['usa_gateway_da_plataforma', 'latitude', 'longitude'])
         c = build_checklist(s)
         self.assertTrue(c['all_done'])
         self.assertEqual(c['completed'], 7)

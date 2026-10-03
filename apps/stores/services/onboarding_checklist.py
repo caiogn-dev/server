@@ -10,11 +10,49 @@ _STEPS = [
     ('account', 'Conta criada', lambda s: True),
     ('logo', 'Adicionar logo da loja', lambda s: bool(s.logo or s.logo_url)),
     ('product', 'Cadastrar 1º produto', lambda s: s.products.exists()),
-    ('delivery', 'Configurar entrega', lambda s: s.delivery_zones.exists()),
+    ('delivery', 'Configurar entrega', lambda s: entrega_calcula(s)),
     ('hours', 'Definir horário de funcionamento', lambda s: bool(s.operating_hours)),
     ('whatsapp', 'Conectar o WhatsApp da loja', lambda s: whatsapp_conectado(s)),
     ('payment', 'Conectar meio de recebimento', lambda s: _recebe_pagamento(s)),
 ]
+
+
+def entrega_calcula(store):
+    """O frete sai quando o cliente digita o endereço?
+
+    Este passo olhava `delivery_zones.exists()`. Em 03/10, Cê, Kero-Kero e
+    Pastita estavam PRONTAS com 16 faixas todas desligadas, e a Agrião estava
+    PENDENTE com a entrega funcionando: a taxa sai da fórmula por distância
+    (`calculate_dynamic_fee`), não das faixas. O que de fato impede o frete é
+    a loja não ter coordenada — sem ela não há distância. Loja só de
+    retirada não tem o que configurar.
+    """
+    if not store.delivery_enabled:
+        return True
+    return store.latitude is not None and store.longitude is not None
+
+
+def alertas_de_saude(store):
+    """O que hoje impede a loja de vender, com a quantidade.
+
+    Diferente dos passos (feitos uma vez), isto pode voltar a qualquer dia:
+    alguém desliga uma categoria e o cardápio some. Em 03/10 o cardápio
+    inteiro da Agrião estava escondido assim, e nada avisou.
+    """
+    from django.db.models import Q
+
+    alertas = []
+    if not entrega_calcula(store):
+        alertas.append({'key': 'entrega_sem_endereco', 'quantidade': 1})
+
+    a_venda = store.products.filter(status='active')
+    sem_preco = a_venda.filter(price__lte=0).count()
+    if sem_preco:
+        alertas.append({'key': 'produto_sem_preco', 'quantidade': sem_preco})
+    escondidos = a_venda.filter(Q(category__is_active=False)).count()
+    if escondidos:
+        alertas.append({'key': 'produto_escondido', 'quantidade': escondidos})
+    return alertas
 
 
 def whatsapp_conectado(store):
@@ -91,4 +129,5 @@ def build_checklist(store):
         'completed': completed,
         'total': total,
         'all_done': completed == total,
+        'alertas': alertas_de_saude(store),
     }
