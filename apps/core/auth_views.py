@@ -11,6 +11,7 @@ from django.db import transaction
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from apps.core.utils import normalize_phone_number
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -134,21 +135,35 @@ class LoginView(APIView):
         user_obj = User.objects.filter(email__iexact=normalized_email).first()
         if not user_obj:
             user_obj = User.objects.filter(username__iexact=identifier).first()
-        if not user_obj:
-            # Colaborador convidado pelo painel só tem CELULAR (e-mail é
-            # placeholder). Mesma resolução de telefone do resto do sistema.
+        user = authenticate(username=user_obj.username, password=password) if user_obj else None
+
+        if user is None and '@' not in identifier:
+            # Celular. NÃO usa a resolução de cliente (resolve_user), que
+            # exclui is_staff/is_superuser de propósito: o dono nunca entrava
+            # pelo número (03/10). Testa toda conta com aquele telefone e entra
+            # na que a senha confere — equipe primeiro.
+            from apps.core.models import UserProfile
             from apps.core.services.customer_identity import CustomerIdentityService
             digitos = CustomerIdentityService.digits_only(identifier)
-            if '@' not in identifier and len(digitos) >= 10:
-                try:
-                    user_obj, _perfil, _ = CustomerIdentityService.resolve_user(phone=identifier, create=False)
-                except Exception:
-                    user_obj = None
-
-        if user_obj:
-            user = authenticate(username=user_obj.username, password=password)
-        else:
-            user = None
+            if len(digitos) >= 10:
+                candidatos = (
+                    UserProfile.objects.select_related('user')
+                    .filter(phone__in=CustomerIdentityService.phone_candidates(identifier))
+                    .order_by('-user__is_superuser', '-user__is_staff', 'user__id')
+                )
+                for perfil in candidatos:
+                    user = authenticate(username=perfil.user.username, password=password)
+                    if user is not None:
+                        break
+                if user is None:
+                    # Último recurso: a resolução de sempre (colaborador
+                    # convidado pelo painel, telefone fora do UserProfile).
+                    try:
+                        achado, _perfil, _ = CustomerIdentityService.resolve_user(phone=identifier, create=False)
+                    except Exception:
+                        achado = None
+                    if achado:
+                        user = authenticate(username=achado.username, password=password)
         
         if user is None:
             return Response(
@@ -486,7 +501,13 @@ class ProfileView(APIView):
         # Update profile fields
         profile, _ = UserProfile.objects.get_or_create(user=user)
         if 'phone' in data:
-            profile.phone = data['phone']
+            # Normalizado: o login por celular compara com as variantes do
+            # número (55, nono dígito). "(63) 99999-0001" cru nunca batia.
+            from apps.core.services.customer_identity import CustomerIdentityService
+            bruto = data['phone'] or ''
+            profile.phone = (
+                normalize_phone_number(bruto) if CustomerIdentityService.digits_only(bruto) else ''
+            )
         if 'cpf' in data:
             profile.cpf = data['cpf']
         if 'address' in data:

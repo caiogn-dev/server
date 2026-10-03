@@ -35,7 +35,10 @@ class LojaPublicaNaoVazaSegredoTests(TestCase):
         resposta = APIClient().get(self.url)
         self.assertEqual(resposta.status_code, 200)
         self.assertNotIn(SEGREDO, resposta.content.decode())
-        for campo in ('metadata', 'owner', 'plan', 'trial_ends_at', 'orders_count',
+        # metadata sai só com as chaves da vitrine (capa, cidade…): ver
+        # CatalogoPublicoNaoVazaSegredoTests.
+        self.assertEqual(resposta.data.get('metadata'), {})
+        for campo in ('owner', 'plan', 'trial_ends_at', 'orders_count',
                       'usa_gateway_da_plataforma', 'voucher_fee_percent',
                       'integrations_count', 'onboarding_completed', 'email',
                       'meta_pixel_id', 'clarity_id'):
@@ -63,4 +66,39 @@ class LojaPublicaNaoVazaSegredoTests(TestCase):
         cliente.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=outro).key}')
         resposta = cliente.get(self.url)
         self.assertNotIn(SEGREDO, resposta.content.decode())
-        self.assertNotIn('metadata', resposta.data)
+        self.assertEqual(resposta.data.get('metadata'), {})
+
+
+class CatalogoPublicoNaoVazaSegredoTests(TestCase):
+    """03/10: `GET /stores/<slug>/catalog/` (público) devolvia o `metadata`
+    inteiro da loja — token da Focus NFe, CNPJ, IE, fatos do bot, layouts de
+    etiqueta (88 KB). A correção de 02/10 tinha coberto só a rota da loja."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.dono = User.objects.create_user(username='dono_cat', email='d@cat.com', password='x')
+        self.store = Store.objects.create(
+            name='Cê Saladas', slug='ce-saladas-cat', owner=self.dono, status='active',
+            metadata={
+                'fiscal': {'focus_token': SEGREDO, 'cnpj': '12345678000199'},
+                'bot_fatos': [{'texto': 'interno'}],
+                'cover_image_url': 'https://x/capa.jpg',
+                'city': 'Palmas',
+            },
+        )
+
+    def test_anonimo_nao_ve_segredo_mas_ve_o_que_a_vitrine_usa(self):
+        r = APIClient().get(f'/api/v1/stores/{self.store.slug}/catalog/')
+        self.assertEqual(r.status_code, 200)
+        corpo = r.content.decode()
+        self.assertNotIn(SEGREDO, corpo)
+        self.assertNotIn('12345678000199', corpo)
+        self.assertNotIn('bot_fatos', corpo)
+        loja = r.json()['store']
+        self.assertEqual(loja['metadata'], {'cover_image_url': 'https://x/capa.jpg', 'city': 'Palmas'})
+        self.assertNotIn('owner', loja)
+
+    def test_rota_da_loja_tambem_entrega_so_o_metadata_da_vitrine(self):
+        r = APIClient().get(f'/api/v1/stores/{self.store.slug}/')
+        self.assertNotIn(SEGREDO, r.content.decode())
+        self.assertEqual(r.json().get('metadata'), {'cover_image_url': 'https://x/capa.jpg', 'city': 'Palmas'})

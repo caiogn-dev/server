@@ -78,3 +78,16 @@ def test_o_cenario_exato_que_gerou_as_cobrancas_agora_falha_seguro():
 
     # Nenhuma fatura criada — nem local, nem no Mercado Pago.
     assert not StorePayment.objects.filter(store=loja).exists()
+
+
+def test_orders_api_sem_mock_estoura_em_vez_de_cobrar():
+    """03/10: a fatura vai por `mp_orders.create_order`; a trava cobria só o SDK."""
+    from apps.stores.services import mp_orders
+    with pytest.raises(AssertionError, match='Mercado Pago DE VERDADE'):
+        mp_orders.create_order('token', {})
+
+
+def test_requests_direto_ao_mercadopago_estoura():
+    import requests
+    with pytest.raises(AssertionError, match='Mercado Pago DE VERDADE'):
+        requests.post('https://api.mercadopago.com/v1/orders', json={})

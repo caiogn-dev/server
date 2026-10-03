@@ -128,7 +128,10 @@ class PixFallbackParaLinkTests(TestCase):
 
     def test_link_tambem_falha_mantem_comportamento_antigo(self):
         sdk = _sdk(BLOQUEIO_MP, {'status': 403, 'response': {'message': 'tambem bloqueado'}})
-        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk):
+        # Sem este mock o PIX ia à Orders API DE VERDADE (a trava do conftest
+        # pegou em 03/10).
+        with self._credenciais(), mock.patch('mercadopago.SDK', return_value=sdk), \
+                mock.patch.object(mp_orders_mod, 'create_order', return_value=RECUSA_ORDERS):
             res = CheckoutService.create_payment(self.order, payment_method='pix')
 
         self.assertFalse(res['success'])

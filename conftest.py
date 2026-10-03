@@ -134,6 +134,24 @@ def _sem_chamada_real_ao_mercadopago(monkeypatch):
         monkeypatch.setattr(subscription_service, '_sdk', _proibido, raising=False)
     except Exception:  # pragma: no cover - app pode não estar carregado
         pass
+
+    # 03/10/2026: a fatura de assinatura passou a ir pela Orders API
+    # (`mp_orders.create_order`, requests cru), e esta trava só cobria o SDK.
+    # Só não gerava cobrança porque o MP recusava a referência com ':'. Ao
+    # consertar a referência, a suíte criou 3 PIX reais (R$ 179/249) na conta
+    # da empresa. Agora qualquer requests ao domínio do MP estoura (create_order
+    # usa requests.post, que passa por Session.request); teste que mocka
+    # requests.post ou create_order continua livre.
+    import requests
+
+    original = requests.Session.request
+
+    def _request_sem_mercadopago(self, method, url, *args, **kwargs):
+        if 'mercadopago.com' in str(url):
+            _proibido()
+        return original(self, method, url, *args, **kwargs)
+
+    monkeypatch.setattr(requests.Session, 'request', _request_sem_mercadopago)
     yield
 
 
