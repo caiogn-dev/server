@@ -21,6 +21,7 @@ from apps.stores.models import (
 )
 from apps.core.services.customer_identity import CustomerIdentityService
 from apps.core.permissions import user_can_access_store
+from apps.core.utils import build_absolute_media_url
 
 
 class StoreSerializer(serializers.ModelSerializer):
@@ -1927,14 +1928,17 @@ def build_combo_groups(obj):
                 # senão o modal desabilita a opção achando que está esgotada.
                 'stock': (variant.stock_quantity if v_tracks else None),
                 'max_selections': limit.max_selections,
-                'image_url': variant.image.url if variant.image else variant.image_url,
+                # Endereço completo: a vitrine roda em outro domínio e "/media/..."
+                # relativo vira 404 lá (fotos quebradas no detalhe do combo).
+                'image_url': build_absolute_media_url(variant.image.url if variant.image else variant.image_url),
             })
 
         # Opções de PRODUTO (escolha entre vários produtos no grupo)
         product_options = []
         for opt in sorted(group.product_options.all(), key=lambda o: o.position):
             p = opt.product
-            p_img = (p.main_image.url if getattr(p, 'main_image', None) else None) or getattr(p, 'main_image_url', None)
+            # Mesmo caminho do produto fora do combo (endereço completo).
+            p_img = p.get_main_image_url()
             p_tracks = bool(getattr(p, 'track_stock', False)) and not bool(getattr(p, 'allow_backorder', False))
             product_options.append({
                 'product_id': str(p.id),
