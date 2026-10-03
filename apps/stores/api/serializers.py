@@ -608,6 +608,18 @@ class StoreProductSerializer(serializers.ModelSerializer):
         }
 
 
+class StoreProductVitrineSerializer(StoreProductSerializer):
+    """O mesmo contrato do painel, sem o que é segredo da loja.
+
+    Rotas AllowAny (catálogo da vitrine, favoritos) usavam o serializer do
+    painel e entregavam `cost_price` a quem chamasse a API. Herdar mantém o
+    resto do contrato idêntico — a vitrine lê dezenas destes campos.
+    """
+
+    class Meta(StoreProductSerializer.Meta):
+        fields = [f for f in StoreProductSerializer.Meta.fields if f not in ('cost_price',)]
+
+
 class StoreProductCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating/updating products with dynamic product type support."""
     

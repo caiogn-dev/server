@@ -77,7 +77,7 @@ from apps.stores.services.frete_promocional import (
     subtotal_ou_none,
 )
 from ..serializers import (
-    StoreSerializer, StoreCategorySerializer, StoreProductSerializer,
+    StoreSerializer, StoreCategorySerializer, StoreProductVitrineSerializer,
     StoreCartSerializer, StoreCartItemSerializer, StoreComboSerializer,
     CatalogProductTypeSerializer, StoreWishlistSerializer, WishlistAddRemoveSerializer,
     CheckoutSerializer
@@ -361,6 +361,24 @@ def build_store_customer_profile(store, user):
     }
 
 
+#: Chaves do `metadata` que a vitrine lê (medido no cardapidex-web em 03/10).
+#: O resto do metadata é do painel: token da Focus NFe, CNPJ, fatos do bot,
+#: layouts de etiqueta (88 KB na Cê), carteira, frete por km…
+METADATA_PUBLICO = (
+    'cover_image_url', 'city', 'state', 'phone', 'whatsapp',
+    'whatsapp_default_message', 'opening_hours', 'business_hours_label',
+    'catalog_pitch', 'serves_cuisine', 'alternate_names', 'alternateName',
+)
+
+
+def loja_para_o_publico(dados: dict, campos) -> dict:
+    """Recorte do StoreSerializer que qualquer visitante pode ver."""
+    publico = {campo: dados[campo] for campo in campos if campo in dados}
+    metadata = dados.get('metadata') or {}
+    publico['metadata'] = {k: metadata[k] for k in METADATA_PUBLICO if k in metadata}
+    return publico
+
+
 class StorePublicView(APIView):
     """Public store information endpoint."""
     permission_classes = [permissions.AllowAny]
@@ -389,7 +407,7 @@ class StorePublicView(APIView):
         # O painel chama esta mesma rota logado e precisa do cadastro completo.
         if request.user.is_authenticated and user_can_access_store(request.user, store):
             return Response(dados)
-        return Response({campo: dados[campo] for campo in self.CAMPOS_PUBLICOS if campo in dados})
+        return Response(loja_para_o_publico(dados, self.CAMPOS_PUBLICOS))
 
 
 class StoreCatalogView(APIView):
@@ -439,7 +457,7 @@ class StoreCatalogView(APIView):
             if cat_products:
                 products_by_category.append({
                     'category': StoreCategorySerializer(category).data,
-                    'products': StoreProductSerializer(cat_products, many=True).data,
+                    'products': StoreProductVitrineSerializer(cat_products, many=True).data,
                 })
 
         featured_products = [p for p in all_products if p.featured]
@@ -459,10 +477,12 @@ class StoreCatalogView(APIView):
         )
 
         payload = {
-            'store': StoreSerializer(store).data,
+            # Sempre o recorte público: esta resposta é a mesma para todos e
+            # entregava o metadata inteiro, com o token fiscal (03/10).
+            'store': loja_para_o_publico(StoreSerializer(store).data, StorePublicView.CAMPOS_PUBLICOS),
             'categories': StoreCategorySerializer(categories, many=True).data,
-            'products': StoreProductSerializer(all_products, many=True).data,
-            'featured_products': StoreProductSerializer(featured_products, many=True).data,
+            'products': StoreProductVitrineSerializer(all_products, many=True).data,
+            'featured_products': StoreProductVitrineSerializer(featured_products, many=True).data,
             'combos': StoreComboSerializer(combos, many=True).data,
             'combos_destaque': StoreComboSerializer(combos_destaque, many=True).data,
             'product_types': CatalogProductTypeSerializer(product_types, many=True).data,
@@ -1687,7 +1707,7 @@ class StoreWishlistViewSet(viewsets.ViewSet):
         products = [item.product for item in wishlist_items]
         
         return Response({
-            'products': StoreProductSerializer(products, many=True).data,
+            'products': StoreProductVitrineSerializer(products, many=True).data,
             'count': len(products)
         })
     
