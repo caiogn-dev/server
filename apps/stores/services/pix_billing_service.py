@@ -45,6 +45,16 @@ def _invoice_amount(plan, cycle):
     return monthly
 
 
+def _validade_do_pix(bruto, now):
+    """Quando o PIX vence, segundo o Mercado Pago. Sem a data, 24 h."""
+    from django.utils.dateparse import parse_datetime
+    try:
+        quando = parse_datetime(bruto) if bruto else None
+    except (TypeError, ValueError):
+        quando = None
+    return quando or (now + timezone.timedelta(hours=24))
+
+
 def generate_invoice(subscription, now=None):
     """Gera (ou retorna a existente) a fatura PIX do período atual. None se isenta."""
     store = subscription.store
@@ -59,7 +69,10 @@ def generate_invoice(subscription, now=None):
         store=store, external_reference__in=[ext_ref, referencia_antiga],
         status__in=[StorePayment.PaymentStatus.PENDING, StorePayment.PaymentStatus.COMPLETED],
     ).first()
-    if existing:
+    if existing and (
+        existing.status == StorePayment.PaymentStatus.COMPLETED
+        or not existing.expires_at or existing.expires_at > now
+    ):
         return existing
 
     plan = billing.get_plan(subscription.plan)
@@ -94,6 +107,21 @@ def generate_invoice(subscription, now=None):
         logger.error("Falha ao gerar PIX de assinatura p/ %s: %s", store.slug, body)
         raise RuntimeError(f"MercadoPago recusou o PIX da fatura: {status_code}")
     tx = mp_orders.extract_pix(body)
+    validade = _validade_do_pix(tx.get('date_of_expiration'), now)
+
+    if existing:
+        # O PIX da Orders API vence em ~24 h. Fatura ainda em aberto ganha
+        # código novo na MESMA linha — o aviso de véspera/dia não pode mandar
+        # um código morto (03/10).
+        existing.external_id = str(tx.get("payment_id") or "")
+        existing.qr_code = tx.get("qr_code", "")
+        existing.qr_code_base64 = tx.get("qr_code_base64", "")
+        existing.ticket_url = tx.get("ticket_url", "")
+        existing.expires_at = validade
+        existing.save(update_fields=[
+            'external_id', 'qr_code', 'qr_code_base64', 'ticket_url', 'expires_at', 'updated_at',
+        ])
+        return existing
 
     return StorePayment.objects.create(
         store=store, order=None,
@@ -105,7 +133,7 @@ def generate_invoice(subscription, now=None):
         qr_code=tx.get("qr_code", ""),
         qr_code_base64=tx.get("qr_code_base64", ""),
         ticket_url=tx.get("ticket_url", ""),
-        expires_at=now + timezone.timedelta(days=3),
+        expires_at=validade,
         metadata={
             "kind": kind, "subscription_id": str(subscription.id),
             "period_key": period_key, "sent_steps": [],

@@ -79,9 +79,17 @@ def enforce_subscription_lifecycle():
                     StoreSubscription.Status.PAST_DUE,
                 ):
                     try:
-                        pix_billing_service.generate_invoice(sub, now=now)
+                        fatura = pix_billing_service.generate_invoice(sub, now=now)
                     except Exception:
+                        fatura = None
                         logger.exception('Falha ao gerar fatura PIX p/ %s', store.slug)
+                    # A fatura só existia na tela de Plano: o dono agora recebe
+                    # por e-mail 3 dias antes, na véspera e no dia (03/10).
+                    try:
+                        from apps.stores.services import aviso_de_fatura
+                        aviso_de_fatura.avisar(fatura, vencimento=due, agora=now)
+                    except Exception:
+                        logger.exception('Falha ao avisar fatura p/ %s', store.slug)
     return counts
 
 
