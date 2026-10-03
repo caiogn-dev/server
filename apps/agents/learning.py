@@ -53,6 +53,27 @@ _VAGUE_INPUT_PATTERNS = [
 ]
 
 
+def _texto_da_mensagem(conteudo) -> str:
+    """Texto legível de uma mensagem, qualquer que seja o formato guardado.
+
+    O campo `content` chega como texto puro, {"text": "..."},
+    {"text": {"body": "..."}}, botão ({"body_text": ...}) ou mídia. O .strip()
+    direto derrubava a tarefa inteira a cada 5 minutos.
+    """
+    if conteudo is None:
+        return ""
+    if isinstance(conteudo, str):
+        return conteudo.strip()
+    if isinstance(conteudo, dict):
+        for chave in ("text", "body", "body_text", "caption"):
+            valor = conteudo.get(chave)
+            if isinstance(valor, dict):
+                valor = valor.get("body") or valor.get("text")
+            if isinstance(valor, str) and valor.strip():
+                return valor.strip()
+    return ""
+
+
 def _classify_topic(text: str) -> str:
     text_lower = text.lower()
     for topic, keywords in _TOPIC_RULES:
@@ -206,8 +227,8 @@ class AgentLearningService:
             if next_msg.get("role") != "assistant":
                 continue
 
-            user_text = (msg.get("content") or "").strip()
-            bot_text = (next_msg.get("content") or "").strip()
+            user_text = _texto_da_mensagem(msg.get("content"))
+            bot_text = _texto_da_mensagem(next_msg.get("content"))
 
             if not user_text or _is_vague_input(user_text) or not _is_good_response(bot_text):
                 continue
