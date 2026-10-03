@@ -31,8 +31,10 @@ from django.test import override_settings
 from apps.agents.runtime import modelos
 from apps.stores.services import ai_insights
 
-SUPER = 'nvidia/nemotron-3-super-120b-a12b'
-ULTRA = 'nvidia/nemotron-3-ultra-550b-a55b'
+# 03/out/2026: o super-120b morreu (410). A escada medida virou ultra → gpt-oss-20b.
+# Os nomes PRIMEIRO/SEGUNDO seguem o lugar na escada, não o modelo.
+PRIMEIRO = 'nvidia/nemotron-3-ultra-550b-a55b'
+SEGUNDO = 'openai/gpt-oss-20b'
 
 JSON_BOM = '{"blocos":[{"tipo":"resultado","titulo":"Ontem","texto":"3 pedidos."}]}'
 
@@ -70,7 +72,7 @@ def _fabrica(por_modelo, registro):
 
 @pytest.fixture(autouse=True)
 def catalogo_com_os_dois():
-    with patch.object(modelos, 'catalogo_vivo', return_value=frozenset({SUPER, ULTRA})):
+    with patch.object(modelos, 'catalogo_vivo', return_value=frozenset({PRIMEIRO, SEGUNDO})):
         yield
 
 
@@ -92,49 +94,49 @@ def _resumo(por_modelo, registro):
 class TestEscadaDeModelos:
     def test_primeiro_pendura_segundo_nvidia_responde(self):
         registro = []
-        r = _resumo({SUPER: TimeoutError('read timeout'), ULTRA: JSON_BOM}, registro)
+        r = _resumo({PRIMEIRO: TimeoutError('read timeout'), SEGUNDO: JSON_BOM}, registro)
 
         assert r['source'] == 'llm'
-        assert r['model'] == ULTRA
-        assert [c['model'] for c in registro] == [SUPER, ULTRA]
+        assert r['model'] == SEGUNDO
+        assert [c['model'] for c in registro] == [PRIMEIRO, SEGUNDO]
 
     def test_resposta_vazia_nao_vira_insight_tenta_o_proximo(self):
         """O gpt-oss-20b devolveu 200 com content='' em 1 de 6 chamadas."""
         registro = []
-        r = _resumo({SUPER: '', ULTRA: JSON_BOM}, registro)
+        r = _resumo({PRIMEIRO: '', SEGUNDO: JSON_BOM}, registro)
 
         assert r['source'] == 'llm'
-        assert r['model'] == ULTRA
+        assert r['model'] == SEGUNDO
 
     def test_prosa_sem_json_tenta_o_proximo(self):
         registro = []
-        r = _resumo({SUPER: 'Claro! Aqui vai o resumo do dia...', ULTRA: JSON_BOM}, registro)
-        assert r['model'] == ULTRA
+        r = _resumo({PRIMEIRO: 'Claro! Aqui vai o resumo do dia...', SEGUNDO: JSON_BOM}, registro)
+        assert r['model'] == SEGUNDO
 
     def test_todos_falham_template_com_motivo_visivel(self, caplog):
         registro = []
         with caplog.at_level('ERROR', logger='apps.stores.services.ai_insights'):
-            r = _resumo({SUPER: TimeoutError('read timeout'), ULTRA: ''}, registro)
+            r = _resumo({PRIMEIRO: TimeoutError('read timeout'), SEGUNDO: ''}, registro)
 
         assert r['source'] == 'template'
         assert r['blocos']
         # O motivo sai no payload e no log ERROR — não só num WARNING que
         # ninguém lê.
-        assert SUPER in r['llm_error'] and ULTRA in r['llm_error']
+        assert PRIMEIRO in r['llm_error'] and SEGUNDO in r['llm_error']
         assert 'vazia' in r['llm_error']
         assert any(rec.levelname == 'ERROR' for rec in caplog.records)
 
     def test_sucesso_nao_traz_llm_error(self):
-        r = _resumo({SUPER: JSON_BOM}, [])
+        r = _resumo({PRIMEIRO: JSON_BOM}, [])
         assert r['source'] == 'llm'
-        assert r['model'] == SUPER
+        assert r['model'] == PRIMEIRO
         assert not r.get('llm_error')
 
 
 class TestOrcamentoDeTempo:
     def test_cliente_nao_refaz_a_chamada_sozinho(self):
         registro = []
-        _resumo({SUPER: TimeoutError('x'), ULTRA: TimeoutError('y')}, registro)
+        _resumo({PRIMEIRO: TimeoutError('x'), SEGUNDO: TimeoutError('y')}, registro)
         assert registro and all(c['max_retries'] == 0 for c in registro)
 
     def test_soma_dos_prazos_cabe_no_orcamento_do_painel(self):
@@ -177,7 +179,7 @@ class TestOrcamentoDeTempo:
         from apps.agents.models import Agent
         from apps.agents.runtime.factory import create_llm
 
-        agent = Agent(name='x', provider=Agent.AgentProvider.NVIDIA, model_name=SUPER,
+        agent = Agent(name='x', provider=Agent.AgentProvider.NVIDIA, model_name=PRIMEIRO,
                       temperature=0.3, max_tokens=100, timeout=10, base_url='')
         agent.max_retries = 0
         with override_settings(NVIDIA_API_KEY='nvapi-teste'):
@@ -202,20 +204,20 @@ class TestConversas:
         bom = '{"faqs": [], "complaints": [], "opportunities": [], "sentiment": "neutro", "summary": "ok"}'
         with override_settings(NVIDIA_API_KEY='nvapi-teste', NVIDIA_INSIGHTS_MODEL=''), \
              patch('apps.agents.runtime.factory.create_llm',
-                   _fabrica({SUPER: 'não sei', ULTRA: bom}, registro)), \
+                   _fabrica({PRIMEIRO: 'não sei', SEGUNDO: bom}, registro)), \
              patch.object(ai_insights, 'collect_conversation_sample', return_value=['oi']):
             r = ai_insights.generate_conversation_insights(_loja())
         assert r['source'] == 'llm'
-        assert r['model'] == ULTRA
+        assert r['model'] == SEGUNDO
 
     def test_conversa_todos_falham_mostra_motivo(self):
         with override_settings(NVIDIA_API_KEY='nvapi-teste', NVIDIA_INSIGHTS_MODEL=''), \
              patch('apps.agents.runtime.factory.create_llm',
-                   _fabrica({SUPER: '', ULTRA: TimeoutError('t')}, [])), \
+                   _fabrica({PRIMEIRO: '', SEGUNDO: TimeoutError('t')}, [])), \
              patch.object(ai_insights, 'collect_conversation_sample', return_value=['oi']):
             r = ai_insights.generate_conversation_insights(_loja())
         assert r['source'] == 'error'
-        assert SUPER in r['llm_error']
+        assert PRIMEIRO in r['llm_error']
 
 
 class TestCatalogoListadoNaoEServido:
@@ -223,24 +225,24 @@ class TestCatalogoListadoNaoEServido:
         """`/v1/models` lista o llama-3.1-nemotron-70b, mas ele dá 404."""
         morto = 'nvidia/llama-3.1-nemotron-70b-instruct'
         assert morto in modelos.MODELOS_APOSENTADOS
-        with patch.object(modelos, 'catalogo_vivo', return_value=frozenset({morto, SUPER})):
-            assert modelos.modelo_vivo(morto) == SUPER
+        with patch.object(modelos, 'catalogo_vivo', return_value=frozenset({morto, PRIMEIRO})):
+            assert modelos.modelo_vivo(morto) == PRIMEIRO
 
     def test_escada_comeca_pelo_pedido_e_so_tem_vivos(self):
-        with patch.object(modelos, 'catalogo_vivo', return_value=frozenset({SUPER, ULTRA, 'x/y'})):
+        with patch.object(modelos, 'catalogo_vivo', return_value=frozenset({PRIMEIRO, SEGUNDO, 'x/y'})):
             escada = modelos.escada_de_modelos('x/y')
         assert escada[0] == 'x/y'
-        assert escada[1:] == [SUPER, ULTRA]
+        assert escada[1:] == [PRIMEIRO, SEGUNDO]
 
     def test_escada_sem_repetir_e_sem_lapide(self):
         with patch.object(modelos, 'catalogo_vivo', return_value=None):
-            escada = modelos.escada_de_modelos(SUPER)
-        assert escada[0] == SUPER
+            escada = modelos.escada_de_modelos(PRIMEIRO)
+        assert escada[0] == PRIMEIRO
         assert len(escada) == len(set(escada))
         assert not set(escada) & modelos.MODELOS_APOSENTADOS
 
     def test_segundo_degrau_e_o_ultra_medido(self):
-        assert modelos.PREFERENCIA[:2] == (SUPER, ULTRA)
+        assert modelos.PREFERENCIA[:2] == (PRIMEIRO, SEGUNDO)
 
 
 class TestPromptDizQueDiaFoiOntem:

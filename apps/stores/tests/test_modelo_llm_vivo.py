@@ -57,10 +57,10 @@ class ModeloPadraoTests(SimpleTestCase):
         from apps.stores.services.ai_insights import modelo_de_insights
         self.assertEqual(modelo_de_insights(), MODELO_INSIGHTS_PADRAO)
 
-    @override_settings(NVIDIA_INSIGHTS_MODEL='nvidia/nemotron-3-super-120b-a12b')
+    @override_settings(NVIDIA_INSIGHTS_MODEL='nvidia/nemotron-3-ultra-550b-a55b')
     def test_env_com_modelo_vivo_manda(self):
         from apps.stores.services.ai_insights import modelo_de_insights
-        self.assertEqual(modelo_de_insights(), 'nvidia/nemotron-3-super-120b-a12b')
+        self.assertEqual(modelo_de_insights(), 'nvidia/nemotron-3-ultra-550b-a55b')
 
 
 class CorpoExtraTests(SimpleTestCase):

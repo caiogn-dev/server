@@ -2,6 +2,7 @@
 API Views for Agents
 """
 import logging
+from apps.agents.runtime.modelos import modelo_vivo
 from rest_framework import viewsets, status
 
 logger = logging.getLogger(__name__)
@@ -234,9 +235,8 @@ class AgentViewSet(viewsets.ModelViewSet):
                 # A família llama-3.1 de texto saiu do catálogo da NIM em
                 # 26/ago/2026 (410 Gone). Oferecer modelo morto no seletor faz
                 # o dono configurar um agente que nunca vai responder.
-                {'value': 'nvidia/nemotron-3-super-120b-a12b', 'label': 'Nemotron Super 120B (Recomendado)'},
+                {'value': 'nvidia/nemotron-3-ultra-550b-a55b', 'label': 'Nemotron Ultra 550B (Recomendado)'},
                 {'value': 'deepseek-ai/deepseek-v4-flash-0731', 'label': 'DeepSeek V4 Flash'},
-                {'value': 'nvidia/nemotron-3-super-120b-a12b', 'label': 'Nemotron Super 120B (Melhor)'},
             ]
         }
         return Response(models)
@@ -264,7 +264,7 @@ class AgentViewSet(viewsets.ModelViewSet):
             },
             'nvidia': {
                 'base_url': getattr(settings, 'NVIDIA_API_BASE_URL', 'https://integrate.api.nvidia.com/v1'),
-                'model_name': getattr(settings, 'NVIDIA_MODEL_NAME', 'nvidia/nemotron-3-super-120b-a12b'),
+                'model_name': modelo_vivo(getattr(settings, 'NVIDIA_MODEL_NAME', None)),
                 'api_style': 'openai',
             },
             'ollama': {

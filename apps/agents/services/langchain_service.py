@@ -181,9 +181,11 @@ class LangchainService:
         # Use ChatOpenAI for NVIDIA (OpenAI-compatible NIM API)
         elif provider == Agent.AgentProvider.NVIDIA:
             from langchain_openai import ChatOpenAI
-            from apps.agents.runtime.modelos import corpo_extra_do_modelo
-            model_name = self.agent.model_name or getattr(
-                settings, 'NVIDIA_MODEL_NAME', 'nvidia/nemotron-3-super-120b-a12b'
+            from apps.agents.runtime.modelos import corpo_extra_do_modelo, modelo_vivo, MODELO_PADRAO
+            # Passa pela escada: o agente gravado com um modelo que o provedor
+            # aposentou (super-120b, 410 desde 03/10) não pode derrubar o bot.
+            model_name = modelo_vivo(
+                self.agent.model_name or getattr(settings, 'NVIDIA_MODEL_NAME', MODELO_PADRAO)
             )
             # A família nemotron-3 raciocina por padrão e, com max_tokens=700,
             # gastava o orçamento inteiro pensando: em 17/09 o raciocínio em

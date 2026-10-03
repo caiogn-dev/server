@@ -65,7 +65,11 @@ class TestPromocoes:
         assert 'Nenhuma promoção' in texto
 
     def test_cardapio_marca_o_item_em_promocao(self):
-        texto = _catalog_summary(_loja_com_promos())
+        # A promoção é de segunda: sem fixar o relógio, o teste só passava às
+        # segundas (falhou no sábado, 03/10).
+        from unittest.mock import patch
+        with patch('django.utils.timezone.now', return_value=SEGUNDA):
+            texto = _catalog_summary(_loja_com_promos())
         linha = next(l for l in texto.splitlines() if 'Magnifico Camarão' in l)
         assert '36.74' in linha and 'PROMOÇÃO DE HOJE' in linha and '48.99' in linha
         linha = next(l for l in texto.splitlines() if 'Combo Tilápia' in l)

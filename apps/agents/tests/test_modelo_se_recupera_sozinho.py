@@ -45,15 +45,15 @@ def _catalogo(*vivos):
 class TestPulaOQueMorreu:
 
     def test_usa_o_modelo_pedido_quando_ele_esta_vivo(self):
-        with _catalogo('nvidia/nemotron-3-super-120b-a12b', 'outro/modelo'):
+        with _catalogo('nvidia/nemotron-3-ultra-550b-a55b', 'outro/modelo'):
             assert modelos.modelo_vivo('outro/modelo') == 'outro/modelo'
 
     def test_modelo_morto_cai_para_a_melhor_preferencia_VIVA(self):
         """O caso de 03/set: o pedido morreu E o substituto fixo também."""
-        with _catalogo('nvidia/nemotron-3-super-120b-a12b'):
+        with _catalogo('nvidia/nemotron-3-ultra-550b-a55b'):
             escolhido = modelos.modelo_vivo('openai/gpt-oss-120b')
 
-        assert escolhido == 'nvidia/nemotron-3-super-120b-a12b'
+        assert escolhido == 'nvidia/nemotron-3-ultra-550b-a55b'
 
     def test_respeita_a_ordem_medida_da_preferencia(self):
         """A ordem é resultado de medição, não de gosto — tem que ser seguida."""

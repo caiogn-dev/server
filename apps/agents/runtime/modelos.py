@@ -66,6 +66,9 @@ MODELOS_APOSENTADOS = frozenset({
     # isso a lápide vale mesmo quando o catálogo responde.
     'nvidia/llama-3.1-nemotron-70b-instruct',
     'nvidia/nemotron-nano-3-30b-a3b',
+    # 410 Gone: "reached its end of life on 2026-10-03T09:00:00Z" (medido
+    # 03/out/2026). Era o padrão; os dois agentes e o env apontavam para ele.
+    'nvidia/nemotron-3-super-120b-a12b',
 })
 
 #: Ordem de preferência, MEDIDA — não escolhida pelo nome. Medição de
@@ -101,7 +104,8 @@ MODELOS_APOSENTADOS = frozenset({
 #: O ultra sobe para segundo: o gpt-oss-20b não cabe no orçamento do painel
 #: (20 s) e devolveu content vazio — como segundo degrau ele era decorativo.
 PREFERENCIA = (
-    'nvidia/nemotron-3-super-120b-a12b',
+    # 03/out/2026: o super-120b morreu (410). O ultra respondeu em 1,2 s num
+    # pedido curto e já era o segundo degrau medido.
     'nvidia/nemotron-3-ultra-550b-a55b',
     'openai/gpt-oss-20b',
 )
