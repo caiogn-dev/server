@@ -1931,6 +1931,22 @@ class CatalogProductTypeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+def _descricao_curta_da_opcao(produto, limite=140):
+    """1ª frase/parágrafo do prato, para a linha do seletor de combo.
+
+    O Combo Família lista 26 pratos: cada linha precisa caber em duas linhas
+    de texto, então vem a curta (ou o 1º parágrafo da completa), cortada sem
+    partir palavra.
+    """
+    texto = (produto.short_description or '').strip()
+    if not texto:
+        texto = (produto.description or '').strip().split('\n\n')[0].strip()
+    texto = ' '.join(texto.split())
+    if len(texto) <= limite:
+        return texto
+    return texto[:limite].rsplit(' ', 1)[0].rstrip(' ,.;:') + '…'
+
+
 def build_combo_groups(obj):
     """Monta os grupos de um combo com opções (variantes E/OU produtos).
 
@@ -1977,6 +1993,7 @@ def build_combo_groups(obj):
                 'stock': (p.stock_quantity if p_tracks else None),
                 'max_selections': opt.max_selections,
                 'image_url': p_img,
+                'description': _descricao_curta_da_opcao(p),
             })
 
         groups_data.append({
