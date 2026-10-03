@@ -59,6 +59,21 @@ class StoreSerializer(serializers.ModelSerializer):
         max_digits=5, decimal_places=2, required=False, allow_null=True,
     )
 
+    # O Google devolve até 14 casas decimais; o campo guarda 7 (max_digits=10).
+    # Sem arredondar, o PATCH da localização voltava 400 (03/10).
+    def to_internal_value(self, data):
+        from decimal import Decimal, ROUND_HALF_UP
+        if hasattr(data, 'copy'):
+            data = data.copy()
+        for campo in ('latitude', 'longitude'):
+            valor = data.get(campo) if hasattr(data, 'get') else None
+            if valor not in (None, ''):
+                try:
+                    data[campo] = str(Decimal(str(valor)).quantize(Decimal('0.0000001'), rounding=ROUND_HALF_UP))
+                except Exception:
+                    pass
+        return super().to_internal_value(data)
+
     class Meta:
         model = Store
         fields = [

@@ -71,3 +71,19 @@ class PontoDoLinkTest(TestCase):
     def test_anonimo_nao_usa(self):
         r = APIClient().get(self.url, {'link': 'https://maps.app.goo.gl/abc'})
         self.assertIn(r.status_code, (401, 403))
+
+
+class CoordenadaComMuitasCasasTest(TestCase):
+    """O Google devolve -48.30363149999999 (14 casas); o campo guarda 7.
+    O PATCH voltava 400 e o painel dizia 'Erro ao salvar localização' (03/10)."""
+
+    def test_coordenada_do_google_e_arredondada_e_salva(self):
+        from apps.stores.api.serializers import StoreSerializer
+        User = get_user_model()
+        dono = User.objects.create_user('dono_casas', 'dono@casas.com', 'x')
+        loja = Store.objects.create(name='Agrião', slug='agriao-casas', owner=dono, status='active')
+        ser = StoreSerializer(loja, data={'latitude': -10.1853496, 'longitude': -48.30363149999999}, partial=True)
+        self.assertTrue(ser.is_valid(), ser.errors)
+        ser.save()
+        loja.refresh_from_db()
+        self.assertEqual(str(loja.longitude), '-48.3036315')
