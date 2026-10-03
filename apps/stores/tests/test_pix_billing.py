@@ -62,7 +62,7 @@ class GenerateInvoiceTest(TestCase):
         self.assertEqual(inv.payment_method, StorePayment.PaymentMethod.PIX)
         self.assertEqual(inv.store_id, self.store.id)
         self.assertIsNone(inv.order_id)
-        self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026-07")
+        self.assertEqual(inv.external_reference, f"subpix-{self.sub.id}-2026-07")
         self.assertEqual(inv.qr_code, "PIXFATURA")
         # id NUMÉRICO consultável (do ticket_url), não o ULID da Orders API:
         # é por ele que o webhook e o poller confirmam o pagamento.
@@ -75,6 +75,21 @@ class GenerateInvoiceTest(TestCase):
         self.assertEqual(inv.metadata["kind"], "monthly")
 
     @patch.object(pix_billing_service.mp_orders, "create_order")
+    def test_referencia_no_formato_que_o_mercado_pago_aceita(self, mock_criar):
+        # A Orders API recusa external_reference fora de [A-Za-z0-9_-], até 64.
+        # Com "subpix:<uuid>:<mês>" ela respondia 400 "does not match pattern"
+        # e nenhuma fatura de assinatura nasceu até 03/10/2026. O mock de
+        # sempre aceitava tudo, por isso nenhum teste viu.
+        import re
+        mock_criar.return_value = _orders_fatura()
+        for ciclo in (StoreSubscription.BillingCycle.MONTHLY, StoreSubscription.BillingCycle.ANNUAL):
+            self.sub.billing_cycle = ciclo
+            self.sub.save()
+            pix_billing_service.generate_invoice(self.sub, now=self.now)
+            enviada = mock_criar.call_args[0][1]["external_reference"]
+            self.assertRegex(enviada, r"^[A-Za-z0-9_-]{1,64}$")
+
+    @patch.object(pix_billing_service.mp_orders, "create_order")
     def test_annual_is_ten_times_monthly(self, mock_criar):
         mock_criar.return_value = _orders_fatura()
         self.sub.billing_cycle = "annual"; self.sub.save()
@@ -82,7 +97,7 @@ class GenerateInvoiceTest(TestCase):
         # O que importa é a RELAÇÃO (paga 10, leva 12), não o valor do mês.
         mensal = float(billing.get_plan("pro")["monthly_price"])
         self.assertEqual(float(inv.amount), mensal * pix_billing_service.ANNUAL_MONTHS_CHARGED)
-        self.assertEqual(inv.external_reference, f"subpix:{self.sub.id}:2026")
+        self.assertEqual(inv.external_reference, f"subpix-{self.sub.id}-2026")
 
     @patch.object(pix_billing_service.mp_orders, "create_order")
     def test_idempotent_per_period(self, mock_criar):
@@ -158,6 +173,17 @@ class WebhookAdvancesSubscriptionTest(TestCase):
         self.assertEqual(self.sub.status, StoreSubscription.Status.ACTIVE)
         self.assertEqual(self.store.plan, "pro")
 
+    def test_webhook_com_referencia_nova_ativa_assinatura(self):
+        from apps.stores.services.checkout_service import CheckoutService
+        ref = f"subpix-{self.sub.id}-2026-07"
+        self.inv.external_reference = ref
+        self.inv.external_id = "778"
+        self.inv.save()
+        CheckoutService().process_payment_webhook("778", "approved", external_reference=ref)
+        self.sub.refresh_from_db(); self.store.refresh_from_db()
+        self.assertEqual(self.sub.status, StoreSubscription.Status.ACTIVE)
+        self.assertEqual(self.store.plan, "pro")
+
 
 class AutoInvoiceGenerationTest(TestCase):
     def setUp(self):
@@ -177,7 +203,7 @@ class AutoInvoiceGenerationTest(TestCase):
         from apps.stores.tasks import enforce_subscription_lifecycle
         enforce_subscription_lifecycle()
         self.assertTrue(StorePayment.objects.filter(
-            store=self.store, external_reference__startswith="subpix:").exists())
+            store=self.store, external_reference__startswith="subpix").exists())
 
     @override_settings(BILLING_PIX_ENABLED=False, BILLING_ENFORCEMENT_ENABLED=True)
     @patch.object(pix_billing_service.mp_orders, "create_order")
@@ -186,7 +212,7 @@ class AutoInvoiceGenerationTest(TestCase):
         from apps.stores.tasks import enforce_subscription_lifecycle
         enforce_subscription_lifecycle()
         self.assertFalse(StorePayment.objects.filter(
-            store=self.store, external_reference__startswith="subpix:").exists())
+            store=self.store, external_reference__startswith="subpix").exists())
 
     @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
     @patch.object(pix_billing_service.mp_orders, "create_order")
@@ -197,7 +223,7 @@ class AutoInvoiceGenerationTest(TestCase):
         from apps.stores.tasks import enforce_subscription_lifecycle
         enforce_subscription_lifecycle()
         self.assertFalse(StorePayment.objects.filter(
-            store=self.store, external_reference__startswith="subpix:").exists())
+            store=self.store, external_reference__startswith="subpix").exists())
 
     @override_settings(BILLING_PIX_ENABLED=True, BILLING_ENFORCEMENT_ENABLED=True)
     @patch.object(pix_billing_service.mp_orders, "create_order")
@@ -208,7 +234,7 @@ class AutoInvoiceGenerationTest(TestCase):
         enforce_subscription_lifecycle()
         self.assertEqual(
             StorePayment.objects.filter(
-                store=self.store, external_reference__startswith="subpix:").count(),
+                store=self.store, external_reference__startswith="subpix").count(),
             1,
         )
 

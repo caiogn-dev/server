@@ -11,6 +11,7 @@ Endpoints de assinatura SaaS:
 import logging
 
 from django.conf import settings
+from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, status
@@ -240,7 +241,8 @@ class StoreInvoiceListView(APIView):
             return Response({'detail': 'Sem permissão.'}, status=status.HTTP_403_FORBIDDEN)
 
         qs = StorePayment.objects.filter(
-            store=store, external_reference__startswith='subpix:',
+            Q(external_reference__startswith='subpix-') | Q(external_reference__startswith='subpix:'),
+            store=store,
         ).order_by('-created_at')
         return Response({'invoices': [_invoice_dict(p) for p in qs]})
 
