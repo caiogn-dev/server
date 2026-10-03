@@ -185,7 +185,7 @@ from .api.views.salada_salva_views import SaladaSalvaDetalheView, SaladasSalvasV
 from .api.views.cash_views import CashOpenView, CashCurrentView, CashMovementView, CashCloseView
 from .api.maps_views import (
     StoreGeocodeView, StoreReverseGeocodeView, StoreRouteView,
-    StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView
+    StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView, PontoDoLinkView
 )
 from .api.ai_insights_views import AIConversationInsightsView, AIDailySummaryView
 from .api.export_views import (
@@ -316,6 +316,7 @@ store_frontend_patterns = [
     path('validate-delivery/', StoreValidateDeliveryView.as_view(), name='store-validate-delivery'),
     path('delivery-zones/', StoreDeliveryZonesView.as_view(), name='store-delivery-zones'),
     path('autosuggest/', StoreAutosuggestView.as_view(), name='store-autosuggest'),
+    path('ponto-do-link/', PontoDoLinkView.as_view(), name='store-ponto-do-link'),
     path('webhooks/mercadopago/', MercadoPagoWebhookView.as_view(), name='store-webhook-mercadopago'),
     path('loyalty/', LoyaltyStatusView.as_view(), name='store-loyalty-status'),
     path('loyalty/redeem-check/', LoyaltyRedeemCheckView.as_view(), name='store-loyalty-redeem-check'),

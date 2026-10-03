@@ -440,8 +440,11 @@ class GeoService:
         center: Tuple[float, float] | None = None,
         country: str = "BRA",
         limit: int = 5,
+        tipos: str | None = 'geocode',
     ) -> List[Dict]:
         try:
+            if tipos != 'geocode':
+                return self.provider.autosuggest(query, center=center, limit=limit, tipos=tipos)
             return self.provider.autosuggest(query, center=center, limit=limit)
         except Exception as exc:
             logger.error("Autosuggest error: %s", exc, exc_info=True)

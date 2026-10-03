@@ -330,6 +330,36 @@ class StoreAutosuggestView(APIView):
                 center = (float(store.latitude), float(store.longitude))
         
         limit = int(request.query_params.get('limit', 5))
-        suggestions = geo_service.autosuggest(query, center=center, limit=limit)
-        
+        # ?tipo=estabelecimento: localização da própria loja no painel — o alvo
+        # é o negócio ("Agrião Comida Saudável"), não um endereço.
+        tipos = None if request.query_params.get('tipo') == 'estabelecimento' else 'geocode'
+        suggestions = geo_service.autosuggest(query, center=center, limit=limit, tipos=tipos)
+
         return Response({'suggestions': suggestions})
+
+
+class PontoDoLinkView(APIView):
+    """GET /stores/<slug>/ponto-do-link/?link=<Google Maps> → {lat, lng}.
+
+    O dono cola o link do Google Maps da própria loja (inclusive o curto,
+    maps.app.goo.gl, que só o servidor consegue seguir).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, store_slug=None):
+        from apps.core.permissions import user_can_access_store
+        from apps.stores.services.nome_do_lugar import (
+            _coords_do_link_curto, _eh_url_google_maps, coordenadas_do_texto,
+        )
+
+        store = get_object_or_404(Store, slug=store_slug)
+        if not user_can_access_store(request.user, store):
+            return Response({'detail': 'Sem acesso a esta loja.'}, status=status.HTTP_403_FORBIDDEN)
+        link = (request.query_params.get('link') or '').strip()
+        if not _eh_url_google_maps(link):
+            return Response({'detail': 'Cole um link do Google Maps.'}, status=status.HTTP_400_BAD_REQUEST)
+        coords = coordenadas_do_texto(link) or _coords_do_link_curto(link)
+        if not coords:
+            return Response({'detail': 'Não achei a localização nesse link.'}, status=422)
+        return Response({'lat': coords[0], 'lng': coords[1]})

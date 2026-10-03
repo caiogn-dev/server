@@ -414,6 +414,7 @@ class GoogleMapsProvider:
         *,
         center: Tuple[float, float] | None = None,
         limit: int = 5,
+        tipos: str | None = 'geocode',
     ) -> List[Dict]:
         if not self.api_key:
             return []
@@ -423,10 +424,12 @@ class GoogleMapsProvider:
             'key': self.api_key,
             'language': 'pt-BR',
             'components': 'country:br',
-            # Endereço, não estabelecimento: sem isto "Quadra 104 Norte" voltava
-            # Câmara, clínica e ótica (01/10).
-            'types': 'geocode',
         }
+        if tipos:
+            # Endereço, não estabelecimento: sem isto "Quadra 104 Norte" voltava
+            # Câmara, clínica e ótica (01/10). A localização da PRÓPRIA loja
+            # passa tipos=None: lá o alvo é o estabelecimento (03/10).
+            params['types'] = tipos
         if center:
             params['location'] = f'{center[0]},{center[1]}'
             params['radius'] = 30000
@@ -435,7 +438,7 @@ class GoogleMapsProvider:
         response = requests.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=params, timeout=10)
         response.raise_for_status()
         payload = response.json()
-        if payload.get('status') == 'ZERO_RESULTS':
+        if tipos and payload.get('status') == 'ZERO_RESULTS':
             # Nenhum endereço: quem digitou "Shopping X" ainda acha pelo nome.
             aberta = {k: v for k, v in params.items() if k != 'types'}
             response = requests.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=aberta, timeout=10)
