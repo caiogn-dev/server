@@ -64,25 +64,27 @@ def enviar_texto(conta, telefone: str, texto: str, evento: str, extra: dict | No
     if _calado(conta, telefone, evento):
         return None
 
-    # Fora da janela de 24 h o texto livre é recusado (131047). Para aviso de
-    # status de pedido existe o modelo de utilidade — ver `modelo.py`.
-    por_modelo = _por_modelo_se_janela_fechada(conta, telefone, evento, extra)
-    if por_modelo is not None:
-        return por_modelo
+    if _status_fora_da_janela(conta, telefone, evento):
+        return None
 
     return _enviar(lambda: MessageService().send_text_message(
         account_id=str(conta.id), to=telefone, text=texto, metadata=_meta(evento, extra),
     ))
 
 
-def _por_modelo_se_janela_fechada(conta, telefone: str, evento: str, extra: dict | None):
-    from . import janela, modelo
+def _status_fora_da_janela(conta, telefone: str, evento: str) -> bool:
+    """Aviso de status de pedido é mensagem normal e só sai com a janela de
+    24 h aberta (dono, 05/10). Fora dela não vai template — custa e, com a
+    WABA em 131042, nem sai — e texto livre seria 131047 certo: em 30 dias,
+    87 de 87 tentativas fora da janela falharam."""
+    from . import janela
 
-    if evento not in modelo.FRASES or not modelo.modelo_aprovado(conta):
-        return None
+    if not evento.startswith('order_'):
+        return False
     if janela.aberta(conta, telefone):
-        return None
-    return _enviar(lambda: modelo.enviar_aviso_de_pedido(conta, telefone, evento, extra, _meta(evento, extra)))
+        return False
+    logger.info('Automática %s não saiu: fora da janela de 24 h.', evento)
+    return True
 
 
 def enviar_botoes(conta, telefone: str, texto: str, botoes: list, evento: str,

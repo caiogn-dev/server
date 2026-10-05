@@ -23,6 +23,18 @@ from apps.stores.models import Store, StoreOrder, StoreProduct
 User = get_user_model()
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _janela_aberta():
+    """Este arquivo testa outra regra; a janela de 24 h tem teste próprio
+    (test_aviso_de_status_pelo_modelo). Aqui ela está aberta."""
+    from unittest.mock import patch as _patch
+    with _patch('apps.automation.mensageiro.janela.aberta', return_value=True):
+        yield
+
+
 def _make_store(n):
     owner = User.objects.create_user(
         username=f'owner-sup-{n}', email=f'owner-sup-{n}@x.com', password='x'

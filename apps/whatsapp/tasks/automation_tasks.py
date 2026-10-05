@@ -532,11 +532,8 @@ def notify_order_status_change(self, order_id: str, new_status: str):
 
                 if account and destino:
                     # Pelo CANAL, como o caminho de reserva: dentro da janela de
-                    # 24 h sai este texto da loja; fora dela, o modelo aprovado
-                    # `aviso_de_pedido` (texto livre ali é 131047); modo humano
-                    # cala. Até 02/10 este ramo chamava o MessageService direto —
-                    # 324 avisos da Cê Saladas em 14 dias, 0 pelo modelo, 76
-                    # perdidos por 131047.
+                    # 24 h sai este texto da loja; fora dela não sai nada (sem
+                    # template — dono, 05/10); modo humano cala.
                     from apps.automation.mensageiro import enviar_texto
                     enviada = enviar_texto(
                         account,
@@ -553,7 +550,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                     )
                     if enviada is None:
                         logger.info(
-                            "Status notification for order %s (%s) calada: conversa em modo humano",
+                            "Status notification for order %s (%s) calada: modo humano ou fora da janela de 24 h",
                             order_id, new_status,
                         )
                         return

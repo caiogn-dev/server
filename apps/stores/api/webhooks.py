@@ -355,8 +355,8 @@ class MercadoPagoWebhookView(APIView):
     
     def _send_payment_confirmation_whatsapp(self, order):
         """
-        Send WhatsApp payment confirmation message.
-        Uses template message if available, otherwise sends text.
+        Send WhatsApp payment confirmation message (texto normal, só com a
+        janela de 24 h aberta — sem template).
         """
         try:
             # Check if customer has phone number
@@ -364,22 +364,15 @@ class MercadoPagoWebhookView(APIView):
                 logger.info(f"No phone number for order {order.order_number}, skipping WhatsApp")
                 return
             
-            # Get WhatsApp integration for the store
-            from apps.stores.models import StoreIntegration
-            integration = StoreIntegration.objects.filter(
-                store=order.store,
-                integration_type=StoreIntegration.IntegrationType.WHATSAPP,
-                status=StoreIntegration.IntegrationStatus.ACTIVE
-            ).first()
-            
-            if not integration:
-                logger.info(f"No WhatsApp integration for store {order.store.slug}")
+            # Pelo canal das automáticas (dono, 05/10): sai como mensagem
+            # normal só com a janela de 24 h aberta, respeita o modo humano e
+            # fica gravada na conversa. Antes ia direto ao MessageService, às
+            # cegas, com o id da integração no lugar do id da conta.
+            account = order.store.get_whatsapp_account() if order.store else None
+            if not account:
+                logger.info(f"No WhatsApp account for store {getattr(order.store, 'slug', None)}")
                 return
-            
-            # Import message service
-            from apps.whatsapp.services import MessageService
-            service = MessageService()
-            
+
             # DDI pela fonte única: grudar '55' na mão manda a notificação do
             # pedido para um número brasileiro inexistente quando o cliente é
             # estrangeiro.
@@ -402,13 +395,19 @@ class MercadoPagoWebhookView(APIView):
 
 Obrigado pela preferência! 🎉"""
             
-            # Send message
-            service.send_text_message(
-                account_id=str(integration.external_id) if integration.external_id else str(integration.id),
-                to=phone,
-                text=message
+            from apps.automation.mensageiro import enviar_texto
+            enviada = enviar_texto(
+                account, phone, message, evento='order_paid',
+                extra={
+                    'source': 'payment_confirmation',
+                    'order_id': str(order.id),
+                    'order_number': order.order_number,
+                    'customer_name': order.customer_name or '',
+                },
             )
-            
+            if enviada is None:
+                logger.info(f"WhatsApp confirmation for {order.order_number} não saiu: modo humano ou fora da janela")
+                return
             logger.info(f"WhatsApp confirmation sent for order {order.order_number}")
             
         except Exception as e:

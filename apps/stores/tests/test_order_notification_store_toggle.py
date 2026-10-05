@@ -19,6 +19,18 @@ User = get_user_model()
 
 # O aviso de status só sai com a mensagem automática que o post_save da loja
 # semeia; a suíte desliga o seed por padrão (settings/test.py).
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _janela_aberta():
+    """Este arquivo testa outra regra; a janela de 24 h tem teste próprio
+    (test_aviso_de_status_pelo_modelo). Aqui ela está aberta."""
+    from unittest.mock import patch as _patch
+    with _patch('apps.automation.mensageiro.janela.aberta', return_value=True):
+        yield
+
+
 @override_settings(AUTOMATION_SEMEAR_MENSAGENS_AO_CRIAR_LOJA=True)
 class OrderNotificationStoreToggleTest(TestCase):
     def setUp(self):

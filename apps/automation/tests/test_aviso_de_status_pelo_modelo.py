@@ -76,23 +76,16 @@ def _avisar(pedido, status):
 
 @pytest.mark.django_db
 @pytest.mark.parametrize('status', STATUS_RELEVANTES)
-def test_janela_fechada_sai_pelo_modelo_mesmo_com_texto_da_loja(pedido, status):
+def test_janela_fechada_nao_manda_nada(pedido, status):
+    """Dono, 05/10: aviso de status é mensagem normal, só com janela de 24 h
+    aberta. Fora dela não sai template (custo) nem texto (131047 certo)."""
     with patch(JANELA, return_value=False), patch(MODELO, return_value=OK) as por_modelo, \
-            patch(TEXTO) as por_texto:
+            patch(TEXTO, return_value=OK) as por_texto:
         _avisar(pedido, status)
 
+    por_modelo.assert_not_called()
     por_texto.assert_not_called()
-    kwargs = por_modelo.call_args.kwargs
-    assert kwargs['template_name'] == modelo.NOME_DO_MODELO
-    params = [p['text'] for p in kwargs['components'][0]['parameters']]
-    assert params == ['Maria', pedido.order_number, 'Cê Saladas', modelo.FRASES[f'order_{status}']]
-
-    msg = Message.objects.get(metadata__order_id=str(pedido.id))
-    assert msg.metadata['por_modelo'] is True
-    assert msg.metadata['evento'] == f'order_{status}'
-    assert msg.metadata['source'] == 'order_status_notification'
-    assert msg.metadata['status'] == status
-    assert msg.metadata['automatico'] is True
+    assert not Message.objects.filter(metadata__order_id=str(pedido.id)).exists()
 
 
 @pytest.mark.django_db

@@ -82,21 +82,16 @@ class TestComponentes:
 @pytest.mark.django_db
 class TestCanalForaDaJanela:
 
-    def test_janela_fechada_com_modelo_aprovado_sai_por_modelo(self, conta):
+    def test_janela_fechada_nao_manda_nada_nem_com_modelo_aprovado(self, conta):
+        # Dono, 05/10: status só como mensagem normal com a janela aberta.
         _aprovado(conta)
         with patch(JANELA, return_value=False), patch(MODELO, return_value=OK) as por_modelo, \
                 patch(TEXTO) as por_texto:
             msg = enviar_texto(conta, TEL, 'Olá Maria! Seu pedido foi confirmado', 'order_confirmed', extra=EXTRA)
 
+        assert msg is None
+        por_modelo.assert_not_called()
         por_texto.assert_not_called()
-        kwargs = por_modelo.call_args.kwargs
-        assert kwargs['template_name'] == modelo.NOME_DO_MODELO
-        params = kwargs['components'][0]['parameters']
-        assert [p['text'] for p in params] == ['Maria', 'CE-2609240001', 'Cê Saladas', modelo.FRASES['order_confirmed']]
-        assert msg.message_type == Message.MessageType.TEMPLATE
-        assert msg.metadata['automatico'] is True
-        assert msg.metadata['evento'] == 'order_confirmed'
-        assert msg.metadata['por_modelo'] is True
 
     def test_janela_aberta_continua_texto_livre(self, conta):
         # Texto livre é o da loja (personalizável); o modelo é só a saída de emergência.
@@ -106,12 +101,13 @@ class TestCanalForaDaJanela:
         por_modelo.assert_not_called()
         por_texto.assert_called_once()
 
-    def test_sem_modelo_aprovado_tenta_o_texto_como_antes(self, conta):
+    def test_janela_fechada_sem_modelo_tambem_nao_tenta_o_texto(self, conta):
+        # Texto livre fora da janela é 131047 certo: 87 de 87 falharam em 30 dias.
         _aprovado(conta, status='pending')
         with patch(JANELA, return_value=False), patch(MODELO) as por_modelo, patch(TEXTO, return_value=OK) as por_texto:
-            enviar_texto(conta, TEL, 'Olá!', 'order_confirmed', extra=EXTRA)
+            assert enviar_texto(conta, TEL, 'Olá!', 'order_confirmed', extra=EXTRA) is None
         por_modelo.assert_not_called()
-        por_texto.assert_called_once()
+        por_texto.assert_not_called()
 
     def test_evento_que_nao_e_status_de_pedido_nao_usa_o_modelo(self, conta):
         _aprovado(conta)
@@ -119,10 +115,9 @@ class TestCanalForaDaJanela:
             enviar_texto(conta, TEL, 'Seu carrinho…', 'cart_reminder', extra={})
         por_modelo.assert_not_called()
 
-    def test_nao_consulta_a_janela_quando_nao_ha_modelo(self, conta):
-        # Sem modelo não há alternativa: a consulta seria uma query a mais por aviso, à toa.
+    def test_evento_que_nao_e_de_pedido_nao_consulta_a_janela(self, conta):
         with patch(JANELA) as janela, patch(TEXTO, return_value=OK):
-            enviar_texto(conta, TEL, 'Olá!', 'order_confirmed', extra=EXTRA)
+            enviar_texto(conta, TEL, 'Seu carrinho…', 'cart_reminder', extra={})
         janela.assert_not_called()
 
 

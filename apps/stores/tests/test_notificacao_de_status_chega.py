@@ -30,6 +30,16 @@ import pytest
 
 from apps.core.models import User
 from apps.stores.models import Store, StoreOrder
+from unittest.mock import patch
+
+
+@pytest.fixture(autouse=True)
+def _janela_aberta():
+    """Estes testes cuidam do texto do aviso; a janela de 24 h tem teste próprio
+    (test_aviso_de_status_pelo_modelo). Aqui ela está aberta."""
+    with patch('apps.automation.mensageiro.janela.aberta', return_value=True):
+        yield
+
 
 
 pytestmark = pytest.mark.django_db

@@ -16,6 +16,15 @@ from apps.automation.models import AutoMessage, CompanyProfile
 from apps.stores.models import Store, StoreOrder
 from apps.whatsapp.tasks import automation_tasks
 
+
+@pytest.fixture(autouse=True)
+def _janela_aberta():
+    """Estes testes cuidam do texto do aviso; a janela de 24 h tem teste próprio
+    (test_aviso_de_status_pelo_modelo). Aqui ela está aberta."""
+    with patch('apps.automation.mensageiro.janela.aberta', return_value=True):
+        yield
+
+
 TEXTO = 'apps.whatsapp.services.message_service.MessageService.send_text_message'
 BOTOES = 'apps.whatsapp.services.message_service.MessageService.send_interactive_buttons'
 
