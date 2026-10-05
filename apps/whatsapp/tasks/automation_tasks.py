@@ -533,7 +533,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 if account and destino:
                     # Pelo CANAL, como o caminho de reserva: dentro da janela de
                     # 24 h sai este texto da loja; fora dela não sai nada (sem
-                    # template — dono, 05/10); modo humano cala.
+                    # template — dono, 05/10). Modo humano NÃO cala status.
                     from apps.automation.mensageiro import enviar_texto
                     enviada = enviar_texto(
                         account,
@@ -550,7 +550,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                     )
                     if enviada is None:
                         logger.info(
-                            "Status notification for order %s (%s) calada: modo humano ou fora da janela de 24 h",
+                            "Status notification for order %s (%s) não saiu: fora da janela de 24 h",
                             order_id, new_status,
                         )
                         return

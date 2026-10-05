@@ -54,17 +54,36 @@ class TestModoHumano:
 
 
 @pytest.mark.django_db
-def test_canal_nao_envia_em_modo_humano(conta):
+def test_canal_nao_envia_lembrete_em_modo_humano(conta):
     from apps.automation.mensageiro import canal
 
     _conversa(conta, '5563911110005', Conversation.ConversationMode.HUMAN)
     servico = MagicMock()
 
     with patch('apps.whatsapp.services.message_service.MessageService', return_value=servico):
-        resultado = canal.enviar_texto(conta, '5563911110005', 'oi', evento='order_preparing')
+        resultado = canal.enviar_texto(conta, '5563911110005', 'oi', evento='cart_reminder')
 
     assert resultado is None
     servico.send_text_message.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_status_do_pedido_sai_mesmo_em_modo_humano(conta):
+    """Dono, 05/10 (Tassiana): o atendente muda o status com 'avisar'
+    ligado e o cliente não recebia nada porque a conversa estava em modo
+    humano. Status do pedido é o próprio atendente falando — sai."""
+    from apps.automation.mensageiro import canal
+    from apps.whatsapp.models import Message
+
+    _conversa(conta, '5563911110007', Conversation.ConversationMode.HUMAN)
+    servico = MagicMock()
+    servico.send_text_message.return_value = MagicMock(status=Message.MessageStatus.SENT)
+
+    with patch('apps.whatsapp.services.message_service.MessageService', return_value=servico), \
+            patch('apps.automation.mensageiro.janela.aberta', return_value=True):
+        canal.enviar_texto(conta, '5563911110007', 'saiu para entrega', evento='order_out_for_delivery')
+
+    servico.send_text_message.assert_called_once()
 
 
 @pytest.mark.django_db

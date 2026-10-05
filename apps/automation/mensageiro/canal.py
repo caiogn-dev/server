@@ -61,7 +61,10 @@ def enviar_texto(conta, telefone: str, texto: str, evento: str, extra: dict | No
     """Devolve a mensagem enviada, ou `None` quando a política calou o envio."""
     from apps.whatsapp.services.message_service import MessageService
 
-    if _calado(conta, telefone, evento):
+    # Status do pedido não é calado pelo modo humano: quem muda o status é o
+    # próprio atendente, e o cliente ficava sem "saiu para entrega" (Tassiana,
+    # 05/10). As demais automáticas seguem a regra de 21/09.
+    if not _e_status_do_pedido(evento) and _calado(conta, telefone, evento):
         return None
 
     if _status_fora_da_janela(conta, telefone, evento):
@@ -72,6 +75,10 @@ def enviar_texto(conta, telefone: str, texto: str, evento: str, extra: dict | No
     ))
 
 
+def _e_status_do_pedido(evento: str) -> bool:
+    return evento.startswith('order_')
+
+
 def _status_fora_da_janela(conta, telefone: str, evento: str) -> bool:
     """Aviso de status de pedido é mensagem normal e só sai com a janela de
     24 h aberta (dono, 05/10). Fora dela não vai template — custa e, com a
@@ -79,7 +86,7 @@ def _status_fora_da_janela(conta, telefone: str, evento: str) -> bool:
     87 de 87 tentativas fora da janela falharam."""
     from . import janela
 
-    if not evento.startswith('order_'):
+    if not _e_status_do_pedido(evento):
         return False
     if janela.aberta(conta, telefone):
         return False

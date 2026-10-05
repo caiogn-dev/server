@@ -101,15 +101,16 @@ def test_janela_aberta_sai_o_texto_da_loja(pedido, status):
 
 
 @pytest.mark.django_db
-def test_modo_humano_cala_o_aviso_com_texto_da_loja(pedido):
-    """Regra do dono (21/09): atendente na conversa, automática não sai. O
-    caminho com AutoMessage pulava o canal e por isso pulava essa regra."""
+def test_modo_humano_nao_cala_o_aviso_de_status(pedido):
+    """Dono, 05/10 (Tassiana): quem muda o status é o atendente; o aviso sai
+    mesmo com a conversa em modo humano (a regra de 21/09 calava)."""
     Conversation.objects.create(
         account=pedido.store.whatsapp_account, phone_number='5563999990801',
         mode=Conversation.ConversationMode.HUMAN,
     )
-    with patch(JANELA, return_value=True), patch(MODELO) as por_modelo, patch(TEXTO) as por_texto:
+    with patch(JANELA, return_value=True), patch(MODELO) as por_modelo, \
+            patch(TEXTO, return_value=OK) as por_texto:
         _avisar(pedido, 'out_for_delivery')
 
     por_modelo.assert_not_called()
-    por_texto.assert_not_called()
+    por_texto.assert_called_once()

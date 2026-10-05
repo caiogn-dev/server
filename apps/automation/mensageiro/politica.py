@@ -2,8 +2,11 @@
 
 Regra do dono (21/09/2026): enquanto um atendente está na conversa — modo
 humano —, nenhuma mensagem automática sai. Elas voltam quando a conversa volta
-para o bot. Vale inclusive para aviso de status: o cliente que está conversando
-com uma pessoa não recebe "saiu para entrega" por cima da conversa.
+para o bot.
+
+EXCEÇÃO (dono, 05/10): aviso de status do pedido sai mesmo em modo humano —
+quem muda o status é o próprio atendente (Tassiana ficou sem "saiu para
+entrega"). A exceção mora no canal (`_e_status_do_pedido`).
 
 Fica no canal porque o canal é o único caminho de toda automática (fase 1) —
 uma regra, um lugar.
