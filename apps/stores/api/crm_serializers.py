@@ -29,6 +29,7 @@ class CustomerSearchSerializer(serializers.ModelSerializer):
     Inclui endereços filtrados pela loja do contexto.
     """
     addresses = serializers.SerializerMethodField()
+    name = serializers.SerializerMethodField()
 
     class Meta:
         model = UnifiedUser
@@ -37,6 +38,27 @@ class CustomerSearchSerializer(serializers.ModelSerializer):
             'total_orders', 'total_spent', 'last_order_at',
             'addresses',
         ]
+
+    def get_name(self, obj):
+        """Nome do cadastro; se for só o telefone, o último nome usado nos
+        pedidos da loja — é por ele que o lojista conhece a cliente."""
+        from apps.core.services.customer_identity import CustomerIdentityService
+        if not CustomerIdentityService.is_placeholder_name(obj.name):
+            return obj.name
+        store = self.context.get('store')
+        if store and obj.django_user_id:
+            from apps.stores.models import StoreOrder
+            nomes = (
+                StoreOrder.objects
+                .filter(store=store, customer_id=obj.django_user_id)
+                .exclude(customer_name='')
+                .order_by('-created_at')
+                .values_list('customer_name', flat=True)[:5]
+            )
+            for nome in nomes:
+                if not CustomerIdentityService.is_placeholder_name(nome):
+                    return nome
+        return obj.name
 
     def get_addresses(self, obj):
         store = self.context.get('store')

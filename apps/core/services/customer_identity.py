@@ -61,9 +61,16 @@ class CustomerIdentityService:
 
     @staticmethod
     def is_placeholder_name(name: str) -> bool:
-        """True para nomes de fallback (cliente_..., desconhecido, vazio)."""
+        """True para nomes de fallback (cliente_..., desconhecido, vazio, telefone).
+
+        Telefone no lugar do nome (ex.: "63981275718") vinha do login por código
+        do WhatsApp e contava como nome real: o nome dos pedidos nunca entrava e a
+        cliente sumia da busca por nome no Novo pedido (Marleny, 05/10).
+        """
         value = (name or "").strip().lower()
-        return not value or value.startswith("cliente_") or value == "desconhecido"
+        if not value or value.startswith("cliente_") or value == "desconhecido":
+            return True
+        return bool(re.fullmatch(r"[\d\s()+.\-]+", value)) and len(re.sub(r"\D", "", value)) >= 8
 
     @classmethod
     def public_name(cls, name: str):

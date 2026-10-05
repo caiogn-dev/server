@@ -235,8 +235,10 @@ def verify_whatsapp_auth_code(request):
             )
 
         display_name = f"{user.first_name} {user.last_name}".strip() or whatsapp_user.get('name') or ''
-        if not display_name or display_name.lower().startswith('cliente_'):
-            display_name = profile.phone or result.get('phone_number') or ''
+        # Sem nome real, devolve vazio — devolver o telefone aqui fazia o front
+        # gravá-lo como nome do cliente (Marleny, 05/10).
+        if CustomerIdentityService.is_placeholder_name(display_name):
+            display_name = ''
 
         return Response({
             'valid': True,

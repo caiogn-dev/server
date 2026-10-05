@@ -73,9 +73,25 @@ class CustomerSearchView(APIView):
         except (ValueError, TypeError):
             limit = 8
 
+        # Também pelo nome usado nos pedidos DESTA loja: cadastro nascido no
+        # login por código pode ter o telefone no lugar do nome, e a cliente
+        # sumia da busca (Marleny, 05/10). E pelo telefone só em dígitos, para
+        # "(63) 98127-5718" achar "5563981275718".
+        busca = (
+            Q(name__icontains=q)
+            | Q(phone_number__icontains=q)
+            | Q(
+                django_user__store_orders__store=store,
+                django_user__store_orders__customer_name__icontains=q,
+            )
+        )
+        digitos = ''.join(ch for ch in q if ch.isdigit())
+        if len(digitos) >= 4:
+            busca |= Q(phone_number__icontains=digitos)
+
         users = (
             UnifiedUser.objects
-            .filter(Q(name__icontains=q) | Q(phone_number__icontains=q))
+            .filter(busca)
             .filter(
                 Q(store_customers__store=store)
                 | Q(addresses__tenant=store)
