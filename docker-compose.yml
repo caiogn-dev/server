@@ -156,7 +156,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres123}
     # max_connections=200 evita "too many clients" com múltiplos workers ASGI + Celery
-    command: postgres -c max_connections=200 -c shared_buffers=256MB
+    # jit=off: a lista de conversas do inbox executava em 106 ms e o Postgres
+    # gastava 3.460 ms COMPILANDO JIT antes (custo estimado inflado pelas
+    # subqueries passa do jit_above_cost). Medido em 05/10 com EXPLAIN ANALYZE.
+    command: postgres -c max_connections=200 -c shared_buffers=256MB -c jit=off
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
