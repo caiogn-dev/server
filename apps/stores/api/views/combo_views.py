@@ -122,6 +122,8 @@ class AddComboToCartView(views.APIView):
                 quantity=quantity,
                 group_selections=selections,
                 customizations={'selections': selections},
+                # A observação do cliente era descartada aqui (05/10).
+                notes=str(request.data.get('notes') or '')[:500],
             )
         except Exception as e:
             logger.error('Erro ao adicionar combo ao carrinho (store=%s, combo=%s): %s', store_slug, combo_id, e)
@@ -172,21 +174,12 @@ class AddComboToCartView(views.APIView):
         return cart
 
     def _get_cart_response(self, cart):
-        """Build cart summary response."""
-        return {
-            'cart_id': str(cart.id),
-            'store_id': str(cart.store_id),
-            'item_count': cart.item_count,
-            'subtotal': str(cart.subtotal),
-            'items': [
-                {
-                    'id': str(item.id),
-                    'combo_name': item.effective_name,
-                    'quantity': item.quantity,
-                    'unit_price': str(item.effective_price),
-                    'subtotal': str(item.subtotal),
-                    'selections': item.group_selections or item.customizations.get('selections', {})
-                }
-                for item in cart.combo_items.all()
-            ]
-        }
+        """A sacola inteira, na MESMA forma do GET /cart/.
+
+        Até 05/10 isto devolvia um resumo próprio, com os combos em `items`: o
+        site lia como produto, mostrava o combo sem nome nem foto ("Remover
+        undefined") e os produtos já na sacola sumiam até recarregar.
+        """
+        from apps.stores.api.serializers import StoreCartSerializer
+
+        return StoreCartSerializer(cart).data

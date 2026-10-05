@@ -457,15 +457,35 @@ class AddComboToCartViewTestCase(APITestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
 
-        # Verify cart response
-        self.assertIn('cart_id', data)
+        # Mesma forma do GET /cart/ (05/10): antes os combos vinham em
+        # `items`, o site lia como produto e a sacola mostrava o combo sem nome
+        # e sem foto — e os produtos já na sacola sumiam da tela.
         self.assertIn('item_count', data)
         self.assertIn('subtotal', data)
-        self.assertIn('items', data)
         self.assertEqual(data['item_count'], 1)
+        self.assertEqual(data['items'], [])
+        self.assertEqual(len(data['combo_items']), 1)
+        self.assertEqual(data['combo_items'][0]['quantity'], 1)
+        self.assertEqual(data['combo_items'][0]['combo_name'], 'Compre 3 Leve 4')
+
+    def test_add_combo_mantem_produtos_e_grava_a_observacao(self):
+        from apps.stores.models import StoreCart, StoreCartItem
+        cart = StoreCart.objects.create(store=self.store, session_key='cart_obs_1', is_active=True, metadata={})
+        StoreCartItem.objects.create(cart=cart, product=self.product_rondelli, quantity=1)
+        selections = {str(self.group.id): [str(self.variant_frango.id)] * 2 + [str(self.variant_carne.id)] * 2}
+
+        response = self.client.post(
+            f'/api/v1/stores/{self.store.slug}/cart/add-combo/?cart_key=cart_obs_1',
+            {'combo_id': str(self.combo.id), 'quantity': 1, 'selections': selections,
+             'notes': 'Sem cebola'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()
         self.assertEqual(len(data['items']), 1)
-        self.assertEqual(data['items'][0]['quantity'], 1)
-        self.assertEqual(data['items'][0]['combo_name'], 'Compre 3 Leve 4')
+        self.assertEqual(data['items'][0]['product_name'], 'Rondelli')
+        self.assertEqual(data['combo_items'][0]['notes'], 'Sem cebola')
 
     def test_add_combo_to_cart_authenticated_user(self):
         """Test adding combo to cart as authenticated user."""
