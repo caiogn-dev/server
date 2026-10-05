@@ -114,11 +114,17 @@ class OrderService:
         # Operational flow for restaurant delivery:
         # pending -> confirmed -> preparing -> out_for_delivery -> delivered
         # Legacy statuses remain readable for backwards compatibility.
+        #
+        # Avançar pulando etapa é permitido: o Kanban deixa arrastar de "Novos"
+        # direto para "Em preparo", e o serviço recusava 14% das mudanças do
+        # painel (medido 28/09–05/10). A trava do PIX não pago fica na view.
+        # Voltar continua proibido — o cliente já recebeu o aviso da etapa.
+        _avancos = ['confirmed', 'preparing', 'ready', 'out_for_delivery', 'delivered', 'cancelled']
         valid_transitions = {
-            'pending':          ['confirmed', 'cancelled'],
-            'processing':       ['confirmed', 'cancelled'],
-            'paid':             ['confirmed', 'preparing', 'cancelled'],
-            'confirmed':        ['preparing', 'out_for_delivery', 'delivered', 'cancelled'],
+            'pending':          _avancos,
+            'processing':       _avancos,
+            'paid':             _avancos,
+            'confirmed':        ['preparing', 'ready', 'out_for_delivery', 'delivered', 'cancelled'],
             'preparing':        ['ready', 'out_for_delivery', 'delivered', 'cancelled'],
             'ready':            ['out_for_delivery', 'delivered', 'cancelled'],
             'out_for_delivery': ['delivered', 'cancelled'],
@@ -134,13 +140,25 @@ class OrderService:
         allowed = valid_transitions.get(current_status, [])
         
         if new_status not in allowed and new_status != current_status:
+            rotulos = dict(StoreOrder.OrderStatus.choices)
             return {
                 'success': False,
-                'error': f'Invalid status transition from {current_status} to {new_status}',
+                'error': (
+                    f'O pedido está "{rotulos.get(current_status, current_status)}" '
+                    f'e não pode ir para "{rotulos.get(new_status, new_status)}".'
+                ),
                 'allowed_transitions': allowed
             }
         
         old_status = order.status
+
+        # Pulou a confirmação: carimba, senão o SLA de aceite fica sem início.
+        if (
+            old_status in ('pending', 'processing', 'paid')
+            and new_status not in ('confirmed', 'cancelled')
+            and not order.confirmed_at
+        ):
+            order.confirmed_at = timezone.now()
 
         if notes:
             order.notes = (

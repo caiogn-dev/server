@@ -74,13 +74,15 @@ class TestOQueNaoPodeMudar:
         assert pedido.payment_status == 'pending'
 
     def test_transicao_invalida_continua_recusada(self, loja):
-        pedido = _pedido(loja, status='pending')
+        # Voltar é inválido. (Avançar pulando etapa passou a valer em 05/10 —
+        # ver test_painel_avanca_pedido.)
+        pedido = _pedido(loja, status='delivered')
 
-        r = OrderService().update_status(pedido, 'delivered', notify_customer=False)
+        r = OrderService().update_status(pedido, 'preparing', notify_customer=False)
 
         assert r['success'] is False
         pedido.refresh_from_db()
-        assert pedido.status == 'pending'
+        assert pedido.status == 'delivered'
 
     def test_o_timestamp_de_entrega_continua_preenchido(self, loja):
         pedido = _pedido(loja)
