@@ -73,6 +73,33 @@ class CustomerIdentityService:
         return bool(re.fullmatch(r"[\d\s()+.\-]+", value)) and len(re.sub(r"\D", "", value)) >= 8
 
     @classmethod
+    def nome_para_pedido(cls, nome: str, *, phone: str = "", user=None) -> str:
+        """Nome que vai no pedido: o digitado, salvo quando é só o telefone e o
+        cadastro conhece o nome de verdade (Marleny, CE-2610052174, 05/10)."""
+        if not cls.is_placeholder_name(nome):
+            return nome
+        try:
+            from apps.users.models import UnifiedUser
+            candidatos = []
+            if user is not None:
+                candidatos.append(
+                    UnifiedUser.objects.filter(django_user=user).values_list("name", flat=True).first()
+                )
+                candidatos.append(f"{user.first_name} {user.last_name}".strip())
+            digitos = cls.digits_only(phone)
+            if len(digitos) >= 10:
+                candidatos.append(
+                    UnifiedUser.objects.filter(phone_number__endswith=digitos[-10:])
+                    .values_list("name", flat=True).first()
+                )
+            for candidato in candidatos:
+                if candidato and not cls.is_placeholder_name(candidato):
+                    return candidato
+        except Exception:
+            logger.debug("[IDENTITY] nome_para_pedido: sem cadastro para %s", phone)
+        return nome
+
+    @classmethod
     def public_name(cls, name: str):
         """Nome seguro para exibição: None se for placeholder interno."""
         return None if cls.is_placeholder_name(name) else name

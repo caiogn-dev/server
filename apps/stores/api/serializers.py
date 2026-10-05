@@ -1334,6 +1334,13 @@ class StoreOrderCreateSerializer(serializers.Serializer):
         )
         customer_user = customer_record.get('user')
         store_customer = customer_record.get('store_customer')
+        # Telefone no lugar do nome não vai para o pedido quando o cadastro
+        # conhece o nome de verdade (Marleny, 05/10).
+        validated_data['customer_name'] = CustomerIdentityService.nome_para_pedido(
+            validated_data['customer_name'],
+            phone=validated_data['customer_phone'],
+            user=customer_user,
+        )
 
         if store_customer:
             metadata['customer'] = {

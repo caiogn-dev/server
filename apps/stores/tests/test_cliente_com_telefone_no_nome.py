@@ -81,3 +81,31 @@ class BuscaDoNovoPedidoTests(APITestCase):
                                   customer_phone='5563900000000', subtotal=Decimal('1'), total=Decimal('1'))
         achados = self._buscar('marleny')
         self.assertEqual([c['id'] for c in achados], [str(self.cliente.id)])
+
+
+class PedidoDoPdvComTelefoneNoNomeTests(APITestCase):
+    """05/10 13:13 — CE-2610052174 saiu com '63981275718' no nome mesmo com o
+    cadastro já corrigido: o painel manda o nome que tinha na tela. O backend
+    não pode aceitar telefone como nome quando conhece o nome de verdade."""
+
+    def setUp(self):
+        self.owner = User.objects.create_user(username='ow-pdv-m', email='ow-pdv@t.com', password='x')
+        self.store = Store.objects.create(name='Loja P', slug='loja-p', owner=self.owner, status='active')
+        self.dj = User.objects.create_user(username='5563981275718', password='x',
+                                           first_name='Marleny', last_name='Barros')
+        UnifiedUser.objects.create(phone_number='5563981275718', name='Marleny Barros', django_user=self.dj)
+
+    def test_nome_que_e_telefone_vira_o_nome_do_cadastro(self):
+        from apps.core.services.customer_identity import CustomerIdentityService
+        nome = CustomerIdentityService.nome_para_pedido('63981275718', phone='5563981275718', user=self.dj)
+        self.assertEqual(nome, 'Marleny Barros')
+
+    def test_nome_real_digitado_e_respeitado(self):
+        from apps.core.services.customer_identity import CustomerIdentityService
+        nome = CustomerIdentityService.nome_para_pedido('Marleny B.', phone='5563981275718', user=self.dj)
+        self.assertEqual(nome, 'Marleny B.')
+
+    def test_sem_nome_conhecido_mantem_o_que_veio(self):
+        from apps.core.services.customer_identity import CustomerIdentityService
+        nome = CustomerIdentityService.nome_para_pedido('63900001111', phone='5563900001111', user=None)
+        self.assertEqual(nome, '63900001111')
