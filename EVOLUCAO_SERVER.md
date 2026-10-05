@@ -10,6 +10,23 @@ Branch trunk: `development`. Branch `main` congelada desde 29/mai/2026.
 
 ## Histórico de execuções
 
+### 2026-10-05
+
+**HEAD de `development`:** `7fe1efab` (2026-10-03). Gate: **4 PRs bot/ abertos** → loop encerrado sem novo PR.
+
+PRs aguardando revisão humana:
+
+| PR | Branch | Prioridade | Título |
+|---|---|---|---|
+| [#381](https://github.com/caiogn-dev/server/pull/381) | `bot/server-2026-09-29-producttype-inactive-staff-idor` | P2-segurança | fix(product-types): is_staff cross-tenant |
+| [#382](https://github.com/caiogn-dev/server/pull/382) | `bot/server-2026-09-30-adotar-team-member` | P2 | fix(nutricao): StoreTeamMember 403 |
+| [#383](https://github.com/caiogn-dev/server/pull/383) | `bot/server-2026-10-01-cielo-logger-str-exc` | P3 | fix(cielo): logger.exception |
+| [#384](https://github.com/caiogn-dev/server/pull/384) | `bot/server-2026-10-02-log-gate` | — | chore: gate log (pode fechar) |
+
+Relato completo em `docs/evolucao/2026-10-05.md`.
+
+---
+
 ### 2026-09-22
 
 **Baseline de testes:** 4 testes estáticos (sem DB/langchain) — 4/4 GREEN após o fix.
