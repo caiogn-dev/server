@@ -302,6 +302,10 @@ def user_can_access_store(user, store) -> bool:
     Nem is_staff nem is_superuser concedem acesso — senão qualquer conta do
     /admin, e a conta do dono da plataforma, vazam todas as lojas.
     """
+    # Anônimo é "não", não exceção: `store.staff.filter(id=<AnonymousUser>)`
+    # estourava TypeError e transformava o gate em erro 500.
+    if not getattr(user, 'is_authenticated', False):
+        return False
     if store.owner_id == user.id or store.staff.filter(id=user.id).exists():
         return True
     from apps.stores.permissions import get_member_role

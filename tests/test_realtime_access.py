@@ -4,7 +4,10 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from apps.core.sse_views import OrderSSEView
-from apps.stores.consumers import user_can_access_customer_order, user_can_access_store_orders
+# O consumer de pedidos (`apps.stores.consumers.OrderConsumer._user_can_access_store`)
+# decide por `user_can_access_store`; as funções soltas que este teste importava
+# saíram do consumers.py em 03/06 e a coleta da suíte inteira quebrava aqui.
+from apps.core.permissions import user_can_access_store
 from apps.stores.models import Store, StoreOrder
 
 
@@ -56,19 +59,19 @@ class RealtimeAccessTests(TestCase):
         self.order_b = make_order(self.store_b, 'order-b')
 
     def test_order_websocket_requires_store_access(self):
-        allowed = user_can_access_store_orders(self.owner_a, self.store_b.slug)
+        allowed = user_can_access_store(self.owner_a, self.store_b)
 
         self.assertFalse(allowed)
 
     def test_order_websocket_allows_store_staff(self):
-        allowed = user_can_access_store_orders(self.staff, self.store_a.slug)
+        allowed = user_can_access_store(self.staff, self.store_a)
 
         self.assertTrue(allowed)
 
     def test_order_websocket_rejects_anonymous_active_store(self):
         from django.contrib.auth.models import AnonymousUser
 
-        allowed = user_can_access_store_orders(AnonymousUser(), self.store_a.slug)
+        allowed = user_can_access_store(AnonymousUser(), self.store_a)
 
         self.assertFalse(allowed)
 
@@ -85,25 +88,6 @@ class RealtimeAccessTests(TestCase):
 
         self.assertFalse(scoped.exists())
 
-    def test_customer_order_websocket_requires_access_token_for_public_user(self):
-        from django.contrib.auth.models import AnonymousUser
-
-        allowed = user_can_access_customer_order(AnonymousUser(), str(self.order_a.id))
-
-        self.assertFalse(allowed)
-
-    def test_customer_order_websocket_allows_valid_access_token(self):
-        from django.contrib.auth.models import AnonymousUser
-
-        allowed = user_can_access_customer_order(
-            AnonymousUser(),
-            str(self.order_a.id),
-            self.order_a.access_token,
-        )
-
-        self.assertTrue(allowed)
-
-    def test_customer_order_websocket_allows_store_owner_without_public_token(self):
-        allowed = user_can_access_customer_order(self.owner_a, str(self.order_a.id))
-
-        self.assertTrue(allowed)
+    # `ws/orders/<id>/` aponta para o mesmo consumer do painel e fecha com 4000
+    # (sem loja na rota): não há mais acompanhamento público por WebSocket, então
+    # os testes do gate do cliente saíram junto com a função.

@@ -241,13 +241,18 @@ class OrderService:
         if order.status == 'cancelled':
             return {
                 'success': False,
-                'error': 'Order is already cancelled'
+                'error': 'O pedido já está cancelado.'
             }
         
         if order.status in ['delivered', 'picked_up']:
             return {
                 'success': False,
-                'error': f'Cannot cancel order with status: {order.status}'
+                'error': (
+                    f'O pedido está "{StoreOrder.OrderStatus(order.status).label}" '
+                    f'e não pode ser cancelado.'
+                    if order.status in StoreOrder.OrderStatus.values
+                    else 'O pedido já foi entregue e não pode ser cancelado.'
+                )
             }
         
         # Update status

@@ -89,3 +89,11 @@ def test_pix_nao_pago_continua_travado_na_view(loja, client):
     resp = api.post(f'/api/v1/stores/orders/{pedido.id}/update_status/', {'status': 'preparing'}, format='json')
     assert resp.status_code == 400
     assert resp.json()['code'] == 'payment_not_confirmed'
+
+
+@pytest.mark.django_db
+def test_cancelar_entregue_recusa_em_portugues(loja):
+    pedido = _pedido(loja, status='delivered')
+    resultado = OrderService().cancel_order(pedido, reason='duplicado')
+    assert not resultado['success']
+    assert resultado['error'] == 'O pedido está "Entregue" e não pode ser cancelado.'
