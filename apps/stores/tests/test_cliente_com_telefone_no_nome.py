@@ -109,3 +109,53 @@ class PedidoDoPdvComTelefoneNoNomeTests(APITestCase):
         from apps.core.services.customer_identity import CustomerIdentityService
         nome = CustomerIdentityService.nome_para_pedido('63900001111', phone='5563900001111', user=None)
         self.assertEqual(nome, '63900001111')
+
+
+class BuscaAchaQuemSoConversouTests(APITestCase):
+    """05/10 — Daniella conversa com a loja pelo WhatsApp desde 06/08, nunca
+    pediu. A busca do Novo pedido só via quem tinha pedido, endereço ou
+    StoreCustomer: 555 cadastros ficavam invisíveis. Quem conversa com o
+    WhatsApp DESTA loja é cliente dela."""
+
+    def setUp(self):
+        from apps.conversations.models import Conversation
+        from apps.whatsapp.models import WhatsAppAccount
+        self.owner = User.objects.create_user(username='ow-dani', email='ow-dani@t.com', password='x')
+        self.store = Store.objects.create(name='Loja D', slug='loja-d', owner=self.owner, status='active')
+        conta = WhatsAppAccount.objects.create(
+            name='Conta D', phone_number_id='pn-d', waba_id='wa-d', phone_number='+5563900000001',
+            display_phone_number='+5563900000001', access_token_encrypted='x', webhook_verify_token='x', owner=self.owner,
+        )
+        self.store.whatsapp_account = conta
+        self.store.save()
+        # wa_id sem o nono dígito no cadastro, com ele na conversa — como em produção.
+        self.dani = UnifiedUser.objects.create(phone_number='556399410086', name='Daniella')
+        Conversation.objects.create(account=conta, phone_number='5563999410086', contact_name='Daniella')
+        self.outro = UnifiedUser.objects.create(phone_number='556381112222', name='Cliente')
+        Conversation.objects.create(account=conta, phone_number='5563981112222', contact_name='Dani Souza')
+
+        outro_dono = User.objects.create_user(username='ow-x', email='ow-x@t.com', password='x')
+        conta_x = WhatsAppAccount.objects.create(
+            name='Conta X', phone_number_id='pn-x', waba_id='wa-x', phone_number='+5563900000002',
+            display_phone_number='+5563900000002', access_token_encrypted='x', webhook_verify_token='x', owner=outro_dono,
+        )
+        UnifiedUser.objects.create(phone_number='556387776666', name='Daniella de Outra Loja')
+        Conversation.objects.create(account=conta_x, phone_number='5563987776666', contact_name='Daniella de Outra Loja')
+        self.client.force_authenticate(self.owner)
+
+    def _buscar(self, q):
+        resp = self.client.get(f'/api/v1/stores/{self.store.slug}/crm/customers/search/', {'q': q})
+        self.assertEqual(resp.status_code, 200, resp.content)
+        return resp.json()
+
+    def test_acha_quem_so_conversou_pelo_whatsapp(self):
+        ids = [c['id'] for c in self._buscar('daniella')]
+        self.assertIn(str(self.dani.id), ids)
+
+    def test_acha_pelo_nome_do_contato_no_whatsapp(self):
+        achados = self._buscar('souza')
+        self.assertEqual([c['id'] for c in achados], [str(self.outro.id)])
+
+    def test_conversa_de_outra_loja_nao_vaza(self):
+        nomes = [c['name'] for c in self._buscar('daniella')]
+        self.assertNotIn('Daniella de Outra Loja', nomes)

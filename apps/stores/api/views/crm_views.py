@@ -89,14 +89,20 @@ class CustomerSearchView(APIView):
         if len(digitos) >= 4:
             busca |= Q(phone_number__icontains=digitos)
 
+        escopo = (
+            Q(store_customers__store=store)
+            | Q(addresses__tenant=store)
+            | Q(django_user__store_orders__store=store)
+        )
+        # Quem conversa com o WhatsApp DESTA loja também é cliente dela, mesmo
+        # sem pedido. A Daniella falava com a Cê desde 06/08 e não aparecia:
+        # 555 cadastros ficavam de fora da busca (05/10). Casa pelo nome do
+        # cadastro, pelo telefone ou pelo nome do contato no WhatsApp.
+        ids_da_conversa = self._ids_de_quem_conversa(store, q, busca)
+
         users = (
             UnifiedUser.objects
-            .filter(busca)
-            .filter(
-                Q(store_customers__store=store)
-                | Q(addresses__tenant=store)
-                | Q(django_user__store_orders__store=store)
-            )
+            .filter((busca & escopo) | Q(id__in=ids_da_conversa))
             .distinct()
             .prefetch_related(
                 Prefetch(
@@ -113,6 +119,34 @@ class CustomerSearchView(APIView):
             context={'store': store, 'request': request},
         )
         return Response(serializer.data)
+
+
+    @staticmethod
+    def _ids_de_quem_conversa(store, q, busca):
+        from apps.campaigns.services.contatos import chave_do_telefone
+        from apps.conversations.models import Conversation
+
+        conta = store.get_whatsapp_account()
+        if not conta:
+            return []
+        da_loja, pelo_nome = set(), set()
+        termo = q.lower()
+        for telefone, nome in Conversation.objects.filter(account=conta).values_list('phone_number', 'contact_name'):
+            chave = chave_do_telefone(telefone)
+            if chave:
+                da_loja.add(chave)
+                if termo in (nome or '').lower():
+                    pelo_nome.add(chave)
+        if not da_loja:
+            return []
+        pelo_contato = Q(pk__in=[])
+        for chave in pelo_nome:
+            pelo_contato |= Q(phone_number__endswith=chave[-8:])
+        candidatos = (
+            UnifiedUser.objects.filter(busca | pelo_contato)
+            .values_list('id', 'phone_number').distinct()[:500]
+        )
+        return [uid for uid, telefone in candidatos if chave_do_telefone(telefone) in da_loja]
 
 
 # ---------------------------------------------------------------------------

@@ -97,7 +97,10 @@ class TestCustomerSearchTenantScopeMock(unittest.TestCase):
              patch('apps.stores.api.views.crm_views.UnifiedUser') as MockUU, \
              patch('apps.stores.api.views.crm_views.UserAddress') as MockUA, \
              patch('apps.stores.api.views.crm_views.Prefetch', return_value=MagicMock()), \
-             patch('apps.stores.api.views.crm_views.CustomerSearchSerializer') as MockSer:
+             patch('apps.stores.api.views.crm_views.CustomerSearchSerializer') as MockSer, \
+             patch.object(CustomerSearchView, '_ids_de_quem_conversa', return_value=[]):
+            # A busca por conversa do WhatsApp tem teste próprio, com banco
+            # (test_cliente_com_telefone_no_nome.BuscaAchaQuemSoConversouTests).
 
             MockUU.objects = MagicMock()
             MockUU.objects.filter.return_value = mock_qs
