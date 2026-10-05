@@ -193,13 +193,13 @@ class StoreValidateDeliveryView(APIView):
             # Try to geocode address
             address = request.data.get('address')
             if address:
-                geocoded = geo_service.geocode(address)
+                geocoded = geo_service.localizar(address)
                 if geocoded:
                     lat = geocoded['lat']
                     lng = geocoded['lng']
                 else:
                     return Response(
-                        {'error': 'Could not geocode address'},
+                        {'error': 'Não achei esse endereço no mapa. Confira o texto ou marque o ponto no mapa.'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
             else:

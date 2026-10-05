@@ -295,6 +295,46 @@ class GeoService:
             logger.error("Geocode error: %s", exc, exc_info=True)
             return None
 
+    def localizar(self, texto: str, city_suffix: str | None = None) -> Optional[Dict]:
+        """Onde fica este texto — só se der para confiar no ponto.
+
+        1. Geocode do endereço; se a granularidade localiza (rua, número), vale.
+        2. Senão, o texto pode ser um LUGAR ("Secretaria da Segurança Pública"):
+           busca de estabelecimento na cidade da loja.
+        3. Nada preciso → None. Nunca o centro genérico da cidade: com ele o
+           frete saía de -10.249091 (OTHER), a 7 km da loja — R$ 15 em vez de
+           R$ 11 (Ana e PDV, 05/10).
+        """
+        from apps.stores.services.coerencia_do_ponto import geocode_e_preciso
+
+        texto = (texto or '').strip()
+        if not texto:
+            return None
+        geo = self.geocode(texto, city_suffix=city_suffix)
+        if geocode_e_preciso(geo):
+            return geo
+
+        sufixo = city_suffix or self.DEFAULT_CITY_SUFFIX
+        cidade = sufixo.split(',')[0].strip().lower()
+        consulta = texto if cidade and cidade in texto.lower() else f"{texto}, {sufixo}"
+        cache_key = _make_cache_key("lugar", consulta.lower())
+        lugar = cache.get(cache_key)
+        if lugar is None:
+            lugar = {}
+            for r in self.provider.search_places(consulta) or []:
+                endereco = (r.get('formatted_address') or '').lower()
+                if r.get('lat') is not None and r.get('lng') is not None and (not cidade or cidade in endereco):
+                    lugar = {
+                        'lat': r['lat'], 'lng': r['lng'], 'latitude': r['lat'], 'longitude': r['lng'],
+                        'formatted_address': r.get('formatted_address') or '',
+                        'display_name': r.get('name') or r.get('formatted_address') or '',
+                        'place_id': r.get('place_id'), 'location_type': 'PLACE',
+                        'address_components': {}, 'provider': self.provider_name,
+                    }
+                    break
+            cache.set(cache_key, lugar, CACHE_TTL_GEOCODE)
+        return lugar or None
+
     def reverse_geocode(self, lat: float, lng: float) -> Optional[Dict]:
         rounded_lat, rounded_lng = _round_coords(lat, lng, 4)
         cache_key = _make_cache_key("revgeo", rounded_lat, rounded_lng)

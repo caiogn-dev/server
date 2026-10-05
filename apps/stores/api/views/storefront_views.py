@@ -1561,13 +1561,15 @@ class StoreDeliveryFeeView(APIView):
             # If only address or zip code provided, geocode it first
             if not (lat and lng):
                 geocode_target = address or zip_code
-                geocode_result = geo_service.geocode(geocode_target)
+                # Só ponto confiável: o centro genérico da cidade cobrava R$ 15
+                # por 4,5 km ("Secretaria da Segurança Pública" no PDV, 05/10).
+                geocode_result = geo_service.localizar(geocode_target)
                 if geocode_result:
                     lat = geocode_result.get('lat')
                     lng = geocode_result.get('lng')
                 else:
                     return Response(
-                        {'error': 'Could not geocode address'},
+                        {'error': 'Não achei esse endereço no mapa. Confira o texto ou marque o ponto no mapa.'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
 

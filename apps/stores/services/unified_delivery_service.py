@@ -202,7 +202,9 @@ class UnifiedDeliveryService:
             from apps.stores.services.geo.service import GeoService
             try:
                 geo = GeoService()
-                result = geo.geocode(address_text)
+                # Só ponto confiável: o centro genérico da cidade cobrava R$ 15
+                # por 4,5 km (Secretaria da Segurança Pública, 05/10).
+                result = geo.localizar(address_text)
                 if result and isinstance(result, dict) and result.get('lat') and result.get('lng'):
                     return {
                         'success': True,
@@ -216,7 +218,10 @@ class UnifiedDeliveryService:
 
         return {
             'success': False,
-            'error': 'Endereço ou coordenadas não fornecidos',
+            'error': (
+                'Não achei esse endereço no mapa. Confira o texto ou marque o ponto no mapa.'
+                if address_text else 'Endereço ou coordenadas não fornecidos'
+            ),
         }
 
     @staticmethod
