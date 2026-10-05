@@ -54,3 +54,21 @@ def ponto_confere_com_texto(lat, lng, lat_do_texto, lng_do_texto,
         return True
     return distancia_km(float(lat), float(lng),
                         float(lat_do_texto), float(lng_do_texto)) <= tolerancia_km
+
+
+#: Granularidades do Google que NÃO localizam o endereço — são o "não achei,
+#: toma o centro de Palmas" (-10.249091, -48.3242858). Em 05/10 a Ana pagou
+#: R$ 15,29 em vez de R$ 10,50: o texto "Praça dos Girassóis, S/n" voltou como
+#: OTHER/APPROXIMATE, ficou a 7 km do pin certo, e o pin foi descartado.
+GRANULARIDADES_IMPRECISAS = frozenset({'OTHER', 'APPROXIMATE', 'GRANULARITY_UNSPECIFIED'})
+
+
+def geocode_e_preciso(geo) -> bool:
+    """True quando o geocode do texto achou um lugar de verdade.
+
+    Só um geocode preciso pode derrubar o pin: comparar o pin com o centro
+    genérico da cidade descarta justamente quem marcou certo.
+    """
+    if not geo or geo.get('lat') is None or geo.get('lng') is None:
+        return False
+    return (geo.get('location_type') or '').upper() not in GRANULARIDADES_IMPRECISAS

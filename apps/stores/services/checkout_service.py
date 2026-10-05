@@ -493,10 +493,16 @@ class CheckoutService:
         # coordenada). A checagem vive aqui porque este é o único ponto por
         # onde TODOS os caminhos do front passam.
         if lat is not None and lng is not None and address_text:
-            from apps.stores.services.coerencia_do_ponto import ponto_confere_com_texto
+            from apps.stores.services.coerencia_do_ponto import (
+                geocode_e_preciso, ponto_confere_com_texto,
+            )
             try:
                 from apps.stores.services.geo.service import GeoService
                 geo = GeoService().geocode(address_text)
+                # Texto que o Google não achou volta como "centro de Palmas":
+                # isso não é prova contra o pin (caso Ana, 05/10).
+                if not geocode_e_preciso(geo):
+                    geo = None
                 lat_txt = (geo or {}).get('lat')
                 lng_txt = (geo or {}).get('lng')
             except Exception as exc:

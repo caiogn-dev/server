@@ -89,6 +89,7 @@ class GeoService:
             'display_name': formatted_address,
             'place_id': result.get('place_id'),
             'address_confidence': result.get('address_confidence', 'high'),
+            'location_type': result.get('location_type', ''),
             'address_components': components,
             'address': legacy,
             'provider': self.provider_name,
@@ -265,7 +266,7 @@ class GeoService:
             if lower_suffix and lower_suffix not in lower_q:
                 query = f"{query}, {suffix}"
 
-        cache_key = _make_cache_key("geocode", query.strip().lower(), country, restrict_to_city)
+        cache_key = _make_cache_key("geocode2", query.strip().lower(), country, restrict_to_city)
         cached = cache.get(cache_key)
         if cached:
             return cached
