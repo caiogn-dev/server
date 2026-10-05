@@ -30,7 +30,7 @@ class _Envio:
 
 
 @contextmanager
-def envio_unico(chave: str, segundos: int):
+def envio_unico(chave: str, segundos: int, liberar_se_nada_saiu: bool = False):
     """A moldura de toda tarefa de envio automático.
 
     Devolve `None` quando a chave já estava reservada — a tarefa é duplicada e
@@ -48,3 +48,8 @@ def envio_unico(chave: str, segundos: int):
         if not envio.saiu_algo:
             liberar(chave)
         raise
+    # Aviso de status: se nada saiu (pedido silenciado, fora da janela), a
+    # reserva não pode prender a próxima tentativa por 1 h — mudar de novo
+    # para o mesmo status tem que avisar (dono, 05/10).
+    if liberar_se_nada_saiu and not envio.saiu_algo:
+        liberar(chave)

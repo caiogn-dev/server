@@ -114,3 +114,25 @@ def test_modo_humano_nao_cala_o_aviso_de_status(pedido):
 
     por_modelo.assert_not_called()
     por_texto.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_aviso_que_nao_saiu_nao_trava_a_nova_tentativa(pedido):
+    """Dono, 05/10: o único bloqueio do status é o botão do painel. A trava
+    anti-duplicata (1 h) ficava presa mesmo quando nada saía — mudar de novo
+    para o mesmo status não mandava nada por uma hora."""
+    with patch(JANELA, return_value=False), patch(TEXTO, return_value=OK) as por_texto:
+        _avisar(pedido, 'out_for_delivery')
+    por_texto.assert_not_called()
+
+    with patch(JANELA, return_value=True), patch(TEXTO, return_value=OK) as por_texto:
+        _avisar(pedido, 'out_for_delivery')
+    por_texto.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_aviso_que_saiu_continua_sem_duplicar(pedido):
+    with patch(JANELA, return_value=True), patch(TEXTO, return_value=OK) as por_texto:
+        _avisar(pedido, 'out_for_delivery')
+        _avisar(pedido, 'out_for_delivery')
+    por_texto.assert_called_once()

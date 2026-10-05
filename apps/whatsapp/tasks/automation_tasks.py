@@ -433,7 +433,7 @@ def notify_order_status_change(self, order_id: str, new_status: str):
     """
     from apps.stores.models.order import StoreOrder as Order
     from apps.automation.models import AutoMessage
-    with envio_unico(f"order_notify:{order_id}:{new_status}", 3600) as envio:
+    with envio_unico(f"order_notify:{order_id}:{new_status}", 3600, liberar_se_nada_saiu=True) as envio:
         if envio is None:
             logger.info("Skipping duplicate notification for order %s status %s", order_id, new_status)
             return
