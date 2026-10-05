@@ -5,6 +5,7 @@ These views handle cart, checkout, catalog, and wishlist functionality
 for the public-facing storefront.
 """
 import logging
+import uuid
 from datetime import datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlparse
@@ -60,7 +61,7 @@ from django.db import transaction
 from apps.core.models import UserProfile
 from apps.core.services.customer_identity import CustomerIdentityService
 from apps.stores.models import (
-    Store, StoreProduct, StoreCategory, StoreCart, StoreCartItem,
+    Store, StoreProduct, StoreCategory, StoreCart, StoreCartItem, StoreCartComboItem,
     StoreCombo, StoreProductType, StoreCoupon, StoreDeliveryZone,
     StoreCustomer, StorePaymentGateway,
     StoreWishlist, StoreCustomerAddress, StoreOrder,
@@ -1001,11 +1002,32 @@ class StoreCartViewSet(viewsets.ViewSet):
         
         quantity = request.data.get('quantity')
         if quantity is not None:
-            quantity = int(quantity)
-            if quantity <= 0:
-                cart_service.remove_item(cart, item_id)
-            else:
-                cart_service.update_item_quantity(cart, item_id, quantity)
+            try:
+                quantity = int(quantity)
+            except (TypeError, ValueError):
+                return Response({'error': 'Quantidade inválida.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # O mesmo endpoint serve produto e combo: a vitrine manda o id do
+            # StoreCartComboItem no "+" do combo.
+            try:
+                uuid.UUID(str(item_id))
+            except ValueError:
+                return Response({'error': 'Item não está na sacola.'}, status=status.HTTP_404_NOT_FOUND)
+            item = StoreCartItem.objects.filter(id=item_id, cart=cart).first()
+            combo_item = None if item else StoreCartComboItem.objects.filter(id=item_id, cart=cart).first()
+            if not item and not combo_item:
+                return Response({'error': 'Item não está na sacola.'}, status=status.HTTP_404_NOT_FOUND)
+
+            try:
+                if quantity <= 0:
+                    cart_service.remove_item(item or combo_item)
+                elif item:
+                    cart_service.update_item_quantity(item, quantity)
+                else:
+                    cart_service.update_combo_quantity(combo_item, quantity)
+            except ValueError as e:
+                # Regra de negócio com mensagem própria (ex.: estoque insuficiente)
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response(StoreCartSerializer(self.refetch_with_prefetch(cart)).data)
     
