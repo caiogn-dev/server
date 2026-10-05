@@ -91,7 +91,13 @@ def processar_rodada_da_janela(campaign, agora=None) -> dict:
                 pulados += 1
                 continue
 
-            alvo = horario_alvo(fechamentos.get(chave), campaign.scheduled_at, fuso)
+            fecha_em = fechamentos.get(chave)
+            alvo = horario_alvo(fecha_em, campaign.scheduled_at, fuso)
+            # Alvo vencido com a janela já fechada não se manda: é 131047 certo.
+            # Juliana, 04/10: alvo 10:57, janela fechou 11:57, a campanha nasceu
+            # às 18:00 e mandou mesmo assim (33 recusas em 4 dias).
+            if alvo is not None and fecha_em is not None and fecha_em <= agora:
+                alvo = None
             if alvo is None:
                 # Só desiste depois que o horário da campanha passou: até lá a
                 # pessoa ainda pode responder à loja e reabrir a janela dela.

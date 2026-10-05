@@ -122,8 +122,26 @@ class TestDisparar:
 
 @pytest.mark.django_db
 class TestBeat:
-    def test_so_dispara_na_hora_da_loja_e_uma_vez(self):
+    def test_modo_janela_nasce_cedo_agendada_para_a_hora_da_loja(self):
+        """05/10 (Juliana): nascendo às 18:00, quem tinha a janela fechando
+        de manhã/tarde nunca era antecipado. Nasce às 08:00 marcada para as
+        18:00 — a rodada manda cada um 1 h antes de a janela dele fechar."""
         loja, _ = _loja(hora='18:00')
+        oito = datetime(2026, 9, 28, 8, 5, tzinfo=BRT)
+        assert promo_do_dia.rodar_para_todas(datetime(2026, 9, 28, 7, 50, tzinfo=BRT)) == []
+        saida = promo_do_dia.rodar_para_todas(oito)
+        assert [(s, m) for s, m, _ in saida] == [(loja.slug, 'janela')]
+        campanha = Campaign.objects.get(id=saida[0][2])
+        assert campanha.scheduled_at == datetime(2026, 9, 28, 18, 0, tzinfo=BRT)
+        assert campanha.metadata['promo_do_dia'] == '2026-09-29'
+
+    def test_modo_modelo_continua_nascendo_na_hora_da_loja(self):
+        loja, _ = _loja(sufixo='pd9', hora='18:00', modo='modelo', modelo='nao_existe')
+        assert promo_do_dia.esta_na_hora(loja, datetime(2026, 9, 28, 8, 5, tzinfo=BRT)) is False
+        assert promo_do_dia.esta_na_hora(loja, SEGUNDA_18H) is True
+
+    def test_so_dispara_na_hora_da_loja_e_uma_vez(self):
+        loja, _ = _loja(hora='18:00', modo='modelo', modelo='nao_existe')
         cedo = datetime(2026, 9, 28, 17, 50, tzinfo=BRT)
         assert promo_do_dia.rodar_para_todas(cedo) == []
         saida = promo_do_dia.rodar_para_todas(SEGUNDA_18H)

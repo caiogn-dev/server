@@ -9,7 +9,7 @@ cria a campanha do dia sozinho, com o card daquele dia da semana:
 
     {
       'ativo': True,
-      'hora': '18:00',            # hora local da loja em que a campanha nasce
+      'hora': '18:00',            # hora local da campanha (modo janela nasce às 08:00 marcada p/ ela)
       'para': sempre 'amanha'     # às 18h de segunda sai a promoção de TERÇA (28/09: 'hoje' não faz sentido)
       'modo': 'janela' | 'modelo',# grátis para quem falou em 24h | modelo pago p/ todos
       'modelo': 'ce_saladas_oferta_do_dia',   # nome do template aprovado (modo modelo)
@@ -203,7 +203,7 @@ def disparar(store, agora=None, forcar=False, criado_por=None):
         conteudo.update({'media_url': plano['card'], 'image_url': plano['card'], 'media_type': 'image'})
     campanha = servico.create_campaign(
         account_id=str(store.whatsapp_account_id), name=nome, message_content=conteudo,
-        contact_list=lista, scheduled_at=agora, created_by=criado_por,
+        contact_list=lista, scheduled_at=max(agora, _hora_da_loja_hoje(store, agora)), created_by=criado_por,
     )
     campanha.metadata = {**(campanha.metadata or {}), 'promo_do_dia': plano['dia'], 'modo': 'janela', 'store_id': str(store.id)}
     campanha.status = Campaign.CampaignStatus.SCHEDULED
@@ -211,17 +211,36 @@ def disparar(store, agora=None, forcar=False, criado_por=None):
     return campanha, 'janela'
 
 
-def esta_na_hora(store, agora=None) -> bool:
-    """Passou da hora configurada hoje (hora local), dentro de 3 h de tolerância."""
+def _hora_da_loja_hoje(store, agora):
+    """A hora configurada (ex.: 18:00), hoje, no fuso da loja."""
     cfg = config(store)
-    agora = agora or timezone.now()
     local = agora.astimezone(fuso(store))
     try:
         h, m = (int(x) for x in str(cfg['hora']).split(':')[:2])
     except (TypeError, ValueError):
         h, m = 18, 0
-    inicio = local.replace(hour=h, minute=m, second=0, microsecond=0)
-    return inicio <= local < inicio + timedelta(hours=3)
+    return local.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
+def esta_na_hora(store, agora=None) -> bool:
+    """Modo modelo: da hora configurada até 3 h depois (hora local).
+
+    Modo janela: desde o começo do dia (08:00) até 3 h depois da hora. A
+    campanha nasce cedo, marcada para a hora da loja, e a rodada manda cada
+    pessoa 1 h antes de a janela dela fechar. Nascendo só às 18:00, quem tinha
+    a janela fechando de manhã/tarde ficava de fora — ou recebia com a janela
+    já fechada (Juliana, 04/10).
+    """
+    from apps.campaigns.services.janela import INICIO_DO_DIA
+
+    cfg = config(store)
+    agora = agora or timezone.now()
+    local = agora.astimezone(fuso(store))
+    hora = _hora_da_loja_hoje(store, agora)
+    inicio = hora
+    if cfg['modo'] == 'janela':
+        inicio = min(hora, local.replace(hour=INICIO_DO_DIA, minute=0, second=0, microsecond=0))
+    return inicio <= local < hora + timedelta(hours=3)
 
 
 def rodar_para_todas(agora=None) -> list:

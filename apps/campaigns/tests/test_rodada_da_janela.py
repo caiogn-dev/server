@@ -190,3 +190,27 @@ class RodadaDaJanelaTests(TestCase):
 
         self.campanha.refresh_from_db()
         self.assertEqual(self.campanha.messages_sent, 1)
+
+    # ── 05/10: janela já fechada ─────────────────────────────────────────
+    """05/10 — Juliana falou 03/10 11:57; a campanha das 18:00 de 04/10 mandou
+    para ela às 18:00, com a janela fechada desde 11:57 → 131047. O alvo dela
+    (10:57) já tinha passado quando a campanha nasceu, e a rodada manda todo
+    alvo vencido sem olhar se a janela ainda está aberta. 33 recusas em 4 dias."""
+
+    def test_janela_fechada_antes_da_rodada_nao_manda(self):
+        self._cliente(datetime(2026, 9, 14, 11, 57, tzinfo=SP))  # fecha 15/09 11:57
+
+        resultado, envio = self._rodar(20)
+
+        envio.assert_not_called()
+        self.assertEqual(resultado['enviados'], 0)
+        self.assertEqual(resultado['pulados'], 1)
+        self.assertEqual(self._destinatario().status, CampaignRecipient.RecipientStatus.SKIPPED)
+
+    def test_antes_do_horario_da_campanha_espera_a_pessoa_reabrir(self):
+        self._cliente(datetime(2026, 9, 14, 11, 57, tzinfo=SP))
+
+        resultado, envio = self._rodar(15)
+
+        envio.assert_not_called()
+        self.assertEqual(resultado['aguardando'], 1)
