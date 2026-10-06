@@ -88,6 +88,14 @@ class AffirmativeHandler(IntentHandler):
         except Exception as exc:
             logger.warning('[AffirmativeHandler] Erro ao verificar sessão: %s', exc)
 
+        # Nenhum estado fixo explica o "sim": quem perguntou foi a IA ("Quer que
+        # eu adicione no seu pedido?"), e só ela tem o histórico para saber a
+        # que o cliente disse sim. 05/10: "Isso" virou "O que você gostaria de
+        # fazer?" e o cliente desistiu para o atendente.
+        if intent_data.get('llm_available'):
+            logger.info('[AffirmativeHandler] Sim sem contexto fixo — devolvendo para a IA')
+            return HandlerResult.needs_llm()
+
         # Sem contexto claro — só as duas saídas reais: catálogo ou humano
         return HandlerResult.buttons(
             body="Claro! O que você gostaria de fazer? 😊",
@@ -139,13 +147,13 @@ class UnknownHandler(IntentHandler):
         except Exception as exc:
             logger.warning("[UnknownHandler] Erro ao verificar estado da sessão: %s", exc)
 
-        # Se a mensagem é só um número, pode ser quantidade após seleção de produto
-        if message.isdigit():
-            qty = int(message)
-            if 1 <= qty <= 20:
-                result = self._try_pending_product_order(qty)
-                if result:
-                    return result
+        # Quantidade depois de o bot apresentar um produto: "2", "2 unidades",
+        # "quero duas". 28/09: "2 unidades" caía em "Como posso te ajudar?".
+        qty = self._quantidade_digitada(message)
+        if qty:
+            result = self._try_pending_product_order(qty)
+            if result:
+                return result
 
         if intent_data.get('llm_available'):
             logger.info("[UnknownHandler] Mensagem desconhecida delegada ao LLM")
@@ -169,6 +177,27 @@ class UnknownHandler(IntentHandler):
             ],
         )
 
+    _POR_EXTENSO = {
+        'um': 1, 'uma': 1, 'dois': 2, 'duas': 2, 'tres': 3, 'três': 3, 'quatro': 4,
+        'cinco': 5, 'seis': 6, 'sete': 7, 'oito': 8, 'nove': 9, 'dez': 10,
+    }
+
+    @classmethod
+    def _quantidade_digitada(cls, mensagem: str) -> int:
+        """1–20 quando a frase curta é só uma quantidade; 0 caso contrário."""
+        import re
+        m = re.fullmatch(
+            r'\s*(?:quero|vou querer|manda|pode ser|sao|são)?\s*'
+            r'(\d{1,2}|um|uma|dois|duas|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez)'
+            r'\s*(?:unidades?|un|x|porç(?:ões|ao|ão)|pratos?|saladas?)?\s*[.!]?\s*',
+            (mensagem or '').lower(),
+        )
+        if not m:
+            return 0
+        bruto = m.group(1)
+        qtd = int(bruto) if bruto.isdigit() else cls._POR_EXTENSO.get(bruto, 0)
+        return qtd if 1 <= qtd <= 20 else 0
+
     def _try_pending_product_order(self, qty: int) -> Optional[HandlerResult]:
         try:
             session_manager = self._get_session_manager()
@@ -176,6 +205,15 @@ class UnknownHandler(IntentHandler):
             context_data = session.context or {}
             product_id = context_data.get('pending_product_id')
             if not product_id:
+                return None
+            # Oferta velha não captura número de outra conversa: o "2" da tarde
+            # não é a quantidade do prato oferecido de manhã.
+            from datetime import timedelta
+            from django.utils import timezone
+            from django.utils.dateparse import parse_datetime
+            quando = parse_datetime(context_data.get('pending_product_at') or '')
+            if quando is None or timezone.now() - quando > timedelta(minutes=30):
+                session.update_context('pending_product_id', None)
                 return None
             from apps.stores.models import StoreProduct
             product = StoreProduct.objects.get(id=product_id, is_active=True)

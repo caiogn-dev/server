@@ -123,6 +123,31 @@ class CustomerSession(BaseModel):
     last_activity_at = models.DateTimeField(auto_now=True)
     expires_at = models.DateTimeField(null=True, blank=True)
 
+    # Memória curta do bot ("acabei de oferecer o Camarão", "montando o combo
+    # X") dentro do próprio cart_data — sem coluna nova. Até 06/10 três
+    # recursos chamavam `session.context`/`update_context` que só existiam na
+    # sessão de FLUXO: o produto oferecido nunca era lembrado, a montagem de
+    # combo nunca começava, e o erro era engolido em silêncio.
+    _CHAVE_CONTEXTO = 'contexto'
+
+    @property
+    def context(self) -> dict:
+        return dict((self.cart_data or {}).get(self._CHAVE_CONTEXTO) or {})
+
+    def update_context(self, key: str, value) -> None:
+        """Grava uma chave do contexto relendo o cart_data antes (não pisa no carrinho)."""
+        if self.pk:
+            self.refresh_from_db(fields=['cart_data'])
+        dados = dict(self.cart_data or {})
+        contexto = dict(dados.get(self._CHAVE_CONTEXTO) or {})
+        if value is None:
+            contexto.pop(key, None)
+        else:
+            contexto[key] = value
+        dados[self._CHAVE_CONTEXTO] = contexto
+        self.cart_data = dados
+        self.save(update_fields=['cart_data'])
+
     class Meta:
         app_label = 'automation'
         db_table = 'customer_sessions'

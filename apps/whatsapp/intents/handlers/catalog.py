@@ -136,6 +136,8 @@ class ProductMentionHandler(IntentHandler):
                     session.update_context('pending_product_id', str(p.id))
                     session.update_context('pending_product_name', p.name)
                     session.update_context('pending_product_price', float(p.preco_vigente()))
+                    from django.utils import timezone as _tz
+                    session.update_context('pending_product_at', _tz.now().isoformat())
                 except Exception as exc:
                     logger.warning('[ProductMentionHandler] session context save failed: %s', exc)
                 body = f"🥗 *{p.name}*\n💰 R$ {p.preco_vigente()}"
