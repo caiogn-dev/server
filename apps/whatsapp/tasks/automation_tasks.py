@@ -445,6 +445,13 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 logger.info("Order %s has suppress_notifications — skipping status notification", order_id)
                 return
 
+            # Retirada não "sai para entrega": o KDS e o Kanban levam todo pedido
+            # pronto para out_for_delivery, e quem ia buscar recebia "🛵 Saiu para
+            # entrega" logo depois de "Pode vir buscar!" (3 de 44 retiradas, 05/10).
+            if new_status == 'out_for_delivery' and order.delivery_method in ('pickup', 'digital'):
+                logger.info("Order %s is pickup — skipping out_for_delivery notification", order_id)
+                return
+
             status_to_event = {
                 'received': 'order_received',
                 'processing': 'order_processing',
