@@ -681,6 +681,18 @@ class IntentHandler:
             .first()
         )
 
+    @staticmethod
+    def _forma_de_pagamento_digitada(normalizado: str) -> str:
+        """'pay_pix' / 'pay_card' quando a frase curta é escolha de pagamento."""
+        import re
+        if not normalizado or len(normalizado) > 40:
+            return ''
+        if re.search(r'\bpix\b', normalizado):
+            return 'pay_pix'
+        if re.search(r'\b(cartao|credito|debito)\b', normalizado):
+            return 'pay_card'
+        return ''
+
     def _handle_notes_input(self, notes_text: str) -> 'HandlerResult':
         _SKIP_WORDS = {
             'nao', 'n', 'nn', 'no', 'nope', 'nada', 'ok', 'okay', 'tudo bem',
@@ -698,6 +710,20 @@ class IntentHandler:
         # suco, o PIX saiu R$ 20,00, a dona cancelou o pedido e refez R$ 100,01
         # na mão. Tudo porque aqui só existiam duas saídas: palavra de pular, ou
         # observação.
+        # Forma de pagamento digitada não é recado pra cozinha.
+        #
+        # 06/10, Ray: com o resumo na tela escreveu "Pode ser pix" e recebeu
+        # "✅ Anotado: Pode ser pix" + os botões de novo.
+        # "Foi pago com cartão" é aviso de pagamento feito, não escolha — esse
+        # caso é tratado abaixo e não pode virar uma segunda cobrança.
+        from apps.stores.services.busca_de_produto import parece_aviso_de_pagamento as _ja_pagou
+        forma = '' if _ja_pagou(notes_text) else self._forma_de_pagamento_digitada(normalized)
+        if forma:
+            from .interactive import InteractiveReplyHandler
+            return InteractiveReplyHandler(
+                self.account, self.conversation, self.company_profile,
+            )._handle_payment_choice(forma)
+
         if normalized not in _SKIP_WORDS:
             from apps.stores.services.busca_de_produto import (
                 parece_aviso_de_pagamento,
@@ -812,6 +838,10 @@ class IntentHandler:
         if pm == 'pix':
             if payment_data.get('success'):
                 return self._send_pix_confirmation(order, payment_data['pix_code'])
+            # Mercado Pago não gerou: com chave cadastrada, o cliente paga assim
+            # mesmo — antes ficava "tente novamente" até um atendente aparecer.
+            if self._chave_pix_da_loja()[0]:
+                return HandlerResult.text(self._mensagem_pix_pela_chave(order))
             error_msg = payment_data.get('error', 'Tente novamente em instantes')
             return HandlerResult.text(
                 f"✅ *Pedido #{order.order_number} criado!*\n\n"
@@ -841,6 +871,60 @@ class IntentHandler:
             f"💰 *Total: {moeda(order.total)}*\n\n"
             f"💵 Pagamento na retirada — nos vemos em breve! 🏪"
         )
+
+    def _chave_pix_da_loja(self):
+        """(chave, titular) cadastrados em `store.metadata`. ('', '') sem chave."""
+        meta = getattr(self.store, 'metadata', None) or {}
+        return (str(meta.get('chave_pix') or '').strip(), str(meta.get('chave_pix_titular') or '').strip())
+
+    def _mensagem_pix_pela_chave(self, order) -> str:
+        chave, titular = self._chave_pix_da_loja()
+        linha_titular = f"\n👤 {titular}" if titular else ''
+        return (
+            f"🧾 *Pedido #{order.order_number}*\n\n"
+            f"💰 *Total: {moeda(order.total)}*\n\n"
+            f"💠 Pague pela *chave PIX* da loja:\n{chave}{linha_titular}\n\n"
+            "Depois é só mandar o comprovante aqui. 🙏"
+        )
+
+    def _cobrar_por_pix(self, order) -> 'HandlerResult':
+        """Cobra por PIX um pedido que JÁ existe (o cliente escolheu cartão e mudou de ideia).
+
+        06/10, Lívia e Ray: depois do link de cartão, tocar em PIX respondia
+        "Não encontrei itens no seu pedido" — o carrinho já tinha virado pedido.
+        """
+        from apps.whatsapp.services.order_service import WhatsAppOrderService
+
+        if order.payment_method != 'pix':
+            order.payment_method = 'pix'
+            order.save(update_fields=['payment_method', 'updated_at'])
+        try:
+            servico = WhatsAppOrderService(self.store, self.conversation.phone_number, order.customer_name or '')
+            pix = servico._generate_pix(order)
+        except Exception:
+            logger.exception('[_cobrar_por_pix] Falha ao gerar PIX do pedido %s', order.order_number)
+            pix = {'success': False}
+        if pix.get('success') and pix.get('pix_code'):
+            return self._send_pix_confirmation(order, pix['pix_code'])
+        if self._chave_pix_da_loja()[0]:
+            return HandlerResult.text(self._mensagem_pix_pela_chave(order))
+        return HandlerResult.text(
+            f"Não consegui gerar o PIX do pedido *#{order.order_number}* agora. 😕\n\n"
+            "Digite *atendente* que alguém da loja te passa a chave."
+        )
+
+    def _pedido_esperando_pagamento(self):
+        """Pedido recente (6 h) deste cliente que ainda não foi pago. None se não houver."""
+        from datetime import timedelta
+        from django.utils import timezone
+        pedido = self._pedido_recente_do_cliente()
+        if pedido is None:
+            return None
+        if pedido.payment_status in ('paid', 'refunded'):
+            return None
+        if pedido.created_at < timezone.now() - timedelta(hours=6):
+            return None
+        return pedido
 
     def _fechar_checkout(self) -> None:
         """Encerra os estados de espera do checkout depois que o pedido nasce.

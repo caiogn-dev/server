@@ -145,6 +145,21 @@ class SessionManager:
         self._session: Optional[CustomerSession] = None
         self._context: Optional[SessionContext] = None
     
+    def _sessao_fresca(self) -> Optional[CustomerSession]:
+        """A sessão com o `cart_data` relido do banco, para quem vai GRAVAR nele.
+
+        O manager guarda a sessão em memória e cada escrita grava o `cart_data`
+        INTEIRO. Dois managers na mesma conversa (a tarefa de finalização abre um
+        antes de criar o pedido; `_fechar_checkout` abre outro) faziam a cópia
+        velha desfazer a nova: em 06/10 a Lívia ficou presa em "aguardando
+        observação" depois do pedido criado — tudo que escrevia virava "Anotado"
+        e o PIX respondia "Não encontrei itens".
+        """
+        session = self.get_or_create_session()
+        if session is not None and session.pk:
+            session.refresh_from_db(fields=['cart_data'])
+        return session
+
     def get_or_create_session(self) -> Optional[CustomerSession]:
         """Obtém ou cria uma sessão para o cliente"""
         if self._session:
@@ -306,7 +321,7 @@ class SessionManager:
 
     def save_pending_order_items(self, items: list) -> None:
         """Salva itens pendentes na sessão enquanto espera escolha de entrega/pagamento."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             self._clear_stale_payment_state(session)
             data = _append_checkout_snapshot(
@@ -331,7 +346,7 @@ class SessionManager:
 
     def clear_pending_order_items(self) -> None:
         """Remove itens pendentes da sessão após criar o pedido."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(session.cart_data or {}, 'order_finalized')
             data.pop('pending_items', None)
@@ -344,7 +359,7 @@ class SessionManager:
 
     def save_scheduling(self, scheduled_date: str, scheduled_time: str) -> None:
         """Salva agendamento do pedido (loja fechada aceita pedido agendado)."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(
                 session.cart_data or {},
@@ -370,7 +385,7 @@ class SessionManager:
 
     def save_pending_delivery_method(self, delivery_method: str) -> None:
         """Salva método de entrega enquanto espera escolha de pagamento."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(
                 session.cart_data or {},
@@ -391,7 +406,7 @@ class SessionManager:
 
     def set_waiting_for_address(self, value: bool) -> None:
         """Marca sessão como aguardando endereço de entrega do cliente."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(
                 session.cart_data or {},
@@ -403,7 +418,7 @@ class SessionManager:
 
     def bump_address_attempts(self) -> int:
         """Conta falhas consecutivas de geocode — trava anti-loop de endereço."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if not session:
             return 0
         data = session.cart_data or {}
@@ -419,7 +434,7 @@ class SessionManager:
         Evita o bot metralhar "não entendi"/atalhos a cada mensagem que não
         reconhece — depois da 1ª ajuda, silêncio até o cooldown expirar.
         """
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if not session:
             return True
         data = session.cart_data or {}
@@ -438,7 +453,7 @@ class SessionManager:
         return True
 
     def clear_address_attempts(self) -> None:
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session and (session.cart_data or {}).get('address_attempts'):
             data = session.cart_data or {}
             data.pop('address_attempts', None)
@@ -454,7 +469,7 @@ class SessionManager:
 
     def set_waiting_for_notes(self, value: bool) -> None:
         """Marca sessão como aguardando observações do cliente (ex: sem cebola)."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(
                 session.cart_data or {},
@@ -479,7 +494,7 @@ class SessionManager:
         porta fecha quando o pedido nasce (`_fechar_checkout`), não na 1ª nota.
         Nota vazia (palavra de pular) não apaga o que já foi anotado.
         """
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(
                 session.cart_data or {},
@@ -504,7 +519,7 @@ class SessionManager:
         Fica fora de `pending_items` de propósito: o que está aqui o cliente
         ainda não confirmou, e `pending_items` é o que a finalização cobra.
         """
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(session.cart_data or {}, 'typed_order_read')
             data['pedido_digitado'] = estado
@@ -518,7 +533,7 @@ class SessionManager:
         return {}
 
     def descartar_pedido_digitado(self) -> None:
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session and 'pedido_digitado' in (session.cart_data or {}):
             data = dict(session.cart_data)
             data.pop('pedido_digitado', None)
@@ -538,7 +553,7 @@ class SessionManager:
 
     def deixar_pedido_de_lado(self) -> bool:
         """Larga o checkout em curso. True quando havia pedido sendo montado."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if not session:
             return False
         data = dict(session.cart_data or {})
@@ -553,7 +568,7 @@ class SessionManager:
 
     def pedir_quadra(self, texto: str) -> None:
         """Guarda o endereço sem quadra enquanto o bot pergunta a quadra (uma vez)."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(session.cart_data or {}, 'asked_block')
             data['endereco_sem_quadra'] = texto
@@ -563,7 +578,7 @@ class SessionManager:
 
     def tirar_endereco_sem_quadra(self) -> tuple:
         """(já perguntou a quadra?, texto guardado — que sai da sessão)."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if not session:
             return False, ''
         data = dict(session.cart_data or {})
@@ -591,7 +606,7 @@ class SessionManager:
         address_components: dict = None,
     ) -> None:
         """Salva endereço geocodificado e taxa calculada pelo GeoService."""
-        session = self.get_or_create_session()
+        session = self._sessao_fresca()
         if session:
             data = _append_checkout_snapshot(
                 session.cart_data or {},

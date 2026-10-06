@@ -698,6 +698,18 @@ class InteractiveReplyHandler(IntentHandler):
         if not items:
             if lock_key:
                 cache.delete(lock_key)
+            # O carrinho já virou pedido: quem toca em PIX depois do link de
+            # cartão quer pagar ESSE pedido por PIX (Lívia e Ray, 06/10).
+            if reply_id == 'pay_pix':
+                pedido = self._pedido_esperando_pagamento()
+                if pedido is not None:
+                    return self._cobrar_por_pix(pedido)
+            recente = self._pedido_recente_do_cliente()
+            if recente is not None and recente.payment_status == 'paid':
+                return HandlerResult.text(
+                    f"Seu pedido *#{recente.order_number}* já está pago ✅ — "
+                    "não precisa pagar de novo. 🙏"
+                )
             return HandlerResult.text(
                 "❌ Não encontrei itens no seu pedido.\n\n"
                 "Por favor, selecione os produtos novamente. Digite *cardápio* para ver as opções."
