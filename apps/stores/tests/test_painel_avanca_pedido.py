@@ -92,8 +92,10 @@ def test_pix_nao_pago_continua_travado_na_view(loja, client):
 
 
 @pytest.mark.django_db
-def test_cancelar_entregue_recusa_em_portugues(loja):
-    pedido = _pedido(loja, status='delivered')
+def test_cancelar_de_novo_recusa_em_portugues(loja):
+    # Entregue passou a poder ser cancelado (dono, 06/10 — ver
+    # test_cancelar_entregue_estorna_cashback). A recusa que sobra é o repetido.
+    pedido = _pedido(loja, status='cancelled')
     resultado = OrderService().cancel_order(pedido, reason='duplicado')
     assert not resultado['success']
-    assert resultado['error'] == 'O pedido está "Entregue" e não pode ser cancelado.'
+    assert resultado['error'] == 'O pedido já está cancelado.'

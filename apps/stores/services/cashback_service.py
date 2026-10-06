@@ -384,6 +384,29 @@ class CashbackService:
             source_ref=f'estorno:{order.id}', validade_dias=dias,
         )
 
+    @staticmethod
+    def estornar_credito_do_pedido(order) -> Decimal:
+        """Tira o cashback que um pedido cancelado gerou (compra e indicação).
+
+        Zera o que sobrou dos lotes do pedido. O que o cliente já gastou em
+        outro pedido não vira dívida — some só o restante. Idempotente: o
+        segundo cancelamento encontra os lotes zerados.
+        """
+        from apps.stores.models import StoreCashbackLot
+
+        lotes = StoreCashbackLot.objects.filter(
+            order=order, remaining__gt=0,
+            origin__in=(StoreCashbackLot.Origin.PURCHASE, StoreCashbackLot.Origin.REFERRAL),
+        )
+        retirado = Decimal('0.00')
+        for lote in lotes:
+            retirado += lote.remaining
+            lote.remaining = Decimal('0.00')
+            lote.save(update_fields=['remaining'])
+        if retirado:
+            logger.info('Cashback estornado do pedido %s: R$ %s', order.id, retirado)
+        return retirado
+
     # ── carteira pré-paga ───────────────────────────────────────────────
 
     @staticmethod

@@ -129,8 +129,10 @@ class OrderService:
             'ready':            ['out_for_delivery', 'delivered', 'cancelled'],
             'out_for_delivery': ['delivered', 'cancelled'],
             'shipped':          ['out_for_delivery', 'delivered', 'cancelled'],
-            'delivered':        ['completed'],
-            'completed':        [],
+            # Entregue pode ser cancelado (dono, 06/10): cliente devolveu,
+            # pedido lançado errado. O cashback ganho sai em `_encerrar_cancelado`.
+            'delivered':        ['completed', 'cancelled'],
+            'completed':        ['cancelled'],
             'cancelled':        ['refunded'],
             'refunded':         [],
             'failed':           ['cancelled'],
@@ -184,7 +186,7 @@ class OrderService:
             # O botão "Cancelar" da tela de detalhe do painel vem por aqui, não
             # pelo `/cancel/`. Estoque só na primeira transição: repetir o status
             # ou estornar depois não devolve de novo.
-            if old_status not in ('cancelled', 'refunded'):
+            if old_status not in ('cancelled', 'refunded', *self._JA_SAIU):
                 from .checkout_service import CheckoutService
                 CheckoutService._restore_stock(order)
             self._encerrar_cancelado(order)
@@ -244,17 +246,12 @@ class OrderService:
                 'error': 'O pedido já está cancelado.'
             }
         
-        if order.status in ['delivered', 'picked_up']:
-            return {
-                'success': False,
-                'error': (
-                    f'O pedido está "{StoreOrder.OrderStatus(order.status).label}" '
-                    f'e não pode ser cancelado.'
-                    if order.status in StoreOrder.OrderStatus.values
-                    else 'O pedido já foi entregue e não pode ser cancelado.'
-                )
-            }
-        
+        # Entregue também se cancela (dono, 06/10) — mas a comida já saiu:
+        # o estoque não volta.
+        if order.status in self._JA_SAIU:
+            restore_stock = False
+
+
         # Update status
         order.status = 'cancelled'
         order.cancelled_at = timezone.now()
@@ -312,6 +309,9 @@ class OrderService:
     # estorno na conciliação com o gateway.
     _PAGAMENTO_FINAL = ('refunded', 'partially_refunded', 'cancelled')
 
+    # Pedido que já saiu da loja: cancelar não devolve estoque.
+    _JA_SAIU = ('delivered', 'picked_up', 'completed')
+
     def _encerrar_cancelado(self, order) -> None:
         """O que todo cancelamento precisa fazer, venha do botão ou do dropdown.
 
@@ -327,6 +327,9 @@ class OrderService:
         # O saldo que o cliente gastou no pedido volta para ele. Sem isto a
         # carteira pré-paga perdia dinheiro a cada cancelamento feito pela loja.
         CashbackService.devolver_resgate(order)
+        # E o cashback que o pedido GEROU sai: compra que não existiu não dá
+        # bônus (dono, 06/10).
+        CashbackService.estornar_credito_do_pedido(order)
         # Idem para o brinde de fidelidade trocado neste pedido.
         from .loyalty_service import LoyaltyService
         LoyaltyService.devolver_resgate(order)
