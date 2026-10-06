@@ -10,6 +10,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
 
 from .api.views.recuperacao_views import RecuperacaoDeVendasView
+from .api.views.informativos_views import InformativosView, InformativoView
 from .api.views import (
     StoreViewSet, StoreIntegrationViewSet, StoreWebhookViewSet,
     StoreCategoryViewSet, StoreProductViewSet, StoreProductVariantViewSet,
@@ -390,6 +391,9 @@ urlpatterns = [
     # Catálogo de templates de cardápio — a fonte para o painel (público: a
     # tela de aparência carrega antes de qualquer escolha de loja).
     path('templates/', TemplateCatalogView.as_view(), name='template-catalog'),
+    # Informativos (avisos no cardápio) — antes das rotas por loja.
+    path('informativos/', InformativosView.as_view(), name='informativos'),
+    path('informativos/<str:informativo_id>/', InformativoView.as_view(), name='informativo'),
     # ==========================================================================
     # ADMIN/MANAGEMENT ENDPOINTS (require auth)
     # ==========================================================================

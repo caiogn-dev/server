@@ -615,7 +615,10 @@ class StoreAppConfigView(APIView):
         payment_config = build_store_payment_config(store)
         metadata = store.metadata or {}
 
+        from apps.stores.services.informativos import no_ar_para_a_vitrine
         return Response({
+            # Avisos da loja no ar agora (só título e texto).
+            'informativos': no_ar_para_a_vitrine(store),
             'auth': {
                 'whatsapp_otp_enabled': bool(whatsapp_account),
                 'whatsapp_account_id': str(whatsapp_account.id) if whatsapp_account else '',

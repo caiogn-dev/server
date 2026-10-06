@@ -93,6 +93,49 @@ class StoreProductViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated, IsStoreOwnerOrStaff]
     store_field = 'store'
 
+    def _loja_do_corpo(self, request, store_pk=None):
+        """Loja pela URL aninhada ou pelo corpo (id ou slug), com o gate de tenant."""
+        loja = Store.objects.filter(pk=store_pk).first() if store_pk else None
+        if not loja:
+            identificador = str(request.data.get("store") or "")
+            try:
+                uuid_module.UUID(identificador)
+                loja = Store.objects.filter(pk=identificador).first()
+            except (ValueError, AttributeError):
+                loja = Store.objects.filter(slug=identificador).first()
+        if not loja or not user_can_access_store(request.user, loja):
+            raise Http404
+        return loja
+
+    @action(detail=False, methods=["post"], url_path="reajuste-de-preco")
+    def reajuste_de_preco(self, request, store_pk=None):
+        """Soma ou reduz preço em R$ ou % nos produtos escolhidos. `previa` não grava."""
+        from apps.stores.services.reajuste_de_preco import ReajusteInvalido, reajustar
+
+        loja = self._loja_do_corpo(request, store_pk)
+        previa = str(request.data.get("previa")).lower() in ("true", "1", "sim")
+        try:
+            resultado = reajustar(
+                loja, request.data.get("produtos") or [],
+                operacao=str(request.data.get("operacao") or ""),
+                modo=str(request.data.get("modo") or ""),
+                valor=request.data.get("valor"),
+                previa=previa, usuario=request.user,
+            )
+        except ReajusteInvalido as e:
+            return Response({"error": str(e), "recusados": e.recusados}, status=400)
+        return Response(resultado)
+
+    @action(detail=False, methods=["post"], url_path="reajuste-de-preco/desfazer")
+    def desfazer_reajuste_de_preco(self, request, store_pk=None):
+        from apps.stores.services.reajuste_de_preco import ReajusteInvalido, desfazer
+
+        loja = self._loja_do_corpo(request, store_pk)
+        try:
+            return Response(desfazer(loja))
+        except ReajusteInvalido as e:
+            return Response({"error": str(e)}, status=400)
+
     @action(detail=False, methods=["post"], url_path="gerar-codigos-internos")
     def gerar_codigos_internos(self, request, store_pk=None):
         """Dá código de barras interno a quem ainda não tem.
