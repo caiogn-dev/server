@@ -142,6 +142,15 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             # traz de volta, que é como o dono confere o que vendeu.
             qs = qs.exclude(source='carteira')
 
+        # O quadro de pedidos mostra o que está em aberto (de qualquer dia) e os
+        # entregues de HOJE. Sem este recorte a tela baixava os 500 mais
+        # recentes (~570 KB) e descartava o histórico no navegador — 182 vezes,
+        # 85 MB em 7 dias (medido 06/10). `__date` usa o fuso da loja.
+        if self.request.query_params.get('quadro') == '1':
+            qs = qs.exclude(status__in=['cancelled', 'refunded', 'failed']).exclude(
+                Q(status__in=['delivered', 'completed']) & ~Q(created_at__date=timezone.localdate())
+            )
+
         payment_method = self.request.query_params.get('payment_method')
         if payment_method:
             qs = qs.filter(payment_method=payment_method)
