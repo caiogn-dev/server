@@ -187,3 +187,34 @@ def test_autosuggest_da_loja_usa_o_raio_da_regiao(loja, client):
         resp = client.get(f'/api/v1/stores/{loja.slug}/autosuggest/?q=bernardo sayao paraiso')
     assert resp.status_code == 200
     assert busca.call_args.kwargs['radius_km'] >= 80
+
+
+# ── Luzimangues ─────────────────────────────────────────────────────────────
+# Distrito de Porto Nacional colado em Palmas (~16 km da loja). O Google devolve
+# só "Porto Nacional, TO" para lá — palavra-chave não separa. A distância separa:
+# zona com `ate_km` só casa até aquela distância (em linha reta) da loja.
+
+@pytest.mark.django_db
+class TestZonaAteKm:
+    def _loja(self):
+        dono = get_user_model().objects.create_user(username='dono-luzi', password='x')
+        return Store.objects.create(
+            owner=dono, name='Agrião Luzi', slug='agriao-luzi', status='active',
+            latitude=Decimal('-10.1853'), longitude=Decimal('-48.3036'),
+            metadata={'fixed_price_zones': [
+                {'name': 'Luzimangues', 'fee': 30, 'keywords': ['porto nacional'], 'ate_km': 30},
+                {'name': 'Porto Nacional', 'fee': 25, 'keywords': ['porto nacional']},
+            ]},
+        )
+
+    def _zona(self, loja, lat, lng):
+        from apps.stores.services.geo import geo_service
+        with mock.patch.object(geo_service, 'reverse_geocode',
+                               return_value={'formatted_address': 'Porto Nacional, TO, Brasil', 'city': 'Porto Nacional'}):
+            return regioes.zona_do_endereco(loja, lat, lng)
+
+    def test_perto_da_loja_e_luzimangues(self):
+        assert self._zona(self._loja(), -10.1865, -48.4518)['name'] == 'Luzimangues'
+
+    def test_longe_da_loja_cai_em_porto(self):
+        assert self._zona(self._loja(), -10.7080, -48.4170)['name'] == 'Porto Nacional'

@@ -160,6 +160,9 @@ class GeoService:
           keywords    (list)  — termos buscados no endereço reverso
           surcharge_on_km (bool)  — se True, soma 'surcharge' à taxa por km em vez de substituir
           surcharge   (float) — valor extra adicionado à taxa por km (ex.: R$5 para condos fechados)
+          ate_km      (float) — só casa até essa distância (linha reta) da loja. Luzimangues
+                                (06/10): o Google devolve "Porto Nacional" para o distrito
+                                colado em Palmas; só a distância o separa da cidade de Porto.
         """
         metadata = getattr(store, 'metadata', None) or {}
         fixed_price_zones = metadata.get('fixed_price_zones') or []
@@ -180,7 +183,16 @@ class GeoService:
         if not searchable_text:
             return None
 
+        distancia_da_loja = None
+        if store.latitude is not None and store.longitude is not None:
+            distancia_da_loja = _haversine_km(
+                (float(store.latitude), float(store.longitude)), (customer_lat, customer_lng),
+            )
+
         for zone in fixed_price_zones:
+            ate_km = zone.get('ate_km')
+            if ate_km not in (None, '') and distancia_da_loja is not None and distancia_da_loja > float(ate_km):
+                continue
             keywords = list(zone.get('keywords') or [])
             if zone.get('name'):
                 keywords.append(zone['name'])
