@@ -104,6 +104,23 @@ class RegrasDaRegiao:
         }
 
 
+RAIO_DA_BUSCA_KM = 30
+RAIO_DA_BUSCA_COM_REGIAO_KM = 100
+
+
+def raio_da_busca_km(store) -> int:
+    """Até onde a busca de endereço procura.
+
+    Dono (06/10): "está difícil achar o endereço de Paraíso". O Google só
+    devolvia endereços a 30 km da loja (strictbounds), e Paraíso fica a ~60 km.
+    Loja que entrega em outra cidade por frete fixo precisa achar essa cidade.
+    """
+    zonas = (getattr(store, 'metadata', None) or {}).get('fixed_price_zones') or []
+    if any(isinstance(z, dict) and not z.get('surcharge_on_km') for z in zonas):
+        return RAIO_DA_BUSCA_COM_REGIAO_KM
+    return RAIO_DA_BUSCA_KM
+
+
 def agora_na_loja(store) -> datetime:
     from django.utils import timezone
     try:

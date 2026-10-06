@@ -158,3 +158,32 @@ class TestCheckout:
         cart, _ = self._sacola(loja)
         with pytest.raises(regioes.RegiaoRecusou):
             self._pedir(loja, cart, forma='cash')
+
+
+# ── busca de endereço ───────────────────────────────────────────────────────
+# Dono (06/10): "está difícil achar o endereço de Paraíso". A busca só pedia ao
+# Google endereços num raio ESTRITO de 30 km da loja; Paraíso fica a ~60 km.
+
+class TestRaioDaBusca:
+    def _loja(self, zonas):
+        return Store(metadata={'fixed_price_zones': zonas} if zonas is not None else {})
+
+    def test_loja_sem_regiao_continua_com_30_km(self):
+        assert regioes.raio_da_busca_km(self._loja(None)) == 30
+
+    def test_loja_com_regiao_de_frete_fixo_busca_mais_longe(self):
+        loja = self._loja([{'name': 'Paraíso do Tocantins', 'fee': 30}])
+        assert regioes.raio_da_busca_km(loja) >= 80
+
+    def test_zona_de_acrescimo_nao_amplia(self):
+        loja = self._loja([{'name': 'Alphaville', 'surcharge_on_km': True, 'surcharge': 5}])
+        assert regioes.raio_da_busca_km(loja) == 30
+
+
+@pytest.mark.django_db
+def test_autosuggest_da_loja_usa_o_raio_da_regiao(loja, client):
+    from apps.stores.services.geo import geo_service
+    with mock.patch.object(geo_service.provider, 'autosuggest', return_value=[]) as busca:
+        resp = client.get(f'/api/v1/stores/{loja.slug}/autosuggest/?q=bernardo sayao paraiso')
+    assert resp.status_code == 200
+    assert busca.call_args.kwargs['radius_km'] >= 80

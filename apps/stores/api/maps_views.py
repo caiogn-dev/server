@@ -324,16 +324,19 @@ class StoreAutosuggestView(APIView):
         
         # Get center point for biasing results
         center = None
+        radius_km = 30
         if store_slug:
+            from apps.stores.services.regioes_de_entrega import raio_da_busca_km
             store = get_object_or_404(Store, slug=store_slug, status='active')
             if store.latitude and store.longitude:
                 center = (float(store.latitude), float(store.longitude))
+            radius_km = raio_da_busca_km(store)
         
         limit = int(request.query_params.get('limit', 5))
         # ?tipo=estabelecimento: localização da própria loja no painel — o alvo
         # é o negócio ("Agrião Comida Saudável"), não um endereço.
         tipos = None if request.query_params.get('tipo') == 'estabelecimento' else 'geocode'
-        suggestions = geo_service.autosuggest(query, center=center, limit=limit, tipos=tipos)
+        suggestions = geo_service.autosuggest(query, center=center, limit=limit, tipos=tipos, radius_km=radius_km)
 
         return Response({'suggestions': suggestions})
 

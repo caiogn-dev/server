@@ -415,6 +415,7 @@ class GoogleMapsProvider:
         center: Tuple[float, float] | None = None,
         limit: int = 5,
         tipos: str | None = 'geocode',
+        radius_km: int = 30,
     ) -> List[Dict]:
         if not self.api_key:
             return []
@@ -432,7 +433,7 @@ class GoogleMapsProvider:
             params['types'] = tipos
         if center:
             params['location'] = f'{center[0]},{center[1]}'
-            params['radius'] = 30000
+            params['radius'] = int(radius_km * 1000)
             params['strictbounds'] = 'true'
 
         response = requests.get(GOOGLE_PLACES_AUTOCOMPLETE_URL, params=params, timeout=10)

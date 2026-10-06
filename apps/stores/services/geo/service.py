@@ -482,11 +482,12 @@ class GeoService:
         country: str = "BRA",
         limit: int = 5,
         tipos: str | None = 'geocode',
+        radius_km: int = 30,
     ) -> List[Dict]:
         try:
             if tipos != 'geocode':
-                return self.provider.autosuggest(query, center=center, limit=limit, tipos=tipos)
-            return self.provider.autosuggest(query, center=center, limit=limit)
+                return self.provider.autosuggest(query, center=center, limit=limit, tipos=tipos, radius_km=radius_km)
+            return self.provider.autosuggest(query, center=center, limit=limit, radius_km=radius_km)
         except Exception as exc:
             logger.error("Autosuggest error: %s", exc, exc_info=True)
             return []
