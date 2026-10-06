@@ -19,10 +19,12 @@ from .export_views import (
     export_automation_logs, export_conversations
 )
 from .lgpd_views import LGPDViewSet
+from .erros_do_painel import ErrosDoPainelView
 
 urlpatterns = [
     # Health & System
     path('health/', HealthCheckView.as_view(), name='health-check'),
+    path('erros-do-painel/', ErrosDoPainelView.as_view(), name='erros-do-painel'),
     path('system/', SystemInfoView.as_view(), name='system-info'),
     path('metrics/', include('apps.core.metrics_urls')),
     
