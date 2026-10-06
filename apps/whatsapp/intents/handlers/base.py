@@ -810,6 +810,10 @@ class IntentHandler:
         )
         if not result.get('success'):
             error = result.get('error', 'Erro desconhecido')
+            if result.get('regiao'):
+                return HandlerResult.text(
+                    f"⚠️ {error}\n\nQuer ajustar o pedido? Digite *cardápio* ou fale com um atendente. 🙏"
+                )
             if 'Erros de estoque' in error or 'fora de estoque' in error.lower() or 'estoque insuficiente' in error.lower():
                 return HandlerResult.text(
                     "⚠️ *Um ou mais itens do seu pedido estão indisponíveis no momento.*\n\n"

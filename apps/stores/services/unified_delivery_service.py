@@ -99,7 +99,32 @@ class UnifiedDeliveryService:
         duration_minutes = distance_info['duration_minutes']
         distancia_aproximada = bool(distance_info.get('aproximada'))
 
-        # 3. Verificar se está dentro da área de entrega máxima
+        # 3. Região com taxa fixa ANTES do limite de distância — e pela MESMA
+        # regra da cotação (palavras-chave + reverse geocode). Antes o limite
+        # (16 km) recusava Paraíso/Porto a 60 km mesmo com a zona configurada,
+        # e a zona era casada por `enabled`/`max_km`, ignorando as palavras.
+        from apps.stores.services import regioes_de_entrega as regioes
+        zona = regioes.zona_do_endereco(
+            store, coords['lat'], coords['lng'], address_text or coords.get('formatted_address', ''),
+        )
+        if zona and not zona.get('surcharge_on_km'):
+            regras = regioes.RegrasDaRegiao.da_zona(zona)
+            fee = regras.taxa + (Decimal('2.00') if rain_surcharge else Decimal('0'))
+            return {
+                'success': True,
+                'fee': float(fee),
+                'distance_km': distance_km,
+                'duration_minutes': duration_minutes,
+                'distancia_aproximada': distancia_aproximada,
+                'method': 'delivery',
+                'zone_name': regras.nome,
+                'reason': f'Zona fixa: {regras.nome}',
+                'raw_address': coords.get('formatted_address', ''),
+                'address_components': coords.get('address_components', {}),
+                'regiao': regras.para_api(regioes.agora_na_loja(store)),
+            }
+
+        # 4. Verificar se está dentro da área de entrega máxima
         max_km = store.metadata.get('delivery_max_km', 16)
         if distance_km > float(max_km):
             return {
@@ -111,13 +136,8 @@ class UnifiedDeliveryService:
                 'reason': f'Endereço muito longe ({distance_km:.1f} km, máximo {max_km} km)',
             }
 
-        # 4. Procurar taxa em zonas fixas (metadata)
-        fixed_zone_fee = UnifiedDeliveryService._check_fixed_price_zones(
-            store=store,
-            distance_km=distance_km,
-            dest_lat=coords['lat'],
-            dest_lng=coords['lng'],
-        )
+        # (zonas fixas já foram resolvidas acima, antes do limite de distância)
+        fixed_zone_fee = None
 
         if fixed_zone_fee is not None:
             fee = fixed_zone_fee['fee']

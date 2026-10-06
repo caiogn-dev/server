@@ -375,6 +375,11 @@ class WhatsAppOrderService:
                 'total': float(order.total),
             }
         except Exception as e:
+            from apps.stores.services.regioes_de_entrega import RegiaoRecusou
+            if isinstance(e, RegiaoRecusou):
+                # Regra da região (categoria, pagamento antecipado, mínimo): o
+                # motivo vai para o cliente, não é falha do sistema.
+                return {'success': False, 'error': str(e), 'regiao': True}
             logger.error(f"[create_order_from_cart] CheckoutService path failed: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
     

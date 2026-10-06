@@ -649,11 +649,18 @@ class GeoService:
             fee_val = float(Decimal(str(fixed_zone.get('fee', store.default_delivery_fee or 0))))
             message = f"Entrega com taxa fixa para a região: {zone_name}"
 
+        regiao = None
+        if not is_additive:
+            from apps.stores.services import regioes_de_entrega as regioes
+            regiao = regioes.RegrasDaRegiao.da_zona(fixed_zone).para_api(regioes.agora_na_loja(store))
         return {
             'fee': apply_rain(fee_val),
             'distance_km': distance_km,
             'duration_minutes': duration_minutes,
             'is_within_area': fee_val is not None,
+            # Regras da região (categorias, mínimo, data de entrega, pagamento antecipado)
+            # para a vitrine filtrar o cardápio e avisar a data — o checkout revalida.
+            'regiao': regiao,
             'zone': {'id': None, 'name': zone_name, 'min_distance': None, 'max_distance': None},
             'polyline': polyline,
             'rain_surcharge_applied': rain_surcharge,

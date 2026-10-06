@@ -882,7 +882,17 @@ class CheckoutService:
             # Não levanta aqui: o corpo atômico valida fee None → ValueError,
             # mantendo mensagem/rollback idênticos ao comportamento anterior.
 
+        # Região com regras (Paraíso/Porto da Agrião, 06/10). Identificada FORA
+        # da transação — o reverse geocode é HTTP — e pelo endereço, nunca pela
+        # taxa que veio pronta: o frete da região é imposto lá dentro. Pedido
+        # lançado com taxa confiável (PDV/painel) é decisão do operador.
+        regiao = None
+        if trusted_delivery_fee is None:
+            from apps.stores.services.regioes_de_entrega import regiao_do_pedido
+            regiao = regiao_do_pedido(store, delivery_payload)
+
         return CheckoutService._create_order_atomic(
+            regiao=regiao,
             cart=cart,
             customer_data=customer_data,
             delivery_data=delivery_data,
@@ -916,6 +926,7 @@ class CheckoutService:
         scheduled_time='',
         precomputed_delivery_info: dict = None,
         payment_method: str = '',
+        regiao=None,
     ) -> StoreOrder:
         """
         Create an order from a cart with atomic stock decrement.
@@ -991,6 +1002,20 @@ class CheckoutService:
             subtotal += item.subtotal
         for combo_item in cart.combo_items.select_related('combo').all():
             subtotal += combo_item.subtotal
+
+        if regiao is not None:
+            from apps.stores.services.regioes_de_entrega import RegiaoRecusou, agora_na_loja
+            itens = [
+                (item.product.name, str(item.product.category_id or ''))
+                for item in cart.items.select_related('product').all()
+            ]
+            erros = regiao.erros(itens=itens, subtotal=subtotal, forma_de_pagamento=payment_method or '')
+            if erros:
+                raise RegiaoRecusou(' '.join(erros))
+            delivery_info = {**delivery_info, 'fee': float(regiao.taxa), 'zone_name': regiao.nome}
+            delivery_fee = regiao.taxa
+            if scheduled_date is None:
+                scheduled_date = regiao.data_de_entrega(agora_na_loja(cart.store))
 
         # Frete grátis promocional. Só AQUI o subtotal do carrinho existe: a
         # taxa pode ter chegado pronta por qualquer um dos caminhos acima

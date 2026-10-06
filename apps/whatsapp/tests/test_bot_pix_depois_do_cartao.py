@@ -151,3 +151,21 @@ class PixDigitadoNaObservacaoTest(_Base):
         self.assertNotIn('Anotado', resultado.response_text or str(resultado.interactive_data or ''))
         delay.assert_called_once()
         self.assertEqual(delay.call_args.kwargs['payment_method'], 'pix')
+
+
+class RegiaoRecusouNoBotTest(_Base):
+    """Paraíso/Porto (06/10): se a região recusa (categoria, pagamento na
+    entrega), o cliente lê o MOTIVO — não 'não conseguimos finalizar'."""
+
+    def test_motivo_da_regiao_chega_ao_cliente(self):
+        with patch(
+            'apps.whatsapp.services.create_order_from_whatsapp',
+            return_value={'success': False, 'regiao': True,
+                          'error': 'Para Paraíso do Tocantins não entregamos: Salada Caesar.'},
+        ):
+            resultado = self._handler()._finalize_order(
+                [{'product_id': str(self.produto.id), 'quantity': 1}],
+                delivery_method='delivery', payment_method='pix',
+            )
+        self.assertIn('Salada Caesar', resultado.response_text or '')
+        self.assertNotIn('Não conseguimos finalizar', resultado.response_text or '')
