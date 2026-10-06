@@ -1299,6 +1299,24 @@ class UnifiedService:
                     )
                     return handoff_response
 
+        # A IA não respondeu, mas pergunta de promoção tem resposta no banco.
+        # 06/10: "qual a promoção do dia?" recebia "Como posso te ajudar? 👇"
+        # nos minutos em que a NVIDIA devolvia 503.
+        try:
+            from django.utils import timezone as _tz
+            from apps.automation.services.resposta_de_promocao import responder_promocao
+            sobre_promocao = responder_promocao(self.store, normalized, _tz.now()) if self.store else None
+        except Exception:
+            logger.exception('[unified] resposta de promoção falhou')
+            sobre_promocao = None
+        if sobre_promocao:
+            self._reset_dead_end()
+            return UnifiedResponse(
+                content=sobre_promocao,
+                source=ResponseSource.FALLBACK,
+                metadata={'intent': 'promocao_sem_ia'},
+            )
+
         _ms = round((time.monotonic() - _t0) * 1000, 1)
         logger.warning(
             '[unified] fallback response (%.0fms) intent=%s — nenhum provider respondeu',
