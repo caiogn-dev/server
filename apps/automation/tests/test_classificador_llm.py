@@ -156,18 +156,25 @@ class TestModeloPequenoDeProposito:
     eixos ao mesmo tempo.
     """
 
+    # 06/10: o llama-3.1-8b foi aposentado pela NVIDIA (410 Gone em toda
+    # classificação). A regra continua — modelo PRÓPRIO e pequeno — com o
+    # menor modelo vivo; a troca por ambiente vale para modelo que existe.
+    _CATALOGO = frozenset({'openai/gpt-oss-20b', 'nvidia/nemotron-3-ultra-550b-a55b', 'outro/modelo'})
+
     def test_usa_modelo_proprio_e_nao_o_do_agente(self, db):
-        with patch('langchain_openai.ChatOpenAI') as fake:
+        with patch('apps.agents.runtime.modelos.catalogo_vivo', return_value=self._CATALOGO), \
+             patch('langchain_openai.ChatOpenAI') as fake:
             with patch.dict('os.environ', {
                 'NVIDIA_API_KEY': 'x',
                 'NVIDIA_MODEL_NAME': 'meta/llama-3.1-70b-instruct',
             }, clear=False):
                 ClassificadorNIM()._carregar()
 
-        assert fake.call_args.kwargs['model'] == 'meta/llama-3.1-8b-instruct'
+        assert fake.call_args.kwargs['model'] == 'openai/gpt-oss-20b'
 
     def test_da_para_trocar_por_ambiente_sem_deploy(self, db):
-        with patch('langchain_openai.ChatOpenAI') as fake:
+        with patch('apps.agents.runtime.modelos.catalogo_vivo', return_value=self._CATALOGO), \
+             patch('langchain_openai.ChatOpenAI') as fake:
             with patch.dict('os.environ', {
                 'NVIDIA_API_KEY': 'x',
                 'NVIDIA_MODELO_CLASSIFICADOR': 'outro/modelo',

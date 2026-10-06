@@ -44,7 +44,9 @@ TIMEOUT_PADRAO = 4
 #: Fica separado de NVIDIA_MODEL_NAME de propósito: o agente conversacional
 #: continua no modelo grande, onde qualidade de texto importa e o tempo é menos
 #: crítico.
-MODELO_PADRAO = 'meta/llama-3.1-8b-instruct'
+# Pequeno de propósito (latência no caminho do cliente). O llama-3.1-8b,
+# medido em 13/ago, foi aposentado pela NVIDIA; o menor modelo vivo é este.
+MODELO_PADRAO = 'openai/gpt-oss-20b'
 
 _ROTULOS = {
     'saudacao': Intencao.SAUDACAO,
@@ -139,12 +141,21 @@ class ClassificadorNIM:
         chave = os.getenv('NVIDIA_API_KEY') or getattr(settings, 'NVIDIA_API_KEY', '')
         if not chave:
             return None
+        # Modelo VIVO: o padrão cravado aqui (llama-3.1-8b) foi aposentado pela
+        # NVIDIA e toda classificação voltava 410 Gone em silêncio (06/10).
+        from apps.agents.runtime.modelos import corpo_extra_do_modelo, modelo_vivo
+        nome = modelo_vivo(
+            os.getenv('NVIDIA_MODELO_CLASSIFICADOR')
+            or getattr(settings, 'NVIDIA_MODELO_CLASSIFICADOR', '')
+            or MODELO_PADRAO,
+            padrao=MODELO_PADRAO,
+        )
         self._modelo = ChatOpenAI(
-            model=os.getenv('NVIDIA_MODELO_CLASSIFICADOR')
-            or getattr(settings, 'NVIDIA_MODELO_CLASSIFICADOR', MODELO_PADRAO),
+            model=nome,
             # Zero: classificar é escolher entre quatro rótulos, não criar.
             temperature=0,
-            max_tokens=60,
+            # Folga para modelo que ainda escreve um pouco antes do JSON.
+            max_tokens=200,
             timeout=self.timeout,
             # Sem isto o teto é de mentira: o cliente tenta de novo sozinho e
             # cada tentativa ganha o timeout cheio. Medido contra o NIM real,
@@ -155,6 +166,10 @@ class ClassificadorNIM:
             base_url=os.getenv('NVIDIA_API_BASE_URL')
             or 'https://integrate.api.nvidia.com/v1',
         )
+        # Raciocínio ligado consome os tokens e devolve resposta vazia.
+        extra = corpo_extra_do_modelo(nome)
+        if extra:
+            self._modelo = self._modelo.bind(extra_body=extra)
         return self._modelo
 
     def __call__(self, texto, *, store=None, esperando=None) -> Optional[Decisao]:
