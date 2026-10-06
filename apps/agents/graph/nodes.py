@@ -430,7 +430,9 @@ def _load_knowledge_context(agent, store) -> str:
         from apps.agents.models import AgentKnowledgeEntry
         entries = (
             AgentKnowledgeEntry.objects
-            .filter(agent=agent, is_active=True)
+            # Só o que o dono ensinou ou aprovou. O extraído sozinho ia direto
+            # para cá e ensinava promoção velha e resposta de erro (06/10).
+            .filter(agent=agent, is_active=True, source__in=("manual", "reviewed"))
             .filter(
                 models.Q(store=store) | models.Q(store__isnull=True)
             )

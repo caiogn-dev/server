@@ -65,13 +65,21 @@ def test_fatos_da_loja_ignora_lixo_no_metadata(db):
 
 
 def test_conhecimento_manual_vem_antes_do_automatico_e_cabem_mais_de_cinco(agent, db):
-    """Os 5 automáticos de confiança 1.0 empurravam o ensino do dono para fora."""
+    """Os 5 automáticos de confiança 1.0 empurravam o ensino do dono para fora.
+
+    06/10: o extraído sozinho nem entra mais (ensinava promoção velha e erro);
+    só manual e aprovado. A regra de ordem e de espaço continua.
+    """
     store = make_store()
     for i in range(6):
         AgentKnowledgeEntry.objects.create(
-            agent=agent, store=store, topic='cardapio', source='auto', confidence=1.0,
-            example_input=f'auto {i}', example_response=f'resposta auto {i}',
+            agent=agent, store=store, topic='cardapio', source='reviewed', confidence=1.0,
+            example_input=f'aprovado {i}', example_response=f'resposta aprovada {i}',
         )
+    AgentKnowledgeEntry.objects.create(
+        agent=agent, store=store, topic='cardapio', source='auto', confidence=1.0,
+        example_input='auto velho', example_response='hoje a promoção é o camarão',
+    )
     AgentKnowledgeEntry.objects.create(
         agent=agent, store=store, topic='outro', source='manual', confidence=1.0,
         example_input='aceita vale refeição?', example_response='Aceitamos VR e VA.',
@@ -79,5 +87,6 @@ def test_conhecimento_manual_vem_antes_do_automatico_e_cabem_mais_de_cinco(agent
 
     contexto = _load_knowledge_context(agent=agent, store=store)
 
-    assert contexto.startswith('[outro] Cliente: "aceita vale refeição?"')
+    assert 'Cliente: "aceita vale refeição?"' in contexto
     assert contexto.count('Cliente:') >= 7
+    assert 'auto velho' not in contexto

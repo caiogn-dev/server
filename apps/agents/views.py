@@ -345,11 +345,28 @@ class ConhecimentoViewSet(viewsets.ModelViewSet):
         from .models import AgentKnowledgeEntry
         if getattr(self, 'swagger_fake_view', False):
             return AgentKnowledgeEntry.objects.none()
-        return (
-            AgentKnowledgeEntry.objects
-            .filter(store=self._loja(), source__in=('manual', 'reviewed'))
-            .order_by('-updated_at')
-        )
+        qs = AgentKnowledgeEntry.objects.filter(store=self._loja())
+        if self.action == 'list':
+            # Sugestões do atendimento ficam numa lista própria: o que ainda não
+            # foi aprovado não se mistura com o que o dono ensinou.
+            quer_sugestoes = str(self.request.query_params.get('sugestoes') or '') in ('1', 'true', 'sim')
+            origens = ('sugestao',) if quer_sugestoes else ('manual', 'reviewed')
+        else:
+            origens = ('manual', 'reviewed', 'sugestao')
+        return qs.filter(source__in=origens).order_by('-updated_at')
+
+    @action(detail=True, methods=['post'])
+    def aprovar(self, request, pk=None):
+        """Sugestão vira ensinamento: entra no prompt da IA. Aceita a resposta editada."""
+        entrada = self.get_object()
+        resposta = str(request.data.get('example_response') or '').strip()
+        if resposta:
+            entrada.example_response = resposta[:2000]
+        entrada.source = 'reviewed'
+        entrada.is_active = True
+        entrada.confidence = 1.0
+        entrada.save(update_fields=['example_response', 'source', 'is_active', 'confidence', 'updated_at'])
+        return Response(self.get_serializer(entrada).data)
 
     def create(self, request, *args, **kwargs):
         from apps.conversations.services.nao_entendi import PedidoInvalido, _agente_da_loja

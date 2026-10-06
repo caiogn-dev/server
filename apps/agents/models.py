@@ -229,6 +229,7 @@ class AgentKnowledgeEntry(BaseModel):
         MANUAL = 'manual', 'Criado manualmente'
         AUTO = 'auto', 'Extraído automaticamente'
         REVIEWED = 'reviewed', 'Revisado pelo humano'
+        SUGESTAO = 'sugestao', 'Sugerido pelo atendimento (aguardando aprovação)'
 
     agent = models.ForeignKey(
         Agent,

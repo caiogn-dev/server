@@ -35,6 +35,51 @@ def _telefone(valor) -> str:
     return ''.join(ch for ch in str(valor or '') if ch.isdigit())
 
 
+def _totais(lojas_ids, contas_ids, inicio, fim) -> dict:
+    """Conversas (cliente escreveu), pedidos pelo WhatsApp e atendente numa janela.
+
+    Conta pela MENSAGEM do cliente, não por `last_customer_message_at`: uma
+    conversa da semana passada que voltou hoje some da semana passada pelo
+    campo, e a comparação ficaria torta.
+    """
+    from apps.handover.models import ConversationHandover
+    from apps.stores.models import StoreOrder
+    from apps.whatsapp.models import Message
+
+    conversas = (
+        Message.objects.filter(account_id__in=contas_ids, direction='inbound',
+                               created_at__gte=inicio, created_at__lt=fim)
+        .values('conversation_id').distinct().count()
+    )
+    pedidos = StoreOrder.objects.filter(
+        store_id__in=lojas_ids, source='whatsapp', created_at__gte=inicio, created_at__lt=fim,
+    ).exclude(status__in=['cancelled', 'refunded']).count()
+    atendente = ConversationHandover.objects.filter(
+        conversation__account_id__in=contas_ids, created_at__gte=inicio, created_at__lt=fim,
+    ).count()
+    return {
+        'conversas': conversas,
+        'pedidos': pedidos,
+        'taxa': round(100.0 * pedidos / conversas, 1) if conversas else 0,
+        'para_atendente': atendente,
+    }
+
+
+def _marcos(lojas_ids, desde) -> list:
+    """O que foi ensinado/aprovado no período — para ler a curva com causa."""
+    from apps.agents.models import AgentKnowledgeEntry
+
+    entradas = (
+        AgentKnowledgeEntry.objects
+        .filter(store_id__in=lojas_ids, source__in=('manual', 'reviewed'), updated_at__gte=desde)
+        .order_by('-updated_at')[:30]
+    )
+    return [
+        {'quando': e.updated_at.isoformat(), 'tipo': 'ensino', 'texto': (e.example_input or '')[:120]}
+        for e in entradas
+    ]
+
+
 def funil(lojas, dias=30) -> dict:
     from apps.automation.models import CustomerSession, IntentLog
     from apps.conversations.models import Conversation
@@ -134,4 +179,10 @@ def funil(lojas, dias=30) -> dict:
         ],
         'serie': serie,
         'perdidas': perdidas,
+        # Mesma janela, período anterior: "esta semana × a passada".
+        'comparativo': {
+            'atual': _totais(lojas_ids, contas_ids, desde, timezone.now()),
+            'anterior': _totais(lojas_ids, contas_ids, desde - timedelta(days=dias), desde),
+        },
+        'marcos': _marcos(lojas_ids, desde - timedelta(days=dias)),
     }

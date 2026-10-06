@@ -126,6 +126,35 @@ def _is_good_response(response_text: str) -> bool:
     return True
 
 
+# Quem mandou a mensagem (metadata.source). Só o bot ensina; atendente na
+# conversa significa que o bot não resolveu sozinho.
+_ORIGENS_DO_BOT = {"unified_llm", "unified_handler", "unified_template", "ai_agent"}
+_ORIGENS_HUMANAS = {"whatsapp_inbox_page", "whatsapp_inbox_comando"}
+_MAX_SUGESTOES_PENDENTES = 30
+
+# O que envelhece (data, dia, hora, preço, promoção) ou tem cara de falha não
+# pode virar exemplo: "hoje a promoção é o Camarão" estava no prompt semanas depois.
+_ENVELHECE = re.compile(
+    r"\b(hoje|ontem|amanh[aã]|segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo|semana|m[eê]s)\b"
+    r"|\d{1,2}\s*[:h]\s*\d{2}|\b\d{1,2}/\d{1,2}\b|r\$\s*\d|\bpromo|\boferta|\bdesconto|\bcupom",
+    re.IGNORECASE,
+)
+_PARECE_FALHA = re.compile(
+    r"n[aã]o encontrei|n[aã]o consegui|desculp|\bops\b|😕|❌|⚠️|\berro\b", re.IGNORECASE,
+)
+
+
+def _envelhece_ou_falhou(texto: str, primeiro_nome: str = "") -> bool:
+    if _ENVELHECE.search(texto) or _PARECE_FALHA.search(texto):
+        return True
+    return bool(primeiro_nome and len(primeiro_nome) >= 3 and re.search(rf"\b{re.escape(primeiro_nome)}\b", texto.lower()))
+
+
+def models_Q(**kwargs):
+    from django.db.models import Q
+    return Q(**kwargs)
+
+
 def _is_vague_input(text: str) -> bool:
     """Retorna True para inputs genéricos que não devem ser aprendidos como exemplos."""
     text = text.strip()
@@ -153,166 +182,106 @@ class AgentLearningService:
         self.agent = agent
 
     def learn(self, lookback_hours: int = 24, max_conversations: int = 100) -> dict:
+        """Sugere exemplos tirados de conversas que VENDERAM sem mão humana.
+
+        Até 06/10 aprendia de qualquer conversa e injetava no prompt na hora:
+        conversa pessoal, resposta de erro e promoção de "hoje" viraram
+        exemplo com confiança 1.0. Agora só sugere; o dono aprova no painel.
         """
-        Ponto de entrada principal. Retorna estatísticas de o que foi aprendido.
-        """
+        from apps.automation.models import CompanyProfile
         from apps.conversations.models import Conversation
 
         since = timezone.now() - timedelta(hours=lookback_hours)
+        stats = {"analyzed": 0, "created": 0, "skipped": 0}
 
-        # Busca conversas recentes ligadas a este agente
-        conversations = (
-            Conversation.objects
-            .filter(
-                agent_sessions__agent=self.agent,
-                updated_at__gte=since,
+        perfis = (
+            CompanyProfile.objects
+            .filter(default_agent=self.agent, store__isnull=False)
+            .select_related("store")
+        )
+        for perfil in perfis:
+            loja = perfil.store
+            if not loja.whatsapp_account_id:
+                continue
+            conversas = (
+                Conversation.objects
+                .filter(account_id=loja.whatsapp_account_id, last_customer_message_at__gte=since)
+                .order_by("-last_customer_message_at")[:max_conversations]
             )
-            .distinct()
-            .order_by("-updated_at")[:max_conversations]
-        )
+            for conv in conversas:
+                stats["analyzed"] += 1
+                criadas = self._aprender_da_conversa(conv, loja, since)
+                stats["created"] += criadas
+                if not criadas:
+                    stats["skipped"] += 1
 
-        stats = {"analyzed": 0, "created": 0, "updated": 0, "skipped": 0}
-
-        for conv in conversations:
-            result = self._process_conversation(conv)
-            stats["analyzed"] += 1
-            stats[result] = stats.get(result, 0) + 1
-
-        logger.info(
-            "[LEARN] Agente %s — %s",
-            self.agent.name,
-            stats,
-        )
+        logger.info("[LEARN] Agente %s — %s", self.agent.name, stats)
         return stats
 
-    def _process_conversation(self, conversation) -> str:
-        """Extrai padrões de uma conversa. Retorna 'created', 'updated' ou 'skipped'."""
-        from apps.whatsapp.models import Message as WhatsAppMessage
+    def _aprender_da_conversa(self, conversation, loja, since) -> int:
+        """Quantas sugestões novas saíram desta conversa (0 quando ela não serve)."""
+        from apps.handover.models import ConversationHandover
+        from apps.stores.models import StoreOrder
+        from apps.whatsapp.models import Message
 
-        try:
-            # Pega as mensagens da conversa (user + bot) em ordem
-            messages = list(
-                conversation.messages.order_by("created_at").values("role", "content")
-            )
-        except Exception:
-            # fallback: tenta pegar via whatsapp messages
-            try:
-                messages = list(
-                    WhatsAppMessage.objects
-                    .filter(conversation=conversation)
-                    .order_by("created_at")
-                    .values("direction", "content")
-                )
-                messages = [
-                    {"role": "user" if m["direction"] == "inbound" else "assistant",
-                     "content": m["content"]}
-                    for m in messages
-                ]
-            except Exception as exc:
-                logger.debug("[LEARN] Sem mensagens para conversa %s: %s", conversation.id, exc)
-                return "skipped"
+        sufixo = "".join(c for c in str(conversation.phone_number or "") if c.isdigit())[-8:]
+        if not sufixo:
+            return 0
+        vendeu = StoreOrder.objects.filter(
+            store=loja, source="whatsapp", created_at__gte=since, customer_phone__endswith=sufixo,
+        ).exclude(status__in=["cancelled", "refunded"]).exists()
+        if not vendeu:
+            return 0
 
-        if len(messages) < 2:
-            return "skipped"
+        teve_atendente = ConversationHandover.objects.filter(conversation=conversation).filter(
+            models_Q(created_at__gte=since) | models_Q(last_transfer_at__gte=since)
+        ).exists()
+        mensagens = list(
+            Message.objects.filter(conversation=conversation, created_at__gte=since)
+            .order_by("created_at")
+            .values("direction", "text_body", "content", "metadata")
+        )
+        origens = [(m["metadata"] or {}).get("source") or "" for m in mensagens if m["direction"] == "outbound"]
+        if teve_atendente or any(o in _ORIGENS_HUMANAS for o in origens):
+            return 0
 
-        # Processa pares user→assistant
-        created = updated = 0
-        for i, msg in enumerate(messages):
-            if msg.get("role") != "user":
+        nome = (conversation.contact_name or "").strip().split(" ")[0].lower()
+        criadas = 0
+        for atual, seguinte in zip(mensagens, mensagens[1:]):
+            if atual["direction"] != "inbound" or seguinte["direction"] != "outbound":
                 continue
-            # Próxima mensagem deve ser do assistente
-            if i + 1 >= len(messages):
+            if ((seguinte["metadata"] or {}).get("source") or "") not in _ORIGENS_DO_BOT:
                 continue
-            next_msg = messages[i + 1]
-            if next_msg.get("role") != "assistant":
+            pergunta = (atual["text_body"] or _texto_da_mensagem(atual["content"])).strip()
+            resposta = (seguinte["text_body"] or _texto_da_mensagem(seguinte["content"])).strip()
+            if not pergunta or _is_vague_input(pergunta) or not _is_good_response(resposta):
                 continue
-
-            user_text = _texto_da_mensagem(msg.get("content"))
-            bot_text = _texto_da_mensagem(next_msg.get("content"))
-
-            if not user_text or _is_vague_input(user_text) or not _is_good_response(bot_text):
+            if _envelhece_ou_falhou(resposta, nome) or _envelhece_ou_falhou(pergunta, nome):
                 continue
+            if self._sugerir(loja, pergunta, resposta):
+                criadas += 1
+        return criadas
 
-            topic = _classify_topic(user_text)
-
-            # Resolve a loja da conversa para escopo correto
-            store = self._resolve_store(conversation)
-
-            result = self._upsert_knowledge(
-                topic=topic,
-                example_input=user_text[:300],
-                example_response=bot_text[:500],
-                store=store,
-            )
-            if result == "created":
-                created += 1
-            elif result == "updated":
-                updated += 1
-
-        if created:
-            return "created"
-        if updated:
-            return "updated"
-        return "skipped"
-
-    def _resolve_store(self, conversation):
-        """Tenta resolver a Store a partir da conversa."""
-        try:
-            from apps.automation.services.context_service import AutomationContextService
-            ctx = AutomationContextService.resolve(conversation=conversation)
-            return ctx.store
-        except Exception:
-            return None
-
-    @transaction.atomic
-    def _upsert_knowledge(
-        self,
-        topic: str,
-        example_input: str,
-        example_response: str,
-        store=None,
-    ) -> str:
+    def _sugerir(self, loja, pergunta: str, resposta: str) -> bool:
+        """Cria a sugestão desligada. False se a pergunta já existe (qualquer origem) ou a fila encheu."""
         from apps.agents.models import AgentKnowledgeEntry
 
-        # Verifica se já existe entrada similar (por input exato)
-        existing = AgentKnowledgeEntry.objects.filter(
-            agent=self.agent,
-            store=store,
-            topic=topic,
-            example_input=example_input,
-        ).first()
-
-        if existing:
-            # Atualiza confiança e contagem
-            existing.usage_count += 1
-            existing.confidence = min(1.0, existing.confidence + 0.05)
-            existing.save(update_fields=["usage_count", "confidence", "updated_at"])
-            return "updated"
-
-        # Limita 20 entradas por tópico/store — remove a pior
-        count = AgentKnowledgeEntry.objects.filter(
-            agent=self.agent, store=store, topic=topic, is_active=True
-        ).count()
-        if count >= 20:
-            worst = (
-                AgentKnowledgeEntry.objects
-                .filter(agent=self.agent, store=store, topic=topic, is_active=True)
-                .order_by("confidence", "usage_count")
-                .first()
-            )
-            if worst:
-                worst.delete()
-
+        pergunta = pergunta[:300]
+        ja_existe = AgentKnowledgeEntry.objects.filter(
+            agent=self.agent, store=loja, example_input__iexact=pergunta,
+        ).exists()
+        if ja_existe:
+            return False
+        pendentes = AgentKnowledgeEntry.objects.filter(agent=self.agent, store=loja, source="sugestao").count()
+        if pendentes >= _MAX_SUGESTOES_PENDENTES:
+            return False
         AgentKnowledgeEntry.objects.create(
-            agent=self.agent,
-            store=store,
-            topic=topic,
-            example_input=example_input,
-            example_response=example_response,
-            source="auto",
-            is_active=True,
+            agent=self.agent, store=loja, topic=_classify_topic(pergunta),
+            example_input=pergunta, example_response=resposta[:500],
+            source="sugestao", is_active=False, confidence=0.5,
+            notes="Sugerido de uma conversa que virou pedido sem atendente.",
         )
-        return "created"
+        return True
 
     # ── API manual ────────────────────────────────────────────────────────────
 

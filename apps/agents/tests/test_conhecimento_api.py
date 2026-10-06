@@ -97,3 +97,42 @@ class TestConhecimentoAPI:
         }, format='json')
         assert r.status_code == 400
         assert 'atendente de IA' in r.json()['error']
+
+
+@pytest.mark.django_db
+class TestSugestoesDoAtendimento:
+    """O aprendizado só SUGERE (06/10); o dono aprova, edita ou descarta aqui."""
+
+    def _sugestao(self, loja, texto='vocês entregam na região sul?'):
+        from apps.automation.models import CompanyProfile
+        agente = CompanyProfile.objects.get(store=loja).default_agent
+        return AgentKnowledgeEntry.objects.create(
+            agent=agente, store=loja, topic='entrega', source='sugestao', is_active=False,
+            example_input=texto, example_response='Entregamos sim em toda a região sul.',
+        )
+
+    def test_lista_de_sugestoes_separada_do_ensinado(self, cliente, loja):
+        s = self._sugestao(loja)
+        ensinado = cliente.get(f'{BASE}/?store={loja.slug}').json()
+        sugestoes = cliente.get(f'{BASE}/?store={loja.slug}&sugestoes=1').json()
+        assert str(s.id) not in [e['id'] for e in ensinado]
+        assert [e['id'] for e in sugestoes] == [str(s.id)]
+
+    def test_aprovar_liga_e_pode_editar_a_resposta(self, cliente, loja):
+        s = self._sugestao(loja)
+        r = cliente.post(f'{BASE}/{s.id}/aprovar/?store={loja.slug}',
+                         {'example_response': 'Entregamos sim, em toda a região sul de Palmas.'}, format='json')
+        assert r.status_code == 200, r.content
+        s.refresh_from_db()
+        assert (s.source, s.is_active) == ('reviewed', True)
+        assert s.example_response == 'Entregamos sim, em toda a região sul de Palmas.'
+
+    def test_descartar_apaga(self, cliente, loja):
+        s = self._sugestao(loja)
+        assert cliente.delete(f'{BASE}/{s.id}/?store={loja.slug}').status_code == 204
+        assert not AgentKnowledgeEntry.objects.filter(pk=s.pk).exists()
+
+    def test_loja_alheia_nao_aprova(self, intruso, loja):
+        s = self._sugestao(loja)
+        r = intruso.post(f'{BASE}/{s.id}/aprovar/?store={loja.slug}', {}, format='json')
+        assert r.status_code == 404
