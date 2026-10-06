@@ -24,6 +24,8 @@ MOTIVOS = {
     'eco_do_app_business': 'Respondido pelo WhatsApp do celular',
     'painel': 'Respondido pelo painel',
     'falha_da_ia': 'A IA não conseguiu responder',
+    'cliente_pediu': 'Cliente pediu atendente',
+    'reclamacao': 'Reclamação do pedido',
 }
 
 

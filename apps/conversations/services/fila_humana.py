@@ -45,6 +45,15 @@ def _item(conversa, agora) -> dict:
     }
 
 
+def ordenar_esperando(itens: list) -> list:
+    """Reclamação primeiro (cliente com pedido errado na mão, 25/09); depois
+    maior espera — é quem o atendente pega antes."""
+    return sorted(itens, key=lambda i: (
+        (i.get('motivo') or {}).get('codigo') != 'reclamacao',
+        -i['esperando_ha_segundos'],
+    ))
+
+
 def montar_fila(conversas, agora=None) -> dict:
     """`conversas`: queryset já restrito ao que o usuário pode ver."""
     from apps.conversations.models import Conversation
@@ -61,8 +70,7 @@ def montar_fila(conversas, agora=None) -> dict:
         # mensagem do cliente (decisão do dono, 19/09).
         if marco and timezone.localtime(marco).date() >= hoje:
             em_atendimento.append(_item(conversa, agora))
-    # Maior espera primeiro — é quem o atendente pega antes.
-    esperando.sort(key=lambda i: -i['esperando_ha_segundos'])
+    esperando = ordenar_esperando(esperando)
     return {
         'esperando': esperando,
         'em_atendimento': em_atendimento,

@@ -99,7 +99,6 @@ class UnifiedService:
         IntentType.CUSTOMIZATION,
         IntentType.COMPARISON,
         IntentType.RECOMMENDATION,
-        IntentType.COMPLAINT,
         IntentType.GENERAL_QUESTION,
         IntentType.UNKNOWN,
     }
@@ -1102,6 +1101,11 @@ class UnifiedService:
             r'|quero falar com|chama algu[ée]m|ajuda humana|suporte)',
             normalized,
         ))
+        # Reclamação também escapa do checkout: "veio sem frango" no passo de
+        # observação não é recado para a cozinha, é alguém precisando de gente.
+        from apps.whatsapp.intents.reclamacao import eh_reclamacao
+        _early_reclamacao = eh_reclamacao(normalized)
+        _early_human = _early_human or _early_reclamacao
         # Combo em montagem: "1, 3, 5" só faz sentido para quem perguntou os
         # sabores. Vem ANTES da detecção de intenção porque um número solto não
         # casa com nada e cairia em UNKNOWN — o cliente responderia a pergunta
@@ -1157,7 +1161,9 @@ class UnifiedService:
                 logger.error('[unified] pending checkout text handler failed: %s', exc, exc_info=True)
 
         intent_data = self.detector.detect(normalized.lower())
-        if _early_human:
+        if _early_reclamacao and intent_data.get('intent') != IntentType.FRUSTRATION:
+            intent_data['intent'] = IntentType.COMPLAINT
+        elif _early_human:
             # "suporte" casava CONTACT e respondia o telefone da loja — quem
             # pede gente vai para a transferência, que também larga o checkout.
             intent_data['intent'] = IntentType.HUMAN_HANDOFF

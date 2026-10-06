@@ -250,6 +250,14 @@ class IntentDetector:
             IntentType.AFFIRMATIVE,
         ]
         
+        # Reclamação antes de tudo, menos frustração (que já transfere):
+        # "Veio errado meu pedido" casava TRACK_ORDER e virava rastreio (25/09).
+        from apps.whatsapp.intents.reclamacao import eh_reclamacao
+        if eh_reclamacao(message) and not any(
+            re.search(p, message_lower) for p in self.PATTERNS[IntentType.FRUSTRATION]
+        ):
+            return IntentType.COMPLAINT
+
         for intent in priority_order:
             patterns = self.PATTERNS.get(intent, [])
             for pattern in patterns:

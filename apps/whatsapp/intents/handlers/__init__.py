@@ -4,7 +4,7 @@ from apps.whatsapp.intents.detector import IntentType  # noqa: F401 — re-expor
 
 from .base import HandlerResult, IntentHandler, _normalize_text
 from .catalog import MenuRequestHandler, PriceCheckHandler, ProductMentionHandler, ProductNotFoundHandler
-from .fallback import AffirmativeHandler, HumanHandoffHandler, UnknownHandler
+from .fallback import AffirmativeHandler, HumanHandoffHandler, ReclamacaoHandler, UnknownHandler
 from .greeting import GreetingHandler
 from .info import BusinessHoursHandler, ContactHandler, DeliveryInfoHandler, FAQHandler, LocationHandler
 from .interactive import InteractiveReplyHandler
@@ -20,7 +20,7 @@ __all__ = [
     'TrackOrderHandler', 'CreateOrderHandler', 'QuickOrderHandler', 'CancelOrderHandler',
     'PaymentStatusHandler', 'ViewQRCodeHandler', 'CopyPixHandler',
     'BusinessHoursHandler', 'DeliveryInfoHandler', 'LocationHandler', 'ContactHandler', 'FAQHandler',
-    'AffirmativeHandler', 'HumanHandoffHandler', 'UnknownHandler',
+    'AffirmativeHandler', 'HumanHandoffHandler', 'ReclamacaoHandler', 'UnknownHandler',
     'InteractiveReplyHandler',
     'LoyaltyStatusHandler',
     'get_handler',
@@ -47,6 +47,7 @@ HANDLER_MAP = {
     IntentType.CANCEL_ORDER: CancelOrderHandler,
     IntentType.HUMAN_HANDOFF: HumanHandoffHandler,
     IntentType.FRUSTRATION: HumanHandoffHandler,
+    IntentType.COMPLAINT: ReclamacaoHandler,
     IntentType.FAQ: FAQHandler,
     IntentType.UNKNOWN: UnknownHandler,
     IntentType.AFFIRMATIVE: AffirmativeHandler,

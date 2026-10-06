@@ -21,6 +21,7 @@ from django.utils import timezone
 GENERICO = 'Synced from conversation mode switch'
 
 TEXTOS = {
+    'reclamacao': 'Reclamação do pedido',
     'pediu_atendente': 'Cliente pediu atendente',
     'bot_nao_entendeu': 'O bot não entendeu o cliente',
     'eco_do_celular': 'Respondido pelo WhatsApp do celular',
@@ -49,6 +50,8 @@ def _codigo_pelo_texto(texto: str):
     t = normalizar(texto)
     if not t or t == normalizar(GENERICO):
         return None
+    if 'reclamac' in t:
+        return 'reclamacao'
     if 'celular' in t or 'eco' in t.split() or 'app business' in t:
         return 'eco_do_celular'
     if 'assumiu' in t or 'painel' in t:
