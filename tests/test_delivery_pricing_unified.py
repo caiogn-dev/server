@@ -98,17 +98,17 @@ class DynamicFeeCalculationTest(TestCase):
         # default_delivery_fee = 8.00, distance=1 <= free_km(3) → base fee
         self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('8.00'))
 
-    @patch('apps.stores.services.geo.service.geo_service.calculate_delivery_fee')
-    def test_checkout_payload_recalculates_from_address_before_using_browser_distance(self, calculate_delivery_fee):
-        calculate_delivery_fee.return_value = {
-            'fee': 10.82,
-            'delivery_fee': 10.82,
-            'distance_km': 5.82,
-            'duration_minutes': 9.8,
-            'is_within_area': True,
-            'zone': None,
-            'message': 'Taxa: R$ 10.82 (5.8 km)',
-        }
+    # O frete passa pela régua única (UnifiedDeliveryService, 03967153): o
+    # texto vira ponto em GeoService.localizar e a distância vem da rota —
+    # o mock antigo em geo_service.calculate_delivery_fee não é mais chamado.
+    @patch('apps.stores.services.geo.service.GeoService.calculate_route')
+    @patch('apps.stores.services.geo.service.GeoService.localizar')
+    def test_checkout_payload_recalculates_from_address_before_using_browser_distance(self, localizar, calculate_route):
+        self.store.latitude = Decimal('-10.1840000')
+        self.store.longitude = Decimal('-48.3330000')
+        self.store.save(update_fields=['latitude', 'longitude'])
+        localizar.return_value = {'lat': -10.2100, 'lng': -48.3300, 'formatted_address': 'Qd 203 Sul, Palmas - TO'}
+        calculate_route.return_value = {'distance_km': 5.82, 'duration_minutes': 9.8}
 
         result = CheckoutService.calculate_delivery_fee_for_payload(self.store, {
             'method': 'delivery',
@@ -123,10 +123,13 @@ class DynamicFeeCalculationTest(TestCase):
             },
         })
 
-        self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')), Decimal('10.82'))
+        # A distância é a da rota até o endereço digitado, não a do navegador.
         self.assertEqual(Decimal(str(result['distance_km'])).quantize(Decimal('0.01')), Decimal('5.82'))
-        calculate_delivery_fee.assert_called_once()
-        self.assertIn('destination_address', calculate_delivery_fee.call_args.kwargs)
+        esperado = CheckoutService._calculate_dynamic_fee(self.store, Decimal('5.82'))['fee']
+        self.assertEqual(Decimal(str(result['fee'])).quantize(Decimal('0.01')),
+                         Decimal(str(esperado)).quantize(Decimal('0.01')))
+        localizar.assert_called_once()
+        self.assertIn('203 Sul', localizar.call_args.args[0])
 
 
 class DynamicDeliveryAreaPolicyTest(TestCase):
