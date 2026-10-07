@@ -1495,10 +1495,14 @@ class LangchainService:
                 return json.loads(raw)
             # Fallback: seed from CustomerSession.pending_items (handler pipeline)
             try:
+                # SessionManager não tem `.session` (é `_session`, via
+                # get_or_create_session). O AttributeError era engolido e a IA
+                # nunca via o que o catálogo pôs na sessão (Dr. Matheus, 07/10).
                 sm = _session_manager()
-                if sm and sm.session and sm.session.cart_data:
+                sessao = sm.get_or_create_session() if sm else None
+                if sessao and sessao.cart_data:
                     from apps.stores.models import StoreProduct as _SP
-                    pending = sm.session.cart_data.get('pending_items') or []
+                    pending = sessao.cart_data.get('pending_items') or []
                     items = []
                     for it in pending:
                         try:
@@ -1528,8 +1532,11 @@ class LangchainService:
             # Sync back to CustomerSession so the handler pipeline stays in sync
             try:
                 sm = _session_manager()
-                if sm and sm.session:
-                    data = dict(sm.session.cart_data or {})
+                # Lê do banco na hora de gravar: outro handler pode ter mexido
+                # no cart_data desde que a sessão foi carregada.
+                sessao = sm._sessao_fresca() if sm else None
+                if sessao:
+                    data = dict(sessao.cart_data or {})
                     items = cart.get('items', [])
                     if items:
                         data['pending_items'] = [
@@ -1546,10 +1553,13 @@ class LangchainService:
                         data['delivery_address'] = cart['delivery_address']
                     if cart.get('delivery_fee') is not None:
                         data['delivery_fee_calculated'] = float(cart['delivery_fee'])
-                    sm.session.cart_data = data
-                    sm.session.save(update_fields=['cart_data', 'updated_at'])
+                    sessao.cart_data = data
+                    sessao.cart_items_count = sum(int(i.get('quantity') or 0) for i in items)
+                    sessao.save(update_fields=['cart_data', 'cart_items_count', 'updated_at'])
             except Exception:
-                pass
+                # Falhar aqui deixa a IA e o fluxo do pedido com carrinhos
+                # diferentes — tem que aparecer no log, não sumir.
+                logger.exception('[agent cart] não sincronizou com a sessão do pedido')
 
         @tool
         def adicionar_ao_carrinho(produto_nome: str, quantidade: int = 1) -> str:

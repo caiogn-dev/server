@@ -87,3 +87,48 @@ def test_nome_exato_vence_mesmo_com_outros_parecidos(agent, db):
     resultado = tools['adicionar_ao_carrinho'].invoke({'produto_nome': 'Magnifico Camarão', 'quantidade': 1})
 
     assert resultado.startswith('✓ 1x Magnifico Camarão'), resultado
+
+
+def test_item_da_ia_chega_na_sessao_do_pedido(agent, db):
+    """07/10, Dr. Matheus (Cê Saladas): a IA disse "Adicionei 1x Especial Filé
+    de Frango ao seu carrinho"; minutos depois ele mandou a localização e o
+    bot respondeu "Escolha um item no cardápio", e o "crédito" virou "Não
+    encontrei nenhum pedido aberto". A cópia do carrinho da IA para a sessão
+    lia `sm.session`, que não existe no SessionManager — o AttributeError era
+    engolido e o item nunca chegava ao fluxo do pedido.
+    """
+    from apps.automation.models import CompanyProfile
+    from apps.automation.services.session_manager import get_session_manager
+
+    store = make_store()
+    produto = make_product(store, name='Especial Filé de Frango', price=Decimal('39.99'))
+    CompanyProfile.objects.get_or_create(store=store)
+    phone = '5563981007070'
+    tools, _ = _tools(agent, store, phone=phone)
+
+    tools['adicionar_ao_carrinho'].invoke({'produto_nome': 'especial filé de frango', 'quantidade': 1})
+
+    sm = get_session_manager(CompanyProfile.objects.get(store=store), phone)
+    itens = sm.get_pending_order_items()
+    assert [(i['product_id'], i['quantity']) for i in itens] == [(str(produto.id), 1)]
+
+
+def test_carrinho_da_ia_nasce_do_que_o_catalogo_ja_pos_na_sessao(agent, db):
+    """O caminho inverso: pedido do catálogo grava em pending_items; se a IA
+    entra na conversa depois, ela precisa ver esse item (mesmo AttributeError)."""
+    from apps.automation.models import CompanyProfile
+    from apps.automation.services.session_manager import get_session_manager
+
+    store = make_store()
+    produto = make_product(store, name='Queridinha', price=Decimal('28.99'))
+    CompanyProfile.objects.get_or_create(store=store)
+    phone = '5563981007071'
+    sm = get_session_manager(CompanyProfile.objects.get(store=store), phone)
+    sessao = sm.get_or_create_session()
+    sessao.cart_data = {'pending_items': [{'product_id': str(produto.id), 'quantity': 2, 'unit_price': 28.99}]}
+    sessao.save(update_fields=['cart_data'])
+    tools, _ = _tools(agent, store, phone=phone)
+
+    resultado = tools['ver_carrinho'].invoke({})
+
+    assert 'Queridinha' in resultado, resultado
