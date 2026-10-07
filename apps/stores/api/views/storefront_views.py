@@ -1085,7 +1085,10 @@ class StoreCheckoutView(APIView):
             'zip_code': request.data.get('delivery_zip_code'),
             'lat': request.data.get('lat') or request.data.get('delivery_lat'),
             'lng': request.data.get('lng') or request.data.get('delivery_lng'),
-            'fee': request.data.get('delivery_fee'),
+            # SEM 'fee': `fee` não-nulo faz o CheckoutService pular o cálculo e
+            # usar o valor como veio. Vindo do corpo de um endpoint público,
+            # era o comprador escrevendo o próprio frete ("delivery_fee": 0).
+            # A taxa é sempre recalculada no servidor a partir do endereço/pin.
             'distance_km': request.data.get('delivery_distance_km'),
             'duration_minutes': request.data.get('delivery_duration_minutes'),
         }
