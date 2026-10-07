@@ -33,7 +33,9 @@ class AgentRuntimeGuardsTestCase(TestCase):
         service = self._make_service()
         self.assertEqual(service._resolve_allowed_tools("me manda o pix"), {'consultar_pagamento'})
 
-    def test_auth_template_configs_do_not_inject_button_payload(self):
+    def test_auth_template_configs_send_code_in_body_and_copy_code_button(self):
+        # Template AUTH: código no body E no botão COPY_CODE, senão a Meta
+        # devolve #131008 (50f4390b, 29/07 — reverteu a regra "sem botão").
         config = WhatsAppAuthService._get_template_configs("123456")[0]
 
         self.assertEqual(config["name"], "codigo_verificacao")
@@ -45,7 +47,15 @@ class AgentRuntimeGuardsTestCase(TestCase):
                     "parameters": [
                         {"type": "text", "text": "123456"},
                     ],
-                }
+                },
+                {
+                    "type": "button",
+                    "sub_type": "url",
+                    "index": "0",
+                    "parameters": [
+                        {"type": "text", "text": "123456"},
+                    ],
+                },
             ],
         )
 

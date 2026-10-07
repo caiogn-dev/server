@@ -62,13 +62,18 @@ class TemplateConfigTest(TestCase):
         self.assertEqual(body['type'], 'body')
         self.assertEqual(body['parameters'][0]['text'], '123456')
 
-    def test_no_button_payload_injected(self):
-        """Regression: COPY_CODE button must come from the approved template, not the payload."""
+    def test_button_payload_carries_code(self):
+        """O template AUTH `codigo_verificacao` exige o código também no
+        parâmetro do botão COPY_CODE — sem ele a Meta devolve #131008
+        (50f4390b, 29/07). A regra antiga ("o template é dono do botão") foi
+        revertida ali; ver também CLAUDE.md."""
         configs = WhatsAppAuthService._get_template_configs('999999')
-        for cfg in configs:
-            for comp in cfg.get('components', []):
-                self.assertNotEqual(comp.get('type'), 'button',
-                    "Payload must NOT inject a button component — the Meta template owns it.")
+        self.assertEqual(configs[0]['name'], 'codigo_verificacao')
+        botoes = [c for c in configs[0]['components'] if c.get('type') == 'button']
+        self.assertEqual(len(botoes), 1)
+        self.assertEqual(botoes[0]['sub_type'], 'url')
+        self.assertEqual(botoes[0]['index'], '0')
+        self.assertEqual(botoes[0]['parameters'], [{'type': 'text', 'text': '999999'}])
 
     def test_template_name_is_set(self):
         configs = WhatsAppAuthService._get_template_configs('000000')
@@ -151,7 +156,13 @@ class SendAuthCodeRateLimitTest(TestCase):
         key = WhatsAppAuthService._get_cache_key('5511999990011')
         stored = cache.get(key)
         self.assertIsNotNone(stored)
-        self.assertEqual(len(stored['code']), 6)
+        # Desde 0d320852 (31/05) o cache guarda só o HMAC do código, nunca o
+        # código em texto puro. O hash tem que bater com o código que foi no
+        # template.
+        self.assertNotIn('code', stored)
+        enviado = mock_svc.send_template_message.call_args.kwargs['components'][0]['parameters'][0]['text']
+        self.assertEqual(len(enviado), 6)
+        self.assertEqual(stored['code_hash'], WhatsAppAuthService._hash_code(enviado))
 
     @patch('apps.core.auth.whatsapp_auth.MessageService')
     def test_send_clears_cache_on_all_templates_fail(self, mock_ms_cls):
