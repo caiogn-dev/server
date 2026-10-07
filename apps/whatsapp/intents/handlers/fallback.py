@@ -44,6 +44,53 @@ class HumanHandoffHandler(IntentHandler):
         )
 
 
+class TravouNoPedidoHandler(HumanHandoffHandler):
+    """Quer comprar e travou no meio do pedido: gente fecha (07/10, Dr. Matheus).
+
+    O que estava sendo montado vai na resposta — fica no chat para o
+    atendente ler sem perguntar de novo. O checkout automático sai de cena
+    como em toda transferência (`deixar_pedido_de_lado`).
+    """
+
+    motivo = 'travou_no_pedido'
+
+    def handle(self, intent_data: Dict[str, Any]) -> HandlerResult:
+        self._resumo = ''
+        try:
+            from apps.stores.models import StoreProduct
+            sessao = self._get_session_manager()
+            itens = sessao.get_pending_order_items() or []
+            nomes = dict(StoreProduct.objects.filter(
+                id__in=[i.get('product_id') for i in itens if i.get('product_id')],
+            ).values_list('id', 'name'))
+            linhas = [
+                f"• {int(i.get('quantity') or 1)}x {nomes.get(_uuid(i.get('product_id')), 'item')}"
+                for i in itens if i.get('product_id')
+            ]
+            endereco = (sessao.get_delivery_address_info() or {}).get('address') or ''
+            if linhas:
+                self._resumo = "\n".join(linhas) + (f"\n📍 {endereco}" if endereco else "")
+        except Exception as exc:
+            logger.warning("[TravouNoPedidoHandler] resumo do pedido falhou: %s", exc)
+        return super().handle(intent_data)
+
+    def _resposta(self, havia_pedido: bool) -> HandlerResult:
+        pedido = f"\n\nSeu pedido:\n{self._resumo}" if self._resumo else ""
+        return HandlerResult.text(
+            "Poxa, desculpa pela volta toda! 🙏\n\n"
+            "Já chamei alguém da equipe pra fechar seu pedido com você agora."
+            f"{pedido}"
+        )
+
+
+def _uuid(valor):
+    import uuid
+    try:
+        return uuid.UUID(str(valor))
+    except (TypeError, ValueError):
+        return valor
+
+
 class ReclamacaoHandler(HumanHandoffHandler):
     """Pedido que chegou com problema: gente resolve, não menu (25/09)."""
 

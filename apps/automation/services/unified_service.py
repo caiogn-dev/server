@@ -1106,6 +1106,11 @@ class UnifiedService:
         from apps.whatsapp.intents.reclamacao import eh_reclamacao
         _early_reclamacao = eh_reclamacao(normalized)
         _early_human = _early_human or _early_reclamacao
+        # Quem trava no meio do pedido ("desisto", "meia hora pra pedir") é
+        # venda em risco: escapa do checkout direto para um atendente (07/10).
+        from apps.whatsapp.intents.travou import travou_no_pedido
+        _early_travou = not _early_reclamacao and not _early_cancel and travou_no_pedido(normalized)
+        _early_human = _early_human or _early_travou
         # Combo em montagem: "1, 3, 5" só faz sentido para quem perguntou os
         # sabores. Vem ANTES da detecção de intenção porque um número solto não
         # casa com nada e cairia em UNKNOWN — o cliente responderia a pergunta
@@ -1159,6 +1164,19 @@ class UnifiedService:
                         )
             except Exception as exc:
                 logger.error('[unified] pending checkout text handler failed: %s', exc, exc_info=True)
+
+        if _early_travou:
+            from apps.whatsapp.intents.handlers.fallback import TravouNoPedidoHandler
+            handler = TravouNoPedidoHandler(self.account, self.conversation, self.company)
+            if self.store:
+                handler.store = self.store
+            try:
+                result = handler.handle({'intent': IntentType.FRUSTRATION})
+                resposta = self._resposta_do_handler(result, 'travou_no_pedido', 'TravouNoPedidoHandler')
+                if resposta is not None:
+                    return resposta
+            except Exception as exc:
+                logger.error('[unified] TravouNoPedidoHandler falhou: %s', exc, exc_info=True)
 
         intent_data = self.detector.detect(normalized.lower())
         if _early_reclamacao and intent_data.get('intent') != IntentType.FRUSTRATION:

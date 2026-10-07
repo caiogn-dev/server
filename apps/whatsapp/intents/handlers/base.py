@@ -3,6 +3,7 @@ Base classes for WhatsApp intent handlers: HandlerResult + IntentHandler.
 Also contains shared module-level helpers for product text parsing.
 """
 import logging
+import re
 import unicodedata
 from typing import Any, Dict, List, Optional
 
@@ -366,6 +367,19 @@ class IntentHandler:
                 # bloqueada etc.) aceita o endereço como digitado com a taxa
                 # padrão e segue o checkout — nunca prende o cliente aqui.
                 attempts = session_manager.bump_address_attempts()
+                if attempts >= 2 and not _parece_endereco(address_text):
+                    # 07/10: "desisto" virou o endereço do Dr. Matheus e o bot
+                    # pediu o pagamento. Texto sem cara de endereço não é
+                    # aceito às cegas: oferece a localização ou um atendente.
+                    return HandlerResult.buttons(
+                        body=(
+                            "📍 Não consegui achar esse endereço.\n\n"
+                            "O jeito mais rápido: toque no clipe 📎 → *Localização* → "
+                            "*Enviar localização atual*.\n\n"
+                            "Se preferir, chamo alguém da equipe pra fechar com você."
+                        ),
+                        buttons=[{'id': 'contact_support', 'title': '👤 Atendente'}],
+                    )
                 if attempts >= 2:
                     logger.warning(
                         "[_handle_address_input] Geocode falhou %s vezes — "
@@ -440,6 +454,11 @@ class IntentHandler:
                         }
                 except Exception:
                     address_display = f"{lat:.6f}, {lng:.6f}"
+            # Ponto sem nome no Google (Orla da Graciosa, 07/10): sem texto, o
+            # "Entregar no mesmo endereço?" não aparecia e o cliente digitava
+            # tudo de novo. O pino vale — o rótulo diz de onde ele veio.
+            if not (address_display or '').strip():
+                address_display = 'Localização enviada pelo WhatsApp'
             return self._process_location_and_ask_payment(
                 session_manager=session_manager,
                 geo_svc=geo_service,
@@ -956,3 +975,15 @@ class IntentHandler:
         """
         nome = (getattr(self.conversation, 'contact_name', None) or '').strip()
         return nome if any(c.isalpha() for c in nome) else 'Cliente'
+
+
+_RE_SINAL_DE_ENDERECO = re.compile(
+    r'\d|\b(rua|r\.|quadra|qd|q\.|alameda|al\.?|avenida|av\.?|lote|lt|casa|apto|apartamento'
+    r'|setor|bairro|jardim|jd|condominio|condomínio|residencial|travessa|tv|rodovia|chacara|chácara)\b',
+    re.IGNORECASE,
+)
+
+
+def _parece_endereco(texto: str) -> bool:
+    """Tem número ou palavra de endereço — o mínimo para aceitar sem achar no mapa."""
+    return bool(_RE_SINAL_DE_ENDERECO.search(texto or ''))

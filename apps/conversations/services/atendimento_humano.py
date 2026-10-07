@@ -26,6 +26,7 @@ MOTIVOS = {
     'falha_da_ia': 'A IA não conseguiu responder',
     'cliente_pediu': 'Cliente pediu atendente',
     'reclamacao': 'Reclamação do pedido',
+    'travou_no_pedido': 'Travou no pedido',
 }
 
 

@@ -47,9 +47,11 @@ def _item(conversa, agora) -> dict:
 
 def ordenar_esperando(itens: list) -> list:
     """Reclamação primeiro (cliente com pedido errado na mão, 25/09); depois
-    maior espera — é quem o atendente pega antes."""
+    quem travou no meio do pedido (venda em risco, 07/10); depois maior
+    espera — é quem o atendente pega antes."""
+    prioridade = {'reclamacao': 0, 'travou_no_pedido': 1}
     return sorted(itens, key=lambda i: (
-        (i.get('motivo') or {}).get('codigo') != 'reclamacao',
+        prioridade.get((i.get('motivo') or {}).get('codigo'), 2),
         -i['esperando_ha_segundos'],
     ))
 
