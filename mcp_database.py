@@ -126,7 +126,6 @@ def _mask_sensitive(record: dict) -> dict:
 #  DEFINIÇÃO DAS FERRAMENTAS (26 tools)
 # ══════════════════════════════════════════════════════════════════════════════
 
-@server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
         # ── Group 0: PostgreSQL Tables ─────────────────────────────────────
@@ -483,7 +482,6 @@ async def list_tools() -> list[Tool]:
 #  DISPATCH
 # ══════════════════════════════════════════════════════════════════════════════
 
-@server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         _dispatch = {
@@ -1719,6 +1717,35 @@ async def _pgvector_readiness(args: dict) -> list[TextContent]:
         'django_package': django_package,
         'ready': extension_installed and 'não instalado' not in django_package,
     })
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  REGISTRO DOS HANDLERS (compatível com mcp 1.x e 2.x)
+#  mcp 2.x removeu os decorators @server.list_tools()/@server.call_tool();
+#  os handlers passaram a ser registrados via add_request_handler.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _register_handlers() -> None:
+    if hasattr(server, 'list_tools'):  # mcp 1.x
+        server.list_tools()(list_tools)
+        server.call_tool()(call_tool)
+        return
+
+    from mcp import types as _t
+
+    async def _on_list_tools(ctx, params):
+        return _t.ListToolsResult(tools=await list_tools())
+
+    async def _on_call_tool(ctx, params):
+        content = await call_tool(params.name, params.arguments or {})
+        is_error = bool(content) and content[0].text.lstrip().startswith('{"error"')
+        return _t.CallToolResult(content=content, is_error=is_error)
+
+    server.add_request_handler('tools/list', _t.PaginatedRequestParams, _on_list_tools)
+    server.add_request_handler('tools/call', _t.CallToolRequestParams, _on_call_tool)
+
+
+_register_handlers()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

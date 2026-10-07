@@ -87,7 +87,6 @@ def _err(msg: str) -> list[TextContent]:
 #  DEFINIÇÃO DAS FERRAMENTAS
 # ══════════════════════════════════════════════════════════════════════════════
 
-@server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
         Tool(
@@ -311,7 +310,6 @@ async def list_tools() -> list[Tool]:
 #  IMPLEMENTAÇÕES
 # ══════════════════════════════════════════════════════════════════════════════
 
-@server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     try:
         if name == 'pipeline_overview':
@@ -1105,6 +1103,34 @@ async def _check_store_products(args: dict) -> list[TextContent]:
 # ══════════════════════════════════════════════════════════════════════════════
 #  ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  REGISTRO DOS HANDLERS (compatível com mcp 1.x e 2.x) — mesmo de mcp_database.py
+#  mcp 2.x removeu os decorators @server.list_tools()/@server.call_tool().
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _register_handlers() -> None:
+    if hasattr(server, 'list_tools'):  # mcp 1.x
+        server.list_tools()(list_tools)
+        server.call_tool()(call_tool)
+        return
+
+    from mcp import types as _t
+
+    async def _on_list_tools(ctx, params):
+        return _t.ListToolsResult(tools=await list_tools())
+
+    async def _on_call_tool(ctx, params):
+        content = await call_tool(params.name, params.arguments or {})
+        is_error = bool(content) and content[0].text.lstrip().startswith('{"error"')
+        return _t.CallToolResult(content=content, is_error=is_error)
+
+    server.add_request_handler('tools/list', _t.PaginatedRequestParams, _on_list_tools)
+    server.add_request_handler('tools/call', _t.CallToolRequestParams, _on_call_tool)
+
+
+_register_handlers()
+
 
 async def main():
     async with stdio_server() as (read_stream, write_stream):
