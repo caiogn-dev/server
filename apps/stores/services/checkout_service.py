@@ -724,7 +724,39 @@ class CheckoutService:
         for item in cart.combo_items.all():
             if LoyaltyService.cart_item_qualifies(cart.store, item):
                 prices.extend([Decimal(str(item.effective_price))] * int(item.quantity or 0))
+                continue
+            # A salada ESCOLHIDA dentro do combo também pode ser a grátis
+            # (07/10, CE-2610073719: só o combo Queridinha+Suco+Sobremesa na
+            # sacola e "nada foi abatido"). Vale o preço da própria salada,
+            # limitado ao valor do combo — nunca abate suco nem sobremesa.
+            salada = CheckoutService._salada_do_combo(cart.store, item)
+            if salada is not None:
+                prices.append(min(salada, Decimal(str(item.effective_price))))
         return min(prices) if prices else Decimal('0')
+
+    @staticmethod
+    def _salada_do_combo(store, combo_item):
+        """Preço da salada que qualifica mais barata escolhida no combo, ou None."""
+        from types import SimpleNamespace
+        from apps.stores.services.loyalty_service import LoyaltyService
+
+        ids = {
+            str(i)
+            for escolhas in (CheckoutService._normalize_group_selections(combo_item) or {}).values()
+            for i in escolhas
+        }
+        if not ids:
+            return None
+        variantes = {str(v.id): v.product for v in StoreProductVariant.objects.filter(id__in=ids).select_related('product__category')}
+        produtos = list(variantes.values()) + list(
+            StoreProduct.objects.filter(id__in=ids - set(variantes)).select_related('category')
+        )
+        precos = [
+            Decimal(str(p.price))
+            for p in produtos
+            if p is not None and LoyaltyService.cart_item_qualifies(store, SimpleNamespace(product=p))
+        ]
+        return min(precos) if precos else None
     
     @staticmethod
     def _coupon_items(cart: StoreCart) -> list:
