@@ -5,12 +5,11 @@ especial", que é como a loja chama no balcão. A tela "ensinar" do painel grava
 esses apelidos em `StoreProduct.metadata['apelidos']` (lista de strings); o
 casamento do bot tem que considerá-los como se fossem o nome.
 
-O campo `metadata` do StoreProduct nasce na branch feat/fila-humana-api
-(migração 0089). Aqui a leitura é defensiva e o teste simula o campo na
-classe — quando a migração chegar, nada muda neste código.
+O campo `metadata` do StoreProduct chegou com a migração 0089 (commit
+6c5b153b). Até lá o teste simulava o campo com um `property` na classe; com o
+campo real, o Django não consegue mais instanciar o produto vindo do banco
+("property ... has no setter") — então os apelidos agora são gravados no campo.
 """
-from unittest.mock import patch
-
 import pytest
 
 from apps.stores.models import StoreProduct
@@ -27,10 +26,11 @@ METADATA = {
 @pytest.fixture
 def loja(db):
     store = make_store(name='Cê Saladas Apelidos')
-    StoreProduct.objects.create(store=store, name='Salada Premium Nº 3', slug='premium-3', price=39.99, is_active=True)
-    StoreProduct.objects.create(store=store, name='Suco de laranja', slug='suco', price=9, is_active=True)
-    with patch.object(StoreProduct, 'metadata', property(lambda self: METADATA.get(self.slug, {})), create=True):
-        yield store
+    StoreProduct.objects.create(store=store, name='Salada Premium Nº 3', slug='premium-3', price=39.99,
+                                is_active=True, metadata=METADATA['premium-3'])
+    StoreProduct.objects.create(store=store, name='Suco de laranja', slug='suco', price=9,
+                                is_active=True, metadata=METADATA['suco'])
+    return store
 
 
 def test_apelido_casa_o_produto(loja):
