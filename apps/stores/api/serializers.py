@@ -2001,6 +2001,10 @@ def build_combo_groups(obj):
                 'max_selections': opt.max_selections,
                 'image_url': p_img,
                 'description': _descricao_curta_da_opcao(p),
+                # Grupo cadastrado sem título vira "Bebidas"/"Sobremesas" na
+                # vitrine pela categoria comum das opções (07/10: o modal
+                # mostrava ": selecione pelo menos 1 item" três vezes).
+                'categoria': p.category.name if getattr(p, 'category_id', None) and p.category else '',
             })
 
         groups_data.append({

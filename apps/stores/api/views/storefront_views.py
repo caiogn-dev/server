@@ -468,6 +468,7 @@ class StoreCatalogView(APIView):
                 'groups__product',
                 'groups__variant_limits__variant__product',
                 'groups__product_options__product',
+                'groups__product_options__product__category',
             ) \
             .order_by('sort_order', 'name')
         combos_destaque = [c for c in combos if c.featured]
