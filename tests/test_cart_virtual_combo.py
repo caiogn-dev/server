@@ -6,6 +6,12 @@ Covers:
 - Checkout succeeds when cart contains only a virtual combo
 - checkout_service uses effective_name / effective_price for virtual combos
 - StoreOrderItem created correctly for virtual combo
+
+Preço da salada montada é DERIVADO no servidor desde 3f550c69 (04/08):
+base = preço do combo `monte-sua-salada` da loja + StoreProduct.price de cada
+ingrediente cobrável (por id, filtrado por loja). O `unit_price` do cliente só
+serve para logar divergência. Por isso a loja de teste tem o combo-base
+cadastrado, e os valores esperados saem dele — não do que o teste "envia".
 """
 from decimal import Decimal
 
@@ -14,7 +20,7 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.stores.models import Store, StoreCart, StoreCartComboItem
+from apps.stores.models import Store, StoreCart, StoreCartComboItem, StoreCombo, StoreProduct
 from apps.stores.models import StoreOrder
 from apps.stores.services import cart_service, checkout_service
 
@@ -40,6 +46,11 @@ class VirtualComboCartTestCase(TestCase):
             currency='BRL',
         )
         self.cart_key = 'test-salad-cart-key-001'
+        # Base da salada montada (CartService.BUILDER_COMBO_SLUG).
+        StoreCombo.objects.create(
+            store=self.store, name='Monte sua Salada', slug='monte-sua-salada',
+            price=Decimal('29.90'),
+        )
 
     # ─── Service-level tests ───────────────────────────────────────────────────
 
@@ -77,11 +88,12 @@ class VirtualComboCartTestCase(TestCase):
             cart,
             combo=None,
             combo_name='Salada Especial',
-            unit_price=Decimal('35.00'),
+            unit_price=Decimal('35.00'),  # ignorado: o servidor deriva 29,90
             quantity=2,
         )
         item = cart.combo_items.first()
-        self.assertEqual(item.subtotal, Decimal('70.00'))
+        self.assertEqual(item.effective_price, Decimal('29.90'))
+        self.assertEqual(item.subtotal, Decimal('59.80'))
 
     def test_checkout_with_only_virtual_combo(self):
         """Checkout should succeed when cart has only a virtual combo (no real combo FK)."""
@@ -204,6 +216,10 @@ class VirtualComboCartTestCase(TestCase):
         self.assertEqual(data['items'][0]['customizations'].get('type'), 'custom_salad')
 
     def test_loyalty_reward_discounts_one_salad(self):
+        frango = StoreProduct.objects.create(
+            store=self.store, name='Frango extra', slug='frango-extra',
+            price=Decimal('1.10'), status=StoreProduct.ProductStatus.ACTIVE,
+        )
         cart = cart_service.get_or_create_cart(self.store, user=self.user, session_key=None)
         cart_service.add_combo(
             cart,
@@ -212,7 +228,12 @@ class VirtualComboCartTestCase(TestCase):
             unit_price=Decimal('31.00'),
             customizations={
                 'is_salad_builder': True,
-                'ingredients': ['Rúcula', 'Frango', 'Tahine'],
+                # 29,90 da base + 1,10 do frango (por id) = 31,00 derivado.
+                'ingredients': [
+                    'Rúcula',
+                    {'id': str(frango.id), 'name': 'Frango extra', 'role': 'proteina'},
+                    {'name': 'Tahine', 'role': 'molho'},
+                ],
             },
         )
 
