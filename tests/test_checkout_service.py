@@ -25,7 +25,15 @@ def _make_store(owner, slug='test-store'):
         slug=slug,
         is_active=True,
         default_delivery_fee=Decimal('8.00'),
+        # Loja em Palmas, com o ponto no mapa: sem coordenada da loja nem pino
+        # do cliente, o checkout recusa ("Não achei esse endereço no mapa") —
+        # e a suíte não consulta o Google (50653b25).
+        latitude=Decimal('-10.1840000'),
+        longitude=Decimal('-48.3330000'),
     )
+
+# Pino do cliente a ~1 km da loja: é o que o mapa do checkout manda.
+PINO = {'lat': -10.1930, 'lng': -48.3330}
 
 
 def _make_product(store, name='Produto', price=Decimal('25.00')):
@@ -243,9 +251,10 @@ class CheckoutCreateOrderTest(TestCase):
             'address': {
                 'street': 'Rua Teste',
                 'number': '100',
-                'city': 'São Paulo',
-                'state': 'SP',
-                'zip_code': '01310000',
+                'city': 'Palmas',
+                'state': 'TO',
+                'zip_code': '77015000',
+                **PINO,
             },
         }
         order = CheckoutService.create_order(cart, customer_data, delivery_data=delivery_data)
@@ -298,7 +307,7 @@ class CheckoutCreateOrderTest(TestCase):
         customer_data = {'name': 'Ign', 'email': 'ign@test.com', 'phone': '+5511333332222'}
         delivery_data = {
             'method': 'delivery',
-            'address': {'raw_address': 'Rua C, 1'},
+            'address': {'raw_address': 'Rua C, 1', **PINO},
             'pre_calculated_fee': Decimal('999.00'),
         }
         order = CheckoutService.create_order(cart, customer_data, delivery_data=delivery_data)
@@ -403,7 +412,7 @@ class CheckoutTrustedDeliveryFeeTest(TestCase):
             delivery_data={
                 'method': 'delivery',
                 'pre_calculated_fee': 999.0,
-                'address': {'raw_address': 'Rua A'},
+                'address': {'raw_address': 'Rua A', **PINO},
             },
         )
         self.assertNotEqual(order.delivery_fee, Decimal('999.00'))
