@@ -599,16 +599,21 @@ def generate_daily_summary(store, day=None) -> dict:
             source = 'llm'
             modelo = _modelo_que_respondeu()
         else:
-            erro = 'modelo respondeu JSON sem nenhum bloco com texto'
-    except Exception as exc:
-        erro = type(exc).__name__
-
-    if not blocos:
-        # JSON inválido, lista vazia ou todos os blocos sem texto: o template
-        # tem o que dizer, e um card vazio leria como falha nossa. Mas a falha
-        # é REGISTRADA — ERROR (vai para o GlitchTip) e `llm_error` no payload.
+            erro = 'blocos_vazios'
+            logger.error('[ai_insights] resumo diário sem IA (loja=%s): JSON sem blocos',
+                         getattr(store, 'id', '?'))
+    except LLMIndisponivel as exc:
+        # LLMIndisponivel.args[0] contém apenas nomes de modelo e classes de erro
+        # sanitizadas por _resumir_erro — sem dados sensíveis como chaves de API.
+        erro = str(exc)
         logger.exception('[ai_insights] resumo diário sem IA (loja=%s)',
                          getattr(store, 'id', '?'))
+    except Exception as exc:
+        erro = type(exc).__name__
+        logger.exception('[ai_insights] resumo diário sem IA (loja=%s)',
+                         getattr(store, 'id', '?'))
+
+    if not blocos:
         blocos = _template_blocos(store, stats, forecast)
         source = 'template'
 
@@ -672,6 +677,7 @@ def generate_conversation_insights(store, days: int = 7) -> dict:
         + '\n'.join(texts)
     )
     _ULTIMO_MODELO.set(None)
+    erro = None
     try:
         insights = _json_do_modelo(_llm_text(prompt))
         if not isinstance(insights, dict):
@@ -679,9 +685,13 @@ def generate_conversation_insights(store, days: int = 7) -> dict:
         return {**base, 'insights': insights,
                 'summary': insights.get('summary', ''), 'source': 'llm',
                 'model': _modelo_que_respondeu()}
+    except LLMIndisponivel as exc:
+        erro = str(exc)
+        logger.exception('[ai_insights] análise de conversas sem IA (loja=%s)',
+                         getattr(store, 'id', '?'))
     except Exception as exc:
         erro = type(exc).__name__
         logger.exception('[ai_insights] análise de conversas sem IA (loja=%s)',
                          getattr(store, 'id', '?'))
-        return {**base, 'insights': None, 'source': 'error', 'llm_error': erro,
-                'summary': 'Análise de IA indisponível no momento — tente novamente em instantes.'}
+    return {**base, 'insights': None, 'source': 'error', 'llm_error': erro,
+            'summary': 'Análise de IA indisponível no momento — tente novamente em instantes.'}
