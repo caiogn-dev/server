@@ -173,31 +173,65 @@ def _ingredient_lines(ingredients) -> list[str]:
     return lines
 
 
-def _combo_selection_lines(display_data: dict) -> list[str]:
-    """Linhas das opções escolhidas no combo (saladas/sabores) p/ a comanda.
+def _escolhas_do_combo(display_data: dict) -> list[tuple[str, list[tuple[int, str]]]]:
+    """Grupos do combo com as escolhas somadas por nome, na ordem do cliente.
 
     Lê display_data['groups'] (snapshot do checkout). Cada item pode ser uma
-    VARIANTE (variant_name) ou um PRODUTO (product_name) — antes a comanda só
-    olhava 'ingredients' e não mostrava nada do que o cliente escolheu.
+    VARIANTE (variant_name) ou um PRODUTO (product_name). O mesmo sabor pode
+    vir em entradas separadas (1 + 1) ou numa só (quantity=2): os dois viram
+    "2x Assadinho" — a cozinha conta por sabor, não por clique.
     """
-    lines: list[str] = []
+    grupos: list[tuple[str, list[tuple[int, str]]]] = []
     groups = display_data.get('groups') if isinstance(display_data, dict) else None
     for group in (groups or []):
         if not isinstance(group, dict):
             continue
-        g_name = str(group.get('group_name') or '').strip()
-        group_items = [it for it in (group.get('items') or []) if isinstance(it, dict)]
-        if not group_items:
-            continue
-        if g_name:
-            lines.append(f"{g_name.rstrip(':')}:")
-        for it in group_items:
+        somados: dict[str, int] = {}
+        for it in (group.get('items') or []):
+            if not isinstance(it, dict):
+                continue
             name = str(it.get('product_name') or it.get('variant_name') or '').strip()
             if not name:
                 continue
-            qty = it.get('quantity') or 1
-            lines.append(f"  {qty}x {name}")
+            try:
+                qty = int(it.get('quantity') or 1)
+            except (TypeError, ValueError):
+                qty = 1
+            somados[name] = somados.get(name, 0) + max(qty, 1)
+        if somados:
+            g_name = str(group.get('group_name') or '').strip().rstrip(':')
+            grupos.append((g_name, [(q, n) for n, q in somados.items()]))
+    return grupos
+
+
+def _combo_selection_lines(display_data: dict) -> list[str]:
+    """Linhas das opções escolhidas no combo (saladas/sabores) p/ a comanda.
+
+    Um sabor por linha, com a quantidade. Com um grupo só, o nome do grupo
+    ("Escolha seus 30 pratos") não acrescenta nada e sai; com vários, ele
+    vira cabeçalho para a cozinha saber o que é salada e o que é suco.
+    """
+    grupos = _escolhas_do_combo(display_data)
+    lines: list[str] = []
+    for g_name, escolhas in grupos:
+        com_cabecalho = len(grupos) > 1 and g_name
+        if com_cabecalho:
+            lines.append(f"{g_name}:")
+        for qty, name in escolhas:
+            lines.append(f"{'  ' if com_cabecalho else ''}{qty}x {name}")
     return lines
+
+
+def _combo_selection_ingredients(display_data: dict) -> list[dict]:
+    """As mesmas escolhas no formato 'ingredients' que o print-agent imprime
+    ("· {role}: {name}"). role vazio com grupo único: a linha fica "· 2x Assadinho".
+    """
+    grupos = _escolhas_do_combo(display_data)
+    return [
+        {'role': g_name if len(grupos) > 1 else '', 'name': f"{qty}x {name}", 'price': 0}
+        for g_name, escolhas in grupos
+        for qty, name in escolhas
+    ]
 
 
 # ── Comanda de PREPARO ────────────────────────────────────────────────────────
@@ -444,17 +478,7 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             details.extend(_combo_selection_lines(linked_display))
             # O print-agent atual só imprime 'ingredients' (não lê 'details'),
             # então as escolhas do combo também vão como ingredients.
-            for group in (linked_display.get('groups') or []):
-                if not isinstance(group, dict):
-                    continue
-                role = str(group.get('group_name') or '').strip().rstrip(':')
-                for sel in (group.get('items') or []):
-                    if not isinstance(sel, dict):
-                        continue
-                    name = str(sel.get('product_name') or sel.get('variant_name') or '').strip()
-                    if name:
-                        qty = sel.get('quantity') or 1
-                        combo_ingredients.append({'role': role, 'name': f"{qty}x {name}" if qty > 1 else name, 'price': 0})
+            combo_ingredients = _combo_selection_ingredients(linked_display)
         details.extend(_ingredient_lines(options.get('ingredients') or []))
         items.append({
             'type': 'item',

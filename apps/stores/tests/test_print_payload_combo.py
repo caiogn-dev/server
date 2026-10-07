@@ -60,9 +60,46 @@ class PrintPayloadComboTests(TestCase):
         payload = build_order_print_payload(self.order)
         ingredients = payload['items'][0]['ingredients']
         self.assertEqual(ingredients, [
-            {'role': 'Escolha sua salada', 'name': 'Tilápia Suprema', 'price': 0},
-            {'role': 'Escolha seu suco', 'name': 'Suco de Acerola 400ml', 'price': 0},
+            {'role': 'Escolha sua salada', 'name': '1x Tilápia Suprema', 'price': 0},
+            {'role': 'Escolha seu suco', 'name': '1x Suco de Acerola 400ml', 'price': 0},
         ])
+
+    def _combo_de_um_grupo(self, itens):
+        self.order.combo_items.update(display_data={
+            'combo_name': 'COMBO 30 UNIDADES', 'unit_price': '150.00',
+            'groups': [{'group_name': 'Escolha seus 30 pratos', 'items': itens}],
+        })
+        return build_order_print_payload(self.order)['items'][0]
+
+    def test_um_grupo_lista_um_sabor_por_linha_somando_repetidos(self):
+        # Dono 07/10: "1x picadinho / 2x assadinho" dentro do COMBO 30 UNIDADES.
+        # Sabor repetido em entradas separadas soma; o nome do grupo não
+        # se repete em cada linha.
+        item = self._combo_de_um_grupo([
+            {'product_name': 'Picadinho de Panela', 'quantity': 1},
+            {'product_name': 'Assadinho', 'quantity': 1},
+            {'product_name': 'Assadinho', 'quantity': 1},
+            {'product_name': 'Escondidinho', 'quantity': 3},
+        ])
+        self.assertEqual(item['ingredients'], [
+            {'role': '', 'name': '1x Picadinho de Panela', 'price': 0},
+            {'role': '', 'name': '2x Assadinho', 'price': 0},
+            {'role': '', 'name': '3x Escondidinho', 'price': 0},
+        ])
+        self.assertEqual(item['details'], [
+            '1x Picadinho de Panela', '2x Assadinho', '3x Escondidinho',
+        ])
+
+    def test_combo_avulso_tambem_soma_repetidos(self):
+        self.order.combo_items.update(order_item=None, display_data={
+            'combo_name': 'COMBO 30 UNIDADES', 'unit_price': '150.00',
+            'groups': [{'group_name': 'Escolha seus 30 pratos', 'items': [
+                {'product_name': 'Assadinho', 'quantity': 1},
+                {'product_name': 'Assadinho', 'quantity': 1},
+            ]}],
+        })
+        combo = [i for i in build_order_print_payload(self.order)['items'] if i['type'] == 'combo'][0]
+        self.assertEqual(combo['details'], ['COMBO', '2x Assadinho'])
 
     def test_item_sem_combo_tem_ingredients_vazio(self):
         self.order.combo_items.all().delete()
