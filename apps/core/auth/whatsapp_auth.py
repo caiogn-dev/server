@@ -270,10 +270,9 @@ class WhatsAppAuthService:
             message_service = MessageService()
             logger.info(f"[WHATSAPP AUTH] MessageService created successfully")
         except Exception as init_error:
-            import traceback
-            logger.error(f"[WHATSAPP AUTH] Failed to initialize MessageService: {init_error}\n{traceback.format_exc()}")
+            logger.error('[WHATSAPP AUTH] Falha ao inicializar MessageService (%s)', type(init_error).__name__)
             cache.delete(cache_key)
-            raise WhatsAppAuthError(f"Falha ao inicializar serviço de mensagens: {init_error}")
+            raise WhatsAppAuthError('Falha ao inicializar serviço de mensagens') from init_error
         
         last_error = None
         last_error_details = None
@@ -324,45 +323,30 @@ class WhatsAppAuthService:
                 return response
                 
             except Exception as e:
-                import traceback
-                # Captura todos os detalhes possíveis do erro
-                error_str = str(e) if str(e) else ''
-                error_repr = repr(e)
                 error_type = type(e).__name__
-                error_message = getattr(e, 'message', '') if hasattr(e, 'message') else ''
                 error_details = getattr(e, 'details', {}) if hasattr(e, 'details') else {}
-                error_code = getattr(e, 'code', 'unknown') if hasattr(e, 'code') else 'unknown'
-                error_traceback = traceback.format_exc()
-                
-                # Usa a melhor mensagem disponível
-                final_error_str = error_str or error_message or error_repr or f"Unknown {error_type} error"
-                
-                logger.error(f"[WHATSAPP AUTH] Template '{template_data['name']}' EXCEPTION:")
-                logger.error(f"[WHATSAPP AUTH]   Type: {error_type}")
-                logger.error(f"[WHATSAPP AUTH]   str(e): '{error_str}'")
-                logger.error(f"[WHATSAPP AUTH]   repr(e): '{error_repr}'")
-                logger.error(f"[WHATSAPP AUTH]   e.message: '{error_message}'")
-                logger.error(f"[WHATSAPP AUTH]   e.code: '{error_code}'")
-                logger.error(f"[WHATSAPP AUTH]   e.details: {error_details}")
-                logger.error(f"[WHATSAPP AUTH]   Traceback:\n{error_traceback}")
-                
+                error_code = str(getattr(e, 'code', '') or '')
+                logger.error('[WHATSAPP AUTH] Template %r falhou (%s, código: %s)',
+                             template_data['name'], error_type, error_code or 'n/a')
+
                 last_error = e
                 last_error_details = error_details
-                
+
                 # Se é erro de template não encontrado ou parâmetro, tenta próximo
                 # Erros: 131008 (required param missing), 132018 (param issue), 131009 (not found)
                 error_codes_to_retry = ['131008', '132018', '131009', '132000']
-                all_error_text = f"{final_error_str} {error_code}"
-                if any(ec in all_error_text for ec in error_codes_to_retry):
-                    logger.info(f"[WHATSAPP AUTH] Template error (code: {error_code}), trying next configuration...")
+                error_str_for_retry = f"{e} {error_code}"
+                if any(ec in error_str_for_retry for ec in error_codes_to_retry):
+                    logger.info('[WHATSAPP AUTH] Erro de template (código: %s), tentando próximo...', error_code)
                     # Se é erro de botão URL (131008), tenta fallback de texto imediatamente
-                    if '131008' in all_error_text and cls.USE_TEXT_FALLBACK:
-                        logger.info(f"[WHATSAPP AUTH] Button URL parameter error, trying text fallback immediately...")
+                    if '131008' in error_str_for_retry and cls.USE_TEXT_FALLBACK:
+                        logger.info('[WHATSAPP AUTH] Erro de parâmetro de botão URL, indo para fallback de texto...')
                         break  # Sai do loop de templates para tentar texto
                     continue
                 else:
                     # Erro diferente, não tenta mais templates
-                    logger.warning(f"[WHATSAPP AUTH] Non-template error ({error_type}), stopping template attempts: {error_code}")
+                    logger.warning('[WHATSAPP AUTH] Erro não-template (%s, código: %s), parando tentativas',
+                                   error_type, error_code or 'n/a')
                     break
         
         # Tenta enviar mensagem de texto simples como último recurso
@@ -398,33 +382,26 @@ class WhatsAppAuthService:
                 return response
                 
             except Exception as text_error:
-                text_error_str = str(text_error) if str(text_error) else repr(text_error)
-                logger.warning(f"[WHATSAPP AUTH] Text fallback also failed: {text_error_str}")
+                logger.warning('[WHATSAPP AUTH] Fallback de texto também falhou (%s)',
+                               type(text_error).__name__)
                 # Continue to raise the original template error
         
         # Nenhum método funcionou
-        logger.error(f"[WHATSAPP AUTH] All attempts failed. Templates tried: {templates_tried}, last_error: {last_error}")
-        
-        if last_error:
-            error_str = str(last_error) if str(last_error) else ''
-            error_message_attr = getattr(last_error, 'message', '') if hasattr(last_error, 'message') else ''
-            error_repr = repr(last_error)
-            error_type = type(last_error).__name__
-            
-            error_message = error_str or error_message_attr or error_repr or f"Unknown {error_type} error"
-        elif templates_tried == 0:
-            error_message = "Nenhum template configurado para tentar"
+        last_error_type = type(last_error).__name__ if last_error else None
+        logger.error('[WHATSAPP AUTH] Todas as tentativas falharam. Templates testados: %s, último erro: %s',
+                     templates_tried, last_error_type or 'nenhum')
+
+        if templates_tried == 0:
+            motivo = 'Nenhum template configurado para tentar'
         else:
-            error_message = f"Erro desconhecido após {templates_tried} tentativas"
-        
-        if last_error_details:
-            error_message = f"{error_message} - Detalhes: {last_error_details}"
-        
-        logger.error(f"[WHATSAPP AUTH] Final error message: {error_message}")
-        
+            motivo = f'Falha após {templates_tried} tentativas'
+
         # Invalida cache em caso de erro
         cache.delete(cache_key)
-        raise WhatsAppAuthError(f"Falha ao enviar código: {error_message}")
+        exc = WhatsAppAuthError(f'Falha ao enviar código: {motivo}')
+        if last_error:
+            raise exc from last_error
+        raise exc
     
     @classmethod
     def verify_code(cls, phone_number: str, code: str) -> dict:
