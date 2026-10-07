@@ -135,6 +135,17 @@ BILLING_ENFORCEMENT_ENABLED = False
 MERCADOPAGO_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
 MP_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
 
+# Google Maps SEM chave. A imagem carrega o .env de produção, então a suíte
+# chamava geocode/address validation/directions de verdade com a chave da loja
+# (medido em 07/10: REQUEST_DENIED/403 nos logs de test_checkout_*). Cada
+# chamada é cobrada, é lenta, e o resultado dependia da rede — o teste "passava"
+# ou não conforme o Google respondia. Sem chave, GoogleMapsProvider devolve
+# None em todo método (geocode, route → haversine, autosuggest…), que é o mesmo
+# efeito observável do REQUEST_DENIED, só que offline e determinístico. Teste
+# que precisa de rota/endereço mocka o provider ou o GeoService.
+GOOGLE_MAPS_KEY = ''
+GOOGLE_MAPS_SERVER_KEY = ''
+
 # Hash rápido: a suíte cria muitos usuários e o PBKDF2 domina o tempo.
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
 
