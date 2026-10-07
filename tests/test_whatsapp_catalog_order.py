@@ -111,7 +111,11 @@ class WhatsAppCatalogOrderTests(TestCase):
         self.assertIsNotNone(response)
         self.assertEqual(response.interactive_type, 'buttons')
         self.assertEqual(response.metadata['intent'], 'catalog_order')
-        self.assertIn('Total dos itens: *R$ 37.50*', response.content)
+        # Preço da LOJA, nunca o item_price do feed da Meta (e0e3c2ea, 01/09:
+        # o feed mostrava um valor e o pedido cobrava outro). O feed diz 17,50
+        # para o Produto B; a loja cobra 20,00. Moeda em português.
+        self.assertIn('Total dos itens: *R$ 40,00*', response.content)
+        self.assertNotIn('17,50', response.content)
         self.assertEqual(
             response.interactive_data['buttons'],
             [
@@ -136,14 +140,17 @@ class WhatsAppCatalogOrderTests(TestCase):
                 {
                     'product_id': str(self.product_b.id),
                     'quantity': 1,
-                    'unit_price': 17.5,
+                    'unit_price': 20.0,
                     'price_source': 'whatsapp_catalog',
                 },
             ],
         )
 
     @patch('apps.whatsapp.services.order_service.broadcast_order_event')
-    def test_whatsapp_catalog_unit_price_is_used_when_order_is_created(self, _broadcast):
+    def test_whatsapp_catalog_unit_price_is_ignored_when_order_is_created(self, _broadcast):
+        """O unit_price que veio do catálogo é só auditoria: o pedido cobra o
+        preço da loja (CheckoutService, 7d22feed; e0e3c2ea). Honrar o valor do
+        payload deixaria o feed velho — ou quem forja o payload — ditar preço."""
         svc = WhatsAppOrderService(
             store=self.store,
             phone_number=self.conversation.phone_number,
@@ -168,7 +175,7 @@ class WhatsAppCatalogOrderTests(TestCase):
         self.assertTrue(result['success'])
         order = StoreOrder.objects.get(id=result['order'].id)
         item = order.items.get()
-        self.assertEqual(item.unit_price, Decimal('17.5'))
-        self.assertEqual(item.subtotal, Decimal('35.0'))
-        self.assertEqual(order.subtotal, Decimal('35.0'))
-        self.assertEqual(order.total, Decimal('35.0'))
+        self.assertEqual(item.unit_price, Decimal('20.00'))
+        self.assertEqual(item.subtotal, Decimal('40.00'))
+        self.assertEqual(order.subtotal, Decimal('40.00'))
+        self.assertEqual(order.total, Decimal('40.00'))
