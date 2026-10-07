@@ -32,6 +32,7 @@ from apps.stores.models import (
 from apps.stores.services.delivery_quote_service import DeliveryQuoteService
 from apps.stores.services.frete_promocional import aplicar_frete_gratis
 from .cart_service import cart_service
+from . import estoque_das_escolhas
 
 logger = logging.getLogger(__name__)
 
@@ -1352,7 +1353,7 @@ class CheckoutService:
 
             if not is_virtual:
                 selection_snapshot = CheckoutService.build_combo_selection_snapshot(combo_item)
-                StoreOrderComboItem.objects.create(
+                order_combo = StoreOrderComboItem.objects.create(
                     order=order,
                     order_item=order_item,
                     combo=combo_item.combo,
@@ -1365,8 +1366,13 @@ class CheckoutService:
                         'unit_price': str(combo_item.effective_price),
                         'customizations': combo_item.customizations,
                         'groups': selection_snapshot['display_groups'],
+                        estoque_das_escolhas.MARCA: True,
                     },
                 )
+                # Cada sabor escolhido sai do estoque dele (Combo Família = 30
+                # marmitas). Ver services/estoque_das_escolhas.
+                if estoque_das_escolhas.baixar(order_combo):
+                    stock_changed = True
 
             # Decrement combo stock if tracked (real combos only)
             if not is_virtual and combo_item.combo.track_stock:
@@ -2816,6 +2822,7 @@ class CheckoutService:
                 StoreCombo.objects.filter(id=combo_item.combo_id).update(
                     stock_quantity=F('stock_quantity') + combo_item.quantity
                 )
+            estoque_das_escolhas.devolver(combo_item)
 
     @staticmethod
     def _baixar_estoque_de_novo(order: StoreOrder):
@@ -2837,6 +2844,7 @@ class CheckoutService:
                 StoreCombo.objects.filter(id=combo_item.combo_id).update(
                     stock_quantity=F('stock_quantity') - combo_item.quantity
                 )
+            estoque_das_escolhas.baixar_de_novo(combo_item)
 
     @staticmethod
     def _release_coupon(order: StoreOrder):

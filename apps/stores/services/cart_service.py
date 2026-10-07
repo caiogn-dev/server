@@ -252,6 +252,12 @@ class CartService:
                 group_selections=group_selections,
             ).first()
 
+        if combo is not None:
+            # Sabor esgotado não entra (Agrião 07/10). Conta o que já estava
+            # no carrinho com as mesmas escolhas, que vai se somar a este.
+            from .estoque_das_escolhas import validar_disponivel
+            validar_disponivel(group_selections, (existing.quantity if existing else 0) + quantity)
+
         if existing:
             existing.quantity += quantity
             if customizations:
@@ -329,6 +335,10 @@ class CartService:
         if item.combo and item.combo.track_stock and quantity > item.combo.stock_quantity:
             raise ValueError(f"Estoque insuficiente. Disponível: {item.combo.stock_quantity}")
         
+        if item.combo:
+            from .estoque_das_escolhas import validar_disponivel
+            validar_disponivel(item.group_selections, quantity)
+
         item.quantity = quantity
         item.save()
         return item
@@ -507,6 +517,17 @@ class CartService:
                     'error': f'Estoque insuficiente. Disponível: {combo.stock_quantity}',
                     'available': combo.stock_quantity,
                     'requested': item.quantity
+                })
+            # O sabor pode ter acabado entre pôr na sacola e fechar o pedido.
+            from .estoque_das_escolhas import validar_disponivel
+            try:
+                validar_disponivel(item.group_selections, item.quantity)
+            except ValueError as erro:
+                errors.append({
+                    'item_id': str(item.id),
+                    'combo_name': combo.name,
+                    'error': str(erro),
+                    'requested': item.quantity,
                 })
         
         return errors
