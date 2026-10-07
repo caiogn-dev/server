@@ -99,6 +99,21 @@ def capture_order_previous_status(sender, instance, **kwargs):
 
 
 @receiver(post_save, sender='stores.StoreOrder')
+def descartar_status_anterior_em_cache(sender, instance, **kwargs):
+    """`_pre_save_status` vale para UM save, não para a vida do objeto.
+
+    O pk do pedido é UUID com default, então já existe antes do INSERT: o
+    pre_save do create grava `_pre_save_status = None` na instância. Sem este
+    descarte, o próximo save do MESMO objeto (ex.: lançar pagamento sem mexer
+    no status, ou salvar de novo depois de `update_status`) lia aquele valor
+    velho, achava que o status tinha mudado e reenviava o aviso de status ao
+    cliente. Os consumidores leem os dicionários `_ORDER_PREV_STATUS`, já
+    preenchidos no pre_save, então descartar aqui não lhes tira nada.
+    """
+    instance.__dict__.pop('_pre_save_status', None)
+
+
+@receiver(post_save, sender='stores.StoreOrder')
 def on_order_created(sender, instance, created, **kwargs):
     """Trigger push notification when a new order is created."""
     if not created:
