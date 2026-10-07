@@ -1,6 +1,9 @@
 """
 Tests that ensure the new `/api/v1/stores/` endpoints (catalog and maps) are wired correctly.
 We exercise the storefront and GeoService maps routes against the unified API.
+
+Maps vivem em /api/v1/maps/ desde b8f70893 (30/05): sob /stores/ eram engolidas
+pelo catch-all de slug de loja. cardapidex-web e pastita-dash já chamam /maps/.
 """
 from decimal import Decimal
 from unittest.mock import patch
@@ -56,7 +59,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
             'formatted_address': 'Palmas, TO'
         }
 
-        response = self.client.get('/api/v1/stores/maps/geocode/', {'address': 'Palmas, TO'})
+        response = self.client.get('/api/v1/maps/geocode/', {'address': 'Palmas, TO'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['formatted_address'], 'Palmas, TO')
         self.assertEqual(response.data['latitude'], -10.185)
@@ -75,7 +78,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
             'state': 'TO',
         }
 
-        response = self.client.get('/api/v1/stores/maps/reverse-geocode/', {'lat': '-10.185', 'lng': '-48.303'})
+        response = self.client.get('/api/v1/maps/reverse-geocode/', {'lat': '-10.185', 'lng': '-48.303'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['city'], 'Palmas')
         self.assertEqual(response.data['latitude'], -10.185)
@@ -93,7 +96,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
             }
         ]
 
-        response = self.client.get('/api/v1/stores/maps/autosuggest/', {'q': 'Palmas'})
+        response = self.client.get('/api/v1/maps/autosuggest/', {'q': 'Palmas'})
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['suggestions'])
         self.assertEqual(response.data['suggestions'][0]['display_name'], 'Palmas, TO')
