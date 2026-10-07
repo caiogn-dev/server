@@ -117,8 +117,8 @@ def send_whatsapp_auth_code(request):
         else:
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
-    except WhatsAppAuthError as e:
-        logger.error('[WHATSAPP AUTH API] Erro ao enviar código: %s', e)
+    except WhatsAppAuthError:
+        logger.error('[WHATSAPP AUTH API] Erro ao enviar código')
         return Response(
             {'error': 'send_error', 'message': 'Erro ao enviar código de verificação.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -292,8 +292,8 @@ def resend_whatsapp_auth_code(request):
         else:
             return Response(result, status=status.HTTP_429_TOO_MANY_REQUESTS)
             
-    except WhatsAppAuthError as e:
-        logger.error('[WHATSAPP AUTH API] Erro ao reenviar código: %s', e)
+    except WhatsAppAuthError:
+        logger.error('[WHATSAPP AUTH API] Erro ao reenviar código')
         return Response(
             {'error': 'send_error', 'message': 'Erro ao reenviar código de verificação.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
