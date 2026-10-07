@@ -292,9 +292,9 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         """Create an order and return the full order contract used by the dashboard."""
         serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            logger.warning('[ORDER_CREATE_ERROR] Validation failed: %s', serializer.errors)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Envelope padrão da API ({'error': {'details': ...}}), como toda outra
+        # validação; o handler já registra a recusa no log.
+        serializer.is_valid(raise_exception=True)
         order = serializer.save()
         # serializer.save() direto pulava o perform_create() — pedido novo
         # nascia sem broadcast e o painel só via no refresh manual
@@ -339,23 +339,6 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
         instance.refresh_from_db()
-
-        if (
-            previous_payment_status != instance.payment_status
-            and instance.payment_status == StoreOrder.PaymentStatus.PAID
-            and not instance.paid_at
-        ):
-            metadata = instance.metadata if isinstance(instance.metadata, dict) else {}
-            metadata['manual_payment'] = {
-                'source': 'dashboard',
-                'user_id': str(request.user.id) if request.user and request.user.is_authenticated else '',
-                'marked_at': timezone.now().isoformat(),
-            }
-            instance.payment_status = StoreOrder.PaymentStatus.PAID
-            instance.paid_at = timezone.now()
-            instance.metadata = metadata
-            instance.save(update_fields=['paid_at', 'metadata', 'updated_at'])
-            instance.refresh_from_db()
 
         if previous_payment_status != instance.payment_status and instance.payment_status == StoreOrder.PaymentStatus.PAID:
             self._notify_order_update(instance, 'order.paid')
@@ -678,6 +661,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 )
 
             update_fields = ['payment_status', 'updated_at']
+            if new_status == paid and order.payment_status != paid:
+                self._auditar_pagamento_manual(order, request, update_fields)
             order.payment_status = new_status
             # paid_at só no 1º pagamento confirmado — não sobrescreve o original.
             if new_status == paid and not order.paid_at:
@@ -691,6 +676,20 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             self._credit_loyalty(order)
 
         return Response(StoreOrderSerializer(order).data)
+
+    @staticmethod
+    def _auditar_pagamento_manual(order, request, update_fields):
+        """Quem marcou como pago, e quando. Morava no PATCH; desde 15/09 o
+        PATCH recusa payment_status e o registro sumiu dos endpoints que o
+        painel de fato chama (mark_paid/, update_payment_status/)."""
+        metadata = order.metadata if isinstance(order.metadata, dict) else {}
+        metadata['manual_payment'] = {
+            'source': 'dashboard',
+            'user_id': str(request.user.id) if request.user and request.user.is_authenticated else '',
+            'marked_at': timezone.now().isoformat(),
+        }
+        order.metadata = metadata
+        update_fields.append('metadata')
 
     @action(detail=True, methods=['post'])
     def mark_paid(self, request, pk=None, **kwargs):
@@ -711,6 +710,8 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 )
 
             update_fields = ['payment_status', 'updated_at']
+            if order.payment_status != paid:
+                self._auditar_pagamento_manual(order, request, update_fields)
             order.payment_status = paid
             # paid_at só no 1º pagamento confirmado — não sobrescreve o original.
             if not order.paid_at:
