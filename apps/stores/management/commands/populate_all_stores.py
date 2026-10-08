@@ -57,7 +57,10 @@ class Command(BaseCommand):
 
             try:
                 out = StringIO()
-                call_command(command_name, '--force' if force else '', stdout=out, stderr=out)
+                # Sem --force, nenhum argumento: '' vira argumento posicional e o
+                # argparse do subcomando recusa — nenhuma loja era populada.
+                args = ['--force'] if force else []
+                call_command(command_name, *args, stdout=out, stderr=out)
                 self.stdout.write(out.getvalue())
                 results[store_slug] = 'SUCCESS'
             except Exception as e:

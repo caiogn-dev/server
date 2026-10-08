@@ -1,3 +1,5 @@
+from decimal import Decimal
+from datetime import datetime, timedelta
 import pytest
 import json
 from unittest.mock import patch, MagicMock
@@ -38,7 +40,7 @@ class TestUberDeliveryBugFixes(TestCase):
         self.order = StoreOrder.objects.create(
             store=self.store,
             order_number='ORD001',
-            status='confirmado',
+            status=StoreOrder.OrderStatus.CONFIRMED,
             subtotal=50.00,
             total=50.00,
             customer_phone='+5511998765432',
@@ -85,7 +87,7 @@ class TestUberDeliveryBugFixes(TestCase):
         mock_post.return_value = mock_response
 
         self.client._access_token = 'fake_token'
-        self.client._token_expires_at = None
+        self.client._token_expires_at = datetime.now() + timedelta(hours=1)  # token válido: não renova
 
         self.client.create_delivery_request(
             pickup_address='Rua das Flores, 123, São Paulo, SP, 01234-567',
@@ -118,6 +120,7 @@ class TestUberDeliveryBugFixes(TestCase):
             order=self.order,
             product=self.product,
             product_name='Test Product',
+            unit_price=Decimal('10.00'),
             quantity=2,
         )
 
@@ -150,7 +153,7 @@ class TestUberDeliveryBugFixes(TestCase):
         mock_post.return_value = mock_response
 
         self.client._access_token = 'fake_token'
-        self.client._token_expires_at = None
+        self.client._token_expires_at = datetime.now() + timedelta(hours=1)  # token válido: não renova
 
         self.client.create_delivery_request(
             pickup_address='Store',
@@ -182,6 +185,7 @@ class TestUberDeliveryBugFixes(TestCase):
             order=self.order,
             product=self.product,
             product_name='Product',
+            unit_price=Decimal('10.00'),
             quantity=1,
         )
 

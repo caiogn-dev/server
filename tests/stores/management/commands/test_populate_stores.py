@@ -22,7 +22,7 @@ class PopulateCeSaladasTestCase(TestCase):
         self.assertTrue(Store.objects.filter(slug='ce-saladas').exists())
         store = Store.objects.get(slug='ce-saladas')
         self.assertEqual(store.name, 'Cê Saladas')
-        self.assertEqual(store.primary_color, '#2E7D32')
+        self.assertEqual(store.primary_color, '#2B5F4F')  # identidade Menta/Verde (out/26)
 
     def test_populate_ce_saladas_creates_whatsapp_account(self):
         call_command('populate_ce_saladas_menu')
