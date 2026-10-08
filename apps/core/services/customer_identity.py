@@ -155,6 +155,17 @@ class CustomerIdentityService:
             candidates.add(local_digits)
             candidates.add(f"+{local_digits}")
 
+        # O wa_id do WhatsApp chega na forma anterior ao nono dígito
+        # (556384354052) e o cadastro grava com o 9 (5563984354052): sem a
+        # forma antiga, pedido do bot não contava no histórico do cliente.
+        # Só celular BR — 55 + DDD + 9 + assinante que começa com 6-9.
+        if (
+            len(normalized) == 13 and normalized.startswith("55")
+            and normalized[4] == "9" and normalized[5] in "6789"
+        ):
+            legado = normalized[:4] + normalized[5:]
+            candidates.update({legado, f"+{legado}"})
+
         return [candidate for candidate in candidates if candidate]
 
     @staticmethod

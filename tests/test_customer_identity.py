@@ -29,6 +29,20 @@ class CustomerIdentityHelpersTest(TestCase):
         result = CustomerIdentityService.digits_only('+55 (11) 9999-8888')
         self.assertEqual(result, '551199998888')
 
+    def test_phone_candidates_inclui_celular_sem_o_nono_digito(self):
+        # O wa_id do WhatsApp chega sem o 9 (556384354052) e o cadastro grava
+        # com o 9: o pedido do bot tem de contar no histórico do cliente.
+        candidatos = CustomerIdentityService.phone_candidates('5563984354052')
+        self.assertIn('556384354052', candidatos)
+        self.assertIn('+556384354052', candidatos)
+
+    def test_phone_candidates_de_fixo_nao_ganha_variante(self):
+        # Fixo (assinante começa com 2-5) não tem nono dígito para tirar nem pôr.
+        self.assertEqual(
+            sorted(CustomerIdentityService.phone_candidates('556332110000')),
+            sorted(['556332110000', '+556332110000', '6332110000', '+6332110000']),
+        )
+
     def test_digits_only_empty(self):
         self.assertEqual(CustomerIdentityService.digits_only(''), '')
         self.assertEqual(CustomerIdentityService.digits_only(None), '')
