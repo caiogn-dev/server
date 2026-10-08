@@ -33,6 +33,11 @@ def _make_store(owner, slug='print-store'):
         address='Quadra 706 Sul Alameda 2',
         city='Palmas',
         state='TO',
+        # Ponto no mapa: sem coordenada da loja nem pino do cliente o checkout
+        # recusa a entrega ("Não achei esse endereço no mapa"), e a suíte não
+        # consulta o Google.
+        latitude=Decimal('-10.1840000'),
+        longitude=Decimal('-48.3330000'),
         is_active=True,
         default_delivery_fee=Decimal('12.50'),
     )
@@ -71,6 +76,8 @@ class PrintJobServiceTest(TestCase):
                 'complement': 'Apto B Residencial Classic',
                 'city': 'Palmas',
                 'state': 'TO',
+                'lat': -10.1930,
+                'lng': -48.3330,
             },
         } if delivery_method == 'delivery' else {'method': 'pickup'}
 

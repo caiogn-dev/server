@@ -47,7 +47,14 @@ def _make_store(owner, slug='wa-order-test'):
         is_active=True,
         status='active',
         default_delivery_fee=Decimal('8.00'),
+        latitude=Decimal('-10.1840000'),
+        longitude=Decimal('-48.3330000'),
     )
+
+
+# Pino do cliente a ~1 km da loja. Os dois caminhos (checkout e WhatsApp)
+# recebem o mesmo ponto: sem ele o checkout recusa a entrega.
+PINO = {'lat': -10.1930, 'lng': -48.3330}
 
 
 def _make_product(store, name='Produto', price=Decimal('20.00'),
@@ -346,7 +353,7 @@ class WhatsAppCheckoutEquivalenceTest(TestCase):
         StoreCartItem.objects.create(cart=cart, product=self.product, quantity=2)
         delivery_data = {'method': delivery_method}
         if delivery_method == 'delivery':
-            delivery_data['address'] = {'raw_address': 'Rua A, 10'}
+            delivery_data['address'] = {'raw_address': 'Rua A, 10', **PINO}
 
         with patch('apps.stores.services.checkout_service.trigger_order_email_automation'):
             return CheckoutService.create_order(
@@ -376,6 +383,7 @@ class WhatsAppCheckoutEquivalenceTest(TestCase):
                 delivery_method=delivery_method,
                 payment_method=payment_method,
                 delivery_address='Rua A, 10' if delivery_method == 'delivery' else '',
+                addr_info=dict(PINO) if delivery_method == 'delivery' else None,
                 customer_notes='Contrato equivalencia',
             )
 

@@ -32,7 +32,11 @@ from apps.whatsapp.intents.detector import IntentDetector, IntentType
 
 User = get_user_model()
 
-_PATCH_CREATE_ORDER = 'apps.whatsapp.intents.handlers.create_order_from_whatsapp'
+# `_finalize_order` importa na hora da chamada (handlers/base.py:
+# `from apps.whatsapp.services import create_order_from_whatsapp`) desde o
+# 8d8fadaf, que quebrou o handlers.py em pacote. O nome não mora mais em
+# `apps.whatsapp.intents.handlers`; o patch tem de ser onde o import busca.
+_PATCH_CREATE_ORDER = 'apps.whatsapp.services.create_order_from_whatsapp'
 _PATCH_WA_SEND = 'apps.whatsapp.services.whatsapp_api_service.WhatsAppAPIService.send_text_message'
 _PATCH_WA_INTERACTIVE = 'apps.whatsapp.services.whatsapp_api_service.WhatsAppAPIService.send_interactive_message'
 _PATCH_PAYMENT   = 'apps.whatsapp.services.order_service.CheckoutService.create_payment'
