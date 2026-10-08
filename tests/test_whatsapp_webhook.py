@@ -104,19 +104,45 @@ class WhatsAppWebhookVerificationTestCase(TestCase):
         self.assertIn(challenge.encode(), resp.content)
 
 
-@override_settings(WHATSAPP_WEBHOOK_VERIFY_TOKEN=VERIFY_TOKEN)
+APP_SECRET = 'test-app-secret'
+
+
+# Desde 252475e9 (10/06, "webhooks Meta fail-closed") o dispatcher recusa com
+# 403 todo POST da Meta sem X-Hub-Signature-256 válido. A Meta sempre assina,
+# então os testes de ingestão assinam como ela; o 403 do POST sem assinatura
+# tem teste próprio abaixo.
+@override_settings(
+    WHATSAPP_WEBHOOK_VERIFY_TOKEN=VERIFY_TOKEN,
+    WHATSAPP_APP_SECRET=APP_SECRET,
+    META_WEBHOOK_APP_SECRET='',
+)
 class WhatsAppWebhookIngestTestCase(TestCase):
     """Tests for the POST webhook ingestion."""
 
     def setUp(self):
         self.client = APIClient()
 
-    def _post(self, payload, headers=None):
+    def _post(self, payload, headers=None, sign=True):
         body = json.dumps(payload)
         kwargs = {'content_type': 'application/json'}
+        if sign:
+            kwargs['HTTP_X_HUB_SIGNATURE_256'] = _make_signature(APP_SECRET, body)
         if headers:
             kwargs.update(headers)
         return self.client.post(WEBHOOK_URL, body, **kwargs)
+
+    def test_unsigned_post_is_rejected(self):
+        """Fail-closed: POST sem assinatura não entra (252475e9)."""
+        resp = self._post(_TEXT_MESSAGE_PAYLOAD, sign=False)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_wrongly_signed_post_is_rejected(self):
+        body = json.dumps(_TEXT_MESSAGE_PAYLOAD)
+        resp = self.client.post(
+            WEBHOOK_URL, body, content_type='application/json',
+            HTTP_X_HUB_SIGNATURE_256=_make_signature('outro-segredo', body),
+        )
+        self.assertEqual(resp.status_code, 403)
 
     # --- Basic ingestion ---
 

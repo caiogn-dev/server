@@ -4,6 +4,7 @@ WhatsApp Authentication API Views
 import logging
 
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
@@ -47,18 +48,44 @@ def _resolve_whatsapp_account_id(account_id: str | None = None, store_slug: str 
     1. `whatsapp_account_id` explícito do cliente (override/testes).
     2. `DEFAULT_WHATSAPP_ACCOUNT_ID` do settings — o número oficial.
     3. Primeira conta ativa (fallback legado).
+
+    Só devolve conta que o `MessageService` aceita enviar (is_active e status
+    ACTIVE — o mesmo critério de `MessageService._get_account`). Antes o id
+    configurado ia adiante sem conferir: com o número oficial apagado ou
+    desativado, cada pedido de código virava `NotFoundError` lá dentro e o
+    cliente via 500 "Erro ao enviar código" — ninguém conseguia entrar. E o
+    fallback legado aceitava conta `pending`, que o envio recusa do mesmo jeito.
     """
+    from apps.whatsapp.models import WhatsAppAccount
+
+    usaveis = WhatsAppAccount.objects.filter(
+        is_active=True, status=WhatsAppAccount.AccountStatus.ACTIVE,
+    )
+
+    def _usavel(conta_id: str) -> bool:
+        try:
+            return usaveis.filter(id=conta_id).exists()
+        except (ValueError, DjangoValidationError):  # não é UUID
+            return False
+
     candidate = str(account_id or '').strip()
     if candidate:
-        return candidate
+        if _usavel(candidate):
+            return candidate
+        # App com id velho guardado: segue para o número oficial em vez de 500.
+        logger.warning('[WHATSAPP AUTH] whatsapp_account_id pedido não é usável: %s', candidate)
 
     default_account_id = str(getattr(settings, 'DEFAULT_WHATSAPP_ACCOUNT_ID', '') or '').strip()
     if default_account_id:
-        return default_account_id
+        if _usavel(default_account_id):
+            return default_account_id
+        logger.error(
+            '[WHATSAPP AUTH] DEFAULT_WHATSAPP_ACCOUNT_ID=%s não existe ou não está ativa; '
+            'OTP cai na primeira conta ativa',
+            default_account_id,
+        )
 
-    from apps.whatsapp.models import WhatsAppAccount
-
-    account = WhatsAppAccount.objects.filter(is_active=True).order_by('created_at').first()
+    account = usaveis.order_by('created_at').first()
     return str(account.id) if account else ''
 
 

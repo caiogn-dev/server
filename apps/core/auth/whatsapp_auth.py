@@ -365,9 +365,16 @@ class WhatsAppAuthService:
                     logger.warning(f"[WHATSAPP AUTH] Non-template error ({error_type}), stopping template attempts: {error_code}")
                     break
         
-        # Tenta enviar mensagem de texto simples como último recurso
-        # Isso só funciona se o usuário já iniciou conversa nas últimas 24h
-        if cls.USE_TEXT_FALLBACK:
+        # Tenta enviar mensagem de texto simples como último recurso — SÓ dentro
+        # da janela de 24 h. Fora dela a Meta aceita a chamada e depois devolve
+        # 131047: o cliente via "Código enviado", nada chegava e ainda ficava
+        # 15 min barrado por `code_already_sent` (regra do CLAUDE.md, 26/04).
+        if cls.USE_TEXT_FALLBACK and not cls._janela_aberta(whatsapp_account_id, clean_phone):
+            logger.warning(
+                "[WHATSAPP AUTH] Template falhou e %s está fora da janela de 24 h: "
+                "sem texto livre", mask_phone(clean_phone),
+            )
+        elif cls.USE_TEXT_FALLBACK:
             logger.info(f"[WHATSAPP AUTH] Trying text message fallback...")
             try:
                 brand = (store_name or '').strip() or 'Cardapidex'
@@ -426,6 +433,19 @@ class WhatsAppAuthService:
         cache.delete(cache_key)
         raise WhatsAppAuthError(f"Falha ao enviar código: {error_message}")
     
+    @staticmethod
+    def _janela_aberta(whatsapp_account_id: str, telefone: str) -> bool:
+        """Na dúvida, fechada: texto livre fora da janela nunca chega."""
+        from apps.automation.mensageiro import janela
+        from apps.whatsapp.models import WhatsAppAccount
+
+        try:
+            conta = WhatsAppAccount.objects.filter(id=whatsapp_account_id).first()
+            return bool(conta) and janela.aberta(conta, telefone)
+        except Exception as exc:  # id inválido, banco indisponível
+            logger.warning("[WHATSAPP AUTH] Não deu para conferir a janela: %s", exc)
+            return False
+
     @classmethod
     def verify_code(cls, phone_number: str, code: str) -> dict:
         """

@@ -149,6 +149,26 @@ class SignalDispatchesCeleryTaskTest(TestCase):
 
         mock_task.delay.assert_not_called()
 
+    def test_second_save_after_status_change_does_not_repeat_notification(self):
+        """
+        O mesmo objeto salvo duas vezes (status muda, depois só o pagamento)
+        avisa UMA vez. O pk UUID existe antes do INSERT, e o pre_save guardava
+        `_pre_save_status` na instância para sempre: o 2º save lia o valor
+        velho e reenviava o aviso de status ao cliente.
+        """
+        order = _make_order(self.store, status='received')
+
+        with patch(
+            'apps.whatsapp.tasks.automation_tasks.notify_order_status_change'
+        ) as mock_task, \
+             patch('apps.automation.signals.transaction.on_commit', side_effect=lambda fn: fn()):
+            order.status = 'confirmed'
+            order.save(update_fields=['status'])
+            order.payment_status = StoreOrder.PaymentStatus.PAID
+            order.save()
+
+        mock_task.delay.assert_called_once_with(str(order.id), 'confirmed')
+
     def test_full_save_with_status_change_queues_notification(self):
         """Full save ainda deve notificar quando o status realmente muda."""
         order = _make_order(self.store, status='pending')
@@ -167,6 +187,7 @@ class SignalDispatchesCeleryTaskTest(TestCase):
 # ─── Testes: notify_order_status_change task ─────────────────────────────────
 
 _PATCH_WA_SERVICE = 'apps.whatsapp.services.message_service.MessageService'
+_PATCH_JANELA_ABERTA = 'apps.automation.mensageiro.janela.aberta'
 _PATCH_GET_PROFILE = 'apps.whatsapp.tasks.automation_tasks._get_store_profile'
 _PATCH_GET_ACCOUNT = 'apps.whatsapp.tasks.automation_tasks._get_account_for_profile'
 
@@ -207,8 +228,15 @@ class NotifyOrderStatusChangeTest(TestCase):
         mock_account = MagicMock()
         mock_service = MagicMock()
 
+        # Desde db4734a6 (05/10) o aviso de status só sai com a janela de 24 h
+        # aberta, e a janela é consultada em Conversation com a conta. A conta
+        # aqui é um MagicMock (o filtro do ORM a lia como "[]" e a task caía no
+        # retry), então a janela é declarada aberta: o que se testa é a escolha
+        # template × fallback, não a janela (coberta em
+        # apps/automation/tests/test_mensageiro_status_automatico.py).
         with patch(_PATCH_GET_PROFILE, return_value=self.profile), \
              patch(_PATCH_GET_ACCOUNT, return_value=mock_account), \
+             patch(_PATCH_JANELA_ABERTA, return_value=True), \
              patch(_PATCH_WA_SERVICE, return_value=mock_service), \
              patch.object(self.order, '_trigger_status_whatsapp_notification') as mock_direct:
             self._run_task('confirmed')

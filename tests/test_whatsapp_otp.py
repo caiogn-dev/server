@@ -62,13 +62,18 @@ class TemplateConfigTest(TestCase):
         self.assertEqual(body['type'], 'body')
         self.assertEqual(body['parameters'][0]['text'], '123456')
 
-    def test_no_button_payload_injected(self):
-        """Regression: COPY_CODE button must come from the approved template, not the payload."""
+    def test_button_payload_carries_code(self):
+        """O template AUTH `codigo_verificacao` exige o código também no
+        parâmetro do botão COPY_CODE — sem ele a Meta devolve #131008
+        (50f4390b, 29/07). A regra antiga ("o template é dono do botão") foi
+        revertida ali; ver também CLAUDE.md."""
         configs = WhatsAppAuthService._get_template_configs('999999')
-        for cfg in configs:
-            for comp in cfg.get('components', []):
-                self.assertNotEqual(comp.get('type'), 'button',
-                    "Payload must NOT inject a button component — the Meta template owns it.")
+        self.assertEqual(configs[0]['name'], 'codigo_verificacao')
+        botoes = [c for c in configs[0]['components'] if c.get('type') == 'button']
+        self.assertEqual(len(botoes), 1)
+        self.assertEqual(botoes[0]['sub_type'], 'url')
+        self.assertEqual(botoes[0]['index'], '0')
+        self.assertEqual(botoes[0]['parameters'], [{'type': 'text', 'text': '999999'}])
 
     def test_template_name_is_set(self):
         configs = WhatsAppAuthService._get_template_configs('000000')
@@ -151,7 +156,13 @@ class SendAuthCodeRateLimitTest(TestCase):
         key = WhatsAppAuthService._get_cache_key('5511999990011')
         stored = cache.get(key)
         self.assertIsNotNone(stored)
-        self.assertEqual(len(stored['code']), 6)
+        # Desde 0d320852 (31/05) o cache guarda só o HMAC do código, nunca o
+        # código em texto puro. O hash tem que bater com o código que foi no
+        # template.
+        self.assertNotIn('code', stored)
+        enviado = mock_svc.send_template_message.call_args.kwargs['components'][0]['parameters'][0]['text']
+        self.assertEqual(len(enviado), 6)
+        self.assertEqual(stored['code_hash'], WhatsAppAuthService._hash_code(enviado))
 
     @patch('apps.core.auth.whatsapp_auth.MessageService')
     def test_send_clears_cache_on_all_templates_fail(self, mock_ms_cls):
@@ -166,3 +177,64 @@ class SendAuthCodeRateLimitTest(TestCase):
 
         key = WhatsAppAuthService._get_cache_key('5511999990012')
         self.assertIsNone(cache.get(key), "Cache must be cleared when send fails")
+
+
+class TextFallbackOnlyInsideWindowTest(TestCase):
+    """OTP sai pelo template `codigo_verificacao`. O texto livre é último
+    recurso e SÓ dentro da janela de 24 h (CLAUDE.md, regra de 26/04): fora
+    dela a Meta aceita a chamada e depois devolve 131047 — o cliente lia
+    "Código enviado", não recebia nada e ainda ficava 15 min barrado por
+    `code_already_sent`."""
+
+    TEL = '5563999990777'
+
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from apps.whatsapp.models import WhatsAppAccount
+
+        cache.clear()
+        dono = get_user_model().objects.create_user(username='otp-janela', password='x')
+        self.conta = WhatsAppAccount.objects.create(
+            name='Oficial', phone_number_id='pn-otp-janela', waba_id='waba-otp',
+            phone_number='+5563900000077', display_phone_number='+5563900000077',
+            access_token_encrypted='x', owner=dono,
+            status=WhatsAppAccount.AccountStatus.ACTIVE,
+        )
+
+    def _abrir_janela(self):
+        from django.utils import timezone
+        from apps.conversations.models import Conversation
+        Conversation.objects.create(
+            account=self.conta, phone_number=self.TEL,
+            last_customer_message_at=timezone.now(),
+        )
+
+    def _template_falha(self, mock_ms_cls):
+        mock_svc = MagicMock()
+        mock_ms_cls.return_value = mock_svc
+        mock_svc.send_template_message.side_effect = Exception('(#131008) Required parameter is missing')
+        mock_svc.send_text_message.return_value = MagicMock(id='msg-1')
+        return mock_svc
+
+    @patch('apps.core.auth.whatsapp_auth.MessageService')
+    def test_fora_da_janela_nao_manda_texto_livre(self, mock_ms_cls):
+        from apps.core.auth.whatsapp_auth import WhatsAppAuthError
+        mock_svc = self._template_falha(mock_ms_cls)
+
+        with self.assertRaises(WhatsAppAuthError):
+            WhatsAppAuthService.send_auth_code(self.TEL, str(self.conta.id))
+
+        mock_svc.send_text_message.assert_not_called()
+        key = WhatsAppAuthService._get_cache_key(self.TEL)
+        self.assertIsNone(cache.get(key), 'sem envio, o cliente pode pedir de novo')
+
+    @patch('apps.core.auth.whatsapp_auth.MessageService')
+    def test_dentro_da_janela_texto_livre_e_ultimo_recurso(self, mock_ms_cls):
+        self._abrir_janela()
+        mock_svc = self._template_falha(mock_ms_cls)
+
+        result = WhatsAppAuthService.send_auth_code(self.TEL, str(self.conta.id))
+
+        self.assertTrue(result['success'])
+        self.assertEqual(result['template_used'], 'text_fallback')
+        mock_svc.send_text_message.assert_called_once()

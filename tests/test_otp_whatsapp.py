@@ -76,6 +76,55 @@ class OTPWhatsAppTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
+    @override_settings(DEFAULT_WHATSAPP_ACCOUNT_ID='00000000-0000-0000-0000-00000000dead')
+    @patch('apps.core.auth.views.WhatsAppAuthService.send_auth_code')
+    def test_send_with_stale_default_account_uses_active_account(self, mock_send):
+        """Número oficial configurado mas apagado/desativado → não vira 500.
+
+        Antes o id do settings ia direto ao MessageService, que levantava
+        NotFoundError: todo pedido de código dava 500.
+        """
+        mock_send.return_value = {'success': True, 'expires_in_minutes': 15}
+        response = self.client.post(
+            SEND_URL, {'phone_number': '+5511999999999'}, format='json',
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_send.call_args.args[1], str(self.wa_account.id))
+
+    @override_settings(DEFAULT_WHATSAPP_ACCOUNT_ID='00000000-0000-0000-0000-00000000dead')
+    def test_send_with_stale_default_and_no_account_returns_400(self):
+        WhatsAppAccount.objects.all().delete()
+        response = self.client.post(
+            SEND_URL, {'phone_number': '+5511999999999'}, format='json',
+        )
+        self.assertEqual(response.status_code, 400)
+
+    @patch('apps.core.auth.views.WhatsAppAuthService.send_auth_code')
+    def test_send_ignores_pending_account_in_fallback(self, mock_send):
+        """Conta `pending` o MessageService recusa; o fallback não pode escolhê-la."""
+        self.wa_account.status = 'pending'
+        self.wa_account.save(update_fields=['status'])
+        with override_settings(DEFAULT_WHATSAPP_ACCOUNT_ID=''):
+            response = self.client.post(
+                SEND_URL, {'phone_number': '+5511999999999'}, format='json',
+            )
+        self.assertEqual(response.status_code, 400)
+        mock_send.assert_not_called()
+
+    @override_settings(DEFAULT_WHATSAPP_ACCOUNT_ID='')
+    @patch('apps.core.auth.views.WhatsAppAuthService.send_auth_code')
+    def test_send_with_unknown_explicit_account_falls_back_to_usable_one(self, mock_send):
+        """App com id de conta velho/inválido não leva 500: cai na conta usável."""
+        mock_send.return_value = {'success': True, 'expires_in_minutes': 15}
+        for conta in ('nao-e-uuid', '00000000-0000-0000-0000-00000000beef'):
+            response = self.client.post(
+                SEND_URL,
+                {'phone_number': '+5511999999999', 'whatsapp_account_id': conta},
+                format='json',
+            )
+            self.assertEqual(response.status_code, 200, conta)
+            self.assertEqual(mock_send.call_args.args[1], str(self.wa_account.id))
+
     @patch('apps.core.auth.views.WhatsAppAuthService.send_auth_code')
     def test_send_success_does_not_expose_code(self, mock_send):
         """The OTP code must be stripped from the API response."""

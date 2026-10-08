@@ -280,7 +280,10 @@ class TestOTPViewInfoDisclosure(SimpleTestCase):
             format='json',
         )
         internal_msg = 'HTTPSConnectionPool(host=api.meta.interno:443): Max retries exceeded'
+        # A conta passou a ser conferida no banco (conta inexistente não vira
+        # mais 500); aqui o assunto é só o vazamento do erro, sem banco.
         with patch.object(WhatsAppAuthThrottle, 'allow_request', return_value=True), \
+             patch('apps.core.auth.views._resolve_whatsapp_account_id', return_value='uuid-123'), \
              patch(
                  'apps.core.auth.views.WhatsAppAuthService.send_auth_code',
                  side_effect=WhatsAppAuthError(internal_msg),
@@ -307,7 +310,10 @@ class TestOTPViewInfoDisclosure(SimpleTestCase):
             format='json',
         )
         internal_msg = 'SMTP connection error: smtp.interno:587 Connection refused (login=root)'
+        # A conta passou a ser conferida no banco (conta inexistente não vira
+        # mais 500); aqui o assunto é só o vazamento do erro, sem banco.
         with patch.object(WhatsAppAuthThrottle, 'allow_request', return_value=True), \
+             patch('apps.core.auth.views._resolve_whatsapp_account_id', return_value='uuid-123'), \
              patch(
                  'apps.core.auth.views.WhatsAppAuthService.resend_code',
                  side_effect=WhatsAppAuthError(internal_msg),

@@ -170,6 +170,22 @@ class StoreProduct(BaseModel):
     def em_promocao(self) -> bool:
         return self.preco_vigente() < self.price
 
+    def preco_de_referencia(self):
+        """O "de R$ X" que acompanha o preço vigente num anúncio, ou None.
+
+        Promoção do dia → o preço normal; senão `compare_at_price` acima do
+        vigente → ele. Mora aqui, ao lado de `preco_vigente`, para quem
+        ANUNCIA preço (bot, prompt do LLM) nunca precisar ler `price` direto —
+        é essa leitura que a peneira de apps/whatsapp/tests/
+        test_bot_apresenta_preco_da_promocao.py proíbe.
+        """
+        vigente = self.preco_vigente()
+        if vigente < self.price:
+            return self.price
+        if self.compare_at_price and self.compare_at_price > vigente:
+            return self.compare_at_price
+        return None
+
     @classmethod
     def disponiveis(cls, store=None):
         """A ÚNICA pergunta sobre disponibilidade de produto.

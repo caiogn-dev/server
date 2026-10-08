@@ -392,12 +392,13 @@ def _catalog_summary(store) -> str:
                 cat = f"[{p.category.name}] " if p.category else ""
                 desc = f" — {_resumo_da_descricao(p.description)}" if getattr(p, "description", "") else ""
                 vigente = p.preco_vigente()
+                de = p.preco_de_referencia()
                 # Preço final sem dizer que é promoção = IA negando a promoção
                 # que a vitrine anuncia (28/09).
-                if vigente < p.price:
-                    preco = f"R$ {vigente} (PROMOÇÃO DE HOJE, de R$ {p.price})"
-                elif p.compare_at_price and p.compare_at_price > p.price:
-                    preco = f"R$ {vigente} (de R$ {p.compare_at_price})"
+                if p.em_promocao:
+                    preco = f"R$ {vigente} (PROMOÇÃO DE HOJE, de R$ {de})"
+                elif de:
+                    preco = f"R$ {vigente} (de R$ {de})"
                 else:
                     preco = f"R$ {vigente}"
                 lines.append(f"  • {cat}{p.name} — {preco}{desc}")
