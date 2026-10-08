@@ -34,6 +34,9 @@ class DashboardOrderCreateContractTests(TestCase):
             slug='salada',
             price=Decimal('25.00'),
             status=StoreProduct.ProductStatus.ACTIVE,
+            # O pedido manual confere estoque desde ec91f83c; este contrato é
+            # sobre frete/identidade/pagamento, não sobre saldo.
+            track_stock=False,
         )
 
     def _payload(self, **overrides):
@@ -81,7 +84,8 @@ class DashboardOrderCreateContractTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         order = StoreOrder.objects.get(id=response.data['id'])
-        store_customer = StoreCustomer.objects.get(store=self.store, phone='556384354052')
+        # Celular sem o 9 é normalizado para o formato com 9 (normalize_phone_number).
+        store_customer = StoreCustomer.objects.get(store=self.store, phone='5563984354052')
         self.assertEqual(order.customer_id, store_customer.user_id)
         self.assertNotEqual(order.customer_id, self.owner.id)
         self.assertEqual(order.metadata['customer']['store_customer_id'], str(store_customer.id))
@@ -102,11 +106,8 @@ class DashboardOrderCreateContractTests(TestCase):
 
         with patch('apps.whatsapp.tasks.automation_tasks.notify_order_status_change') as mock_task, \
              patch('apps.automation.signals.transaction.on_commit', side_effect=lambda fn: fn()):
-            response = self.client.patch(
-                f'/api/v1/stores/orders/{order.id}/',
-                {'payment_status': StoreOrder.PaymentStatus.PAID},
-                format='json',
-            )
+            # PATCH recusa payment_status desde ab440904; o painel usa mark_paid/.
+            response = self.client.post(f'/api/v1/stores/orders/{order.id}/mark_paid/', {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         order.refresh_from_db()
@@ -142,11 +143,7 @@ class DashboardOrderCreateContractTests(TestCase):
             payment_id=str(order.id),
         )
 
-        response = self.client.patch(
-            f'/api/v1/stores/orders/{order.id}/',
-            {'payment_status': StoreOrder.PaymentStatus.PAID},
-            format='json',
-        )
+        response = self.client.post(f'/api/v1/stores/orders/{order.id}/mark_paid/', {}, format='json')
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         session.refresh_from_db()

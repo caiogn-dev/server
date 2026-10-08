@@ -44,6 +44,10 @@ def _make_store(owner, slug="checkout-store"):
         status=Store.StoreStatus.ACTIVE,
         owner=owner,
         currency="BRL",
+        # Ponto no mapa: sem coordenada o checkout de entrega recusa, e a
+        # suíte não consulta o Google (50653b25).
+        latitude=Decimal("-10.1840000"),
+        longitude=Decimal("-48.3330000"),
     )
 
 
@@ -210,6 +214,9 @@ class CheckoutHappyPathTestCase(CheckoutTestBase):
                     "city": "São Paulo",
                     "state": "SP",
                     "zip_code": "01310-100",
+                    # Pino que o mapa do checkout manda (~1 km da loja).
+                    "lat": -10.1930,
+                    "lng": -48.3330,
                 },
             }
         )
@@ -386,16 +393,19 @@ class CheckoutSchedulingTestCase(CheckoutTestBase):
 
     def test_checkout_persists_same_day_scheduling(self):
         """Checkout with valid scheduled_date + scheduled_time_slot persists both fields."""
+        # Hoje, não uma data fixa: `_parse_scheduling` ignora data passada, e o
+        # '2026-06-25' de quando o teste nasceu já passou.
+        hoje = timezone.localdate().isoformat()
         self._add_to_cart(self.product, quantity=1)
         resp = self._checkout(
             extra={
-                'scheduled_date': '2026-06-25',
+                'scheduled_date': hoje,
                 'scheduled_time_slot': '16:00-18:00',
             }
         )
         self.assertIn(resp.status_code, [200, 201], msg=str(resp.data))
         order = self._get_order_from_response(resp.data)
-        self.assertEqual(str(order.scheduled_date), '2026-06-25')
+        self.assertEqual(str(order.scheduled_date), hoje)
         self.assertEqual(order.scheduled_time, '16:00-18:00')
 
     def test_checkout_with_garbage_scheduling_does_not_break(self):

@@ -253,11 +253,25 @@ class UnifiedDeliveryService:
         """Calcular distância e duração via Google Maps."""
         from apps.stores.services.geo.service import GeoService
 
+        origem = UnifiedDeliveryService._coordenadas_da_loja(store)
+        if origem is None:
+            # Sem ponto de partida não existe distância. Antes isto ia cru para
+            # `round(None, 4)` dentro do GeoService, o except engolia, e o motivo
+            # que chegava ao cliente era um genérico "não consegui calcular".
+            logger.warning(
+                "[UnifiedDeliveryService] Loja %s sem coordenadas (campo e metadata) — frete recusado",
+                getattr(store, 'slug', store),
+            )
+            return {
+                'success': False,
+                'error': 'A localização da loja não está cadastrada; não dá para calcular o frete.',
+            }
+
         try:
             geo = GeoService()
             result = geo.calculate_route(
-                origin=(store.latitude, store.longitude),
-                destination=(dest_lat, dest_lng),
+                origin=origem,
+                destination=(float(dest_lat), float(dest_lng)),
             )
 
             if result and isinstance(result, dict) and result.get('distance_km'):
@@ -277,6 +291,26 @@ class UnifiedDeliveryService:
             'success': False,
             'error': 'Não consegui calcular a rota',
         }
+
+    @staticmethod
+    def _coordenadas_da_loja(store: Store) -> Optional[tuple]:
+        """(lat, lng) da loja como float, ou None.
+
+        Mesma ordem de `GeoService._resolve_store_coords` e de `maps_views`:
+        campo do modelo, depois `metadata['store_latitude'/'store_longitude']`.
+        Converte para float porque o valor pode chegar como Decimal (banco) ou
+        texto (instância montada a partir de formulário) — e `round()` não
+        aceita texto.
+        """
+        metadata = getattr(store, 'metadata', None) or {}
+        lat = store.latitude if store.latitude not in (None, '') else metadata.get('store_latitude')
+        lng = store.longitude if store.longitude not in (None, '') else metadata.get('store_longitude')
+        if lat in (None, '') or lng in (None, ''):
+            return None
+        try:
+            return float(lat), float(lng)
+        except (TypeError, ValueError):
+            return None
 
     @staticmethod
     def _check_fixed_price_zones(

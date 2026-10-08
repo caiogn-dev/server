@@ -4,7 +4,7 @@ Tests for StorePermissionMixin and cross-store data isolation.
 Ensures that:
 - Users can only access data from stores they own or are staff of
 - Cross-store access is denied (critical security property)
-- Superusers can access all stores
+- Superuser NÃO é chave-mestra: acesso vem de vínculo (ce243572, 16/set)
 """
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -130,12 +130,37 @@ class CrossStoreIsolationTestCase(TestCase):
             status.HTTP_403_FORBIDDEN,
         ])
 
-    def test_superuser_can_access_any_store(self):
+    def test_superuser_sem_vinculo_nao_le_loja_alheia(self):
+        """16/set (ce243572, 574ec24b): superuser deixou de ser chave-mestra.
+
+        Acesso ao painel vem de vínculo (dono, staff, StoreTeamMember). Este
+        teste fixava o comportamento antigo ("superuser vê qualquer loja") —
+        que era justamente o IDOR fechado naqueles commits.
+        """
         self._auth(self.token_super)
-        resp_a = self.client.get(self._products_url(self.store_a))
-        resp_b = self.client.get(self._products_url(self.store_b))
-        self.assertEqual(resp_a.status_code, status.HTTP_200_OK)
-        self.assertEqual(resp_b.status_code, status.HTTP_200_OK)
+        resp = self.client.get(self._products_url(self.store_b))
+        if resp.status_code == status.HTTP_200_OK:
+            body = resp.json()
+            items = body.get('results', body) if isinstance(body, dict) else body
+            self.assertNotIn(
+                self.product_b.pk, [p.get('id') for p in items],
+                'superuser sem vínculo leu produto de loja alheia',
+            )
+        else:
+            self.assertIn(resp.status_code, [
+                status.HTTP_403_FORBIDDEN,
+                status.HTTP_404_NOT_FOUND,
+            ])
+
+    def test_superuser_com_vinculo_acessa_a_loja(self):
+        """Âncora: com vínculo tem que passar, senão o assert acima é vazio."""
+        self.store_b.staff.add(self.superuser)
+        self._auth(self.token_super)
+        resp = self.client.get(self._products_url(self.store_b))
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        body = resp.json()
+        items = body.get('results', body) if isinstance(body, dict) else body
+        self.assertIn(str(self.product_b.pk), [str(p.get('id')) for p in items])
 
 
 class StorePermissionMixinUnitTestCase(TestCase):

@@ -474,16 +474,28 @@ class CheckoutService:
         if isinstance(address_obj, str):
             address_text = address_obj
         elif isinstance(address_obj, dict):
+            # Sem rua estruturada, o que o cliente escreveu está em `raw_address`
+            # (bot do WhatsApp, PDV). Ignorá-lo deixava só "Palmas, TO" para
+            # geocodificar — centro genérico, recusado por `localizar`.
+            # Contrato anterior a 03967153: DeliveryQuoteService.delivery_address_text.
             parts = [
-                address_obj.get('street', ''),
+                address_obj.get('street') or address_obj.get('raw_address') or '',
                 address_obj.get('number', ''),
                 address_obj.get('neighborhood', ''),
                 address_obj.get('city', ''),
                 address_obj.get('state', ''),
             ]
-            address_text = ', '.join(filter(None, parts)) or None
+            address_text = ', '.join(str(p).strip() for p in parts if str(p or '').strip()) or None
 
         lat, lng = payload.get('lat'), payload.get('lng')
+        if (lat is None or lng is None) and isinstance(address_obj, dict):
+            # O bot grava o pin DENTRO do endereço (order_service._build_delivery_address).
+            lat = next((address_obj[k] for k in ('lat', 'latitude')
+                        if address_obj.get(k) not in ('', None)), None)
+            lng = next((address_obj[k] for k in ('lng', 'longitude')
+                        if address_obj.get(k) not in ('', None)), None)
+            if lat is None or lng is None:
+                lat = lng = None
 
         # O pin não pode contradizer o endereço escrito. Em 20/08 dois pedidos
         # saíram com o texto certo e a coordenada a 4,45 km e 5,16 km — o
