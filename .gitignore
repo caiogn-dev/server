@@ -60,3 +60,8 @@ recovery_*
 
 # backups de .env (nunca commitar)
 .env.bak*
+
+# Carimbo da suíte verde (testar.sh) e log de deploy sem testes — locais
+.suite-verde
+.suite-ultima.log
+.deploys-sem-testes.log

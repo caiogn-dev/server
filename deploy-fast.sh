@@ -18,6 +18,7 @@
 # Uso:
 #   ./deploy-fast.sh             # sincroniza código + recarrega
 #   ./deploy-fast.sh --migrate   # idem, rodando migrações antes de recarregar
+#   ./deploy-fast.sh --sem-testes  # emergência: sobe sem suíte verde (fica no log)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -30,6 +31,24 @@ for c in "$WEB" "${WORKERS[@]}"; do
     exit 1
   fi
 done
+
+# Só sobe código com a suíte verde (./testar.sh carimba .suite-verde).
+# 04/09: um teste de guarda falhou no dia em que o bug voltou, e o deploy
+# subiu assim mesmo — a falha sumiu no meio de outras 104.
+# Emergência: --sem-testes sobe mesmo assim e fica registrado no log.
+SEM_TESTES=0
+for arg in "$@"; do [[ "$arg" == "--sem-testes" ]] && SEM_TESTES=1; done
+assinatura_suite=$(find apps config tests -name '*.py' -type f | sort | xargs md5sum | md5sum | cut -d' ' -f1)
+carimbo=$(cut -d' ' -f1 .suite-verde 2>/dev/null || true)
+if [[ "$carimbo" != "$assinatura_suite" ]]; then
+  if [[ "$SEM_TESTES" -eq 1 ]]; then
+    echo "$(date -Iseconds) $(git rev-parse --short HEAD) $assinatura_suite" >> .deploys-sem-testes.log
+    echo "==> ATENÇÃO: subindo SEM suíte verde (--sem-testes). Registrado em .deploys-sem-testes.log"
+  else
+    echo "ERRO: este código não tem suíte verde. Rode ./testar.sh (ou, em emergência, --sem-testes)." >&2
+    exit 1
+  fi
+fi
 
 echo "==> Validando sintaxe Python local..."
 find apps config -name '*.py' -not -path '*/migrations/*' -print0 | xargs -0 python3 -m py_compile
@@ -61,7 +80,7 @@ for c in "$WEB" "${WORKERS[@]}"; do
 done
 echo "    idêntico ($local_sig)"
 
-if [[ "${1:-}" == "--migrate" ]]; then
+if [[ " $* " == *" --migrate "* ]]; then
   echo "==> Rodando migrações..."
   docker exec "$WEB" python manage.py migrate
 fi
