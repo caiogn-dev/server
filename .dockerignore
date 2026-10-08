@@ -114,3 +114,7 @@ yarn-error.log*
 # Clone git aninhado (1.4M, com .git próprio). O padrão `.git/` acima só casa
 # na raiz do contexto, então openapi/.git iria inteiro para a imagem.
 openapi/
+
+# Qualquer variação de .env (08/10: .env.pre-v26 entraria na imagem)
+.env*
+!.env.example
