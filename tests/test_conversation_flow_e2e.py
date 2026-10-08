@@ -37,6 +37,12 @@ User = get_user_model()
 # 8d8fadaf, que quebrou o handlers.py em pacote. O nome não mora mais em
 # `apps.whatsapp.intents.handlers`; o patch tem de ser onde o import busca.
 _PATCH_CREATE_ORDER = 'apps.whatsapp.services.create_order_from_whatsapp'
+# A finalização roda em task (checkout_tasks) e a task é quem responde ao
+# cliente. Interceptar o envio dela mantém o teste fora da Meta e deixa
+# conferir o que o cliente recebeu.
+# Frete do bot: régua única (UnifiedDeliveryService), não o GeoService direto.
+_PATCH_FRETE = 'apps.stores.services.unified_delivery_service.UnifiedDeliveryService.calculate_delivery_fee'
+_PATCH_TASK_SEND = 'apps.whatsapp.tasks.checkout_tasks._send_handler_result'
 _PATCH_WA_SEND = 'apps.whatsapp.services.whatsapp_api_service.WhatsAppAPIService.send_text_message'
 _PATCH_WA_INTERACTIVE = 'apps.whatsapp.services.whatsapp_api_service.WhatsAppAPIService.send_interactive_message'
 _PATCH_PAYMENT   = 'apps.whatsapp.services.order_service.CheckoutService.create_payment'
@@ -86,15 +92,20 @@ def _make_product(store, name='Pizza', price=Decimal('25.00'),
 
 
 def _make_account(owner, phone_number_id='123', phone_number='+5563900000099'):
-    return WhatsAppAccount.objects.create(
+    conta = WhatsAppAccount(
         name='Test Account',
         phone_number_id=phone_number_id,
         waba_id='waba_test',
         phone_number=phone_number,
-        access_token_encrypted='fake',
         status=WhatsAppAccount.AccountStatus.ACTIVE,
         owner=owner,
     )
+    # Token cifrado de verdade: com 'fake' cru o WhatsAppAPIService quebra no
+    # decrypt ao responder, a task eager propaga o erro e o handler finaliza
+    # de novo pelo caminho síncrono — 2 chamadas de create_order.
+    conta.access_token = 'fake'
+    conta.save()
+    return conta
 
 
 def _make_conversation(account, phone='+5563900000050'):
@@ -215,14 +226,15 @@ class PickupCashFlowTest(ConversationFlowBase):
             'order_number': mock_order.order_number,
             'payment_method': 'cash',
             'payment_data': {},
-        }) as mock_create:
-            result = handler.handle({'reply_id': 'pay_pickup'})
+        }) as mock_create, patch(_PATCH_TASK_SEND) as envio:
+            handler.handle({'reply_id': 'pay_pickup'})
 
         mock_create.assert_called_once()
         call_kwargs = mock_create.call_args
         self.assertEqual(call_kwargs.kwargs.get('payment_method') or call_kwargs.args[4], 'cash')
-        self.assertIsNotNone(result.response_text)
-        self.assertIn('TEST-FLOW-001', result.response_text)
+        envio.assert_called_once()
+        enviado = envio.call_args.args[2]
+        self.assertIn('TEST-FLOW-001', enviado.response_text)
 
     def test_pay_pickup_without_items_returns_error(self):
         """Tentar finalizar pedido sem itens na sessão deve retornar mensagem de erro."""
@@ -272,7 +284,7 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
         }
         mock_fee = {
             'fee': Decimal('9.00'), 'distance_km': 3.5, 'duration_minutes': 12,
-            'is_within_area': True, 'zone': None, 'message': 'ok',
+            'success': True, 'is_within_area': True, 'zone': None, 'message': 'ok',
         }
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
@@ -280,7 +292,7 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
             'apps.stores.services.geo.service.GeoService.geocode',
             return_value=mock_geo,
         ), patch(
-            'apps.stores.services.geo.service.GeoService.calculate_delivery_fee',
+            _PATCH_FRETE,
             return_value=mock_fee,
         ):
             result = handler._handle_address_input('Rua das Flores, 42')
@@ -318,7 +330,10 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
         )
 
         self.session.refresh_from_db()
-        self.assertFalse(self.session.cart_data.get('waiting_for_notes'))
+        # A espera de notas segue aberta até o pedido nascer (25/09: a 2ª
+        # observação caía em mensagem desconhecida). O que importa aqui é o
+        # "NAO" não virar recado para a cozinha.
+        self.assertFalse((self.session.cart_data.get('customer_notes') or '').strip())
         self.assertEqual(
             self.session.cart_data.get('pending_items'),
             [{'product_id': str(self.product.id), 'quantity': 1}],
@@ -346,7 +361,7 @@ class DeliveryTypedAddressFlowTest(ConversationFlowBase):
             'order_number': mock_order.order_number,
             'payment_method': 'pix',
             'payment_data': {'success': True, 'pix_code': '00020126...'},
-        }) as mock_create:
+        }) as mock_create, patch(_PATCH_TASK_SEND):
             result = handler.handle({'reply_id': 'pay_pix'})
 
         mock_create.assert_called_once()
@@ -395,7 +410,7 @@ class DeliveryGPSFlowTest(ConversationFlowBase):
 
         mock_fee = {
             'fee': Decimal('8.00'), 'distance_km': 2.8, 'duration_minutes': 10,
-            'is_within_area': True, 'zone': None, 'message': 'ok',
+            'success': True, 'is_within_area': True, 'zone': None, 'message': 'ok',
         }
         mock_rev = {
             'formatted_address': 'Alameda 1, Palmas',
@@ -407,7 +422,7 @@ class DeliveryGPSFlowTest(ConversationFlowBase):
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
         with patch(
-            'apps.stores.services.geo.service.GeoService.calculate_delivery_fee',
+            _PATCH_FRETE,
             return_value=mock_fee,
         ), patch(
             'apps.stores.services.geo.service.GeoService.reverse_geocode',
@@ -431,14 +446,14 @@ class DeliveryGPSFlowTest(ConversationFlowBase):
 
         mock_fee = {
             'fee': Decimal('0'), 'distance_km': 50.0, 'duration_minutes': 90,
-            'is_within_area': False, 'zone': None,
+            'success': False, 'is_within_area': False, 'zone': None,
             'message': 'Fora da área de entrega',
         }
 
         handler = _make_handler(self.account, self.conversation, self.profile, UnknownHandler)
 
         with patch(
-            'apps.stores.services.geo.service.GeoService.calculate_delivery_fee',
+            _PATCH_FRETE,
             return_value=mock_fee,
         ), patch(
             'apps.stores.services.geo.service.GeoService.reverse_geocode',
