@@ -134,6 +134,12 @@ BILLING_ENFORCEMENT_ENABLED = False
 # falha na autenticação em vez de mexer na conta real.
 MERCADOPAGO_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
 MP_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
+# O código lê MERCADO_PAGO_ACCESS_TOKEN (com sublinhado) e NVIDIA_API_KEY. Sem
+# eles a suíte dependia de a imagem trazer as variáveis de produção; a imagem
+# rebakeada em 09/10 não traz e 13 testes de cobrança/IA caíram. Falsos aqui.
+MERCADO_PAGO_ACCESS_TOKEN = 'TEST-TOKEN-FALSO-NAO-USAR'
+MERCADO_PAGO_SANDBOX_TOKEN = ''
+NVIDIA_API_KEY = 'nvapi-FALSO-NAO-USAR'
 
 # Google Maps SEM chave. A imagem carrega o .env de produção, então a suíte
 # chamava geocode/address validation/directions de verdade com a chave da loja
