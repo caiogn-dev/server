@@ -14,6 +14,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.stores.models.printing import q_agent_atende
 from apps.stores.models import Store, StorePrintAgent, StorePrintJob
 from apps.stores.services.print_service import (
     claim_next_print_job,
@@ -100,10 +101,18 @@ class StorePrintAgentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = StorePrintAgent.objects.select_related('store').order_by('name')
+        acessiveis = list(accessible_store_ids(self.request.user))
+        if self.action not in ('list', 'retrieve'):
+            # Editar, trocar chave, calibrar: só a dona do agent. Compartilhar é para imprimir.
+            return queryset.filter(store_id__in=acessiveis)
         store_param = self.kwargs.get('store_pk') or self.request.query_params.get('store')
         if store_param:
-            queryset, _ = filter_by_store(queryset, store_param)
-        return queryset.filter(store_id__in=accessible_store_ids(self.request.user))
+            # Lista da loja = agents dela + os compartilhados com ela (Zebra da Cê na Agrião).
+            loja = Store.objects.filter(id__in=acessiveis).filter(
+                **({'pk': store_param} if _uuid_valido(store_param) else {'slug': store_param})
+            ).values_list('pk', flat=True).first()
+            return queryset.filter(q_agent_atende([loja])) if loja else queryset.none()
+        return queryset.filter(q_agent_atende(acessiveis))
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -187,7 +196,7 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         if not store:
             return Response({'detail': 'Loja não encontrada.'}, status=status.HTTP_404_NOT_FOUND)
         agent = StorePrintAgent.objects.filter(
-            pk=dados.get('agent'), store=store, is_active=True,
+            q_agent_atende([store.pk]), pk=dados.get('agent'), is_active=True,
             status=StorePrintAgent.AgentStatus.ACTIVE,
         ).first() if _uuid_valido(dados.get('agent')) else None
         if not agent:
@@ -325,7 +334,7 @@ class StorePrintJobViewSet(viewsets.ReadOnlyModelViewSet):
         if modelo not in desenho.MODELOS:
             return Response({'detail': f'modelo inválido: {modelo}'}, status=status.HTTP_400_BAD_REQUEST)
         agent = StorePrintAgent.objects.filter(
-            pk=dados.get('agent'), store=store, is_active=True, status=StorePrintAgent.AgentStatus.ACTIVE,
+            q_agent_atende([store.pk]), pk=dados.get('agent'), is_active=True, status=StorePrintAgent.AgentStatus.ACTIVE,
         ).first() if _uuid_valido(dados.get('agent')) else None
         if not agent or not agent.imprime_o(StorePrintAgent.IMPRIME_ETIQUETAS):
             return Response({'detail': 'Escolha um programa de impressão desta loja que imprima etiquetas.'},

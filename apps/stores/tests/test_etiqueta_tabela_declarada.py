@@ -69,3 +69,63 @@ class EstiloLaudoTest(SimpleTestCase):
         img = motor.render_bitmap(self._layout('laudo'), [ET])
         self.assertEqual(img.size, (800, 640))
         self.assertLess(sum(img.crop((120, 40, 680, 392)).getdata()) / (560 * 352), 255)  # tem tinta
+
+
+class PrefixoEmNegritoTest(SimpleTestCase):
+    """'INGREDIENTES:' em negrito e o texto normal na MESMA linha, como no PDF."""
+    def _lay(self, prefixo):
+        return motor.validar_layout({'etiqueta': {'largura': 100, 'altura': 20}, 'papel': {'colunas': 1},
+            'elementos': [{'id': 'i', 'tipo': 'texto', 'x': 2, 'y': 2, 'w': 90, 'h': 10, 'tamanho': 2,
+                           'linhas': 3, 'texto': '{ingredients}', 'prefixo': prefixo}]})
+
+    def test_prefixo_e_preservado(self):
+        self.assertEqual(self._lay('INGREDIENTES:')['elementos'][0]['prefixo'], 'INGREDIENTES:')
+
+    def test_texto_comeca_depois_do_prefixo_sem_sobrepor(self):
+        et = {'ingredients': 'Filé de peito de frango, leite zero lactose.'}
+        com = motor.render_bitmap(self._lay('INGREDIENTES:'), [et])
+        sem = motor.render_bitmap(self._lay(''), [et])
+        # a primeira linha com prefixo é mais longa: o texto foi empurrado para a direita
+        def fim_da_tinta(img):
+            px = img.load()
+            return max((x for x in range(img.width) for y in range(16, 40) if px[x, y] == 0), default=0)
+        self.assertGreater(fim_da_tinta(com), fim_da_tinta(sem) + 60)
+
+
+class NegritoNoMeioEMaiusculasTest(SimpleTestCase):
+    """Rótulo do Canva da Agrião: '**Modo de conservação:** … **Não recongelar.**' e título em caixa alta."""
+    def _lay(self, texto, **extra):
+        return motor.validar_layout({'etiqueta': {'largura': 100, 'altura': 20}, 'papel': {'colunas': 1},
+            'elementos': [{'id': 'i', 'tipo': 'texto', 'x': 2, 'y': 2, 'w': 96, 'h': 10, 'tamanho': 2.4,
+                           'linhas': 3, 'texto': texto, **extra}]})
+
+    def _tinta(self, img):
+        return sum(1 for v in img.getdata() if v == 0)
+
+    def test_trecho_entre_asteriscos_sai_em_negrito_e_sem_os_asteriscos(self):
+        normal = motor.render_bitmap(self._lay('Manter congelado. Não recongelar.'), [{}])
+        rico = motor.render_bitmap(self._lay('Manter congelado. **Não recongelar.**'), [{}])
+        self.assertGreater(self._tinta(rico), self._tinta(normal))   # negrito tem mais tinta
+        so_ast = motor.render_bitmap(self._lay('**'), [{}])
+        self.assertEqual(self._tinta(so_ast), 0)                       # asterisco não é impresso
+
+    def test_maiusculas(self):
+        lay = self._lay('{name}', maiusculas=True)
+        self.assertTrue(lay['elementos'][0]['maiusculas'])
+        a = motor.render_bitmap(lay, [{'name': 'Estrogonofe'}])
+        b = motor.render_bitmap(self._lay('ESTROGONOFE'), [{}])
+        self.assertEqual(list(a.getdata()), list(b.getdata()))
+
+
+class AjusteCaberTest(SimpleTestCase):
+    """'caber': quebra em várias linhas e diminui a letra até o texto inteiro caber
+    na caixa — lista de ingredientes do laudo é mais longa que a do Canva."""
+    def test_texto_longo_nao_e_cortado(self):
+        lay = motor.validar_layout({'etiqueta': {'largura': 40, 'altura': 20}, 'papel': {'colunas': 1},
+            'elementos': [{'id': 'i', 'tipo': 'texto', 'x': 0, 'y': 0, 'w': 40, 'h': 10, 'tamanho': 2.4,
+                           'linhas': 3, 'ajuste': 'caber', 'texto': '{ingredients}'}]})
+        longo = ' '.join(['ingrediente'] * 30) + ' ULTIMA'
+        img = motor.render_bitmap(lay, [{'ingredients': longo}])
+        # ainda há tinta perto do fim da caixa: a última linha foi desenhada, nada sumiu
+        self.assertTrue(any(img.getpixel((x, y)) == 0 for x in range(0, 320) for y in range(60, 80)))
+        self.assertEqual(motor._linhas_ricas_que_cabem(longo, 2.4, False, 'sans', 40, 10, 3)[1], True)

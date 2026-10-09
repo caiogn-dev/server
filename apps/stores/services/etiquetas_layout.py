@@ -38,7 +38,7 @@ FONTES = {
     'serif': ('LiberationSerif-Regular.ttf', 'LiberationSerif-Bold.ttf'),
     'mono': ('LiberationMono-Regular.ttf', 'LiberationMono-Bold.ttf'),
 }
-AJUSTES = ('quebrar', 'encolher')
+AJUSTES = ('quebrar', 'encolher', 'caber')
 # 'laudo' = proporções do PDF do nutricionista (título 1,25x as linhas, colunas estreitas).
 ESTILOS_DE_TABELA = ('padrao', 'laudo')
 DIR_FONTES = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'fonts')
@@ -183,7 +183,10 @@ def validar_layout(layout) -> dict:
             'bloqueado': bool(e.get('bloqueado', False)),   # só o editor usa: não deixa arrastar sem querer
         }
         if n['tipo'] == 'texto':
-            n['texto'] = str(e.get('texto') or '')[:200]
+            n['texto'] = str(e.get('texto') or '')[:400]
+            # Rótulo em negrito na mesma linha do texto ("INGREDIENTES: Filé de…").
+            n['prefixo'] = str(e.get('prefixo') or '')[:40]
+            n['maiusculas'] = bool(e.get('maiusculas', False))
             n['tamanho'] = _num(e.get('tamanho', 2.5), f'elemento {i}.tamanho', 0.8, 60)
             n['negrito'] = bool(e.get('negrito', False))
             n['linhas'] = int(_num(e.get('linhas', 1), f'elemento {i}.linhas', 0, 20))  # 0 = quantas couberem
@@ -272,13 +275,15 @@ def _fonte(px: int, negrito: bool, familia: str = 'sans'):
         return ImageFont.load_default()
 
 
-def _quebrar(texto, fonte, largura_px, max_linhas):
+def _quebrar(texto, fonte, largura_px, max_linhas, recuo_px=0):
+    """recuo_px: a 1ª linha é mais curta (lugar do prefixo em negrito)."""
     linhas = []
     for paragrafo in str(texto).split('\n'):
         atual = ''
         for palavra in paragrafo.split(' '):
             tentativa = palavra if not atual else f'{atual} {palavra}'
-            if fonte.getlength(tentativa) <= largura_px or not atual:
+            limite = largura_px - (recuo_px if not linhas else 0)
+            if fonte.getlength(tentativa) <= limite or not atual:
                 atual = tentativa
             else:
                 linhas.append(atual)
@@ -289,6 +294,8 @@ def _quebrar(texto, fonte, largura_px, max_linhas):
 
 def _desenhar_texto(draw, e, dados, img=None):
     conteudo = preencher(e['texto'], dados).strip()
+    if e.get('maiusculas'):
+        conteudo = conteudo.upper()
     if not conteudo:
         return
     rot = int(e.get('rotacao', 0) or 0)
@@ -310,6 +317,7 @@ def _desenhar_texto(draw, e, dados, img=None):
     fonte = _fonte(px, e['negrito'], familia)
     x0, y0, w, h = mm(e['x']), mm(e['y']), mm(e['w']), mm(e['h'])
     if e.get('ajuste') == 'encolher':
+        conteudo = conteudo.replace('**', '')
         # Uma linha só: diminui a letra até caber na largura (mínimo 4 px).
         while px > 4 and fonte.getlength(conteudo) > w:
             px -= 1
@@ -318,7 +326,16 @@ def _desenhar_texto(draw, e, dados, img=None):
     else:
         passo_auto = max(1, int(round(px * 1.12)))
         maximo = e['linhas'] if e['linhas'] > 0 else max(1, h // passo_auto)
-        linhas = _quebrar(conteudo, fonte, w, maximo)
+        prefixo = e.get('prefixo') or ''
+        if prefixo:
+            conteudo = f'**{prefixo}** {conteudo}'
+        if e.get('ajuste') == 'caber':
+            # Diminui a letra até o texto inteiro caber (linhas livres dentro da altura).
+            while px > 6 and not _cabe(conteudo, px, e['negrito'], familia, w, h):
+                px -= 1
+            maximo = 99
+        _desenhar_rico(draw, conteudo, px, e['negrito'], familia, x0, y0, w, h, maximo, e['alinhar'])
+        return
     passo = int(round(px * 1.12))
     y = y0
     for linha in linhas:
@@ -327,6 +344,68 @@ def _desenhar_texto(draw, e, dados, img=None):
         lw = fonte.getlength(linha)
         x = x0 if e['alinhar'] == 'esquerda' else (x0 + (w - lw) / 2 if e['alinhar'] == 'centro' else x0 + w - lw)
         draw.text((x, y), linha, font=fonte, fill=0)
+        y += passo
+
+
+def _palavras_ricas(texto, negrito_base):
+    """'a **b c** d' → [[('a',F)], [('b',T),('c',T)], …] por parágrafo; ** alterna o negrito."""
+    paragrafos = []
+    negrito = False
+    for paragrafo in str(texto).split('\n'):
+        palavras = []
+        for k, trecho in enumerate(paragrafo.split('**')):
+            if k:
+                negrito = not negrito
+            palavras += [(p, negrito_base or negrito) for p in trecho.split(' ') if p]
+        paragrafos.append(palavras)
+    return paragrafos
+
+
+def _cabe(texto, px, negrito_base, familia, w, h):
+    linhas = _quebrar_rico(texto, px, negrito_base, familia, w)
+    return len(linhas) * int(round(px * 1.12)) <= h + max(2, int(round(px * 1.12)) // 4)
+
+
+def _linhas_ricas_que_cabem(texto, tamanho_mm, negrito, familia, w_mm, h_mm, linhas):
+    """(px final, coube?) — para teste e para o editor saber a letra que sobrou."""
+    px = int(round(tamanho_mm * DPMM * 0.92))
+    while px > 6 and not _cabe(texto, px, negrito, familia, mm(w_mm), mm(h_mm)):
+        px -= 1
+    return px, _cabe(texto, px, negrito, familia, mm(w_mm), mm(h_mm))
+
+
+def _quebrar_rico(texto, px, negrito_base, familia, w):
+    f = {False: _fonte(px, False, familia), True: _fonte(px, True, familia)}
+    espaco = f[False].getlength(' ')
+    linhas = []
+    for palavras in _palavras_ricas(texto, negrito_base):
+        atual, largura = [], 0.0
+        for palavra, neg in palavras:
+            lw = f[neg].getlength(palavra)
+            nova = largura + (espaco if atual else 0) + lw
+            if atual and nova > w:
+                linhas.append((atual, largura))
+                atual, largura = [(palavra, neg)], lw
+            else:
+                atual.append((palavra, neg)); largura = nova
+        linhas.append((atual, largura))
+    return linhas
+
+
+def _desenhar_rico(draw, texto, px, negrito_base, familia, x0, y0, w, h, maximo, alinhar):
+    """Quebra e desenha palavra a palavra, cada uma com a sua fonte (normal/negrito)."""
+    f = {False: _fonte(px, False, familia), True: _fonte(px, True, familia)}
+    espaco = f[False].getlength(' ')
+    linhas = _quebrar_rico(texto, px, negrito_base, familia, w)
+    passo = int(round(px * 1.12))
+    y = y0
+    for palavras, largura in linhas[:maximo]:
+        if y + passo > y0 + h + max(2, passo // 4):
+            break
+        x = x0 if alinhar == 'esquerda' else (x0 + (w - largura) / 2 if alinhar == 'centro' else x0 + w - largura)
+        for palavra, neg in palavras:
+            draw.text((x, y), palavra, font=f[neg], fill=0)
+            x += f[neg].getlength(palavra) + espaco
         y += passo
 
 

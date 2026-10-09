@@ -653,12 +653,13 @@ def enqueue_order_print_job(
 CLAIM_TRAVADO_APOS = timedelta(minutes=5)
 
 
-def _liberar_claims_travados(store) -> None:
+def _liberar_claims_travados(agent) -> None:
     limite = timezone.now() - CLAIM_TRAVADO_APOS
     travados = (
         StorePrintJob.objects
         .select_for_update(skip_locked=True)
-        .filter(store=store, status=StorePrintJob.JobStatus.CLAIMED, claimed_at__lt=limite)
+        .filter(Q(store=agent.store) | Q(target_agent=agent))
+        .filter(status=StorePrintJob.JobStatus.CLAIMED, claimed_at__lt=limite)
     )
     for job in travados:
         minutos = int((timezone.now() - job.claimed_at).total_seconds() // 60)
@@ -674,17 +675,17 @@ def _liberar_claims_travados(store) -> None:
 
 def claim_next_print_job(agent: StorePrintAgent) -> StorePrintJob | None:
     with transaction.atomic():
-        _liberar_claims_travados(agent.store)
+        _liberar_claims_travados(agent)
         job = (
             StorePrintJob.objects
             .select_for_update(skip_locked=True)
             .filter(
-                store=agent.store,
                 station=agent.station,
                 status=StorePrintJob.JobStatus.PENDING,
                 available_at__lte=timezone.now(),
             )
-            .filter(Q(target_agent=agent) | Q(target_agent__isnull=True))
+            # Da loja dele (alvo ele ou ninguém) OU de loja compartilhada, só se o alvo for ele.
+            .filter(Q(store=agent.store, target_agent__isnull=True) | Q(target_agent=agent))
             .order_by('created_at')
             .first()
         )

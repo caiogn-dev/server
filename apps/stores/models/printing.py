@@ -154,6 +154,17 @@ class StorePrintAgent(BaseModel):
         ])
 
 
+def q_agent_atende(store_ids):
+    """Agents da loja OU compartilhados com ela (metadata.lojas_compartilhadas).
+
+    09/10: a Zebra e a Elgin ficam no PC da Cê e a Agrião imprime nelas."""
+    from django.db.models import Q
+    q = Q(store_id__in=list(store_ids))
+    for sid in store_ids:
+        q |= Q(metadata__lojas_compartilhadas__contains=[str(sid)])
+    return q
+
+
 class StorePrintJob(BaseModel):
     """Queued print jobs to be consumed by a local print agent."""
 
