@@ -37,14 +37,21 @@ def public_nutrition_label(request, product_id):
         ProductNutritionProfile.objects.select_related("product", "product__store", "recipe").prefetch_related("recipe__items__ingredient"),
         product_id=product_id, is_active=True,
     )
-    if not profile.recipe_id and all(getattr(profile, field) is None for field in NUTRIENT_FIELDS):
+    tabela = profile.tabela_declarada or {}
+    if not tabela and not profile.recipe_id and all(getattr(profile, field) is None for field in NUTRIENT_FIELDS):
         raise Http404
     serving = profile.serving_size_g
     rows = []
-    for field, label, unit in LABELS:
-        per_100 = getattr(profile, field)
-        per_serving = per_100 * serving / 100 if per_100 is not None else None
-        rows.append(f"<tr><th>{label} ({unit})</th><td>{_fmt(per_100)}</td><td>{_fmt(per_serving)}</td></tr>")
+    if tabela:
+        # Tabela pronta da loja: sai como foi declarada, número por número.
+        for field, label, unit in LABELS:
+            cem, porcao, vd = (tabela.get("linhas", {}).get(field) or ["", "", ""])
+            rows.append(f"<tr><th>{label} ({unit})</th><td>{escape(cem)}</td><td>{escape(porcao)}</td><td>{escape(vd)}</td></tr>")
+    else:
+        for field, label, unit in LABELS:
+            per_100 = getattr(profile, field)
+            per_serving = per_100 * serving / 100 if per_100 is not None else None
+            rows.append(f"<tr><th>{label} ({unit})</th><td>{_fmt(per_100)}</td><td>{_fmt(per_serving)}</td></tr>")
     ingredients = []
     if profile.recipe_id:
         ingredients = [item.ingredient.display_name for item in profile.recipe.items.all()]
@@ -77,7 +84,10 @@ def public_nutrition_label(request, product_id):
         lact_html = ""
 
     alerg = allergens_da_receita(profile.recipe) if profile.recipe_id else None
-    if alerg and alerg["revisado"]:
+    if tabela.get("declaracoes"):
+        alerg_html = ("<section><h2>Alergênicos</h2>"
+                      + "".join(f"<p class='alerg'>{escape(d)}</p>" for d in tabela["declaracoes"]) + "</section>")
+    elif alerg and alerg["revisado"]:
         alerg_html = (f"<section><h2>Alergênicos</h2><p class='alerg'>{escape(alerg['texto'])}</p>"
                       f"{lact_html}</section>")
     elif alerg:
@@ -90,8 +100,19 @@ def public_nutrition_label(request, product_id):
     store_name = escape(profile.product.store.name)
     measure = escape(profile.household_measure)
     ingredients_text = ", ".join(escape(name) for name in ingredients)
+    if tabela.get("ingredientes"):
+        ingredients, ingredients_text = [tabela["ingredientes"]], escape(tabela["ingredientes"])
+    if tabela:
+        status = "Tabela nutricional da loja"
+        porcao_html = f"<p>Porções por embalagem: <b>{escape(tabela.get('porcoes_por_embalagem', ''))}</b><br>Porção: <b>{escape(tabela.get('porcao', ''))}</b></p>"
+        thead = f"<tr><th></th><th>100 g</th><th>{escape(tabela.get('coluna_porcao', 'Porção'))}</th><th>%VD*</th></tr>"
+        nota = "<p class='note'>*Percentual de valores diários fornecidos pela porção.</p>"
+    else:
+        porcao_html = f"<p>Porção: <b>{_fmt(serving)} g</b>{f' ({measure})' if measure else ''}</p>"
+        thead = "<tr><th></th><th>100 g</th><th>Porção</th></tr>"
+        nota = "<p class='note'>Valores estimados a partir da composição cadastrada, salvo quando o produto estiver marcado como aprovado.</p>"
     html = f"""<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
 <title>Informação nutricional — {product_name}</title><style>
 *{{box-sizing:border-box}}body{{margin:0;background:#f4f1eb;color:#171717;font:16px/1.45 system-ui,sans-serif}}main{{max-width:720px;margin:auto;padding:24px}}header{{margin-bottom:22px}}.brand{{font-size:13px;text-transform:uppercase;letter-spacing:.12em;color:#666}}h1{{font-size:28px;line-height:1.1;margin:6px 0}}.status{{display:inline-block;padding:5px 9px;border:1px solid #777;border-radius:999px;font-size:12px}}section{{background:#fff;padding:18px;border-radius:14px;margin-top:14px}}h2{{font-size:19px;margin:0 0 12px}}table{{width:100%;border-collapse:collapse}}th,td{{padding:9px 6px;border-bottom:1px solid #bbb;text-align:right}}th:first-child{{text-align:left}}thead th{{border-bottom:3px solid #111}}p{{margin:8px 0}}.note{{font-size:13px;color:#555}}.selos{{display:flex;gap:10px;flex-wrap:wrap}}.selo{{background:#111;color:#fff;padding:10px 14px;border-radius:6px;font-size:12px;line-height:1.25;text-align:center;text-transform:uppercase;letter-spacing:.04em}}.alerg{{font-weight:700;text-transform:uppercase;letter-spacing:.02em}}@media(max-width:520px){{main{{padding:16px}}h1{{font-size:23px}}th,td{{font-size:13px;padding:8px 3px}}}}
-</style></head><body><main><header><div class='brand'>{store_name}</div><h1>{product_name}</h1><span class='status'>{status}</span></header><section><h2>Informação nutricional</h2><p>Porção: <b>{_fmt(serving)} g</b>{f" ({measure})" if measure else ""}</p><table><thead><tr><th></th><th>100 g</th><th>Porção</th></tr></thead><tbody>{''.join(rows)}</tbody></table><p class='note'>Valores estimados a partir da composição cadastrada, salvo quando o produto estiver marcado como aprovado.</p></section>{frontal_html}{alerg_html}{f"<section><h2>Ingredientes cadastrados</h2><p>{ingredients_text}</p></section>" if ingredients else ""}</main></body></html>"""
+</style></head><body><main><header><div class='brand'>{store_name}</div><h1>{product_name}</h1><span class='status'>{status}</span></header><section><h2>Informação nutricional</h2>{porcao_html}<table><thead>{thead}</thead><tbody>{''.join(rows)}</tbody></table>{nota}</section>{frontal_html}{alerg_html}{f"<section><h2>Ingredientes</h2><p>{ingredients_text}</p></section>" if ingredients else ""}</main></body></html>"""
     return HttpResponse(html)

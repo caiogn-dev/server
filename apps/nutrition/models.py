@@ -251,6 +251,11 @@ class ProductNutritionProfile(BaseModel):
     serving_size_g = models.DecimalField(max_digits=10, decimal_places=3, default=100)
     household_measure = models.CharField(max_length=100, blank=True)
     manual_override_reason = models.TextField(blank=True)
+    # Tabela PRONTA entregue pela loja (laudo/nutricionista), impressa como veio:
+    # {porcoes_por_embalagem, porcao, coluna_porcao, linhas: {campo: [100g, porção, %VD]},
+    #  ingredientes, declaracoes: ["ZERO LACTOSE", ...]}. Recalcular a porção a partir
+    # do valor por 100 g diverge do declarado (209 kcal × 3,3 = 689,7; o PDF diz 691).
+    tabela_declarada = models.JSONField(default=dict, blank=True)
     is_print_approved = models.BooleanField(default=False, db_index=True)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL, related_name="nutrition_profiles_approved")
     approved_at = models.DateTimeField(null=True, blank=True)

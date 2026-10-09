@@ -159,7 +159,27 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
     def get_calculation(self, obj):
         return _calculo(obj.recipe) if obj.recipe_id else None
 
+    def validate_tabela_declarada(self, tabela):
+        """Tabela pronta: cada nutriente com as três colunas (100 g, porção, %VD)."""
+        if not tabela:
+            return {}
+        linhas = tabela.get("linhas") if isinstance(tabela, dict) else None
+        if not isinstance(linhas, dict) or not linhas:
+            raise serializers.ValidationError("Informe as linhas da tabela.")
+        desconhecidos = set(linhas) - set(NUTRIENT_FIELDS)
+        if desconhecidos:
+            raise serializers.ValidationError(f"Nutriente desconhecido: {', '.join(sorted(desconhecidos))}.")
+        for campo, valores in linhas.items():
+            if not isinstance(valores, list) or len(valores) != 3:
+                raise serializers.ValidationError(f"{campo}: são três colunas (100 g, porção, %VD).")
+        declaracoes = tabela.get("declaracoes", [])
+        if not isinstance(declaracoes, list) or not all(isinstance(d, str) for d in declaracoes):
+            raise serializers.ValidationError("Declarações são uma lista de frases.")
+        return tabela
+
     def get_ingredientes_declaracao(self, obj):
+        if (obj.tabela_declarada or {}).get("ingredientes"):
+            return obj.tabela_declarada["ingredientes"]
         if not obj.recipe_id:
             return ""
         itens = sorted(obj.recipe.items.select_related("ingredient"), key=lambda i: -(i.quantity_g or 0))
@@ -169,6 +189,8 @@ class ProductNutritionProfileSerializer(serializers.ModelSerializer):
         return ", ".join([nomes[0][:1].upper() + nomes[0][1:]] + [n[:1].lower() + n[1:] for n in nomes[1:]])
 
     def get_porcoes_por_embalagem(self, obj):
+        if (obj.tabela_declarada or {}).get("porcoes_por_embalagem"):
+            return obj.tabela_declarada["porcoes_por_embalagem"]
         return obj.recipe.servings_per_container if obj.recipe_id else None
 
     def get_custo(self, obj):
