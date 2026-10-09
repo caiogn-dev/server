@@ -48,3 +48,24 @@ class EtiquetaTabelaDeclaradaTest(SimpleTestCase):
 
     def test_campo_peso_sem_tabela_usa_a_porcao_do_perfil(self):
         self.assertEqual(motor.preencher('{peso}', motor.dados_da_etiqueta({'name': 'X', 'servingG': 350})), '350 g')
+
+
+class EstiloLaudoTest(SimpleTestCase):
+    """Quadro no estilo do PDF do nutricionista: título só 1,25x a letra das
+    linhas (no padrão ele ocupa 11% da altura e sai enorme)."""
+    def _layout(self, estilo):
+        return motor.validar_layout({'etiqueta': {'largura': 100, 'altura': 80}, 'papel': {'colunas': 1},
+            'elementos': [{'id': 't', 'tipo': 'tabela', 'x': 15, 'y': 5, 'w': 70, 'h': 44, 'estilo': estilo}]})
+
+    def test_estilo_laudo_e_aceito_e_preservado(self):
+        self.assertEqual(self._layout('laudo')['elementos'][0]['estilo'], 'laudo')
+        self.assertEqual(self._layout(None)['elementos'][0]['estilo'], 'padrao')
+
+    def test_estilo_desconhecido_e_recusado(self):
+        with self.assertRaises(motor.LayoutInvalido):
+            self._layout('neon')
+
+    def test_laudo_desenha_a_tabela_declarada(self):
+        img = motor.render_bitmap(self._layout('laudo'), [ET])
+        self.assertEqual(img.size, (800, 640))
+        self.assertLess(sum(img.crop((120, 40, 680, 392)).getdata()) / (560 * 352), 255)  # tem tinta

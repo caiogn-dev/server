@@ -39,6 +39,8 @@ FONTES = {
     'mono': ('LiberationMono-Regular.ttf', 'LiberationMono-Bold.ttf'),
 }
 AJUSTES = ('quebrar', 'encolher')
+# 'laudo' = proporções do PDF do nutricionista (título 1,25x as linhas, colunas estreitas).
+ESTILOS_DE_TABELA = ('padrao', 'laudo')
 DIR_FONTES = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'fonts')
 
 
@@ -221,6 +223,10 @@ def validar_layout(layout) -> dict:
             if fonte not in FONTES:
                 raise LayoutInvalido(f'elemento {i}: fonte desconhecida')
             n['fonte'] = fonte
+            estilo = e.get('estilo') or 'padrao'
+            if estilo not in ESTILOS_DE_TABELA:
+                raise LayoutInvalido(f'elemento {i}: estilo de tabela desconhecido')
+            n['estilo'] = estilo
         saida.append(n)
     return {
         'versao': 1,
@@ -422,9 +428,64 @@ def cabecalho_da_tabela(et: dict) -> tuple:
     return (f'Porções por embalagem: {porcoes_txt}', f'Porção: {porcao}')
 
 
+def _desenhar_tabela_laudo(draw, e, dados):
+    """Quadro como o PDF do nutricionista (TCPDF, medido em 09/10): uma letra só
+    para porções, cabeçalho e linhas; título 1,25x; rodapé 0,76x; três colunas
+    de valor estreitas e iguais (13% da largura cada)."""
+    x0, y0, w, h = mm(e['x']), mm(e['y']), mm(e['w']), mm(e['h'])
+    familia = e.get('fonte', 'sans')
+    draw.rectangle([x0, y0, x0 + w - 1, y0 + h - 1], outline=0, width=max(2, mm(0.3)))
+    pad = mm(1.0)
+    # Proporções da altura no PDF: título 8%, porções 12%, barra 2,5%, cabeçalho 6,4%,
+    # 10 linhas 64,5%, rodapé 6,6%.
+    h_titulo = int(h * 0.08); h_porc = int(h * 0.12); h_barra = max(3, int(h * 0.025))
+    h_cab = int(h * 0.064); h_rod = int(h * 0.066)
+    h_linha = (h - 2 * pad - h_titulo - h_porc - h_barra - h_cab - h_rod) // len(_LINHAS_ANVISA)
+    px = max(5, int(h_linha * 0.585))
+    def texto(tx, ty, s_, tam, negrito=False, alinhar='L', largura=None):
+        f = _fonte(tam, negrito, familia)
+        lw = f.getlength(s_)
+        if alinhar == 'C' and largura:
+            tx = tx + (largura - lw) / 2
+        draw.text((tx, ty), s_, font=f, fill=0)
+    y = y0 + pad
+    px_t = int(px * 1.25)
+    texto(x0 + pad, y + (h_titulo - px_t) // 2, 'INFORMAÇÃO NUTRICIONAL', px_t, True, 'C', w - 2 * pad)
+    y += h_titulo
+    draw.rectangle([x0 + pad, y, x0 + w - pad, y + 1], fill=0)
+    l1, l2 = cabecalho_da_tabela(dados)
+    texto(x0 + pad * 2, y + int(h_porc * 0.12), l1, px)
+    texto(x0 + pad * 2, y + int(h_porc * 0.12) + int(px * 1.2), l2, px)
+    y += h_porc
+    draw.rectangle([x0 + pad, y, x0 + w - pad, y + h_barra], fill=0)
+    y += h_barra
+    t = _declarada(dados)
+    coluna = (t.get('colunaPorcao') if t else None) or f"{_fmt(dados.get('servingG', 100), 'g')} g"
+    c_val = int((w - 2 * pad) * 0.13)
+    f_cab = _fonte(px, True, familia)
+    c_val = max(c_val, int(max(f_cab.getlength(x) for x in ('100 g', coluna, '%VD*')) + mm(1)))
+    x_c3 = x0 + w - pad - c_val; x_c2 = x_c3 - c_val; x_c1 = x_c2 - c_val
+    for xx, cab in ((x_c1, '100 g'), (x_c2, coluna), (x_c3, '%VD*')):
+        draw.rectangle([xx, y, xx, y + h_cab], fill=0)
+        texto(xx, y + (h_cab - px) // 2, cab, px, True, 'C', c_val)
+    y += h_cab
+    for rotulo, v100, vporc, pct, recuo in linhas_da_tabela(dados):
+        draw.rectangle([x0 + pad, y, x0 + w - pad, y], fill=0)
+        ty = y + (h_linha - px) // 2
+        texto(x0 + pad * 2 + recuo * mm(1.2), ty, rotulo, px)
+        for xx, v in ((x_c1, v100), (x_c2, vporc), (x_c3, pct)):
+            draw.rectangle([xx, y, xx, y + h_linha], fill=0)
+            texto(xx, ty, v, px, False, 'C', c_val)
+        y += h_linha
+    draw.rectangle([x0 + pad, y, x0 + w - pad, y], fill=0)
+    texto(x0 + pad * 2, y + (h_rod - int(px * 0.76)) // 2, '*Percentual de valores diários fornecidos pela porção.', int(px * 0.76))
+
+
 def _desenhar_tabela(draw, e, dados):
     """Tabela no padrão da ANVISA dentro da caixa (x, y, w, h em mm): moldura,
     título, porções, barra grossa, cabeçalho de colunas, 10 linhas, rodapé."""
+    if e.get('estilo') == 'laudo':
+        return _desenhar_tabela_laudo(draw, e, dados)
     x0, y0, w, h = mm(e['x']), mm(e['y']), mm(e['w']), mm(e['h'])
     familia = e.get('fonte', 'sans')
     draw.rectangle([x0, y0, x0 + w - 1, y0 + h - 1], outline=0, width=max(2, mm(0.4)))
