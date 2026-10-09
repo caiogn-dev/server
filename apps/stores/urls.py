@@ -10,6 +10,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
 
 from .api.views.recuperacao_views import RecuperacaoDeVendasView
+from .api.views.lote_views import StoreLoteViewSet
 from .api.views.informativos_views import InformativosView, InformativoView
 from .api.views import (
     StoreViewSet, StoreIntegrationViewSet, StoreWebhookViewSet,
@@ -242,6 +243,7 @@ router.register(r'bio-links', BioLinkViewSet, basename='bio-link')
 router.register(r'delivery-zones', StoreDeliveryZoneViewSet, basename='delivery-zone')
 router.register(r'print-agents', StorePrintAgentViewSet, basename='print-agent')
 router.register(r'print-jobs', StorePrintJobViewSet, basename='print-job')
+router.register(r'lotes', StoreLoteViewSet, basename='lote')
 # Admin viewset for product types (full CRUD)
 router.register(r'admin/product-types', StoreProductTypeAdminViewSet, basename='admin-product-type')
 

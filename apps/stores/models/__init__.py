@@ -74,8 +74,10 @@ from .ifood import StoreIfoodIntegration
 
 
 from .salada_salva import SaladaSalva
+from .lote import StoreLote
 
 __all__ = [
+    'StoreLote',
     'StoreBanner', 'MAXIMO_DE_BANNERS',
     'StoreIfoodIntegration',
     # Base
