@@ -41,3 +41,10 @@ class EtiquetaTabelaDeclaradaTest(SimpleTestCase):
         self.assertEqual(energia[1:4], ('209', '691', '35'))
         self.assertEqual(motor.cabecalho_da_tabela(ET), ('Porções por embalagem: 1', 'Porção: 330 g (1 marmita)'))
         self.assertIn('CONTÉM GLÚTEN', motor.preencher('{allergens}', motor.dados_da_etiqueta(ET)))
+
+    def test_campo_peso_vem_da_porcao_declarada(self):
+        # Gramagem da marmita no layout desenhado: {peso} → "330 g".
+        self.assertEqual(motor.preencher('Peso líquido: {peso}', motor.dados_da_etiqueta(ET)), 'Peso líquido: 330 g')
+
+    def test_campo_peso_sem_tabela_usa_a_porcao_do_perfil(self):
+        self.assertEqual(motor.preencher('{peso}', motor.dados_da_etiqueta({'name': 'X', 'servingG': 350})), '350 g')

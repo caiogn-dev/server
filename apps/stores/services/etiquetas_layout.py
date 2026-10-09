@@ -361,11 +361,18 @@ def _declarada(et: dict) -> dict:
 
 def dados_da_etiqueta(et: dict) -> dict:
     """Campos de texto do layout. Com tabela declarada, {allergens} recebe as
-    declarações dela (ZERO LACTOSE, CONTÉM GLÚTEN…)."""
+    declarações dela (ZERO LACTOSE, CONTÉM GLÚTEN…), e {peso} a gramagem."""
     t = _declarada(et)
-    if t and t.get('declaracoes') and not et.get('allergens'):
-        return dict(et, allergens='\n'.join(str(d) for d in t['declaracoes']))
-    return et
+    dados = dict(et or {})
+    if t and t.get('declaracoes') and not dados.get('allergens'):
+        dados['allergens'] = '\n'.join(str(d) for d in t['declaracoes'])
+    # {peso}: gramagem da embalagem — a coluna da porção do laudo ("330 g") ou a porção do perfil.
+    if not dados.get('peso'):
+        if t and t.get('colunaPorcao'):
+            dados['peso'] = str(t['colunaPorcao'])
+        elif dados.get('servingG') not in (None, ''):
+            dados['peso'] = f"{_fmt(dados['servingG'], 'g')} g"
+    return dados
 
 
 def linhas_da_tabela(et: dict) -> list:
