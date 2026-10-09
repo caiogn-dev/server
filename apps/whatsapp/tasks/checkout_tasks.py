@@ -84,11 +84,9 @@ def finalize_whatsapp_order_task(
                 delivery_fee_override=addr_info.get('fee'),
                 addr_info=addr_info,
             )
-            if not (result.response_text or '').startswith(('❌ Erro ao criar pedido', '❌ Loja')):
-                try:
-                    session_manager.clear_pending_order_items()
-                except Exception as exc:
-                    logger.warning('[finalize_task] Erro ao limpar itens pendentes: %s', exc)
+            # Itens pendentes: o sucesso já limpa em `_fechar_checkout`. Limpar
+            # aqui apagava o carrinho de pedido que NÃO nasceu (estoque, 09/10
+            # Juliana) e o toque seguinte em Cartão caía num pedido antigo.
     except Exception as exc:
         logger.exception('[finalize_task] Finalização falhou (tentativa %s)', self.request.retries)
         if lock_key:

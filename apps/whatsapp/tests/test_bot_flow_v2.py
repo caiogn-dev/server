@@ -262,7 +262,7 @@ class SchedulingTest(_Base):
         with self._close_store():
             self._click('sched_2026-07-16_11:00')
             with patch(
-                'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.delay'
+                'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.apply_async'
             ) as delay:
                 result = self._click('pay_pix')
         delay.assert_called_once()
@@ -358,7 +358,7 @@ class FewerClicksTest(_Base):
         self._seed_address()
         self._click('checkout_now')
         with patch(
-            'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.delay'
+            'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.apply_async'
         ) as delay:
             result = self._click('pay_pix')
         delay.assert_called_once()

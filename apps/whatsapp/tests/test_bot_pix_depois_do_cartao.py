@@ -145,12 +145,12 @@ class PixDigitadoNaObservacaoTest(_Base):
         sm.save_pending_order_items([{'product_id': str(self.produto.id), 'quantity': 1, 'price': 44.99}])
         sm.set_waiting_for_notes(True)
 
-        with patch('apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.delay') as delay:
+        with patch('apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.apply_async') as delay:
             resultado = h._handle_notes_input('Pode ser pix')
 
         self.assertNotIn('Anotado', resultado.response_text or str(resultado.interactive_data or ''))
         delay.assert_called_once()
-        self.assertEqual(delay.call_args.kwargs['payment_method'], 'pix')
+        self.assertEqual(delay.call_args.kwargs['kwargs']['payment_method'], 'pix')
 
 
 class RegiaoRecusouNoBotTest(_Base):

@@ -1,7 +1,9 @@
 import logging
+from datetime import timedelta
 from typing import Any, Dict, List
 
 from django.core.cache import cache
+from django.utils import timezone
 
 from apps.stores.models import StoreProduct
 
@@ -704,8 +706,14 @@ class InteractiveReplyHandler(IntentHandler):
                 pedido = self._pedido_esperando_pagamento()
                 if pedido is not None:
                     return self._cobrar_por_pix(pedido)
+            # Só pedido de AGORA: sem janela, o pedido entregue de 8 dias atrás
+            # virou "seu pedido já está pago" (Juliana, 09/10).
             recente = self._pedido_recente_do_cliente()
-            if recente is not None and recente.payment_status == 'paid':
+            if (
+                recente is not None
+                and recente.payment_status == 'paid'
+                and recente.created_at >= timezone.now() - timedelta(hours=6)
+            ):
                 return HandlerResult.text(
                     f"Seu pedido *#{recente.order_number}* já está pago ✅ — "
                     "não precisa pagar de novo. 🙏"
@@ -733,12 +741,17 @@ class InteractiveReplyHandler(IntentHandler):
         # recliques até o task terminar (ele libera no finally).
         try:
             from apps.whatsapp.tasks.checkout_tasks import finalize_whatsapp_order_task
-            finalize_whatsapp_order_task.delay(
-                account_id=str(self.account.id),
-                conversation_id=str(self.conversation.id),
-                profile_id=str(self.company_profile.id) if self.company_profile else None,
-                payment_method=payment_method,
-                lock_key=lock_key,
+            # Atraso curto: a tarefa leva <1 s e o resultado (ex.: item
+            # esgotado) chegava ANTES do "Pedido recebido" deste ack.
+            finalize_whatsapp_order_task.apply_async(
+                kwargs=dict(
+                    account_id=str(self.account.id),
+                    conversation_id=str(self.conversation.id),
+                    profile_id=str(self.company_profile.id) if self.company_profile else None,
+                    payment_method=payment_method,
+                    lock_key=lock_key,
+                ),
+                countdown=2,
             )
         except Exception:
             logger.exception('[InteractiveReplyHandler] Falha ao enfileirar — finalizando síncrono')
@@ -758,11 +771,6 @@ class InteractiveReplyHandler(IntentHandler):
             finally:
                 if lock_key:
                     cache.delete(lock_key)
-            if not (result.response_text and result.response_text.startswith(('❌ Erro ao criar pedido', '❌ Loja'))):
-                try:
-                    session_manager.clear_pending_order_items()
-                except Exception as exc:
-                    logger.warning('[InteractiveReplyHandler] Erro ao limpar itens pendentes: %s', exc)
             return result
 
         ack_by_method = {

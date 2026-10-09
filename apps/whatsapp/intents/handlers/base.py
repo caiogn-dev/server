@@ -834,6 +834,15 @@ class IntentHandler:
                     f"⚠️ {error}\n\nQuer ajustar o pedido? Digite *cardápio* ou fale com um atendente. 🙏"
                 )
             if 'Erros de estoque' in error or 'fora de estoque' in error.lower() or 'estoque insuficiente' in error.lower():
+                import re
+                esgotados = list(dict.fromkeys(re.findall(r"'product_name': '([^']+)'", error)))
+                if esgotados:
+                    lista = '\n'.join(f'• {nome}' for nome in esgotados)
+                    return HandlerResult.text(
+                        f"⚠️ *Acabou por agora:*\n{lista}\n\n"
+                        "Seu pedido ainda não foi feito e nada foi cobrado. "
+                        "Digite *cardápio* para trocar o item ou fale com um atendente. 🙏"
+                    )
                 return HandlerResult.text(
                     "⚠️ *Um ou mais itens do seu pedido estão indisponíveis no momento.*\n\n"
                     "Por favor, revise seu pedido ou fale com um atendente para verificar o cardápio atualizado. 🙏"

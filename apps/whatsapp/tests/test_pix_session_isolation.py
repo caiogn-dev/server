@@ -93,7 +93,7 @@ class PixIdempotencyScopeTest(_Base):
         h = self._handler()
         h.handle({'reply_id': f'product_{self.product.id}', 'reply_title': '', 'original_message': ''})
         with patch(
-            'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.delay'
+            'apps.whatsapp.tasks.checkout_tasks.finalize_whatsapp_order_task.apply_async'
         ) as delay:
             result = h.handle({'reply_id': 'pay_pix', 'reply_title': '', 'original_message': ''})
         delay.assert_called_once()
@@ -141,7 +141,13 @@ class AsyncCheckoutTaskTest(_Base):
         self._seed_cart()
         cache.set('lock-teste', '1', timeout=60)
         fake = HandlerResult.buttons(body='PIXNOVO123', buttons=[{'id': 'pix_copy', 'title': 'COPIAR CODIGO PIX'}])
-        with patch.object(InteractiveReplyHandler, '_finalize_order', return_value=fake) as fin, \
+        # Pedido que nasce fecha o checkout (e limpa os itens) dentro do
+        # próprio `_finalize_order` — a tarefa não limpa mais por conta própria.
+        def _sucesso(handler, *args, **kwargs):
+            handler._fechar_checkout()
+            return fake
+
+        with patch.object(InteractiveReplyHandler, '_finalize_order', autospec=True, side_effect=_sucesso) as fin, \
              patch('apps.whatsapp.services.message_service.MessageService.send_interactive_buttons') as send_btn:
             finalize_whatsapp_order_task.apply(kwargs=dict(
                 account_id=str(self.account.id),
