@@ -141,6 +141,12 @@ def _produto(etiquetas, cfg) -> str:
 
 # ---------------------------------------------------------------- nutrição 100 × 80
 
+def _declarada(et: dict) -> dict:
+    """Tabela pronta da loja (laudo), quando o painel a mandou: sai como veio."""
+    t = (et or {}).get('declarada')
+    return t if isinstance(t, dict) and isinstance(t.get('linhas'), dict) and t['linhas'] else {}
+
+
 def _nutricao(etiquetas) -> str:
     W, H = 100, 80
     x0 = mm(4)
@@ -167,13 +173,17 @@ def _nutricao(etiquetas) -> str:
         medida = et.get('householdMeasure')
         if medida:
             porcao += f' ({medida})'
-        p.append(_campo(x0, y, 18, f'Porções por embalagem: -  |  Porção: {porcao}', largura=largura)); y += 22
+        declarada = _declarada(et)
+        if declarada:
+            porcao = declarada.get('porcao') or porcao
+        porcoes = (declarada.get('porcoesPorEmbalagem') if declarada else None) or '-'
+        p.append(_campo(x0, y, 18, f'Porções por embalagem: {porcoes}  |  Porção: {porcao}', largura=largura)); y += 22
         p.append(f'^FO{x0},{y}^GB{largura},2,2^FS'); y += 6
 
         c_nome, c1, c2, c3 = x0, x0 + mm(48), x0 + mm(63), x0 + mm(78)
         col_w = mm(14)
         cab = (_campo(c1, y, 16, '100 g', largura=col_w, alinhar='R')
-               + _campo(c2, y, 16, f"{numero(et.get('servingG', 100), 'g')} g", largura=col_w, alinhar='R')
+               + _campo(c2, y, 16, (declarada.get('colunaPorcao') if declarada else None) or f"{numero(et.get('servingG', 100), 'g')} g", largura=col_w, alinhar='R')
                + _campo(c3, y, 16, '%VD*', largura=col_w, alinhar='R'))
         p.append(cab); y += 20
         per100 = et.get('per100g') or {}
@@ -183,6 +193,16 @@ def _nutricao(etiquetas) -> str:
         except (TypeError, ValueError):
             fator = 1.0
         for chave, nome, unidade, vd in LINHAS_NUTRICIONAIS:
+            if declarada:
+                # Tabela do laudo: texto por texto, sem recalcular.
+                cem, na_porcao_txt, vd_txt = (list(declarada['linhas'].get(chave) or []) + ['', '', ''])[:3]
+                linha = (_campo(c_nome, y, 17, f'{nome} ({unidade})')
+                         + _campo(c1, y, 17, str(cem) or '-', largura=col_w, alinhar='R')
+                         + _campo(c2, y, 17, str(na_porcao_txt) or '-', largura=col_w, alinhar='R')
+                         + _campo(c3, y, 17, str(vd_txt), largura=col_w, alinhar='R')
+                         + f'^FO{x0},{y + 20}^GB{largura},1,1^FS')
+                p.append(linha); y += 22
+                continue
             base = per100.get(chave)
             if porcao_g is not None:
                 na_porcao = porcao_g.get(chave)
@@ -208,6 +228,8 @@ def _nutricao(etiquetas) -> str:
             p.append(_campo(x0, y, 15, f"INGREDIENTES: {et['ingredients']}", largura=texto_largura, linhas=3)); y += 3 * 17
         if et.get('allergens'):
             p.append(_campo(x0, y, 16, str(et['allergens']).upper(), largura=texto_largura, linhas=2)); y += 2 * 18
+        elif declarada and declarada.get('declaracoes'):
+            p.append(_campo(x0, y, 16, '  '.join(str(d) for d in declarada['declaracoes']).upper(), largura=texto_largura, linhas=2)); y += 2 * 18
         if et.get('publicUrl'):
             p.append(_qr(qr_x, mm(H) - mm(4) - mm(14), et['publicUrl'], 4))
         p.append('^XZ')

@@ -353,8 +353,30 @@ def _fmt(v, unidade):
     return f'{f:.1f}'.rstrip('0').rstrip('.').replace('.', ',')
 
 
+def _declarada(et: dict) -> dict:
+    """Tabela pronta da loja (laudo), quando o painel a mandou: sai como veio."""
+    t = (et or {}).get('declarada')
+    return t if isinstance(t, dict) and isinstance(t.get('linhas'), dict) and t['linhas'] else {}
+
+
+def dados_da_etiqueta(et: dict) -> dict:
+    """Campos de texto do layout. Com tabela declarada, {allergens} recebe as
+    declarações dela (ZERO LACTOSE, CONTÉM GLÚTEN…)."""
+    t = _declarada(et)
+    if t and t.get('declaracoes') and not et.get('allergens'):
+        return dict(et, allergens='\n'.join(str(d) for d in t['declaracoes']))
+    return et
+
+
 def linhas_da_tabela(et: dict) -> list:
     """[(rótulo, por 100 g, por porção, %VD, recuo)] com travessão onde não há valor."""
+    t = _declarada(et)
+    if t:
+        saida = []
+        for chave, rotulo, _unidade, _vd, recuo in _LINHAS_ANVISA:
+            cem, porcao, vd = (list(t['linhas'].get(chave) or []) + ['', '', ''])[:3]
+            saida.append((rotulo, str(cem) or '-', str(porcao) or '-', str(vd), recuo))
+        return saida
     per100 = et.get('per100g') or {}
     porcao = et.get('perServing') or {}
     try:
@@ -381,6 +403,10 @@ def linhas_da_tabela(et: dict) -> list:
 
 
 def cabecalho_da_tabela(et: dict) -> tuple:
+    t = _declarada(et)
+    if t:
+        return (f"Porções por embalagem: {t.get('porcoesPorEmbalagem') or '-'}",
+                f"Porção: {t.get('porcao') or ''}")
     porcoes = et.get('servingsPerContainer')
     porcoes_txt = _fmt(porcoes, 'g') if porcoes not in (None, '') else '-'
     porcao = f"{_fmt(et.get('servingG', 100), 'g')} g"
@@ -572,7 +598,7 @@ def render_bitmap(layout, etiquetas, *, elementos=None, marcadores=False) -> Ima
         dados = [{'coluna': i + 1} for i in range(colunas)]
     papel = Image.new('1', (mm(lay['papel']['largura']), mm(lay['etiqueta']['altura'])), 1)
     for col, et in enumerate(dados):
-        papel.paste(_desenhar_etiqueta(lay, dict(et, coluna=col + 1), elementos, marcadores),
+        papel.paste(_desenhar_etiqueta(lay, dict(dados_da_etiqueta(et), coluna=col + 1), elementos, marcadores),
                     (mm(_origem_x(lay, margem, col)), 0))
     return papel
 
