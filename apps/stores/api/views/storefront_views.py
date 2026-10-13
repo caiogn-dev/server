@@ -33,6 +33,10 @@ class PublicWriteThrottle(AnonRateThrottle):
     """60/min for cart mutations — protects against cart-spam, allows normal use."""
     scope = 'public_write'
 
+class FreteThrottle(AnonRateThrottle):
+    """60/min por IP só para cotação de frete — não divide balde com o carrinho."""
+    scope = 'frete'
+
 class CheckoutThrottle(AnonRateThrottle):
     """20/min per IP — protects against bot ordering while allowing legitimate retries."""
     scope = 'checkout'
@@ -1520,7 +1524,7 @@ def _coords_from_maps_url(url):
 class StoreDeliveryFeeView(APIView):
     """Calculate delivery fee endpoint."""
     permission_classes = [permissions.AllowAny]
-    throttle_classes = [PublicWriteThrottle]
+    throttle_classes = [FreteThrottle]
 
     def _subtotal_do_carrinho(self, request, store):
         """Subtotal do carrinho DESTE visitante, para a promoção de frete grátis.

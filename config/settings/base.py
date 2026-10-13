@@ -228,6 +228,9 @@ REST_FRAMEWORK = {
         'public_write': '60/minute',
         # Checkout: proteção anti-bot real — 20/min por IP (antes era 5, muito restritivo)
         'checkout': '20/minute',
+        # Cotação de frete: separada do carrinho (public_write), senão cotar
+        # demais trava o "adicionar à sacola" (13/10).
+        'frete': '60/minute',
         # Auth: OTP brute-force protection — manter restritivo
         'auth': '10/minute',
         # Lead capture form — low rate to prevent spam
@@ -553,6 +556,15 @@ RATE_LIMIT_WHITELIST_PATHS = [
     path.strip() for path in _RATE_LIMIT_WHITELIST.split(',') if path.strip()
 ]
 RATE_LIMIT_SCOPED_PATHS = [
+    # Cotação de frete em balde próprio (13/10): um laço no checkout mandou ~8
+    # cotações/s, estourou o balde global de 100/min do IP e travou sacola,
+    # perfil e carteira — de um restaurante inteiro atrás do mesmo IP.
+    {
+        'contains': '/delivery-fee/',
+        'requests': int(os.environ.get('RATE_LIMIT_FRETE_REQUESTS', '60')),
+        'window': int(os.environ.get('RATE_LIMIT_FRETE_WINDOW', '60')),
+        'key_by': 'ip',
+    },
     {
         'prefix': '/api/v1/stores/print/',
         'requests': int(os.environ.get('RATE_LIMIT_PRINT_REQUESTS', '1200')),

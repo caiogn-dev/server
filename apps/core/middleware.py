@@ -369,8 +369,13 @@ class RateLimitMiddleware:
 
     def _handle_scoped_limit(self, request, client_ip):
         for rule in self.scoped_limits:
-            prefix = rule.get('prefix')
-            if not prefix or not request.path.startswith(prefix):
+            # `contains` serve para rota com o slug da loja no meio
+            # (/stores/{slug}/delivery-fee/), que `prefix` não alcança.
+            prefix = rule.get('prefix') or rule.get('contains')
+            if rule.get('contains'):
+                if rule['contains'] not in request.path:
+                    continue
+            elif not prefix or not request.path.startswith(prefix):
                 continue
 
             max_requests = int(rule.get('requests') or self.max_requests)
