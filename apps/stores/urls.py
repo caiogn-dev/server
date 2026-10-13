@@ -12,6 +12,7 @@ from rest_framework_nested import routers as nested_routers
 from .api.views.recuperacao_views import RecuperacaoDeVendasView
 from .api.views.lote_views import StoreLoteViewSet
 from .api.views.informativos_views import InformativosView, InformativoView
+from .api.views.exibicao_views import ExibicaoDoCardapioView
 from .api.views import (
     StoreViewSet, StoreIntegrationViewSet, StoreWebhookViewSet,
     StoreCategoryViewSet, StoreProductViewSet, StoreProductVariantViewSet,
@@ -394,6 +395,7 @@ urlpatterns = [
     # tela de aparência carrega antes de qualquer escolha de loja).
     path('templates/', TemplateCatalogView.as_view(), name='template-catalog'),
     # Informativos (avisos no cardápio) — antes das rotas por loja.
+    path('exibicao-do-cardapio/', ExibicaoDoCardapioView.as_view(), name='exibicao-do-cardapio'),
     path('informativos/', InformativosView.as_view(), name='informativos'),
     path('informativos/<str:informativo_id>/', InformativoView.as_view(), name='informativo'),
     # ==========================================================================

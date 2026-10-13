@@ -24,6 +24,17 @@ def invalidate_store_slug_cache(sender, instance, **kwargs):
         logger.warning("Failed to invalidate store cache for %s: %s", instance.slug, e)
 
 
+@receiver(pre_save, sender='stores.StoreProduct')
+@receiver(pre_save, sender='stores.StoreCombo')
+@receiver(pre_save, sender='stores.StoreProductVariant')
+@receiver(pre_save, sender='stores.StoreCategory')
+@receiver(pre_save, sender='stores.StoreProductType')
+def padronizar_foto_do_cardapio(sender, instance, **kwargs):
+    """Foto nova vira WebP ≤1280px antes de gravar (services/foto_do_cardapio)."""
+    from apps.stores.services.foto_do_cardapio import normalizar_instancia
+    normalizar_instancia(instance)
+
+
 @receiver(post_save, sender='stores.StoreProduct')
 @receiver(post_delete, sender='stores.StoreProduct')
 def invalidate_catalog_on_product_change(sender, instance, **kwargs):

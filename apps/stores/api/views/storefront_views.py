@@ -617,7 +617,10 @@ class StoreAppConfigView(APIView):
         metadata = store.metadata or {}
 
         from apps.stores.services.informativos import no_ar_para_a_vitrine
+        from apps.stores.services.exibicao_do_cardapio import ler as exibicao_do_cardapio
         return Response({
+            # Como o produto aparece (limite da descrição, foto, estoque...).
+            'exibicao': exibicao_do_cardapio(store),
             # Avisos da loja no ar agora (só título e texto).
             'informativos': no_ar_para_a_vitrine(store),
             'auth': {
