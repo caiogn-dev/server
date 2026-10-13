@@ -21,12 +21,17 @@ PADRAO = {
     # Vazio = o texto de sempre da tela de pedido concluído.
     'agradecimento_titulo': '',
     'agradecimento_subtitulo': '',
+    # Topo do cardápio: formato e alinhamento do logo ('padrao' = do template).
+    'logo_formato': 'padrao',
+    'logo_alinhamento': 'padrao',
 }
 
 ESCOLHAS = {
     'foto_posicao': ('padrao', 'topo', 'esquerda', 'direita'),
     'foto_encaixe': ('cortar', 'inteira'),
     'foto_proporcao': ('padrao', 'quadrada', 'retangular', 'paisagem'),
+    'logo_formato': ('padrao', 'redondo', 'quadrado'),
+    'logo_alinhamento': ('padrao', 'esquerda', 'centro'),
 }
 LIMITE_DESCRICAO_MAX = 500
 TEXTOS_MAX = {'agradecimento_titulo': 60, 'agradecimento_subtitulo': 160}

@@ -55,6 +55,8 @@ class TestPainel:
         ('foto_posicao', 'em_cima_do_preco'),
         ('foto_encaixe', 'esticar'),
         ('foto_proporcao', '21:9'),
+        ('logo_formato', 'estrela'),
+        ('logo_alinhamento', 'direita'),
         ('descricao_limite', -1),
         ('descricao_limite', 5000),
         ('descricao_limite', 'muito'),
