@@ -61,6 +61,7 @@ class TestPainel:
         ('descricao_limite', 5000),
         ('descricao_limite', 'muito'),
         ('mostrar_esgotados', 'talvez'),
+        ('mostrar_peca_novamente', 'sim'),
         ('agradecimento_titulo', 'x' * 61),
         ('agradecimento_subtitulo', 'x' * 161),
     ])

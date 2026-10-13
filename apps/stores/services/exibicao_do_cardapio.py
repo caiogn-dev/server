@@ -18,6 +18,8 @@ PADRAO = {
     'foto_proporcao': 'padrao',
     'mostrar_estoque_baixo': True,
     'mostrar_esgotados': True,
+    # Faixa com o que o cliente já pediu neste aparelho (60% dos pedidos do site da Cê vêm de quem volta).
+    'mostrar_peca_novamente': True,
     # Vazio = o texto de sempre da tela de pedido concluído.
     'agradecimento_titulo': '',
     'agradecimento_subtitulo': '',
@@ -35,7 +37,7 @@ ESCOLHAS = {
 }
 LIMITE_DESCRICAO_MAX = 500
 TEXTOS_MAX = {'agradecimento_titulo': 60, 'agradecimento_subtitulo': 160}
-BOOLEANOS = ('mostrar_estoque_baixo', 'mostrar_esgotados')
+BOOLEANOS = ('mostrar_estoque_baixo', 'mostrar_esgotados', 'mostrar_peca_novamente')
 
 
 class ExibicaoInvalida(ValueError):
