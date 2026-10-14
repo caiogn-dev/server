@@ -90,3 +90,24 @@ class TestAgora:
     def test_sem_horario_cadastrado_nao_inventa(self):
         texto = texto_de_agora(_loja(operating_hours={}), SEXTA_20H)
         assert texto == ''
+
+
+# ─── Prazo de entrega (Enna, 14/10) ──────────────────────────────────────────
+# Ela avisou "vou entrar em reunião às 13:00" às 12:40. O agente respondeu
+# "fecha agora pra garantir que chegue antes das 13:00 — o preparo leva uns 40
+# minutos". 40 min de preparo depois das 12:40 não chega às 13:00: a promessa
+# era impossível pela própria conta (o pedido saiu às 12:58).
+from apps.agents.services.contexto_da_loja import texto_do_prazo  # noqa: E402
+
+
+def test_prazo_usa_o_preparo_da_loja_e_proibe_prometer_horario():
+    texto = texto_do_prazo(SimpleNamespace(default_prep_minutes=25))
+    assert '25 min' in texto
+    assert 'NUNCA prometa' in texto
+
+
+def test_sem_preparo_cadastrado_nao_estima_minutos():
+    texto = texto_do_prazo(SimpleNamespace(default_prep_minutes=0))
+    import re
+    assert not re.search(r'\d+\s*min', texto)
+    assert 'não estime' in texto

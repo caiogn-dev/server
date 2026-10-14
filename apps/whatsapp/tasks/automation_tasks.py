@@ -452,6 +452,15 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 logger.info("Order %s is pickup — skipping out_for_delivery notification", order_id)
                 return
 
+            # Pagar confirma o pedido: o aviso de pagamento (com itens e total)
+            # já saiu no mesmo segundo. "Pedido confirmado" em seguida era o
+            # mesmo fato dito duas vezes (Enna, 14/10).
+            if new_status == 'confirmed' and order.paid_at and (
+                timezone.now() - order.paid_at
+            ).total_seconds() <= 120:
+                logger.info("Order %s just paid — skipping duplicate confirmed notification", order_id)
+                return
+
             status_to_event = {
                 'received': 'order_received',
                 'processing': 'order_processing',

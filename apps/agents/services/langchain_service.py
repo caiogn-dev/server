@@ -875,6 +875,9 @@ class LangchainService:
                 agora = texto_de_agora(store, _tz.localtime())
                 if agora:
                     context_parts.append(agora)
+            if store:
+                from apps.agents.services.contexto_da_loja import texto_do_prazo
+                context_parts.append(texto_do_prazo(store))
         except Exception as e:
             logger.error(f"[AGENT CONTEXT] Error loading business hours: {e}")
 

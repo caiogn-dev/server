@@ -100,3 +100,21 @@ def texto_de_agora(loja, agora) -> str:
         f"{link_do_cardapio(loja)} e diga que dá para fazer o pedido AGENDADO "
         "para quando a loja abrir."
     )
+
+
+def texto_do_prazo(loja) -> str:
+    """O tempo de preparo real e a regra de não prometer horário de chegada.
+
+    Enna, 14/10: "vou entrar em reunião às 13:00" às 12:40, e o agente disse
+    que dava, com "uns 40 minutos" de preparo — a própria conta não fechava.
+    O pedido saiu às 12:58. O preparo vinha só de passagem; agora vem com a
+    regra junto.
+    """
+    minutos = int(getattr(loja, 'default_prep_minutes', 0) or 0)
+    regra = (
+        "NUNCA prometa horário de chegada. Se o cliente tiver um horário-limite, "
+        "diga a estimativa e que não dá para garantir; ele decide."
+    )
+    if minutos <= 0:
+        return f"⏱️ Tempo de preparo: não cadastrado — não estime minutos. {regra}"
+    return f"⏱️ Tempo de preparo: cerca de {minutos} min, mais o trajeto da entrega. {regra}"
