@@ -35,6 +35,61 @@ class UnifiedDeliveryService:
         lng: Optional[float] = None,
         rain_surcharge: bool = False,
     ) -> Dict[str, Any]:
+        """Taxa de entrega + o PONTO usado para calculá-la.
+
+        A cotação sempre achou o ponto (geocodificando o texto quando não havia
+        pino) e o jogava fora: o pedido da Enna (CE-2610141687, 14/10) saiu sem
+        localização com a distância calculada — 1,51 km — e o entregador sem
+        mapa. Agora o ponto volta com `coordinate_source`: 'pin' quando veio do
+        cliente, 'endereco_escrito' quando saiu do texto (não é pino confirmado).
+        O cálculo em si mora em `_calcular_com_ponto`.
+        """
+        if delivery_method == 'pickup':
+            return UnifiedDeliveryService._calcular_com_ponto(
+                store=store, delivery_method=delivery_method, address_text=address_text,
+                lat=lat, lng=lng, rain_surcharge=rain_surcharge,
+            )
+
+        tinha_pino = lat is not None and lng is not None
+        coords = UnifiedDeliveryService._resolve_coordinates(
+            store=store, address_text=address_text, lat=lat, lng=lng,
+        )
+        if not coords.get('success'):
+            return {
+                'success': False,
+                'fee': None,
+                'reason': coords.get('error', 'Não consegui verificar o endereço'),
+            }
+
+        resultado = UnifiedDeliveryService._calcular_com_ponto(
+            store=store, delivery_method=delivery_method, address_text=address_text,
+            lat=coords['lat'], lng=coords['lng'], rain_surcharge=rain_surcharge,
+        )
+        if not resultado.get('success'):
+            return resultado
+        resultado = {
+            **resultado,
+            'lat': coords['lat'],
+            'lng': coords['lng'],
+            'coordinate_source': 'pin' if tinha_pino else 'endereco_escrito',
+        }
+        # Com o ponto já resolvido o cálculo não geocodifica de novo, então o
+        # endereço formatado do Google só existe aqui.
+        if coords.get('formatted_address') and not resultado.get('raw_address'):
+            resultado['raw_address'] = coords['formatted_address']
+        if coords.get('address_components') and not resultado.get('address_components'):
+            resultado['address_components'] = coords['address_components']
+        return resultado
+
+    @staticmethod
+    def _calcular_com_ponto(
+        store: Store,
+        delivery_method: str = 'delivery',
+        address_text: Optional[str] = None,
+        lat: Optional[float] = None,
+        lng: Optional[float] = None,
+        rain_surcharge: bool = False,
+    ) -> Dict[str, Any]:
         """
         Calcula taxa de entrega com prioridade única.
 

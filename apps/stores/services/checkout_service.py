@@ -551,6 +551,11 @@ class CheckoutService:
             'available': result.get('success', False),
             'message': result.get('reason', 'OK' if result.get('success') else 'Erro'),
             'zone_name': result.get('zone_name', 'Dinâmica'),
+            # O ponto usado no cálculo — o pedido sem pino adota este (ver
+            # _create_order_atomic). Antes este recorte o jogava fora.
+            'lat': result.get('lat'),
+            'lng': result.get('lng'),
+            'coordinate_source': result.get('coordinate_source'),
         }
 
     @staticmethod
@@ -1038,6 +1043,22 @@ class CheckoutService:
         
         if delivery_info.get('fee') is None:
             raise ValueError(delivery_info.get('message') or 'Endereço fora da área de entrega')
+
+        # Endereço sem pino fica com o ponto que a cotação achou no texto. Sem
+        # isto o pedido saía sem localização com a distância calculada (Enna,
+        # CE-2610141687) — e o cadastro do cliente continuava sem ponto, então
+        # o pedido seguinte repetia. Marcado como do texto: não é pino confirmado.
+        if (
+            delivery_payload and delivery_payload.get('method') == 'delivery'
+            and delivery_address.get('lat') is None and delivery_address.get('lng') is None
+            and delivery_info.get('lat') is not None and delivery_info.get('lng') is not None
+            and delivery_info.get('coordinate_source') == 'endereco_escrito'
+        ):
+            delivery_address['lat'] = delivery_info['lat']
+            delivery_address['lng'] = delivery_info['lng']
+            delivery_address['coordinate_source'] = 'endereco_escrito'
+            delivery_address['coordinates_confirmed'] = False
+            delivery_payload['address'] = delivery_address
 
         delivery_fee = Decimal(str(delivery_info['fee']))
         

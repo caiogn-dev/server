@@ -926,9 +926,26 @@ class WebhookService:
 
         # Orquestrador (UnifiedService) com timeout, em thread daemon.
         with self._conversa_serializada(message):
+            # Rajada: a cliente mandou outra mensagem enquanto esta esperava a
+            # vez. Uma resposta só, dada pela mais nova, que lê o texto de todas
+            # (Enna, 14/10: três mensagens, três respostas da IA que se
+            # contradiziam e um PIX repetido).
+            if interactive_reply is None and location_data is None and self._mensagem_superada(message):
+                logger.info(
+                    '[pipeline] Mensagem agrupada na seguinte da rajada',
+                    extra={'message_id': str(message.id)},
+                )
+                return
+            texto = (
+                self._texto_da_rajada(message)
+                if interactive_reply is None and location_data is None
+                else (message.text_body or '')
+            )
+            self._marcar_processada(message)
             orchestrator_response, orchestrator_error, orchestrator_ms, timed_out = (
                 self._run_orchestrator_with_timeout(
                     event, message, llm_enabled, interactive_reply, location_data,
+                    texto=texto,
                 )
             )
 
@@ -1244,6 +1261,73 @@ class WebhookService:
             return f'orquestrador:conversa:{conversa.id}'
         return f'orquestrador:telefone:{getattr(message, "from_number", "?")}'
 
+    # Só texto entra na rajada. Botão e localização são decisões explícitas e
+    # respondem sempre; figurinha/reação nem são processadas, então não podem
+    # calar o texto que veio antes delas.
+    TIPOS_DA_RAJADA = ('text',)
+    # Rajada é conversa corrida, não histórico: nada mais velho que isto entra.
+    JANELA_DA_RAJADA_S = 180
+
+    @staticmethod
+    def _chave_da_ultima_processada(message) -> str:
+        conversa = getattr(message, 'conversation', None)
+        return f'orquestrador:ultima_processada:{getattr(conversa, "id", None) or getattr(message, "from_number", "?")}'
+
+    def _mensagem_superada(self, message) -> bool:
+        """Já existe texto mais novo da mesma conversa esperando — ele responde por este."""
+        conversa = getattr(message, 'conversation', None)
+        if (
+            conversa is None
+            or getattr(message, 'message_type', '') not in self.TIPOS_DA_RAJADA
+            or getattr(message, 'created_at', None) is None
+        ):
+            return False
+        return Message.objects.filter(
+            conversation=conversa,
+            direction=Message.MessageDirection.INBOUND,
+            message_type__in=self.TIPOS_DA_RAJADA,
+            created_at__gt=message.created_at,
+        ).exclude(pk=message.pk).exists()
+
+    def _texto_da_rajada(self, message) -> str:
+        """O texto desta mensagem precedido dos textos ainda não respondidos.
+
+        Sem a marca da última processada não se sabe o que já foi respondido —
+        aí vai só o texto desta, para não repetir conversa velha.
+        """
+        from datetime import timedelta
+        from django.core.cache import cache
+
+        texto = message.text_body or ''
+        conversa = getattr(message, 'conversation', None)
+        if conversa is None or getattr(message, 'created_at', None) is None:
+            return texto
+        try:
+            desde = cache.get(self._chave_da_ultima_processada(message))
+        except Exception:
+            desde = None
+        if not desde:
+            return texto
+        limite = max(desde, message.created_at - timedelta(seconds=self.JANELA_DA_RAJADA_S))
+        anteriores = Message.objects.filter(
+            conversation=conversa,
+            direction=Message.MessageDirection.INBOUND,
+            message_type__in=self.TIPOS_DA_RAJADA,
+            created_at__gt=limite,
+            created_at__lt=message.created_at,
+        ).order_by('created_at').values_list('text_body', flat=True)
+        textos = [t.strip() for t in anteriores if t and t.strip()]
+        return '\n'.join([*textos, texto]) if textos else texto
+
+    def _marcar_processada(self, message) -> None:
+        from django.core.cache import cache
+        if getattr(message, 'created_at', None) is None:
+            return
+        try:
+            cache.set(self._chave_da_ultima_processada(message), message.created_at, timeout=60 * 60)
+        except Exception:
+            logger.debug('[pipeline] Sem cache para marcar a última processada')
+
     @contextmanager
     def _conversa_serializada(self, message, espera_s: int = 45):
         """Uma mensagem por vez por cliente.
@@ -1292,7 +1376,7 @@ class WebhookService:
                     logger.exception('[pipeline] Falha ao liberar a trava da conversa')
 
     def _run_orchestrator_with_timeout(self, event, message, llm_enabled,
-                                       interactive_reply, location_data):
+                                       interactive_reply, location_data, texto=None):
         """Executa o UnifiedService em thread daemon com timeout configurável.
 
         Retorna (orchestrator_response, orchestrator_error, orchestrator_ms, timed_out).
@@ -1320,7 +1404,7 @@ class WebhookService:
                     debug=False,
                 )
                 orchestrator_response = service.process_message(
-                    message.text_body or '',
+                    texto if texto is not None else (message.text_body or ''),
                     interactive_reply=interactive_reply,
                     location_data=location_data,
                 )

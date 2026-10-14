@@ -1748,16 +1748,10 @@ class LangchainService:
             try:
                 from apps.whatsapp.services.order_service import WhatsAppOrderService
 
-                customer_name = ""
-                try:
-                    from apps.stores.models import StoreCustomer
-                    phone_candidates = self._phone_candidates(phone_number)
-                    cust = StoreCustomer.objects.filter(
-                        store=store, phone__in=phone_candidates
-                    ).first()
-                    customer_name = cust.name if cust else ""
-                except Exception:
-                    pass
+                # Lia `StoreCustomer.name`, campo que não existe: o erro era
+                # engolido e o pedido nascia "Cliente WhatsApp" (Enna, 14/10).
+                from apps.core.services.customer_identity import CustomerIdentityService
+                customer_name = CustomerIdentityService.melhor_nome(phone_number, store=store)
 
                 svc = WhatsAppOrderService(
                     store=store,

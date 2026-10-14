@@ -70,6 +70,11 @@ class CustomerIdentityService:
         value = (name or "").strip().lower()
         if not value or value.startswith("cliente_") or value == "desconhecido":
             return True
+        # Os nomes reserva que o próprio sistema escreve quando não sabe o nome.
+        # "Cliente WhatsApp" contava como nome real e sobrescreveu o cadastro da
+        # Enna (CE-2610141687, 14/10).
+        if re.fullmatch(r"cliente( (whatsapp|web|pdv|balc[aã]o|site|app))?", value):
+            return True
         return bool(re.fullmatch(r"[\d\s()+.\-]+", value)) and len(re.sub(r"\D", "", value)) >= 8
 
     @classmethod
@@ -98,6 +103,33 @@ class CustomerIdentityService:
         except Exception:
             logger.debug("[IDENTITY] nome_para_pedido: sem cadastro para %s", phone)
         return nome
+
+    @classmethod
+    def melhor_nome(cls, phone: str, *, store=None) -> str:
+        """O nome de verdade do cliente para um pedido novo, ou ''.
+
+        Ordem: o último pedido nesta loja com nome real (é o que o cliente
+        escreveu ou a loja confirmou), o cadastro, e por fim o nome do contato
+        no WhatsApp — sem emoji ("🌸 Enna  Hannes 🌸" → "Enna Hannes").
+        """
+        digitos = cls.digits_only(phone)
+        candidatos = []
+        if store is not None and len(digitos) >= 8:
+            from apps.stores.models import StoreOrder
+            candidatos.extend(
+                StoreOrder.objects.filter(store=store, customer_phone__endswith=digitos[-8:])
+                .order_by("-created_at").values_list("customer_name", flat=True)[:5]
+            )
+        candidatos.append(cls.nome_para_pedido("", phone=phone))
+        try:
+            candidatos.append(cls.whatsapp_name(phone))
+        except Exception:
+            logger.debug("[IDENTITY] melhor_nome: sem contato para %s", phone)
+        for candidato in candidatos:
+            limpo = cls.clean_name(candidato or "")
+            if limpo:
+                return limpo
+        return ""
 
     @classmethod
     def public_name(cls, name: str):
@@ -300,6 +332,10 @@ class CustomerIdentityService:
             profile = UserProfile.objects.create(user=resolved_user)
 
         user_updates = []
+        # Nome reserva nunca apaga nome de verdade — só preenche cadastro vazio.
+        nome_e_reserva = cls.is_placeholder_name(full_name)
+        if nome_e_reserva and (resolved_user.first_name or resolved_user.last_name):
+            first_name = last_name = ""
         if not resolved_user.is_staff and not resolved_user.is_superuser:
             if first_name and resolved_user.first_name != first_name:
                 resolved_user.first_name = first_name
