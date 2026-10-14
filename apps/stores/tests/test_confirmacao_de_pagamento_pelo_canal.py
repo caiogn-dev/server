@@ -44,3 +44,30 @@ class ConfirmacaoPeloCanalTests(TestCase):
                 patch('apps.automation.mensageiro.politica.silenciado', return_value=False):
             MercadoPagoWebhookView()._send_payment_confirmation_whatsapp(self.pedido)
         texto.assert_not_called()
+
+
+class PrevisaoNaConfirmacaoTests(TestCase):
+    """14/10: o cliente que paga sabe a janela de chegada em horário de relógio.
+    Reclamação de demora em pedido dentro do prazo some quando a promessa é clara."""
+
+    def setUp(self):
+        owner = User.objects.create_user(username='ow-prev', email='ow-prev@t.com', password='x')
+        self.store = Store.objects.create(name='Loja P', slug='loja-prev', owner=owner, status='active',
+                                          prazo_entrega_min=30, prazo_entrega_max=45)
+
+    def _texto(self, metodo):
+        from django.utils import timezone
+        pedido = StoreOrder.objects.create(
+            store=self.store, customer_name='Ana', customer_phone='63984301666',
+            subtotal=Decimal('40'), total=Decimal('40'), delivery_method=metodo, paid_at=timezone.now(),
+        )
+        with patch.object(Store, 'get_whatsapp_account', return_value=MagicMock()), \
+                patch('apps.automation.mensageiro.enviar_texto') as enviar:
+            MercadoPagoWebhookView()._send_payment_confirmation_whatsapp(pedido)
+        return enviar.call_args[0][2]
+
+    def test_entrega_leva_a_janela_de_chegada(self):
+        self.assertRegex(self._texto('delivery'), r'Chega entre \d\d:\d\d e \d\d:\d\d')
+
+    def test_retirada_nao_promete_chegada(self):
+        self.assertNotIn('Chega entre', self._texto('pickup'))

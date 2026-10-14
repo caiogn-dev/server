@@ -111,3 +111,10 @@ def test_sem_preparo_cadastrado_nao_estima_minutos():
     import re
     assert not re.search(r'\d+\s*min', texto)
     assert 'não estime' in texto
+
+
+def test_prazo_de_entrega_da_loja_vai_para_o_agente():
+    """Com a faixa cadastrada, o agente fala a promessa da loja (30–45 min)."""
+    texto = texto_do_prazo(SimpleNamespace(default_prep_minutes=40, prazo_entrega_min=30, prazo_entrega_max=45))
+    assert '30–45 min' in texto
+    assert 'NUNCA prometa' in texto

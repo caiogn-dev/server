@@ -247,6 +247,11 @@ class Store(BaseModel):
     # Tempo padrão de preparo, em minutos. 0 = a loja não usa previsão. Vira
     # `StoreOrder.prep_minutes` quando o pedido entra em preparo.
     default_prep_minutes = models.PositiveSmallIntegerField(default=0)
+    # Prazo de entrega que o CLIENTE vê ("30–45 min"): preparo + trajeto. É a
+    # promessa da loja — atraso é o que passa do máximo. Zero no máximo = não
+    # mostra prazo. Diferente do preparo acima, que é o relógio da cozinha.
+    prazo_entrega_min = models.PositiveSmallIntegerField(default=0)
+    prazo_entrega_max = models.PositiveSmallIntegerField(default=0)
 
     # Operating Hours (JSON: {"monday": {"open": "09:00", "close": "18:00"}, ...})
     operating_hours = models.JSONField(default=dict, blank=True)

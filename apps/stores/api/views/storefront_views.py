@@ -622,6 +622,7 @@ class StoreAppConfigView(APIView):
 
         from apps.stores.services.informativos import no_ar_para_a_vitrine
         from apps.stores.services.exibicao_do_cardapio import ler as exibicao_do_cardapio
+        from apps.stores.services.prazo_de_entrega import para_vitrine as prazo_para_vitrine
         return Response({
             # Como o produto aparece (limite da descrição, foto, estoque...).
             'exibicao': exibicao_do_cardapio(store),
@@ -655,6 +656,8 @@ class StoreAppConfigView(APIView):
                 # dizer "até 3 km", senão promete frete grátis para quem mora
                 # longe.
                 'frete_gratis': promocao_para_vitrine(store),
+                # A promessa da loja ("30–45 min"). Nulo = não mostra prazo.
+                'prazo_de_entrega': prazo_para_vitrine(store),
             },
             'branding': {
                 'primary_color': store.primary_color or '',

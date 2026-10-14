@@ -87,7 +87,7 @@ class StoreSerializer(serializers.ModelSerializer):
             'currency', 'timezone', 'tax_rate',
             'delivery_enabled', 'pickup_enabled',
             'min_order_value', 'free_delivery_threshold', 'default_delivery_fee',
-            'default_prep_minutes',
+            'default_prep_minutes', 'prazo_entrega_min', 'prazo_entrega_max',
             'operating_hours', 'is_open',
             'avg_rating', 'reviews_count',
             'owner', 'metadata', 'vale_por_link_brands', 'voucher_fee_percent', 'banners',
@@ -115,6 +115,17 @@ class StoreSerializer(serializers.ModelSerializer):
         if valor < 0 or valor > 100:
             raise serializers.ValidationError('O acréscimo precisa ficar entre 0 e 100%.')
         return valor
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # A faixa do prazo de entrega não pode vir invertida ("50 a 40 min").
+        minimo = attrs.get('prazo_entrega_min', getattr(self.instance, 'prazo_entrega_min', 0)) or 0
+        maximo = attrs.get('prazo_entrega_max', getattr(self.instance, 'prazo_entrega_max', 0)) or 0
+        if maximo and minimo > maximo:
+            raise serializers.ValidationError({'prazo_entrega_min': 'O mínimo não pode passar do máximo.'})
+        if maximo > 600:
+            raise serializers.ValidationError({'prazo_entrega_max': 'Use até 600 minutos.'})
+        return attrs
 
     def validate_default_prep_minutes(self, valor):
         """Até 10 horas. Mais que isso é digitação errada, e viraria um

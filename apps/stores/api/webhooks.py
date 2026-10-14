@@ -384,6 +384,16 @@ class MercadoPagoWebhookView(APIView):
             for item in order.items.all():
                 items_text.append(f"• {item.quantity}x {item.product_name}")
             
+            # A promessa em horário de relógio, a partir do pagamento. "~3 min"
+            # na vitrine e nenhuma previsão aqui geravam reclamação de demora
+            # em pedido dentro do prazo (14/10).
+            previsao = ''
+            if order.delivery_method == StoreOrder.DeliveryMethod.DELIVERY:
+                from apps.stores.services.prazo_de_entrega import janela
+                quando = janela(order.store, order.paid_at or timezone.now())
+                if quando:
+                    previsao = f"\n🕐 Chega entre {quando}"
+
             message = f"""✅ *Pagamento Confirmado!*
 
 🛒 Pedido: #{order.order_number}
@@ -391,7 +401,7 @@ class MercadoPagoWebhookView(APIView):
 {chr(10).join(items_text)}
 
 💰 Total: R$ {float(order.total):.2f}
-📦 Entrega: {order.get_delivery_method_display()}
+📦 Entrega: {order.get_delivery_method_display()}{previsao}
 
 Obrigado pela preferência! 🎉"""
             

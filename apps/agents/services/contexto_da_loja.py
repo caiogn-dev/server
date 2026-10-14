@@ -110,7 +110,15 @@ def texto_do_prazo(loja) -> str:
     O pedido saiu às 12:58. O preparo vinha só de passagem; agora vem com a
     regra junto.
     """
+    from apps.stores.services.prazo_de_entrega import texto as prazo_de_entrega
+    faixa = prazo_de_entrega(loja)
     minutos = int(getattr(loja, 'default_prep_minutes', 0) or 0)
+    if faixa:
+        return (
+            f"⏱️ Prazo de entrega da loja: {faixa} depois do pagamento (preparo + trajeto). "
+            "É o prazo que você informa; passou do máximo, é atraso. "
+            "NUNCA prometa horário de chegada mais cedo que isso."
+        )
     regra = (
         "NUNCA prometa horário de chegada. Se o cliente tiver um horário-limite, "
         "diga a estimativa e que não dá para garantir; ele decide."
