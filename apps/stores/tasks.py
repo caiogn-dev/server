@@ -634,3 +634,11 @@ def renovar_tokens_oauth_do_mercadopago():
             )
 
     return {'renovados': renovados, 'falhas': falhas}
+
+
+@shared_task(name='apps.stores.tasks.rodar_vigias', ignore_result=True)
+def rodar_vigias():
+    """Vigias: resumo da manhã e alertas ao dono. Ver `apps/stores/vigias/runner.py`."""
+    from apps.stores.vigias.runner import tick
+
+    return tick()

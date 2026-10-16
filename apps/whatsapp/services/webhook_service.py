@@ -1202,6 +1202,16 @@ class WebhookService:
         if not (message.conversation and message.conversation.mode == 'human'):
             return False
 
+        # "PARAR AVISOS" do dono (vigias) vale mesmo com atendente na conversa.
+        try:
+            from apps.stores.vigias.comandos import e_comando_do_dono
+            if not interactive_reply and e_comando_do_dono(
+                    getattr(context, 'store', None), message.conversation.phone_number,
+                    getattr(message, 'text_body', '') or ''):
+                return False
+        except Exception:  # noqa: BLE001 — na dúvida, segue a regra do modo humano
+            logger.exception('[pipeline] checagem de comando de vigia falhou')
+
         # Decisão do dono (19/09): o modo humano vale até o fim do dia. Se o
         # atendimento humano é de um dia anterior, a conversa volta ao bot e
         # esta mensagem já é respondida por ele. Antes não havia volta: uma

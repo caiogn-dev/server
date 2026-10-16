@@ -191,6 +191,9 @@ from .api.maps_views import (
     StoreValidateDeliveryView, StoreDeliveryZonesView, StoreAutosuggestView, PontoDoLinkView
 )
 from .api.ai_insights_views import AIConversationInsightsView, AIDailySummaryView
+from .api.vigias_views import (
+    VigiaAvisosView, VigiaAvisoUtilView, VigiaModeloView, VigiaPreviaView, VigiasView, VigiaTesteView,
+)
 from .api.export_views import (
     OrdersExportView, RevenueReportView, ProductsReportView,
     StockReportView, CustomersReportView, StoreDashboardStatsView,
@@ -442,6 +445,12 @@ urlpatterns = [
     
     # Insights de IA do painel (resumo diário + análise de conversas)
     path('ai/daily-summary/', AIDailySummaryView.as_view(), name='ai-daily-summary'),
+    path('vigias/', VigiasView.as_view(), name='vigias'),
+    path('vigias/avisos/', VigiaAvisosView.as_view(), name='vigias-avisos'),
+    path('vigias/avisos/<uuid:aviso_id>/util/', VigiaAvisoUtilView.as_view(), name='vigias-aviso-util'),
+    path('vigias/previa/', VigiaPreviaView.as_view(), name='vigias-previa'),
+    path('vigias/teste/', VigiaTesteView.as_view(), name='vigias-teste'),
+    path('vigias/modelo/', VigiaModeloView.as_view(), name='vigias-modelo'),
     path('ai/conversation-insights/', AIConversationInsightsView.as_view(), name='ai-conversation-insights'),
 
     # Export orders as CSV

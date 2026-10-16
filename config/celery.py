@@ -179,6 +179,12 @@ app.conf.beat_schedule = {
         'task': 'apps.stores.tasks.database_integrity_check',
         'schedule': 21600.0,  # Every 6 hours
     },
+    # Vigias: resumo da manhã e alertas ao dono. O beat só pergunta "é hora?";
+    # a hora de cada loja e o "uma vez por dia" moram em VigiaConfig/VigiaEnvio.
+    'rodar-vigias': {
+        'task': 'apps.stores.tasks.rodar_vigias',
+        'schedule': 600.0,  # 10 min
+    },
     # Billing: ciclo de vida de assinaturas — diário às 4h
     'enforce-subscription-lifecycle': {
         'task': 'stores.enforce_subscription_lifecycle',

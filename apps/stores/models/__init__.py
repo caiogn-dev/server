@@ -76,6 +76,9 @@ from .ifood import StoreIfoodIntegration
 from .salada_salva import SaladaSalva
 from .lote import StoreLote
 
+# Vigias (avisos ao dono)
+from .vigia import VigiaAviso, VigiaConfig, VigiaEnvio
+
 __all__ = [
     'StoreLote',
     'StoreBanner', 'MAXIMO_DE_BANNERS',
@@ -140,4 +143,8 @@ __all__ = [
     'StoreBioLink',
     # Saladas criadas pelo cliente
     'SaladaSalva',
+    # Vigias (avisos ao dono)
+    'VigiaConfig',
+    'VigiaEnvio',
+    'VigiaAviso',
 ]

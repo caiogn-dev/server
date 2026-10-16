@@ -833,6 +833,12 @@ class UnifiedService:
         #
         # Ausência de perfil ou do campo NÃO cala o bot: calar por omissão
         # seria um estrago maior que o defeito.
+        # Comando de vigia do dono vem antes da trava: desligar as respostas
+        # automáticas do bot não pode impedir o dono de pausar os próprios avisos.
+        comando = self._comando_de_vigia(message_text, interactive_reply)
+        if comando is not None:
+            return comando
+
         perfil = getattr(self, 'company', None)
         if perfil is not None and getattr(perfil, 'auto_reply_enabled', True) is False:
             logger.info(
@@ -935,6 +941,23 @@ class UnifiedService:
         except Exception:
             # Observabilidade nunca pode custar a resposta ao cliente.
             logger.warning('[unified] falha ao gravar IntentLog', exc_info=True)
+
+    def _comando_de_vigia(self, message_text, interactive_reply=None) -> Optional['UnifiedResponse']:
+        """Resposta ao comando de pausar/retomar os vigias, ou None."""
+        loja = getattr(self, 'store', None)
+        conversa = getattr(self, 'conversation', None)
+        if interactive_reply or not message_text or not loja or not conversa:
+            return None
+        try:
+            from apps.stores.vigias.comandos import responder
+
+            texto = responder(loja, conversa.phone_number, message_text)
+        except Exception:  # noqa: BLE001 — comando de vigia nunca derruba o atendimento
+            logger.exception('[unified] comando de vigia falhou')
+            return None
+        if texto is None:
+            return None
+        return UnifiedResponse(content=texto, source=ResponseSource.HANDLER, metadata={'vigia': True})
 
     def _processar_mensagem(
         self,
