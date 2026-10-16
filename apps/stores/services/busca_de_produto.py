@@ -112,6 +112,11 @@ def _palavras(texto: str) -> list:
     return [p for p in texto.split() if len(p) > 2]
 
 
+def _contem_palavras(texto: str, trecho: str) -> bool:
+    """`trecho` aparece em `texto` começando e terminando em fronteira de palavra."""
+    return f' {trecho} ' in f' {texto} '
+
+
 def _casa(alvo: str, nome: str) -> bool:
     """O texto contém o nome, o nome contém o texto, ou uma palavra casa.
 
@@ -120,7 +125,9 @@ def _casa(alvo: str, nome: str) -> bool:
     """
     if not alvo or not nome:
         return False
-    if nome in alvo or alvo in nome:
+    # Trecho só vale em palavra inteira. Por substring, "ola" (de "Olá") estava
+    # dentro de "cebOLA roxa" e a saudação virava pedido de cebola (16/10).
+    if _contem_palavras(alvo, nome) or _contem_palavras(nome, alvo):
         return True
     return any(_peso_da_palavra(a, n) for n in _palavras(nome) for a in _palavras(alvo))
 
@@ -298,7 +305,7 @@ def _pontos(alvo: str, nome: str) -> int:
         max((_peso_da_palavra(a, n) for a in do_cliente), default=0)
         for n in dict.fromkeys(_raiz(p) for p in _palavras(nome))
     )
-    return casadas + (100 if nome in alvo else 0)
+    return casadas + (100 if _contem_palavras(alvo, nome) else 0)
 
 
 # Avisos de que o dinheiro já saiu da mão do cliente.

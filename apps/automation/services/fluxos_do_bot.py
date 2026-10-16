@@ -20,6 +20,9 @@ o que ele mesmo começou. Botão desconhecido continua suprimido: no modo humano
 o padrão é o silêncio.
 """
 import re
+from datetime import datetime, timedelta
+
+from django.utils import timezone
 
 #: Ids fixos do checkout determinístico (escrevem StoreOrder).
 IDS_TRANSACIONAIS = frozenset({
@@ -50,6 +53,26 @@ PREFIXOS_DE_FLUXO_DO_BOT = (
 
 #: Status de sessão em que um checkout ainda pode ser retomado.
 STATUS_DE_CHECKOUT_VIVO = ('active', 'cart_created', 'checkout', 'payment_pending')
+
+#: Quanto vale uma espera de checkout (endereço/observação) depois do último passo.
+#:
+#: 16/10, Raquel × Cê Saladas: o bot pediu observação em 14/10, o atendente
+#: fechou o pedido na mão e a espera ficou ligada. Dois dias depois o "Olá" dela
+#: foi lido como observação. Mesma janela do "pedido recente" do bot.
+VALIDADE_DA_ESPERA = timedelta(hours=6)
+
+
+def espera_viva(cart_data) -> bool:
+    """False quando o último passo do checkout é mais velho que a validade.
+
+    Sem rastro de passos (sessão antiga) vale o comportamento de antes: viva.
+    """
+    passos = (cart_data or {}).get('checkout_snapshots') or []
+    try:
+        ultimo = datetime.fromisoformat(passos[-1]['at'])
+    except (IndexError, KeyError, TypeError, ValueError):
+        return True
+    return timezone.now() - ultimo <= VALIDADE_DA_ESPERA
 
 
 def eh_fluxo_do_bot(reply_id) -> bool:
@@ -92,4 +115,4 @@ def espera_endereco(conversation, company=None, store=None) -> bool:
     elif store is not None:
         sessoes = sessoes.filter(company__store=store)
 
-    return sessoes.exists()
+    return any(espera_viva(s.cart_data) for s in sessoes.only('cart_data'))

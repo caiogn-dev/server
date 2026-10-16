@@ -464,7 +464,10 @@ class SessionManager:
         """Verifica se a sessão está aguardando endereço do cliente."""
         session = self.get_or_create_session()
         if session:
-            return bool((session.cart_data or {}).get('waiting_for_address', False))
+            from apps.automation.services.fluxos_do_bot import espera_viva
+
+            dados = session.cart_data or {}
+            return bool(dados.get('waiting_for_address', False)) and espera_viva(dados)
         return False
 
     def set_waiting_for_notes(self, value: bool) -> None:
@@ -483,7 +486,10 @@ class SessionManager:
         """Verifica se a sessão está aguardando observações do cliente."""
         session = self.get_or_create_session()
         if session:
-            return bool((session.cart_data or {}).get('waiting_for_notes', False))
+            from apps.automation.services.fluxos_do_bot import espera_viva
+
+            dados = session.cart_data or {}
+            return bool(dados.get('waiting_for_notes', False)) and espera_viva(dados)
         return False
 
     def save_customer_notes(self, notes: str) -> None:

@@ -531,7 +531,9 @@ class UnifiedService:
         elif self.store:
             sessions = sessions.filter(company__store=self.store)
 
-        return sessions.exists()
+        from apps.automation.services.fluxos_do_bot import espera_viva
+
+        return any(espera_viva(s.cart_data) for s in sessions.only('cart_data'))
 
     def _get_active_session(self) -> Optional[CustomerSession]:
         """Return the active CustomerSession for this conversation, or None."""
