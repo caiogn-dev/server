@@ -99,3 +99,52 @@ class PedidoDaAnaTests(TestCase):
         kw = self._cotar({'lat': CENTRO_GENERICO_DE_PALMAS[0], 'lng': CENTRO_GENERICO_DE_PALMAS[1],
                           'location_type': 'ROUTE'})
         self.assertIsNone(kw['lat'])
+
+
+# 16/10 — Ana Loyse (CE-2610162865): pin certo na UFT. O texto do pedido É o
+# que o Google devolve para esse pin ("Av. NS 15, 109 - Plano Diretor Norte"),
+# mas o mesmo texto geocodificado de volta vira "Av. NS-03, 15-109", a 2 km.
+# O pin certo foi descartado e o frete saiu pelo ponto errado (R$ 11,93 em vez
+# de R$ 14,26). Se o pin cai NA rua e número escritos, ele é a prova.
+UFT_PIN = (-10.177921333405909, -48.3607097581473)
+NS03_ERRADO = (-10.1766552, -48.3426407)
+
+
+class PedidoDaAnaLoyseTests(TestCase):
+    ENDERECO = {'street': 'Avenida NS 15', 'number': '109', 'neighborhood': 'Plano Diretor Norte',
+                'city': 'Palmas', 'state': 'Tocantins', 'complement': 'Residencial Rio Negro'}
+
+    def _cotar(self, reverso, endereco=None):
+        from unittest.mock import patch, MagicMock
+        from apps.stores.services.checkout_service import CheckoutService
+        payload = {'method': 'delivery', 'lat': UFT_PIN[0], 'lng': UFT_PIN[1],
+                   'address': endereco or self.ENDERECO}
+        geo_do_texto = {'lat': NS03_ERRADO[0], 'lng': NS03_ERRADO[1], 'location_type': 'ROOFTOP'}
+        with patch('apps.stores.services.geo.service.GeoService.geocode', return_value=geo_do_texto), \
+             patch('apps.stores.services.geo.service.GeoService.reverse_geocode', return_value=reverso), \
+             patch('apps.stores.services.unified_delivery_service.UnifiedDeliveryService.calculate_delivery_fee',
+                   return_value={'success': True, 'fee': 14.26, 'distance_km': 8.26}) as calc:
+            CheckoutService.calculate_delivery_fee_for_payload(MagicMock(), payload)
+        return calc.call_args.kwargs
+
+    def test_pin_que_cai_na_rua_e_numero_escritos_e_mantido(self):
+        kw = self._cotar({'street': 'Avenida NS 15', 'number': '109',
+                          'formatted_address': 'Av. NS 15, 109 - Plano Diretor Norte, Palmas - TO, Brasil'})
+        self.assertEqual((kw['lat'], kw['lng']), UFT_PIN)
+
+    def test_av_abreviada_tambem_confere(self):
+        kw = self._cotar({'street': 'Av. NS 15', 'number': '109'})
+        self.assertEqual((kw['lat'], kw['lng']), UFT_PIN)
+
+    def test_pin_em_outra_rua_continua_derrubado(self):
+        kw = self._cotar({'street': 'Quadra 106 Norte Alameda 1', 'number': '01'})
+        self.assertIsNone(kw['lat'])
+
+    def test_mesma_rua_numero_diferente_continua_derrubado(self):
+        """Avenida comprida: estar na NS 15 não basta, o número tem que bater."""
+        kw = self._cotar({'street': 'Avenida NS 15', 'number': '900'})
+        self.assertIsNone(kw['lat'])
+
+    def test_sem_reverso_continua_derrubado(self):
+        kw = self._cotar(None)
+        self.assertIsNone(kw['lat'])

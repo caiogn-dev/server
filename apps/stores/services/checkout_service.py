@@ -456,6 +456,18 @@ class CheckoutService:
         return DeliveryQuoteService.normalize(info, route)
 
     @staticmethod
+    def _pino_confirmado_pelo_reverso(lat, lng, endereco) -> bool:
+        """O reverso do pin dá a rua e o número escritos? Então o pin vale."""
+        from apps.stores.services.coerencia_do_ponto import pino_esta_no_endereco
+        from apps.stores.services.geo.service import GeoService
+        try:
+            reverso = GeoService().reverse_geocode(float(lat), float(lng))
+        except Exception as exc:
+            logger.warning("Coerência do ponto: reverso falhou (%s)", exc)
+            return False
+        return pino_esta_no_endereco(reverso, endereco)
+
+    @staticmethod
     def calculate_delivery_fee_for_payload(store: Store, delivery_payload: dict) -> dict:
         """Resolve a delivery fee from distance, coordinates, or address text.
 
@@ -522,7 +534,10 @@ class CheckoutService:
                 logger.warning("Coerência do ponto: geocodificação falhou (%s) — mantendo o pin", exc)
                 lat_txt = lng_txt = None
 
-            if not ponto_confere_com_texto(lat, lng, lat_txt, lng_txt):
+            if (
+                not ponto_confere_com_texto(lat, lng, lat_txt, lng_txt)
+                and not CheckoutService._pino_confirmado_pelo_reverso(lat, lng, address_obj)
+            ):
                 logger.warning(
                     "PIN DESCARTADO: coordenada (%s, %s) não confere com '%s' "
                     "(texto fica em %s, %s). Usando o endereço escrito.",

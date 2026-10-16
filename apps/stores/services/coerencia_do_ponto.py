@@ -72,3 +72,29 @@ def geocode_e_preciso(geo) -> bool:
     if not geo or geo.get('lat') is None or geo.get('lng') is None:
         return False
     return (geo.get('location_type') or '').upper() not in GRANULARIDADES_IMPRECISAS
+
+
+def _rua_normalizada(texto) -> str:
+    import re
+    import unicodedata
+    plano = unicodedata.normalize('NFD', str(texto or '')).encode('ascii', 'ignore').decode().lower()
+    plano = re.sub(r'[^a-z0-9 ]+', ' ', plano)
+    plano = re.sub(r'\bav\b', 'avenida', plano)
+    return ' '.join(plano.split())
+
+
+def pino_esta_no_endereco(reverso, endereco) -> bool:
+    """True quando o pin cai na MESMA rua e número que o cliente tem escritos.
+
+    16/10, Ana Loyse: o texto do pedido era o próprio reverso do pin na UFT
+    ("Av. NS 15, 109"), mas o Google geocodifica esse texto como "Av. NS-03,
+    15-109", a 2 km — e o pin certo era descartado. Quando o reverso do pin
+    confirma rua E número, o pin é a prova; o geocode do texto é que errou.
+    Rua sozinha não basta: avenida comprida tem quilômetros.
+    """
+    if not reverso or not isinstance(endereco, dict):
+        return False
+    rua_pin, rua_txt = _rua_normalizada(reverso.get('street')), _rua_normalizada(endereco.get('street'))
+    num_pin = str(reverso.get('number') or '').strip().lstrip('0')
+    num_txt = str(endereco.get('number') or '').strip().lstrip('0')
+    return bool(rua_pin and num_pin) and rua_pin == rua_txt and num_pin == num_txt
