@@ -72,6 +72,10 @@ x-django-env: &django-env
   # Endereço do painel para onde o login do Instagram volta. FRONTEND_URL é
   # LISTA (vários domínios) e não serve para montar URL de retorno.
   PAINEL_URL: ${PAINEL_URL:-https://painel.cardapidex.com.br}
+  # Aviso ao cardapidex-web (host :3010) quando o catálogo muda — sem o
+  # segredo a tarefa revalidar_cardapio não chama nada.
+  STOREFRONT_INTERNAL_URL: ${STOREFRONT_INTERNAL_URL:-http://172.20.0.1:3010}
+  STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
   # AI / LLM
   KIMI_API_KEY: ${KIMI_API_KEY}
   KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/}

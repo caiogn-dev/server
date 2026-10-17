@@ -85,6 +85,39 @@ def invalidate_catalog_on_combo_change(sender, instance, **kwargs):
         logger.warning("Failed to invalidate catalog cache on combo save: %s", e)
 
 
+@receiver(post_save, sender='stores.Store')
+@receiver(post_save, sender='stores.StoreProduct')
+@receiver(post_delete, sender='stores.StoreProduct')
+@receiver(post_save, sender='stores.StoreProductVariant')
+@receiver(post_delete, sender='stores.StoreProductVariant')
+@receiver(post_save, sender='stores.StoreProductType')
+@receiver(post_delete, sender='stores.StoreProductType')
+@receiver(post_save, sender='stores.StoreCategory')
+@receiver(post_delete, sender='stores.StoreCategory')
+@receiver(post_save, sender='stores.StoreCombo')
+@receiver(post_delete, sender='stores.StoreCombo')
+def avisar_o_cardapio(sender, instance, **kwargs):
+    """Catálogo mudou → o cardápio refaz a página da loja (services/aviso_ao_cardapio).
+
+    Variação e tipo também apagam o catálogo cacheado aqui: antes ninguém
+    apagava, e a mudança esperava os 5 min do TTL.
+    """
+    try:
+        if sender.__name__ == 'Store':
+            slug = instance.slug
+        elif sender.__name__ == 'StoreProductVariant':
+            slug = instance.product.store.slug
+        else:
+            slug = instance.store.slug if instance.store_id else None
+        if not slug:
+            return
+        cache.delete(f'catalog:{slug}')
+        from apps.stores.services.aviso_ao_cardapio import avisar_que_o_cardapio_mudou
+        avisar_que_o_cardapio_mudou(slug)
+    except Exception as e:
+        logger.warning("Failed to notify storefront of catalog change: %s", e)
+
+
 @receiver(pre_save, sender='stores.StoreOrder')
 def capture_order_previous_status(sender, instance, **kwargs):
     """Capture previous status before save for transition detection.

@@ -2,7 +2,10 @@
 Celery tasks for the stores app.
 """
 import logging
+
+import requests
 from celery import shared_task
+from django.core.cache import cache
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -642,3 +645,32 @@ def rodar_vigias():
     from apps.stores.vigias.runner import tick
 
     return tick()
+
+
+@shared_task(bind=True, name='stores.revalidar_cardapio', max_retries=2, default_retry_delay=5)
+def revalidar_cardapio(self, slug: str):
+    """Pede ao cardapidex-web que refaça a página da loja agora.
+
+    Ver services/aviso_ao_cardapio.py. Falha aqui não é grave: a página ainda
+    se refaz sozinha pelo prazo (60 s); o aviso é só o atalho.
+    """
+    segredo = getattr(settings, 'STOREFRONT_REVALIDATE_SECRET', '')
+    if not segredo:
+        return 'sem_segredo'
+
+    # Uma leitura que começou antes do commit pode ter regravado o catálogo
+    # velho depois do delete do signal; refazer a página em cima disso
+    # traria o preço antigo de volta por 5 min.
+    cache.delete(f'catalog:{slug}')
+
+    url = f"{settings.STOREFRONT_INTERNAL_URL.rstrip('/')}/api/revalidar"
+    try:
+        resposta = requests.post(
+            url, json={'slug': slug}, headers={'x-revalidar-segredo': segredo}, timeout=5,
+        )
+    except requests.RequestException as exc:
+        logger.warning('revalidar_cardapio %s: cardápio inacessível (%s)', slug, exc)
+        raise self.retry(exc=exc)
+    if resposta.status_code >= 500:
+        raise self.retry(exc=RuntimeError(f'cardápio respondeu {resposta.status_code}'))
+    return resposta.status_code

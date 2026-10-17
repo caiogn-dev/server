@@ -671,6 +671,10 @@ BILLING_PANEL_URL = os.environ.get('BILLING_PANEL_URL', 'https://painel.cardapid
 PAINEL_URL = os.environ.get('PAINEL_URL', BILLING_PANEL_URL).rstrip('/')
 # Link na Bio: base do storefront (link "Cardápio") e base pública da página bio.cardapidex.com.br/<slug>.
 STOREFRONT_BASE_URL = os.environ.get('STOREFRONT_BASE_URL', 'https://cardapidex.com.br')
+# Aviso de "catálogo mudou" ao cardapidex-web (systemd no host, :3010). Do
+# container, o host é o gateway da pastita_network. Sem segredo, não avisa.
+STOREFRONT_INTERNAL_URL = os.environ.get('STOREFRONT_INTERNAL_URL', 'http://172.20.0.1:3010')
+STOREFRONT_REVALIDATE_SECRET = os.environ.get('STOREFRONT_REVALIDATE_SECRET', '')
 BIO_BASE_URL = os.environ.get('BIO_BASE_URL', 'https://bio.cardapidex.com.br')
 # Dias de carência após o fim do trial antes de suspender a loja.
 BILLING_GRACE_DAYS = int(os.environ.get('BILLING_GRACE_DAYS', '3'))
