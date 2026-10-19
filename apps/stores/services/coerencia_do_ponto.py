@@ -98,3 +98,41 @@ def pino_esta_no_endereco(reverso, endereco) -> bool:
     num_pin = str(reverso.get('number') or '').strip().lstrip('0')
     num_txt = str(endereco.get('number') or '').strip().lstrip('0')
     return bool(rua_pin and num_pin) and rua_pin == rua_txt and num_pin == num_txt
+
+
+def _quadras_de_palmas(texto) -> set:
+    """Quadras escritas no formato de Palmas: '110 Sul', 'quadra 704 sul'.
+
+    Só a forma por extenso (número + Sul/Norte). Sigla (ARSO 52 = 207 Sul)
+    fica de fora de propósito: o dono pediu para não inventar tabela de
+    conversão (02/10) — sem quadra reconhecível, este atalho não vale.
+    """
+    import re
+    plano = _rua_normalizada(texto)
+    return {(int(n), lado) for n, lado in re.findall(r'\b(\d{2,4}) (sul|norte)\b', plano)}
+
+
+def pino_na_quadra_escrita(reverso, endereco) -> bool:
+    """True quando o reverso do pin cai na MESMA quadra que o cliente escreveu.
+
+    19/10, Bárbara (CE-2610195503): pin certo na 110 Sul, texto "Av jk quadra
+    110 sul, Lote 21" — o Google devolveu o texto como PREMISE a ~4 km
+    (ecoando o digitado), o pin foi descartado e a entrega saiu R$ 14,36 em
+    vez de ~R$ 8. Rua e número do reverso ("Alameda 1, 56") nunca batem com
+    "Av jk, Lote 21", mas a QUADRA bate: 110 Sul nos dois.
+
+    Quadra vizinha não passa (Simone, 01/10: escreveu 704 Sul, pin na 702 Sul)
+    e Sul não confunde com Norte.
+    """
+    if not reverso or not isinstance(endereco, dict):
+        return False
+    escrito = ' '.join(str(endereco.get(k) or '') for k in (
+        'street', 'number', 'neighborhood', 'raw_address', 'label',
+    ))
+    quadras_escritas = _quadras_de_palmas(escrito)
+    if not quadras_escritas:
+        return False
+    do_pino = _quadras_de_palmas(' '.join(str(reverso.get(k) or '') for k in (
+        'street', 'neighborhood', 'formatted_address',
+    )))
+    return bool(do_pino) and do_pino <= quadras_escritas

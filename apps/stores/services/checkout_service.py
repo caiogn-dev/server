@@ -457,15 +457,16 @@ class CheckoutService:
 
     @staticmethod
     def _pino_confirmado_pelo_reverso(lat, lng, endereco) -> bool:
-        """O reverso do pin dá a rua e o número escritos? Então o pin vale."""
-        from apps.stores.services.coerencia_do_ponto import pino_esta_no_endereco
+        """O reverso do pin dá a rua e o número escritos, ou a mesma quadra
+        de Palmas (Bárbara, 19/10)? Então o pin vale."""
+        from apps.stores.services.coerencia_do_ponto import pino_esta_no_endereco, pino_na_quadra_escrita
         from apps.stores.services.geo.service import GeoService
         try:
             reverso = GeoService().reverse_geocode(float(lat), float(lng))
         except Exception as exc:
             logger.warning("Coerência do ponto: reverso falhou (%s)", exc)
             return False
-        return pino_esta_no_endereco(reverso, endereco)
+        return pino_esta_no_endereco(reverso, endereco) or pino_na_quadra_escrita(reverso, endereco)
 
     @staticmethod
     def calculate_delivery_fee_for_payload(store: Store, delivery_payload: dict) -> dict:

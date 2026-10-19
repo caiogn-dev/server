@@ -148,3 +148,69 @@ class PedidoDaAnaLoyseTests(TestCase):
     def test_sem_reverso_continua_derrubado(self):
         kw = self._cotar(None)
         self.assertIsNone(kw['lat'])
+
+
+# 19/10, Bárbara (CE-2610195503): pin CERTO na 110 Sul (ao lado da Agrovida,
+# 650 m da loja), mas o texto "Av jk quadra 110 sul, Lote 21, Plano diretor
+# sul" o Google devolveu como PREMISE a ~4 km — só ecoando o que foi digitado.
+# O pin foi descartado e a entrega saiu R$ 14,36 (8,36 km) em vez de ~R$ 8.
+# O reverso do pin dizia "110 Sul": a MESMA quadra escrita. Isso é prova.
+BARBARA_PIN_CERTO = (-10.184835033183676, -48.30957419225769)
+TEXTO_DA_BARBARA_ERRADO = (-10.2133048, -48.3469198)
+
+
+class QuadraDoPinoTests(TestCase):
+    ENDERECO = {
+        'street': 'Av jk quadra 110 sul', 'number': 'Lote 21', 'neighborhood': 'Plano diretor sul ',
+        'city': 'Palmas', 'state': 'Tocantins',
+        'complement': 'Clínica DVI (ao lado da Agrovida pet shop)',
+    }
+    REVERSO_110_SUL = {
+        'street': 'Quadra 110 Sul Alameda 1', 'number': '56', 'neighborhood': '110 Sul',
+        'formatted_address': 'Q. 110 Sul Alameda 1, 56 - 110 Sul, Palmas - TO, 77020-142, Brasil',
+    }
+
+    def _cotar(self, reverso, endereco=None):
+        from unittest.mock import patch, MagicMock
+        from apps.stores.services.checkout_service import CheckoutService
+        payload = {'method': 'delivery', 'lat': BARBARA_PIN_CERTO[0], 'lng': BARBARA_PIN_CERTO[1],
+                   'address': endereco or self.ENDERECO}
+        geo = {'lat': TEXTO_DA_BARBARA_ERRADO[0], 'lng': TEXTO_DA_BARBARA_ERRADO[1], 'location_type': 'PREMISE'}
+        with patch('apps.stores.services.geo.service.GeoService.geocode', return_value=geo), \
+             patch('apps.stores.services.geo.service.GeoService.reverse_geocode', return_value=reverso), \
+             patch('apps.stores.services.unified_delivery_service.UnifiedDeliveryService.calculate_delivery_fee',
+                   return_value={'success': True, 'fee': 8.0, 'distance_km': 1.9}) as calc:
+            CheckoutService.calculate_delivery_fee_for_payload(MagicMock(), payload)
+        return calc.call_args.kwargs
+
+    def test_pin_na_quadra_escrita_e_mantido(self):
+        kw = self._cotar(self.REVERSO_110_SUL)
+        self.assertEqual((kw['lat'], kw['lng']), BARBARA_PIN_CERTO)
+
+    def test_quadra_so_no_formatted_address_tambem_vale(self):
+        kw = self._cotar({'street': 'Alameda 1', 'number': '56',
+                          'formatted_address': 'Q. 110 Sul Alameda 1, 56 - 110 Sul, Palmas - TO, Brasil'})
+        self.assertEqual((kw['lat'], kw['lng']), BARBARA_PIN_CERTO)
+
+    def test_quadra_vizinha_continua_derrubada(self):
+        """Simone, 01/10: escreveu 704 Sul, pin na 702 Sul — o pin estava errado."""
+        kw = self._cotar(
+            {'street': 'Alameda 2', 'number': '10', 'neighborhood': '702 Sul',
+             'formatted_address': 'Q. 702 Sul Alameda 2, 10 - 702 Sul, Palmas - TO, Brasil'},
+            endereco={**self.ENDERECO, 'street': 'Alameda 5 quadra 704 sul', 'number': '12'},
+        )
+        self.assertEqual((kw['lat'], kw['lng']), (None, None))
+
+    def test_sul_e_norte_de_mesmo_numero_nao_confundem(self):
+        kw = self._cotar(
+            {'street': 'Alameda 1', 'number': '5', 'neighborhood': '110 Norte',
+             'formatted_address': 'Q. 110 Norte Alameda 1, 5 - 110 Norte, Palmas - TO, Brasil'},
+        )
+        self.assertEqual((kw['lat'], kw['lng']), (None, None))
+
+    def test_endereco_sem_quadra_nao_ganha_atalho(self):
+        kw = self._cotar(self.REVERSO_110_SUL, endereco={
+            'street': 'Avenida Teotônio Segurado', 'number': '1500', 'neighborhood': 'Plano Diretor Sul',
+            'city': 'Palmas', 'state': 'Tocantins',
+        })
+        self.assertEqual((kw['lat'], kw['lng']), (None, None))
