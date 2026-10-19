@@ -155,6 +155,16 @@ class LoyaltyService:
                 total += explicit
             else:
                 total += LoyaltyService.item_qualified_units(store, item)
+        # A salada que saiu GRÁTIS pelo resgate não rende carimbo: só as pagas
+        # contam (dono, 19/10). Antes contava — CE-2610028836 pagou só a
+        # entrega e ganhou 1 carimbo.
+        resgate = (getattr(order, 'metadata', None) or {}).get('loyalty_reward') or {}
+        if resgate.get('applied'):
+            try:
+                resgatadas = int(resgate.get('count') or 0)
+            except (TypeError, ValueError):
+                resgatadas = 0
+            total = max(0, total - resgatadas)
         return total
 
     @staticmethod

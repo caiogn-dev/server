@@ -1731,6 +1731,55 @@ class CheckoutService:
         order.save(update_fields=['payment_status', 'updated_at'])
         return {'success': False, 'error': resultado.mensagem}
 
+    #: Rótulo do pedido que não deve nada (resgate cobrindo tudo, retirada).
+    SEM_COBRANCA = 'sem_cobranca'
+
+    @staticmethod
+    def quitar_sem_cobranca(order) -> dict:
+        """Pedido de total zero: pago e confirmado sem passar por cobrança.
+
+        19/10, Wanny (CE-2610192528): salada do resgate + retirada = R$ 0,00.
+        O checkout tentou um PIX de zero, `create_payment` recusou e o pedido
+        nasceu `failed` — a cliente viu erro num pedido que estava certo.
+        Não há o que cobrar, então o pedido segue o mesmo caminho do pago no
+        cartão: PAID + CONFIRMED + fidelidade/cashback (ambos contam zero de
+        dinheiro, mas o crédito de carimbo das saladas pagas tem de rodar).
+
+        Devolve o mesmo contrato de `create_payment` com `status='approved'`:
+        é o que leva a tela — inclusive a versão antiga em cache — ao sucesso.
+        """
+        from django.utils import timezone
+
+        agora = timezone.now()
+        order.payment_status = StoreOrder.PaymentStatus.PAID
+        order.payment_method = CheckoutService.SEM_COBRANCA
+        order.paid_at = agora
+        campos = ['payment_status', 'payment_method', 'paid_at', 'updated_at']
+        if order.status in {
+            StoreOrder.OrderStatus.PENDING,
+            StoreOrder.OrderStatus.PROCESSING,
+            StoreOrder.OrderStatus.PAID,
+        }:
+            order.status = StoreOrder.OrderStatus.CONFIRMED
+            if not order.confirmed_at:
+                order.confirmed_at = agora
+            campos += ['status', 'confirmed_at']
+        order.save(update_fields=campos)
+        try:
+            from apps.stores.services.loyalty_service import LoyaltyService
+            LoyaltyService.credit_order(order)
+        except Exception:
+            logger.warning('Falha ao creditar fidelidade do pedido %s', order.id, exc_info=True)
+        from apps.stores.services.cashback_service import CashbackService
+        CashbackService.credit_order(order)
+        logger.info('Pedido %s sem valor a cobrar: quitado sem cobrança', order.order_number)
+        return {
+            'success': True,
+            'status': 'approved',
+            'payment_id': None,
+            'payment_method': CheckoutService.SEM_COBRANCA,
+        }
+
     @staticmethod
     def registrar_cobranca_que_falhou(order) -> None:
         """Marca o pedido cuja cobrança nem chegou a ser criada.

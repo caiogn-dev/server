@@ -1132,6 +1132,10 @@ class StoreCheckoutView(APIView):
         """
         if not payment_result or payment_result.get('status') != 'approved':
             return
+        # Pedido sem cobrança (resgate cobrindo tudo) não é venda para o
+        # anúncio: uma "compra" de R$ 0,00 só inflaria as conversões.
+        if payment_result.get('payment_method') == checkout_service.SEM_COBRANCA:
+            return
         try:
             from apps.stores.services.meta_pixel_service import _get_client_ip
             from apps.stores.tasks import send_meta_purchase_event
@@ -1429,7 +1433,13 @@ class StoreCheckoutView(APIView):
 
             # Process payment if method specified
             payment_result = None
-            if payment_requested:
+            if order.total <= 0:
+                # Nada a cobrar (resgate cobrindo tudo na retirada): não existe
+                # PIX de R$ 0,00 — ver quitar_sem_cobranca. Vale venha o método
+                # que vier: a tela antiga em cache ainda manda 'pix'.
+                payment_method = checkout_service.SEM_COBRANCA
+                payment_result = checkout_service.quitar_sem_cobranca(order)
+            elif payment_requested:
                 try:
                     payment_result = checkout_service.create_payment(
                         order, payment_method, payment_payload

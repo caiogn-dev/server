@@ -868,8 +868,15 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     # Quanto o entregador leva de troco (change_for - total). `None` quando
     # ninguém informou; 0 quando o cliente disse que não precisa.
     change_due = serializers.SerializerMethodField()
+    # De onde veio o desconto: cupom (com código), resgate da fidelidade (com
+    # o item grátis), cashback. Ver services/descontos_do_pedido.py.
+    descontos = serializers.SerializerMethodField()
     # Previsão de pronto = preparing_at + prep_minutes. `None` sem os dois.
     prep_due_at = serializers.SerializerMethodField()
+
+    def get_descontos(self, obj):
+        from apps.stores.services.descontos_do_pedido import descontos_do_pedido
+        return descontos_do_pedido(obj)
 
     def get_change_due(self, obj):
         from apps.stores.services.troco import troco_a_levar
@@ -914,7 +921,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'status', 'status_display', 'payment_status', 'payment_status_display',
             'subtotal', 'discount', 'coupon_code', 'tax', 'delivery_fee', 'voucher_fee', 'total',
             'amount_paid', 'amount_due', 'is_fully_paid', 'pedidos_do_cliente',
-            'change_for', 'change_due', 'prep_minutes', 'prep_due_at',
+            'descontos', 'change_for', 'change_due', 'prep_minutes', 'prep_due_at',
             'surcharge_value', 'surcharge_reason',
             'manual_discount_value', 'manual_discount_type', 'manual_discount_reason',
             'payment_method', 'payment_id', 'payment_preference_id',

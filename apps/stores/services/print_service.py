@@ -16,6 +16,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.stores.services.descontos_do_pedido import descontos_do_pedido
 from apps.stores.models import StoreOrder, StorePrintAgent, StorePrintJob
 
 logger = logging.getLogger(__name__)
@@ -571,6 +572,10 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             # somava itens + frete e não batia com o total impresso embaixo.
             'voucher_fee': _money(getattr(order, 'voucher_fee', 0) or 0),
             'total': _money(order.total),
+            # O `discount` acima é a soma; aqui, de onde veio (cupom com
+            # código, resgate com o item grátis, cashback). Agente antigo
+            # ignora a chave e segue imprimindo "Desconto".
+            'descontos': descontos_do_pedido(order),
         },
     }
 
