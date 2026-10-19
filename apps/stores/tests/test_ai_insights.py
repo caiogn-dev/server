@@ -77,6 +77,24 @@ class DailySummaryTest(_Base):
         self.assertEqual(data['source'], 'template')
         self.assertIn('pedidos', data['summary'])
 
+    def test_llm_error_nao_vaza_str_exc_no_payload(self):
+        """llm_error no resumo diário nunca expõe str(exc) — pode conter API keys."""
+        self._order(timezone.now() - timedelta(days=1), total=80)
+        chave_interna = 'sk-nvidia-SECRETAPIKEY1234567890abcdef'
+        exc = RuntimeError(f'Authentication failed: {chave_interna}')
+        with patch('apps.stores.services.ai_insights._llm_text', side_effect=exc):
+            resp = self.client.get('/api/v1/stores/ai/daily-summary/', {'store': 'loja-ia'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['source'], 'template')
+        llm_error = data.get('llm_error', '')
+        self.assertNotIn(chave_interna, str(llm_error),
+                         "API key não deve aparecer em llm_error")
+        self.assertNotIn('Authentication failed', str(llm_error),
+                         "Detalhe de erro interno não deve aparecer em llm_error")
+        self.assertEqual(llm_error, 'RuntimeError',
+                         "llm_error deve conter apenas o nome da classe de exceção")
+
     def test_other_users_store_is_404(self):
         client = APIClient()
         client.credentials(HTTP_AUTHORIZATION=f'Token {Token.objects.create(user=self.intruder).key}')
@@ -186,3 +204,21 @@ class ConversationInsightsTest(_Base):
             resp = self.client.get('/api/v1/stores/ai/conversation-insights/', {'store': 'loja-ia'})
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()['source'], 'error')
+
+    def test_llm_error_nao_vaza_str_exc_no_payload(self):
+        """llm_error nunca expõe str(exc) — pode conter API keys ou URLs internas."""
+        self._wire_whatsapp()
+        chave_interna = 'sk-nvidia-SECRETAPIKEY1234567890abcdef'
+        exc = RuntimeError(f'Authentication failed: {chave_interna}')
+        with patch('apps.stores.services.ai_insights._llm_text', side_effect=exc):
+            resp = self.client.get('/api/v1/stores/ai/conversation-insights/', {'store': 'loja-ia'})
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data['source'], 'error')
+        llm_error = data.get('llm_error', '')
+        self.assertNotIn(chave_interna, str(llm_error),
+                         "API key não deve aparecer em llm_error")
+        self.assertNotIn('Authentication failed', str(llm_error),
+                         "Detalhe de erro interno não deve aparecer em llm_error")
+        self.assertEqual(llm_error, 'RuntimeError',
+                         "llm_error deve conter apenas o nome da classe de exceção")
