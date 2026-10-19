@@ -318,6 +318,37 @@ def process_message_with_agent(self, message_id: str):
         release_lock(lock_name)
 
 
+def _atendente_assumiu_depois_da_mensagem(account_id: str, reply_to: str) -> bool:
+    """True quando a conversa virou humana DEPOIS de chegar a mensagem respondida.
+
+    19/10, Mavi: "eu já pedi" chegou às 15:51:04,2 com a conversa no bot; a
+    atendente respondeu pelo celular às 15:51:04,5 (conversa vira humana); o
+    LLM terminou às 15:51:44 e a resposta saiu por cima dela. O modo humano
+    era olhado só na entrada.
+
+    Conversa que JÁ era humana quando a mensagem chegou não entra aqui: se o
+    bot está respondendo, foi a triagem da entrada que liberou (botão do
+    próprio bot, localização com checkout esperando).
+    """
+    from ..models import Message
+
+    try:
+        entrada = Message.objects.filter(
+            account_id=account_id, whatsapp_message_id=reply_to,
+        ).select_related('conversation').first()
+        conversa = entrada.conversation if entrada else None
+        if conversa is None or conversa.mode != 'human':
+            return False
+        handover = getattr(conversa, 'handover', None)
+        assumiu_em = getattr(handover, 'last_transfer_at', None)
+        return bool(assumiu_em and assumiu_em > entrada.created_at)
+    except Exception:
+        # Na dúvida, a regra de antes: responde. Calar o bot por erro de
+        # consulta seria pior que o atropelo que esta guarda evita.
+        logger.warning('Falha ao checar atendente na saída (reply_to=%s)', reply_to, exc_info=True)
+        return False
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=30)
 def send_agent_response(
     self,
@@ -367,6 +398,15 @@ def send_agent_response(
         message_service = MessageService()
         # Ensure phone number has + prefix for E.164 format
         formatted_to = to if to.startswith('+') else '+' + to
+
+        if reply_to and _atendente_assumiu_depois_da_mensagem(account_id, reply_to):
+            logger.warning(
+                "Automated response suppressed for inbound %s via %s: atendente "
+                "assumiu a conversa enquanto o bot pensava",
+                reply_to,
+                response_source,
+            )
+            return
 
         if reply_to:
             response_lock = f"whatsapp:auto_response_sent:{account_id}:{reply_to}"

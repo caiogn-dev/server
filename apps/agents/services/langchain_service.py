@@ -463,6 +463,9 @@ class LangchainService:
                 for order in recent_orders:
                     if order.customer_name and not self._is_store_identity_name(order.customer_name, store=store):
                         name_candidates.append(order.customer_name)
+                    # Retirada grava o endereço DA LOJA no pedido — não é do cliente.
+                    if order.delivery_method in ('pickup', 'digital'):
+                        continue
                     formatted = self._format_address_for_context(order.delivery_address)
                     if formatted:
                         saved_addresses.append(formatted)
@@ -478,17 +481,37 @@ class LangchainService:
 
             customer_name = next(
                 (
-                    name for name in name_candidates
-                    if name
-                    and name.lower() != 'desconhecido'
+                    name.strip() for name in name_candidates
+                    if name and name.strip()
+                    and name.strip().lower() != 'desconhecido'
                     and not self._is_store_identity_name(name, store=store)
                 ),
                 '',
             )
             lines = [
                 "👤 CONTEXTO DO CLIENTE (dados reais do CRM/pedidos):",
-                "• Use apenas como histórico/identidade. Nunca trate pedido antigo como pedido atual sem confirmação nova.",
             ]
+            # Pedido de hoje que ainda não terminou NÃO é histórico: é o assunto
+            # da conversa. Até 19/10 ele vinha misturado na lista de antigos,
+            # sob "use apenas como histórico" — e a Mavi, com o pedido em
+            # preparo, ouviu "o que você gostaria de pedir hoje?" três vezes.
+            em_andamento = self._pedidos_em_andamento(recent_orders)
+            if em_andamento:
+                lines.append(
+                    "🟢 PEDIDO EM ANDAMENTO (feito há pouco — é dele que o cliente está falando):"
+                )
+                for order in em_andamento:
+                    lines.append("  - " + self._linha_do_pedido(order, com_hora=True))
+                lines.append(
+                    "• O cliente JÁ fez este pedido. Se ele cumprimentar, perguntar do pedido, "
+                    "disser que já pediu ou perguntar sobre buscar/retirar ou entrega, responda "
+                    "sobre ESTE pedido: o status e o próximo passo. Não pergunte o que ele quer "
+                    "pedir nem peça o número do pedido."
+                )
+            lines.append(
+                "• Pedidos antigos abaixo são histórico/identidade: não trate pedido antigo como "
+                "pedido atual sem confirmação nova."
+            )
             if customer_name:
                 lines.append(f"• Nome provável: {customer_name}")
             if phone_candidates:
@@ -508,22 +531,59 @@ class LangchainService:
             if recent_orders:
                 lines.append("• Pedidos recentes:")
                 for order in recent_orders:
-                    items = ", ".join(
-                        f"{item.quantity}x {item.product_name}"
-                        for item in order.items.all()[:5]
-                    ) or "sem itens salvos"
-                    address = self._format_address_for_context(order.delivery_address)
-                    address_text = f" | endereço: {address}" if address else ""
-                    lines.append(
-                        f"  - #{order.order_number} em {order.created_at.strftime('%d/%m/%Y')}: "
-                        f"{items} | total R$ {order.total} | status {order.status}/{order.payment_status}"
-                        f"{address_text}"
-                    )
+                    if order in em_andamento:
+                        continue
+                    lines.append("  - " + self._linha_do_pedido(order))
 
             return "\n".join(lines)
         except Exception as exc:
             logger.error("[AGENT CONTEXT] Error loading customer order history: %s", exc)
             return ''
+
+    #: Status em que o pedido já terminou — não é mais assunto da conversa.
+    _STATUS_FINAIS = {'delivered', 'completed', 'cancelled', 'refunded', 'failed'}
+
+    def _pedidos_em_andamento(self, pedidos) -> list:
+        """Pedidos das últimas 24 h que ainda não terminaram.
+
+        A janela existe porque pedido esquecido em "pendente" (PIX que nunca
+        foi pago) não pode virar, dias depois, "o pedido de que você fala".
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone as dj_tz
+
+        limite = dj_tz.now() - timedelta(hours=24)
+        return [
+            p for p in pedidos
+            if p.status not in self._STATUS_FINAIS and p.created_at and p.created_at >= limite
+        ]
+
+    def _linha_do_pedido(self, order, com_hora: bool = False) -> str:
+        """Uma linha do pedido para o contexto da IA, em português.
+
+        Retirada diz "RETIRADA na loja" e não mostra endereço: o endereço
+        gravado num pedido de retirada é o DA LOJA, e aparecia como
+        "endereço: Q. 112 Sul" — a IA lia como entrega.
+        """
+        from django.utils import timezone as dj_tz
+
+        items = ", ".join(
+            f"{item.quantity}x {item.product_name}"
+            for item in order.items.all()[:5]
+        ) or "sem itens salvos"
+        quando = dj_tz.localtime(order.created_at)
+        data = quando.strftime('%d/%m/%Y às %H:%M' if com_hora else '%d/%m/%Y')
+        if order.delivery_method in ('pickup', 'digital'):
+            entrega = "RETIRADA na loja"
+        else:
+            address = self._format_address_for_context(order.delivery_address)
+            entrega = f"ENTREGA em {address}" if address else "ENTREGA"
+        return (
+            f"#{order.order_number} em {data}: {items} | total R$ {order.total} | {entrega}"
+            f" | status: {order.get_status_display().lower()}"
+            f" | pagamento: {order.get_payment_status_display().lower()}"
+        )
 
     def _get_delivery_fee_runtime_reply(self, message: str, store=None) -> Optional[str]:
         """Resolve delivery fee questions deterministically, never by LLM prose."""

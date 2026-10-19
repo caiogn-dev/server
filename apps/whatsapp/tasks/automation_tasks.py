@@ -520,20 +520,13 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 # Retirada e entrega não podem receber a mesma frase. O texto padrão
                 # de "pedido pronto" dizia "aguarde a chegada do entregador OU venha
                 # buscar" — contradição que, numa entrega, chegou dois segundos
-                # antes de "está a caminho" (CE-2608129257, 12/ago).
-                eh_retirada = order.delivery_method in ('pickup', 'digital')
-                proximo_passo = (
-                    'Pode vir buscar! 😊' if eh_retirada
-                    else 'Já vai sair para entrega.'
-                )
-
-                message = template.render_message({
-                    'customer_name': order.customer_name,
-                    'order_number': order.order_number,
-                    'order_status': status_display,
-                    'order_total': order.total,
-                    'proximo_passo': proximo_passo,
-                })
+                # antes de "está a caminho" (CE-2608129257, 12/ago). As variáveis
+                # (nome, tempo, endereço, retirada/entrega) moram em
+                # `textos_de_aviso`; linha sem dado some em vez de sair com buraco.
+                from apps.automation.textos_de_aviso import renderizar_aviso, variaveis_do_pedido
+                variaveis = variaveis_do_pedido(order)
+                variaveis['order_status'] = status_display
+                message = renderizar_aviso(template.message_text, variaveis)
 
                 account = _get_account_for_profile(profile)
 

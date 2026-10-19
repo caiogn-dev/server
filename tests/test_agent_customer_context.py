@@ -119,7 +119,7 @@ class AgentCustomerContextTest(TestCase):
         self.assertIn('Total de pedidos encontrados: 1', context)
         self.assertIn('Magnífico Camarão', context)
         self.assertIn('Quadra 112 Sul Rua SR 2', context)
-        self.assertIn('Nunca trate pedido antigo como pedido atual', context)
+        self.assertIn('não trate pedido antigo como pedido atual', context)
 
     def test_order_history_uses_phone_variants(self):
         service = LangchainService.__new__(LangchainService)

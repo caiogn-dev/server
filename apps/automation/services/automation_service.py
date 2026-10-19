@@ -13,6 +13,7 @@ from apps.whatsapp.models import WhatsAppAccount
 from apps.whatsapp.services import MessageService as WhatsAppService
 from ..models import CompanyProfile, AutoMessage, CustomerSession, AutomationLog
 from .context_service import AutomationContextService
+from ..textos_de_aviso import TEXTOS_PADRAO
 
 logger = logging.getLogger(__name__)
 
@@ -322,19 +323,13 @@ class AutomationService:
             {
                 'event_type': AutoMessage.EventType.ORDER_CONFIRMED,
                 'name': 'Pedido confirmado',
-                'message_text': (
-                    "🎉 Pedido confirmado!\n\n"
-                    "Pedido #{order_number} está confirmado e já entrou na fila."
-                ),
+                'message_text': TEXTOS_PADRAO['order_confirmed'],
                 'priority': 1,
             },
             {
                 'event_type': AutoMessage.EventType.ORDER_PREPARING,
                 'name': 'Pedido em preparo',
-                'message_text': (
-                    "👨‍🍳 Estamos preparando seu pedido #{order_number}.\n\n"
-                    "Em breve estará a caminho!"
-                ),
+                'message_text': TEXTOS_PADRAO['order_preparing'],
                 'priority': 1,
             },
             {
@@ -362,19 +357,13 @@ class AutomationService:
             {
                 'event_type': AutoMessage.EventType.ORDER_OUT_FOR_DELIVERY,
                 'name': 'Saiu para entrega',
-                'message_text': (
-                    "📍 Pedido #{order_number} está a caminho!\n\n"
-                    "Fique atento ao entregador."
-                ),
+                'message_text': TEXTOS_PADRAO['order_out_for_delivery'],
                 'priority': 1,
             },
             {
                 'event_type': AutoMessage.EventType.ORDER_DELIVERED,
                 'name': 'Pedido entregue',
-                'message_text': (
-                    "🍽️ Pedido #{order_number} entregue!\n\n"
-                    "Esperamos que aproveite e conte com a gente sempre."
-                ),
+                'message_text': TEXTOS_PADRAO['order_delivered'],
                 'priority': 1,
             },
             {
