@@ -4,6 +4,7 @@ Base: /api/v1/stores/{store_slug}/fiscal/
 """
 import logging
 import uuid as uuid_module
+from decimal import Decimal
 
 from django.core.exceptions import PermissionDenied
 from django.db.models import Q, Sum
@@ -339,7 +340,7 @@ class PedidosParaNotaView(APIView):
             if limpar(busca):
                 criterio |= Q(customer_phone__icontains=limpar(busca))
             pedidos = pedidos.filter(criterio)
-        pedidos = list(pedidos.order_by('-created_at')[:LIMITE_DE_PEDIDOS])
+        pedidos = list(pedidos.prefetch_related('items').order_by('-created_at')[:LIMITE_DE_PEDIDOS])
 
         notas_por_pedido: dict = {}
         documentos = FiscalDocument.objects.filter(
@@ -364,6 +365,9 @@ class PedidosParaNotaView(APIView):
                 'total': p.total,
                 'created_at': p.created_at,
                 'delivery_method': p.delivery_method,
+                'payment_method': p.payment_method,
+                'itens': self._itens(p),
+                'valores': self._valores(p),
                 'notas': [
                     {'modelo': modelo, 'status': situacao}
                     for modelo, situacao in sorted(notas_por_pedido.get(p.id, {}).items())
@@ -372,6 +376,37 @@ class PedidosParaNotaView(APIView):
             }
             for p in pedidos
         ])
+
+    @staticmethod
+    def _itens(order) -> list:
+        """O que vai em cada linha da nota — editável no formulário."""
+        return [
+            {
+                'id': str(item.id),
+                'nome': item.product_name,
+                'quantidade': item.quantity,
+                'valor_unitario': f'{item.unit_price:.2f}',
+                'subtotal': f'{item.subtotal:.2f}',
+                'do_cardapio': item.product_id is not None,
+            }
+            for item in sorted(order.items.all(), key=lambda i: i.created_at)
+        ]
+
+    @staticmethod
+    def _valores(order) -> dict:
+        """A conta da nota, com os mesmos nomes da tela. Acréscimo e taxa do
+        vale saem juntos como "outras despesas" na SEFAZ, mas só o acréscimo é
+        editável — a taxa do vale já foi cobrada do cliente."""
+        zero = Decimal('0.00')
+        itens = sum((i.subtotal for i in order.items.all()), zero)
+        return {
+            'itens': f'{itens:.2f}',
+            'frete': f'{order.delivery_fee or zero:.2f}',
+            'desconto': f'{order.discount or zero:.2f}',
+            'acrescimo': f'{order.surcharge_value or zero:.2f}',
+            'taxa_do_vale': f'{order.voucher_fee or zero:.2f}',
+            'total': f'{order.total or zero:.2f}',
+        }
 
     @staticmethod
     def _sugestao(order, salvos: dict) -> dict:

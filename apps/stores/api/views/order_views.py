@@ -447,6 +447,16 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                         unit_price=unit_price, quantity=qty,
                         subtotal=unit_price * qty, options={}, notes='',
                     )
+                elif kind == 'add_custom':
+                    # Fora do cardápio: sem produto, sem estoque. Na nota sai
+                    # com o NCM padrão da loja.
+                    qty = op['quantity']
+                    StoreOrderItem.objects.create(
+                        order=order, product=None, variant=None,
+                        product_name=op['name'], variant_name='', sku='',
+                        unit_price=op['unit_price'], quantity=qty,
+                        subtotal=op['unit_price'] * qty, options={}, notes='',
+                    )
                 elif kind == 'update':
                     item = order.items.filter(id=op['item_id']).first()
                     if not item:
@@ -454,8 +464,12 @@ class StoreOrderViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                             {'error': 'Item não pertence a este pedido.',
                              'code': 'item_not_found'})
                     item.quantity = op['quantity']
+                    if op.get('unit_price') is not None:
+                        item.unit_price = op['unit_price']
+                    if op.get('name'):
+                        item.product_name = op['name']
                     item.subtotal = item.unit_price * item.quantity
-                    item.save(update_fields=['quantity', 'subtotal'])
+                    item.save(update_fields=['quantity', 'unit_price', 'product_name', 'subtotal'])
                 elif kind == 'remove':
                     item = order.items.filter(id=op['item_id']).first()
                     if not item:

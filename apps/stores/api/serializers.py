@@ -1380,6 +1380,11 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             coupon_code=validated_data.get('coupon_code', ''),
             tax=tax,
             delivery_fee=delivery_fee,
+            # Na coluna, e não só no metadata: a NF-e e o recalculate_totals
+            # leem daqui. Fora dela, a nota da Ivoneth (19/10) somou só os
+            # itens contra o total cheio e a SEFAZ recusou ("ausência de troco").
+            surcharge_value=surcharge,
+            surcharge_reason=adjustment_reason[:255] if surcharge > 0 else '',
             total=total,
             payment_method=validated_data.get('payment_method', ''),
             delivery_method=validated_data.get('delivery_method', 'delivery'),
@@ -1542,18 +1547,29 @@ class StoreOrderUpdateSerializer(serializers.ModelSerializer):
 
 class StoreOrderItemOpSerializer(serializers.Serializer):
     """Uma operação sobre itens do pedido na edição."""
-    op = serializers.ChoiceField(choices=['add', 'update', 'remove'])
+    op = serializers.ChoiceField(choices=['add', 'add_custom', 'update', 'remove'])
     item_id = serializers.UUIDField(required=False)
     product_id = serializers.UUIDField(required=False)
     quantity = serializers.IntegerField(min_value=1, required=False)
+    # Item fora do cardápio (add_custom) e correção do item na nota (update).
+    name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    unit_price = serializers.DecimalField(
+        max_digits=10, decimal_places=2, required=False, min_value=Decimal('0.00'))
 
     def validate(self, attrs):
         op = attrs['op']
         if op == 'add' and not attrs.get('product_id'):
             raise serializers.ValidationError("op 'add' exige product_id.")
+        if op == 'add_custom':
+            if not (attrs.get('name') or '').strip():
+                raise serializers.ValidationError('Informe o nome do item.')
+            if attrs.get('unit_price') is None:
+                raise serializers.ValidationError('Informe o valor do item.')
+        if 'name' in attrs:
+            attrs['name'] = attrs['name'].strip()
         if op in ('update', 'remove') and not attrs.get('item_id'):
             raise serializers.ValidationError(f"op '{op}' exige item_id.")
-        if op in ('add', 'update') and not attrs.get('quantity'):
+        if op in ('add', 'add_custom', 'update') and not attrs.get('quantity'):
             raise serializers.ValidationError(f"op '{op}' exige quantity.")
         return attrs
 
