@@ -5,7 +5,6 @@ Note: ScheduledMessageViewSet has been moved to apps.automation.api.views.
 Use /api/v1/automation/scheduled-messages/ endpoint for scheduled message operations.
 """
 import logging
-import traceback
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -672,7 +671,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
             logger.warning(f"Campaign {pk} start validation failed: {e}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Campaign {pk} start error: {e}\n{traceback.format_exc()}")
+            logger.exception("Campanha %s: erro ao iniciar", pk)
             return Response(
                 {'error': 'Erro ao iniciar campanha. Verifique se o serviço de filas está ativo.'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -693,7 +692,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Campaign {pk} pause error: {e}\n{traceback.format_exc()}")
+            logger.exception("Campanha %s: erro ao pausar", pk)
             return Response({'error': 'Erro ao pausar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @extend_schema(summary="Resume campaign")
@@ -711,7 +710,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Campaign {pk} resume error: {e}\n{traceback.format_exc()}")
+            logger.exception("Campanha %s: erro ao retomar", pk)
             return Response({'error': 'Erro ao retomar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @extend_schema(summary="Cancel campaign")
@@ -729,7 +728,7 @@ class CampaignViewSet(viewsets.ModelViewSet):
         except ValueError as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Campaign {pk} cancel error: {e}\n{traceback.format_exc()}")
+            logger.exception("Campanha %s: erro ao cancelar", pk)
             return Response({'error': 'Erro ao cancelar campanha'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @extend_schema(summary="Get campaign statistics")
