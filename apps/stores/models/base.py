@@ -357,33 +357,31 @@ class Store(BaseModel):
 
     def is_open(self):
         """Check if store is currently open based on operating hours."""
+        from apps.stores.services.horario_de_funcionamento import (
+            dentro_do_horario, dia_esta_aberto, pausa_ativa,
+        )
+
+        now = timezone.localtime()
+        # Pausa programada vence a grade (e vale até para loja sem grade):
+        # "volta às 14h, faltou gás".
+        if pausa_ativa(self.metadata, now):
+            return False
+
         if not self.operating_hours:
             return True
 
-        now = timezone.localtime()
         day_name = self._WEEKDAY_NAMES[now.weekday()]
         hours = self.operating_hours.get(day_name)
 
         # A vontade de quem administra vem ANTES do relógio: dia desligado não
         # abre, mesmo com `open`/`close` gravados embaixo do desligamento.
         # Regra em fonte única — o bot errava por ter a própria cópia dela.
-        from apps.stores.services.horario_de_funcionamento import dia_esta_aberto
-
         if not dia_esta_aberto(hours):
             return False
 
-        try:
-            from datetime import datetime as _dt
-            open_str = hours.get('open') or hours.get('start') or '00:00'
-            close_str = hours.get('close') or hours.get('end') or '23:59'
-            open_time = _dt.strptime(open_str, '%H:%M').time()
-            close_time = _dt.strptime(close_str, '%H:%M').time()
-            return open_time <= now.time() <= close_time
-        except (ValueError, TypeError):
-            # Era `return True`: um erro de digitação no painel ABRIA a loja.
-            # Diante da dúvida não vender é recuperável — o cliente volta.
-            # Vender sem poder entregar custa o cliente.
-            return False
+        # Um ou mais turnos; turno ilegível não abre (era `return True`: um
+        # erro de digitação no painel ABRIA a loja).
+        return dentro_do_horario(hours, now.time())
 
     @staticmethod
     def _verdadeiro(valor):

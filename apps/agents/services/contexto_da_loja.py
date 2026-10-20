@@ -13,7 +13,7 @@ fonte única de `horario_de_funcionamento` — a mesma do `Store.is_open`.
 """
 from datetime import datetime, timedelta
 
-from apps.stores.services.horario_de_funcionamento import dia_esta_aberto, faixa_do_dia
+from apps.stores.services.horario_de_funcionamento import dia_esta_aberto, faixa_do_dia, turnos_do_dia
 
 _DIAS = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')
 _DIA_PT = {
@@ -52,34 +52,36 @@ def _hora(texto):
         return None
 
 
-def _faixa(do_dia):
-    """(abre, fecha) como `time`, ou None se o dia não abre ou está mal cadastrado."""
+def _turnos(do_dia):
+    """[(abre, fecha), ...] como `time`; [] se o dia não abre ou está mal cadastrado.
+
+    Dois turnos (08–13 e 15–17) são dois itens: às 13:30 a loja está fechada
+    e reabre "hoje às 15:00", não amanhã.
+    """
     if not dia_esta_aberto(do_dia):
-        return None
-    abre = _hora(do_dia.get('open') or do_dia.get('start'))
-    fecha = _hora(do_dia.get('close') or do_dia.get('end'))
-    if not abre or not fecha:
-        return None
-    return abre, fecha
+        return []
+    turnos = []
+    for a, f in turnos_do_dia(do_dia):
+        abre, fecha = _hora(a), _hora(f)
+        if abre and fecha:
+            turnos.append((abre, fecha))
+    return turnos
 
 
 def _proxima_abertura(horarios, agora):
     """Primeiro (dia, hora) em que a loja abre depois de `agora`, até 7 dias."""
     for adiante in range(0, 8):
         data = agora + timedelta(days=adiante)
-        faixa = _faixa(horarios.get(_DIAS[data.weekday()]))
-        if not faixa:
-            continue
-        abre, _ = faixa
-        if adiante == 0 and agora.time() >= abre:
-            continue
-        if adiante == 0:
-            quando = 'hoje'
-        elif adiante == 1:
-            quando = 'amanhã'
-        else:
-            quando = _DIA_PT[_DIAS[data.weekday()]].lower()
-        return f"{quando} às {abre.strftime('%H:%M')}"
+        for abre, _ in _turnos(horarios.get(_DIAS[data.weekday()])):
+            if adiante == 0 and agora.time() >= abre:
+                continue
+            if adiante == 0:
+                quando = 'hoje'
+            elif adiante == 1:
+                quando = 'amanhã'
+            else:
+                quando = _DIA_PT[_DIAS[data.weekday()]].lower()
+            return f"{quando} às {abre.strftime('%H:%M')}"
     return ''
 
 
@@ -88,9 +90,9 @@ def texto_de_agora(loja, agora) -> str:
     horarios = getattr(loja, 'operating_hours', None) or {}
     if not horarios:
         return ''  # sem horário cadastrado não se inventa aberta nem fechada
-    faixa = _faixa(horarios.get(_DIAS[agora.weekday()]))
-    if faixa and faixa[0] <= agora.time() <= faixa[1]:
-        return f"🟢 AGORA: a loja está ABERTA (fecha hoje às {faixa[1].strftime('%H:%M')})."
+    for abre, fecha in _turnos(horarios.get(_DIAS[agora.weekday()])):
+        if abre <= agora.time() <= fecha:
+            return f"🟢 AGORA: a loja está ABERTA (fecha hoje às {fecha.strftime('%H:%M')})."
 
     proxima = _proxima_abertura(horarios, agora)
     reabre = f" Reabre {proxima}." if proxima else ''

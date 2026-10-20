@@ -227,8 +227,12 @@ def public_store_availability(request, slug):
     now = timezone.localtime()
     day_name = now.strftime('%A').lower()
     hours = (store.operating_hours or {}).get(day_name)
+    from apps.stores.services.horario_de_funcionamento import pausa_ativa
+    pausa = pausa_ativa(store.metadata, timezone.now())
     return Response({
         'is_open': store.is_open(),
+        # Só fim e motivo: o cardápio diz "volta às 14:00 — faltou gás".
+        'pausa': {'fim': pausa.get('fim'), 'motivo': pausa.get('motivo') or ''} if pausa else None,
         'today': day_name,
         'hours': hours,
         'operating_hours': store.operating_hours or {},

@@ -354,8 +354,10 @@ class UnifiedService:
         today_hours = hours.get(today) or {}
 
         lines = [f"{store_name} está fora do horário no momento."]
-        if today_hours.get('open') and today_hours.get('close'):
-            lines.append(f"Hoje atendemos de {today_hours['open']} às {today_hours['close']}.")
+        from apps.stores.services.horario_de_funcionamento import faixa_do_dia
+        faixa = faixa_do_dia(today_hours)
+        if faixa:
+            lines.append(f"Hoje atendemos das {faixa}.")
         lines.append("Você pode me enviar sua mensagem agora que seguimos assim que a loja abrir.")
         return "\n".join(lines)
 
