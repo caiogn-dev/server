@@ -1195,7 +1195,14 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         # 'addresses' do serializer eram lidos por linha → N+1 em
         # store_customer_addresses. Com o prefetch, é 1 query p/ todos os endereços.
         qs = qs.select_related('user', 'store').prefetch_related('address_list')
-        return _anotar_crm(qs)
+        qs = _anotar_crm(qs)
+        # `?segmento=` só na lista: o `stats` conta todos os segmentos sobre
+        # este mesmo queryset e não pode herdar o filtro.
+        if self.action == 'list':
+            filtro = self._filtro_do_segmento(self.request.query_params.get('segmento'))
+            if filtro is not None:
+                qs = qs.filter(filtro)
+        return qs
 
     def perform_create(self, serializer):
         """Injeta a store no create garantindo isolamento por tenant.
@@ -1255,6 +1262,32 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
     # raramente volta sozinho — vira campanha, não lembrete.
     DIAS_ATIVO = 30
     DIAS_RISCO = 45
+    # Mesma régua do `perfil` no serializer (novo 0–1 · ocasional 2–4 · vip 5+).
+    PEDIDOS_VIP = 5
+
+    def _filtros_dos_segmentos(self):
+        """Um `Q` por segmento — a mesma definição serve ao filtro da lista e
+        à contagem do `stats`, senão a aba diz 12 e o cartão de cima diz 14."""
+        from apps.stores.metrics import hoje_local
+
+        hoje = hoje_local()
+        corte_ativo = hoje - timedelta(days=self.DIAS_ATIVO)
+        corte_risco = hoje - timedelta(days=self.DIAS_RISCO)
+        return {
+            'vip': Q(_pedidos_reais__gte=self.PEDIDOS_VIP),
+            'ativos': Q(_ultima_compra__date__gte=corte_ativo),
+            'em_risco': Q(_ultima_compra__date__lt=corte_ativo, _ultima_compra__date__gte=corte_risco),
+            'inativos': Q(_ultima_compra__date__lt=corte_risco),
+            # Cadastro sem compra é LEAD, não cliente perdido. Somar os dois
+            # inflaria "inativos" e mandaria campanha de reativação para quem
+            # nunca ativou.
+            'sem_compra': Q(_ultima_compra__isnull=True),
+        }
+
+    def _filtro_do_segmento(self, segmento):
+        # Segmento desconhecido não filtra: link velho ou digitado errado
+        # mostra a lista inteira, nunca uma lista vazia que parece verdade.
+        return self._filtros_dos_segmentos().get(segmento or '')
 
     def _segmentos(self):
         """Quantos clientes em cada estágio, com a régua declarada.
@@ -1266,24 +1299,9 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         dado: quem lê não tem como julgar se concorda, nem como explicar o
         número para outra pessoa.
         """
-        from apps.stores.metrics import hoje_local
-
-        hoje = hoje_local()
-        corte_ativo = hoje - timedelta(days=self.DIAS_ATIVO)
-        corte_risco = hoje - timedelta(days=self.DIAS_RISCO)
-
-        qs = self.get_queryset()
-        agg = qs.aggregate(
-            ativos=Count('id', filter=Q(_ultima_compra__date__gte=corte_ativo)),
-            em_risco=Count('id', filter=Q(
-                _ultima_compra__date__lt=corte_ativo,
-                _ultima_compra__date__gte=corte_risco,
-            )),
-            inativos=Count('id', filter=Q(_ultima_compra__date__lt=corte_risco)),
-            # Cadastro sem compra é LEAD, não cliente perdido. Somar os dois
-            # inflaria "inativos" e mandaria campanha de reativação para quem
-            # nunca ativou.
-            sem_compra=Count('id', filter=Q(_ultima_compra__isnull=True)),
+        filtros = self._filtros_dos_segmentos()
+        agg = self.get_queryset().aggregate(
+            **{nome: Count('id', filter=q) for nome, q in filtros.items()}
         )
         return {
             **agg,
@@ -1292,6 +1310,7 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
                 'em_risco': f'{self.DIAS_ATIVO} a {self.DIAS_RISCO} dias sem comprar',
                 'inativos': f'mais de {self.DIAS_RISCO} dias sem comprar',
                 'sem_compra': 'cadastrado, nunca comprou',
+                'vip': f'{self.PEDIDOS_VIP} ou mais pedidos',
             },
         }
 
