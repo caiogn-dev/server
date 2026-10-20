@@ -489,8 +489,8 @@ class StoreCatalogView(APIView):
             'categories': StoreCategorySerializer(categories, many=True).data,
             'products': StoreProductVitrineSerializer(all_products, many=True).data,
             'featured_products': StoreProductVitrineSerializer(featured_products, many=True).data,
-            'combos': StoreComboSerializer(combos, many=True).data,
-            'combos_destaque': StoreComboSerializer(combos_destaque, many=True).data,
+            'combos': StoreComboSerializer(combos, many=True, context={'vitrine': True}).data,
+            'combos_destaque': StoreComboSerializer(combos_destaque, many=True, context={'vitrine': True}).data,
             'product_types': CatalogProductTypeSerializer(product_types, many=True).data,
             'products_by_category': products_by_category,
         }

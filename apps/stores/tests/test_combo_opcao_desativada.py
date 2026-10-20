@@ -53,3 +53,29 @@ class OpcaoDesativadaNoComboTest(TestCase):
         p.allow_backorder = True
         p.save()
         assert p.name in self._nomes(somente_disponiveis=True)
+
+
+class CatalogoDaVitrineTest(TestCase):
+    """O cardápio lê `/stores/<slug>/catalog/`, que serializa combos com o
+    StoreComboSerializer do painel — o filtro precisa valer ali também."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.store, cls.combo = make_combo_with_groups(groups=1, variants=0, options=2)
+        cls.combo.is_active = True
+        cls.combo.save()
+        cls.desativado, cls.ok = [o.product for o in cls.combo.groups.get().product_options.order_by('position')]
+        cls.desativado.status = StoreProduct.ProductStatus.INACTIVE
+        cls.desativado.save()
+
+    def setUp(self):
+        from django.core.cache import cache
+        cache.clear()
+
+    def test_catalogo_nao_traz_opcao_desativada(self):
+        from rest_framework.test import APIClient
+        r = APIClient().get(f'/api/v1/stores/{self.store.slug}/catalog/')
+        assert r.status_code == 200
+        combo = next(c for c in r.json()['combos'] if c['id'] == str(self.combo.id))
+        nomes = [o['name'] for o in combo['groups'][0]['product_options']]
+        assert nomes == [self.ok.name]

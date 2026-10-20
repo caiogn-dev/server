@@ -2121,8 +2121,12 @@ class StoreComboSerializer(serializers.ModelSerializer):
         }
 
     def get_groups(self, obj):
-        """Retorna grupos com opções (variantes E/OU produtos) para seleção."""
-        return build_combo_groups(obj)
+        """Retorna grupos com opções (variantes E/OU produtos) para seleção.
+
+        `context['vitrine']`: o catálogo público reaproveita este serializer;
+        lá a opção desativada/pausada/zerada não vai.
+        """
+        return build_combo_groups(obj, somente_disponiveis=bool(self.context.get('vitrine')))
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
