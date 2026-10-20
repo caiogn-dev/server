@@ -2171,7 +2171,7 @@ class LangchainService:
             if isinstance(e, RespostaDoModeloInvalida):
                 # Tipo preservado: quem chama vê que foi a resposta, não a rede.
                 raise
-            logger.exception("Erro ao processar mensagem")
+            logger.error("Erro ao processar mensagem: %s", type(e).__name__)
             raise BaseAPIException("Erro ao processar mensagem")
 
     def _registrar_resposta_barrada(self, invalida, finish_reason, start_time):

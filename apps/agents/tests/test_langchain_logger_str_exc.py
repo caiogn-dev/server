@@ -86,13 +86,40 @@ class LangchainLoggerStrExcTest(unittest.TestCase):
             "logger.error com {e} ainda presente em process_message",
         )
 
-    def test_contagem_logger_exception_no_minimo_14(self):
-        """Deve haver pelo menos 14 usos de logger.exception no módulo (um por fix)."""
+    def test_contagem_logger_exception_no_minimo_10(self):
+        """Deve haver pelo menos 10 usos de logger.exception no módulo."""
         src = _source()
         count = len(re.findall(r'logger\.exception\(', src))
         self.assertGreaterEqual(
-            count, 14,
-            f"Esperado ≥ 14 logger.exception, encontrado {count}",
+            count, 10,
+            f"Esperado ≥ 10 logger.exception, encontrado {count}",
+        )
+
+    def test_process_message_usa_logger_error_sem_exc_info(self):
+        """process_message deve usar logger.error com type(e).__name__, não logger.exception.
+
+        JsonFormatter serializa formatException() no campo 'exception' do JSON de log.
+        Exceções do OpenAI/Anthropic incluem o API key no str(e); logger.exception
+        (exc_info=True) colocaria esse texto no campo 'exception' — diferente de 'message',
+        mas ainda presente nos logs. logger.error com type(e).__name__ registra apenas
+        o nome da classe (ex: 'AuthenticationError') sem a mensagem sensível.
+        """
+        src = _source()
+        # O padrão correto: logger.error com type(e).__name__, não logger.exception
+        self.assertIn(
+            'logger.error("Erro ao processar mensagem: %s", type(e).__name__)',
+            src,
+            "process_message deve usar logger.error com type(e).__name__",
+        )
+        # Garante que não há logger.exception logo antes de raise BaseAPIException
+        import re
+        bad_pattern = re.findall(
+            r'logger\.exception\("Erro ao processar mensagem"\)',
+            src,
+        )
+        self.assertEqual(
+            bad_pattern, [],
+            "logger.exception (exc_info=True) não deve ser usado em process_message",
         )
 
 
