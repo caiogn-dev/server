@@ -1,4 +1,4 @@
-from django.http import Http404, HttpResponse
+from django.http import Http404, HttpResponse, JsonResponse
 from django.utils.html import escape
 from django.shortcuts import get_object_or_404
 from django.views.decorators.cache import cache_page
@@ -30,16 +30,71 @@ def _fmt(value):
     return f"{value:.1f}".replace(".0", "").replace(".", ",")
 
 
-@require_GET
-@cache_page(60 * 10)
-def public_nutrition_label(request, product_id):
+def _perfil_publico(product_id):
+    """O perfil que a etiqueta pública mostra; 404 quando não há o que mostrar."""
     profile = get_object_or_404(
         ProductNutritionProfile.objects.select_related("product", "product__store", "recipe").prefetch_related("recipe__items__ingredient"),
         product_id=product_id, is_active=True,
     )
-    tabela = profile.tabela_declarada or {}
-    if not tabela and not profile.recipe_id and all(getattr(profile, field) is None for field in NUTRIENT_FIELDS):
+    if not profile.tabela_declarada and not profile.recipe_id and all(
+            getattr(profile, field) is None for field in NUTRIENT_FIELDS):
         raise Http404
+    return profile
+
+
+@require_GET
+@cache_page(60 * 10)
+def public_nutrition_data(request, product_id):
+    """A mesma etiqueta da página pública, em dados — o modal do cardápio desenha.
+
+    Valores saem como TEXTO já formatado: na tabela declarada é o que o
+    nutricionista assinou ("1,7", "1216"), e a vitrine não deve refazer conta.
+    """
+    profile = _perfil_publico(product_id)
+    tabela = profile.tabela_declarada or {}
+    serving = profile.serving_size_g
+    linhas = []
+    for field, label, unit in LABELS:
+        if tabela:
+            cem, porcao, vd = (tabela.get("linhas", {}).get(field) or ["", "", ""])
+        else:
+            per_100 = getattr(profile, field)
+            cem = _fmt(per_100) if per_100 is not None else ""
+            porcao = _fmt(per_100 * serving / 100) if per_100 is not None and serving else ""
+            vd = ""
+        linhas.append({"campo": field, "rotulo": label, "unidade": unit,
+                       "por_100": cem, "por_porcao": porcao, "vd": vd})
+
+    if tabela:
+        alergenicos = list(tabela.get("declaracoes") or [])
+        ingredientes = tabela.get("ingredientes") or ""
+        porcao_txt = tabela.get("porcao", "")
+    else:
+        alerg = allergens_da_receita(profile.recipe) if profile.recipe_id else None
+        alergenicos = [alerg["texto"]] if alerg and alerg["revisado"] else []
+        ingredientes = ", ".join(i.ingredient.display_name for i in profile.recipe.items.all()) if profile.recipe_id else ""
+        porcao_txt = f"{_fmt(serving)} g" if serving else ""
+        if profile.household_measure and porcao_txt:
+            porcao_txt += f" ({profile.household_measure})"
+
+    por_100 = {field: getattr(profile, field) for field in NUTRIENT_FIELDS}
+    frontal = alertas_frontais(por_100, profile.physical_form)
+    return JsonResponse({
+        "declarada": bool(tabela),
+        "porcao": porcao_txt,
+        "coluna_porcao": tabela.get("coluna_porcao", "Porção") if tabela else "Porção",
+        "linhas": linhas,
+        "alto_em": [s["selo"] for s in frontal["selos"]],
+        "alergenicos": alergenicos,
+        "ingredientes": ingredientes,
+    })
+
+
+@require_GET
+@cache_page(60 * 10)
+def public_nutrition_label(request, product_id):
+    profile = _perfil_publico(product_id)
+    tabela = profile.tabela_declarada or {}
     serving = profile.serving_size_g
     rows = []
     if tabela:
