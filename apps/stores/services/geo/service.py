@@ -347,6 +347,27 @@ class GeoService:
             cache.set(cache_key, lugar, CACHE_TTL_GEOCODE)
         return lugar or None
 
+    def cotar_texto(self, store, texto: str) -> Optional[Dict]:
+        """Frete de um endereço ESCRITO — porta única para quem só tem texto.
+
+        Localiza com ponto confiável (`localizar`) e cota por coordenada.
+        None = não deu para saber onde é: peça a localização, não cote o
+        centro da cidade. A resposta traz `lugar` (lat, lng, formatted_address).
+        """
+        metadata = getattr(store, 'metadata', None) or {}
+        address_data = getattr(store, 'address_data', None) or {}
+        city_suffix = self._build_city_suffix(store, address_data, metadata)
+        lugar = self.localizar(texto, city_suffix=city_suffix)
+        if not lugar or lugar.get('lat') is None or lugar.get('lng') is None:
+            return None
+        cotacao = self.calculate_delivery_fee(
+            store,
+            customer_lat=float(lugar['lat']),
+            customer_lng=float(lugar['lng']),
+            customer_address_text=texto,
+        )
+        return {**cotacao, 'lugar': lugar}
+
     def reverse_geocode(self, lat: float, lng: float) -> Optional[Dict]:
         rounded_lat, rounded_lng = _round_coords(lat, lng, 4)
         cache_key = _make_cache_key("revgeo", rounded_lat, rounded_lng)
@@ -373,7 +394,9 @@ class GeoService:
         if isinstance(destination, tuple):
             return destination
 
-        geocoded = self.geocode(destination, city_suffix=city_suffix)
+        # localizar, não geocode: o centro genérico de Palmas (-10.249091)
+        # virava destino e cobrava 9 km (Nair, "Colégio Marista", 20/10).
+        geocoded = self.localizar(destination, city_suffix=city_suffix)
         if not geocoded:
             return None
 

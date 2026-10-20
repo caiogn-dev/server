@@ -585,6 +585,35 @@ class LangchainService:
             f" | pagamento: {order.get_payment_status_display().lower()}"
         )
 
+    _PECA_LOCALIZACAO = (
+        "Não consegui localizar esse endereço no mapa.\n"
+        "Me envie a localização pelo alfinete do WhatsApp para calcular certinho."
+    )
+
+    def _cotar_endereco(self, store, texto: str) -> Dict[str, Any]:
+        """Frete de endereço escrito — o MESMO cálculo para cotação e para salvar.
+
+        Antes cada ferramenta geocodificava por conta própria e aceitava o
+        centro genérico de Palmas: a Nair ouviu "9,3 km" e pagou R$ 8 (20/10).
+        """
+        from apps.stores.services.geo import geo_service
+
+        cotacao = geo_service.cotar_texto(store, texto)
+        if not cotacao:
+            return {'ok': False, 'mensagem': self._PECA_LOCALIZACAO}
+        if not cotacao.get('is_within_area', True) or cotacao.get('fee') is None:
+            return {
+                'ok': False,
+                'mensagem': cotacao.get('message') or "Esse endereço fica fora da nossa área de entrega.",
+            }
+        dist = cotacao.get('distance_km')
+        return {
+            'ok': True,
+            'fee': float(cotacao['fee']),
+            'distancia': f" ({float(dist):.1f} km)" if dist else "",
+            'endereco': cotacao['lugar'].get('formatted_address') or texto,
+        }
+
     def _get_delivery_fee_runtime_reply(self, message: str, store=None) -> Optional[str]:
         """Resolve delivery fee questions deterministically, never by LLM prose."""
         if not store:
@@ -606,32 +635,13 @@ class LangchainService:
 
         if self._looks_like_delivery_address(message):
             try:
-                from apps.stores.services.geo import geo_service
-
-                geo = geo_service.geocode(message, restrict_to_city=True)
-                if not geo or not geo.get('lat') or not geo.get('lng'):
-                    return (
-                        "Não consegui localizar esse endereço em Palmas.\n"
-                        "Me envie a localização pelo alfinete do WhatsApp para calcular certinho."
-                    )
-
-                fee_info = geo_service.calculate_delivery_fee(
-                    store,
-                    customer_lat=geo['lat'],
-                    customer_lng=geo['lng'],
-                    customer_address_text=message,
+                cotacao = self._cotar_endereco(store, message)
+                if not cotacao['ok']:
+                    return cotacao['mensagem']
+                return (
+                    f"Para {cotacao['endereco']}, a taxa de entrega{cotacao['distancia']} "
+                    f"é {self._format_brl(cotacao['fee'])}."
                 )
-                if not fee_info.get('is_within_area', True) or fee_info.get('fee') is None:
-                    return (
-                        fee_info.get('message')
-                        or "Esse endereço fica fora da nossa área de entrega dinâmica."
-                    )
-
-                fee = float(fee_info['fee'])
-                distance_km = fee_info.get('distance_km')
-                formatted_address = geo.get('formatted_address') or message
-                dist_text = f" ({float(distance_km):.1f} km)" if distance_km else ""
-                return f"Para {formatted_address}, a taxa de entrega{dist_text} é {self._format_brl(fee)}."
             except Exception as exc:
                 logger.error('[AGENT] Deterministic delivery fee failed: %s', exc, exc_info=True)
                 return (
@@ -1752,36 +1762,16 @@ class LangchainService:
             _save_cart(cart)
             if store:
                 try:
-                    from apps.stores.services.geo import geo_service
-                    geo = geo_service.geocode(endereco, restrict_to_city=True)
-                    if geo and geo.get('lat') and geo.get('lng'):
-                        fee_info = geo_service.calculate_delivery_fee(
-                            store,
-                            customer_lat=float(geo['lat']),
-                            customer_lng=float(geo['lng']),
-                            customer_address_text=geo.get('formatted_address') or endereco,
-                        )
-                    else:
-                        fee_info = geo_service.calculate_delivery_fee(
-                            store,
-                            destination_address=endereco,
-                            customer_address_text=endereco,
-                        )
-                    if not fee_info.get('is_within_area', True) or fee_info.get('fee') is None:
+                    cotacao = self._cotar_endereco(store, endereco)
+                    if not cotacao['ok']:
                         cart.pop('delivery_address', None)
                         _save_cart(cart)
-                        return (
-                            fee_info.get('message')
-                            or "Esse endereço fica fora da nossa área de entrega."
-                        )
-                    fee = float(fee_info['fee'])
-                    cart['delivery_fee'] = fee
+                        return cotacao['mensagem']
+                    cart['delivery_fee'] = cotacao['fee']
                     _save_cart(cart)
-                    dist = fee_info.get('distance_km')
-                    dist_text = f" ({float(dist):.1f} km)" if dist else ""
                     return (
-                        f"Endereço salvo: {geo.get('formatted_address') or endereco}{dist_text}\n"
-                        f"Taxa de entrega: {self._format_brl(fee)}"
+                        f"Endereço salvo: {cotacao['endereco']}{cotacao['distancia']}\n"
+                        f"Taxa de entrega: {self._format_brl(cotacao['fee'])}"
                     )
                 except Exception as exc:
                     logger.warning("[AGENT] salvar_endereco_entrega fee calc failed: %s", exc)

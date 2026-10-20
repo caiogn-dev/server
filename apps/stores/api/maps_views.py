@@ -37,7 +37,9 @@ class StoreGeocodeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        result = geo_service.geocode(address)
+        # localizar: o pino do checkout sai daqui; o centro genérico da
+        # cidade punha o cliente a 9 km do lugar (Nair, 20/10).
+        result = geo_service.localizar(address)
         if result:
             return Response(result)
         return Response(

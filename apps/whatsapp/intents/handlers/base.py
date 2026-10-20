@@ -350,7 +350,9 @@ class IntentHandler:
 
             # Em Palmas a quadra localiza; alameda e lote se repetem em todas.
             # 25/09: "307 norte Al 19 lote 53" cru virou Plano Diretor SUL, 14 km.
-            geo = geo_service.geocode(consulta_para_geocodificar(address_text), restrict_to_city=True)
+            # localizar: nome de lugar ("Colégio Marista") vira o lugar, nunca
+            # o centro genérico da cidade (Nair, 20/10).
+            geo = geo_service.localizar(consulta_para_geocodificar(address_text))
             if geo and geo.get('lat') and not resultado_bate_com_o_setor(address_text, geo):
                 logger.warning(
                     "[_handle_address_input] geocode devolveu outro setor para %r: %s",
