@@ -50,7 +50,7 @@ class StoreCatalogAndMapsAPITestCase(TestCase):
 
     @patch('apps.stores.api.maps_views.geo_service')
     def test_maps_geocode_endpoint(self, mock_maps_service):
-        mock_maps_service.geocode.return_value = {
+        mock_maps_service.localizar.return_value = {
             'lat': -10.185,
             'lng': -48.303,
             'latitude': -10.185,
