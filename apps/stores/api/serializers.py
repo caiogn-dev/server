@@ -1988,11 +1988,23 @@ def _descricao_curta_da_opcao(produto, limite=140):
     return texto[:limite].rsplit(' ', 1)[0].rstrip(' ,.;:') + '…'
 
 
-def build_combo_groups(obj):
+def _opcao_disponivel(produto, rastreia):
+    """Mesma regra de StoreProduct.disponiveis(), em memória (prefetch)."""
+    if not produto.is_active or produto.status != produto.ProductStatus.ACTIVE:
+        return False
+    if produto.paused_until and produto.paused_until > timezone.now():
+        return False
+    return not (rastreia and (produto.stock_quantity or 0) <= 0)
+
+
+def build_combo_groups(obj, somente_disponiveis=False):
     """Monta os grupos de um combo com opções (variantes E/OU produtos).
 
     Compartilhado entre StoreComboSerializer (admin) e PublicComboSerializer
     (storefront) para garantir paridade do contrato de exibição.
+
+    `somente_disponiveis` (vitrine): opção desativada, pausada ou zerada sai da
+    lista. O painel recebe todas para o dono poder reativar ou tirar do grupo.
     """
     groups_data = []
     for group in sorted(obj.groups.all(), key=lambda g: g.position):
@@ -2002,6 +2014,10 @@ def build_combo_groups(obj):
             variant = limit.variant
             v_prod = getattr(variant, 'product', None)
             v_tracks = bool(getattr(v_prod, 'track_stock', False)) and not bool(getattr(v_prod, 'allow_backorder', False))
+            if somente_disponiveis and (
+                not variant.is_active or (v_tracks and (variant.stock_quantity or 0) <= 0)
+            ):
+                continue
             variants.append({
                 'variant_id': str(variant.id),
                 'name': variant.name,
@@ -2024,6 +2040,8 @@ def build_combo_groups(obj):
             # Mesmo caminho do produto fora do combo (endereço completo).
             p_img = p.get_main_image_url()
             p_tracks = bool(getattr(p, 'track_stock', False)) and not bool(getattr(p, 'allow_backorder', False))
+            if somente_disponiveis and not _opcao_disponivel(p, p_tracks):
+                continue
             product_options.append({
                 'product_id': str(p.id),
                 'name': p.name,
@@ -2608,7 +2626,7 @@ class PublicComboSerializer(serializers.ModelSerializer):
 
     def get_groups(self, obj):
         """Mesmo contrato de grupos do StoreComboSerializer (variantes/produtos)."""
-        return build_combo_groups(obj)
+        return build_combo_groups(obj, somente_disponiveis=True)
 
     def get_is_in_stock(self, obj):
         if not obj.track_stock:
