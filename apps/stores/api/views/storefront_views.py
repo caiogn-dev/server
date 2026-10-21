@@ -1372,6 +1372,12 @@ class StoreCheckoutView(APIView):
             )
 
         scheduled_date, scheduled_time = _parse_scheduling(request.data)
+        if scheduled_date and scheduled_time:
+            from apps.stores.services.agendamento import problema_da_faixa
+            problema = problema_da_faixa(store, scheduled_date, scheduled_time, timezone.now())
+            if problema:
+                return Response({'error': problema, 'field': 'scheduled_time_slot'},
+                                status=status.HTTP_400_BAD_REQUEST)
         try:
             order = checkout_service.create_order(
                 cart=cart,

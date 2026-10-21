@@ -565,52 +565,37 @@ class InteractiveReplyHandler(IntentHandler):
             return True
 
     def _next_open_slots(self, max_slots: int = 8) -> List[Dict[str, str]]:
-        """Próximos horários de abertura pelo operating_hours da loja."""
-        from datetime import datetime as _dt, timedelta
+        """Próximos horários pela agenda da loja — a mesma da vitrine.
+
+        Antes andava de hora em hora sozinho; agora vem de `agendamento`, que
+        respeita turnos, pausa programada, intervalo e antecedência do dono.
+        """
+        from datetime import date as _date
         from django.utils import timezone as _tz
-        from apps.stores.services.horario_de_funcionamento import dia_esta_aberto, turnos_do_dia
+        from apps.stores.services.agendamento import agenda
         if not self.store or not getattr(self.store, 'operating_hours', None):
             return []
-        now = _tz.localtime()
-        weekday_names = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        hoje = _tz.localdate()
         day_labels = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
         slots = []
-        for offset in range(7):
-            day = (now + timedelta(days=offset)).date()
-            hours = self.store.operating_hours.get(weekday_names[day.weekday()])
-            # `if not hours` só pulava o dia SEM configuração. Dia configurado e
-            # DESLIGADO passava direto, e o cliente recebia "Sáb 19/09 08:00"
-            # para uma loja que não abre no sábado — o horário fica gravado
-            # embaixo do desligamento. Mesma regra do bot e do Store.is_open.
-            if not dia_esta_aberto(hours):
-                continue
-            # Um item por turno: com 08–13 e 15–17, oferecer 13:00 e 14:00
-            # seria prometer entrega no intervalo em que ninguém sai.
-            for abre, fecha in turnos_do_dia(hours) or [('00:00', '23:59')]:
-                try:
-                    open_t = _dt.strptime(abre or '00:00', '%H:%M').time()
-                    close_t = _dt.strptime(fecha or '23:59', '%H:%M').time()
-                except (ValueError, TypeError):
-                    continue
-                cursor = _dt.combine(day, open_t)
-                end = _dt.combine(day, close_t)
-                while cursor < end and len(slots) < max_slots:
-                    aware = _tz.make_aware(cursor) if _tz.is_naive(cursor) else cursor
-                    if aware > now + timedelta(minutes=30):
-                        if offset == 0:
-                            label = f"Hoje {cursor.strftime('%H:%M')}"
-                        elif offset == 1:
-                            label = f"Amanhã {cursor.strftime('%H:%M')}"
-                        else:
-                            label = f"{day_labels[day.weekday()]} {day.strftime('%d/%m')} {cursor.strftime('%H:%M')}"
-                        slots.append({
-                            'id': f"sched_{day.isoformat()}_{cursor.strftime('%H:%M')}",
-                            'title': label[:24],
-                            'description': 'Agendar para este horário',
-                        })
-                    cursor += timedelta(hours=1)
-            if len(slots) >= max_slots:
-                break
+        for dia in agenda(self.store):
+            day = _date.fromisoformat(dia['data'])
+            for faixa in dia['faixas']:
+                inicio = faixa.split('-')[0]
+                offset = (day - hoje).days
+                if offset == 0:
+                    label = f"Hoje {inicio}"
+                elif offset == 1:
+                    label = f"Amanhã {inicio}"
+                else:
+                    label = f"{day_labels[day.weekday()]} {day.strftime('%d/%m')} {inicio}"
+                slots.append({
+                    'id': f"sched_{day.isoformat()}_{inicio}",
+                    'title': label[:24],
+                    'description': 'Agendar para este horário',
+                })
+                if len(slots) >= max_slots:
+                    return slots
         return slots
 
     def _offer_scheduling(self, items: List[Dict]) -> HandlerResult:

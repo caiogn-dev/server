@@ -227,6 +227,7 @@ def public_store_availability(request, slug):
     now = timezone.localtime()
     day_name = now.strftime('%A').lower()
     hours = (store.operating_hours or {}).get(day_name)
+    from apps.stores.services.agendamento import agenda, config_do_agendamento
     from apps.stores.services.horario_de_funcionamento import pausa_ativa
     pausa = pausa_ativa(store.metadata, timezone.now())
     return Response({
@@ -236,6 +237,11 @@ def public_store_availability(request, slug):
         'today': day_name,
         'hours': hours,
         'operating_hours': store.operating_hours or {},
+        # Faixas de agendamento prontas: a vitrine só desenha (21/10).
+        'agendamento': {
+            'intervalo': config_do_agendamento(store)['intervalo'],
+            'dias': agenda(store, now),
+        },
     })
 
 
