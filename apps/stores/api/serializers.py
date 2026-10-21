@@ -1801,11 +1801,13 @@ class StoreCartItemSerializer(serializers.ModelSerializer):
     variant_name = serializers.CharField(source='variant.name', read_only=True, allow_null=True)
     unit_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     subtotal = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    # O checkout lê "só retirada" daqui para já marcar retirada.
+    regras_de_venda = serializers.JSONField(source='product.regras_de_venda', read_only=True)
     
     class Meta:
         model = StoreCartItem
         fields = [
-            'id', 'product', 'product_name', 'product_image',
+            'id', 'product', 'product_name', 'product_image', 'regras_de_venda',
             'variant', 'variant_name',
             'quantity', 'unit_price', 'subtotal',
             'options', 'notes',

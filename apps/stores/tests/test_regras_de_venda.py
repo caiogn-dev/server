@@ -144,3 +144,11 @@ class TestPainelGrava:
         dados = r.json()
         linhas = dados['results'] if isinstance(dados, dict) else dados
         assert linhas[0]['regras_de_venda'] == {'so_retirada': True}
+
+
+def test_item_do_carrinho_leva_as_regras(loja):
+    from apps.stores.api.serializers import StoreCartItemSerializer
+    p = _produto(loja, 'Bolo', {'so_retirada': True})
+    cart = StoreCart.objects.create(store=loja, session_key='c-serial')
+    item = StoreCartItem.objects.create(cart=cart, product=p, quantity=1)
+    assert StoreCartItemSerializer(item).data['regras_de_venda'] == {'so_retirada': True}
