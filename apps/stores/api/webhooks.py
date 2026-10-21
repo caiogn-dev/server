@@ -420,8 +420,9 @@ Obrigado pela preferência! 🎉"""
                 return
             logger.info(f"WhatsApp confirmation sent for order {order.order_number}")
             
-        except Exception as e:
-            logger.error(f"Failed to send WhatsApp confirmation: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Falha ao enviar confirmação WhatsApp — pedido %s",
+                             getattr(order, 'order_number', '?'))
             # Don't raise - webhook should not fail if message fails
 
 
