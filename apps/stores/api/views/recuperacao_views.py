@@ -1,4 +1,7 @@
 """O painel do recuperador de vendas."""
+from datetime import timedelta
+
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -34,4 +37,16 @@ class RecuperacaoDeVendasView(APIView):
             .values_list('whatsapp_account_id', flat=True)
         )
 
-        return Response(painel_de_recuperacao([loja.id], dias=dias, account_ids=contas))
+        agora = timezone.now()
+        painel = painel_de_recuperacao([loja.id], dias=dias, account_ids=contas, agora=agora)
+        # A mesma janela, logo antes: "R$ 380 recuperados" só vira decisão
+        # comparado com o mês anterior (do admin do Prefiro).
+        antes = painel_de_recuperacao(
+            [loja.id], dias=dias, account_ids=contas, agora=agora - timedelta(days=dias),
+        )
+        painel['anterior'] = {
+            chave: antes[chave]
+            for chave in ('abandonados', 'valor_abandonado', 'recuperados', 'valor_recuperado', 'taxa_de_recuperacao')
+            if chave in antes
+        }
+        return Response(painel)

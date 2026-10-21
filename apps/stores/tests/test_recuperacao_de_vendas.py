@@ -166,6 +166,17 @@ class TestApi:
         assert r.data['dias'] == 7
         assert 'oportunidade_perdida' in r.data
 
+    def test_compara_com_o_periodo_anterior(self, loja):
+        agora = timezone.now()
+        _carrinho(loja, '5563911110009', agora - timedelta(days=10))
+        _pedido(loja, '5563911110009', agora - timedelta(days=9), total='80.00')
+
+        r = self._cliente(loja.owner).get(f'/api/v1/stores/{loja.slug}/recuperacao/?dias=7')
+
+        assert r.data['recuperados'] == 0
+        assert r.data['anterior']['recuperados'] == 1
+        assert r.data['anterior']['valor_recuperado'] == 80.0
+
     def test_loja_alheia_responde_nao_encontrada(self, loja, db):
         from django.contrib.auth import get_user_model
 
