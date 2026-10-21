@@ -668,6 +668,8 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
             'weight', 'weight_unit', 'dimensions',
             'attributes', 'tags', 'sort_order'
         ]
+        # Só o rascunho dispensa preço — `validate` cobra dos outros.
+        extra_kwargs = {'price': {'required': False}}
     
     def validate_store(self, value):
         """Loja de outro dono responde "não encontrada" — a trava é única,
@@ -716,6 +718,15 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
                     })
 
         return data
+
+    def create(self, validated_data):
+        # Rascunho (do Prefiro): o dono salva pela metade, sem preço ainda. Fica
+        # fora do cardápio como qualquer não-ativo; o preço vem antes de ativar.
+        if 'price' not in validated_data:
+            if validated_data.get('status') != StoreProduct.ProductStatus.DRAFT:
+                raise serializers.ValidationError({'price': 'Informe o preço.'})
+            validated_data['price'] = Decimal('0')
+        return super().create(validated_data)
 
 
 # =============================================================================

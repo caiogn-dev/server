@@ -67,6 +67,8 @@ class StoreProduct(BaseModel):
         INACTIVE = 'inactive', 'Inactive'
         OUT_OF_STOCK = 'out_of_stock', 'Out of Stock'
         DISCONTINUED = 'discontinued', 'Discontinued'
+        # Salvo pela metade (do Prefiro): fora do cardápio como os outros não-ativos.
+        DRAFT = 'draft', 'Rascunho'
 
     store = models.ForeignKey(
         Store,

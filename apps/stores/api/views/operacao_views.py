@@ -1,4 +1,4 @@
-"""Entregadores da loja, atribuição no pedido e ranking da operação."""
+"""Entregadores, ranking da operação e ajudas do cadastro (IA na descrição, combos)."""
 from django.shortcuts import get_object_or_404
 from rest_framework import serializers
 from rest_framework.permissions import IsAuthenticated
@@ -79,3 +79,29 @@ class RankingDaOperacaoView(_DaLoja):
         except (TypeError, ValueError):
             dias = 30
         return Response(ranking_da_operacao(loja, dias=dias))
+
+
+class MelhorarDescricaoView(_DaLoja):
+    """POST {nome, descricao, categoria} → sugestão. Nada é gravado aqui."""
+
+    def post(self, request, store_slug):
+        from apps.stores.services.descricao_com_ia import IaForaDoAr, SemSugestao, melhorar_descricao
+
+        self.loja(request, store_slug)
+        dados = request.data if isinstance(request.data, dict) else {}
+        try:
+            return Response(melhorar_descricao(
+                str(dados.get('nome') or ''), str(dados.get('descricao') or ''), str(dados.get('categoria') or ''),
+            ))
+        except IaForaDoAr as exc:
+            return Response({'error': str(exc)}, status=503)
+        except SemSugestao as exc:
+            return Response({'error': str(exc)}, status=400)
+
+
+class SugestaoDeCombosView(_DaLoja):
+    def get(self, request, store_slug):
+        from apps.stores.services.sugestao_de_combos import sugestao_de_combos
+
+        loja = self.loja(request, store_slug)
+        return Response({'sugestoes': sugestao_de_combos(loja)})

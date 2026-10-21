@@ -11,7 +11,8 @@ from rest_framework_nested import routers as nested_routers
 
 from .api.views.recuperacao_views import RecuperacaoDeVendasView
 from .api.views.operacao_views import (
-    EntregadorDoPedidoView, EntregadorView, EntregadoresView, RankingDaOperacaoView,
+    EntregadorDoPedidoView, EntregadorView, EntregadoresView, MelhorarDescricaoView,
+    RankingDaOperacaoView, SugestaoDeCombosView,
 )
 from .api.views.lote_views import StoreLoteViewSet
 from .api.views.informativos_views import InformativosView, InformativoView
@@ -287,6 +288,8 @@ store_frontend_patterns = [
     path('entregadores/<uuid:pk>/', EntregadorView.as_view(), name='store-entregador'),
     path('pedidos/<uuid:pk>/entregador/', EntregadorDoPedidoView.as_view(), name='store-pedido-entregador'),
     path('ranking/', RankingDaOperacaoView.as_view(), name='store-ranking'),
+    path('produtos/melhorar-descricao/', MelhorarDescricaoView.as_view(), name='store-melhorar-descricao'),
+    path('sugestao-de-combos/', SugestaoDeCombosView.as_view(), name='store-sugestao-de-combos'),
     path('reviews/', StoreReviewListView.as_view(), name='store-reviews'),
     # Caixa (PDV)
     path('cash/open/', CashOpenView.as_view(), name='store-cash-open'),
