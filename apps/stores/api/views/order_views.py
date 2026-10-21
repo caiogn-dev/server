@@ -1198,7 +1198,7 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
         qs = _anotar_crm(qs)
         # `?segmento=` só na lista: o `stats` conta todos os segmentos sobre
         # este mesmo queryset e não pode herdar o filtro.
-        if self.action == 'list':
+        if self.action in ('list', 'exportar'):
             filtro = self._filtro_do_segmento(self.request.query_params.get('segmento'))
             if filtro is not None:
                 qs = qs.filter(filtro)
@@ -1254,6 +1254,48 @@ class StoreCustomerViewSet(StoreQuerysetMixin, viewsets.ModelViewSet):
             'total_revenue': f"{revenue:.2f}",
             'segmentos': self._segmentos(),
         })
+
+    @action(detail=False, methods=['get'])
+    def exportar(self, request):
+        """A lista que o lojista está vendo (aba + busca) como planilha.
+
+        Do admin do Prefiro. CSV com `;`, vírgula decimal e BOM: é o que o
+        Excel em português abre direto, sem assistente de importação.
+        """
+        import csv
+        from django.http import HttpResponse
+        from apps.stores.services.checkout_service import is_placeholder_email
+
+        if not (self.kwargs.get('store_pk') or request.query_params.get('store')):
+            raise DRFValidationError({'store': 'Parâmetro store é obrigatório.'})
+
+        def reais(v):
+            return f'{Decimal(str(v or 0)):.2f}'.replace('.', ',')
+
+        segmento = request.query_params.get('segmento') or ''
+        nome_do_arquivo = f"clientes-{segmento if self._filtro_do_segmento(segmento) is not None else 'todos'}.csv"
+        resposta = HttpResponse(content_type='text/csv; charset=utf-8')
+        resposta['Content-Disposition'] = f'attachment; filename="{nome_do_arquivo}"'
+        resposta.write('\ufeff')
+        escrever = csv.writer(resposta, delimiter=';').writerow
+        escrever(['Nome', 'Telefone', 'E-mail', 'Bairro', 'Pedidos', 'Total gasto',
+                  'Ticket médio', 'Dias sem comprar', 'Perfil', 'Aceita marketing'])
+        for linha in StoreCustomerSerializer(self.get_queryset().order_by('-_gasto_real'), many=True).data:
+            email = linha.get('user_email') or ''
+            pedidos = linha['pedidos_reais']
+            escrever([
+                linha.get('user_name') or '',
+                linha.get('phone') or linha.get('whatsapp') or '',
+                '' if is_placeholder_email(email) else email,
+                (linha.get('default_address') or {}).get('neighborhood') or '',
+                pedidos,
+                reais(linha['gasto_real']),
+                reais(Decimal(str(linha['gasto_real'])) / pedidos if pedidos else 0),
+                '' if linha['dias_sem_comprar'] is None else linha['dias_sem_comprar'],
+                linha['perfil'],
+                'sim' if linha.get('accepts_marketing') else 'não',
+            ])
+        return resposta
 
     # Réguas dos segmentos, em dias sem comprar.
     #

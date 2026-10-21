@@ -86,3 +86,37 @@ def test_stats_conta_vip_com_a_mesma_regua(cenario):
     seg = r.json()['segmentos']
     assert seg['vip'] == 1
     assert seg['reguas']['vip'] == '5 ou mais pedidos'
+
+
+# ── Exportar (do Prefiro): a aba que o lojista está vendo vira planilha ──────
+def _exportar(cenario, **params):
+    api = APIClient()
+    api.force_authenticate(user=cenario['loja'].owner)
+    return api.get('/api/v1/stores/customers/exportar/', {'store': cenario['loja'].slug, **params})
+
+
+@pytest.mark.django_db
+def test_exportar_respeita_o_segmento_e_abre_no_excel(cenario):
+    r = _exportar(cenario, segmento='em_risco')
+    assert r.status_code == 200
+    assert r['Content-Type'].startswith('text/csv')
+    assert 'clientes-em_risco' in r['Content-Disposition']
+    texto = r.content.decode('utf-8-sig')
+    linhas = [l for l in texto.splitlines() if l]
+    assert linhas[0].startswith('Nome;Telefone;E-mail;Bairro;Pedidos;Total gasto;Ticket médio;Dias sem comprar;Perfil')
+    assert len(linhas) == 2  # cabeçalho + o cliente em risco
+    assert 'risco@x.com' in linhas[1]
+    assert ';50,00;50,00;35;' in linhas[1]
+
+
+@pytest.mark.django_db
+def test_exportar_sem_segmento_traz_todos(cenario):
+    linhas = [l for l in _exportar(cenario).content.decode('utf-8-sig').splitlines() if l]
+    assert len(linhas) == 6
+
+
+@pytest.mark.django_db
+def test_exportar_exige_a_loja(cenario):
+    api = APIClient()
+    api.force_authenticate(user=cenario['loja'].owner)
+    assert api.get('/api/v1/stores/customers/exportar/').status_code == 400
