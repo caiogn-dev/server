@@ -146,6 +146,8 @@ class StoreProduct(BaseModel):
 
     # Pausa rápida (item esgotado): produto fica indisponível até este horário
     paused_until = models.DateTimeField(null=True, blank=True)
+    # Quando vende, como sai e quanto por pedido — ver services/regras_de_venda.py.
+    regras_de_venda = models.JSONField(default=dict, blank=True)
 
 
     def preco_vigente(self):
@@ -209,9 +211,13 @@ class StoreProduct(BaseModel):
         qs = cls.objects.filter(is_active=True, status=cls.ProductStatus.ACTIVE)
         if store is not None:
             qs = qs.filter(store=store)
+        from apps.stores.services.regras_de_venda import filtro_vende_agora
+
+        # Fora do dia/horário de venda é indisponível para o bot também — ele
+        # não pode oferecer o almoço às 20h.
         return qs.filter(
             Q(paused_until__isnull=True) | Q(paused_until__lte=timezone.now())
-        )
+        ).filter(filtro_vende_agora(timezone.localtime()))
 
     # Images
     main_image = models.ImageField(upload_to='stores/products/', blank=True, null=True)

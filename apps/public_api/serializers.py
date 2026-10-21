@@ -95,6 +95,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
             'image_url', 'category_name', 'category_slug',
             'is_available', 'sort_order',
             'attributes', 'tags', 'variants', 'variant_label',
+            'regras_de_venda',
         ]
 
     def get_image_url(self, obj):

@@ -1014,6 +1014,15 @@ class CheckoutService:
         stock_errors = cart_service.validate_stock_for_checkout(cart)
         if stock_errors:
             raise ValueError(f"Erros de estoque: {stock_errors}")
+
+        from apps.stores.services.regras_de_venda import erros_do_carrinho
+        erros_de_regra = erros_do_carrinho(
+            [(item.product, int(item.quantity or 0)) for item in cart.items.select_related('product').all()],
+            delivery_payload.get('method') or '',
+            timezone.localtime(),
+        )
+        if erros_de_regra:
+            raise ValueError(' '.join(erros_de_regra))
         
         # Validate trusted_delivery_fee early so callers get a clear error.
         if trusted_delivery_fee is not None and trusted_delivery_fee < 0:

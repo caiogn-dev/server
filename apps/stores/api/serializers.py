@@ -586,7 +586,7 @@ class StoreProductSerializer(serializers.ModelSerializer):
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
             'allow_backorder', 'is_low_stock', 'is_in_stock',
-            'paused_until', 'is_paused',
+            'paused_until', 'is_paused', 'regras_de_venda',
             'status', 'featured',
             'main_image', 'main_image_url', 'images',
             'meta_title', 'meta_description',
@@ -661,7 +661,7 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
             # preenchia, via "Produto atualizado!" e nada era gravado. Em 20/08
             # só 1 dos 42 produtos da Cê Saladas tinha promoção, e essa tinha
             # sido escrita direto no banco. Nunca deu para cadastrar pelo painel.
-            'promo_price', 'promo_weekday',
+            'promo_price', 'promo_weekday', 'regras_de_venda',
             'track_stock', 'stock_quantity', 'low_stock_threshold', 'allow_backorder',
             'status', 'featured', 'main_image', 'main_image_url', 'images',
             'meta_title', 'meta_description',
@@ -673,6 +673,13 @@ class StoreProductCreateSerializer(serializers.ModelSerializer):
         """Loja de outro dono responde "não encontrada" — a trava é única,
         em `apps.core.serializers`."""
         return checar_loja_do_usuario(self.context.get('request'), value)
+    def validate_regras_de_venda(self, value):
+        from apps.stores.services.regras_de_venda import RegraInvalida, normalizar
+        try:
+            return normalizar(value)
+        except RegraInvalida as e:
+            raise serializers.ValidationError(str(e))
+
     def validate_category(self, value):
         """Bloqueia categoria de outra loja: impede produto cross-tenant via category FK."""
         if value is None:
@@ -783,7 +790,7 @@ class StoreProductWithTypeSerializer(serializers.ModelSerializer):
             'is_on_sale', 'discount_percentage',
             'track_stock', 'stock_quantity', 'low_stock_threshold',
             'allow_backorder', 'is_low_stock', 'is_in_stock',
-            'paused_until', 'is_paused',
+            'paused_until', 'is_paused', 'regras_de_venda',
             'status', 'featured',
             'main_image', 'main_image_url', 'images',
             'attributes', 'tags', 'sort_order',
@@ -2594,7 +2601,7 @@ class PublicProductSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description', 'short_description',
             'price', 'compare_at_price',
             'is_on_sale', 'discount_percentage',
-            'stock_quantity', 'is_in_stock', 'is_paused',
+            'stock_quantity', 'is_in_stock', 'is_paused', 'regras_de_venda',
             'status', 'featured',
             'main_image_url', 'images',
             'category', 'category_name', 'category_slug',
