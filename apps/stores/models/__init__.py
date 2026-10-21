@@ -56,6 +56,7 @@ from .printing import (
 
 # Team
 from .team import StoreTeamMember
+from .entregador import Entregador
 
 # Review
 from .review import StoreReview, StoreProductReview
@@ -80,6 +81,7 @@ from .lote import StoreLote
 from .vigia import VigiaAviso, VigiaConfig, VigiaEnvio
 
 __all__ = [
+    'Entregador',
     'StoreLote',
     'StoreBanner', 'MAXIMO_DE_BANNERS',
     'StoreIfoodIntegration',

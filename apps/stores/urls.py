@@ -10,6 +10,9 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_nested import routers as nested_routers
 
 from .api.views.recuperacao_views import RecuperacaoDeVendasView
+from .api.views.operacao_views import (
+    EntregadorDoPedidoView, EntregadorView, EntregadoresView, RankingDaOperacaoView,
+)
 from .api.views.lote_views import StoreLoteViewSet
 from .api.views.informativos_views import InformativosView, InformativoView
 from .api.views.exibicao_views import ExibicaoDoCardapioView
@@ -280,6 +283,10 @@ products_router.register(r'variants', StoreProductVariantViewSet, basename='prod
 store_frontend_patterns = [
     path('', StorePublicView.as_view(), name='store-public'),
     path('recuperacao/', RecuperacaoDeVendasView.as_view(), name='store-recuperacao'),
+    path('entregadores/', EntregadoresView.as_view(), name='store-entregadores'),
+    path('entregadores/<uuid:pk>/', EntregadorView.as_view(), name='store-entregador'),
+    path('pedidos/<uuid:pk>/entregador/', EntregadorDoPedidoView.as_view(), name='store-pedido-entregador'),
+    path('ranking/', RankingDaOperacaoView.as_view(), name='store-ranking'),
     path('reviews/', StoreReviewListView.as_view(), name='store-reviews'),
     # Caixa (PDV)
     path('cash/open/', CashOpenView.as_view(), name='store-cash-open'),

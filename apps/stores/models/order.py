@@ -262,6 +262,10 @@ class StoreOrder(BaseModel):
         blank=True,
         verbose_name='Motivo do Acréscimo',
     )
+    # Quem levou o pedido — atribuído no quadro, base do ranking de entregas.
+    entregador = models.ForeignKey(
+        'stores.Entregador', null=True, blank=True, on_delete=models.SET_NULL, related_name='entregas',
+    )
     created_by_staff = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

@@ -867,6 +867,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
     store_slug = serializers.CharField(source='store.slug', read_only=True)
     items_count = serializers.SerializerMethodField()
+    entregador_nome = serializers.CharField(source='entregador.nome', read_only=True, allow_null=True)
     # Fase 3 — derivados da soma dos StorePayment 'completed' (read-only).
     amount_paid = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     amount_due = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
@@ -943,6 +944,8 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'delivered_at', 'picked_up_at', 'cancelled_at',
             # Por que o pedido foi cancelado — o painel mostra no detalhe.
             'cancel_reason',
+            # Quem levou (atribuído no quadro) — base do ranking de entregas.
+            'entregador', 'entregador_nome',
             'items', 'combo_items', 'items_count', 'metadata',
             # `source` é o canal de origem (web/whatsapp/pdv). O resumo do
             # histórico já quebrava a receita por canal, mas a coluna da lista
@@ -960,7 +963,7 @@ class StoreOrderSerializer(serializers.ModelSerializer):
             'source',
             # Troco entra pelo checkout (com a régua de `services/troco.py`) e
             # a previsão nasce da loja; o PATCH do painel não escreve nenhum.
-            'change_for', 'prep_minutes',
+            'change_for', 'prep_minutes', 'entregador',
             'paid_at', 'confirmed_at', 'preparing_at', 'processing_at',
             'ready_at', 'out_for_delivery_at', 'shipped_at',
             'delivered_at', 'picked_up_at', 'cancelled_at', 'cancel_reason',
