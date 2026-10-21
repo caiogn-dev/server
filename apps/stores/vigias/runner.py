@@ -14,7 +14,7 @@ from datetime import time, timedelta
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
-from apps.stores.vigias import canal_do_dono
+from apps.stores.vigias import canal_do_dono, por_email
 from apps.stores.vigias.regras import REGRAS_DA_MANHA, Fato, dia_curto, sem_pedido_hoje
 
 logger = logging.getLogger(__name__)
@@ -151,6 +151,8 @@ def rodar_turno(loja, config, agora, turno: str):
     entrega = canal_do_dono.entregar(loja, config.telefone, texto, linha)
     VigiaEnvio.objects.filter(pk=envio.pk).update(
         status=entrega.status, canal=entrega.canal, mensagem_id=entrega.mensagem_id, erro=entrega.erro)
+    if getattr(config, 'email', ''):
+        por_email.enviar(loja, config.email, turno, hoje, avisos)
     envio.refresh_from_db()
     logger.info('[vigia] loja %s turno %s: %d avisos, %s por %s', loja.id, turno, len(avisos),
                 entrega.status, entrega.canal)

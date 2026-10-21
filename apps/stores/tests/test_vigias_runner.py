@@ -260,3 +260,42 @@ class TestComandosDoDono:
 
     def test_loja_sem_vigia_ignora(self, loja):
         assert comandos.responder(loja, DONO, 'parar avisos') is None
+
+
+class TestPorEmail:
+    """"Receber no e-mail" (do Prefiro): cópia com TODOS os avisos, sempre."""
+
+    def test_email_leva_todos_os_avisos_mesmo_sem_canal_no_whatsapp(self, loja, config):
+        config.email = 'dono@example.com'
+        config.save()
+        fatos = [_fato('a', 1), _fato('b', 2), _fato('c', 3), _fato('d', 4)]
+        enviados = []
+        with patch('apps.notifications.services.email_service.EmailService.send_email',
+                   lambda self, **kw: enviados.append(kw) or {'success': True}), \
+             Canal(janela=False, modelo=False), _regras(*fatos):
+            runner.tick(SEXTA_8H)
+
+        assert len(enviados) == 1
+        assert enviados[0]['to'] == 'dono@example.com'
+        assert enviados[0]['subject'].startswith('Vigia da Cê Saladas')
+        assert all(f'texto {t} {n}' in enviados[0]['text'] for t, n in (('a', 1), ('b', 2), ('c', 3), ('d', 4)))
+        assert VigiaEnvio.objects.get().status == 'so_painel'
+
+    def test_falha_do_email_nao_muda_o_envio(self, loja, config):
+        config.email = 'dono@example.com'
+        config.save()
+
+        def explode(self, **kw):
+            raise RuntimeError('resend fora')
+
+        with patch('apps.notifications.services.email_service.EmailService.send_email', explode), \
+             Canal(), _regras(_fato('a', 1)):
+            runner.tick(SEXTA_8H)
+
+        assert VigiaEnvio.objects.get().status == 'enviado'
+
+    def test_sem_email_nao_tenta(self, loja, config):
+        with patch('apps.notifications.services.email_service.EmailService.send_email') as envio, \
+             Canal(), _regras(_fato('a', 1)):
+            runner.tick(SEXTA_8H)
+        envio.assert_not_called()

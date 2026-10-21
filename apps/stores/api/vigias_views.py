@@ -71,6 +71,7 @@ def _config_json(config: VigiaConfig | None) -> dict:
         'pausado': config.pausado_em is not None,
         'pausado_em': config.pausado_em.isoformat() if config.pausado_em else None,
         'telefone': config.telefone,
+        'email': config.email,
         'hora_resumo': f'{config.hora_resumo:%H:%M}' if hasattr(config.hora_resumo, 'strftime') else str(config.hora_resumo)[:5],
         'hora_alerta': f'{config.hora_alerta:%H:%M}' if hasattr(config.hora_alerta, 'strftime') else str(config.hora_alerta)[:5],
         'dias': config.dias,
@@ -138,6 +139,16 @@ class VigiasView(APIView):
                 erros['telefone'] = 'Use DDD + número, ex.: (63) 99999-0000.'
             else:
                 config.telefone = telefone
+        if 'email' in dados:
+            from django.core.exceptions import ValidationError
+            from django.core.validators import validate_email
+            email = str(dados['email'] or '').strip().lower()
+            try:
+                if email:
+                    validate_email(email)
+                config.email = email
+            except ValidationError:
+                erros['email'] = 'E-mail inválido.'
         for campo in ('hora_resumo', 'hora_alerta'):
             if campo in dados:
                 hora = _hora(dados[campo])

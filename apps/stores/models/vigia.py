@@ -29,6 +29,9 @@ class VigiaConfig(models.Model):
     ativo = models.BooleanField(default=False)
     #: Telefone do dono/gerente que recebe os avisos (só dígitos, com DDI).
     telefone = models.CharField(max_length=20, blank=True, default='')
+    #: "Receber no e-mail" (do Prefiro): cópia do resumo, com TODOS os avisos.
+    #: Não depende da janela de 24 h nem do modelo aprovado na Meta.
+    email = models.EmailField(blank=True, default='')
     #: Hora da mensagem da manhã, no fuso da loja.
     hora_resumo = models.TimeField(default='08:00')
     #: Hora a partir da qual "nenhum pedido hoje" vira alerta.

@@ -50,12 +50,19 @@ class TestConfig:
 
     @pytest.mark.parametrize('campo,valor', [
         ('telefone', '123'), ('hora_resumo', '25:00'), ('dias', [7]), ('dias', 'seg'),
-        ('desligados', ['nao_existe']),
+        ('desligados', ['nao_existe']), ('email', 'dono@'),
     ])
     def test_valor_invalido_nao_grava(self, cliente, loja, campo, valor):
         r = cliente.patch(_url('vigias/', loja), {campo: valor}, format='json')
         assert r.status_code == 400 and campo in r.data['campos']
         assert not VigiaConfig.objects.filter(store=loja, telefone='123').exists()
+
+    def test_email_grava_e_apaga(self, cliente, loja):
+        r = cliente.patch(_url('vigias/', loja), {'email': ' Dono@Example.com '}, format='json')
+        assert r.status_code == 200, r.data
+        assert VigiaConfig.objects.get(store=loja).email == 'dono@example.com'
+        cliente.patch(_url('vigias/', loja), {'email': ''}, format='json')
+        assert VigiaConfig.objects.get(store=loja).email == ''
 
     def test_ligado_sem_dia_nenhum_nao_vale(self, cliente, loja):
         r = cliente.patch(_url('vigias/', loja), {'ativo': True, 'dias': []}, format='json')
