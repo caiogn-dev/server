@@ -15,6 +15,7 @@ from .api.views.operacao_views import (
     RankingDaOperacaoView, SugestaoDeCombosView,
 )
 from .api.views.lote_views import StoreLoteViewSet
+from .api.views.comanda_views import ComandaImprimirTesteView, ComandaLayoutView, ComandaPreviaView
 from .api.views.informativos_views import InformativosView, InformativoView
 from .api.views.exibicao_views import ExibicaoDoCardapioView
 from .api.views import (
@@ -288,6 +289,10 @@ store_frontend_patterns = [
     path('entregadores/<uuid:pk>/', EntregadorView.as_view(), name='store-entregador'),
     path('pedidos/<uuid:pk>/entregador/', EntregadorDoPedidoView.as_view(), name='store-pedido-entregador'),
     path('ranking/', RankingDaOperacaoView.as_view(), name='store-ranking'),
+    # Layout da comanda montada no servidor (docs/comanda-no-servidor.md §4)
+    path('comanda/layout/', ComandaLayoutView.as_view(), name='store-comanda-layout'),
+    path('comanda/previa/', ComandaPreviaView.as_view(), name='store-comanda-previa'),
+    path('comanda/imprimir-teste/', ComandaImprimirTesteView.as_view(), name='store-comanda-imprimir-teste'),
     path('produtos/melhorar-descricao/', MelhorarDescricaoView.as_view(), name='store-melhorar-descricao'),
     path('sugestao-de-combos/', SugestaoDeCombosView.as_view(), name='store-sugestao-de-combos'),
     path('reviews/', StoreReviewListView.as_view(), name='store-reviews'),

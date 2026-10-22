@@ -194,6 +194,12 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Auto-update do pastita-print-agent (docs/comanda-no-servidor.md §5): o
+# heartbeat devolve {versao, url_zip, sha256}. Qualquer um vazio = nada.
+PRINT_AGENT_UPDATE_VERSION = os.environ.get('PRINT_AGENT_UPDATE_VERSION', '')
+PRINT_AGENT_UPDATE_URL = os.environ.get('PRINT_AGENT_UPDATE_URL', '')
+PRINT_AGENT_UPDATE_SHA256 = os.environ.get('PRINT_AGENT_UPDATE_SHA256', '')
+
 # REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
