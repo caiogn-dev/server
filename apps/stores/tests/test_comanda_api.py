@@ -150,3 +150,56 @@ class HeartbeatAtualizacaoTests(APITestCase):
     def test_com_configuracao_devolve_versao_url_e_sha(self):
         self.assertEqual(self._bate().json()['atualizacao'],
                          {'versao': '0.6.0', 'url_zip': 'https://x/agent.zip', 'sha256': 'ab' * 32})
+
+
+class ImprimirRapidoTests(Base):
+    """Botão "Imprimir rápido" do pedido: vai para o print agent, sem o
+    diálogo de impressão do navegador (22/10)."""
+
+    def _agente(self, imprime=('comanda', 'recibo')):
+        raw, prefix, hashed = StorePrintAgent.generate_api_key()
+        return StorePrintAgent.objects.create(
+            store=self.loja, name='Notebook', slug='nb-rapido', station='kitchen',
+            imprime=list(imprime), api_key_prefix=prefix, api_key_hash=hashed)
+
+    def test_enfileira_o_pedido_escolhido_para_o_agente_da_comanda(self):
+        agente = self._agente()
+        p = self._pedido()
+        self._pedido(numero='CE-OUTRO')
+        resp = self.client.post(self.url + 'imprimir/', {'pedido_id': str(p.id)}, format='json')
+        self.assertEqual(resp.status_code, 201, resp.content)
+        job = StorePrintJob.objects.get(pk=resp.json()['id'])
+        self.assertEqual(job.order_id, p.id)
+        self.assertEqual(job.target_agent_id, agente.id)
+        self.assertEqual(job.source, StorePrintJob.Source.MANUAL_REPRINT)
+        self.assertTrue(job.payload.get('escpos_b64'))
+
+    def test_cada_clique_e_um_papel(self):
+        self._agente()
+        p = self._pedido()
+        r1 = self.client.post(self.url + 'imprimir/', {'pedido_id': str(p.id)}, format='json')
+        r2 = self.client.post(self.url + 'imprimir/', {'pedido_id': str(p.id)}, format='json')
+        self.assertNotEqual(r1.json()['id'], r2.json()['id'])
+
+    def test_cozinha_sai_sem_precos(self):
+        self._agente()
+        p = self._pedido()
+        resp = self.client.post(self.url + 'imprimir/', {'pedido_id': str(p.id), 'cozinha': True}, format='json')
+        import base64
+        dados = base64.b64decode(StorePrintJob.objects.get(pk=resp.json()['id']).payload['escpos_b64'])
+        self.assertNotIn(b'TOTAL', dados)
+
+    def test_sem_agente_de_comanda_e_409_e_nao_cria_job(self):
+        self._agente(imprime=('etiquetas',))
+        p = self._pedido()
+        resp = self.client.post(self.url + 'imprimir/', {'pedido_id': str(p.id)}, format='json')
+        self.assertEqual(resp.status_code, 409)
+        self.assertFalse(StorePrintJob.objects.exists())
+
+    def test_pedido_de_outra_loja_e_404(self):
+        self._agente()
+        outro = User.objects.create_user(username='o-rap', email='o-rap@t.local', password='x')
+        outra = Store.objects.create(name='O', slug='outra-rap', owner=outro, status='active')
+        alheio = StoreOrder.objects.create(store=outra, order_number='X-1', subtotal=1, total=1)
+        resp = self.client.post(self.url + 'imprimir/', {'pedido_id': str(alheio.id)}, format='json')
+        self.assertEqual(resp.status_code, 404)

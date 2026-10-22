@@ -132,3 +132,45 @@ class ComandaImprimirTesteView(_DaComanda):
                 metadata={'requested_by': getattr(request.user, 'username', '') or ''},
             )
         return Response(StorePrintJobSerializer(job).data, status=status.HTTP_201_CREATED)
+
+
+class ComandaImprimirView(_DaComanda):
+    """POST {pedido_id, template?, cozinha?} → job para o print agent da loja.
+
+    "Imprimir rápido" do pedido: sem o diálogo do navegador. Sem agente que
+    imprima comanda é 409 — o painel cai na impressão pelo navegador em vez
+    de deixar um job esperando para sempre.
+    """
+
+    def post(self, request, store_slug):
+        loja = self.loja(request, store_slug)
+        pedido_id = request.data.get('pedido_id')
+        try:
+            uuid.UUID(str(pedido_id))
+        except ValueError:
+            raise NotFound('Pedido não encontrado.') from None
+        pedido = get_object_or_404(StoreOrder, pk=pedido_id, store=loja)
+
+        template = request.data.get('template') or StorePrintJob.Template.KITCHEN_TICKET
+        if template not in TEMPLATES_COM_ESCPOS:
+            return _invalido(f'template inválido: {template}')
+        layout = comanda_linhas.layout_da_loja(loja)
+        if request.data.get('cozinha'):
+            layout = comanda_linhas.layout_da_cozinha(layout)
+
+        tem_agente = any(
+            a.imprime_o(StorePrintAgent.IMPRIME_COMANDA)
+            for a in StorePrintAgent.objects.filter(
+                store=loja, station='kitchen', is_active=True,
+                status=StorePrintAgent.AgentStatus.ACTIVE,
+            )
+        )
+        if not tem_agente:
+            return Response({'detail': 'Nenhuma impressora de comanda conectada.'}, status=status.HTTP_409_CONFLICT)
+
+        job = print_service.enqueue_order_print_job(
+            pedido, template=template, source=StorePrintJob.Source.MANUAL_REPRINT,
+            dedupe=False, layout=layout,
+            requested_by=getattr(request.user, 'username', '') or '',
+        ).job
+        return Response(StorePrintJobSerializer(job).data, status=status.HTTP_201_CREATED)

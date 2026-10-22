@@ -104,6 +104,20 @@ def validar_layout(layout) -> dict:
     return saida
 
 
+def layout_da_cozinha(layout: dict) -> dict:
+    """Cozinha não vê dinheiro: sem preço nos itens, sem totais, sem pagamento,
+    uma via. Espelho de `layoutDaCozinha` no painel (src/utils/comandaHtml.ts)."""
+    return {
+        **layout,
+        'vias': 1,
+        'precos_nos_itens': False,
+        'blocos': [
+            {**b, 'ligado': False} if b['id'] in ('totais', 'pagamento') else b
+            for b in layout['blocos']
+        ],
+    }
+
+
 def layout_da_loja(store) -> dict:
     """O salvo em `metadata['comanda']`, ou o padrão. Layout corrompido não
     pode deixar a cozinha sem comanda: cai no padrão e registra."""

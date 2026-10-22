@@ -15,7 +15,7 @@ from .api.views.operacao_views import (
     RankingDaOperacaoView, SugestaoDeCombosView,
 )
 from .api.views.lote_views import StoreLoteViewSet
-from .api.views.comanda_views import ComandaImprimirTesteView, ComandaLayoutView, ComandaPreviaView
+from .api.views.comanda_views import ComandaImprimirTesteView, ComandaImprimirView, ComandaLayoutView, ComandaPreviaView
 from .api.views.informativos_views import InformativosView, InformativoView
 from .api.views.exibicao_views import ExibicaoDoCardapioView
 from .api.views import (
@@ -292,6 +292,7 @@ store_frontend_patterns = [
     # Layout da comanda montada no servidor (docs/comanda-no-servidor.md §4)
     path('comanda/layout/', ComandaLayoutView.as_view(), name='store-comanda-layout'),
     path('comanda/previa/', ComandaPreviaView.as_view(), name='store-comanda-previa'),
+    path('comanda/imprimir/', ComandaImprimirView.as_view(), name='store-comanda-imprimir'),
     path('comanda/imprimir-teste/', ComandaImprimirTesteView.as_view(), name='store-comanda-imprimir-teste'),
     path('produtos/melhorar-descricao/', MelhorarDescricaoView.as_view(), name='store-melhorar-descricao'),
     path('sugestao-de-combos/', SugestaoDeCombosView.as_view(), name='store-sugestao-de-combos'),
