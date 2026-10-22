@@ -524,7 +524,8 @@ def notify_order_status_change(self, order_id: str, new_status: str):
                 # (nome, tempo, endereço, retirada/entrega) moram em
                 # `textos_de_aviso`; linha sem dado some em vez de sair com buraco.
                 from apps.automation.textos_de_aviso import renderizar_aviso, variaveis_do_pedido
-                variaveis = variaveis_do_pedido(order)
+                from apps.automation.variaveis import variaveis_da_loja
+                variaveis = {**variaveis_da_loja(profile), **variaveis_do_pedido(order)}
                 variaveis['order_status'] = status_display
                 message = renderizar_aviso(template.message_text, variaveis)
 

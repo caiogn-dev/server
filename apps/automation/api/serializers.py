@@ -84,6 +84,8 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     # Store data (read-only, comes from Store model)
     store_id = serializers.UUIDField(source='store.id', read_only=True)
     store_slug = serializers.CharField(source='store.slug', read_only=True)
+    # O que {website_url}/{menu_url} viram — a prévia do painel usa o mesmo.
+    link_do_cardapio = serializers.CharField(read_only=True)
     store_name = serializers.CharField(source='store.name', read_only=True)
     store_email = serializers.CharField(source='store.email', read_only=True)
     store_phone = serializers.CharField(source='store.phone', read_only=True)
@@ -110,7 +112,7 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
             'store_city', 'store_state', 'store_type',
             # Profile data (may come from store via properties)
             'company_name', 'business_type', 'description',
-            'website_url', 'menu_url', 'order_url',
+            'website_url', 'menu_url', 'order_url', 'link_do_cardapio',
             'computed_menu_url', 'computed_order_url',
             'business_hours',
             # Automation settings

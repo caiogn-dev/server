@@ -222,8 +222,6 @@ class AutoMessage(BaseModel):
         return f"{self.company.company_name} - {self.get_event_type_display()}"
 
     def render_message(self, context: dict) -> str:
-        """Render message with context variables."""
-        message = self.message_text
-        for key, value in context.items():
-            message = message.replace(f"{{{key}}}", str(value))
-        return message
+        """Preenche as variáveis — nome/link/horário da loja entram sempre."""
+        from apps.automation.variaveis import preencher
+        return preencher(self.message_text, context, self.company)
