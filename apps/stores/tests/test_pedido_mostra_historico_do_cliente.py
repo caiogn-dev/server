@@ -28,9 +28,12 @@ def loja(db):
 
 
 def _pedido(loja, phone, **kw):
+    # Pagos: desde 22/10 só conta pedido que valeu (ver pedidos_do_cliente).
+    dados = dict(payment_status='paid', status='delivered')
+    dados.update(kw)
     return StoreOrder.objects.create(
         store=loja, customer_name='Cliente', customer_phone=phone,
-        subtotal=Decimal('30.00'), total=Decimal('30.00'), **kw,
+        subtotal=Decimal('30.00'), total=Decimal('30.00'), **dados,
     )
 
 
