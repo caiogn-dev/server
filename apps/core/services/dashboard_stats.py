@@ -103,7 +103,7 @@ class DashboardStatsAggregator:
 
         Antes o dinheiro era filtrado por `paid_at__date`. Pedido pago em
         dinheiro na entrega ou com baixa manual não tem `paid_at` — sumia do
-        faturamento em silêncio. O núcleo usa Coalesce(paid_at, created_at),
+        faturamento em silêncio. O núcleo agrupa pelo dia do pedido (created_at),
         então esses continuam contando, no dia certo.
         """
         queryset = StoreOrder.objects.filter(store=self.store, is_active=True)

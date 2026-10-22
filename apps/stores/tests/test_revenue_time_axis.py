@@ -1,5 +1,6 @@
 """
-Receita é agrupada pela data em que o DINHEIRO ENTROU, no fuso da loja.
+Receita é agrupada pelo DIA DO PEDIDO, no fuso da loja (decisão do dono,
+22/10/2026 — antes era o dia do pagamento; ver metrics.eixo_de_receita).
 
 Dois defeitos técnicos que faziam o mesmo faturamento aparecer em dias
 diferentes conforme a tela:
@@ -44,8 +45,8 @@ def _pedido(loja, total, criado, pago):
 @pytest.mark.django_db
 class TestEixoDeReceita:
 
-    def test_agrupa_pela_data_do_pagamento_nao_da_criacao(self, loja):
-        """Pedido criado dia 31 e pago dia 1 é faturamento do dia 1."""
+    def test_agrupa_pelo_dia_do_pedido_nao_do_pagamento(self, loja):
+        """Pedido criado dia 31 e pago dia 1 é faturamento do dia 31."""
         criado = datetime(2026, 7, 31, 20, 0, tzinfo=dt_timezone.utc)
         pago = datetime(2026, 8, 1, 14, 0, tzinfo=dt_timezone.utc)
         _pedido(loja, '112.60', criado, pago)
@@ -58,8 +59,8 @@ class TestEixoDeReceita:
             .annotate(d=TruncDate(eixo_de_receita()))
             .values('d').annotate(t=Sum('total'))
         }
-        assert '2026-08-01' in linhas, f'esperava no dia do pagamento, veio {linhas}'
-        assert '2026-07-31' not in linhas
+        assert '2026-07-31' in linhas, f'esperava no dia do pedido, veio {linhas}'
+        assert '2026-08-01' not in linhas
 
     def test_usa_created_at_quando_nao_ha_paid_at(self, loja):
         """Pedido pago fora do gateway (dinheiro na entrega) não pode sumir."""

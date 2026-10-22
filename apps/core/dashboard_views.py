@@ -858,7 +858,7 @@ class DashboardChartsView(APIView):
         from apps.stores.metrics import eixo_de_receita, pedidos_de_receita, soma_de_venda
 
         revenue_rows = (
-            pedidos_de_receita(queryset=orders_qs).filter(paid_at__gte=window_start)
+            pedidos_de_receita(queryset=orders_qs).filter(created_at__gte=window_start)
             # Sem tzinfo: agrupa no TIME_ZONE do projeto. Forçar UTC jogava toda
             # venda depois das 21h para o dia seguinte — o pico do delivery.
             .annotate(day=TruncDate(eixo_de_receita()))

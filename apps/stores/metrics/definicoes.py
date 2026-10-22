@@ -63,11 +63,14 @@ def media_de_venda(**extra):
 
 
 def eixo_de_receita():
-    """A data que define A QUE DIA a receita pertence.
+    """A data que define A QUE DIA a receita pertence: o dia do PEDIDO.
 
-    `paid_at` — o dia em que o dinheiro entrou — com fallback para `created_at`
-    quando não há registro de pagamento pelo gateway (dinheiro na entrega,
-    baixa manual). Sem o fallback esses pedidos sumiriam de qualquer série.
+    Até 22/10/2026 era `paid_at` (com fallback para `created_at`). O dono
+    decidiu: faturamento é do dia do pedido. Com `paid_at`, a Valéria
+    (CE-2610215446) fez o pedido 21/10 15h, pagou com cartão na entrega, e a
+    baixa às 08h12 do dia 22 jogou R$ 43,51 no "hoje" — antes do primeiro
+    pedido do dia. `paid_at` continua sendo o eixo do DINHEIRO (gaveta do
+    caixa, "como entrou o dinheiro"), não o da venda.
 
     Existe porque cada tela escolhia um eixo: `/orders/stats/` agrupava por
     `created_at` e o painel por `paid_at`. Um pedido feito 31/07 23h40 e pago
@@ -78,7 +81,7 @@ def eixo_de_receita():
     TIME_ZONE do projeto (America/Sao_Paulo). Forçar UTC jogava toda venda
     depois das 21h para o dia seguinte — justamente o pico do delivery.
     """
-    return Coalesce('paid_at', 'created_at')
+    return F('created_at')
 
 
 def _q_pedido_de_teste(prefixo=''):
@@ -144,7 +147,7 @@ def itens_de_receita(loja=None, inicio=None, fim=None, incluir_teste=False):
     if loja is not None:
         qs = qs.filter(order__store=loja)
     if inicio is not None or fim is not None:
-        qs = qs.annotate(_data_receita=Coalesce('order__paid_at', 'order__created_at'))
+        qs = qs.annotate(_data_receita=F('order__created_at'))
     if inicio is not None and fim is not None:
         qs = qs.filter(_data_receita__date__range=(inicio, fim))
     elif inicio is not None:

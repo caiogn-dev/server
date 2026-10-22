@@ -138,6 +138,19 @@ class ReceitaTests(TestCase):
             metrics.totais(self.store, metrics.ontem())['receita'], Decimal('70.00'),
         )
 
+    def test_pedido_de_ontem_pago_hoje_fica_em_ontem(self):
+        """Valéria (CE-2610215446): pedido 21/10 15h, cartão na entrega, baixado
+        22/10 08h12 — inflava o "hoje" do dono. Receita é do dia do pedido."""
+        ontem = self.hoje - timedelta(days=1)
+        pedido = self._pedido('56.21', dia=ontem)
+        agora = timezone.make_aware(
+            datetime.combine(self.hoje, datetime.min.time().replace(hour=8)),
+            timezone.get_current_timezone(),
+        )
+        StoreOrder.objects.filter(pk=pedido.pk).update(paid_at=agora)
+        self.assertEqual(metrics.totais(self.store, metrics.hoje())['receita'], Decimal('0'))
+        self.assertEqual(metrics.totais(self.store, metrics.ontem())['receita'], Decimal('56.21'))
+
     def test_contagem_operacional_inclui_o_cancelado(self):
         """A cozinha precisa ver o pedido que existiu — receita não."""
         self._pedido('100.00')
