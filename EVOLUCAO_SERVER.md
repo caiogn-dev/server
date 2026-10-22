@@ -1150,27 +1150,3 @@ baixo, não prioritário.
    pendente: busca de isolamento de tenant em views recentemente adicionadas.
 4. **P2** — Varredura de `is_staff` como bypass cross-tenant nos novos módulos adicionados desde
    setembro/2026 (loyalty, payments, pdv, fiscal).
-
-### 2026-10-22
-
-**Baseline de testes:** 2/9 FAILING (RED confirmado). 9/9 após fix.
-HEAD de `development`: `202aad46`. Gate: 2 PRs bot/ abertos (#390, #391).
-
-**Módulos novos verificados:**
-- `fiscal`, `mobile_api`, `orders`, `panel`, `notifications` — todos usam `user_can_access_store`.
-  Nenhum `is_staff` cross-tenant encontrado.
-- `mobile_api/urls.py` — namespace Flutter limpo já existe.
-
-**Bug corrigido:** 6 `logger.error(f"...{e}")` em `StorePaymentViewSet` + 1 `logger.error('%s', ..., e)`
-no callback MP OAuth — P2.
-
-- Arquivos: `apps/stores/api/payment_views.py` (lines 195, 271, 295, 320, 346, 364, 389)
-- Exceções do SDK do MP incluem corpo da resposta HTTP em `str(e)`, que pode conter
-  `access_token`/`client_secret` da plataforma.
-- Correção: `except Exception:` + `logger.exception(mensagem_fixa, identificador)`
-- 9 testes em `apps/stores/tests/test_payment_views_logger_str_exc.py` (2 RED→GREEN, 7 GREEN)
-- PR: `bot/server-2026-10-22-payment-views-logger-str-exc`
-
-**Próximo backlog:**
-P2 — `unified_delivery_service.py:292,343,414` | P3 — `order_service.py:364`,
-`checkout_service.py:189,842`, `uber_delivery.py:78`, `core/auth_views.py`.

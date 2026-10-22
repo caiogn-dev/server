@@ -38,15 +38,15 @@ def _src():
 
 def _metodo(src, nome):
     """Extrai o corpo do método (até o próximo 'def' no mesmo nível de indentação)."""
-    # busca 'def nome(' dentro de uma classe (indentação de 4 espaços)
-    pat = re.compile(r'    def ' + re.escape(nome) + r'\(')
-    m = pat.search(src)
+    pat_target = re.compile(r'    def ' + re.escape(nome) + r'\(')
+    m = pat_target.search(src)
     if not m:
         return ''
     inicio = m.start()
-    # próximo método na mesma classe
-    prox = pat.search(src, inicio + 1)
-    return src[inicio: prox.start() if prox else len(src)]
+    # próximo 'def' a 4 espaços de indentação, qualquer nome — delimita o método
+    pat_next = re.compile(r'\n    def \w')
+    prox = pat_next.search(src, inicio + 1)
+    return src[inicio: prox.start() + 1 if prox else len(src)]
 
 
 class StorePaymentViewSetLoggerTest(unittest.TestCase):
