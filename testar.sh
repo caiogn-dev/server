@@ -28,7 +28,11 @@ echo "==> Suíte inteira em $DB_HOST (assinatura $antes)..."
 rm -f "$CARIMBO"
 
 set +e
+# A imagem vem de `docker commit pastita_web` e herda os rótulos do compose:
+# sem trocá-los, o container de teste vira "réplica do web" — o compose o
+# derrubou no recreate de 22/10 e `docker compose exec web` caía nele.
 docker run --rm --network sdd_test_net -v "$PWD:/app" -w /app \
+  --label com.docker.compose.project=testes --label com.docker.compose.service=pytest \
   --entrypoint /opt/venv/bin/python \
   -e DJANGO_SETTINGS_MODULE=config.settings.test -e TEST_DB_HOST="$DB_HOST" \
   pastita_backend:latest -m pytest -q --no-header -p no:cacheprovider --create-db \

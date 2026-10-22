@@ -76,6 +76,11 @@ x-django-env: &django-env
   # segredo a tarefa revalidar_cardapio não chama nada.
   STOREFRONT_INTERNAL_URL: ${STOREFRONT_INTERNAL_URL:-http://172.20.0.1:3010}
   STOREFRONT_REVALIDATE_SECRET: ${STOREFRONT_REVALIDATE_SECRET:-}
+  # Auto-update do print agent (docs/comanda-no-servidor.md §5): o heartbeat
+  # devolve versão + zip + sha256; vazio = sem atualização oferecida.
+  PRINT_AGENT_UPDATE_VERSION: ${PRINT_AGENT_UPDATE_VERSION:-}
+  PRINT_AGENT_UPDATE_URL: ${PRINT_AGENT_UPDATE_URL:-}
+  PRINT_AGENT_UPDATE_SHA256: ${PRINT_AGENT_UPDATE_SHA256:-}
   # AI / LLM
   KIMI_API_KEY: ${KIMI_API_KEY}
   KIMI_BASE_URL: ${KIMI_BASE_URL:-https://api.kimi.com/coding/}
