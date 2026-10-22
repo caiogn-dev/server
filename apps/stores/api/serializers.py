@@ -1408,6 +1408,9 @@ class StoreOrderCreateSerializer(serializers.Serializer):
             scheduled_time=validated_data.get('scheduled_time', ''),
             customer_notes=validated_data.get('customer_notes') or validated_data.get('notes', ''),
             metadata=metadata,
+            # Quem lançou: base do ranking "Atendentes" (Equipe e entregas).
+            # Ninguém gravava — 51 pedidos de PDV da Cê em 30 dias sem dono (22/10).
+            created_by_staff=request.user if request and request.user.is_authenticated else None,
         )
 
         # Trava e valida o estoque ANTES de decrementar. Este caminho (PDV/painel)
