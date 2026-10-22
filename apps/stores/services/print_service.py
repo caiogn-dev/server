@@ -158,6 +158,28 @@ def _address_warning_lines(order: StoreOrder) -> list[str]:
     ]
 
 
+def _obs_do_cliente(notes, ingredients) -> str:
+    """Tira de `notes` o resumo que o montador de salada grava ("Base: Alface |
+    Proteína: Frango"): os mesmos ingredientes já saem nos detalhes do item.
+    Fica só o trecho que não é lista de ingredientes — o pedido do cliente."""
+    texto = str(notes or '').strip()
+    nomes = {
+        str(i.get('name') or '').strip().lower()
+        for i in ingredients or [] if isinstance(i, dict)
+    } - {''}
+    if not texto or not nomes:
+        return texto
+    sobra = []
+    for trecho in texto.split('|'):
+        rotulo, dois_pontos, lista = trecho.partition(':')
+        escolhidos = [n.strip().lower() for n in lista.split(',') if n.strip()]
+        if dois_pontos and escolhidos and all(n in nomes for n in escolhidos):
+            continue
+        if trecho.strip():
+            sobra.append(trecho.strip())
+    return ' | '.join(sobra)
+
+
 def _ingredient_lines(ingredients) -> list[str]:
     lines: list[str] = []
     for ingredient in ingredients:
@@ -525,7 +547,7 @@ def payload_do_pedido(order: StoreOrder, *, template: str) -> dict:
             # O que a cozinha monta, não o que o cliente recebe. Ver
             # `linhas_de_preparo`.
             'prep': _preparo_do_item(item),
-            'notes': item.notes or '',
+            'notes': _obs_do_cliente(item.notes, options.get('ingredients')),
         })
 
     for combo in order.combo_items.all():
