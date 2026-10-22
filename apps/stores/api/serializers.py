@@ -911,26 +911,19 @@ class StoreOrderSerializer(serializers.ModelSerializer):
         )
 
     def get_pedidos_do_cliente(self, obj):
-        """Quantos pedidos essa pessoa já fez NESTA loja — inclusive este.
+        """Qual pedido dessa pessoa NESTA loja é este (1º, 2º...).
 
         Só no DETALHE: numa listagem de 50 linhas seriam 50 COUNT extras na
         tela mais quente do painel, e ninguém lê esse número numa lista.
         `self.parent` só existe quando o serializer está dentro de um
         ListSerializer (many=True), então é ele quem distingue os dois casos.
 
-        Conta por VARIANTES do telefone: o wa_id do WhatsApp vem sem o nono
-        dígito e o site grava com ele — sem isso o cliente fiel apareceria
-        como novato de novo a cada canal.
+        A conta é a mesma da comanda: ver services/pedidos_do_cliente.py.
         """
         if self.parent is not None:
             return None
-        from apps.core.utils import phone_variants
-        variantes = phone_variants(obj.customer_phone or '')
-        if not variantes:
-            return 0
-        return StoreOrder.objects.filter(
-            store_id=obj.store_id, customer_phone__in=variantes,
-        ).count()
+        from apps.stores.services.pedidos_do_cliente import numero_do_pedido_do_cliente
+        return numero_do_pedido_do_cliente(obj) or 0
 
     class Meta:
         model = StoreOrder

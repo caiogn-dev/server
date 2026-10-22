@@ -17,6 +17,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.stores.services.descontos_do_pedido import descontos_do_pedido
+from apps.stores.services.pedidos_do_cliente import numero_do_pedido_do_cliente
 from apps.stores.models import StoreOrder, StorePrintAgent, StorePrintJob
 
 logger = logging.getLogger(__name__)
@@ -557,6 +558,8 @@ def build_order_print_payload(order: StoreOrder, *, template: str = StorePrintJo
             'name': order.customer_name,
             'phone': order.customer_phone,
             'email': order.customer_email if order.customer_email and not any(order.customer_email.endswith(s) for s in ('@local.invalid', '@whatsapp.bot', '@cliente.pastita.com.br')) else '',
+            # 1 = cliente novo. Agente < 0.5 ignora a chave.
+            'pedidos': numero_do_pedido_do_cliente(order),
         },
         'address_lines': _extract_address_lines(order),
         # Pin do mapa x endereço escrito. O painel já avisa disso na comanda
